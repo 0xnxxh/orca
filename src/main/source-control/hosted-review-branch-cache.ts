@@ -5,11 +5,13 @@ import {
   noteActiveClaim
 } from './hosted-review-active-branch-claims'
 import {
-  __resetDetachedHostedReviewLookupsForTests,
-  hasDetachedLookupCapacity,
+  __resetUnsettledHostedReviewLookupsForTests,
+  hasLookupCapacity,
   noteDetachedLookup,
-  settleDetachedLookup
-} from './hosted-review-detached-lookups'
+  noteLookupStarted,
+  settleDetachedLookup,
+  settleLookup
+} from './hosted-review-unsettled-lookups'
 import {
   __resetHostedReviewScopeGenerationsForTests,
   bumpScopeGeneration,
@@ -220,7 +222,7 @@ export function __resetHostedReviewBranchCacheForTests(): void {
   inflight.clear()
   __resetHostedReviewLookupBackoffForTests()
   __resetHostedReviewActiveClaimsForTests()
-  __resetDetachedHostedReviewLookupsForTests()
+  __resetUnsettledHostedReviewLookupsForTests()
   __resetHostedReviewScopeGenerationsForTests()
 }
 
@@ -249,7 +251,7 @@ function lookupUnavailableReason(key: string): string | null {
       until
     ).toLocaleTimeString()}.`
   }
-  if (!hasDetachedLookupCapacity(key)) {
+  if (!hasLookupCapacity(key)) {
     return 'Hosted review lookup is still running from an earlier attempt that never answered. It will be retried once that attempt settles.'
   }
   return null
@@ -296,8 +298,9 @@ function startLookup(
       noteFailure(key)
     }
     // Why: the lookup runs on with nothing able to stop it, so it is counted
-    // until it settles — that count is the only bound on stranded work.
-    noteDetachedLookup(key)
+    // process-wide until it settles — that count is what stops a wedged host
+    // from stranding a lookup on every branch it serves.
+    noteDetachedLookup()
     const stale = entries.get(key)
     if (stale) {
       release(stale.review)
@@ -312,6 +315,10 @@ function startLookup(
     )
   }
 
+  // Why: the branch's slot is taken from the moment the lookup starts. Counting
+  // only from the deadline would let a first failure wave admit one lookup per
+  // branch with the cap still reading zero, and every one of them can wedge.
+  noteLookupStarted(key)
   timer = setTimeout(expire, HOSTED_REVIEW_LOOKUP_DEADLINE_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
@@ -366,8 +373,9 @@ function startLookup(
         clearTimeout(timer)
       }
       if (timedOut) {
-        settleDetachedLookup(key)
+        settleDetachedLookup()
       }
+      settleLookup(key)
       releaseInflight(key, token)
     }
   })()

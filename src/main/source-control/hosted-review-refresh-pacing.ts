@@ -52,12 +52,13 @@ export const MAX_BRANCH_MAP_ENTRIES = 500
 export const MAX_INFLIGHT_LOOKUPS = MAX_BRANCH_MAP_ENTRIES
 
 /**
- * A detached lookup cannot be cancelled, so one that never settles is stranded
- * for the life of the process. Two per branch leaves room for the retry that
- * proves a host recovered; past that the branch is wedged, not slow, and asking
- * again only strands another provider call.
+ * A lookup cannot be cancelled, so one that never settles is stranded for the
+ * life of the process. Two per branch — counted from the moment a lookup starts,
+ * not from the deadline — leaves room for the retry that proves a host
+ * recovered; past that the branch is wedged, not slow, and asking again only
+ * strands another provider call.
  */
-export const MAX_DETACHED_LOOKUPS_PER_KEY = 2
+export const MAX_UNSETTLED_LOOKUPS_PER_KEY = 2
 
 /** Process-wide backstop for the same leak when many branches wedge at once. */
 export const MAX_DETACHED_LOOKUPS = 64

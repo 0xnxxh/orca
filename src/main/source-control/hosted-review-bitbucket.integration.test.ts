@@ -126,6 +126,7 @@ describe('Bitbucket hosted review integration', () => {
   it('does not cache a transient API failure as a definitive no-review result', async () => {
     vi.useFakeTimers({ now: Date.now() })
     let pullRequestCalls = 0
+    let buildStatusCalls = 0
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
       if (url.pathname === '/2.0/repositories/team/repo/pullrequests') {
@@ -151,6 +152,7 @@ describe('Bitbucket hosted review integration', () => {
       }
 
       if (url.pathname === '/2.0/repositories/team/repo/commit/def456/statuses/build') {
+        buildStatusCalls += 1
         sendJson(res, { values: [{ state: 'SUCCESSFUL' }] })
         return
       }
@@ -187,6 +189,8 @@ describe('Bitbucket hosted review integration', () => {
         state: 'open'
       })
       expect(pullRequestCalls).toBe(2)
+      // The failed lookup never reaches build status, so the recovery owns this call.
+      expect(buildStatusCalls).toBe(1)
     } finally {
       await rm(repoPath, { recursive: true, force: true })
       await new Promise<void>((resolve, reject) => {

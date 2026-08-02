@@ -8,8 +8,9 @@ import {
 import {
   HOSTED_REVIEW_LOOKUP_DEADLINE_MS,
   LOOKUP_BACKOFF_MAX_MS,
-  MAX_DETACHED_LOOKUPS_PER_KEY,
-  MAX_INFLIGHT_LOOKUPS
+  MAX_BRANCH_MAP_ENTRIES,
+  MAX_INFLIGHT_LOOKUPS,
+  MAX_UNSETTLED_LOOKUPS_PER_KEY
 } from './hosted-review-refresh-pacing'
 
 const identity = { repoPath: '/repo', connectionId: null, branch: 'feature/x' }
@@ -753,7 +754,7 @@ describe('hosted review branch cache (#11532)', () => {
 
     it('stops asking once a branch has stranded its cap of unsettled lookups', async () => {
       const wedged = stuckLookup()
-      for (let attempt = 0; attempt < MAX_DETACHED_LOOKUPS_PER_KEY; attempt += 1) {
+      for (let attempt = 0; attempt < MAX_UNSETTLED_LOOKUPS_PER_KEY; attempt += 1) {
         const rejects = expect(
           withHostedReviewBranchCache(identity, { headOid: null }, wedged.lookup)
         ).rejects.toThrow(/timed out/)
@@ -762,14 +763,14 @@ describe('hosted review branch cache (#11532)', () => {
         // Past the longest backoff, so only the detached cap can hold the branch.
         await vi.advanceTimersByTimeAsync(LOOKUP_BACKOFF_MAX_MS + 1)
       }
-      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_DETACHED_LOOKUPS_PER_KEY)
+      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_UNSETTLED_LOOKUPS_PER_KEY)
 
       // Nothing can cancel the stranded calls, so a third would leak another one
       // for the life of the process rather than recover anything.
       await expect(
         withHostedReviewBranchCache(identity, { headOid: null }, wedged.lookup)
       ).rejects.toThrow(/never answered/)
-      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_DETACHED_LOOKUPS_PER_KEY)
+      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_UNSETTLED_LOOKUPS_PER_KEY)
 
       // A settling lookup frees its slot, so a host that recovers is asked again.
       wedged.resolve(openReview)
@@ -779,6 +780,63 @@ describe('hosted review branch cache (#11532)', () => {
         withHostedReviewBranchCache(identity, { headOid: null }, recovered)
       ).resolves.toEqual(mergedReview)
       expect(recovered).toHaveBeenCalledTimes(1)
+    })
+
+    it('counts a lookup that is still running against the branch cap', async () => {
+      const swallow = (promise: Promise<unknown>): void => {
+        void promise.catch(() => {})
+      }
+      const filler = stuckLookup()
+      const wedged = stuckLookup()
+      /** Drops the branch's in-flight record without expiring it, so it runs on untracked. */
+      const evictInflightRecords = (round: number): void => {
+        for (let index = 0; index < MAX_INFLIGHT_LOOKUPS; index += 1) {
+          swallow(
+            withHostedReviewBranchCache(
+              { ...identity, branch: `filler/${round}/${index}` },
+              { headOid: null },
+              filler.lookup
+            )
+          )
+        }
+      }
+
+      for (let attempt = 0; attempt < MAX_UNSETTLED_LOOKUPS_PER_KEY; attempt += 1) {
+        swallow(withHostedReviewBranchCache(identity, { headOid: null }, wedged.lookup))
+        evictInflightRecords(attempt)
+      }
+      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_UNSETTLED_LOOKUPS_PER_KEY)
+
+      // Neither has reached its deadline, so nothing is counted as detached yet —
+      // but both are running with nothing able to stop them, and a third would
+      // strand another provider call the same way.
+      await expect(
+        withHostedReviewBranchCache(identity, { headOid: null }, wedged.lookup)
+      ).rejects.toThrow(/never answered/)
+      expect(wedged.lookup).toHaveBeenCalledTimes(MAX_UNSETTLED_LOOKUPS_PER_KEY)
+    })
+
+    it('does not adopt a straggler whose invalidated scope was evicted', async () => {
+      const stale = stuckLookup()
+      const inflight = withHostedReviewBranchCache(identity, { headOid: null }, stale.lookup)
+
+      invalidateHostedReviewBranchCache('/repo', null)
+      // Fill the generation map so the repo's own generation is evicted: read back
+      // as zero it would match what this lookup captured before the invalidation.
+      for (let index = 0; index < MAX_BRANCH_MAP_ENTRIES; index += 1) {
+        invalidateHostedReviewBranchCache(`/filler/${index}`, null)
+      }
+
+      stale.resolve(null)
+      await expect(inflight).resolves.toBeNull()
+
+      // Stored, that "no review" would hide the review Orca had just opened for
+      // the whole no-review interval.
+      const next = vi.fn(async () => openReview)
+      await expect(withHostedReviewBranchCache(identity, { headOid: null }, next)).resolves.toEqual(
+        openReview
+      )
+      expect(next).toHaveBeenCalledTimes(1)
     })
   })
 })

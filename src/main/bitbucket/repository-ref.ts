@@ -1,4 +1,4 @@
-import { isTransientGitProbeError, readRemoteUrl } from '../git/remote-url-probe'
+import { createRemoteRefProbeCache } from '../git/remote-ref-probe-cache'
 
 export type BitbucketRepoRef = {
   workspace: string
@@ -9,28 +9,16 @@ type LocalGitExecOptions = {
   wslDistro?: string
 }
 
-const REPO_REF_CACHE_MAX_ENTRIES = 512
-const repoRefCache = new Map<string, BitbucketRepoRef | null>()
+const repoRefProbeCache = createRemoteRefProbeCache(parseBitbucketRepoRef)
 
 /** @internal - exposed for tests only */
 export function _resetBitbucketRepoRefCache(): void {
-  repoRefCache.clear()
+  repoRefProbeCache.clear()
 }
 
 /** @internal - exposed for tests only */
 export function _getBitbucketRepoRefCacheSize(): number {
-  return repoRefCache.size
-}
-
-function rememberRepoRefCacheEntry(cacheKey: string, value: BitbucketRepoRef | null): void {
-  repoRefCache.set(cacheKey, value)
-  while (repoRefCache.size > REPO_REF_CACHE_MAX_ENTRIES) {
-    const oldestKey = repoRefCache.keys().next().value
-    if (oldestKey === undefined) {
-      return
-    }
-    repoRefCache.delete(oldestKey)
-  }
+  return repoRefProbeCache.size()
 }
 
 function decodeSegment(value: string): string {
@@ -85,36 +73,7 @@ export async function getBitbucketRepoRefForRemote(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<BitbucketRepoRef | null> {
-  const runtimeKey = connectionId ?? `local:${localGitOptions.wslDistro ?? 'host'}`
-  const cacheKey = `${runtimeKey}\0${repoPath}\0${remoteName}`
-  if (repoRefCache.has(cacheKey)) {
-    return repoRefCache.get(cacheKey)!
-  }
-  try {
-    const stdout = await readRemoteUrl(
-      {
-        repoPath,
-        connectionId,
-        ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
-      },
-      remoteName
-    )
-    if (stdout === null) {
-      return null
-    }
-    const result = parseBitbucketRepoRef(stdout)
-    rememberRepoRefCacheEntry(cacheKey, result)
-    return result
-  } catch (error) {
-    if (connectionId || isTransientGitProbeError(error)) {
-      // Why: SSH provider failures are often transient reconnect/tunnel states,
-      // and a probe killed on its deadline says nothing about the remote either;
-      // caching them as "not Bitbucket" would poison the repo for the session.
-      return null
-    }
-    rememberRepoRefCacheEntry(cacheKey, null)
-    return null
-  }
+  return repoRefProbeCache.get(repoPath, remoteName, connectionId, localGitOptions)
 }
 
 export async function getBitbucketRepoRef(

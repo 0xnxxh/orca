@@ -37,6 +37,14 @@ describe('remote URL probe', () => {
       timeout: REMOTE_URL_PROBE_TIMEOUT_MS,
       wslDistro: 'Ubuntu'
     })
+
+    await expect(readRemoteUrl({ repoPath: '/repo' }, 'origin')).resolves.toContain('github.com')
+
+    expect(gitExecFileAsyncMock).toHaveBeenLastCalledWith(['remote', 'get-url', 'origin'], {
+      cwd: '/repo',
+      timeout: REMOTE_URL_PROBE_TIMEOUT_MS
+    })
+    expect(REMOTE_URL_PROBE_TIMEOUT_MS).toBe(30_000)
   })
 
   it('rethrows a timed-out local probe so callers can report unavailable', async () => {

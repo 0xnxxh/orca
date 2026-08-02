@@ -27,8 +27,14 @@ export async function readLocalGitConfigSignature(
     // runtimes are already separated by cache key and probed through git.
     return undefined
   }
-  return runCoalescedProbe(localGitConfigSignatureInFlight, context.repoPath, () =>
-    withConfigSignatureDeadline(readUncachedLocalGitConfigSignature(context.repoPath))
+  // Why: the deadline is caller-facing only. Bounding the coalesced probe itself
+  // would drop its map entry after 2s while the read runs on, so every later
+  // call would start another unbounded read instead of joining the one already
+  // out — the coalescing that keeps a wedged mount to one read (P1-D).
+  return withConfigSignatureDeadline(
+    runCoalescedProbe(localGitConfigSignatureInFlight, context.repoPath, () =>
+      readUncachedLocalGitConfigSignature(context.repoPath)
+    )
   )
 }
 

@@ -66,7 +66,7 @@ describe('runCoalescedProbe', () => {
 
     first.reject(new Error('old probe failed'))
     await expect(firstRequest).rejects.toThrow('old probe failed')
-    expect(probes.get('repo')?.promise).not.toBe(firstRequest)
+    expect(probes.get('repo')?.promise).toBe(second.promise)
 
     second.resolve('new')
     await expect(secondRequest).resolves.toBe('new')
