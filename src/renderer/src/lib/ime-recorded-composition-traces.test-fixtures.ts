@@ -209,10 +209,50 @@ export const CANDIDATE_ARROW_NAVIGATION_TRACE: ImeCompositionTrace = {
   provenance: 'derived'
 }
 
+/**
+ * Escape dismisses the candidate window and commits nothing.
+ *
+ * This trace exists to make one assumption falsifiable rather than leave it in prose:
+ * `isImeCompositionKeyDown` exempts Escape from the derived composition flag, and that
+ * is only safe if an Escape the IME owns arrives marked. Nothing hardware-recorded
+ * shows that yet. Replace this with a recording (`pnpm ime:record`) and the exemption
+ * is either proven or contradicted here first.
+ */
+export const CANDIDATE_ESCAPE_DISMISSAL_TRACE: ImeCompositionTrace = {
+  committed: '',
+  env: { browser: 'chromium', engine: 'Pinyin', platform: 'darwin' },
+  events: [
+    compositionStart(''),
+    processKeydown('', 'KeyZ'),
+    compositionUpdate('', 'zhong'),
+    ...editPair('', 'zhong', 'insertCompositionText', 'zhong'),
+    {
+      code: 'Escape',
+      isComposing: true,
+      key: 'Escape',
+      keyCode: 27,
+      state: caretAtEnd('zhong'),
+      type: 'keydown'
+    },
+    // The engine tears the preedit down itself; the buffer is empty before the end.
+    ...editPair('zhong', '', 'insertCompositionText', ''),
+    compositionEnd('', '')
+  ],
+  final: caretAtEnd(''),
+  initial: caretAtEnd(''),
+  name: 'macOS - Chromium - Pinyin - Escape dismisses the candidate window',
+  origin:
+    'Derived from the Escape exemption in ime-composition-keyboard-event.ts, not ' +
+    'hardware-recorded. Promote with config/scripts/record-ime-trace.mjs on macOS or ' +
+    'Windows: compose, open the candidate window, press Escape.',
+  provenance: 'derived'
+}
+
 export const IME_COMPOSITION_TRACES: readonly ImeCompositionTrace[] = [
   IBUS_HANGUL_TERMINAL_JAMO_COMMIT_TRACE,
   IBUS_HANGUL_RETAINED_COMMIT_TRACE,
   IBUS_HANGUL_MIXED_LATIN_TRACE,
   TELEX_BACKSPACE_MID_COMPOSITION_TRACE,
-  CANDIDATE_ARROW_NAVIGATION_TRACE
+  CANDIDATE_ARROW_NAVIGATION_TRACE,
+  CANDIDATE_ESCAPE_DISMISSAL_TRACE
 ]

@@ -12,6 +12,7 @@ import {
 import type { ImeTraceKeyEvent } from './ime-composition-trace.test-fixtures'
 import { isImeCompositionKeyDown } from './ime-composition-keyboard-event'
 import {
+  CANDIDATE_ESCAPE_DISMISSAL_TRACE,
   IBUS_HANGUL_MIXED_LATIN_TRACE,
   IBUS_HANGUL_RETAINED_COMMIT_TRACE,
   IBUS_HANGUL_TERMINAL_JAMO_COMMIT_TRACE,
@@ -83,6 +84,20 @@ describe('recorded composition traces', () => {
     expect(isImeCompositionKeyDown(committingEnter as ImeTraceKeyEvent)).toBe(true)
     // The paired negative: an otherwise identical Enter with no IME marker must submit.
     expect(isImeCompositionKeyDown({ isComposing: false, key: 'Enter', keyCode: 13 })).toBe(false)
+  })
+
+  it('classifies the Escape that dismisses a candidate window as IME-owned', () => {
+    // The premise the Escape exemption rests on, pinned so a real recording can
+    // contradict it: an Escape the IME owns is marked, so the exemption never sees it.
+    // Derived, not recorded — see the trace's origin.
+    const dismissal = CANDIDATE_ESCAPE_DISMISSAL_TRACE.events.find(
+      (event) => event.type === 'keydown' && event.key === 'Escape'
+    )
+
+    expect(dismissal).toMatchObject({ isComposing: true, keyCode: 27 })
+    expect(isImeCompositionKeyDown(dismissal as ImeTraceKeyEvent)).toBe(true)
+    // The paired negative: the same Escape unmarked is the drift case, and must pass.
+    expect(isImeCompositionKeyDown({ isComposing: false, key: 'Escape', keyCode: 27 })).toBe(false)
   })
 
   it('derives no commit from the plain ASCII typed between two compositions', () => {
