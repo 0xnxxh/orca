@@ -91,6 +91,11 @@ export type AiVaultSession = {
   messageCount: number
   totalTokens: number
   previewMessages: AiVaultSessionPreviewMessage[]
+  /**
+   * Full first non-injected user prompt. List scans omit this (payload/perf);
+   * populated only by on-demand `aiVault.getFirstUserPrompt` re-parses for copy.
+   */
+  firstUserPrompt?: string | null
   /** Latest provider-authenticated user prompt; absent when the transcript has no trustworthy signal. */
   lastUserPrompt?: string | null
   // Recoverable signal for sessions whose conversation transcript persisted zero
@@ -116,6 +121,21 @@ export type AiVaultSubagentListArgs = {
 export type AiVaultSubagentListResult = {
   sessions: AiVaultSession[]
   issues: AiVaultScanIssue[]
+}
+
+/** On-demand full first-prompt read for Agent Session History copy/reuse. */
+export type AiVaultFirstUserPromptArgs = {
+  agent: AiVaultAgent
+  filePath: string
+  // Required for OpenCode SQLite rows (filePath is the db; session is a row id).
+  sessionId?: string
+  // Transcripts are local-FS only; non-local hosts resolve to null prompt.
+  executionHostId?: ExecutionHostId
+  codexHome?: string | null
+}
+
+export type AiVaultFirstUserPromptResult = {
+  prompt: string | null
 }
 
 // A session is only offered for normal resume when its transcript actually holds
@@ -323,6 +343,7 @@ function buildAgentResumeInvocation(
     // Why: Kimi Code resumes with `kimi --session <id>` (alias `-S`). Sessions
     // are work-dir-scoped, so the cwd prefix from buildAiVaultResumeCommand is
     // required — resuming from another directory is rejected by the CLI.
+    // falls through
     case 'kimi':
       return `${baseCommand} --session ${sessionArg}`
     case 'copilot':
@@ -337,6 +358,7 @@ function buildAgentResumeInvocation(
     case 'droid':
     // Why: OMP resumes by absolute transcript path (see buildAiVaultResumeCommand),
     // but the `--resume <arg>` invocation form is identical to the others here.
+    // falls through
     case 'omp':
       return `${baseCommand} --resume ${sessionArg}`
     case 'antigravity':

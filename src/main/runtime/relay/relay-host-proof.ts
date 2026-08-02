@@ -3,11 +3,9 @@ import nacl from 'tweetnacl'
 
 const HOST_PROOF_TRANSCRIPT_DOMAIN = 'orca-relay-host-proof/v1'
 const HOST_CHALLENGE_PLAINTEXT_DOMAIN = 'orca-relay-host-challenge/v1'
-// Why: sub-second NTP drift between a cell and a host is normal; a cell whose
-// clock ran ~100ms ahead deterministically failed every activation under a
-// zero-tolerance issuedAt check. Challenges stay single-use and nonce-bound,
-// so a small leeway on both edges keeps replay protection intact.
-const CHALLENGE_CLOCK_TOLERANCE_MS = 2_000
+// Covers routine NTP drift without extending the signed challenge window.
+const RELAY_HOST_PROOF_CLOCK_SKEW_MS = 30_000
+const MAX_HOST_PROOF_CHALLENGE_WINDOW_MS = 10_000
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 
@@ -108,20 +106,22 @@ function validateTranscript(
   const previousGeneration = fields.get('previousGeneration')
   const expectedPrevious =
     context.previousGeneration === undefined ? new Uint8Array() : uint64(context.previousGeneration)
+  // Main's 30s skew bounds with named-check reporting kept from the incident
+  // instrumentation; deltas are relative offsets only, never absolute values.
   const checks: [string, boolean][] = [
     ['issuedAt-readable', issuedAt !== null],
-    // Deltas are relative offsets only; absolute timestamps never surface.
     [
       `issuedAt-not-future(d=${issuedAt === null ? 'n/a' : issuedAt - now}ms)`,
-      issuedAt === null || issuedAt <= now + CHALLENGE_CLOCK_TOLERANCE_MS
+      issuedAt === null || issuedAt - RELAY_HOST_PROOF_CLOCK_SKEW_MS <= now
     ],
     [
       `not-expired(d=${challenge.expiresAt - now}ms)`,
-      now <= challenge.expiresAt + CHALLENGE_CLOCK_TOLERANCE_MS
+      now - RELAY_HOST_PROOF_CLOCK_SKEW_MS <= challenge.expiresAt
     ],
+    ['issuedAt-before-expiry', issuedAt === null || issuedAt <= challenge.expiresAt],
     [
       `window(w=${issuedAt === null ? 'n/a' : challenge.expiresAt - issuedAt}ms)`,
-      issuedAt === null || challenge.expiresAt - issuedAt <= 10_000
+      issuedAt === null || challenge.expiresAt - issuedAt <= MAX_HOST_PROOF_CHALLENGE_WINDOW_MS
     ],
     ['expiry-consistent', expiresAt === challenge.expiresAt],
     ['protocol', equal(fields.get('protocol'), textEncoder.encode(HOST_PROOF_TRANSCRIPT_DOMAIN))],

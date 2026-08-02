@@ -516,7 +516,7 @@ describe('RelayControlClient scripted-socket lifecycle', () => {
   })
 
   it('rejects a challenge issued beyond the clock tolerance', async () => {
-    const { client } = scriptedControl({ issuedAtOffsetMs: 30_000 })
+    const { client } = scriptedControl({ issuedAtOffsetMs: 45_000 })
 
     await expect(client.connect()).rejects.toThrow('invalid host challenge')
     expect(client.isLive()).toBe(false)
