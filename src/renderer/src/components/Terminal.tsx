@@ -45,7 +45,7 @@ import type {
 } from '../../../shared/types'
 import { hasFeatureInteraction } from '../../../shared/feature-interactions'
 import BrowserPane from './browser-pane/BrowserPane'
-import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
+import { RetainedBrowserPaneOverlayLayer } from './browser-pane/BrowserPaneOverlayLayer'
 import EmulatorPaneOverlayLayer from './emulator-pane/EmulatorPaneOverlayLayer'
 import { useBrowserAutomationVisibilityForAny } from './browser-pane/browser-automation-visibility'
 import { useBrowserMobileDriverForAny } from '@/lib/pane-manager/browser-mobile-driver-state'
@@ -2674,11 +2674,19 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
         backgroundMountTabIds={backgroundMountTabIds}
         activationDeferredMountTabIds={activationDeferredMountTabIds}
       />
+      {/* Why: once eligible, retain slot DOM so hidden worktrees keep their Electron guests alive (STA-3228). */}
+      <RetainedBrowserPaneOverlayLayer
+        worktreeId={worktreeId}
+        isWorktreeActive={isVisible}
+        mountEligible={
+          isVisible ||
+          backgroundMountTabIds === null ||
+          hasAutomationVisibleBrowser ||
+          hasMobileDrivenBrowser
+        }
+      />
       {isVisible || backgroundMountTabIds === null ? (
-        <>
-          <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
-          <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
-        </>
+        <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
       ) : null}
       <AiVaultSessionDropLayer worktreeId={worktreeId} enabled={isVisible} />
     </div>
