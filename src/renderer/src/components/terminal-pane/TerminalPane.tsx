@@ -1709,6 +1709,9 @@ function TerminalPane(
   // transport, so a queued restart has no ptyId to match on the mount pass. The
   // reconnected PTY rewrites this map when it binds — `ptyIdsByTabId` does not,
   // because a restored id is already listed there before the pane ever mounts.
+  // Panes with no mounted TerminalPane at all are executed by the detached
+  // driver instead (codex-detached-pane-restart), which leaves anything a live
+  // transport owns to this effect.
   const panePtyLayoutBindings = savedLayout.ptyIdsByLeafId
   useEffect(() => {
     const manager = managerRef.current
