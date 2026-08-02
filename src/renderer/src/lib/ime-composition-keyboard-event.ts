@@ -1,4 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { keybindingInputIsImeOwned } from '../../../shared/keybindings'
 
 // The one place that decides a keystroke belongs to an IME.
 // See the IME Composition rules in AGENTS.md before changing any of this.
@@ -97,11 +98,7 @@ export function isImeCompositionKeyDown(event: AnyKeyboardEvent): boolean {
   if (!nativeEvent) {
     return isDocumentImeCompositionActive()
   }
-  if (
-    nativeEvent.isComposing === true ||
-    nativeEvent.keyCode === 229 ||
-    nativeEvent.key === 'Process'
-  ) {
+  if (keybindingInputIsImeOwned(nativeEvent)) {
     return true
   }
   // Why: an Escape the IME owns is marked above, so an unmarked one means this

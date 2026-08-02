@@ -21,6 +21,14 @@ export type TerminalShortcutPolicy = 'orca-first' | 'terminal-first'
 export type KeybindingMatchOptions = {
   context?: KeybindingContext
   terminalShortcutPolicy?: TerminalShortcutPolicy
+  /**
+   * Resolve the action even when an IME owns the keystroke.
+   *
+   * Only for callers that make the ownership decision themselves and need to know what the
+   * chord *would* do first — the terminal panes, which must still honour input-source
+   * switching and deferred Enter mid-composition. Application dispatchers must never set it.
+   */
+  allowImeOwnedInput?: boolean
 }
 
 export type AgentTabActionId = `tab.newAgent.${TuiAgent}`
@@ -170,6 +178,24 @@ export type KeybindingInput = {
   shiftKey?: boolean
   // Set only by the double-tap detector; always a physical token (never 'Mod').
   doubleTapModifier?: PhysicalModifierToken
+  // IME ownership markers, read straight off the DOM event. See keybindingInputIsImeOwned.
+  isComposing?: boolean
+  keyCode?: number
+}
+
+/**
+ * True when an IME owns this keystroke, so no shortcut may resolve from it.
+ *
+ * This is the event-shape half of the renderer's `isImeCompositionKeyDown`, which layers a
+ * document-wide composition flag on top; both must agree on these three markers, so the
+ * renderer imports this rather than restating it.
+ *
+ * It lives at the matcher because guarding each window listener does not scale: the
+ * listeners are capture-phase siblings on `window`, one guard does not stop the others, and
+ * a chord that resolves `tab.closeAll` mid-composition closes the user's editor tabs.
+ */
+export function keybindingInputIsImeOwned(input: KeybindingInput): boolean {
+  return input.isComposing === true || input.keyCode === 229 || input.key === 'Process'
 }
 
 type ParsedKeybinding = {
@@ -2143,6 +2169,9 @@ export function keybindingMatchesAction(
   if (!definition) {
     return false
   }
+  if (!options.allowImeOwnedInput && keybindingInputIsImeOwned(input)) {
+    return false
+  }
   if (!keybindingIsActiveInContext(definition, options)) {
     return false
   }
@@ -2171,6 +2200,9 @@ export function matchKeybindingDigitIndex(
 ): number | null {
   const definition = DEFINITIONS_BY_ID.get(actionId)
   if (!definition || !keybindingIsActiveInContext(definition, options)) {
+    return null
+  }
+  if (!options.allowImeOwnedInput && keybindingInputIsImeOwned(input)) {
     return null
   }
   const digit = digitFromInput(input, platform)

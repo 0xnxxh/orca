@@ -1,6 +1,7 @@
 import type { ActivePluginCommand } from '@/store/plugin-panels'
 import {
   getEffectiveKeybindingsForDefinition,
+  keybindingInputIsImeOwned,
   keybindingMatchesInput,
   type KeybindingDefinition,
   type KeybindingInput,
@@ -60,6 +61,12 @@ export function findPluginCommandForKeybinding(
   overrides: KeybindingOverrides | undefined,
   hasActiveWorktree: boolean
 ): ActivePluginCommand | null {
+  // This resolves against `keybindingMatchesInput` directly rather than through
+  // `keybindingMatchesAction`, so it does not inherit that matcher's IME refusal. A plugin
+  // command can be bound to any chord and can do anything, so it gets the same rule.
+  if (keybindingInputIsImeOwned(input)) {
+    return null
+  }
   for (const command of commands) {
     if (command.context === 'worktree' && !hasActiveWorktree) {
       continue

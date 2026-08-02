@@ -1,11 +1,31 @@
 import {
-  keybindingMatchesAction,
+  keybindingMatchesAction as matchKeybindingActionAllowingIme,
+  type KeybindingActionId,
   type KeybindingInput,
   type KeybindingMatchOptions,
   type KeybindingOverrides,
   type TerminalShortcutPolicy
 } from '../../../../shared/keybindings'
 import type { WindowsShiftEnterEncoding } from './terminal-windows-shift-enter'
+
+/**
+ * The matcher refuses IME-owned input by default so no application dispatcher can act on a
+ * keystroke the user is still composing. The terminal is the one surface that must resolve
+ * it anyway: `terminalShortcutIsOwnedByIme` decides ownership *after* seeing which action a
+ * chord names, because input-source switching and deferred Enter are legitimate mid-preedit.
+ */
+function keybindingMatchesAction(
+  actionId: KeybindingActionId,
+  input: KeybindingInput,
+  platform: NodeJS.Platform,
+  overrides?: KeybindingOverrides,
+  options: KeybindingMatchOptions = {}
+): boolean {
+  return matchKeybindingActionAllowingIme(actionId, input, platform, overrides, {
+    ...options,
+    allowImeOwnedInput: true
+  })
+}
 
 export type TerminalShortcutEvent = {
   key: string

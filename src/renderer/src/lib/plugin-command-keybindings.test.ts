@@ -77,6 +77,23 @@ describe('plugin command keybindings', () => {
     ).toBeNull()
   })
 
+  // A plugin command can be bound to any chord and can run arbitrary plugin code, so it must
+  // not resolve mid-composition. This resolver bypasses `keybindingMatchesAction`, so it does
+  // not inherit that matcher's refusal.
+  it('refuses to resolve a plugin command while an IME owns the keystroke', () => {
+    const actionId = pluginCommandKeybindingActionId(command)
+    const overrides = { [actionId]: ['Mod+Shift+T'] }
+    const base = { key: 't', code: 'KeyT', control: true, meta: false, alt: false, shift: true }
+
+    expect(findPluginCommandForKeybinding([command], base, 'linux', overrides, true)).toBe(command)
+
+    for (const marker of [{ isComposing: true }, { keyCode: 229 }]) {
+      expect(
+        findPluginCommandForKeybinding([command], { ...base, ...marker }, 'linux', overrides, true)
+      ).toBeNull()
+    }
+  })
+
   it('reports conflicts between plugin and built-in definitions', () => {
     const actionId = pluginCommandKeybindingActionId(command)
     const definitions = [...KEYBINDING_DEFINITIONS, pluginCommandKeybindingDefinition(command)]
