@@ -548,7 +548,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       relaunch: () => Promise.resolve(window.location.reload()),
       restart: () => Promise.resolve(window.location.reload()),
       reload: () => Promise.resolve(window.location.reload()),
-      persistBeforeUnloadSync: ({ sessions, ui }) => {
+      stageBeforeUnloadSync: ({ sessions, ui }) => {
         // Why: beforeunload cannot await the paired runtime, so the web adapter
         // guarantees immediate browser-local durability for the final snapshot.
         for (const { state, hostId } of sessions) {

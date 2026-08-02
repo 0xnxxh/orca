@@ -123,7 +123,6 @@ describe('ai vault session display', () => {
       })
     ).toBeNull()
   })
-
   // Remote/SSH rows never re-parse on demand, so a truncated window would
   // otherwise show a RECENT ask permanently labelled as the first prompt.
   it('refuses the preview fallback once the sliding window has truncated', () => {

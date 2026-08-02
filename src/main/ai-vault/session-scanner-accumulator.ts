@@ -187,6 +187,17 @@ export function addPreviewMessage(
   ) {
     accumulator.firstUserPrompt = normalizeFullFirstUserPromptText(args.text)
   }
+  // Why: list scans never store firstUserPrompt (payload/perf). Only the
+  // on-demand full-capture path seeds the untruncated copy body.
+  if (
+    args.role === 'user' &&
+    args.seedFirstUserPrompt !== false &&
+    !accumulator.firstUserPrompt &&
+    shouldCaptureFullFirstUserPrompt() &&
+    args.text
+  ) {
+    accumulator.firstUserPrompt = normalizeFullFirstUserPromptText(args.text)
+  }
 }
 
 export function addPreviewContent(
