@@ -25,6 +25,12 @@ import { SYNC_FIT_PANES_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/const
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 import { canShowRightSidebarForView } from '@/lib/right-sidebar-visibility'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
+import {
+  toDoubleTapShortcutDispatchInput,
+  toShortcutDispatchInput,
+  type ShortcutDispatchInput
+} from '@/lib/app-shortcut-dispatch-input'
 import {
   isPairedWebClientWindow,
   shouldRenderDesktopWindowChrome
@@ -180,8 +186,7 @@ import {
   keybindingMatchesAction,
   type KeybindingActionId,
   type KeybindingContext,
-  type KeybindingMatchOptions,
-  type PhysicalModifierToken
+  type KeybindingMatchOptions
 } from '../../shared/keybindings'
 import { PLUGIN_COMMAND_ALIAS_ACTION_IDS } from '../../shared/plugins/plugin-command-actions'
 import { registerAppCommandDispatcher } from '@/lib/app-command-dispatch'
@@ -244,20 +249,6 @@ function getKeybindingContext(target: EventTarget | null): KeybindingContext {
   return target instanceof HTMLElement && target.classList.contains('xterm-helper-textarea')
     ? 'terminal'
     : 'app'
-}
-
-// Abstraction over a real KeyboardEvent and a synthetic double-tap gesture so one dispatch path serves both; KeybindingInput-compatible.
-type ShortcutDispatchInput = {
-  key?: string
-  code?: string
-  altKey?: boolean
-  metaKey?: boolean
-  ctrlKey?: boolean
-  shiftKey?: boolean
-  doubleTapModifier?: PhysicalModifierToken
-  target: EventTarget | null
-  defaultPrevented: boolean
-  preventDefault: () => void
 }
 
 // Why: Windows and Linux both remove the native title bar, so we render our own min/max/close buttons (Fluent/Win11-style SVGs).
@@ -1920,6 +1911,11 @@ function App(): React.JSX.Element {
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
+      // Ahead of the detector: a composing chord must not arm a double-tap either, and the
+      // synthetic input a detection produces carries no markers to be refused by later.
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       const detected = doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyDown',
@@ -1936,30 +1932,20 @@ function App(): React.JSX.Element {
       if (e.repeat) {
         return
       }
-      if (detected) {
-        // Synthetic input: no key/modifier flags, so only DoubleTap bindings match.
-        dispatchShortcutInput({
-          doubleTapModifier: detected.modifier,
-          target: e.target,
-          defaultPrevented: e.defaultPrevented,
-          preventDefault: () => e.preventDefault()
-        })
-        return
+      const input = detected
+        ? toDoubleTapShortcutDispatchInput(e, detected.modifier)
+        : toShortcutDispatchInput(e)
+      if (input) {
+        dispatchShortcutInput(input)
       }
-      dispatchShortcutInput({
-        key: e.key,
-        code: e.code,
-        altKey: e.altKey,
-        metaKey: e.metaKey,
-        ctrlKey: e.ctrlKey,
-        shiftKey: e.shiftKey,
-        target: e.target,
-        defaultPrevented: e.defaultPrevented,
-        preventDefault: () => e.preventDefault()
-      })
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
+      // The detector is stateful across keydown/keyup, so a composing release must not
+      // complete a tap pair the matching press was already withheld from.
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyUp',

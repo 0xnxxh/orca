@@ -16,4 +16,7 @@
 # its minified bundle lines also make a diff nobody can read. Review the hand-written
 # source patch under xterm-src/ instead.
 /config/patches/@xterm__xterm@*.patch -diff -text
-/config/patches/xterm-src/*.patch text eol=lf
+# A unified-diff context line is prefixed with a space, so a blank source line is a line
+# holding exactly one space. Stripping it corrupts the patch, so exempt these from the
+# whitespace checks rather than leave `git diff --check` reporting damage as a defect.
+/config/patches/xterm-src/*.patch text eol=lf -whitespace
