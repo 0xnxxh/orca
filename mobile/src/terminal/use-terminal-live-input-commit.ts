@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
 import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
 import { sendTerminalLiveControlAfterPendingFlush } from './terminal-live-control-send-order'
@@ -14,6 +14,13 @@ import {
 type TerminalLiveInputKeyPressEvent = {
   readonly nativeEvent: {
     readonly key: string
+  }
+}
+
+type TerminalLiveInputChangeEvent = {
+  readonly nativeEvent: {
+    readonly isComposing?: boolean
+    readonly text: string
   }
 }
 
@@ -36,7 +43,7 @@ type TerminalLiveInputCommitHandlers = {
   readonly handleLiveInputAccessoryBytes: (
     input: TerminalLiveAccessoryInput
   ) => Promise<TerminalLiveAccessoryInputCommitResult>
-  readonly handleLiveInputChange: (text: string) => void
+  readonly handleLiveInputChange: (event: TerminalLiveInputChangeEvent) => void
   readonly handleLiveInputKeyPress: (event: TerminalLiveInputKeyPressEvent) => void
   readonly handleLiveInputSubmit: () => void
 }
@@ -53,9 +60,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
+  const liveInputComposingRef = useRef(false)
   const {
     applyLiveInputMirror,
-    clearPendingLiveInputCommit,
+    clearPendingLiveInputCommit: clearPendingLiveInputMirror,
     flushPendingLiveInputText,
     heldLiveInputTextRef,
     pendingLiveInputHandleRef,
@@ -69,6 +77,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
+
+  const clearPendingLiveInputCommit = useCallback(() => {
+    liveInputComposingRef.current = false
+    clearPendingLiveInputMirror()
+  }, [clearPendingLiveInputMirror])
 
   useEffect(() => {
     // Why: what reached the PTY is unknowable across an outage — stale mirror state corrupts the first post-reconnect send.
@@ -113,7 +126,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   )
 
   const handleLiveInputChange = useCallback(
-    (text: string) => {
+    ({ nativeEvent: { isComposing, text } }: TerminalLiveInputChangeEvent) => {
       if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
         clearPendingLiveInputCommit()
         return
@@ -122,6 +135,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       // that differs from the native field text, so the controlled capture must
       // echo the field verbatim; only the PTY mirror sees normalized text.
       setLiveInputCapture(text)
+      liveInputComposingRef.current = isComposing === true
+      if (liveInputComposingRef.current) {
+        return
+      }
       applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text))
     },
     [
@@ -135,7 +152,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   const handleLiveInputKeyPress = useCallback(
     (event: TerminalLiveInputKeyPressEvent) => {
-      if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
+      if (
+        !activeHandle ||
+        !liveInputTerminalHandles.has(activeHandle) ||
+        liveInputComposingRef.current
+      ) {
         return
       }
       const ownsPendingState = pendingLiveInputHandleRef.current === activeHandle
@@ -192,7 +213,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   })
 
   const handleLiveInputSubmit = useCallback(() => {
-    if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
+    if (
+      !activeHandle ||
+      !liveInputTerminalHandles.has(activeHandle) ||
+      liveInputComposingRef.current
+    ) {
       return
     }
     void sendTerminalLiveControlAfterPendingFlush(

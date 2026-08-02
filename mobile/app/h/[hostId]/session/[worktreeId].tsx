@@ -5012,7 +5012,7 @@ export default function SessionScreen() {
                       ref={liveInputRef}
                       style={styles.liveInputCapture}
                       value={liveInputCapture}
-                      onChangeText={handleLiveInputChange}
+                      onChange={handleLiveInputChange}
                       onKeyPress={handleLiveInputKeyPress}
                       onSubmitEditing={handleLiveInputSubmit}
                       placeholder=""
