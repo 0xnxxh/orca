@@ -48,7 +48,7 @@ export const terminalIbusEngineProfiles = {
       ['com.github.libpinyin.ibus-libpinyin.libpinyin', 'emoji-candidate', 'false'],
       ['com.github.libpinyin.ibus-libpinyin.libpinyin', 'show-suggestion', 'false']
     ],
-    expectationsVerified: false
+    expectationsVerified: true
   },
 
   // ibus-anthy 1.5.14-1. input-mode defaults to 3 (Latin), so leaving it alone
@@ -61,12 +61,13 @@ export const terminalIbusEngineProfiles = {
       ['org.freedesktop.ibus.engine.anthy.common', 'input-mode', '0'],
       ['org.freedesktop.ibus.engine.anthy.common', 'typing-method', '0']
     ],
-    expectationsVerified: false
+    expectationsVerified: true
   },
 
   // ibus-unikey 0.7.0~beta1-1build2. Telex and Unicode are already the schema
   // defaults; they are pinned so a distro patch cannot silently retarget the
-  // keystroke script.
+  // keystroke script. Still unverified: see the Return/commit race noted in the
+  // input profile.
   unikey: {
     aptPackage: 'ibus-unikey',
     ibusEngineName: 'Unikey',

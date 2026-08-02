@@ -64,12 +64,10 @@ export const nativeIbusEngineInputProfiles: Record<string, NativeIbusEngineInput
 
   // Space selects the highlighted candidate and is consumed; Enter is only
   // forwarded once the editor text is empty, so the newline needs no extra key.
-  // The candidate itself comes from the bundled libpinyin model, so the glyphs
-  // are a prediction until CI records them.
   libpinyin: {
     ibusEngineName: 'libpinyin',
     committedScriptPattern: /[\u4e00-\u9fff]/,
-    expectationsVerified: false,
+    expectationsVerified: true,
     scenarios: [
       {
         title: 'commits one Pinyin candidate per repetition without leaked Latin',
@@ -90,7 +88,7 @@ export const nativeIbusEngineInputProfiles: Record<string, NativeIbusEngineInput
   anthy: {
     ibusEngineName: 'anthy',
     committedScriptPattern: /[\u3040-\u309f]/,
-    expectationsVerified: false,
+    expectationsVerified: true,
     scenarios: [
       {
         title: 'commits the romaji-to-kana preedit without leaked Latin',
@@ -108,6 +106,12 @@ export const nativeIbusEngineInputProfiles: Record<string, NativeIbusEngineInput
   // break: it is committed with the first word. Enter commits the buffer and is
   // forwarded, so it both flushes and sends the newline. All lowercase, because
   // a Shift press is Unikey's restore-keystrokes trigger.
+  //
+  // Unverified because that double duty races: under IBUS_ENABLE_SYNC_MODE=1,
+  // which the harness sets, a GTK sink delivers the Return ahead of the pending
+  // final word, so `việt` lands after the newline and migrates into the next
+  // repetition. Whether that carries to the xterm.js path is untested, and the
+  // per-repetition equality oracle answers it either way on the first CI run.
   unikey: {
     ibusEngineName: 'Unikey',
     committedScriptPattern: /[\u1ea0-\u1ef9]/,
