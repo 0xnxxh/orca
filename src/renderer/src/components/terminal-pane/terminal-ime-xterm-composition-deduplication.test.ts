@@ -281,6 +281,27 @@ describe('xterm IME composition de-duplication', () => {
     terminal.dispose()
   })
 
+  // The cases above commit exactly what they composed, so the recorded preedit extent and
+  // the commit length always agree. Every conversion engine breaks that: the preedit is
+  // Latin keystrokes and the commit is shorter.
+  it.each([
+    ['nihao', '你好', '.'],
+    ['hiragana', 'ひらがな', 'a'],
+    ['gks', '한', '1']
+  ])('excludes input typed after %s commits the shorter %s', async (preedit, commit, following) => {
+    const { emitted, terminal, textarea } = openTerminal()
+    startComposition(textarea, preedit)
+    await nextEventLoop()
+
+    dispatchCompositionEvent(textarea, 'compositionend', commit)
+    textarea.value = `${commit}${following}`
+    dispatchComposedInput(textarea, { data: following, inputType: 'insertText' })
+    await nextEventLoop()
+
+    expect(emitted.join('')).toBe(`${commit}${following}`)
+    terminal.dispose()
+  })
+
   it('emits repeated Korean insertText within one composition exactly twice', async () => {
     const { emitted, terminal, textarea } = openTerminal()
     startComposition(textarea, '가가')

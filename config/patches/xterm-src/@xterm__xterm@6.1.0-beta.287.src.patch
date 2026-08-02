@@ -88,7 +88,7 @@ index 497afcf535f3eaca00889525a77e15eb633ccd96..96d499b34605f860608382114c3fbdc0
  
  export interface IBrowser {
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..163a1d4a18dba60fe7e80245306fb8c31bf97247 100644
+index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..665f5f81c56fc59d3bcbf19239ff93cbaea01f88 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -12,6 +12,28 @@ interface IPosition {
@@ -486,7 +486,7 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..163a1d4a18dba60fe7e80245306fb8c3
  
        // Since composition* events happen before the changes take place in the textarea on most
        // browsers, use a setTimeout with 0ms time to allow the native compositionend event to
-@@ -172,35 +413,277 @@ export class CompositionHelper {
+@@ -172,35 +413,282 @@ export class CompositionHelper {
        // - The last compositionupdate event's data property does not always accurately describe
        //   the character, a counter example being Korean where an ending consonsant can move to
        //   the following character if the following input is a vowel.
@@ -626,9 +626,14 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..163a1d4a18dba60fe7e80245306fb8c3
 +        ? value.length - pending.suffix.length
 +        : value.length;
 +    const compositionLength = (pending.endData || pending.compositionData).length;
++    // position.end recorded the *preedit* extent, which overshoots for every conversion
++    // engine: "nihao" commits "你好". Once the commit length is known it is the extent, not
++    // a floor, or this excludes nothing and the caller re-sends the text that followed.
 +    const observedEnd = includeFollowingInput
 +      ? suffixEnd
-+      : Math.max(pending.position.end, start + compositionLength);
++      : compositionLength > 0
++        ? start + compositionLength
++        : pending.position.end;
 +    return value.substring(start, Math.max(start, Math.min(suffixEnd, observedEnd)));
 +  }
 +
@@ -791,7 +796,7 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..163a1d4a18dba60fe7e80245306fb8c3
    }
  
    /**
-@@ -214,21 +697,39 @@ export class CompositionHelper {
+@@ -214,21 +702,39 @@ export class CompositionHelper {
        return;
      }
      const oldValue = this._textarea.value;
@@ -835,7 +840,7 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..163a1d4a18dba60fe7e80245306fb8c3
            this._coreService.triggerDataEvent(newValue, true);
          }
  
-@@ -278,7 +779,8 @@ export class CompositionHelper {
+@@ -278,7 +784,8 @@ export class CompositionHelper {
      }
  
      if (!dontRecurse) {
