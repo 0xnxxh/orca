@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveShortcutPlatform } from '@/lib/shortcut-platform'
 import { resolveTerminalImePlatform } from './terminal-ime-platform'
 
 const DESKTOP_LINUX =
@@ -11,6 +12,8 @@ const MACOS =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
 const WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+const FREEBSD =
+  'Mozilla/5.0 (X11; FreeBSD amd64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
 
 describe('resolveTerminalImePlatform', () => {
   it('treats desktop Linux as both Chromium-family and ibus/fcitx-bearing', () => {
@@ -44,4 +47,25 @@ describe('resolveTerminalImePlatform', () => {
       isDesktopLinux: false
     })
   })
+
+  // Only Windows has a reason to suppress a standalone 229, so an unrecognised desktop
+  // belongs on the passing side rather than in whichever bucket a UA guess lands it in.
+  it('treats an unrecognised desktop as Linux', () => {
+    expect(resolveTerminalImePlatform(FREEBSD)).toEqual({
+      isMac: false,
+      isLinux: true,
+      isDesktopLinux: true
+    })
+  })
+
+  it.each([DESKTOP_LINUX, CHROME_OS, ANDROID, MACOS, WINDOWS, FREEBSD])(
+    'agrees with the renderer-wide platform mapping (%#)',
+    (userAgent) => {
+      const { isMac, isLinux } = resolveTerminalImePlatform(userAgent)
+      expect({ isMac, isLinux }).toEqual({
+        isMac: resolveShortcutPlatform(userAgent) === 'darwin',
+        isLinux: resolveShortcutPlatform(userAgent) === 'linux'
+      })
+    }
+  )
 })
