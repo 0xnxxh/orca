@@ -148,16 +148,22 @@ vi.mock('ssh2', () => {
 })
 
 const {
+  findSystemSshMock,
   getOrcaControlSocketPathMock,
   removeControlSocketPathMock,
   spawnSystemSshCommandMock,
   spawnSystemSshMock
 } = vi.hoisted(() => ({
+  findSystemSshMock: vi.fn<() => string | null>(),
   getOrcaControlSocketPathMock: vi.fn(),
   removeControlSocketPathMock: vi.fn(),
   spawnSystemSshMock: vi.fn(),
   spawnSystemSshCommandMock: vi.fn()
 }))
+
+// Why: security-key transport selection scans the real ~/.ssh defaults, so a developer's own
+// FIDO2 key would otherwise decide which transport these tests take.
+vi.mock('./system-ssh-binary', () => ({ findSystemSsh: findSystemSshMock }))
 
 vi.mock('./ssh-system-fallback', () => ({
   getOrcaControlSocketPath: getOrcaControlSocketPathMock,
@@ -331,6 +337,8 @@ describe('SshConnection', () => {
     vi.mocked(writeFileViaSystemSsh).mockResolvedValue(undefined)
     vi.mocked(resolveWithSshG).mockReset()
     vi.mocked(resolveWithSshG).mockResolvedValue(null)
+    findSystemSshMock.mockReset()
+    findSystemSshMock.mockReturnValue(null)
     vi.unstubAllEnvs()
   })
 
@@ -1697,6 +1705,7 @@ describe('SshConnection', () => {
   })
 
   it('uses system SSH before ssh2 parses a security-key private key', async () => {
+    findSystemSshMock.mockReturnValue('/usr/bin/ssh')
     const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-connect-'))
     const keyPath = join(directory, 'id_ed25519_sk')
     writeFileSync(
@@ -1718,6 +1727,7 @@ describe('SshConnection', () => {
   })
 
   it('uses system SSH for an agent-backed security-key public identity', async () => {
+    findSystemSshMock.mockReturnValue('/usr/bin/ssh')
     const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-agent-connect-'))
     const identityPath = join(directory, 'id_ed25519_sk')
     writeFileSync(
