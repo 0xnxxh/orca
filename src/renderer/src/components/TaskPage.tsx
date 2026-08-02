@@ -43,6 +43,7 @@ import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-cl
 import { getLocalPreflightContext, localPreflightContextKey } from '@/lib/local-preflight-context'
 import { getProviderRuntimeContextKey } from '@/lib/provider-runtime-context'
 import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
+import { resolveTaskPageEscapeAction } from '@/lib/task-page-escape-policy'
 import {
   getSettingsFocusedExecutionHostId,
   parseExecutionHostId,
@@ -7093,28 +7094,18 @@ export default function TaskPage(): React.JSX.Element {
     }
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') {
-        return
-      }
-
       const target = event.target
-      if (!(target instanceof HTMLElement)) {
+      const action = resolveTaskPageEscapeAction(event, target)
+      if (action === 'ignore') {
         return
       }
-
-      // Why: Esc first blurs a focused input so it doesn't accidentally close the whole page; only closes once focus is outside an input.
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        target.isContentEditable
-      ) {
-        event.preventDefault()
-        target.blur()
-        return
-      }
-
       event.preventDefault()
+      if (action === 'blur-target') {
+        if (target instanceof HTMLElement) {
+          target.blur()
+        }
+        return
+      }
       closeTaskPage()
     }
 

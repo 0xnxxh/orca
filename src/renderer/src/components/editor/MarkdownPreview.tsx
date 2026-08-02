@@ -948,6 +948,11 @@ export default function MarkdownPreview({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      // Why: find, review-note and the search Escape all resolve from key shape, which an
+      // IME-owned keystroke still matches while the candidate window owns it.
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       const root = rootRef.current
       if (!root) {
         return
