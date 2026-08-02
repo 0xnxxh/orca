@@ -1,4 +1,4 @@
-import { ChevronRight, Monitor, MoreVertical } from 'lucide-react-native'
+import { Monitor, MoreVertical } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { ConnectionVerdict } from '../transport/connection-health'
 import { verdictDisplayLabel } from '../transport/connection-health'
@@ -81,7 +81,6 @@ export function MobileHostCard(props: {
             </Text>
           ) : null}
         </View>
-        <ChevronRight size={16} color={colors.textMuted} />
       </Pressable>
       <Pressable
         accessibilityRole="button"

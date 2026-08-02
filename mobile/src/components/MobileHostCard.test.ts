@@ -11,7 +11,6 @@ vi.mock('react-native', () => ({
 }))
 
 vi.mock('lucide-react-native', () => ({
-  ChevronRight: 'ChevronRight',
   Monitor: 'Monitor',
   MoreVertical: 'MoreVertical'
 }))
@@ -72,6 +71,7 @@ describe('MobileHostCard', () => {
     expect(buttons).toHaveLength(2)
     expect(buttons[0].props.accessibilityLabel).toBe('Open Desk, Disconnected')
     expect(buttons[1].props.accessibilityLabel).toBe('Actions for Desk')
+    expect(renderer.root.findAllByType('ChevronRight')).toHaveLength(0)
 
     act(() => buttons[1].props.onPress())
     expect(onOpenActions).toHaveBeenCalledOnce()
