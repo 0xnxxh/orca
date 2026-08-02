@@ -98,7 +98,8 @@ async function readNewestReflogEntryAt(
   try {
     const lines = (await readTextFile(reflogPath)).split('\n')
     for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const seconds = /\s(\d{9,11})\s[-+]\d{4}\t/.exec(lines[index] ?? '')?.[1]
+      // The trailing timezone + tab anchors the capture, so no digit-count floor is needed.
+      const seconds = /\s(\d{1,11})\s[-+]\d{4}\t/.exec(lines[index] ?? '')?.[1]
       if (seconds) {
         return Number(seconds) * 1000
       }

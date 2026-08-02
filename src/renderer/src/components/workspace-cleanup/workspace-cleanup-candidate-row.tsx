@@ -117,8 +117,10 @@ export const CandidateRow = React.memo(function CandidateRow({
   onToggleSelected,
   onView
 }: CandidateRowProps): React.JSX.Element {
-  const selectable = canQueueWorkspaceCleanupCandidate(candidate) && !removing
   const deleting = deletionPhase !== undefined
+  // Why: derive from `deleting` too, so the row never offers a checkbox or
+  // Remove button while it is queuing/deleting, even if `removing` was omitted.
+  const selectable = canQueueWorkspaceCleanupCandidate(candidate) && !removing && !deleting
   const ignored = candidate.blockers.includes('dismissed')
   const blockers = getWorkspaceCleanupBlockerLabels(candidate)
   const contextDetails = formatContextDetails(candidate)
