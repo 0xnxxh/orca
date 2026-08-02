@@ -34,8 +34,10 @@ and are tracked separately; see [Known Gaps](#known-gaps).
 4. The upstream commit lives in `config/patches/xterm-upstream.json`, not in a
    comment. A version bump that leaves it stale fails the generator, it does not
    silently patch the wrong tree.
-5. Sourcemaps are patched alongside their bundles. Shipping a moved bundle with
-   an unmoved map produces offsets that point at the wrong code.
+5. Sourcemaps are deleted, not patched and not silently omitted. The patch moves
+   the bundle, so a retained map would have to move with it; dropping only the
+   map hunks ships offsets that point at the wrong code. Deletion is the honest
+   form of that saving, and `sourcemaps.policy` in the manifest controls it.
 
 ## Workflow
 
@@ -179,7 +181,9 @@ no build, so they run in the ordinary test shards.
 bundles. Their patches carry a literal `/* PATCH(orca): ... */` comment inside
 minified code and parser round-trip artifacts, and neither patch touches its
 `.map` file, so both addons currently ship sourcemaps whose offsets do not match
-the shipped bundle. Both addons build from the same pinned commit and reproduce
+the shipped bundle — the defect `sourcemaps.policy` now avoids for `@xterm/xterm`
+and which folding them into this manifest would also fix. Both addons build from
+the same pinned commit and reproduce
 byte for byte, so they can be folded into this manifest as additional `packages`
 entries; that change needs e2e sign-off because, unlike `@xterm/xterm`, it will
 not be a byte-for-byte no-op.

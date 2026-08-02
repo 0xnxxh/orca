@@ -162,6 +162,19 @@ export function assertBuildStepsAllowed(manifest) {
   }
 }
 
+export const SOURCEMAP_POLICIES = new Set(['include', 'delete'])
+
+/** A typo would fall through to `include` and re-inflate the patch by 5.8 MB. */
+export function assertSourcemapPolicy(manifest) {
+  const policy = manifest.sourcemaps?.policy
+  if (!SOURCEMAP_POLICIES.has(policy)) {
+    throw new Error(
+      `sourcemaps.policy must be one of ${[...SOURCEMAP_POLICIES].join(', ')}, got ${JSON.stringify(policy)}`
+    )
+  }
+  return policy
+}
+
 /**
  * pnpm keys the patched package directory and the lockfile entry by the
  * sha256 of the patch file itself, so a regenerated patch that leaves
@@ -425,6 +438,29 @@ function diffFolders(folderA, folderB) {
   return normalizePnpmDiff(stdout, folderA, folderB)
 }
 
+// Why: dropping only the map hunks would ship maps whose offsets no longer line
+// up with the patched bundle. Deleting the maps outright is the honest form of
+// the same size saving, and the diff carries it as a file-deletion stanza.
+function deleteGeneratedSourcemaps(patchedDir, packageEntry) {
+  for (const relative of listFilesRelative(patchedDir)) {
+    const posix = toPosix(relative)
+    if (!packageEntry.generatedPaths.some((prefix) => posix.startsWith(prefix))) {
+      continue
+    }
+    const absolute = path.join(patchedDir, relative)
+    if (posix.endsWith('.map')) {
+      rmSync(absolute)
+      continue
+    }
+    // The reference outlives the file it points at, so it goes with it.
+    const text = readFileSync(absolute, 'utf8')
+    const stripped = text.replace(/\n\/\/# sourceMappingURL=[^\n]*\n?$/, '')
+    if (stripped !== text) {
+      writeFileSync(absolute, stripped)
+    }
+  }
+}
+
 function regeneratePackage(packageEntry, manifest, context) {
   const { workDir, repoRoot } = context
   const pristineDir = fetchPristinePackage(packageEntry, workDir)
@@ -446,6 +482,9 @@ function regeneratePackage(packageEntry, manifest, context) {
 
   const patchedDir = path.join(workDir, 'patched', packageEntry.name.replace(/[@/]/g, '_'))
   overlayBuildOutput(pristineDir, upstreamRoot, packageEntry, patchedDir)
+  if (assertSourcemapPolicy(manifest) === 'delete') {
+    deleteGeneratedSourcemaps(patchedDir, packageEntry)
+  }
 
   // Leave the checkout diffable: the pinned commit plus the source patch, with
   // no publish-time version stamp mixed in, so `git diff` there is the source
@@ -464,6 +503,7 @@ export function regenerateXtermPatches({
 } = {}) {
   const manifest = JSON.parse(readFileSync(path.join(repoRoot, MANIFEST_RELATIVE_PATH), 'utf8'))
   assertBuildStepsAllowed(manifest)
+  assertSourcemapPolicy(manifest)
   mkdirSync(workDir, { recursive: true })
 
   const lockfilePath = path.join(repoRoot, 'pnpm-lock.yaml')

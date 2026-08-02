@@ -8,6 +8,7 @@ import {
   PNPM_DIFF_FLAGS,
   assertBuildStepsAllowed,
   assertPublishedCommit,
+  assertSourcemapPolicy,
   firstDifferenceIndex,
   formatCheckFailure,
   generatedHunks,
@@ -268,6 +269,15 @@ describe('manifest guards', () => {
       ]
     }
     expect(() => assertBuildStepsAllowed(manifest)).toThrow(/`npm run setup` is forbidden/)
+  })
+
+  it('refuses a sourcemap policy it does not implement', () => {
+    expect(assertSourcemapPolicy({ sourcemaps: { policy: 'delete' } })).toBe('delete')
+    expect(assertSourcemapPolicy({ sourcemaps: { policy: 'include' } })).toBe('include')
+    expect(() => assertSourcemapPolicy({ sourcemaps: { policy: 'exclude' } })).toThrow(
+      /must be one of include, delete, got "exclude"/
+    )
+    expect(() => assertSourcemapPolicy({})).toThrow(/got undefined/)
   })
 
   it('stamps the published version into the version source', () => {
