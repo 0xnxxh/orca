@@ -1139,6 +1139,7 @@ export class SshRelaySession {
         providerSession?: unknown
         providerSessionOnly?: unknown
         shedFields?: unknown
+        claudeRunningNonAgentTask?: unknown
         payload?: unknown
       }
       if (typeof envelope.paneKey !== 'string') {
@@ -1169,6 +1170,10 @@ export class SshRelaySession {
           providerSessionOnly: envelope.providerSessionOnly === true ? true : undefined,
           // Why: names the fields the relay dropped to fit the frame; ingestRemote restores them.
           shedFields: envelope.shedFields,
+          claudeRunningNonAgentTask:
+            typeof envelope.claudeRunningNonAgentTask === 'boolean'
+              ? envelope.claudeRunningNonAgentTask
+              : undefined,
           payload: envelope.payload
         },
         this.targetId
