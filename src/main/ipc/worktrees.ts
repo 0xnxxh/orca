@@ -2238,10 +2238,10 @@ export function registerWorktreeHandlers(
       if (!repo) {
         throw new Error(`Repo not found: ${repoId}`)
       }
-      const inFlightKey = getWorktreeRemovalInFlightKey(
-        args.worktreeId,
-        getRepoExecutionHostId(repo)
-      )
+      // Why: the resolved repo is the canonical owner; args.hostId may be absent, so derive it here for
+      // every teardown below or an ownerless remote worktree would clear the local session instead.
+      const removalHostId = getRepoExecutionHostId(repo)
+      const inFlightKey = getWorktreeRemovalInFlightKey(args.worktreeId, removalHostId)
       const optionsKey = getWorktreeRemovalOptionsKey(args)
       const inFlightRemoval = worktreeRemovalsInFlight.get(inFlightKey)
       if (inFlightRemoval) {
@@ -2272,7 +2272,7 @@ export function registerWorktreeHandlers(
               })
             })
             await withWorktreeRemoveStageSpan('metadata_purge', 'folder', async () => {
-              removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+              removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
             })
             preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
             notifyWorktreesChanged(mainWindow, repoId)
@@ -2381,7 +2381,7 @@ export function registerWorktreeHandlers(
                 invalidateAuthorizedRootsCache()
               }
               runtime.clearOptimisticReconcileToken(args.worktreeId)
-              removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+              removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
               preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
               notifyWorktreesChanged(mainWindow, repoId)
               return {}
@@ -2424,7 +2424,7 @@ export function registerWorktreeHandlers(
                   localWorktreeGitOptions
                 )
                 runtime.clearOptimisticReconcileToken(args.worktreeId)
-                removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+                removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
                 preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
                 invalidateAuthorizedRootsCache()
                 notifyWorktreesChanged(mainWindow, repoId)
@@ -2456,7 +2456,7 @@ export function registerWorktreeHandlers(
                 invalidateAuthorizedRootsCache()
               }
               runtime.clearOptimisticReconcileToken(args.worktreeId)
-              removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+              removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
               preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
               notifyWorktreesChanged(mainWindow, repoId)
               return {}
@@ -2510,7 +2510,7 @@ export function registerWorktreeHandlers(
               removedPushTarget
             )
             runtime.clearOptimisticReconcileToken(args.worktreeId)
-            removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+            removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
             invalidateAuthorizedRootsCache()
             notifyWorktreesChanged(mainWindow, repoId)
             return removalResult ?? {}
@@ -2609,7 +2609,7 @@ export function registerWorktreeHandlers(
             )
             runtime.clearOptimisticReconcileToken(args.worktreeId)
             await withWorktreeRemoveStageSpan('metadata_purge', 'remote', async () => {
-              removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+              removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
             })
             notifyWorktreesChanged(mainWindow, repoId)
             return removalResult ?? {}
@@ -2753,7 +2753,7 @@ export function registerWorktreeHandlers(
                   localWorktreeGitOptions
                 )
                 runtime.clearOptimisticReconcileToken(args.worktreeId)
-                removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+                removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
                 preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
                 invalidateAuthorizedRootsCache()
                 notifyWorktreesChanged(mainWindow, repoId)
@@ -2784,7 +2784,7 @@ export function registerWorktreeHandlers(
           )
           runtime.clearOptimisticReconcileToken(args.worktreeId)
           await withWorktreeRemoveStageSpan('metadata_purge', 'local', async () => {
-            removeWorktreeMetadataAndTransientState(store, args.worktreeId)
+            removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
           })
           await withWorktreeRemoveStageSpan('cache_invalidation', 'local', async () => {
             invalidateAuthorizedRootsCache()
