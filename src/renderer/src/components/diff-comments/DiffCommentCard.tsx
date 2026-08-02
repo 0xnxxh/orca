@@ -288,12 +288,17 @@ export function DiffCommentCard({
                 onContentResizeRef.current?.()
               }}
               onKeyDown={(e) => {
+                // Above the dispatch: Escape dismisses an IME candidate window, and discarding
+                // the draft on it would lose text the user never asked to throw away.
+                if (isImeCompositionKeyDown(e)) {
+                  return
+                }
                 if (e.key === 'Escape') {
                   e.preventDefault()
                   handleCancel()
                   return
                 }
-                if (e.key === 'Enter' && !isImeCompositionKeyDown(e) && !e.shiftKey) {
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   if (!canSubmit) {
                     return

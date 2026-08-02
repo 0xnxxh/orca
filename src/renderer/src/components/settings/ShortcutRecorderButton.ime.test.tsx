@@ -15,7 +15,10 @@ afterEach(cleanup)
 // the easiest place to forget that an IME-owned keystroke carries no chord: its `key` is 'Process'
 // or 'Unidentified', so capturing one writes a binding that can never fire.
 describe('ShortcutRecorderButton while an IME owns the keystroke', () => {
-  function renderRecording(): { button: HTMLElement; onCapture: ReturnType<typeof vi.fn> } {
+  function renderRecording(over: { onCancelRecording?: () => void } = {}): {
+    button: HTMLElement
+    onCapture: ReturnType<typeof vi.fn>
+  } {
     const onCapture = vi.fn()
     const view = render(
       <TooltipProvider>
@@ -29,7 +32,7 @@ describe('ShortcutRecorderButton while an IME owns the keystroke', () => {
           bindingCount={1}
           recording
           onStartRecording={vi.fn()}
-          onCancelRecording={vi.fn()}
+          onCancelRecording={over.onCancelRecording ?? vi.fn()}
           onCapture={onCapture}
           onClearError={vi.fn()}
         />
@@ -80,6 +83,30 @@ describe('ShortcutRecorderButton while an IME owns the keystroke', () => {
     fireEvent.keyDown(button, shiftTap)
 
     expect(onCapture).not.toHaveBeenCalled()
+  })
+
+  // Escape is what dismisses an IME candidate window, so it arrives marked while a composition is
+  // live. Cancelling recording on it would consume a keystroke the user aimed at the IME.
+  it.each([
+    ['isComposing', { isComposing: true, keyCode: 27 }],
+    ['keyCode 229', { keyCode: 229 }]
+  ])('does not cancel recording on an Escape marked by %s', (_marker, over) => {
+    const onCancelRecording = vi.fn()
+    const { button } = renderRecording({ onCancelRecording })
+
+    fireEvent.keyDown(button, { key: 'Escape', ...over })
+
+    expect(onCancelRecording).not.toHaveBeenCalled()
+  })
+
+  // The paired negative: without it, both cases above pass with the guard deleted.
+  it('still cancels recording on an ordinary Escape', () => {
+    const onCancelRecording = vi.fn()
+    const { button } = renderRecording({ onCancelRecording })
+
+    fireEvent.keyDown(button, { key: 'Escape', keyCode: 27 })
+
+    expect(onCancelRecording).toHaveBeenCalledTimes(1)
   })
 
   it('still records a real double-tap', () => {

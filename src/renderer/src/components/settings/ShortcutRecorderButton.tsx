@@ -87,16 +87,21 @@ export function ShortcutRecorderButton({
     event.preventDefault()
     event.stopPropagation()
 
+    // Read before the Escape branch: the Escape that dismisses a candidate window is marked, and
+    // cancelling recording on it would consume a keystroke the user aimed at the IME.
+    // Fed to the detector rather than short-circuiting above it: withholding a composing press
+    // leaves the gesture armed, so a later real press would complete a tap nobody made.
+    const imeOwned = isImeCompositionKeyDown(event)
+
     if (event.key === 'Escape') {
       doubleTapDetectorRef.current?.reset()
+      if (imeOwned) {
+        return
+      }
       onClearError(actionId)
       onCancelRecording()
       return
     }
-
-    // Fed to the detector rather than short-circuiting above it: withholding a composing press
-    // leaves the gesture armed, so a later real press would complete a tap nobody made.
-    const imeOwned = isImeCompositionKeyDown(event)
 
     // A modifier press never captures on its own — the detector decides whether
     // it completes a double-tap, leaving normal chords to capture on their key.

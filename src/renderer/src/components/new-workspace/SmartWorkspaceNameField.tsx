@@ -1811,6 +1811,14 @@ export default function SmartWorkspaceNameField({
                       tryOpenSourcePopover()
                     }}
                     onKeyDown={(event) => {
+                      // Why: an Enter that only commits a CJK IME candidate must not select a row
+                      // or advance focus — moving focus mid-composition makes Chromium re-commit
+                      // the composed character into the controlled input, duplicating the last
+                      // syllable (e.g. 배포 → 배포포). Escape and the arrows belong to the
+                      // candidate window for the same reason, so the check sits above all of them.
+                      if (isImeCompositionKeyDown(event)) {
+                        return
+                      }
                       if (event.key === 'Tab' && event.shiftKey) {
                         const activeTrigger = tabsListRef.current?.querySelector<HTMLElement>(
                           `[data-smart-name-mode="${mode}"]`
@@ -1841,14 +1849,6 @@ export default function SmartWorkspaceNameField({
                         !event.ctrlKey &&
                         !event.shiftKey
                       ) {
-                        // Why: an Enter that only commits a CJK IME candidate
-                        // must not select a row or advance focus — moving focus
-                        // mid-composition makes Chromium re-commit the composed
-                        // character into the controlled input, duplicating the
-                        // last syllable (e.g. 배포 → 배포포).
-                        if (isImeCompositionKeyDown(event)) {
-                          return
-                        }
                         if (emojiMenuOpen && selectedEmojiSuggestion) {
                           event.preventDefault()
                           event.stopPropagation()

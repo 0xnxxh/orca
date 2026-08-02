@@ -1103,10 +1103,12 @@ function ProjectSearchInput({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
+          // Above the dispatch: a composing Escape dismisses the candidate window, and reverting
+          // and blurring the search on it would throw away a half-typed CJK query.
+          if (isImeCompositionKeyDown(e)) {
+            return
+          }
           if (e.key === 'Enter') {
-            if (isImeCompositionKeyDown(e)) {
-              return
-            }
             e.preventDefault()
             apply(value)
           } else if (e.key === 'Escape') {

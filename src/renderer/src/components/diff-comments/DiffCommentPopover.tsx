@@ -209,13 +209,19 @@ export function DiffCommentPopover({
             autoResize(e.currentTarget)
           }}
           onKeyDown={(e) => {
+            // Why: a composing Enter commits the CJK candidate and a composing Escape dismisses
+            // it — neither may submit or discard the note. Guarded above the dispatch so the
+            // Escape branch cannot run ahead of the check.
+            if (isImeCompositionKeyDown(e)) {
+              return
+            }
             if (e.key === 'Escape') {
               e.preventDefault()
               onCancel()
               return
             }
-            // Why: Shift+Enter inserts a newline; skip isComposing so IME composition Enter doesn't submit a half-typed CJK note.
-            if (e.key === 'Enter' && !isImeCompositionKeyDown(e) && !e.shiftKey) {
+            // Why: Shift+Enter inserts a newline.
+            if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               if (submitting) {
                 return

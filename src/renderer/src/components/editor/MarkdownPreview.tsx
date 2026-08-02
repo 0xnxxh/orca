@@ -2121,12 +2121,17 @@ function MarkdownAnnotationComposer({
           el.style.height = `${Math.min(el.scrollHeight, 240)}px`
         }}
         onKeyDown={(event) => {
+          // Above the dispatch: Escape dismisses an IME candidate window, and discarding the
+          // note on it would lose text the user never asked to throw away.
+          if (isImeCompositionKeyDown(event)) {
+            return
+          }
           if (event.key === 'Escape') {
             event.preventDefault()
             onCancel()
             return
           }
-          if (event.key === 'Enter' && !isImeCompositionKeyDown(event) && !event.shiftKey) {
+          if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
             void submit()
           }

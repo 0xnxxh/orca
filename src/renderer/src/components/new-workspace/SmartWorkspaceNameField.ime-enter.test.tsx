@@ -199,6 +199,70 @@ function pressEnter(
   })
 }
 
+function pressEscape(
+  input: HTMLInputElement,
+  init?: KeyboardEventInit & { keyCode?: number }
+): void {
+  const event = new KeyboardEvent('keydown', {
+    key: 'Escape',
+    bubbles: true,
+    cancelable: true,
+    ...init
+  })
+  Object.defineProperty(event, 'keyCode', { value: init?.keyCode ?? 27 })
+  act(() => {
+    input.dispatchEvent(event)
+  })
+}
+
+// Escape is the key that dismisses an IME candidate window, so it arrives marked while a
+// composition is live. Closing the emoji menu on it would consume a keystroke the user aimed at
+// the IME. Whether the menu survived is read through the Enter that follows.
+describe('SmartWorkspaceNameField IME Escape guard', () => {
+  function openEmojiMenu(input: HTMLInputElement): void {
+    act(() => {
+      input.focus()
+      input.setSelectionRange(12, 12)
+      input.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+  }
+
+  it('keeps the emoji menu open when Escape is marked as composing', () => {
+    const onValueChange = vi.fn()
+    const input = renderEmojiField('Launch :wink', onValueChange)
+    openEmojiMenu(input)
+
+    pressEscape(input, { isComposing: true })
+    pressEnter(input)
+
+    expect(onValueChange).toHaveBeenCalledWith('Launch 😉')
+  })
+
+  it('keeps the emoji menu open when Escape is reported as keyCode 229', () => {
+    const onValueChange = vi.fn()
+    const input = renderEmojiField('Launch :wink', onValueChange)
+    openEmojiMenu(input)
+
+    pressEscape(input, { keyCode: 229 })
+    pressEnter(input)
+
+    expect(onValueChange).toHaveBeenCalledWith('Launch 😉')
+  })
+
+  // The paired negative: an ordinary Escape must still dismiss the menu, or the two tests above
+  // would pass with the guard deleted.
+  it('still dismisses the emoji menu on an ordinary Escape', () => {
+    const onValueChange = vi.fn()
+    const input = renderEmojiField('Launch :wink', onValueChange)
+    openEmojiMenu(input)
+
+    pressEscape(input)
+    pressEnter(input)
+
+    expect(onValueChange).not.toHaveBeenCalledWith('Launch 😉')
+  })
+})
+
 describe('SmartWorkspaceNameField IME Enter guard', () => {
   it('ignores the Enter that commits a CJK IME composition (isComposing)', () => {
     const onPlainEnter = vi.fn()

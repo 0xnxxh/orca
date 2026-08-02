@@ -82,9 +82,13 @@ export function MarkupOverlay({
             // Why: keep keystrokes local — without this the browser pane's global
             // key handlers can swallow typing before it reaches the input.
             event.stopPropagation()
-            // Why: during IME composition (e.g. Japanese conversion), Enter
-            // confirms the candidate — it must NOT also commit the annotation.
-            if (event.key === 'Enter' && !isImeCompositionKeyDown(event)) {
+            // Why: during IME composition (e.g. Japanese conversion), Enter confirms the
+            // candidate and Escape dismisses it — neither may also commit or discard the
+            // annotation. Guarded above the dispatch so both are suppressed together.
+            if (isImeCompositionKeyDown(event)) {
+              return
+            }
+            if (event.key === 'Enter') {
               event.preventDefault()
               editor.commitPendingText(event.currentTarget.value)
             } else if (event.key === 'Escape') {

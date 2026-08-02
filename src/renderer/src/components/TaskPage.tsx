@@ -2558,6 +2558,12 @@ function PRReviewCell({
             aria-label={translate('auto.components.TaskPage.0b9b04f4b5', 'Type or choose a user')}
             aria-autocomplete="list"
             onKeyDown={(event) => {
+              // Above the dispatch: while a candidate window is open the arrows move the
+              // candidate, Enter commits it and Escape dismisses it — none of the three may also
+              // drive the reviewer picker.
+              if (isImeCompositionKeyDown(event)) {
+                return
+              }
               if (event.key === 'ArrowDown' && actionableReviewerRows.length > 0) {
                 event.preventDefault()
                 setActiveReviewerIndex((current) => (current + 1) % actionableReviewerRows.length)
