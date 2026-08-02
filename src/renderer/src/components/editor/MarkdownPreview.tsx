@@ -1854,6 +1854,11 @@ export default function MarkdownPreview({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
+                  // Above the dispatch: the wrapper below stops propagation, so the document
+                  // handler's guard never sees this key and this is the only place to refuse.
+                  if (isImeCompositionKeyDown(event)) {
+                    return
+                  }
                   if (event.key === 'Enter' && event.shiftKey) {
                     event.preventDefault()
                     moveToMatch(-1)

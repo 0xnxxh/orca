@@ -15,10 +15,15 @@ import { describe, expect, it } from 'vitest'
 const ROOTS = ['src/renderer/src', 'src/main', 'src/shared']
 const GUARD = 'isImeCompositionKeyDown'
 const ESCAPE_COMPARISON = /[!=]==\s*['"]Escape['"]/
+// Ordering alone cannot see a second, wholly unguarded Escape handler added below a guarded one,
+// so files this work reviewed are additionally checked for absence — a guard in one handler no
+// longer vouches for the rest of the file.
 const MUST_GUARD_EVERY_ESCAPE_HANDLER = new Set([
   'src/renderer/src/components/NewWorkspaceComposerModal.tsx',
   'src/renderer/src/components/browser-pane/BrowserAddressBar.tsx',
+  'src/renderer/src/components/diff-comments/DiffCommentPopover.tsx',
   'src/renderer/src/components/editor/EditorPanelHeaderPath.tsx',
+  'src/renderer/src/components/editor/MarkdownPreview.tsx',
   'src/renderer/src/components/editor/RichMarkdownLinkBubble.tsx',
   'src/renderer/src/components/github/GitHubMarkdownComposer.tsx',
   'src/renderer/src/components/github-project/ProjectCell.tsx',

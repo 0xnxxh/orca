@@ -144,4 +144,56 @@ describe('MarkdownPreview window-capture listener yields to a composition', () =
 
     expect(searchIsOpen()).toBe(false)
   })
+
+  // The search field's wrapper stops propagation, so the window listener's guard above never
+  // sees these keys. The field's own handler is the only place that can refuse them.
+  describe('the find field refuses the keys the IME owns', () => {
+    const findField = (): HTMLInputElement => {
+      const element = container.querySelector('.markdown-preview-search-field input')
+      if (!(element instanceof HTMLInputElement)) {
+        throw new Error('find field did not render')
+      }
+      return element
+    }
+
+    function typeIntoField(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+      if (init.keyCode !== undefined) {
+        Object.defineProperty(event, 'keyCode', { value: init.keyCode })
+      }
+      act(() => {
+        findField().dispatchEvent(event)
+      })
+      return event
+    }
+
+    beforeEach(() => {
+      openSearch()
+      expect(searchIsOpen()).toBe(true)
+    })
+
+    it('leaves search open when the IME owns the Escape', () => {
+      typeIntoField({ key: 'Escape', code: 'Escape', keyCode: 27, isComposing: true })
+
+      expect(searchIsOpen()).toBe(true)
+    })
+
+    it('still closes search on an unmarked Escape', () => {
+      typeIntoField({ key: 'Escape', code: 'Escape', keyCode: 27 })
+
+      expect(searchIsOpen()).toBe(false)
+    })
+
+    it('does not step matches on an Enter that only commits a candidate', () => {
+      const event = typeIntoField({ key: 'Enter', code: 'Enter', keyCode: 13, isComposing: true })
+
+      expect(event.defaultPrevented).toBe(false)
+    })
+
+    it('still steps matches on an unmarked Enter', () => {
+      const event = typeIntoField({ key: 'Enter', code: 'Enter', keyCode: 13 })
+
+      expect(event.defaultPrevented).toBe(true)
+    })
+  })
 })
