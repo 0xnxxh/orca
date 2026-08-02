@@ -2623,6 +2623,11 @@ function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined):
     : [LOCAL_EXECUTION_HOST_ID]
 }
 
+/** The partition the host actually owns; the others are only spill surfaces for it. */
+function workspaceSessionOwnerPartitionForHost(hostId: string | null | undefined): ExecutionHostId {
+  return parseExecutionHostId(hostId)?.id ?? LOCAL_EXECUTION_HOST_ID
+}
+
 function removeWorkspaceSessionOwner(
   session: WorkspaceSessionState | undefined,
   ownerKey: string,
@@ -5349,12 +5354,15 @@ export class Store {
         this.hasPersistedWorkspaceSession(partition)
       )
     )
-    // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy.
+    // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy, and a spill
+    // partition that never held this worktree has no claim on the repo at all.
+    const ownerPartition = workspaceSessionOwnerPartitionForHost(owner)
     const fencedPartitions = new Set(
       [...partitions].filter(
         (partition) =>
           this.partitionOwnsWorktreeTabs(worktreeId, partition) ||
-          !this.partitionHasOtherRepoWorktreeTabs(worktreeId, partition)
+          (partition === ownerPartition &&
+            !this.partitionHasOtherRepoWorktreeTabs(worktreeId, partition))
       )
     )
     delete this.state.worktreeMeta[worktreeId]

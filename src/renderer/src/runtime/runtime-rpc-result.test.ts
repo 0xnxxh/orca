@@ -49,6 +49,55 @@ describe('hasRuntimeRpcErrorCode', () => {
     ).toBe(true)
   })
 
+  // Why: the destructive consumer forgets the workspace locally, so only a real message boundary may classify.
+  it('rejects a trailing token that is not after a message boundary', () => {
+    expect(
+      hasRuntimeRpcErrorCode(new Error('failed to reach host for repo_not_found'), 'repo_not_found')
+    ).toBe(false)
+    expect(
+      hasRuntimeRpcErrorCode(
+        new Error('remote is unreachable, selector_not_found'),
+        'selector_not_found'
+      )
+    ).toBe(false)
+    expect(
+      hasRuntimeRpcErrorCode({ message: 'timed out waiting for repo_not_found' }, 'repo_not_found')
+    ).toBe(false)
+    expect(
+      hasRuntimeRpcErrorCode(new Error('host offline (selector_not_found'), 'selector_not_found')
+    ).toBe(false)
+  })
+
+  it('rejects an unrelated failure re-wrapped around a token-shaped tail', () => {
+    expect(
+      hasRuntimeRpcErrorCode(
+        new Error('worktree.rm failed while probing selector_not_found', {
+          cause: new Error('connection reset by peer while resolving repo_not_found')
+        }),
+        'selector_not_found'
+      )
+    ).toBe(false)
+    expect(
+      hasRuntimeRpcErrorCode(
+        {
+          response: {
+            error: { code: 'permission_denied', message: 'denied lookup of repo_not_found' }
+          }
+        },
+        'repo_not_found'
+      )
+    ).toBe(false)
+  })
+
+  it('matches a token placed on its own line by a multi-line transport message', () => {
+    expect(
+      hasRuntimeRpcErrorCode(
+        new Error('relay envelope rejected the call\nselector_not_found'),
+        'selector_not_found'
+      )
+    ).toBe(true)
+  })
+
   it('rejects diagnostic mentions and cyclic causes', () => {
     const cycle: { cause?: unknown; message: string } = { message: 'permission_denied' }
     cycle.cause = cycle

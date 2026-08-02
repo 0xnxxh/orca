@@ -13,15 +13,18 @@ export class RuntimeRpcCallError extends Error {
 }
 
 // Why: transports re-wrap the token into a longer message and drop the cause (Electron IPC's
-// "Error invoking remote method 'x': Error: selector_not_found", relay envelope re-throws), so a
-// trailing token still classifies while a mid-sentence diagnostic mention deliberately does not.
+// "Error invoking remote method 'x': Error: selector_not_found", relay envelope re-throws), so the
+// token classifies only as the whole message or after a real message boundary (": " or a newline) —
+// prose that merely trails off in the token must not reach the destructive forget-local fallback.
+const CODE_TOKEN_BOUNDARY = /(?:: |\n)[ \t]*$/
+
 function endsWithCodeToken(text: string, expectedCode: string): boolean {
   const trimmed = text.trimEnd()
   if (!trimmed.endsWith(expectedCode)) {
     return false
   }
-  const boundary = trimmed.at(-expectedCode.length - 1)
-  return boundary === undefined || !/[\w-]/.test(boundary)
+  const prefix = trimmed.slice(0, -expectedCode.length)
+  return prefix.trim() === '' || CODE_TOKEN_BOUNDARY.test(prefix)
 }
 
 export function hasRuntimeRpcErrorCode(error: unknown, expectedCode: string): boolean {

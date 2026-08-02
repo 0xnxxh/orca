@@ -152,6 +152,66 @@ describe('worktree removal across host session partitions', () => {
     expect(store.getWorkspaceSession(ENV_A).tabsByWorktree[STALE]).toBeUndefined()
   })
 
+  // Regression: an empty local blob counted as "no sibling to rebase", so a runtime removal claimed
+  // repo-wide authority there and the renderer's next ownership-unresolved write lost its tabs.
+  it('does not fence the local blob for a runtime removal it never held tabs for', async () => {
+    const store = await createStore()
+    store.setWorktreeMeta(STALE, { hostId: ENV_A })
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [STALE]: [makeTerminalTab({ id: 'host-tab', worktreeId: STALE })] }
+      },
+      ENV_A
+    )
+
+    store.removeWorktreeMeta(STALE)
+
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [LIVE]: [makeTerminalTab({ id: 'live-tab', worktreeId: LIVE })] }
+    })
+
+    expect(store.getWorkspaceSession().tabsByWorktree[LIVE]?.map((tab) => tab.id)).toEqual([
+      'live-tab'
+    ])
+    expect(
+      store.getWorkspaceSession().terminalTopologyRevisionByRepoId?.['repo-gone']
+    ).toBeUndefined()
+  })
+
+  // The owner's own partition still fences on emptiness: nothing of the repo lives there to rebase.
+  it('fences the owning partition that holds no tabs for the removed worktree', async () => {
+    const store = await createStore()
+    const otherRepoWorktree = 'repo-other::/workspace/live'
+    store.setWorktreeMeta(STALE, { hostId: ENV_A })
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: {
+          [otherRepoWorktree]: [
+            makeTerminalTab({ id: 'other-repo-tab', worktreeId: otherRepoWorktree })
+          ]
+        }
+      },
+      ENV_A
+    )
+
+    store.removeWorktreeMeta(STALE)
+
+    expect(store.getWorkspaceSession(ENV_A).terminalTopologyRevisionByRepoId?.['repo-gone']).toBe(1)
+
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [STALE]: [makeTerminalTab({ id: 'delayed-tab', worktreeId: STALE })] }
+      },
+      ENV_A
+    )
+
+    expect(store.getWorkspaceSession(ENV_A).tabsByWorktree[STALE]).toEqual([])
+  })
+
   // The widened local purge must not fence the local blob when only siblings live there.
   it('does not fence the local blob that holds only sibling worktrees of the removed runtime worktree', async () => {
     const store = await createStore()
