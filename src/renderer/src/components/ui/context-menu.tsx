@@ -3,6 +3,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { ContextMenu as ContextMenuPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function ContextMenu({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
   return <ContextMenuPrimitive.Root data-slot="context-menu" modal={false} {...props} />
@@ -59,8 +60,11 @@ function ContextMenuSubTrigger({
 function ContextMenuSubContent({
   className,
   style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.SubContent
@@ -73,6 +77,7 @@ function ContextMenuSubContent({
         // overflow clipping does not hide the cascade on click/hover.
         style={{ ...style, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       />
     </ContextMenuPrimitive.Portal>
   )
@@ -81,8 +86,11 @@ function ContextMenuSubContent({
 function ContextMenuContent({
   className,
   style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
@@ -95,6 +103,7 @@ function ContextMenuContent({
         // capture clicks at the OS level when menus overlap them.
         style={{ ...style, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       />
     </ContextMenuPrimitive.Portal>
   )

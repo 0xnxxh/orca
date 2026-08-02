@@ -4,6 +4,7 @@ import { Globe } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { useAppStore } from '@/store'
 import { DEFAULT_SEARCH_ENGINE, type SearchEngine } from '../../../../shared/browser-url'
 import { buildBrowserAddressBarSuggestions } from './browser-address-bar-suggestions'
@@ -229,6 +230,9 @@ export default function BrowserAddressBar({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key === 'Escape') {
         cancelSuggestionPreview()
         return
@@ -329,6 +333,9 @@ export default function BrowserAddressBar({
     }
 
     const handleEscape = (event: KeyboardEvent): void => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key !== 'Escape') {
         return
       }

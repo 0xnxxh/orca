@@ -3,6 +3,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
   return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
@@ -24,8 +25,11 @@ function DropdownMenuContent({
   className,
   sideOffset = 4,
   style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
@@ -40,6 +44,7 @@ function DropdownMenuContent({
         // dropdown menus that visually overlap the titlebar are unclickable.
         style={{ ...style, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       />
     </DropdownMenuPrimitive.Portal>
   )
@@ -205,8 +210,11 @@ function DropdownMenuSubTrigger({
 function DropdownMenuSubContent({
   className,
   style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.SubContent
@@ -219,6 +227,7 @@ function DropdownMenuSubContent({
         // would otherwise capture clicks when submenu overlaps it.
         style={{ ...style, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       />
     </DropdownMenuPrimitive.Portal>
   )

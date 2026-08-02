@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 
 function isEditableElement(target: EventTarget | null): target is HTMLElement {
   return (
@@ -13,6 +14,9 @@ export function useMobilePageEscape(onClose: () => void): void {
   // Why: mirror Automations/Tasks — Esc first exits field focus, then closes the page.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key !== 'Escape' || event.defaultPrevented) {
         return
       }

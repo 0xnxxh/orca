@@ -5,6 +5,7 @@ import { Popover as PopoverPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 import { updatePopoverContentRef } from './popover-content-ref'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function Popover(props: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
@@ -25,6 +26,7 @@ function PopoverContent({
   portalContainer,
   style,
   onWheel,
+  onEscapeKeyDown,
   ref: forwardedRef,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content> & {
@@ -87,6 +89,8 @@ function PopoverContent({
     [onWheel]
   )
 
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <PopoverPrimitive.Portal container={portalContainer ?? undefined}>
       <PopoverPrimitive.Content
@@ -112,6 +116,7 @@ function PopoverContent({
           } as React.CSSProperties
         }
         onWheel={handleWheel}
+        onEscapeKeyDown={handleEscapeKeyDown}
         {...props}
       />
     </PopoverPrimitive.Portal>

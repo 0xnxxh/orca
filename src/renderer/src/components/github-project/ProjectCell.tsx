@@ -11,6 +11,7 @@ import { TYPE_FIELD_DATA_TYPE } from './columns'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { useRepoAssigneesBySlug, useRepoLabelsBySlug } from '@/hooks/useGitHubSlugMetadata'
 import { useAppStore } from '@/store'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
@@ -726,6 +727,9 @@ function TextCell({
         }
       }}
       onKeyDown={(e) => {
+        if (isImeCompositionKeyDown(e)) {
+          return
+        }
         if (e.key === 'Enter') {
           e.preventDefault()
           setEditing(false)
@@ -779,6 +783,9 @@ function DateCell({
         }
       }}
       onKeyDown={(e) => {
+        if (isImeCompositionKeyDown(e)) {
+          return
+        }
         if (e.key === 'Enter') {
           e.preventDefault()
           ;(e.target as HTMLInputElement).blur()

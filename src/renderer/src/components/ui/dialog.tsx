@@ -7,6 +7,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -48,11 +49,14 @@ function DialogContent({
   children,
   overlayClassName,
   showCloseButton = true,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   overlayClassName?: string
   showCloseButton?: boolean
 }) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay className={overlayClassName} />
@@ -68,6 +72,7 @@ function DialogContent({
           className
         )}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       >
         {children}
         {showCloseButton && (

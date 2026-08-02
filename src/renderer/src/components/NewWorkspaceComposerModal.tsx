@@ -18,6 +18,7 @@ import {
 } from '@/lib/quick-workspace-agent-selection'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
 import { shouldAllowComposerEnterSubmitTarget } from '@/lib/new-workspace-enter-guard'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import type {
   TuiAgent,
@@ -247,6 +248,9 @@ function QuickTabBody({
       return
     }
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key !== 'Enter' && event.key !== 'Escape') {
         return
       }

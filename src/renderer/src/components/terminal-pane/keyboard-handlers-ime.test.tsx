@@ -6,6 +6,7 @@ import type { PtyTransport } from './pty-transport'
 import { useTerminalKeyboardShortcuts } from './keyboard-handlers'
 import {
   installTerminalImeCompositionRoute,
+  XTERM_COMPOSITION_SESSION_END_EVENT,
   XTERM_COMPOSITION_SESSION_START_EVENT
 } from './terminal-ime-composition-route'
 
@@ -31,6 +32,7 @@ function keyboardEvent(
 function createHarness(options: { paneCount?: number } = {}): {
   deps: KeyboardHandlersDeps
   editable: HTMLInputElement
+  endComposition: () => void
   sendInput: ReturnType<typeof vi.fn>
   startComposition: () => void
   terminalInput: HTMLTextAreaElement
@@ -103,6 +105,13 @@ function createHarness(options: { paneCount?: number } = {}): {
   return {
     deps,
     editable,
+    endComposition: () => {
+      terminalElement.dispatchEvent(
+        new CustomEvent(XTERM_COMPOSITION_SESSION_END_EVENT, {
+          detail: { id: 1, data: '한' }
+        })
+      )
+    },
     sendInput,
     terminalInput,
     startComposition: () => {
@@ -326,6 +335,106 @@ describe('Windows IME keyboard ownership', () => {
     hook.unmount()
     harness.dispose()
   })
+
+  it('clears held Shift when a consumed keyup reports that the modifier is no longer down', () => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Shift',
+        code: 'ShiftLeft',
+        keyCode: 16,
+        timeStamp: 1,
+        shiftKey: true
+      })
+    )
+    harness.startComposition()
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keyup', {
+        key: 'Process',
+        code: 'ShiftLeft',
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true
+      })
+    )
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keyup', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        timeStamp: 20,
+        isComposing: true
+      })
+    )
+
+    harness.endComposition()
+    vi.runAllTimers()
+
+    expect(harness.sendInput).not.toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it('uses held Shift for a bare balancing Enter keyup during composition', () => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Shift',
+        code: 'ShiftLeft',
+        keyCode: 16,
+        timeStamp: 1,
+        shiftKey: true
+      })
+    )
+    harness.startComposition()
+    const keyup = keyboardEvent('keyup', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      timeStamp: 20,
+      isComposing: true
+    })
+
+    harness.terminalInput.dispatchEvent(keyup)
+
+    expect(keyup.defaultPrevented).toBe(true)
+    expect(harness.sendInput).not.toHaveBeenCalled()
+    harness.endComposition()
+    vi.runAllTimers()
+    expect(harness.sendInput).toHaveBeenCalledOnce()
+    expect(harness.sendInput).toHaveBeenCalledWith('\x1b\r')
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it.each([{ code: 'Enter' }, { code: 'NumpadEnter' }])(
+    'still defers a composed Shift+Enter reported as Process with code $code',
+    ({ code }) => {
+      const harness = createHarness()
+      const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+      harness.startComposition()
+      const processEnter = keyboardEvent('keydown', {
+        key: 'Process',
+        code,
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true,
+        shiftKey: true
+      })
+
+      harness.terminalInput.dispatchEvent(processEnter)
+
+      expect(processEnter.defaultPrevented).toBe(true)
+      expect(harness.sendInput).not.toHaveBeenCalled()
+      harness.endComposition()
+      vi.runAllTimers()
+      expect(harness.sendInput).toHaveBeenCalledWith('\x1b\r')
+      hook.unmount()
+      harness.dispose()
+    }
+  )
 })
 
 describe('terminal shortcuts yield to a composition', () => {

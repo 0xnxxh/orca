@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function TooltipProvider({
   delayDuration = 0,
@@ -32,8 +33,11 @@ function TooltipContent({
   className,
   sideOffset = 0,
   children,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
@@ -46,6 +50,7 @@ function TooltipContent({
           className
         )}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       >
         {children}
         <TooltipPrimitive.Arrow className="size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] bg-foreground fill-foreground" />

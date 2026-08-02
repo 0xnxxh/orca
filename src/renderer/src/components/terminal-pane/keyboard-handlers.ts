@@ -281,6 +281,25 @@ export function useTerminalKeyboardShortcuts({
     const nativeOnlyShortcutTracker = createTerminalNativeOnlyShortcutTracker()
     const deferredNewlineSender = createTerminalImeDeferredNewlineSender()
     const modifiedEnterChordOwner = createTerminalImeModifiedEnterChordOwner()
+    const reconcileHeldImeEnterModifiers = (
+      event: KeyboardEvent,
+      preserveModifierLostRedispatch = false
+    ): void => {
+      if (heldImeEnterModifiers.size === 0) {
+        return
+      }
+      for (const [kind, pressed] of [
+        ['shift', event.shiftKey],
+        ['ctrl', event.ctrlKey]
+      ] as const) {
+        const belongsToActiveChord =
+          preserveModifierLostRedispatch &&
+          modifiedEnterChordOwner.absorb({ kind, code: event.code, timeStamp: event.timeStamp })
+        if (!pressed && !belongsToActiveChord && heldImeEnterModifiers.delete(kind)) {
+          modifiedEnterChordOwner.release({ kind, code: event.code, timeStamp: event.timeStamp })
+        }
+      }
+    }
     const getHeldImeEnterModifier = () =>
       heldImeEnterModifiers.size === 1
         ? (heldImeEnterModifiers.values().next().value ?? null)
@@ -297,6 +316,7 @@ export function useTerminalKeyboardShortcuts({
       return kind ? { kind, code: event.code, timeStamp: event.timeStamp } : null
     }
     const onModifierDown = (e: KeyboardEvent): void => {
+      reconcileHeldImeEnterModifiers(e, e.key === 'Enter' && e.keyCode === 13)
       if (e.key === 'Alt') {
         optionKeyLocation = e.location
       }
@@ -452,6 +472,7 @@ export function useTerminalKeyboardShortcuts({
           deferredNewlineSender.absorbRedispatchedEnter(e))
       ) {
         // Chromium can drop the modifier when re-dispatching the committing Enter.
+        reconcileHeldImeEnterModifiers(e)
         e.preventDefault()
         e.stopImmediatePropagation()
         return
@@ -749,6 +770,9 @@ export function useTerminalKeyboardShortcuts({
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
+      if (!isTerminalImeEnterKeyUp(e)) {
+        reconcileHeldImeEnterModifiers(e)
+      }
       if (e.key === 'Alt') {
         optionKeyLocation = 0
       }

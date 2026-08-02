@@ -6,6 +6,7 @@ import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { addViewportSizeChangeListener } from '@/hooks/viewport-size-change-listener'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 
 export type LinkBubbleState = {
   kind: 'markdown' | 'html-superscript'
@@ -134,6 +135,9 @@ function LinkEditInput({
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
+        if (isImeCompositionKeyDown(e)) {
+          return
+        }
         if (e.key === 'Enter') {
           e.preventDefault()
           onSave(value.trim())
@@ -298,6 +302,9 @@ export function RichMarkdownLinkBubble({
       }}
       onKeyDown={(event) => {
         event.stopPropagation()
+        if (isImeCompositionKeyDown(event)) {
+          return
+        }
         if (event.key === 'Escape') {
           event.preventDefault()
           onDismiss()

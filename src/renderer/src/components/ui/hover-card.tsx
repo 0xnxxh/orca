@@ -4,6 +4,7 @@ import * as React from 'react'
 import { HoverCard as HoverCardPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function HoverCard({ ...props }: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
   return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
@@ -17,8 +18,11 @@ function HoverCardContent({
   className,
   align = 'center',
   sideOffset = 4,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof HoverCardPrimitive.Content>) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <HoverCardPrimitive.Portal data-slot="hover-card-portal">
       <HoverCardPrimitive.Content
@@ -35,6 +39,7 @@ function HoverCardContent({
           className
         )}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       />
     </HoverCardPrimitive.Portal>
   )

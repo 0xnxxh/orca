@@ -6,6 +6,7 @@ import { ImageIcon, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { createRichMarkdownExtensions } from '@/components/editor/rich-markdown-extensions'
 import { RichMarkdownToolbar } from '@/components/editor/RichMarkdownToolbar'
@@ -26,26 +27,13 @@ import {
 } from '@/components/github/github-markdown-composer-tabbar'
 import { hasBoundedGitHubMarkdownImageUrlText } from '@/components/github/github-markdown-image-url'
 import { useImageInput } from '@/components/github/use-image-input'
-import type { GitHubOwnerRepo } from '../../../../shared/types'
 import { translate } from '@/i18n/i18n'
 import { useAppStore } from '@/store'
 import {
   getRichMarkdownSpellcheckAttribute,
   useRichMarkdownSpellcheckAttribute
 } from '@/components/editor/rich-markdown-spellcheck'
-
-type GitHubMarkdownComposerProps = {
-  value: string
-  onChange: (value: string) => void
-  placeholder: string
-  minHeightClassName?: string
-  className?: string
-  disabled?: boolean
-  autoFocus?: boolean
-  onSubmitShortcut?: () => void
-  layout?: 'stacked' | 'tabbed'
-  previewGithubRepo?: GitHubOwnerRepo | null
-}
+import type { GitHubMarkdownComposerProps } from './github-markdown-composer-props'
 
 export function GitHubMarkdownComposer({
   value,
@@ -129,6 +117,9 @@ export function GitHubMarkdownComposer({
         spellcheck: getRichMarkdownSpellcheckAttribute(richMarkdownSpellcheckEnabled)
       },
       handleKeyDown: (_view, event) => {
+        if (isImeCompositionKeyDown(event)) {
+          return false
+        }
         if (isScreenSubmitShortcut(event)) {
           const submit = onSubmitShortcutRef.current
           if (submit) {
@@ -306,6 +297,9 @@ export function GitHubMarkdownComposer({
         value={imageUrl}
         onChange={(event) => setImageUrl(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeCompositionKeyDown(event)) {
+            return
+          }
           if (isScreenSubmitShortcut(event)) {
             event.preventDefault()
             event.stopPropagation()

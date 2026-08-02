@@ -5,6 +5,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { Select as SelectPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
@@ -50,10 +51,13 @@ function SelectContent({
   position = 'item-aligned',
   align = 'center',
   portalContainer,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content> & {
   portalContainer?: HTMLElement | null
 }) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <SelectPrimitive.Portal container={portalContainer ?? undefined}>
       <SelectPrimitive.Content
@@ -71,6 +75,7 @@ function SelectContent({
         position={position}
         align={align}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport

@@ -120,7 +120,7 @@ export default function WorkspaceKanbanSearchField({
           // this field is the only handler — it must cover both outcomes.
           // Mid-composition Escape belongs to the IME, which cancels the
           // in-progress reading rather than the query behind it.
-          if (event.key !== 'Escape' || isImeCompositionKeyDown(event)) {
+          if (isImeCompositionKeyDown(event) || event.key !== 'Escape') {
             return
           }
           event.preventDefault()

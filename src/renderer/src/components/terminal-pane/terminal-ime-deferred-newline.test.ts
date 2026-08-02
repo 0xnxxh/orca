@@ -475,6 +475,7 @@ describe('isTerminalImeProcessEnter', () => {
   const event = (overrides: Partial<KeyboardEvent> = {}) =>
     ({
       key: 'Process',
+      code: 'Enter',
       keyCode: 229,
       metaKey: false,
       ctrlKey: false,
@@ -483,19 +484,23 @@ describe('isTerminalImeProcessEnter', () => {
       ...overrides
     }) as KeyboardEvent
 
-  it.each([{ shiftKey: true }, { shiftKey: false, ctrlKey: true }])(
-    'recognizes a Windows IME modifier Enter reported as Process',
-    (modifiers) => {
-      expect(isTerminalImeProcessEnter(event(modifiers))).toBe(true)
-    }
-  )
+  it.each([
+    { shiftKey: true },
+    { shiftKey: false, ctrlKey: true },
+    { code: 'NumpadEnter' },
+    { code: 'NumpadEnter', shiftKey: false, ctrlKey: true }
+  ])('recognizes a Windows IME modifier Enter reported as Process', (modifiers) => {
+    expect(isTerminalImeProcessEnter(event(modifiers))).toBe(true)
+  })
 
   it.each([
     { key: 'Enter' },
     { keyCode: 13 },
     { shiftKey: false },
     { ctrlKey: true },
-    { altKey: true }
+    { altKey: true },
+    { code: 'KeyQ' },
+    { code: 'KeyI', shiftKey: false, ctrlKey: true }
   ])('rejects a non-IME or ambiguous Process key', (override) => {
     expect(isTerminalImeProcessEnter(event(override))).toBe(false)
   })

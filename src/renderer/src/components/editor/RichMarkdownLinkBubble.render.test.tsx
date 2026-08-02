@@ -28,28 +28,36 @@ const LINK_BUBBLE: LinkBubbleState = {
   copyEnabled: true
 }
 
-function renderBubble(): { onDismiss: ReturnType<typeof vi.fn> } {
+function renderBubble({ isEditing = false }: { isEditing?: boolean } = {}): {
+  onDismiss: ReturnType<typeof vi.fn>
+  onEditCancel: ReturnType<typeof vi.fn>
+  onAncestorKeyDown: ReturnType<typeof vi.fn>
+} {
   const anchorElement = document.createElement('div')
   document.body.append(anchorElement)
   const onDismiss = vi.fn()
+  const onEditCancel = vi.fn()
+  const onAncestorKeyDown = vi.fn()
   render(
-    <TooltipProvider>
-      <RichMarkdownLinkBubble
-        anchorElement={anchorElement}
-        linkBubble={LINK_BUBBLE}
-        isEditing={false}
-        onDismiss={onDismiss}
-        onSave={vi.fn()}
-        onRemove={vi.fn()}
-        onEditStart={vi.fn()}
-        onEditCancel={vi.fn()}
-        onOpen={vi.fn()}
-        onCopy={vi.fn()}
-      />
-    </TooltipProvider>
+    <div onKeyDown={onAncestorKeyDown}>
+      <TooltipProvider>
+        <RichMarkdownLinkBubble
+          anchorElement={anchorElement}
+          linkBubble={LINK_BUBBLE}
+          isEditing={isEditing}
+          onDismiss={onDismiss}
+          onSave={vi.fn()}
+          onRemove={vi.fn()}
+          onEditStart={vi.fn()}
+          onEditCancel={onEditCancel}
+          onOpen={vi.fn()}
+          onCopy={vi.fn()}
+        />
+      </TooltipProvider>
+    </div>
   )
   onDismiss.mockClear()
-  return { onDismiss }
+  return { onDismiss, onEditCancel, onAncestorKeyDown }
 }
 
 describe('RichMarkdownLinkBubble viewport dismissal', () => {
@@ -79,5 +87,26 @@ describe('RichMarkdownLinkBubble viewport dismissal', () => {
     fireEvent(window, new Event('resize'))
 
     expect(onDismiss).toHaveBeenCalled()
+  })
+
+  it('keeps link editing open for an IME-owned Escape', () => {
+    const { onDismiss, onEditCancel, onAncestorKeyDown } = renderBubble({ isEditing: true })
+    const input = document.querySelector<HTMLInputElement>('.rich-markdown-link-input')
+
+    fireEvent.keyDown(input!, { key: 'Escape', keyCode: 27, isComposing: true })
+
+    expect(onEditCancel).not.toHaveBeenCalled()
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(onAncestorKeyDown).not.toHaveBeenCalled()
+  })
+
+  it('still cancels link editing for ordinary Escape', () => {
+    const { onDismiss, onEditCancel } = renderBubble({ isEditing: true })
+    const input = document.querySelector<HTMLInputElement>('.rich-markdown-link-input')
+
+    fireEvent.keyDown(input!, { key: 'Escape', keyCode: 27 })
+
+    expect(onEditCancel).toHaveBeenCalledOnce()
+    expect(onDismiss).not.toHaveBeenCalled()
   })
 })

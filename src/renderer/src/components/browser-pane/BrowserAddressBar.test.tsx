@@ -212,6 +212,39 @@ describe('BrowserAddressBar autocomplete preview', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('keeps suggestions open for an IME-owned Escape', async () => {
+    const onNavigate = vi.fn()
+    const onSubmit = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <AddressBarHarness initialValue="local" onNavigate={onNavigate} onSubmit={onSubmit} />
+      )
+    })
+
+    const input = container.querySelector<HTMLInputElement>('input[data-orca-browser-address-bar]')
+    expect(input).not.toBeNull()
+
+    await act(async () => {
+      input?.focus()
+    })
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, isComposing: true })
+      )
+    })
+
+    expect(container.querySelector('[data-current-address-value="true"]')?.textContent).toBe(
+      'http://localhost:3000/review-one'
+    )
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
   it('dismisses suggestions when focus moves into an Electron webview guest', async () => {
     const onNavigate = vi.fn()
     const onSubmit = vi.fn()

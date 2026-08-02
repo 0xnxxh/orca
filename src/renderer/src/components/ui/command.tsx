@@ -6,6 +6,7 @@ import { SearchIcon } from 'lucide-react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
@@ -42,6 +43,7 @@ function CommandDialog({
   commandProps?: React.ComponentProps<typeof CommandPrimitive>
 }) {
   const { className: commandClassName, ...commandRootProps } = commandProps ?? {}
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown()
 
   return (
     <DialogPrimitive.Root {...props}>
@@ -67,6 +69,7 @@ function CommandDialog({
           )}
           onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
+          onEscapeKeyDown={handleEscapeKeyDown}
         >
           <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">

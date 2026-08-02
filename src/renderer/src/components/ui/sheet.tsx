@@ -7,6 +7,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
+import { useImeAwareEscapeKeyDown } from './use-ime-aware-escape-key-down'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -79,6 +80,7 @@ function SheetContent({
   overlayClassName,
   overlayStyle,
   style,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> &
   VariantProps<typeof sheetContentVariants> & {
@@ -86,6 +88,8 @@ function SheetContent({
     overlayClassName?: string
     overlayStyle?: React.CSSProperties
   }) {
+  const handleEscapeKeyDown = useImeAwareEscapeKeyDown(onEscapeKeyDown)
+
   return (
     <SheetPortal>
       <SheetOverlay className={overlayClassName} style={overlayStyle} />
@@ -96,6 +100,7 @@ function SheetContent({
         // document root and its header overlaps the titlebar drag strip.
         style={{ ...style, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         {...props}
+        onEscapeKeyDown={handleEscapeKeyDown}
       >
         {children}
         {showCloseButton && (

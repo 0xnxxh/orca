@@ -42,5 +42,6 @@ export function terminalShortcutIsOwnedByIme(
   if (action?.type === 'switchInputSource') {
     return false
   }
-  return !(enterIsDeferredToCommit && event.code === 'Enter' && action?.type === 'sendInput')
+  const isPhysicalEnter = event.code === 'Enter' || event.code === 'NumpadEnter'
+  return !(enterIsDeferredToCommit && isPhysicalEnter && action?.type === 'sendInput')
 }

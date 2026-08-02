@@ -33,6 +33,10 @@ describe('terminalShortcutIsOwnedByIme', () => {
   // already handles composition, rather than merely declining to fix one.
   it.each([
     ['the Process shape', { key: 'Process', code: 'Enter', keyCode: 229, isComposing: true }],
+    [
+      'the numpad Process shape',
+      { key: 'Process', code: 'NumpadEnter', keyCode: 229, isComposing: true }
+    ],
     ['the marked real shape', { key: 'Enter', code: 'Enter', keyCode: 13, isComposing: true }]
   ])('releases Enter in %s for a caller that defers it to the commit', (_shape, init) => {
     expect(
