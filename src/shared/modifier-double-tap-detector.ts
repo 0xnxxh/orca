@@ -27,7 +27,8 @@ export type ModifierKeyEventLike = {
   alt?: boolean
   meta?: boolean
   isAutoRepeat?: boolean
-  // Optional so non-DOM callers (Electron before-input-event) keep their current behavior.
+  // Optional because `Electron.Input` has no numeric keyCode; it does carry isComposing, so the
+  // before-input-event callers pass that one.
   isComposing?: boolean
   keyCode?: number
 }
