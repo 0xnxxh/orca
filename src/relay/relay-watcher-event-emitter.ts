@@ -13,8 +13,15 @@ type WatcherBatchSizing = {
   batchBytes: number
 }
 
-// Why: one outstanding marker per (client, root) keeps sustained backpressure bounded.
-const outstandingOverflowMarkers = new WeakMap<RelayDispatcher, Set<string>>()
+type OverflowMarkerState = {
+  // Why: one outstanding marker per (client, root) keeps sustained backpressure bounded.
+  inFlight: Set<string>
+  // Rejected markers, retained per client so they can be republished when the control lane frees up.
+  pending: Map<number, Set<string>>
+  capacityUnsubscribes: Map<number, () => void>
+}
+
+const overflowMarkerStates = new WeakMap<RelayDispatcher, OverflowMarkerState>()
 
 export function emitRelayWatcherEvents(
   dispatcher: RelayDispatcher,
@@ -157,6 +164,32 @@ function publishWatcherBatchToClient(
   }
 }
 
+function overflowMarkerState(dispatcher: RelayDispatcher): OverflowMarkerState {
+  const existing = overflowMarkerStates.get(dispatcher)
+  if (existing) {
+    return existing
+  }
+  const state: OverflowMarkerState = {
+    inFlight: new Set(),
+    pending: new Map(),
+    capacityUnsubscribes: new Map()
+  }
+  overflowMarkerStates.set(dispatcher, state)
+  // In-flight keys need no sweep here: closing a client settles every queued and written frame first.
+  dispatcher.onClientDetached((clientId) => forgetClientMarkers(state, clientId))
+  return state
+}
+
+function forgetClientMarkers(state: OverflowMarkerState, clientId: number): void {
+  state.pending.delete(clientId)
+  state.capacityUnsubscribes.get(clientId)?.()
+  state.capacityUnsubscribes.delete(clientId)
+}
+
+function overflowMarkerParams(rootPath: string): Record<string, unknown> {
+  return { events: [{ kind: 'overflow', absolutePath: rootPath }] }
+}
+
 // Why: the control lane — on the producer lane the marker would hit the same full queue that just
 // rejected the batch and be dropped, silently desyncing the remote file tree.
 function emitWatcherOverflowToClient(
@@ -164,34 +197,94 @@ function emitWatcherOverflowToClient(
   clientId: number,
   rootPath: string
 ): void {
+  const state = overflowMarkerState(dispatcher)
   // Per root, never per client alone: an outstanding marker for one tree must not suppress another's resync.
-  const key = `${clientId} ${rootPath}`
-  const outstanding = outstandingOverflowMarkers.get(dispatcher) ?? new Set<string>()
-  if (outstanding.has(key)) {
+  if (
+    state.inFlight.has(`${clientId} ${rootPath}`) ||
+    state.pending.get(clientId)?.has(rootPath) === true
+  ) {
     return
   }
-  outstanding.add(key)
-  outstandingOverflowMarkers.set(dispatcher, outstanding)
-  const release = (): void => {
-    outstanding.delete(key)
-    if (outstanding.size === 0) {
-      outstandingOverflowMarkers.delete(dispatcher)
-    }
-  }
+  publishOverflowMarker(dispatcher, state, clientId, rootPath)
+}
+
+function publishOverflowMarker(
+  dispatcher: RelayDispatcher,
+  state: OverflowMarkerState,
+  clientId: number,
+  rootPath: string
+): void {
+  const key = `${clientId} ${rootPath}`
+  state.inFlight.add(key)
+  let settled = false
   const accepted = dispatcher.tryNotifyClient(
     clientId,
     'fs.changed',
-    { events: [{ kind: 'overflow', absolutePath: rootPath }] },
+    overflowMarkerParams(rootPath),
     () => {
       // Settles on write, drop, or client close, so the slot can never leak.
-      release()
+      settled = true
+      state.inFlight.delete(key)
     },
     { controlOverflow: 'reject' }
   )
-  // Admission rejection has no settlement callback, so release the slot directly.
-  if (!accepted) {
-    release()
+  if (accepted || settled) {
+    // A settled rejection means the client is gone, so there is nothing left to resync.
+    return
   }
+  // Admission rejection has no settlement callback: retain the marker instead of desyncing the tree.
+  state.inFlight.delete(key)
+  retainOverflowMarker(dispatcher, state, clientId, rootPath)
+}
+
+function retainOverflowMarker(
+  dispatcher: RelayDispatcher,
+  state: OverflowMarkerState,
+  clientId: number,
+  rootPath: string
+): void {
+  if (!state.capacityUnsubscribes.has(clientId)) {
+    const unsubscribe = dispatcher.onClientCapacity(clientId, () =>
+      flushPendingOverflowMarkers(dispatcher, state, clientId)
+    )
+    if (!unsubscribe) {
+      // The client went away between admission and arming, so there is nothing left to resync.
+      return
+    }
+    state.capacityUnsubscribes.set(clientId, unsubscribe)
+  }
+  const roots = state.pending.get(clientId)
+  if (roots) {
+    roots.add(rootPath)
+    return
+  }
+  state.pending.set(clientId, new Set([rootPath]))
+}
+
+function flushPendingOverflowMarkers(
+  dispatcher: RelayDispatcher,
+  state: OverflowMarkerState,
+  clientId: number
+): void {
+  const roots = state.pending.get(clientId)
+  if (!roots) {
+    return
+  }
+  for (const rootPath of Array.from(roots)) {
+    // Drop before republishing so a synchronous settlement cannot see the marker as still pending —
+    // and skip roots a re-entrant flush already took, which would otherwise send the marker twice.
+    if (!roots.delete(rootPath)) {
+      continue
+    }
+    publishOverflowMarker(dispatcher, state, clientId, rootPath)
+  }
+  // Identity check: a re-entrant flush may have retired this set and armed a fresh one to keep.
+  if (roots.size > 0 || state.pending.get(clientId) !== roots) {
+    return
+  }
+  state.pending.delete(clientId)
+  state.capacityUnsubscribes.get(clientId)?.()
+  state.capacityUnsubscribes.delete(clientId)
 }
 
 export function emitRelayWatcherOverflow(
