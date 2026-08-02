@@ -68,12 +68,14 @@ function finalizeFullFirstUserPrompt(value: string): string | null {
   if (isKnownHarnessInjectedUserTurnText(trimmed)) {
     return null
   }
+  // Bound before scanning so a multi-MB paste cannot force a full lowercase copy.
+  const bounded = sliceAtCodeUnitLimit(trimmed, FULL_FIRST_USER_PROMPT_SAFETY_LIMIT)
   // Reject pure Grok bootstrap dumps even when they arrived via a non-Grok path.
-  const lower = trimmed.toLowerCase()
+  const lower = bounded.toLowerCase()
   if (lower.startsWith('<user_info>') && !lower.includes('<user_query>')) {
     return null
   }
-  return sliceAtCodeUnitLimit(trimmed, FULL_FIRST_USER_PROMPT_SAFETY_LIMIT)
+  return bounded
 }
 
 function isSuppressedFullFirstUserPrompt(value: string): boolean {

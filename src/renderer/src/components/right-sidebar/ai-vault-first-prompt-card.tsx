@@ -7,6 +7,10 @@ import { translate } from '@/i18n/i18n'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
 import { LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 
+// Why: the main-process re-parse has no deadline of its own. Without this the
+// card can sit in `loading` forever on a huge or stalled transcript.
+const FULL_FIRST_PROMPT_LOAD_TIMEOUT_MS = 15_000
+
 function canLoadFullFirstPrompt(
   session: Pick<AiVaultSession, 'executionHostId' | 'filePath'>
 ): boolean {
@@ -57,18 +61,29 @@ export function FirstPromptCard({
 
     const generation = generationRef.current
     const isStale = (): boolean => generationRef.current !== generation
-    const promise = getFirstUserPrompt({
-      agent,
-      filePath,
-      sessionId,
-      executionHostId,
-      codexHome
+    let timeoutId: number | undefined
+    const deadline = new Promise<null>((resolve) => {
+      timeoutId = window.setTimeout(() => {
+        resolve(null)
+      }, FULL_FIRST_PROMPT_LOAD_TIMEOUT_MS)
     })
+
+    const promise = Promise.race([
+      getFirstUserPrompt({
+        agent,
+        filePath,
+        sessionId,
+        executionHostId,
+        codexHome
+      }),
+      deadline
+    ])
       .then((result) => {
         if (isStale()) {
           return null
         }
-        const prompt = result.prompt?.trim() || null
+        // A timed-out read lands here as null and falls back to the preview text.
+        const prompt = result?.prompt?.trim() || null
         fullTextRef.current = prompt
         setFullText(prompt)
         return prompt
@@ -82,11 +97,13 @@ export function FirstPromptCard({
         return null
       })
       .finally(() => {
+        window.clearTimeout(timeoutId)
         // A stale settle must not clear the live request's dedupe handle.
         if (isStale()) {
           return
         }
         setLoading(false)
+        // Left null on timeout/failure so a later copy click can retry.
         loadPromiseRef.current = null
       })
 

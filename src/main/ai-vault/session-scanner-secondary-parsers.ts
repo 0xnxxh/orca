@@ -15,6 +15,7 @@ import {
   addPreviewMessage,
   createAccumulator,
   finalizeSession,
+  seedFullFirstUserPrompt,
   sessionIdFromFileName,
   updateTimeline
 } from './session-scanner-accumulator'
@@ -249,19 +250,22 @@ export async function consumeOpenCodeMessages(
     if (role === 'user' || role === 'assistant') {
       accumulator.messageCount++
       updateTimeline(accumulator, timeObjectValue(message.time, 'created'))
+      const summary = asRecord(message.summary)
       if (role === 'user') {
-        accumulator.title ??= extractString(asRecord(message.summary)?.title)
-        accumulator.title ??= extractString(asRecord(message.summary)?.body)
+        accumulator.title ??= extractString(summary?.title) ?? extractString(summary?.body)
       }
       // Why: pass raw body text so full first-prompt capture is not stuck on the
       // 220-char preview fold (addPreviewMessage preview-caps for display).
+      const contentText = extractFullFirstUserPromptText(message.content)
+      // Why: the summary fallbacks are AI-generated. Seed the copyable first
+      // prompt from real typed content only, never from a summary of a
+      // harness-injected turn.
+      seedFullFirstUserPrompt(accumulator, role, () => contentText)
       addPreviewMessage(accumulator, {
         role,
-        text:
-          extractFullFirstUserPromptText(message.content) ??
-          extractString(asRecord(message.summary)?.body) ??
-          extractString(asRecord(message.summary)?.title),
-        timestamp: timeObjectValue(message.time, 'created')
+        text: contentText ?? extractString(summary?.body) ?? extractString(summary?.title),
+        timestamp: timeObjectValue(message.time, 'created'),
+        seedFirstUserPrompt: false
       })
       accumulator.model =
         extractString(asRecord(message.model)?.modelID) ||
