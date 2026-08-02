@@ -103,19 +103,12 @@ export const nativeIbusEngineInputProfiles: Record<string, NativeIbusEngineInput
   },
 
   // Telex is rule-based, so no dictionary decides the glyphs. Space is a word
-  // break: it is committed with the first word. Enter commits the buffer and is
-  // forwarded, so it both flushes and sends the newline. All lowercase, because
-  // a Shift press is Unikey's restore-keystrokes trigger.
-  //
-  // Unverified because that double duty races: under IBUS_ENABLE_SYNC_MODE=1,
-  // which the harness sets, a GTK sink delivers the Return ahead of the pending
-  // final word, so `việt` lands after the newline and migrates into the next
-  // repetition. Whether that carries to the xterm.js path is untested, and the
-  // per-repetition equality oracle answers it either way on the first CI run.
+  // break, and is what closes each word — including the last one. All lowercase,
+  // because a Shift press is Unikey's restore-keystrokes trigger.
   unikey: {
     ibusEngineName: 'Unikey',
     committedScriptPattern: /[\u1ea0-\u1ef9]/,
-    expectationsVerified: false,
+    expectationsVerified: true,
     scenarios: [
       {
         title: 'commits Telex diacritics without leaked keystroke Latin',

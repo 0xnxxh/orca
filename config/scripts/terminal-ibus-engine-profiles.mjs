@@ -66,8 +66,7 @@ export const terminalIbusEngineProfiles = {
 
   // ibus-unikey 0.7.0~beta1-1build2. Telex and Unicode are already the schema
   // defaults; they are pinned so a distro patch cannot silently retarget the
-  // keystroke script. Still unverified: see the Return/commit race noted in the
-  // input profile.
+  // keystroke script.
   unikey: {
     aptPackage: 'ibus-unikey',
     ibusEngineName: 'Unikey',
@@ -77,7 +76,7 @@ export const terminalIbusEngineProfiles = {
       ['org.freedesktop.ibus.engine.unikey', 'spell-check', 'true'],
       ['org.freedesktop.ibus.engine.unikey', 'macro-enabled', 'false']
     ],
-    expectationsVerified: false
+    expectationsVerified: true
   }
 }
 
