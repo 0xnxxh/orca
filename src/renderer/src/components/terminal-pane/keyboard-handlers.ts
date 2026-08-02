@@ -9,6 +9,7 @@ import { safeFind } from '../terminal-search-safe-find'
 import { resolveTerminalShortcutAction } from './terminal-shortcut-policy'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
 import { createTerminalNativeOnlyShortcutTracker } from './terminal-native-only-shortcut'
+import { terminalShortcutIsOwnedByIme } from './terminal-shortcut-composition-guard'
 import {
   createTerminalImeDeferredNewlineSender,
   createTerminalImeModifiedEnterChordOwner,
@@ -453,6 +454,10 @@ export function useTerminalKeyboardShortcuts({
         // Chromium can drop the modifier when re-dispatching the committing Enter.
         e.preventDefault()
         e.stopImmediatePropagation()
+        return
+      }
+
+      if (terminalShortcutIsOwnedByIme(e, resolveShortcutEvent)) {
         return
       }
 

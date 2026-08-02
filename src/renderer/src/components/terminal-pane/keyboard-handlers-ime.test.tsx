@@ -31,6 +31,7 @@ function keyboardEvent(
 function createHarness(): {
   deps: KeyboardHandlersDeps
   editable: HTMLInputElement
+  sendInput: ReturnType<typeof vi.fn>
   startComposition: () => void
   terminalInput: HTMLTextAreaElement
   dispose: () => void
@@ -97,6 +98,7 @@ function createHarness(): {
   return {
     deps,
     editable,
+    sendInput,
     terminalInput,
     startComposition: () => {
       terminalElement.dispatchEvent(
@@ -271,6 +273,82 @@ describe('Windows IME keyboard ownership', () => {
     harness.terminalInput.dispatchEvent(redispatch)
 
     expect(redispatch.defaultPrevented).toBe(true)
+    hook.unmount()
+    harness.dispose()
+  })
+})
+
+describe('terminal shortcuts yield to a composition', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  // The chord resolves to a real control sequence, so the only thing standing between a
+  // preedit keystroke and the PTY is a composition check above the dispatch.
+  it.each([
+    { name: 'Ctrl+Backspace', init: { key: 'Backspace', code: 'Backspace', ctrlKey: true } },
+    { name: 'Alt+Backspace', init: { key: 'Backspace', code: 'Backspace', altKey: true } },
+    { name: 'Alt+ArrowLeft', init: { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true } }
+  ])('does not send $name to the PTY while composing', ({ init }) => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.startComposition()
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', { ...init, keyCode: 229, timeStamp: 10, isComposing: true })
+    )
+
+    expect(harness.sendInput).not.toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it('still sends Ctrl+Backspace when nothing is composing', () => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Backspace',
+        code: 'Backspace',
+        keyCode: 8,
+        timeStamp: 10,
+        ctrlKey: true
+      })
+    )
+
+    expect(harness.sendInput).toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  // 'Process' means the IME already consumed this keystroke, but the non-Latin fallback
+  // re-derives the binding from event.code, so the chord matches by physical key anyway.
+  it('does not close the pane on a Ctrl+W the IME consumed', () => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.startComposition()
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Process',
+        code: 'KeyW',
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true,
+        ctrlKey: true
+      })
+    )
+
+    expect(harness.deps.onRequestClosePane).not.toHaveBeenCalled()
     hook.unmount()
     harness.dispose()
   })
