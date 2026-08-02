@@ -2674,11 +2674,10 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
         backgroundMountTabIds={backgroundMountTabIds}
         activationDeferredMountTabIds={activationDeferredMountTabIds}
       />
+      {/* Why: always mounted — its slots host persistent <webview> guests that die if the slot leaves the DOM (STA-3228); hidden worktrees park the pane subtree, so targeted background mounts only pay for empty slot divs. */}
+      <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
       {isVisible || backgroundMountTabIds === null ? (
-        <>
-          <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
-          <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
-        </>
+        <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
       ) : null}
       <AiVaultSessionDropLayer worktreeId={worktreeId} enabled={isVisible} />
     </div>

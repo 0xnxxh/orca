@@ -65,11 +65,18 @@ export function ensureBrowserPageViewport(
   browserPageId: string,
   workspaceTabId: string
 ): BrowserPageViewport | null {
+  const root = slotViewportRoots.get(workspaceTabId)
   const existing = browserPageViewports.get(browserPageId)
   if (existing) {
-    return existing
+    if (!root || existing.shell.parentElement === root) {
+      return existing
+    }
+    // Why: a remounted slot root (overlay unmount while hidden, cross-worktree tab move) strands
+    // the cached shell in a removed subtree where its guest is already dead; drop it so the caller
+    // rebuilds against the live root instead of rendering into detached DOM forever (STA-3228).
+    existing.shell.remove()
+    browserPageViewports.delete(browserPageId)
   }
-  const root = slotViewportRoots.get(workspaceTabId)
   if (!root) {
     return null
   }
