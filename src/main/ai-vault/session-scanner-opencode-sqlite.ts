@@ -297,6 +297,11 @@ export async function parseOpenCodeSqliteSession(args: {
       const previewRows = db
         .prepare(previewSql)
         .all(sessionId, OPENCODE_SQLITE_PREVIEW_LIMIT) as PreviewRow[]
+      // Why: SQL already dropped anything older than the newest-N window, so the
+      // accumulator never shifts and cannot detect the truncation itself.
+      if (previewRows.length >= OPENCODE_SQLITE_PREVIEW_LIMIT) {
+        accumulator.previewMessagesTruncated = true
+      }
       // Why: query returns newest-first; push in chronological order so the
       // accumulator's ring buffer keeps the newest OPENCODE_SQLITE_PREVIEW_LIMIT
       // messages.

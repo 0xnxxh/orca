@@ -22,7 +22,11 @@ export function FirstPromptCard({
   previewText
 }: {
   session: AiVaultSession
-  /** Short preview from list scan; replaced by the full on-demand body when available. */
+  /**
+   * Short preview from the list scan; replaced by the full on-demand body when
+   * available. Empty unless the scan proved it really is the opening ask, so the
+   * fallback below can never show a recent turn (remote rows never re-parse).
+   */
   previewText: string
 }): React.JSX.Element {
   // Loading starts true when an on-demand re-parse is possible so the mount effect

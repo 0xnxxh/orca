@@ -1,11 +1,11 @@
 import { basename, extname } from 'node:path'
 import {
   aiVaultAgentLabel,
-  buildAiVaultResumeCommand,
   type AiVaultAgent,
   type AiVaultSession,
   type AiVaultSessionPreviewMessage
 } from '../../shared/ai-vault-types'
+import { buildAiVaultResumeCommand } from '../../shared/ai-vault-resume-command'
 import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../shared/execution-host'
 import type {
   FileWithMtime,
@@ -46,6 +46,7 @@ export function createAccumulator(args: {
     messageCount: 0,
     totalTokens: 0,
     previewMessages: [],
+    previewMessagesTruncated: false,
     firstUserPrompt: null,
     lastUserPrompt: null,
     queuedMessageCount: 0,
@@ -119,6 +120,7 @@ export function finalizeSession(
     messageCount: accumulator.messageCount,
     totalTokens: accumulator.totalTokens,
     previewMessages: accumulator.previewMessages,
+    ...(accumulator.previewMessagesTruncated ? { previewMessagesTruncated: true } : {}),
     ...(accumulator.firstUserPrompt ? { firstUserPrompt: accumulator.firstUserPrompt } : {}),
     ...(accumulator.lastUserPrompt ? { lastUserPrompt: accumulator.lastUserPrompt } : {}),
     queuedMessageCount: accumulator.queuedMessageCount,
@@ -172,6 +174,7 @@ export function addPreviewMessage(
   })
   if (accumulator.previewMessages.length > SESSION_PREVIEW_MESSAGE_LIMIT) {
     accumulator.previewMessages.shift()
+    accumulator.previewMessagesTruncated = true
   }
   // Why: list scans never store firstUserPrompt (payload/perf). Only the
   // on-demand full-capture path seeds the untruncated copy body.
