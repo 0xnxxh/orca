@@ -1,0 +1,33 @@
+You are seat "claude-opus" in a multi-LLM counsel review.
+
+Review the shit out of the current branch and find performance / functionality regressions.
+
+Scope:
+- Worktree: /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight
+- Base: 8fc892dd023850df379c07cc4e7a46cff9a3ea84 .. HEAD plus uncommitted changes
+- Branch: P1-D-hosted-review-inflight (hosted-review inflight deadlines, lookup backoff, git remote get-url bounds)
+- Scope notes: /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/scope.txt
+- Diff: git diff 8fc892dd023850df379c07cc4e7a46cff9a3ea84 (and any uncommitted changes)
+
+Focus first:
+1) Performance regressions (hot paths, RPC/git calls, timers, unbounded retries/polling, cache thrash, blocking awaits)
+2) Functionality regressions (wrong host identity, deadline cancel races, false cache hits/misses, WSL/SSH/local path differences, silent swallows)
+
+Rules:
+- Review-only. Do not edit production code.
+- Stay in this worktree. Do not follow absolute paths into other checkouts.
+- Proven findings only: file + line, severity (Critical/High/Medium/Low), impact, evidence.
+- Actively try to falsify the branch claim. Prefer concrete failure scenarios over style nits.
+- Cover hot paths touched by the diff (render, stream, send, timers, listeners, unbounded buffers, RPC).
+- Write your FULL markdown report to: /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/reviews/claude-opus.md
+- Create parent dirs if needed. Overwrite if exists.
+- Also put a 3-sentence executive summary in worker_done body.
+- In worker_done payload include: taskId, dispatchId, reportPath, filesModified:[], findingsCount, topSeverity
+
+Report structure:
+# Review — claude-opus
+## Executive summary
+## Findings (table or numbered list with severity, file:line, impact, evidence)
+## Performance surface
+## Functionality / regression surface
+## Residual risks / what you could not verify

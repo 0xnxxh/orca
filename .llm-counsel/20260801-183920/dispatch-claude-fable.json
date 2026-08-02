@@ -1,0 +1,36 @@
+{
+  "id": "a78438cd-e29f-456e-864c-35640c09904c",
+  "ok": true,
+  "result": {
+    "dispatch": {
+      "id": "ctx_023d1570c1c4",
+      "task_id": "task_03d87e4013a6",
+      "assignee_handle": "term_8fcc06ec-c949-4a23-8f97-d597e1304fb8",
+      "assignee_pane_key": "71f7937c-a11c-4370-b09e-a602165fd6d8:d981f2d1-7367-4dba-8cef-20ac787c3ca6",
+      "status": "dispatched",
+      "failure_count": 0,
+      "last_failure": null,
+      "dispatched_at": "2026-08-02 01:40:44",
+      "completed_at": null,
+      "created_at": "2026-08-02 01:40:44",
+      "last_heartbeat_at": null,
+      "requested_agent": null,
+      "base_agent": null,
+      "agent_launch_failure": null,
+      "run_id": "run_df9e74b354f5",
+      "capability_hash": null,
+      "process_incarnation": null,
+      "capability_revoked_at": null,
+      "contract_version": 1,
+      "launch_token_hash": null
+    },
+    "injected": true,
+    "mutation": {
+      "requestId": "c0bc99c7-67b9-4a66-97f6-29e16d41d624",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "c9ef7df8-519e-4c16-87ab-248bf8b41226"
+  }
+}

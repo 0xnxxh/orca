@@ -1,0 +1,20 @@
+{
+  "id": "08634fa1-c9bb-400a-b105-133f5e781e54",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_763dd2ac-6903-4389-90a6-5669d4cba0b8",
+      "tabId": "c9393d84-f480-4182-a54a-65bbf38468ba",
+      "paneKey": "c9393d84-f480-4182-a54a-65bbf38468ba:525283f2-5282-44c9-a005-356761dc01ce",
+      "ptyId": "48e366bb-2436-46a9-bb37-10ace25ada5f::/Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight@@00e45a9e",
+      "worktreeId": "48e366bb-2436-46a9-bb37-10ace25ada5f::/Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight",
+      "title": "counsel-grok",
+      "executionHostId": "local",
+      "hostPlatform": "darwin",
+      "surface": "visible"
+    }
+  },
+  "_meta": {
+    "runtimeId": "c9ef7df8-519e-4c16-87ab-248bf8b41226"
+  }
+}

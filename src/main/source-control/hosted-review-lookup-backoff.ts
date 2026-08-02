@@ -1,4 +1,8 @@
-import { lookupBackoffDelayMs, LOOKUP_BACKOFF_MAX_MS } from './hosted-review-refresh-pacing'
+import {
+  lookupBackoffDelayMs,
+  LOOKUP_BACKOFF_MAX_MS,
+  MAX_BRANCH_MAP_ENTRIES
+} from './hosted-review-refresh-pacing'
 
 /**
  * Per-branch failure escalation for hosted-review lookups (#11532).
@@ -9,7 +13,7 @@ import { lookupBackoffDelayMs, LOOKUP_BACKOFF_MAX_MS } from './hosted-review-ref
  */
 
 /** Bounded like the answer cache, so a churn of dead branches cannot grow it. */
-const MAX_BACKOFF_ENTRIES = 500
+const MAX_BACKOFF_ENTRIES = MAX_BRANCH_MAP_ENTRIES
 
 const failureBackoff = new Map<string, { until: number; failures: number }>()
 

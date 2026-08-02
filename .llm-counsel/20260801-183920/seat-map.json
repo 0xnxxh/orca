@@ -1,0 +1,22 @@
+{
+  "grok": {
+    "task": "task_e8a579b978bc",
+    "dispatch": "ctx_c7422385152c",
+    "term": null
+  },
+  "codex": {
+    "task": "task_8facc22c5889",
+    "dispatch": "ctx_884b2beebde5",
+    "term": null
+  },
+  "claude-opus": {
+    "task": "task_b7eca83a7bf8",
+    "dispatch": "ctx_ffc9870c8803",
+    "term": null
+  },
+  "claude-fable": {
+    "task": "task_03d87e4013a6",
+    "dispatch": "ctx_023d1570c1c4",
+    "term": null
+  }
+}

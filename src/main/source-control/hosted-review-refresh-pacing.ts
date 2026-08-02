@@ -38,11 +38,29 @@ export const LOOKUP_BACKOFF_MAX_MS = 15 * 60_000
 export const HOSTED_REVIEW_LOOKUP_DEADLINE_MS = 2 * 60_000
 
 /**
+ * Single bound for every branch-keyed map in this subsystem — cached answers,
+ * scope generations and failure backoff. One knob, so tuning one map cannot
+ * silently leave the others behind.
+ */
+export const MAX_BRANCH_MAP_ENTRIES = 500
+
+/**
  * Why: a memory backstop, not a concurrency limit. Evicting a live lookup costs
  * a duplicate provider call — the quota problem this cache exists to prevent —
- * so the cap sits far above the branch count any client polls at once.
+ * so the cap must stay far above the branch count any client polls at once.
  */
-export const MAX_INFLIGHT_LOOKUPS = 500
+export const MAX_INFLIGHT_LOOKUPS = MAX_BRANCH_MAP_ENTRIES
+
+/**
+ * A detached lookup cannot be cancelled, so one that never settles is stranded
+ * for the life of the process. Two per branch leaves room for the retry that
+ * proves a host recovered; past that the branch is wedged, not slow, and asking
+ * again only strands another provider call.
+ */
+export const MAX_DETACHED_LOOKUPS_PER_KEY = 2
+
+/** Process-wide backstop for the same leak when many branches wedge at once. */
+export const MAX_DETACHED_LOOKUPS = 64
 
 // Why: capped so a long-lived failure settles at LOOKUP_BACKOFF_MAX_MS rather
 // than overflowing the exponent.

@@ -1,0 +1,29 @@
+You are a peer rater for an anonymized multi-reviewer counsel. Do NOT re-read the full branch diff.
+
+Read ONLY these anonymized reports (and the packet if provided):
+- /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/reviews-blind/A.md
+- /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/reviews-blind/B.md
+- /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/reviews-blind/C.md
+- /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/reviews-blind/D.md
+- optional: /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/ratings-packet-blind.md
+
+Do not guess which model wrote which letter. Do not use model names as row keys.
+
+Rate EVERY letter A–D (no self-labeling — you do not know which is yours).
+Integers 1–5 for each:
+- evidence_quality (file/line + concrete impact)
+- regression_catch (perf + functionality bugs that look real)
+- false_positive_risk (5 = low FP / trustworthy; 1 = lots of speculation)
+- actionability (clear smallest fix)
+
+Also for each letter:
+- best_unique finding (or "none")
+- one overreach/false positive if any (or "none")
+
+Write ONLY: /Users/jinjingliang/Documents/projects/orca/P1-D-hosted-review-inflight/.llm-counsel/20260801-183920/ratings-blind/rater-3.md
+
+Table required:
+| report | evidence | regression_catch | false_positive_risk | actionability | best_unique | overreach |
+
+Rows: A, B, C, D only.
+Then ≤5 lines of notes. worker_done with reportPath pointing at the ratings-blind file.

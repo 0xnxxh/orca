@@ -1,5 +1,4 @@
-import { gitExecFileAsync } from '../git/runner'
-import { getSshGitProvider } from '../providers/ssh-git-dispatch'
+import { isTransientGitProbeError, readRemoteUrl } from '../git/remote-url-probe'
 
 export type GiteaRepoRef = {
   host: string
@@ -153,22 +152,24 @@ export async function getGiteaRepoRefForRemote(
     return repoRefCache.get(cacheKey)!
   }
   try {
-    const sshGitProvider = connectionId ? getSshGitProvider(connectionId) : null
-    if (connectionId && !sshGitProvider) {
+    const stdout = await readRemoteUrl(
+      {
+        repoPath,
+        connectionId,
+        ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
+      },
+      remoteName
+    )
+    if (stdout === null) {
       return null
     }
-    const { stdout } = sshGitProvider
-      ? await sshGitProvider.exec(['remote', 'get-url', remoteName], repoPath)
-      : await gitExecFileAsync(['remote', 'get-url', remoteName], {
-          cwd: repoPath,
-          ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
-        })
     const result = parseGiteaRepoRef(stdout)
     rememberRepoRefCacheEntry(cacheKey, result)
     return result
-  } catch {
-    if (connectionId) {
-      // Why: SSH provider failures are often transient reconnect/tunnel states;
+  } catch (error) {
+    if (connectionId || isTransientGitProbeError(error)) {
+      // Why: SSH provider failures are often transient reconnect/tunnel states,
+      // and a probe killed on its deadline says nothing about the remote either;
       // caching them as "not Gitea" would poison the repo for the session.
       return null
     }

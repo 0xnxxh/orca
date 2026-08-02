@@ -1,5 +1,21 @@
 import type { HostedReviewInfo } from '../../shared/hosted-review'
 import {
+  __resetHostedReviewActiveClaimsForTests,
+  isActiveBranch,
+  noteActiveClaim
+} from './hosted-review-active-branch-claims'
+import {
+  __resetDetachedHostedReviewLookupsForTests,
+  hasDetachedLookupCapacity,
+  noteDetachedLookup,
+  settleDetachedLookup
+} from './hosted-review-detached-lookups'
+import {
+  __resetHostedReviewScopeGenerationsForTests,
+  bumpScopeGeneration,
+  scopeGeneration
+} from './hosted-review-scope-generations'
+import {
   __resetHostedReviewLookupBackoffForTests,
   backoffUntil,
   clearFailures,
@@ -7,10 +23,9 @@ import {
   noteFailure
 } from './hosted-review-lookup-backoff'
 import {
-  ACTIVE_CLAIM_TTL_MS,
   ACTIVE_REFRESH_INTERVAL_MS,
   HOSTED_REVIEW_LOOKUP_DEADLINE_MS,
-  MAX_ACTIVE_BRANCHES,
+  MAX_BRANCH_MAP_ENTRIES,
   MAX_INFLIGHT_LOOKUPS,
   NO_REVIEW_REFRESH_INTERVAL_MS
 } from './hosted-review-refresh-pacing'
@@ -31,12 +46,14 @@ import {
 // Why: a found review still refreshes at the callers' poll cadence; the cache
 // exists to collapse concurrent clients, not to make review state go stale.
 const FOUND_REVIEW_TTL_MS = 60_000
-const MAX_ENTRIES = 500
+const MAX_ENTRIES = MAX_BRANCH_MAP_ENTRIES
 
 type CacheEntry = {
   review: HostedReviewInfo | null
   fetchedAt: number
   headOid: string | null
+  /** When the lookup that produced this answer began, for straggler ordering. */
+  startedAt: number
 }
 
 type InflightRecord = {
@@ -50,11 +67,6 @@ type InflightRecord = {
 
 const entries = new Map<string, CacheEntry>()
 const inflight = new Map<string, InflightRecord>()
-/** Branches a caller reported as its current selection, least recent first. */
-const activeClaims = new Map<string, number>()
-/** Bumped per repo on invalidation so a lookup that predates it cannot store. */
-const scopeGenerations = new Map<string, number>()
-
 // Why: NUL is the one byte a repo path or branch name cannot contain, so a
 // scope prefix cannot straddle a component boundary — invalidating `/a/b` must
 // not also flush the unrelated repo at `/a/b c`.
@@ -100,36 +112,6 @@ export function hostedReviewBranchCacheKey(identity: HostedReviewBranchCacheIden
   ].join(KEY_SEPARATOR)
 }
 
-/**
- * Records the caller's current selection, reporting whether the branch was not
- * already active. Claims are least-recently-used so the fast tier stays bounded
- * no matter how many a client asserts.
- */
-function noteActiveClaim(key: string): boolean {
-  const now = Date.now()
-  for (const [candidate, claimedAt] of activeClaims) {
-    if (now - claimedAt > ACTIVE_CLAIM_TTL_MS) {
-      activeClaims.delete(candidate)
-    }
-  }
-  const wasActive = activeClaims.has(key)
-  activeClaims.delete(key)
-  activeClaims.set(key, now)
-  while (activeClaims.size > MAX_ACTIVE_BRANCHES) {
-    const oldest = activeClaims.keys().next().value
-    if (oldest === undefined) {
-      break
-    }
-    activeClaims.delete(oldest)
-  }
-  return !wasActive
-}
-
-function isActiveBranch(key: string): boolean {
-  const claimedAt = activeClaims.get(key)
-  return claimedAt !== undefined && Date.now() - claimedAt <= ACTIVE_CLAIM_TTL_MS
-}
-
 // Why: a merged review is the one answer that depends on the inspected head —
 // the merged-at-head carve-out keeps it visible only while the head matches.
 // Negative answers are deliberately head-insensitive, so a branch under active
@@ -166,25 +148,6 @@ function storeEntry(key: string, entry: CacheEntry): void {
   }
 }
 
-function scopeGeneration(scope: string): number {
-  return scopeGenerations.get(scope) ?? 0
-}
-
-function bumpScopeGeneration(scope: string): void {
-  const next = scopeGeneration(scope) + 1
-  scopeGenerations.delete(scope)
-  scopeGenerations.set(scope, next)
-  // Why: an evicted scope reads as generation 0, which only makes a lookup in
-  // flight at eviction discard its result — a wasted call, never a stale one.
-  while (scopeGenerations.size > MAX_ENTRIES) {
-    const oldest = scopeGenerations.keys().next().value
-    if (oldest === undefined) {
-      break
-    }
-    scopeGenerations.delete(oldest)
-  }
-}
-
 /** Clears the key's in-flight record only if it is still this lookup's. */
 function releaseInflight(key: string, token: object): boolean {
   if (inflight.get(key)?.token !== token) {
@@ -198,6 +161,9 @@ function releaseInflight(key: string, token: object): boolean {
  * Expires records that outlived the deadline without their timer firing. Main's
  * timers are suspended across a system sleep, so wall-clock age — not
  * `setTimeout` alone — is what actually bounds how long a branch stays pinned.
+ *
+ * The guarantee covers tracked records only: one the size cap evicted is no
+ * longer reachable here and falls back to its own suspended timer.
  */
 function expireOverdueInflight(now: number): void {
   let overdue: InflightRecord[] | undefined
@@ -222,6 +188,9 @@ function trackInflight(key: string, record: InflightRecord): void {
     }
     // Why: drop the record without expiring it — its own deadline still
     // releases its callers, and evicting is about memory, not about failing.
+    // It does forfeit the sweep's wall-clock release, so the cap must stay far
+    // above realistic concurrency: below it, sleep-suspended timers are all an
+    // evicted record's callers have left.
     inflight.delete(oldest)
   }
 }
@@ -250,14 +219,40 @@ export function __resetHostedReviewBranchCacheForTests(): void {
   entries.clear()
   inflight.clear()
   __resetHostedReviewLookupBackoffForTests()
-  activeClaims.clear()
-  scopeGenerations.clear()
+  __resetHostedReviewActiveClaimsForTests()
+  __resetDetachedHostedReviewLookupsForTests()
+  __resetHostedReviewScopeGenerationsForTests()
 }
 
-/** A newer lookup has already answered for this key since `startedAt`. */
-function answeredSince(key: string, startedAt: number): boolean {
+/**
+ * Whether a lookup that no longer owns the key may still install its answer.
+ * Losing the record — to the deadline or to the size cap — costs it the branch,
+ * so it may only fill a gap or replace an answer a strictly older attempt stored
+ * after this one began. It must never overwrite the pre-refresh answer its own
+ * callers were served, and never beat a replacement to the key: a late `null`
+ * landing there reads as a fresh "no review" and short-circuits the lookup that
+ * was about to give the real one.
+ */
+function canAdoptDetachedAnswer(key: string, startedAt: number): boolean {
+  if (inflight.has(key)) {
+    return false
+  }
   const current = entries.get(key)
-  return current !== undefined && current.fetchedAt >= startedAt
+  return current === undefined || (current.startedAt < startedAt && current.fetchedAt >= startedAt)
+}
+
+/** Why the branch must not be asked again yet, or null when a lookup may start. */
+function lookupUnavailableReason(key: string): string | null {
+  const until = backoffUntil(key)
+  if (until !== null) {
+    return `Hosted review lookup is backing off after repeated failures. Retrying after ${new Date(
+      until
+    ).toLocaleTimeString()}.`
+  }
+  if (!hasDetachedLookupCapacity(key)) {
+    return 'Hosted review lookup is still running from an earlier attempt that never answered. It will be retried once that attempt settles.'
+  }
+  return null
 }
 
 /**
@@ -300,6 +295,9 @@ function startLookup(
     if (releaseInflight(key, token)) {
       noteFailure(key)
     }
+    // Why: the lookup runs on with nothing able to stop it, so it is counted
+    // until it settles — that count is the only bound on stranded work.
+    noteDetachedLookup(key)
     const stale = entries.get(key)
     if (stale) {
       release(stale.review)
@@ -327,11 +325,18 @@ function startLookup(
       const review = await lookup()
       // Why: a review created while this lookup was out makes its answer older
       // than the invalidation; storing it would re-pin the stale "no review".
-      // A timed-out lookup additionally yields to whatever answered after it
-      // started, so a slow straggler cannot overwrite the current answer.
-      if (generation === scopeGeneration(scope) && !(timedOut && answeredSince(key, startedAt))) {
-        storeEntry(key, { review, fetchedAt: Date.now(), headOid })
-        // A late answer proves the provider recovered, so stop backing off.
+      // Owning the key is what licenses a store outright — anything else is a
+      // straggler and has to prove it still outranks what is there.
+      const stored =
+        generation === scopeGeneration(scope) &&
+        (inflight.get(key)?.token === token || canAdoptDetachedAnswer(key, startedAt))
+      if (stored) {
+        storeEntry(key, { review, fetchedAt: Date.now(), headOid, startedAt })
+      }
+      // Why: only an answer that beat the deadline proves the provider is
+      // healthy. Clearing on a straggler leaves a chronically wedged host at the
+      // base window forever, re-asking as fast as the deadline expires.
+      if (stored && !timedOut) {
         clearFailures(key)
       }
       release(review)
@@ -341,7 +346,11 @@ function startLookup(
       if (timedOut) {
         return
       }
-      noteFailure(key)
+      // Why: a record the size cap dropped has a live successor, and backing the
+      // branch off would slow the retry that is already running.
+      if (inflight.get(key)?.token === token) {
+        noteFailure(key)
+      }
       // Why: the last good review beats an error card here just as it does on
       // the backed-off path — otherwise it blinks out on the first failure.
       // An invalidation drops the entry, so this cannot revive a retired answer.
@@ -355,6 +364,9 @@ function startLookup(
       completed = true
       if (timer !== undefined) {
         clearTimeout(timer)
+      }
+      if (timedOut) {
+        settleDetachedLookup(key)
       }
       releaseInflight(key, token)
     }
@@ -397,18 +409,14 @@ export async function withHostedReviewBranchCache(
     return pending.promise
   }
 
-  const until = backoffUntil(key)
-  if (until !== null) {
+  const unavailable = lookupUnavailableReason(key)
+  if (unavailable !== null) {
     // Why: a stale answer beats an error card, but with nothing cached the
     // caller must hear the failure rather than read it as "no review".
     if (cached) {
       return cached.review
     }
-    throw new Error(
-      `Hosted review lookup is backing off after repeated failures. Retrying after ${new Date(
-        until
-      ).toLocaleTimeString()}.`
-    )
+    throw new Error(unavailable)
   }
 
   return startLookup(key, repoScope(identity.repoPath, identity.connectionId), headOid, lookup)

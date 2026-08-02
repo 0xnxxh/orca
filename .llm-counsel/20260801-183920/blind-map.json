@@ -1,0 +1,14 @@
+{
+  "letter_to_seat": {
+    "C": "grok",
+    "D": "codex",
+    "B": "claude-opus",
+    "A": "claude-fable"
+  },
+  "seat_to_letter": {
+    "grok": "C",
+    "codex": "D",
+    "claude-opus": "B",
+    "claude-fable": "A"
+  }
+}
