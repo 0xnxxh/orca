@@ -259,6 +259,7 @@ import {
   getPtyIdsForConnection
 } from './pty'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
+import { getSshPtyConsumerRecovery } from '../ssh/ssh-pty-consumer-recovery'
 
 describe('SSH IPC handlers', () => {
   const relayBuildId = '0.1.0+ipc-test'
@@ -2632,6 +2633,75 @@ describe('SSH IPC handlers', () => {
     expect(mockStore.markSshRemotePtyLeases).toHaveBeenCalledWith('ssh-1', 'detached')
     expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'pty-1', 'expired')
     expect(mockForceStopRelayForTarget).toHaveBeenCalledWith(conn, 'ssh-1')
+  })
+
+  describe('SSH PTY consumer identity across failed connects', () => {
+    function makeTarget(id: string): SshTarget {
+      return { id, label: 'Server', host: 'example.com', port: 22, username: 'deploy' }
+    }
+
+    function markConnected(targetId: string): void {
+      mockConnectionManager.getState.mockReturnValue({
+        targetId,
+        status: 'connected',
+        error: null,
+        reconnectAttempt: 0
+      })
+    }
+
+    it('reclaims the consumer identity after a failed transport connect', async () => {
+      const targetId = 'ssh-consumer-identity-connect-failure'
+      mockSshStore.getTarget.mockReturnValue(makeTarget(targetId))
+      mockConnectionManager.connect.mockRejectedValueOnce(new Error('transport refused'))
+
+      await expect(handlers.get('ssh:connect')!(null, { targetId })).rejects.toThrow(
+        'transport refused'
+      )
+      const claimedId = getSshPtyConsumerRecovery(targetId)?.clientInstanceId
+      expect(claimedId).toEqual(expect.any(String))
+
+      mockConnectionManager.connect.mockResolvedValue({})
+      markConnected(targetId)
+      await handlers.get('ssh:connect')!(null, { targetId })
+
+      expect(getSshPtyConsumerRecovery(targetId)?.clientInstanceId).toBe(claimedId)
+      expect(mockStore.upsertSshPtyConsumerRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({ targetId, clientInstanceId: claimedId })
+      )
+    })
+
+    it('resumes the remembered owner lease after a failed establish', async () => {
+      const targetId = 'ssh-consumer-identity-establish-failure'
+      mockSshStore.getTarget.mockReturnValue(makeTarget(targetId))
+      mockConnectionManager.connect.mockResolvedValue({})
+      markConnected(targetId)
+      // Why: fail the first request after the consumer session opens, so establish() rejects with an
+      // owner lease already remembered — the state a retry must be able to resume from.
+      const openClientResponse = await mockMux.request('pty.openClient')
+      mockMux.request.mockImplementationOnce(() => Promise.resolve(openClientResponse))
+      mockMux.request.mockImplementationOnce(() =>
+        Promise.reject(new Error('relay handshake aborted'))
+      )
+
+      await expect(handlers.get('ssh:connect')!(null, { targetId })).rejects.toThrow(
+        'relay handshake aborted'
+      )
+      const claimedId = getSshPtyConsumerRecovery(targetId)?.clientInstanceId
+      expect(claimedId).toEqual(expect.any(String))
+
+      mockMux.request.mockClear()
+      await handlers.get('ssh:connect')!(null, { targetId })
+
+      expect(getSshPtyConsumerRecovery(targetId)?.clientInstanceId).toBe(claimedId)
+      expect(mockMux.request).toHaveBeenCalledWith(
+        'pty.openClient',
+        expect.objectContaining({
+          clientInstanceId: claimedId,
+          resume: { ownerGeneration: 1, ownerLease: 'ipc-test-owner' }
+        }),
+        expect.anything()
+      )
+    })
   })
 
   it('ssh:getState returns connection state', async () => {
