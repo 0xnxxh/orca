@@ -28,7 +28,7 @@ function keyboardEvent(
   return event
 }
 
-function createHarness(): {
+function createHarness(options: { paneCount?: number } = {}): {
   deps: KeyboardHandlersDeps
   editable: HTMLInputElement
   sendInput: ReturnType<typeof vi.fn>
@@ -59,9 +59,14 @@ function createHarness(): {
       getSelection: vi.fn(() => '')
     }
   }
+  // A second pane only has to exist for the pane-scoped actions that require one.
+  const panes = [pane, { ...pane, id: 2, leafId: '00000000-0000-4000-8000-000000000002' }].slice(
+    0,
+    options.paneCount ?? 1
+  )
   const manager = {
     getActivePane: () => pane,
-    getPanes: () => [pane]
+    getPanes: () => panes
   } as unknown as PaneManager
   const route = installTerminalImeCompositionRoute({
     terminalElement,
@@ -163,6 +168,51 @@ describe('Windows IME keyboard ownership', () => {
     harness.terminalInput.dispatchEvent(redispatch)
 
     expect(redispatch.defaultPrevented).toBe(true)
+    hook.unmount()
+    harness.dispose()
+  })
+
+  // The Enter exemption exists for the deferred newline, which is the `sendInput` branch
+  // alone. `Mod+Shift+Enter` is bound to expand a pane, and running it mid-preedit rearranges
+  // the layout under a user who is still choosing a candidate.
+  it('does not expand a pane on a composing Mod+Shift+Enter', () => {
+    const harness = createHarness({ paneCount: 2 })
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.startComposition()
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        timeStamp: 10,
+        isComposing: true,
+        ctrlKey: true,
+        shiftKey: true
+      })
+    )
+
+    expect(harness.deps.toggleExpandPane).not.toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it('still expands a pane on an unmarked Mod+Shift+Enter', () => {
+    const harness = createHarness({ paneCount: 2 })
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        timeStamp: 10,
+        ctrlKey: true,
+        shiftKey: true
+      })
+    )
+
+    expect(harness.deps.toggleExpandPane).toHaveBeenCalled()
     hook.unmount()
     harness.dispose()
   })

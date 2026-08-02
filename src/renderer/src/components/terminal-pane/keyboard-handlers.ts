@@ -457,8 +457,30 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
+      const terminalPaneForImeShortcut = manager.getActivePane() ?? manager.getPanes()[0]
+      const hasPendingImeComposition = hasPendingTerminalImeComposition(
+        terminalPaneForImeShortcut?.terminal.element
+      )
+      const imeProcessEnter = isWindows && hasPendingImeComposition && isTerminalImeProcessEnter(e)
+      // Why: Windows reports the composing Enter as `Process`, so the raw event resolves to
+      // a different action than the one dispatched below. Resolve it once, here, or the IME
+      // guard decides against a binding the dispatch will never run.
+      const shortcutEvent = imeProcessEnter
+        ? {
+            key: 'Enter',
+            code: e.code,
+            metaKey: e.metaKey,
+            ctrlKey: e.ctrlKey,
+            altKey: e.altKey,
+            shiftKey: e.shiftKey,
+            repeat: e.repeat
+          }
+        : e
+
       if (
-        terminalShortcutIsOwnedByIme(e, resolveShortcutEvent, { enterIsDeferredToCommit: true })
+        terminalShortcutIsOwnedByIme(e, () => resolveShortcutEvent(shortcutEvent), {
+          enterIsDeferredToCommit: true
+        })
       ) {
         return
       }
@@ -502,22 +524,6 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
-      const terminalPaneForImeShortcut = manager.getActivePane() ?? manager.getPanes()[0]
-      const hasPendingImeComposition = hasPendingTerminalImeComposition(
-        terminalPaneForImeShortcut?.terminal.element
-      )
-      const imeProcessEnter = isWindows && hasPendingImeComposition && isTerminalImeProcessEnter(e)
-      const shortcutEvent = imeProcessEnter
-        ? {
-            key: 'Enter',
-            code: e.code,
-            metaKey: e.metaKey,
-            ctrlKey: e.ctrlKey,
-            altKey: e.altKey,
-            shiftKey: e.shiftKey,
-            repeat: e.repeat
-          }
-        : e
       const action = resolveShortcutEvent(shortcutEvent)
       if (!action) {
         return

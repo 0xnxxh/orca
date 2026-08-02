@@ -22,6 +22,12 @@ type ResolvedShortcutAction = { readonly type: string } | null
  * the keystroke commits the composition instead of submitting a line the user was
  * still composing.
  *
+ * That exemption belongs to the action that defers, not to the key shape: `sendInput` is
+ * the only branch that holds its newline until the commit. `Mod+Shift+Enter` is bound to
+ * expand a pane by default, and any terminal action can be rebound onto an Enter chord —
+ * exempting those would run them mid-preedit, which is the whole failure this guard exists
+ * to stop.
+ *
  * Resolution is pure, so asking for the action before deciding costs nothing.
  */
 export function terminalShortcutIsOwnedByIme(
@@ -32,8 +38,9 @@ export function terminalShortcutIsOwnedByIme(
   if (!isImeCompositionKeyDown(event)) {
     return false
   }
-  if (enterIsDeferredToCommit && event.code === 'Enter') {
+  const action = resolveAction(event)
+  if (action?.type === 'switchInputSource') {
     return false
   }
-  return resolveAction(event)?.type !== 'switchInputSource'
+  return !(enterIsDeferredToCommit && event.code === 'Enter' && action?.type === 'sendInput')
 }

@@ -12,6 +12,7 @@ function keydown(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent 
 
 const sendInput = (): { type: string } => ({ type: 'sendInput' })
 const switchInputSource = (): { type: string } => ({ type: 'switchInputSource' })
+const toggleExpandActivePane = (): { type: string } => ({ type: 'toggleExpandActivePane' })
 const noAction = (): null => null
 
 describe('terminalShortcutIsOwnedByIme', () => {
@@ -30,16 +31,51 @@ describe('terminalShortcutIsOwnedByIme', () => {
 
   // Both exemptions matter in the same direction: claiming them would break a path that
   // already handles composition, rather than merely declining to fix one.
-  it('releases Enter for a caller that defers it to the commit', () => {
-    const event = keydown({ key: 'Process', code: 'Enter', keyCode: 229, isComposing: true })
-    expect(terminalShortcutIsOwnedByIme(event, sendInput, { enterIsDeferredToCommit: true })).toBe(
-      false
-    )
+  it.each([
+    ['the Process shape', { key: 'Process', code: 'Enter', keyCode: 229, isComposing: true }],
+    ['the marked real shape', { key: 'Enter', code: 'Enter', keyCode: 13, isComposing: true }]
+  ])('releases Enter in %s for a caller that defers it to the commit', (_shape, init) => {
+    expect(
+      terminalShortcutIsOwnedByIme(keydown(init), sendInput, { enterIsDeferredToCommit: true })
+    ).toBe(false)
   })
 
   it('claims Enter for a caller with no defer path, so it commits instead of submitting', () => {
     const event = keydown({ key: 'Process', code: 'Enter', keyCode: 229, isComposing: true })
     expect(terminalShortcutIsOwnedByIme(event, sendInput)).toBe(true)
+  })
+
+  // The defer path is `sendInput` and nothing else, so an Enter chord bound to any other
+  // terminal action has no deferral to fall through to and must stay claimed.
+  it('claims an Enter chord bound to a non-deferring action even where Enter defers', () => {
+    const event = keydown({
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      isComposing: true,
+      ctrlKey: true,
+      shiftKey: true
+    })
+    expect(
+      terminalShortcutIsOwnedByIme(event, toggleExpandActivePane, {
+        enterIsDeferredToCommit: true
+      })
+    ).toBe(true)
+  })
+
+  it('leaves the same chord alone when no IME marks it', () => {
+    const event = keydown({
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      ctrlKey: true,
+      shiftKey: true
+    })
+    expect(
+      terminalShortcutIsOwnedByIme(event, toggleExpandActivePane, {
+        enterIsDeferredToCommit: true
+      })
+    ).toBe(false)
   })
 
   it('releases the input-source switch so the OS still receives it', () => {
