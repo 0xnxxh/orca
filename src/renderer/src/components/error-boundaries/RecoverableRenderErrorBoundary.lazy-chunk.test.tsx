@@ -14,8 +14,6 @@ vi.mock('@/lib/react-error-boundary-reporting', () => ({
 }))
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
-// Only a guard left by a *different* document proves the reload landed, which is
-// what makes lazy-with-retry emit the sentinel this boundary suppresses.
 const LANDED_RELOAD_GUARD_VALUE = 'doc-before-the-reload'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true

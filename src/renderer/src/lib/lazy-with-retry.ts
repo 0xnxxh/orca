@@ -13,10 +13,8 @@ import {
  * ']'"). React.lazy permanently caches that rejection, so the error boundary's
  * "Retry" — which just re-renders the same Lazy — can never recover it; the
  * surface stays dead and reports a react-error-boundary crash. This wrapper first
- * retries transient fetch failures, then performs ONE guarded full reload — routed
- * through the intentional-restart path so Orca's dirty-tab beforeunload guard cannot
- * silently veto it — to refetch fresh chunk bytes and rebuild the ES module map,
- * before finally falling through to the error boundary.
+ * retries transient failures, then requests one restart-prepared reload before
+ * falling through to the error boundary.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror React.lazy's own ComponentType<any> constraint so every existing call site type-checks unchanged.
@@ -49,23 +47,15 @@ export function isLazyChunkLoadError(error: unknown): error is LazyChunkLoadErro
   return error instanceof LazyChunkLoadError
 }
 
-// One recovery reload per session. The guard survives the reload itself (so we
-// never loop) but resets when the window/app closes, so a later launch — e.g.
-// after an update ships fresh chunks — can earn another reload. sessionStorage
-// (not localStorage) gives exactly that lifetime; a healthy sibling load never
-// clears it, otherwise an auto-mounted corrupt chunk would loop. The one exception
-// is a reload this document proved never landed (see clearChunkReloadGuard).
+// The session guard survives a landed reload to prevent loops, but a surviving
+// document clears its own token so a later failure can retry recovery.
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
-// Stand-in document identity for hosts without a usable performance.timeOrigin; a
-// reload re-evaluates this module, so a fresh value still means the reload landed.
+// Reloading reevaluates this fallback, giving the new document a different token.
 const FALLBACK_RELOAD_TOKEN = `doc-${Math.random().toString(36).slice(2)}`
 const DEFAULT_RETRIES = 2
 const DEFAULT_BASE_DELAY_MS = 250
 
-// The guard stores the requesting document's identity, not a bare flag: reload() can be
-// vetoed (beforeunload preventDefault → Electron cancels the navigation) and a bare flag
-// would then read as "recovery ran" forever inside a document that never reloaded (crash
-// b860def2). timeOrigin changes per navigation, so a value still ours means no reload.
+// A matching token proves this document requested a reload that never landed.
 function currentDocumentReloadToken(): string {
   const timeOrigin = typeof performance === 'undefined' ? Number.NaN : performance.timeOrigin
   return Number.isFinite(timeOrigin) && timeOrigin > 0 ? String(timeOrigin) : FALLBACK_RELOAD_TOKEN
@@ -98,9 +88,6 @@ function markChunkReloadAttempted(): boolean {
   }
 }
 
-// Why: a token this document wrote itself proves no reload happened, so leaving it in
-// place would deny the surface recovery for the whole session even after whatever
-// vetoed the navigation is gone (e.g. the user saved the dirty tab).
 function clearChunkReloadGuard(): void {
   try {
     window.sessionStorage.removeItem(RELOAD_GUARD_KEY)
@@ -109,12 +96,9 @@ function clearChunkReloadGuard(): void {
   }
 }
 
-// sessionStorage cannot bound a document that keeps re-arming its own guard, so cap
-// recovery requests in memory; the counter dies with the document a reload replaces.
+// A per-document cap prevents repeated vetoes from creating a reload loop.
 const MAX_RELOAD_REQUESTS_PER_DOCUMENT = 2
 let reloadRequestsThisDocument = 0
-// A sibling chunk failing mid-navigation reads the same 'reload-not-landed' guard;
-// clearing it there would re-arm a document that is already tearing down.
 let reloadRequestInFlight = false
 
 export function resetLazyChunkReloadRequestsForTest(): void {
@@ -211,11 +195,15 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     reloadRequestsThisDocument += 1
     reloadRequestInFlight = true
     recordReloadBreadcrumb('lazy_chunk_reload', reloadKey, failureMessage)
-    // Resolves only if the navigation was refused; a landed reload kills this document.
-    const outcome: LazyChunkRecoveryReloadOutcome = await requestLazyChunkRecoveryReload(window)
-    reloadRequestInFlight = false
-    clearChunkReloadGuard()
-    recordReloadBreadcrumb('lazy_chunk_reload_vetoed', reloadKey, failureMessage, outcome)
+    let outcome: LazyChunkRecoveryReloadOutcome = 'request-failed'
+    try {
+      // A landed reload tears down this document before the promise settles.
+      outcome = await requestLazyChunkRecoveryReload(window)
+    } finally {
+      reloadRequestInFlight = false
+      clearChunkReloadGuard()
+      recordReloadBreadcrumb('lazy_chunk_reload_vetoed', reloadKey, failureMessage, outcome)
+    }
     throw lastError
   }
 
@@ -228,8 +216,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     !reloadRequestInFlight &&
     isKnownDynamicImportFailure(lastError)
   ) {
-    // Why here and not only at request time: this crumb lands in the same tick as the
-    // crash report, so the 30-entry ring cannot evict it the way it evicted b860def2's.
+    // Record the veto beside the resulting crash report before the ring can evict it.
     clearChunkReloadGuard()
     recordReloadBreadcrumb(
       'lazy_chunk_reload_vetoed',
@@ -239,10 +226,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     )
   }
 
-  // No proven reload (SSR / node / blocked storage / a reload this document asked
-  // for but never got) or unknown failure: re-throw the original error so normal
-  // error reporting semantics stay intact. Boundaries suppress the sentinel, so
-  // wrapping an unproven recovery here would hide the failure entirely.
+  // Without a proven reload, preserve normal error-reporting behavior.
   throw lastError
 }
 

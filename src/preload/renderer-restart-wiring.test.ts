@@ -1,36 +1,45 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { ORCA_RENDERER_UNLOAD_PREVENTED_EVENT } from '../shared/renderer-shutdown-events'
+import { ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT } from '../shared/updater-renderer-events'
+import {
+  prepareAndInvokeUpdaterInstall,
+  relayRendererUnloadPrevented,
+  relayUpdaterStatus
+} from './renderer-restart-wiring'
 
-describe('preload restart wiring', () => {
-  const source = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
+describe('renderer restart wiring', () => {
+  it('relays updater status and prevented unload events', () => {
+    const eventTarget = new EventTarget()
+    const unloadPrevented = vi.fn()
+    const handleStatus = vi.fn()
+    eventTarget.addEventListener(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT, unloadPrevented)
 
-  it('relays prevented unload and async updater failure IPC into renderer lifecycle events', () => {
-    expect(source).toContain("ipcRenderer.on('updater:status'")
-    expect(source).toContain('updaterQuitAbortRelay.handleStatus(status)')
-    expect(source).toContain("ipcRenderer.on('window:unload-prevented'")
-    expect(source).toContain(
-      'window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))'
-    )
+    relayUpdaterStatus({ handleStatus }, { state: 'error', message: 'install failed' })
+    relayRendererUnloadPrevented(eventTarget)
+
+    expect(handleStatus).toHaveBeenCalledWith({ state: 'error', message: 'install failed' })
+    expect(unloadPrevented).toHaveBeenCalledTimes(1)
   })
 
-  it('marks updater preparation before invoking main and aborts it on immediate IPC failure', () => {
-    const start = source.indexOf('quitAndInstall: async (): Promise<void> => {')
-    const end = source.indexOf('onStatus: (callback) => {', start)
-    expect(start).toBeGreaterThanOrEqual(0)
-    expect(end).toBeGreaterThan(start)
-    const block = source.slice(start, end)
-    const prepare = block.indexOf('await prepareRendererForAppRestart(window, {')
-    const markPrepared = block.indexOf('updaterQuitAbortRelay.markPrepared()')
-    const invoke = block.indexOf("ipcRenderer.invoke('updater:quitAndInstall')")
-    const abort = block.indexOf('updaterQuitAbortRelay.abort()')
+  it('marks preparation before invoking main and aborts on IPC failure', async () => {
+    const eventTarget = new EventTarget()
+    const calls: string[] = []
+    eventTarget.addEventListener(ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT, () => {
+      calls.push('prepared')
+    })
+    const relay = {
+      markPrepared: () => calls.push('marked'),
+      abort: () => calls.push('aborted')
+    }
+    const invoke = vi.fn(async () => {
+      calls.push('invoked')
+      throw new Error('IPC failed')
+    })
 
-    expect(prepare).toBeGreaterThanOrEqual(0)
-    expect(markPrepared).toBeGreaterThan(prepare)
-    expect(invoke).toBeGreaterThan(markPrepared)
-    expect(abort).toBeGreaterThan(invoke)
-    expect(block).toMatch(
-      /try \{\s*return await ipcRenderer\.invoke\('updater:quitAndInstall'\)\s*\} catch \(error\) \{\s*updaterQuitAbortRelay\.abort\(\)\s*throw error\s*\}/
+    await expect(prepareAndInvokeUpdaterInstall(eventTarget, relay, invoke)).rejects.toThrow(
+      'IPC failed'
     )
+
+    expect(calls).toEqual(['prepared', 'marked', 'invoked', 'aborted'])
   })
 })

@@ -14,12 +14,7 @@ type State = {
   fileId: string
 }
 
-// Module-scoped, not per instance: EditorContent re-keys this boundary per open file,
-// so an instance field would re-record on every markdown tab switch and flush the
-// 30-entry breadcrumb ring that this very evidence lives in. The key is the cause's
-// name+message, which embeds per-chunk URLs for fetch failures, so a session that
-// exhausts recovery across many lazy sites can accumulate dozens of entries — small
-// and bounded by distinct failures, not by one.
+// Module scope deduplicates breadcrumbs across file-keyed boundary remounts.
 const recordedLazyChunkCauses = new Set<string>()
 
 export function clearLazyChunkBreadcrumbDedupeForTest(): void {
@@ -60,17 +55,12 @@ export class RichMarkdownErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('[RichMarkdownEditor] render crash contained by boundary', error, info)
-    // Retries and the one guarded reload are already spent, so a crash report is not
-    // actionable — but it was the only artifact naming this surface, so leave a
-    // breadcrumb. Fallback still renders (matches RecoverableRenderErrorBoundary).
     if (isLazyChunkLoadError(error)) {
       const cause = describeLazyChunkCause(error)
       if (!recordedLazyChunkCauses.has(cause)) {
         recordedLazyChunkCauses.add(cause)
         recordRendererCrashBreadcrumb('lazy_chunk_boundary_degraded', {
           boundaryId: 'editor.rich-markdown',
-          // Carried on the error itself: the pre-reload crumb naming the chunk may
-          // already have been evicted from the 30-entry ring (crash b860def2).
           reloadKey: error.reloadKey,
           cause
         })
