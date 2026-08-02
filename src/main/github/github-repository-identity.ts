@@ -89,6 +89,16 @@ function pruneOwnerRepoCache(now: number): void {
   }
 }
 
+/**
+ * Why: `git remote get-url` is a local config read, so the only way it outlasts
+ * this is a wedged host — a dead network mount or stalled WSL interop. Unbounded,
+ * the call never returns and every caller above it hangs with it (P1-D). Matches
+ * the SSH branch, which the relay mux already bounds at 30s. Passing a timeout is
+ * also what arms the runner's kill path; Node's own waits forever on a child that
+ * ignores signals.
+ */
+const REMOTE_URL_EXEC_TIMEOUT_MS = 30_000
+
 export async function getRemoteUrlForRepo(
   context: GitHubRepoContext,
   remoteName: string
@@ -103,6 +113,7 @@ export async function getRemoteUrlForRepo(
   }
   const { stdout } = await gitExecFileAsync(['remote', 'get-url', remoteName], {
     cwd: context.repoPath,
+    timeout: REMOTE_URL_EXEC_TIMEOUT_MS,
     ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
   })
   return stdout
