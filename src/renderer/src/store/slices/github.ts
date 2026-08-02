@@ -53,7 +53,10 @@ import { rightSidebarShowsPullRequestData } from '@/lib/right-sidebar-visibility
 import { hostedReviewInfoFromGitHubPRInfo } from '../../../../shared/hosted-review-github'
 import { getHostedReviewCacheKey, linkedReviewHintKey } from './hosted-review-cache-identity'
 import { getGitHubPRCacheKey, getGitHubRepoCacheKey } from './github-cache-key'
-import { isGitHubWorkItemsQueryTooLarge } from './github-work-items-query-bounds'
+import {
+  GITHUB_SEARCH_RESULT_WINDOW_ERROR_PATTERN,
+  isGitHubWorkItemsQueryTooLarge
+} from './github-work-items-query-bounds'
 import { classifyGitHubUnavailable } from '../../../../shared/github-api-availability'
 import { isMacAppDataPath } from '@/lib/passive-macos-app-data-access'
 import { translate } from '@/i18n/i18n'
@@ -2824,7 +2827,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             // Why: only the 1000-result-window 422 may drive the unreachable
             // clamp; demote other validation errors so they read as failures.
             errorTypes.push(
-              type === 'validation_error' && !/first 1000 search results/i.test(message)
+              type === 'validation_error' &&
+                !GITHUB_SEARCH_RESULT_WINDOW_ERROR_PATTERN.test(message)
                 ? 'unknown'
                 : type
             )

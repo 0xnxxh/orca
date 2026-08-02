@@ -3211,7 +3211,12 @@ export default function TaskPage(): React.JSX.Element {
   )
 
   // Why: see buildSelectedReposKey — array-identity deps re-fire on every
-  // repos:changed even when the selection is unchanged.
+  // repos:changed even when the selection is unchanged. The context part is
+  // resolved as GitHub, but every provider-independent field (projectId,
+  // hostId, projectHostSetupId, repoId) is identical across providers, so the
+  // GitLab effect can key off this too — it passes no gitlabProjectRef, so its
+  // context carries no providerIdentity of its own. Thread a projectRef into
+  // that call and this key needs a GitLab-scoped part.
   const selectedReposKey = useMemo(
     () => buildSelectedReposKey(selectedRepos, (r) => getTaskPageRepoSourceContext(r, 'github')),
     [selectedRepos]
@@ -4967,7 +4972,7 @@ export default function TaskPage(): React.JSX.Element {
     return () => {
       stale = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedReposKey encodes the only selectedRepos fields read above; keying off the array ref would re-run on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedReposKey covers every selectedRepos field read above (see its GitHub-scoped-context note); keying off the array ref would re-run on every parent render.
   }, [taskSource, gitlabView, activeGitlabFilter, gitlabRefreshNonce, selectedReposKey])
 
   // Why: Todos fetch has its own effect — different trigger (no chip filter) and data path (gl.todos is user-scoped, not repo-scoped).
