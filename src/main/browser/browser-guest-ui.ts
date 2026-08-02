@@ -500,6 +500,9 @@ export function setupGuestShortcutForwarding(args: {
           control: input.control,
           alt: input.alt,
           meta: input.meta,
+          // Electron.Input carries isComposing (no numeric keyCode); without it the detector
+          // could arm a gesture from a keystroke the IME owns.
+          isComposing: input.isComposing,
           isAutoRepeat: input.isAutoRepeat
         }),
         Date.now()

@@ -22,6 +22,10 @@ export type WindowShortcutInput = {
   metaKey?: boolean
   ctrlKey?: boolean
   shiftKey?: boolean
+  // The matcher refuses a chord an IME owns by reading these, so anything that rebuilds this
+  // shape has to carry them. `Electron.Input` supplies isComposing; it has no numeric keyCode.
+  isComposing?: boolean
+  keyCode?: number
   // Set only by the double-tap detector; threads the synthetic input through
   // the main-process resolver so allowlisted actions can fire on double-tap.
   doubleTapModifier?: PhysicalModifierToken
@@ -89,7 +93,11 @@ export function matchesRecentTabSwitcherChord(
       altKey: alt,
       metaKey: meta,
       ctrlKey: control,
-      shiftKey: false
+      shiftKey: false,
+      // Rebuilt rather than forwarded because Shift is deliberately normalized away, so the
+      // markers have to be carried across by hand or the matcher has nothing to refuse on.
+      isComposing: input.isComposing,
+      keyCode: input.keyCode
     },
     platform,
     keybindings,

@@ -1315,6 +1315,41 @@ describe('createMainWindow', () => {
     const togglePreventDefault = triggerDoubleTapShift()
     expect(togglePreventDefault).toHaveBeenCalledTimes(1)
     expect(webContents.send).toHaveBeenCalledWith('ui:dictationKeyDown')
+
+    // `Electron.Input` carries `isComposing`. A completed gesture dispatches
+    // `{ doubleTapModifier }` with no key or modifier flags, so the shortcut matcher has nothing
+    // left to refuse on — the ownership check has to happen before the detector sees the press.
+    const modifierInput = {
+      code: 'ShiftLeft',
+      key: 'Shift',
+      shift: true,
+      meta: false,
+      control: false,
+      alt: false
+    }
+    for (const markedIndex of [1, 0]) {
+      webContents.send.mockClear()
+      const steps = [
+        { ...modifierInput, type: 'keyUp' },
+        { ...modifierInput, type: 'keyDown' }
+      ]
+      windowHandlers['before-input-event'](
+        { preventDefault: vi.fn() } as never,
+        { ...modifierInput, type: 'keyDown' } as never
+      )
+      for (const [index, step] of steps.entries()) {
+        windowHandlers['before-input-event'](
+          { preventDefault: vi.fn() } as never,
+          (index === markedIndex ? { ...step, isComposing: true } : step) as never
+        )
+      }
+      expect(webContents.send).not.toHaveBeenCalledWith('ui:dictationKeyDown')
+      // Clear the trailing armed state so the next case starts from idle.
+      windowHandlers['before-input-event'](
+        { preventDefault: vi.fn() } as never,
+        { code: 'KeyA', key: 'a', type: 'keyDown' } as never
+      )
+    }
   })
 
   it('forwards ctrl/cmd+j to the worktree palette toggle event', () => {

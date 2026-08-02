@@ -801,6 +801,45 @@ describe('setupGuestShortcutForwarding', () => {
     expect(rendererSendMock).not.toHaveBeenCalledWith('ui:openQuickOpen')
   })
 
+  // `Electron.Input` carries `isComposing`, so the guest path can refuse an IME-owned press the
+  // same way the renderer does. A completed gesture dispatches `{ doubleTapModifier }` with no
+  // key or modifier flags, leaving the matcher nothing to refuse on — it has to stop here.
+  it.each([
+    ['a marked second press', 1],
+    ['a marked release', 0]
+  ])('does not complete a guest double-tap from %s', (_case, markedIndex) => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer(),
+      getKeybindings: () => ({
+        'worktree.quickOpen': ['DoubleTap+Shift']
+      })
+    })
+
+    const modifierInput = {
+      code: 'ShiftLeft',
+      key: 'Shift',
+      shift: true,
+      meta: false,
+      control: false,
+      alt: false
+    }
+    const sequence = [
+      { ...modifierInput, type: 'keyUp' as const },
+      { ...modifierInput, type: 'keyDown' as const }
+    ]
+    triggerBeforeInput(modifierInput)
+    const preventDefaults = sequence.map((step, index) =>
+      triggerBeforeInput(index === markedIndex ? { ...step, isComposing: true } : step)
+    )
+
+    for (const preventDefault of preventDefaults) {
+      expect(preventDefault).not.toHaveBeenCalled()
+    }
+    expect(rendererSendMock).not.toHaveBeenCalledWith('ui:openQuickOpen')
+  })
+
   // A floating-workspace-owned guest routes close/index chords to the floating-scoped
   // IPC *carrying its source id*; a main-owned guest keeps main routing.
   describe('source-aware close/index routing', () => {

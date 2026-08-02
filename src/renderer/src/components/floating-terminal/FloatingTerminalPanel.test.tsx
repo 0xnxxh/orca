@@ -1713,6 +1713,92 @@ describe('FloatingTerminalPanel close behavior', () => {
     expect(mocks.createTab).not.toHaveBeenCalled()
   })
 
+  // The double-tap gesture is dispatched as `{ doubleTapModifier }` with no key or modifier
+  // flags, so once it is armed the shortcut matcher has nothing left to refuse on. These drive
+  // the real window listeners rather than the detector, because the panel is where the ownership
+  // decision is read off the event and handed down.
+  describe('while an IME owns a focused floating terminal keystroke', () => {
+    async function bindDoubleTapListeners(): Promise<{
+      keyDown: (event: unknown) => void
+      keyUp: (event: unknown) => void
+      shiftTap: (over?: Record<string, unknown>) => Record<string, unknown>
+    }> {
+      setFloatingTabs([makeTab({ id: 'tab-1' })])
+      ;(storeBox.state as FloatingPanelStoreState).keybindings = {
+        'tab.newTerminal': ['DoubleTap+Shift']
+      }
+      const element = await renderPanel(true)
+      const panel = findByProp(element, 'data-floating-terminal-panel')
+      const panelElement = { contains: vi.fn().mockReturnValue(true), focus: vi.fn() }
+      const target = {
+        classList: { contains: vi.fn((token: string) => token === 'xterm-helper-textarea') },
+        closest: vi.fn((selector: string) =>
+          selector === '[data-floating-terminal-panel]' ? panelElement : null
+        )
+      }
+      Object.setPrototypeOf(target, HTMLElement.prototype)
+      attachRef(panel.props.ref, panelElement)
+      vi.stubGlobal('document', {
+        activeElement: target,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      })
+      runEffects()
+      const listener = (type: string): ((event: unknown) => void) | undefined =>
+        vi.mocked(window.addEventListener).mock.calls.find(([name]) => name === type)?.[1] as
+          | ((event: unknown) => void)
+          | undefined
+      const keyDown = listener('keydown')
+      const keyUp = listener('keyup')
+      if (!keyDown || !keyUp) {
+        throw new Error('keyboard listeners not registered')
+      }
+      return {
+        keyDown,
+        keyUp,
+        shiftTap: (over = {}) => ({
+          altKey: false,
+          code: 'ShiftLeft',
+          ctrlKey: false,
+          defaultPrevented: false,
+          key: 'Shift',
+          metaKey: false,
+          preventDefault: vi.fn(),
+          repeat: false,
+          shiftKey: true,
+          stopImmediatePropagation: vi.fn(),
+          stopPropagation: vi.fn(),
+          target,
+          ...over
+        })
+      }
+    }
+
+    it('does not complete a double-tap whose second press is marked', async () => {
+      const { keyDown, keyUp, shiftTap } = await bindDoubleTapListeners()
+
+      keyDown(shiftTap())
+      keyUp(shiftTap())
+      // The real shape a composing press has — not `key: 'Process'`, which resolves to no
+      // binding and so would pass even with the ownership check deleted.
+      keyDown(shiftTap({ isComposing: true, keyCode: 229 }))
+      await flushAsyncWork()
+
+      expect(mocks.createTab).not.toHaveBeenCalled()
+    })
+
+    it('does not let a marked release arm the second half of the gesture', async () => {
+      const { keyDown, keyUp, shiftTap } = await bindDoubleTapListeners()
+
+      keyDown(shiftTap())
+      keyUp(shiftTap({ isComposing: true, keyCode: 229 }))
+      keyDown(shiftTap())
+      await flushAsyncWork()
+
+      expect(mocks.createTab).not.toHaveBeenCalled()
+    })
+  })
+
   it('routes focused floating tab switch shortcuts to the floating workspace', async () => {
     setFloatingTabs([makeTab({ id: 'tab-1' }), makeTab({ id: 'tab-2' })])
     const element = await renderPanel(true)
