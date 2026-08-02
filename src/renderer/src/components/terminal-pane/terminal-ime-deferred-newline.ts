@@ -9,12 +9,13 @@ export const TERMINAL_IME_DEFERRED_NEWLINE_FALLBACK_MS = 200
 // compositionupdate, not from the start: multi-segment bunsetsu conversion keeps a
 // Japanese composition legitimately pending far longer than this, and finishing on a
 // total-elapsed ceiling would split it with the newline this deferral exists to hold back.
+// At the ceiling the newline is dropped, not sent — see `abandon` below.
 export const TERMINAL_IME_DEFERRED_NEWLINE_MAX_IDLE_MS = 2000
 
 export function sendTerminalInputAfterComposition(
   terminalElement: HTMLElement | null | undefined,
   send: () => void,
-  options?: { fallbackMs?: number; maxIdleMs?: number }
+  options?: { fallbackMs?: number; maxIdleMs?: number; onAbandon?: () => void }
 ): void {
   if (!terminalElement) {
     window.setTimeout(send, 0)
@@ -29,9 +30,9 @@ export function sendTerminalInputAfterComposition(
   let done = false
   let idleMs = 0
 
-  const finish = (): void => {
+  const settle = (): boolean => {
     if (done) {
-      return
+      return false
     }
     done = true
     terminalElement.removeEventListener('compositionend', onCompositionEnd)
@@ -41,8 +42,21 @@ export function sendTerminalInputAfterComposition(
       onCompositionSessionEnd
     )
     window.clearTimeout(fallbackTimer)
-    // xterm flushes the committed glyph after compositionend.
-    window.setTimeout(send, 0)
+    return true
+  }
+
+  const finish = (): void => {
+    if (settle()) {
+      // xterm flushes the committed glyph after compositionend.
+      window.setTimeout(send, 0)
+    }
+  }
+
+  /** Give up on the newline without emitting it, releasing the caller's bookkeeping. */
+  const abandon = (): void => {
+    if (settle()) {
+      options?.onAbandon?.()
+    }
   }
 
   const finishAfterPendingComposition = (): void => {
@@ -72,8 +86,16 @@ export function sendTerminalInputAfterComposition(
     const compositionInProgress =
       hasPendingTerminalImeComposition(terminalElement) || sawRecentUpdate
     sawRecentUpdate = false
-    if (!compositionInProgress || idleMs >= maxIdleMs) {
+    if (!compositionInProgress) {
       finish()
+      return
+    }
+    if (idleMs >= maxIdleMs) {
+      // Why: reaching the ceiling only proves the preedit stopped changing — the route still
+      // positively reports it live, and a user reading candidates is not a stuck composition.
+      // Dropping the newline costs one repeatable keypress; splitting a live preedit does not
+      // undo. Emit nothing while the evidence says a composition is still open.
+      abandon()
       return
     }
     fallbackTimer = window.setTimeout(onFallbackDeadline, fallbackMs)
@@ -196,11 +218,23 @@ export function createTerminalImeDeferredNewlineSender(): TerminalImeDeferredNew
       state.absorbCredits += 1
       statesByTimeStamp.set(enter.timeStamp, state)
       statesByEnterCode.set(enter.code, statesByTimeStamp)
-      sendTerminalInputAfterComposition(terminalElement, () => {
-        state.inFlightSends -= 1
-        cleanUpIfSettled(enter, state)
-        send()
-      })
+      sendTerminalInputAfterComposition(
+        terminalElement,
+        () => {
+          state.inFlightSends -= 1
+          cleanUpIfSettled(enter, state)
+          send()
+        },
+        {
+          onAbandon: () => {
+            state.inFlightSends -= 1
+            // No commit means no redispatched Enter is coming; a surviving credit would
+            // absorb the user's next one instead.
+            state.absorbCredits = Math.max(0, state.absorbCredits - 1)
+            cleanUpIfSettled(enter, state)
+          }
+        }
+      )
     },
     absorbRedispatchedEnter: (enter) => {
       const state = statesByEnterCode.get(enter.code)?.get(enter.timeStamp)

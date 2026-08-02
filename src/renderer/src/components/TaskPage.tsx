@@ -43,7 +43,10 @@ import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-cl
 import { getLocalPreflightContext, localPreflightContextKey } from '@/lib/local-preflight-context'
 import { getProviderRuntimeContextKey } from '@/lib/provider-runtime-context'
 import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
-import { resolveTaskPageEscapeAction } from '@/lib/task-page-escape-policy'
+import {
+  resolveTaskPageEscapeAction,
+  resolveTaskPageSearchShortcut
+} from '@/lib/task-page-window-shortcut-policy'
 import {
   getSettingsFocusedExecutionHostId,
   parseExecutionHostId,
@@ -6509,27 +6512,13 @@ export default function TaskPage(): React.JSX.Element {
     }
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      const isMac = navigator.userAgent.includes('Mac')
-      const modifierPressed = isMac ? event.metaKey : event.ctrlKey
-      if (!modifierPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f') {
-        return
-      }
-
       const input = taskSearchInputRef.current
-      if (!input) {
+      const action = resolveTaskPageSearchShortcut(event, event.target, input, {
+        isMac: navigator.userAgent.includes('Mac')
+      })
+      if (action === 'ignore' || !input) {
         return
       }
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        target !== input &&
-        (target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-
       event.preventDefault()
       event.stopPropagation()
       input.focus()

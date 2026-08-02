@@ -196,7 +196,7 @@ describe('sendTerminalInputAfterComposition', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
-  it('sends once at the ceiling when a composition never ends', () => {
+  it('drops the newline at the ceiling while the composition is still positively pending', () => {
     const el = document.createElement('div')
     const send = vi.fn()
     const transport = { getPtyId: () => 'pty-1' } as unknown as PtyTransport
@@ -210,18 +210,34 @@ describe('sendTerminalInputAfterComposition', () => {
       new CustomEvent(XTERM_COMPOSITION_SESSION_START_EVENT, { detail: { id: 1, data: '한' } })
     )
 
-    sendTerminalInputAfterComposition(el, send, { fallbackMs: 50, maxIdleMs: 200 })
+    const onAbandon = vi.fn()
+    sendTerminalInputAfterComposition(el, send, { fallbackMs: 50, maxIdleMs: 200, onAbandon })
     vi.advanceTimersByTime(150)
     expect(send).not.toHaveBeenCalled()
 
-    // Bounded: a composition that stops progressing must not strand the keystroke.
+    // A user reading candidates is not a stuck composition: emit nothing and settle instead.
     vi.advanceTimersByTime(100)
-    expect(send).toHaveBeenCalledTimes(1)
+    expect(onAbandon).toHaveBeenCalledTimes(1)
 
     vi.runAllTimers()
-    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+    expect(onAbandon).toHaveBeenCalledTimes(1)
 
     route.dispose()
+  })
+
+  it('still sends at the ceiling once the route no longer reports a pending composition', () => {
+    const el = document.createElement('div')
+    const send = vi.fn()
+    const onAbandon = vi.fn()
+
+    // No composition route installed, so nothing positively reports a live preedit.
+    sendTerminalInputAfterComposition(el, send, { fallbackMs: 50, maxIdleMs: 200, onAbandon })
+    vi.advanceTimersByTime(50)
+    vi.runAllTimers()
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(onAbandon).not.toHaveBeenCalled()
   })
 
   it('still delivers the input on the next macrotask without a terminal element', () => {
@@ -260,6 +276,32 @@ describe('createTerminalImeDeferredNewlineSender', () => {
     expect(send).toHaveBeenCalledTimes(1)
     // The credit was consumed pre-send, so nothing lingers to eat a real Enter.
     expect(sender.absorbRedispatchedEnter(enter(10))).toBe(false)
+  })
+
+  // Abandoning at the ceiling must release the credit too: no commit means no re-dispatch is
+  // coming, and a surviving credit would swallow the Enter the user presses next.
+  it('releases its bookkeeping when the ceiling drops the newline', () => {
+    const el = document.createElement('div')
+    const send = vi.fn()
+    const sender = createSender()
+    const transport = { getPtyId: () => 'pty-1' } as unknown as PtyTransport
+    const route = installTerminalImeCompositionRoute({
+      terminalElement: el,
+      terminal: { input: vi.fn() },
+      capturedTransport: transport,
+      getCurrentTransport: () => transport
+    })
+    el.dispatchEvent(
+      new CustomEvent(XTERM_COMPOSITION_SESSION_START_EVENT, { detail: { id: 1, data: '한' } })
+    )
+
+    sender.defer(enter(10), el, send)
+    vi.runAllTimers()
+
+    expect(send).not.toHaveBeenCalled()
+    expect(sender.absorbRedispatchedEnter(enter(10))).toBe(false)
+
+    route.dispose()
   })
 
   it('absorbs after the deferred send even if focus moved to another pane', () => {

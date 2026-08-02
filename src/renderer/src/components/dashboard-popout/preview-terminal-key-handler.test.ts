@@ -129,4 +129,20 @@ describe('preview terminal key handler yields to a composition', () => {
     expect(handler.handle(keyup({ key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }))).toBe(true)
     handler.dispose()
   })
+
+  // The release guard must not widen to keypress: a composing keypress can carry the
+  // committed glyph, and withholding it from xterm drops the text off the live PTY. This is
+  // the same shape the pane policy deliberately lets through (xterm-bypass-policy.ts).
+  it('hands a composing keypress to xterm so the committed glyph survives', () => {
+    const handler = installHandler()
+    const event = new KeyboardEvent('keypress', {
+      key: '中',
+      bubbles: true,
+      cancelable: true,
+      isComposing: true
+    })
+
+    expect(handler.handle(event)).toBe(true)
+    handler.dispose()
+  })
 })

@@ -102,8 +102,9 @@ export function installPreviewTerminalKeyHandler(args: {
       }
       // Why: xterm encodes accepted releases once Kitty REPORT_EVENT_TYPES is on, so an
       // IME-owned keyup reaches the PTY as a release sequence mid-composition. Withhold it
-      // from xterm without preventDefault — the IME still needs the event.
-      return !isImeCompositionKeyDown(event)
+      // from xterm without preventDefault — the IME still needs the event. Scoped to keyup:
+      // a composing keypress can carry the committed glyph, and dropping it loses text.
+      return !(event.type === 'keyup' && isImeCompositionKeyDown(event))
     }
     nativeOnlyShortcutTracker.prepareKeyDown(event)
     const resolveAction = (
