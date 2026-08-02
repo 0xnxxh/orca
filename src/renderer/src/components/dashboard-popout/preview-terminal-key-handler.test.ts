@@ -53,6 +53,14 @@ function keydown(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent 
   return event
 }
 
+function keyup(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent {
+  const event = new KeyboardEvent('keyup', { bubbles: true, cancelable: true, ...init })
+  if (init.keyCode !== undefined) {
+    Object.defineProperty(event, 'keyCode', { value: init.keyCode })
+  }
+  return event
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
@@ -100,6 +108,25 @@ describe('preview terminal key handler yields to a composition', () => {
     handler.handle(keydown({ key: 'Enter', code: 'Enter', shiftKey: true, keyCode: 13 }))
 
     expect(handler.sendInput).toHaveBeenCalledWith('\x1b\r')
+    handler.dispose()
+  })
+
+  // Releases matter on their own once Kitty REPORT_EVENT_TYPES is negotiated: xterm encodes
+  // an accepted keyup into a release sequence, so withholding only the keydown still leaks
+  // half the chord into the preedit.
+  it('withholds an IME-owned keyup from xterm', () => {
+    const handler = installHandler()
+
+    expect(handler.handle(keyup({ key: 'ArrowLeft', code: 'ArrowLeft', isComposing: true }))).toBe(
+      false
+    )
+    handler.dispose()
+  })
+
+  it('hands an ordinary keyup to xterm', () => {
+    const handler = installHandler()
+
+    expect(handler.handle(keyup({ key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 }))).toBe(true)
     handler.dispose()
   })
 })

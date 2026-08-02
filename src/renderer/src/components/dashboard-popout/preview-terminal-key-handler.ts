@@ -5,6 +5,7 @@ import { useAppStore } from '@/store'
 import { prefetchLayoutBaseCharacters } from '@/lib/keyboard-layout/layout-base-character'
 import { createTerminalNativeOnlyShortcutTracker } from '@/components/terminal-pane/terminal-native-only-shortcut'
 import { terminalShortcutIsOwnedByIme } from '@/components/terminal-pane/terminal-shortcut-composition-guard'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import {
   resolvePreviewShortcutAction,
   type PreviewShortcutContext
@@ -99,7 +100,10 @@ export function installPreviewTerminalKeyHandler(args: {
         }
         return consumeEvent(event)
       }
-      return true
+      // Why: xterm encodes accepted releases once Kitty REPORT_EVENT_TYPES is on, so an
+      // IME-owned keyup reaches the PTY as a release sequence mid-composition. Withhold it
+      // from xterm without preventDefault — the IME still needs the event.
+      return !isImeCompositionKeyDown(event)
     }
     nativeOnlyShortcutTracker.prepareKeyDown(event)
     const resolveAction = (
