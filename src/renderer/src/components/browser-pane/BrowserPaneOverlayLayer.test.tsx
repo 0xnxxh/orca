@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, render } from '@testing-library/react'
+import { Suspense } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserTab as BrowserTabState, Tab, TabGroup } from '../../../../shared/types'
@@ -92,6 +93,33 @@ describe('BrowserPaneOverlayLayer', () => {
       />
     )
     expect(view.container.querySelectorAll('[data-browser-overlay-tab-id]')).toHaveLength(2)
+  })
+
+  it('does not retain browser slots from an eligible render that never commits', () => {
+    const pending = new Promise<never>(() => {})
+    const BlockCommit = ({ blocked }: { blocked: boolean }): null => {
+      if (blocked) {
+        throw pending
+      }
+      return null
+    }
+    const renderBoundary = (mountEligible: boolean, blocked: boolean) => (
+      <Suspense fallback={<span data-suspended />}>
+        <RetainedBrowserPaneOverlayLayer
+          worktreeId="wt-1"
+          isWorktreeActive={mountEligible}
+          mountEligible={mountEligible}
+        />
+        <BlockCommit blocked={blocked} />
+      </Suspense>
+    )
+    const view = render(renderBoundary(false, false))
+
+    view.rerender(renderBoundary(true, true))
+    expect(view.container.querySelector('[data-suspended]')).not.toBeNull()
+
+    view.rerender(renderBoundary(false, false))
+    expect(view.container.querySelectorAll('[data-browser-overlay-tab-id]')).toHaveLength(0)
   })
 
   it('keeps inactive browser panes mounted for a visible worktree', () => {
