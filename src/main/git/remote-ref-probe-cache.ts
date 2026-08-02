@@ -83,6 +83,10 @@ export function createRemoteRefProbeCache<Ref>(
         },
         remoteName
       )
+      // Why: null is the SSH runtime being disconnected, not an answer about the
+      // remote — and it costs no `git`, so there is nothing here to spare. It is
+      // deliberately the one negative with no TTL floor: flooring it would make a
+      // reconnected host wait the interval out for a probe it could serve now.
       if (stdout === null) {
         return null
       }
