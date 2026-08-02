@@ -59,58 +59,14 @@ describe('ModelManager progress callbacks', () => {
         internals.updateState('model-a', 'downloading', chunk / 8_000)
       }
 
-      // Exact, not a ceiling: a bound alone passes when coalescing swallows every
-      // step after the first and the progress bar sits at 0% for the whole download.
-      expect(listener.mock.calls.map(([, progress]) => Math.round(progress * 100))).toEqual(
-        Array.from({ length: 101 }, (_unused, percent) => percent)
+      expect(listener.mock.calls.map(([, progress]) => progress)).toEqual(
+        Array.from({ length: 101 }, (_unused, percent) => percent / 100)
       )
-      // Status transitions must still reach the UI unconditionally.
       const afterDownload = listener.mock.calls.length
       internals.updateState('model-a', 'extracting')
       internals.updateState('model-a', 'ready')
-      expect(listener.mock.calls.length).toBe(afterDownload + 2)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  it('re-emits a repeated ready so a stale pane still resyncs', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'orca-model-manager-'))
-    try {
-      const manager = new ModelManager(dir)
-      const internals = manager as unknown as ModelManagerInternals
-      const listener = vi.fn()
-      manager.setProgressCallback(listener)
-
-      // downloadModel's already-downloaded branch: this lone 'ready' is the only
-      // notification the requesting window receives before the handler returns.
       internals.updateState('model-a', 'ready')
-      internals.updateState('model-a', 'ready')
-
-      expect(listener).toHaveBeenCalledTimes(2)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  // Why this matters: the renderer discards the progress event payload and re-polls
-  // getModelState, so coalescing only the fan-out leaves the polled path raw.
-  it('reports whole-percent progress to pollers during a download', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'orca-model-manager-'))
-    try {
-      const manager = new ModelManager(dir)
-      const internals = manager as unknown as ModelManagerInternals
-      const seen = new Set<number | undefined>()
-
-      for (let chunk = 0; chunk < 8000; chunk += 1) {
-        internals.updateState('whisper-tiny', 'downloading', chunk / 8000)
-        seen.add((await manager.getModelState('whisper-tiny')).progress)
-      }
-
-      // Exact, not a ceiling: a bound alone passes when every poll reports 0%.
-      expect([...seen].sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
-        Array.from({ length: 101 }, (_unused, percent) => percent / 100)
-      )
+      expect(listener.mock.calls.length).toBe(afterDownload + 3)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

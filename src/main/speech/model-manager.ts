@@ -47,18 +47,6 @@ type DownloadTotals = {
 }
 type ContentRange = { start: number; end: number; totalBytes?: number }
 
-// Why: -1 stands in for "no progress reported" so undefined never equals 0%.
-function toWholeProgressPercent(progress: number | undefined): number {
-  return progress === undefined ? -1 : Math.round(progress * 100)
-}
-
-/** The precision the UI actually renders, so polled replies match the fan-out. */
-function toWholePercentState(state: SpeechModelState): SpeechModelState {
-  return state.progress === undefined
-    ? state
-    : { ...state, progress: toWholeProgressPercent(state.progress) / 100 }
-}
-
 const DOWNLOAD_IDLE_TIMEOUT_MS = 120_000
 // Why: flaky networks/proxies often kill long CDN transfers near the end; Range-resume lets them finish.
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 2_000, 4_000]
@@ -224,10 +212,7 @@ export class ModelManager {
     await this.migrationReady
     const cached = this.modelStates.get(modelId)
     if (cached && (cached.status === 'downloading' || cached.status === 'extracting')) {
-      // Why quantise here too: the renderer ignores the progress event payload and
-      // re-polls, so returning the raw sub-percent cache would hand it a new value
-      // per chunk and defeat the whole-percent coalescing the fan-out already does.
-      return toWholePercentState(cached)
+      return cached
     }
 
     const manifest = getCatalogModel(modelId)
@@ -403,25 +388,23 @@ export class ModelManager {
     error?: string
   ): void {
     const previous = this.modelStates.get(modelId)
-    const state: SpeechModelState = { id: modelId, status, progress, error }
-    this.modelStates.set(modelId, state)
-    // Why: notify on every state change (not just progress) so extracting/ready/error transitions reach the UI.
-    const progressValue = progress ?? (status === 'extracting' ? 0.95 : -1)
-    // Why: downloads call this once per HTTP chunk (thousands per model), and each
-    // notification costs the renderer an IPC round-trip plus a full re-render of the
-    // open speech-model menu. The UI only ever shows whole percent, so emitting at
-    // that granularity keeps every visible transition and drops the rest.
-    // Why only 'downloading': every other transition is one-shot, and the
-    // already-ready branch of downloadModel is the sole notification that window
-    // gets — deduplicating it strands a stale pane on a dead click.
+    // Whole-percent state matches the UI and prevents chunk-level IPC/poll churn.
+    const reportedProgress =
+      status === 'downloading' && progress !== undefined
+        ? Math.round(progress * 100) / 100
+        : progress
     if (
       status === 'downloading' &&
       previous?.status === 'downloading' &&
       previous.error === error &&
-      toWholeProgressPercent(previous.progress) === toWholeProgressPercent(progress)
+      previous.progress === reportedProgress
     ) {
       return
     }
+    const state: SpeechModelState = { id: modelId, status, progress: reportedProgress, error }
+    this.modelStates.set(modelId, state)
+    // Repeated non-download states can be the requesting window's only resync signal.
+    const progressValue = reportedProgress ?? (status === 'extracting' ? 0.95 : -1)
     for (const callback of this.progressCallbacks) {
       callback(modelId, progressValue)
     }
