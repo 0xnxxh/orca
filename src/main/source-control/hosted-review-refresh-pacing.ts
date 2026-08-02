@@ -29,6 +29,21 @@ export const ACTIVE_CLAIM_TTL_MS = NO_REVIEW_REFRESH_INTERVAL_MS
 export const LOOKUP_BACKOFF_BASE_MS = 60_000
 export const LOOKUP_BACKOFF_MAX_MS = 15 * 60_000
 
+/**
+ * Hard deadline for a single lookup. The steps underneath are individually
+ * bounded (30s `gh` exec, HTTP timeouts) but they chain, so this is a hang
+ * detector rather than a latency budget: a lookup that outlives it is wedged on
+ * something that has no timeout of its own, not merely slow.
+ */
+export const HOSTED_REVIEW_LOOKUP_DEADLINE_MS = 2 * 60_000
+
+/**
+ * Why: a memory backstop, not a concurrency limit. Evicting a live lookup costs
+ * a duplicate provider call — the quota problem this cache exists to prevent —
+ * so the cap sits far above the branch count any client polls at once.
+ */
+export const MAX_INFLIGHT_LOOKUPS = 500
+
 // Why: capped so a long-lived failure settles at LOOKUP_BACKOFF_MAX_MS rather
 // than overflowing the exponent.
 const MAX_BACKOFF_DOUBLINGS = 4
