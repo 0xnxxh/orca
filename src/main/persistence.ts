@@ -3846,6 +3846,16 @@ export class Store {
     return write
   }
 
+  // Why: recovery ownership must be durable before relay setup continues without blocking the main thread.
+  private async flushImmediateAsync(): Promise<void> {
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer)
+      this.writeTimer = null
+    }
+    this.firstPendingSaveAt = null
+    await this.enqueueWrite()
+  }
+
   /** Wait for any in-flight async disk write to complete. Used in tests. */
   async waitForPendingWrite(): Promise<void> {
     await Promise.all([this.pendingWrite, this.activeViewPreference.waitForPendingWrite()])
@@ -6888,7 +6898,7 @@ export class Store {
     return record ? structuredClone(record) : null
   }
 
-  upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): void {
+  async upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): Promise<void> {
     const normalized = normalizeSshPtyConsumerRecovery(record)
     if (!normalized) {
       throw new Error('Invalid SSH PTY consumer recovery record')
@@ -6898,23 +6908,24 @@ export class Store {
       ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
       normalized
     ]
-    this.flushSshPtyConsumerRecovery()
+    await this.flushSshPtyConsumerRecovery()
   }
 
-  removeSshPtyConsumerRecovery(targetId: string): void {
+  async removeSshPtyConsumerRecovery(targetId: string): Promise<void> {
     const recoveries = this.state.sshPtyConsumerRecoveries ?? []
     const next = recoveries.filter((record) => record.targetId !== targetId)
     if (next.length === recoveries.length) {
       return
     }
     this.state.sshPtyConsumerRecoveries = next
-    this.flushSshPtyConsumerRecovery()
+    await this.flushSshPtyConsumerRecovery()
   }
 
-  private flushSshPtyConsumerRecovery(): void {
+  private async flushSshPtyConsumerRecovery(): Promise<void> {
     try {
-      // Why: ownership must be durable before relay setup continues, but active-view and GitHub sidecars are unrelated startup work.
-      this.flushOrThrow()
+      // Why: ownership must be durable before relay setup continues, but this runs on the live
+      // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
+      await this.flushImmediateAsync()
     } catch (err) {
       console.error('[persistence] Failed to flush SSH PTY consumer recovery:', err)
     }

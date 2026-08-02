@@ -143,6 +143,26 @@ type TestStore = {
   flushOrThrow(): void
   flushPendingAsync(): Promise<void>
   flushPendingOrThrowAsync(): Promise<void>
+  upsertSshPtyConsumerRecovery(record: {
+    targetId: string
+    clientInstanceId: string
+    serverBuildId: string
+    clientGeneration: number
+    ownerGeneration: number
+    ownerLease: string
+  }): Promise<void>
+  removeSshPtyConsumerRecovery(targetId: string): Promise<void>
+}
+
+function consumerRecovery(clientInstanceId: string) {
+  return {
+    targetId: 'ssh-1',
+    clientInstanceId,
+    serverBuildId: 'relay-build-1',
+    clientGeneration: 3,
+    ownerGeneration: 5,
+    ownerLease: 'secret-owner-lease'
+  }
 }
 
 async function createStore(dir: string): Promise<TestStore> {
@@ -653,6 +673,84 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
     expect(ring).toEqual(ringSnapshot(syncDir))
     expect(Object.keys(ring)).toContain(`orca-data.json.bak.${BACKUP_COUNT - 1}`)
   })
+
+  it('persists SSH PTY consumer recovery without a sync syscall, durable once awaited', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    try {
+      await store.upsertSshPtyConsumerRecovery(consumerRecovery('client-1'))
+    } finally {
+      fsCalls.recording = false
+    }
+
+    expect(fsCalls.syncCalls).toEqual([])
+    // Durability is awaited, not merely debounced: the record is on disk when the promise resolves.
+    const persisted = JSON.parse(readFileSync(dataFile(dir), 'utf-8')) as {
+      sshPtyConsumerRecoveries: { clientInstanceId: string }[]
+    }
+    expect(persisted.sshPtyConsumerRecoveries).toHaveLength(1)
+    expect(persisted.sshPtyConsumerRecoveries[0]?.clientInstanceId).toBe('client-1')
+  })
+
+  it('removes SSH PTY consumer recovery without a sync syscall, durable once awaited', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    await store.upsertSshPtyConsumerRecovery(consumerRecovery('client-1'))
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    try {
+      await store.removeSshPtyConsumerRecovery('ssh-1')
+    } finally {
+      fsCalls.recording = false
+    }
+
+    expect(fsCalls.syncCalls).toEqual([])
+    const persisted = JSON.parse(readFileSync(dataFile(dir), 'utf-8')) as {
+      sshPtyConsumerRecoveries: unknown[]
+    }
+    expect(persisted.sshPtyConsumerRecoveries).toEqual([])
+  })
+
+  it('lets a main-thread timer keep firing while a consumer-recovery write is in flight', async () => {
+    // The P1-A freeze itself: a stalled profile mount must not park the main thread on establish.
+    vi.useRealTimers()
+    const dir = makeDir()
+    const store = await createStore(dir)
+    const stallMs = 1_000
+    // Why half: a sync write parks the loop for at least stallMs while the async path ticks every
+    // ~10ms, so this leaves room for scheduler jitter on a loaded runner without going vacuous.
+    const maxAcceptableGapMs = stallMs / 2
+
+    let lastTick = Date.now()
+    let worstGapMs = 0
+    const heartbeat = setInterval(() => {
+      const now = Date.now()
+      worstGapMs = Math.max(worstGapMs, now - lastTick)
+      lastTick = now
+    }, 10)
+
+    try {
+      fsCalls.dirPrefix = dir
+      fsCalls.stallMs = stallMs
+      fsCalls.recording = true
+      lastTick = Date.now()
+      const write = store.upsertSshPtyConsumerRecovery(consumerRecovery('client-1'))
+      // Why not await first: a fully synchronous write finishes before the interval can fire, so the
+      // heartbeat would never observe the stall it exists to detect.
+      await new Promise((resolve) => setTimeout(resolve, stallMs + 200))
+      await write
+    } finally {
+      fsCalls.recording = false
+      clearInterval(heartbeat)
+    }
+
+    expect(worstGapMs).toBeLessThan(maxAcceptableGapMs)
+    expect(readFileSync(dataFile(dir), 'utf-8')).toContain('client-1')
+  }, 20_000)
 
   it('keeps the sync quit/crash fallback on synchronous syscalls', async () => {
     const dir = makeDir()

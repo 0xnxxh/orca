@@ -408,7 +408,7 @@ export class SshRelaySession {
       const ownsAttempt = (): boolean => this.mux === mux && !this.isDisposed()
 
       this.ptyConsumerSessionState = await this.openPtyConsumerSession(mux, serverBuildId)
-      this.rememberPtyConsumerRecovery(serverBuildId)
+      await this.rememberPtyConsumerRecovery(serverBuildId)
 
       await mux.request('session.resolveHome', { path: '~' })
       if (!ownsAttempt()) {
@@ -534,7 +534,7 @@ export class SshRelaySession {
         !this.isDisposed()
 
       this.ptyConsumerSessionState = await this.openPtyConsumerSession(mux, serverBuildId)
-      this.rememberPtyConsumerRecovery(serverBuildId)
+      await this.rememberPtyConsumerRecovery(serverBuildId)
       if (!ownsAttempt()) {
         if (!mux.isDisposed()) {
           mux.dispose()
@@ -633,7 +633,9 @@ export class SshRelaySession {
     this.store.markSshRemotePtyLeases(this.targetId, 'terminated')
     this.currentConnection = null
     this._state = 'disposed'
-    forgetSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId, this.store)
+    // Why: dispose() is synchronous; removal is cleanup, not an ordering barrier, and the
+    // in-memory entry is already deleted synchronously inside forget.
+    void forgetSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId, this.store)
   }
 
   detach(): void {
@@ -876,18 +878,22 @@ export class SshRelaySession {
           )
         }
       }
-      removeSshPtyConsumerOwnerRecovery(this.targetId, this.ptyConsumerClientInstanceId, this.store)
+      await removeSshPtyConsumerOwnerRecovery(
+        this.targetId,
+        this.ptyConsumerClientInstanceId,
+        this.store
+      )
       this.ptyConsumerSessionState = null
       return openSshPtyConsumerSession(mux, options)
     }
   }
 
-  private rememberPtyConsumerRecovery(serverBuildId: string | undefined): void {
+  private async rememberPtyConsumerRecovery(serverBuildId: string | undefined): Promise<void> {
     const owner = this.activePtyConsumerOwner()
     if (!owner || !serverBuildId) {
       return
     }
-    rememberSshPtyConsumerRecovery({
+    await rememberSshPtyConsumerRecovery({
       targetId: this.targetId,
       clientInstanceId: this.ptyConsumerClientInstanceId,
       serverBuildId,
