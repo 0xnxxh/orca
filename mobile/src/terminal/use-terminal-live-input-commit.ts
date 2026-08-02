@@ -60,7 +60,8 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
-  const liveInputComposingRef = useRef(false)
+  const liveInputCompositionHandleRef = useRef<string | null>(null)
+  const staleLiveInputCompositionHandleRef = useRef<string | null>(null)
   const {
     applyLiveInputMirror,
     clearPendingLiveInputCommit: clearPendingLiveInputMirror,
@@ -79,7 +80,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   })
 
   const clearPendingLiveInputCommit = useCallback(() => {
-    liveInputComposingRef.current = false
+    if (liveInputCompositionHandleRef.current) {
+      staleLiveInputCompositionHandleRef.current = liveInputCompositionHandleRef.current
+      liveInputCompositionHandleRef.current = null
+    }
     clearPendingLiveInputMirror()
   }, [clearPendingLiveInputMirror])
 
@@ -92,7 +96,9 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   useEffect(() => {
     const pendingHandle = pendingLiveInputHandleRef.current
-    if (!pendingHandle) {
+    const compositionHandle = liveInputCompositionHandleRef.current
+    const inputOwnerHandle = compositionHandle ?? pendingHandle
+    if (!inputOwnerHandle) {
       return
     }
     // Why: a lagging mobile tab list briefly yields no active tab object; a
@@ -100,7 +106,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     // still block sends if the tab truly changed.
     if (
       !activeHandle ||
-      pendingHandle !== activeHandle ||
+      inputOwnerHandle !== activeHandle ||
       (activeSessionTabType != null && activeSessionTabType !== 'terminal') ||
       !liveInputTerminalHandles.has(activeHandle)
     ) {
@@ -110,6 +116,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   const flushPendingLiveInputBeforeExternalSend = useCallback(
     async (handle: string): Promise<boolean> => {
+      // Marked text belongs to the native IME until its final onChange event.
+      if (liveInputCompositionHandleRef.current === handle) {
+        return false
+      }
       const pendingHandle = pendingLiveInputHandleRef.current
       if (pendingHandle && pendingHandle !== handle) {
         clearPendingLiveInputCommit()
@@ -131,14 +141,29 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
         clearPendingLiveInputCommit()
         return
       }
+      if (isComposing === true) {
+        staleLiveInputCompositionHandleRef.current = null
+        liveInputCompositionHandleRef.current = activeHandle
+        setLiveInputCapture(text)
+        return
+      }
+
+      const compositionHandle = liveInputCompositionHandleRef.current
+      if (
+        (compositionHandle && compositionHandle !== activeHandle) ||
+        (!compositionHandle && staleLiveInputCompositionHandleRef.current)
+      ) {
+        liveInputCompositionHandleRef.current = null
+        staleLiveInputCompositionHandleRef.current = null
+        clearPendingLiveInputMirror()
+        return
+      }
       // Why: iOS kills an active dictation/IME session when JS writes a value
       // that differs from the native field text, so the controlled capture must
       // echo the field verbatim; only the PTY mirror sees normalized text.
+      liveInputCompositionHandleRef.current = null
+      staleLiveInputCompositionHandleRef.current = null
       setLiveInputCapture(text)
-      liveInputComposingRef.current = isComposing === true
-      if (liveInputComposingRef.current) {
-        return
-      }
       applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text))
     },
     [
@@ -155,7 +180,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       if (
         !activeHandle ||
         !liveInputTerminalHandles.has(activeHandle) ||
-        liveInputComposingRef.current
+        liveInputCompositionHandleRef.current === activeHandle
       ) {
         return
       }
@@ -201,6 +226,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     activeHandle,
     applyLiveInputMirror,
     clearPendingLiveInputCommit,
+    liveInputCompositionHandleRef,
     flushPendingLiveInputText,
     heldLiveInputTextRef,
     liveInputRef,
@@ -216,7 +242,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     if (
       !activeHandle ||
       !liveInputTerminalHandles.has(activeHandle) ||
-      liveInputComposingRef.current
+      liveInputCompositionHandleRef.current === activeHandle
     ) {
       return
     }
