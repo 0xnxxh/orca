@@ -1,6 +1,7 @@
 import { getSshGitProviderGeneration } from '../providers/ssh-git-dispatch'
 import { runCoalescedProbe, type CoalescedProbes } from './coalesced-probe'
 import { isTransientGitProbeError, readRemoteUrl } from './remote-url-probe'
+import { isStableMissingGitRemoteError } from './stable-missing-git-remote-error'
 
 /**
  * The "is this repo mine?" probe every forge integration runs: read the remote's
@@ -18,7 +19,7 @@ const REPO_REF_CACHE_MAX_ENTRIES = 512
  * repo per interval is what lets a remote added mid-session be picked up without
  * a restart. Positives stay, as they did before.
  */
-const NEGATIVE_ENTRY_TTL_MS = 5 * 60_000
+export const NEGATIVE_ENTRY_TTL_MS = 5 * 60_000
 
 type CachedRepoRef<Ref> = { value: Ref | null; expiresAt: number }
 
@@ -59,11 +60,20 @@ export function createRemoteRefProbeCache<Ref>(
 
   async function probe(
     cacheKey: string,
+    ownsKey: () => boolean,
     repoPath: string,
     remoteName: string,
     connectionId: string | null | undefined,
     localGitOptions: RemoteRefLocalGitOptions
   ): Promise<Ref | null> {
+    // Why: a probe abandoned as stale still runs, and its answer describes a repo
+    // state older than whatever the successor is about to store — or already has.
+    // It may still answer its own callers; it may not publish.
+    const publish = (value: Ref | null): void => {
+      if (ownsKey()) {
+        remember(cacheKey, value)
+      }
+    }
     try {
       const stdout = await readRemoteUrl(
         {
@@ -77,16 +87,20 @@ export function createRemoteRefProbeCache<Ref>(
         return null
       }
       const result = parseRemoteUrl(stdout)
-      remember(cacheKey, result)
+      publish(result)
       return result
     } catch (error) {
-      if (connectionId || isTransientGitProbeError(error)) {
-        // Why: SSH provider failures are often transient reconnect/tunnel states,
-        // and a probe killed on its deadline says nothing about the remote either;
-        // caching them as "not this provider" would poison the repo for the session.
+      // Why: a probe killed on its deadline says nothing about the remote, and an
+      // SSH failure is usually a reconnect or tunnel state rather than an answer.
+      // Only "no such remote" is the repo itself saying it is not this provider's
+      // — anything else cached would poison it, on SSH for the generation's life.
+      if (isTransientGitProbeError(error)) {
         return null
       }
-      remember(cacheKey, null)
+      if (connectionId && !isStableMissingGitRemoteError(error)) {
+        return null
+      }
+      publish(null)
       return null
     }
   }
@@ -110,8 +124,8 @@ export function createRemoteRefProbeCache<Ref>(
       // Why: every branch of a repo resolves its forge through this probe, so a
       // poll of the worktree list arrives as a burst of identical lookups. One
       // young probe answers all of them instead of spawning a `git` per branch.
-      return runCoalescedProbe(inFlight, cacheKey, () =>
-        probe(cacheKey, repoPath, remoteName, connectionId, localGitOptions)
+      return runCoalescedProbe(inFlight, cacheKey, (ownsKey) =>
+        probe(cacheKey, ownsKey, repoPath, remoteName, connectionId, localGitOptions)
       )
     },
     clear() {

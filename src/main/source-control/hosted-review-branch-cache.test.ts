@@ -9,6 +9,7 @@ import {
   HOSTED_REVIEW_LOOKUP_DEADLINE_MS,
   LOOKUP_BACKOFF_MAX_MS,
   MAX_BRANCH_MAP_ENTRIES,
+  MAX_DETACHED_LOOKUPS,
   MAX_INFLIGHT_LOOKUPS,
   MAX_UNSETTLED_LOOKUP_KEYS,
   MAX_UNSETTLED_LOOKUPS_PER_KEY
@@ -839,10 +840,16 @@ describe('hosted review branch cache (#11532)', () => {
 
       // Nothing has reached its deadline, so only the map bound can hold this
       // back — without it the wave keeps widening until the detached cap does.
+      // This branch never started a lookup, so it must not be told one of its own
+      // is still out there.
       const fresh = vi.fn(async () => openReview)
-      await expect(
-        withHostedReviewBranchCache({ ...identity, branch: 'fresh' }, { headOid: null }, fresh)
-      ).rejects.toThrow(/never answered/)
+      const refusal = await withHostedReviewBranchCache(
+        { ...identity, branch: 'fresh' },
+        { headOid: null },
+        fresh
+      ).catch((error: unknown) => (error as Error).message)
+      expect(refusal).toMatch(/Too many hosted review lookups are already in progress/)
+      expect(refusal).not.toMatch(/never answered/)
       expect(fresh).not.toHaveBeenCalled()
 
       // A branch already counted keeps its second attempt: the bound is on new
@@ -856,6 +863,28 @@ describe('hosted review branch cache (#11532)', () => {
         )
       )
       expect(retry.lookup).toHaveBeenCalledTimes(1)
+    })
+
+    it('names the process-wide cap when abandoned lookups have filled it', async () => {
+      const wedged = stuckLookup()
+      for (let index = 0; index < MAX_DETACHED_LOOKUPS; index += 1) {
+        void withHostedReviewBranchCache(
+          { ...identity, branch: `wedged/${index}` },
+          { headOid: null },
+          wedged.lookup
+        ).catch(() => {})
+      }
+      await vi.advanceTimersByTimeAsync(HOSTED_REVIEW_LOOKUP_DEADLINE_MS)
+
+      // The host wedged every branch on it, not this one in particular.
+      const fresh = vi.fn(async () => openReview)
+      const refusal = await withHostedReviewBranchCache(
+        { ...identity, branch: 'fresh' },
+        { headOid: null },
+        fresh
+      ).catch((error: unknown) => (error as Error).message)
+      expect(refusal).toMatch(/abandoned without answering/)
+      expect(fresh).not.toHaveBeenCalled()
     })
 
     it('does not adopt a straggler whose invalidated scope was evicted', async () => {
