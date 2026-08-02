@@ -18,4 +18,11 @@ describe('createCancelledConnectAttemptError', () => {
   it('does not classify unrelated errors as cancellations', () => {
     expect(isCancelledConnectAttemptError(new Error('connect ETIMEDOUT'))).toBe(false)
   })
+
+  it('ignores a lookalike message from a producer that skipped the factory', () => {
+    // Every real producer imports the factory, so message text alone must not qualify.
+    expect(
+      isCancelledConnectAttemptError(new Error(createCancelledConnectAttemptError().message))
+    ).toBe(false)
+  })
 })

@@ -9,8 +9,8 @@ export function createCancelledConnectAttemptError(): Error {
   return error
 }
 
+// Identity only: every producer goes through createCancelledConnectAttemptError, so a message match
+// would add no reach and would misclassify an unrelated error that happens to share the wording.
 export function isCancelledConnectAttemptError(err: Error): boolean {
-  return (
-    err.name === CANCELLED_CONNECT_ATTEMPT_NAME || err.message === CANCELLED_CONNECT_ATTEMPT_MESSAGE
-  )
+  return err.name === CANCELLED_CONNECT_ATTEMPT_NAME
 }

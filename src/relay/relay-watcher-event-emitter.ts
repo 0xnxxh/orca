@@ -17,7 +17,7 @@ type OverflowMarkerState = {
   // Why: one outstanding marker per (client, root) keeps sustained backpressure bounded.
   inFlight: Set<string>
   // Rejected markers, retained per client so they can be republished when the control lane frees up.
-  pending: Map<number, Set<string>>
+  pending: Map<number, Map<string, number>>
   capacityUnsubscribes: Map<number, () => void>
 }
 
@@ -176,14 +176,22 @@ function overflowMarkerState(dispatcher: RelayDispatcher): OverflowMarkerState {
   }
   overflowMarkerStates.set(dispatcher, state)
   // In-flight keys need no sweep here: closing a client settles every queued and written frame first.
-  dispatcher.onClientDetached((clientId) => forgetClientMarkers(state, clientId))
+  dispatcher.onClientDetached((clientId) => {
+    // Not every detach retires the id: invalidateClient() detaches the primary without removing it and
+    // setWrite() revives it, so dropping the markers here would desync the tree the reconnect restores.
+    if (dispatcher.isClientAttached(clientId)) {
+      return
+    }
+    forgetClientMarkers(state, clientId)
+  })
   return state
 }
 
 function forgetClientMarkers(state: OverflowMarkerState, clientId: number): void {
-  state.pending.delete(clientId)
+  // Unsubscribe first so no re-entrant flush can observe a half-cleared client.
   state.capacityUnsubscribes.get(clientId)?.()
   state.capacityUnsubscribes.delete(clientId)
+  state.pending.delete(clientId)
 }
 
 function overflowMarkerParams(rootPath: string): Record<string, unknown> {
@@ -212,36 +220,46 @@ function publishOverflowMarker(
   dispatcher: RelayDispatcher,
   state: OverflowMarkerState,
   clientId: number,
-  rootPath: string
+  rootPath: string,
+  estimatedBytes?: number
 ): void {
   const key = `${clientId} ${rootPath}`
+  const params = overflowMarkerParams(rootPath)
+  const frameBytes = estimatedBytes ?? dispatcher.notificationFrameBytes('fs.changed', params)
   state.inFlight.add(key)
   let settled = false
   const accepted = dispatcher.tryNotifyClient(
     clientId,
     'fs.changed',
-    overflowMarkerParams(rootPath),
-    () => {
+    params,
+    (result) => {
       // Settles on write, drop, or client close, so the slot can never leak.
       settled = true
       state.inFlight.delete(key)
+      if (result.ok) {
+        return
+      }
+      // A frame the sink never wrote leaves the tree just as desynced as a rejected one — setWrite
+      // fails every queued and in-flight frame this way. Retain unconditionally: a real detach clears
+      // it through onClientDetached, which fires after this settlement.
+      retainOverflowMarker(dispatcher, state, clientId, rootPath, frameBytes)
     },
-    { controlOverflow: 'reject' }
+    { controlOverflow: 'reject', estimatedBytes: frameBytes }
   )
   if (accepted || settled) {
-    // A settled rejection means the client is gone, so there is nothing left to resync.
     return
   }
   // Admission rejection has no settlement callback: retain the marker instead of desyncing the tree.
   state.inFlight.delete(key)
-  retainOverflowMarker(dispatcher, state, clientId, rootPath)
+  retainOverflowMarker(dispatcher, state, clientId, rootPath, frameBytes)
 }
 
 function retainOverflowMarker(
   dispatcher: RelayDispatcher,
   state: OverflowMarkerState,
   clientId: number,
-  rootPath: string
+  rootPath: string,
+  estimatedBytes: number
 ): void {
   if (!state.capacityUnsubscribes.has(clientId)) {
     const unsubscribe = dispatcher.onClientCapacity(clientId, () =>
@@ -255,10 +273,10 @@ function retainOverflowMarker(
   }
   const roots = state.pending.get(clientId)
   if (roots) {
-    roots.add(rootPath)
+    roots.set(rootPath, estimatedBytes)
     return
   }
-  state.pending.set(clientId, new Set([rootPath]))
+  state.pending.set(clientId, new Map([[rootPath, estimatedBytes]]))
 }
 
 function flushPendingOverflowMarkers(
@@ -270,21 +288,23 @@ function flushPendingOverflowMarkers(
   if (!roots) {
     return
   }
-  for (const rootPath of Array.from(roots)) {
+  for (const [rootPath, estimatedBytes] of Array.from(roots)) {
+    // Capacity fires on every lane; retry only frames the control queue can admit now.
+    if (!dispatcher.canAdmitControlFrame(clientId, estimatedBytes)) {
+      continue
+    }
     // Drop before republishing so a synchronous settlement cannot see the marker as still pending —
     // and skip roots a re-entrant flush already took, which would otherwise send the marker twice.
     if (!roots.delete(rootPath)) {
       continue
     }
-    publishOverflowMarker(dispatcher, state, clientId, rootPath)
+    publishOverflowMarker(dispatcher, state, clientId, rootPath, estimatedBytes)
   }
   // Identity check: a re-entrant flush may have retired this set and armed a fresh one to keep.
   if (roots.size > 0 || state.pending.get(clientId) !== roots) {
     return
   }
-  state.pending.delete(clientId)
-  state.capacityUnsubscribes.get(clientId)?.()
-  state.capacityUnsubscribes.delete(clientId)
+  forgetClientMarkers(state, clientId)
 }
 
 export function emitRelayWatcherOverflow(

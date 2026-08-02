@@ -18,8 +18,29 @@ const NETWORK_LIKE_ERROR_FRAGMENTS = [
   'name or service not known',
   'nodename nor servname',
   'could not resolve hostname',
-  'kex_exchange_identification'
+  'kex_exchange_identification',
+  // Pre-7.x OpenSSH wording for the same banner-exchange failure.
+  'ssh_exchange_identification',
+  // Deliberately not the bare 'connection closed by': OpenSSH prints "Connection closed by <ip> port 22"
+  // for server-side rejections (MaxStartups, DenyUsers) too, and those must stay permanent.
+  'connection closed by remote'
 ]
+
+const DEFINITE_HOST_FAILURE_FRAGMENTS = [
+  'no route to host',
+  'network is unreachable',
+  'network is down',
+  'host is down',
+  'temporary failure in name resolution',
+  'name or service not known',
+  'nodename nor servname',
+  'could not resolve hostname'
+]
+
+const DEFINITE_HOST_FAILURE_CODES = new Set(['EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'])
+
+const OPENSSH_HOST_CONNECT_FAILURE =
+  /\bconnect to host .+? port \d+: (?:connection (?:timed out|refused|reset(?: by peer)?)|operation timed out)\b/i
 
 /**
  * Why a second classifier: connect() spends isTransientError on INITIAL_RETRY_ATTEMPTS, so widening
@@ -36,4 +57,20 @@ export function isTransientReconnectError(err: Error): boolean {
   }
   const message = err.message.toLowerCase()
   return NETWORK_LIKE_ERROR_FRAGMENTS.some((fragment) => message.includes(fragment))
+}
+
+/** Definite host failures where a ControlMaster-free retry cannot help. */
+export function isDefiniteSystemSshHostFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false
+  }
+  const code = (err as NodeJS.ErrnoException).code
+  if (code && DEFINITE_HOST_FAILURE_CODES.has(code)) {
+    return true
+  }
+  const message = err.message.toLowerCase()
+  return (
+    DEFINITE_HOST_FAILURE_FRAGMENTS.some((fragment) => message.includes(fragment)) ||
+    OPENSSH_HOST_CONNECT_FAILURE.test(err.message)
+  )
 }

@@ -44,7 +44,10 @@ import {
   createCancelledConnectAttemptError,
   isCancelledConnectAttemptError
 } from './ssh-connect-attempt-cancellation'
-import { isTransientReconnectError } from './ssh-reconnect-error-classification'
+import {
+  isDefiniteSystemSshHostFailure,
+  isTransientReconnectError
+} from './ssh-reconnect-error-classification'
 import { SshReconnectLadder } from './ssh-reconnect-ladder'
 import { getPassphrasePrivateKeyPath } from './ssh-private-key-authentication'
 import {
@@ -975,10 +978,18 @@ export class SshConnection {
     try {
       await this.doSystemSshProbe(connectGeneration)
     } catch (err) {
-      if (!controlPath || this.disposed || connectGeneration !== this.connectGeneration) {
+      if (
+        !controlPath ||
+        this.disposed ||
+        connectGeneration !== this.connectGeneration
+      ) {
         throw err
       }
       removeControlSocketPath(controlPath)
+      // A mux-free probe cannot reach a definitively unavailable host.
+      if (isDefiniteSystemSshHostFailure(err)) {
+        throw err
+      }
       this.systemSshResolvedConfig = cloneResolvedConfig(resolved)
       this.systemSshControlMasterDisabledForSession = true
       try {
@@ -1004,6 +1015,9 @@ export class SshConnection {
         throw err
       }
       removeControlSocketPath(controlPath)
+      if (isDefiniteSystemSshHostFailure(err)) {
+        throw err
+      }
       this.systemSshControlMasterDisabledForSession = true
       if (!this.isCurrentConnectAttempt(connectGeneration)) {
         throw this.createCancelledConnectAttemptError()

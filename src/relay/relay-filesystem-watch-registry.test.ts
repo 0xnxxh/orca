@@ -96,7 +96,8 @@ function createDispatcher() {
     onClientDetached: vi.fn((listener: (clientId: number) => void) => {
       detached.add(listener)
       return () => detached.delete(listener)
-    })
+    }),
+    notificationFrameBytes: vi.fn(() => 64)
   }
 }
 
