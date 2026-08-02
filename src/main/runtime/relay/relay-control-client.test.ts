@@ -406,7 +406,7 @@ class FakeControlSocket extends EventEmitter {
   }
 }
 
-function scriptedControl(options: { closeWithAck?: boolean } = {}): {
+function scriptedControl(options: { closeWithAck?: boolean; issuedAtOffsetMs?: number } = {}): {
   client: RelayControlClient
   socket: FakeControlSocket
   onClose: ReturnType<typeof vi.fn>
@@ -428,7 +428,7 @@ function scriptedControl(options: { closeWithAck?: boolean } = {}): {
       const relayKeys = nacl.box.keyPair()
       const nonce = randomBytes(24)
       const secret = randomBytes(32)
-      const issuedAt = Date.now()
+      const issuedAt = Date.now() + (options.issuedAtOffsetMs ?? 0)
       const expiresAt = issuedAt + 10_000
       const transcript = buildTranscript({
         origin,
@@ -504,6 +504,21 @@ describe('RelayControlClient scripted-socket lifecycle', () => {
     await expect(client.connect()).resolves.toMatchObject({ generation: 4 })
 
     expect(onClose).toHaveBeenCalledWith(1006)
+    expect(client.isLive()).toBe(false)
+  })
+
+  it('tolerates a cell clock slightly ahead when validating the challenge', async () => {
+    // A relay whose clock runs ~100ms-2s ahead is normal NTP drift, not replay.
+    const { client } = scriptedControl({ issuedAtOffsetMs: 1_500 })
+
+    await expect(client.connect()).resolves.toMatchObject({ generation: 4 })
+    expect(client.isLive()).toBe(true)
+  })
+
+  it('rejects a challenge issued beyond the clock tolerance', async () => {
+    const { client } = scriptedControl({ issuedAtOffsetMs: 30_000 })
+
+    await expect(client.connect()).rejects.toThrow('invalid host challenge')
     expect(client.isLive()).toBe(false)
   })
 

@@ -240,6 +240,7 @@ export class RelayControlClient {
   private handleProofMessage(message: Record<string, unknown>): void {
     const challenge = RelayHostChallengeMessageSchema.safeParse(message)
     if (challenge.success) {
+      let invalidReason = 'unknown'
       const proofB64 = answerRelayHostChallenge(challenge.data, {
         relayOrigin: this.relayOrigin,
         ...this.options.identity,
@@ -248,10 +249,14 @@ export class RelayControlClient {
         hostSecretKey: this.options.keypair.secretKey,
         assignmentEpoch: this.options.assignmentEpoch,
         previousGeneration: this.options.previousGeneration,
-        resumeRequested: Boolean(this.options.controlResumeSecret)
+        resumeRequested: Boolean(this.options.controlResumeSecret),
+        onInvalid: (reason) => {
+          invalidReason = reason
+        }
       })
       if (!proofB64) {
-        this.failProtocol('invalid host challenge')
+        // Reason names the failing check only; field values never surface here.
+        this.failProtocol(`invalid host challenge: ${invalidReason} origin=${this.relayOrigin}`)
         return
       }
       this.socket?.send(

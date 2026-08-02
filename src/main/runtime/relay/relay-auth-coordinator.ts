@@ -188,6 +188,12 @@ export class RelayAuthCoordinator {
       this.options.onStatus('registered')
     } catch (error) {
       if (this.isEpochCurrent(epoch)) {
+        // Why: silent broker-open failures made a dead relay look like standby
+        // during incident diagnosis; the message carries operation + status.
+        console.warn(
+          '[relay] broker reconcile failed:',
+          error instanceof Error ? error.message : String(error)
+        )
         this.options.onStatus('offline')
         if (shouldRetryRelayConnectionError(error)) {
           const retryAfterMs = error instanceof RelayHttpError ? (error.retryAfterMs ?? 0) : 0
