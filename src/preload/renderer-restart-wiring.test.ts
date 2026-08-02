@@ -3,8 +3,7 @@ import { ORCA_RENDERER_UNLOAD_PREVENTED_EVENT } from '../shared/renderer-shutdow
 import { ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT } from '../shared/updater-renderer-events'
 import {
   prepareAndInvokeUpdaterInstall,
-  relayRendererUnloadPrevented,
-  relayUpdaterStatus
+  registerRendererRestartIpcRelays
 } from './renderer-restart-wiring'
 
 describe('renderer restart wiring', () => {
@@ -12,11 +11,20 @@ describe('renderer restart wiring', () => {
     const eventTarget = new EventTarget()
     const unloadPrevented = vi.fn()
     const handleStatus = vi.fn()
+    const listeners = new Map<string, (...args: unknown[]) => void>()
+    const ipcRenderer = {
+      on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(channel, listener)
+        return ipcRenderer
+      })
+    } as unknown as Parameters<typeof registerRendererRestartIpcRelays>[0]
     eventTarget.addEventListener(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT, unloadPrevented)
 
-    relayUpdaterStatus({ handleStatus }, { state: 'error', message: 'install failed' })
-    relayRendererUnloadPrevented(eventTarget)
+    registerRendererRestartIpcRelays(ipcRenderer, eventTarget, { handleStatus })
+    listeners.get('updater:status')?.({}, { state: 'error', message: 'install failed' })
+    listeners.get('window:unload-prevented')?.({})
 
+    expect(ipcRenderer.on).toHaveBeenCalledTimes(2)
     expect(handleStatus).toHaveBeenCalledWith({ state: 'error', message: 'install failed' })
     expect(unloadPrevented).toHaveBeenCalledTimes(1)
   })

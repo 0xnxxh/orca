@@ -279,8 +279,7 @@ import {
 } from '../shared/renderer-restart-preparation'
 import {
   prepareAndInvokeUpdaterInstall,
-  relayRendererUnloadPrevented,
-  relayUpdaterStatus
+  registerRendererRestartIpcRelays
 } from './renderer-restart-wiring'
 
 type NativeFileDropCallback = (data: NativeFileDropPayload) => void
@@ -292,12 +291,7 @@ const updaterQuitAbortRelay = createUpdaterQuitAbortRelay(
   ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT
 )
 
-ipcRenderer.on('updater:status', (_event, status: UpdateStatus) => {
-  relayUpdaterStatus(updaterQuitAbortRelay, status)
-})
-ipcRenderer.on('window:unload-prevented', () => {
-  relayRendererUnloadPrevented(window)
-})
+registerRendererRestartIpcRelays(ipcRenderer, window, updaterQuitAbortRelay)
 
 function getLinuxDisplayServer(): 'wayland' | 'x11' | null {
   if (process.platform !== 'linux') {
