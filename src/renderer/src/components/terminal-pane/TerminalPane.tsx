@@ -149,6 +149,10 @@ import {
   resolveCodexAccountRestartStartup,
   type CodexAccountRestartStartup
 } from '@/lib/codex-session-restart'
+import {
+  getSelectedHostCodexAccountId,
+  resolveCodexAccountRestartApplyState
+} from '@/lib/codex-account-restart-apply-state'
 import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/workspace-file-drag'
 import { isTerminalSessionStateSaveFailure } from '../../../../shared/terminal-session-state-save-failure'
 import { isTerminalZeroDimensionsDiagnostic } from '../../../../shared/terminal-zero-dimensions-diagnostic'
@@ -1631,6 +1635,7 @@ function TerminalPane(
       const transport = paneTransportsRef.current.get(paneId)
       const panePtyBinding = panePtyBindingsRef.current.get(paneId)
       const existingPtyId = transport?.getPtyId()
+      const selectedHostAccountId = getSelectedHostCodexAccountId(useAppStore.getState().settings)
 
       // Why before teardown: resume preparation reads the live session's /goal
       // through the old home's app-server and bridges it into the new home; a
@@ -1648,9 +1653,24 @@ function TerminalPane(
         // second restart can interleave before this one finishes.
         restartingCodexPaneIdsRef.current.delete(paneId)
       }
-      if (paneTransportsRef.current.get(paneId) !== transport) {
-        // Why: the pane reconnected while preparation ran; a second teardown
-        // would kill the replacement PTY.
+      const applyState = resolveCodexAccountRestartApplyState({
+        capturedTransport: transport,
+        currentTransport: paneTransportsRef.current.get(paneId),
+        capturedPtyId: existingPtyId,
+        capturedHostAccountId: selectedHostAccountId,
+        currentHostAccountId: getSelectedHostCodexAccountId(useAppStore.getState().settings)
+      })
+      if (applyState === 'target-replaced') {
+        // Why: reconnect can replace the PTY on the same transport object;
+        // teardown authority belongs to the captured object + PTY generation.
+        return
+      }
+      if (applyState === 'selection-changed') {
+        // Why: preparation targeted the earlier selection. Retry against the
+        // current account instead of launching its shell with another home's bridge.
+        if (existingPtyId) {
+          useAppStore.getState().queueCodexPaneRestarts([existingPtyId])
+        }
         return
       }
 

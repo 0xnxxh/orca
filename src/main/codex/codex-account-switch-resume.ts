@@ -19,7 +19,7 @@ import { getCodexPaneAccount, type CodexPaneAccountRecord } from './codex-pane-a
 // the launch CODEX_HOME's sqlite, so the goal became doubly unreachable (new
 // thread, other home). This module decides whether the restarted pane may
 // `codex resume` its live thread instead, and carries the goal row across homes
-// through the sanctioned app-server RPCs (thread/goal/get → thread/goal/set).
+// through the sanctioned app-server goal RPCs (get → set/clear).
 // Orca never reads or writes Codex's sqlite itself: the app-server owns the DB
 // and its WAL. Any doubt — unrecorded pane, non-host lane, custom home, missing
 // rollout, old CLI without the goal RPCs — degrades to today's fresh `codex`
@@ -29,6 +29,7 @@ const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 const GOAL_READ_TIMEOUT_MS = 10_000
 const GOAL_WRITE_TIMEOUT_MS = 15_000
+const GOAL_RPC_UNSUPPORTED = Symbol('goal-rpc-unsupported')
 
 /** Goal RPCs are probed on the native host only; WSL/remote lanes never reach
  *  the probe (their panes degrade to a fresh startup in resolveHomes). */
@@ -161,7 +162,7 @@ export type PrepareCodexAccountSwitchResumeDeps = {
  * Decides whether an account-switch restart may resume the pane's thread, and
  * performs the goal bridge as part of deciding: `resume` is only answered once
  * the rollout is present in the new home, `thread/read` proved it resumable
- * there, and any goal row was written through `thread/goal/set`.
+ * there, and the target goal was set or cleared to match the source.
  */
 export async function prepareCodexAccountSwitchResume(
   request: { threadId: string },
@@ -176,14 +177,15 @@ export async function prepareCodexAccountSwitchResume(
     return homesDecision
   }
   const { homes } = homesDecision
+  if (
+    normalizeRuntimePathForComparison(homes.oldCodexHomePath) ===
+    normalizeRuntimePathForComparison(homes.newCodexHomePath)
+  ) {
+    // Same home keeps the same goals DB and rollout tree; resume alone carries both.
+    return { outcome: 'resume', threadId }
+  }
   const cache = deps.capabilityCache ?? codexGoalRpcCapabilityCache
   const nowMs = deps.nowMs ?? ((): number => Date.now())
-  if (
-    !cache.isKnownSupported(CODEX_GOAL_RPC_HOST_KEY) &&
-    !cache.shouldTry(CODEX_GOAL_RPC_HOST_KEY, nowMs())
-  ) {
-    return { outcome: 'fresh', reason: 'goal-rpc-unsupported' }
-  }
   const runSession = deps.runAppServerSession ?? runCodexAppServerSession
   const buildInvocation = deps.buildInvocation ?? buildCodexGoalRpcInvocation
 
@@ -191,30 +193,26 @@ export async function prepareCodexAccountSwitchResume(
   try {
     // Why: the get doubles as the capability probe — a method-not-found reply or
     // a missing app-server subcommand is the only signal that marks unsupported.
-    const result = await runSession(
-      buildInvocation(homes.oldCodexHomePath, GOAL_READ_TIMEOUT_MS),
-      (rpc) => rpc.request('thread/goal/get', { threadId })
+    const result = await cache.runWithFallbackAsync(
+      CODEX_GOAL_RPC_HOST_KEY,
+      () =>
+        runSession(buildInvocation(homes.oldCodexHomePath, GOAL_READ_TIMEOUT_MS), (rpc) =>
+          rpc.request('thread/goal/get', { threadId })
+        ),
+      () => GOAL_RPC_UNSUPPORTED,
+      isCodexAppServerUnsupportedError,
+      nowMs()
     )
+    if (result === GOAL_RPC_UNSUPPORTED) {
+      return { outcome: 'fresh', reason: 'goal-rpc-unsupported' }
+    }
     const parsed = parseThreadGoalSnapshot(result)
     if (parsed.outcome === 'malformed') {
       return { outcome: 'fresh', reason: 'goal-shape-unexpected' }
     }
     goal = parsed.goal
-    cache.rememberSupported(CODEX_GOAL_RPC_HOST_KEY)
-  } catch (error) {
-    if (isCodexAppServerUnsupportedError(error)) {
-      cache.rememberUnsupported(CODEX_GOAL_RPC_HOST_KEY, nowMs())
-      return { outcome: 'fresh', reason: 'goal-rpc-unsupported' }
-    }
+  } catch {
     return { outcome: 'fresh', reason: 'goal-read-failed' }
-  }
-
-  if (
-    normalizeRuntimePathForComparison(homes.oldCodexHomePath) ===
-    normalizeRuntimePathForComparison(homes.newCodexHomePath)
-  ) {
-    // Same home keeps the same goals DB and rollout tree; resume alone carries both.
-    return { outcome: 'resume', threadId }
   }
 
   if (!(await deps.ensureRolloutBridged(homes))) {
@@ -229,14 +227,16 @@ export async function prepareCodexAccountSwitchResume(
         // bridged rollout and upserts the thread row, proving the thread is
         // resumable in this home before Orca commits the pane to `codex resume`.
         await rpc.request('thread/read', { threadId })
-        if (goal) {
-          await rpc.request('thread/goal/set', {
-            threadId,
-            objective: goal.objective,
-            status: goal.status,
-            tokenBudget: goal.tokenBudget
-          })
-        }
+        // Why: the target may retain an older row from a prior switch; mirroring
+        // null must remove it or the resumed thread revives stale state.
+        await (goal
+          ? rpc.request('thread/goal/set', {
+              threadId,
+              objective: goal.objective,
+              status: goal.status,
+              tokenBudget: goal.tokenBudget
+            })
+          : rpc.request('thread/goal/clear', { threadId }))
       }
     )
   } catch (error) {
@@ -258,7 +258,10 @@ function parseThreadGoalSnapshot(
     return { outcome: 'malformed' }
   }
   const goal = (result as { goal?: unknown }).goal
-  if (goal === null || goal === undefined) {
+  if (goal === undefined) {
+    return { outcome: 'malformed' }
+  }
+  if (goal === null) {
     return { outcome: 'parsed', goal: null }
   }
   if (typeof goal !== 'object') {

@@ -109,6 +109,63 @@ describe('CodexAppServerCapabilityCache', () => {
     expect(cache.shouldTry('native', 2)).toBe(true)
   })
 
+  it('coalesces concurrent unsupported async probes per host', async () => {
+    const cache = new CodexAppServerCapabilityCache()
+    let rejectProbe!: (error: Error) => void
+    const preferred = vi.fn(
+      () =>
+        new Promise<string>((_resolve, reject) => {
+          rejectProbe = reject
+        })
+    )
+
+    const first = cache.runWithFallbackAsync(
+      'native',
+      preferred,
+      () => 'first-fallback',
+      isUnsupported,
+      5
+    )
+    const second = cache.runWithFallbackAsync(
+      'native',
+      preferred,
+      () => 'second-fallback',
+      isUnsupported,
+      5
+    )
+    await Promise.resolve()
+    expect(preferred).toHaveBeenCalledTimes(1)
+
+    rejectProbe(unsupportedError)
+    await expect(first).resolves.toBe('first-fallback')
+    await expect(second).resolves.toBe('second-fallback')
+    expect(preferred).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets concurrent callers run their own work once the async probe succeeds', async () => {
+    const cache = new CodexAppServerCapabilityCache()
+    let resolveProbe!: (value: string) => void
+    const preferred = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveProbe = resolve
+          })
+      )
+      .mockResolvedValueOnce('second-result')
+
+    const first = cache.runWithFallbackAsync('native', preferred, () => 'fallback', isUnsupported)
+    const second = cache.runWithFallbackAsync('native', preferred, () => 'fallback', isUnsupported)
+    await Promise.resolve()
+    expect(preferred).toHaveBeenCalledTimes(1)
+
+    resolveProbe('first-result')
+    await expect(first).resolves.toBe('first-result')
+    await expect(second).resolves.toBe('second-result')
+    expect(preferred).toHaveBeenCalledTimes(2)
+  })
+
   it('builds host keys that keep WSL distros apart', () => {
     expect(getCodexAppServerHostKey({ kind: 'native' })).toBe('native')
     expect(getCodexAppServerHostKey({ kind: 'wsl', distro: 'Ubuntu' })).toBe('wsl:Ubuntu')

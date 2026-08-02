@@ -246,7 +246,7 @@ describe('prepareCodexAccountSwitchResume', () => {
     ])
   })
 
-  it('still resumes a goalless thread, validating it via thread/read alone', async () => {
+  it('clears a stale target goal when the source thread is goalless', async () => {
     const { deps, calls } = prepareDeps({
       script: (call) => (call.method === 'thread/goal/get' ? { goal: null } : {})
     })
@@ -254,7 +254,11 @@ describe('prepareCodexAccountSwitchResume', () => {
     const decision = await prepareCodexAccountSwitchResume({ threadId: THREAD_ID }, deps)
 
     expect(decision).toEqual({ outcome: 'resume', threadId: THREAD_ID })
-    expect(calls.map((call) => call.method)).toEqual(['thread/goal/get', 'thread/read'])
+    expect(calls).toEqual([
+      { home: OLD_HOME, method: 'thread/goal/get', params: { threadId: THREAD_ID } },
+      { home: NEW_HOME, method: 'thread/read', params: { threadId: THREAD_ID } },
+      { home: NEW_HOME, method: 'thread/goal/clear', params: { threadId: THREAD_ID } }
+    ])
   })
 
   it('normalizes a missing token budget to null for the write', async () => {
@@ -268,10 +272,16 @@ describe('prepareCodexAccountSwitchResume', () => {
     expect(calls.at(-1)?.params).toMatchObject({ tokenBudget: null })
   })
 
-  it('skips the bridge entirely when the launch home is also the new home', async () => {
+  it('resumes immediately without app-server work when both homes are the same', async () => {
+    const cache = new CodexAppServerCapabilityCache()
+    cache.rememberUnsupported(CODEX_GOAL_RPC_HOST_KEY, 1_000)
     const { deps, calls, bridgedHomes } = prepareDeps({
-      script: () => ({ goal: GOAL }),
-      homes: { oldCodexHomePath: OLD_HOME, newCodexHomePath: OLD_HOME }
+      script: () => {
+        throw new Error('same-home restart must not spawn an app-server')
+      },
+      homes: { oldCodexHomePath: OLD_HOME, newCodexHomePath: OLD_HOME },
+      cache,
+      nowMs: () => 1_001
     })
 
     const decision = await prepareCodexAccountSwitchResume({ threadId: THREAD_ID }, deps)
@@ -279,7 +289,7 @@ describe('prepareCodexAccountSwitchResume', () => {
     // Why: one home means one goals DB and one rollout tree; resume carries both.
     expect(decision).toEqual({ outcome: 'resume', threadId: THREAD_ID })
     expect(bridgedHomes).toEqual([])
-    expect(calls.map((call) => call.method)).toEqual(['thread/goal/get'])
+    expect(calls).toEqual([])
   })
 
   it('declines a thread id that is not a bare rollout UUID without touching anything', async () => {
@@ -333,6 +343,22 @@ describe('prepareCodexAccountSwitchResume', () => {
     })
   })
 
+  it('declines when clearing a stale target goal fails', async () => {
+    const { deps } = prepareDeps({
+      script: (call) => {
+        if (call.method === 'thread/goal/clear') {
+          throw new Error('codex app-server thread/goal/clear failed: boom')
+        }
+        return call.method === 'thread/goal/get' ? { goal: null } : {}
+      }
+    })
+
+    expect(await prepareCodexAccountSwitchResume({ threadId: THREAD_ID }, deps)).toEqual({
+      outcome: 'fresh',
+      reason: 'goal-write-failed'
+    })
+  })
+
   it('declines on an unrecognizable goal payload instead of guessing', async () => {
     const { deps } = prepareDeps({
       script: () => ({ goal: { status: 'usageLimited' } })
@@ -342,6 +368,16 @@ describe('prepareCodexAccountSwitchResume', () => {
       outcome: 'fresh',
       reason: 'goal-shape-unexpected'
     })
+  })
+
+  it('declines a goal response that omits the goal property', async () => {
+    const { deps, calls } = prepareDeps({ script: () => ({}) })
+
+    expect(await prepareCodexAccountSwitchResume({ threadId: THREAD_ID }, deps)).toEqual({
+      outcome: 'fresh',
+      reason: 'goal-shape-unexpected'
+    })
+    expect(calls.map((call) => call.method)).toEqual(['thread/goal/get'])
   })
 
   it('treats a transient read failure as fresh without poisoning the capability', async () => {
