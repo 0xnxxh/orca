@@ -12,10 +12,12 @@ import {
   firstDifferenceIndex,
   formatCheckFailure,
   generatedHunks,
+  lockfilePatchHashIsStale,
   normalizePnpmDiff,
   patchHash,
   pnpmDiffEnvironment,
   readLockfilePatchHash,
+  readLockfileResolutionHashes,
   sourceHunks,
   splitPatchEntries,
   stampVersionSource,
@@ -298,6 +300,10 @@ describe('lockfile coupling', () => {
     '  node-pty@1.1.0:',
     `    hash: ${'1'.repeat(64)}`,
     '    path: config/patches/node-pty@1.1.0.patch',
+    'snapshots:',
+    `  '@xterm/addon-fit@0.12.0-beta.287(@xterm/xterm@6.1.0-beta.287(patch_hash=${'0'.repeat(64)}))':`,
+    `      '@xterm/xterm': 6.1.0-beta.287(patch_hash=${'0'.repeat(64)})`,
+    `  node-pty@1.1.0(patch_hash=${'1'.repeat(64)}):`,
     ''
   ].join('\n')
 
@@ -317,6 +323,28 @@ describe('lockfile coupling', () => {
     expect(readLockfilePatchHash(updated, '@xterm/xterm@6.1.0-beta.287')).toBe('a'.repeat(64))
     expect(readLockfilePatchHash(updated, 'node-pty@1.1.0')).toBe('1'.repeat(64))
     expect(updated.split('\n')).toHaveLength(lockfile.split('\n').length)
+  })
+
+  // pnpm repeats the hash in every resolution key. Rewriting only patchedDependencies
+  // installs fine on a warm store and drifts on a cold one, so it fails in CI only.
+  it('rewrites the resolution keys as well as patchedDependencies', () => {
+    const key = '@xterm/xterm@6.1.0-beta.287'
+    expect(readLockfileResolutionHashes(lockfile, key)).toEqual(['0'.repeat(64), '0'.repeat(64)])
+
+    const updated = updateLockfilePatchHash(lockfile, key, 'a'.repeat(64))
+
+    expect(readLockfileResolutionHashes(updated, key)).toEqual(['a'.repeat(64), 'a'.repeat(64)])
+    expect(readLockfileResolutionHashes(updated, 'node-pty@1.1.0')).toEqual(['1'.repeat(64)])
+    expect(updated).not.toContain('0'.repeat(64))
+  })
+
+  it('reports a lockfile stale in its resolution keys alone', () => {
+    const key = '@xterm/xterm@6.1.0-beta.287'
+    const halfUpdated = lockfile.replace(`hash: ${'0'.repeat(64)}`, `hash: ${'a'.repeat(64)}`)
+
+    expect(readLockfilePatchHash(halfUpdated, key)).toBe('a'.repeat(64))
+    expect(lockfilePatchHashIsStale(halfUpdated, key, 'a'.repeat(64))).toBe(true)
+    expect(lockfilePatchHashIsStale(lockfile, key, '0'.repeat(64))).toBe(false)
   })
 
   it('fails loudly when the package is not patched at all', () => {

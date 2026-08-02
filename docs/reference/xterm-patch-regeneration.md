@@ -38,6 +38,12 @@ and are tracked separately; see [Known Gaps](#known-gaps).
    the bundle, so a retained map would have to move with it; dropping only the
    map hunks ships offsets that point at the wrong code. Deletion is the honest
    form of that saving, and `sourcemaps.policy` in the manifest controls it.
+6. `--check` is the authority on the lockfile, not `pnpm install`. pnpm writes the
+   patch hash in two places — `patchedDependencies` and every resolution key that
+   depends on the patched package — and on a warm store it will leave the
+   resolution keys at their previous value while reporting success. That installs
+   locally and drifts on CI's cold store. Always finish on step 4, and if it
+   reports a stale hash after an install, rerun `--write`.
 
 ## Workflow
 

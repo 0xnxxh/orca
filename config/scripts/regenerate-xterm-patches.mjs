@@ -198,9 +198,41 @@ export function readLockfilePatchHash(lockfileText, packageKey) {
   return match[2]
 }
 
+function lockfileResolutionHashPattern(packageKey) {
+  const separator = packageKey.lastIndexOf('@')
+  const name = escapeRegExp(packageKey.slice(0, separator))
+  const version = escapeRegExp(packageKey.slice(separator + 1))
+  // Two spellings: `name@version(patch_hash=…)` in dependency keys, and a bare
+  // `: version(patch_hash=…)` under `version:` and in resolved dependency maps.
+  return new RegExp(`(?:${name}@|: )${version}\\(patch_hash=([0-9a-f]{64})\\)`, 'g')
+}
+
+/**
+ * pnpm repeats the hash inside every resolution key that depends on the patched
+ * package, not just in `patchedDependencies`. Updating one and not the other leaves
+ * a lockfile that installs on a warm store and drifts on a cold one, which is CI.
+ */
+export function readLockfileResolutionHashes(lockfileText, packageKey) {
+  return Array.from(
+    lockfileText.matchAll(lockfileResolutionHashPattern(packageKey)),
+    (match) => match[1]
+  )
+}
+
+export function lockfilePatchHashIsStale(lockfileText, packageKey, hash) {
+  return (
+    readLockfilePatchHash(lockfileText, packageKey) !== hash ||
+    readLockfileResolutionHashes(lockfileText, packageKey).some((value) => value !== hash)
+  )
+}
+
 export function updateLockfilePatchHash(lockfileText, packageKey, hash) {
   readLockfilePatchHash(lockfileText, packageKey)
-  return lockfileText.replace(lockfilePatchHashPattern(packageKey), `$1${hash}`)
+  return lockfileText
+    .replace(lockfilePatchHashPattern(packageKey), `$1${hash}`)
+    .replace(lockfileResolutionHashPattern(packageKey), (match, current) =>
+      match.replace(`patch_hash=${current}`, `patch_hash=${hash}`)
+    )
 }
 
 export function firstDifferenceIndex(left, right) {
@@ -526,7 +558,7 @@ export function regenerateXtermPatches({
       writeFileSync(sourcePatchPath, canonicalSource)
       log(`  wrote ${packageEntry.patch} (${Buffer.byteLength(regenerated)} bytes)`)
       log(`  wrote ${packageEntry.sourcePatch} (${Buffer.byteLength(canonicalSource)} bytes)`)
-      if (readLockfilePatchHash(lockfile, packageKey) !== hash) {
+      if (lockfilePatchHashIsStale(lockfile, packageKey, hash)) {
         lockfile = updateLockfilePatchHash(lockfile, packageKey, hash)
         lockfileChanged = true
         log(`  updated pnpm-lock.yaml patch hash to ${hash}`)
@@ -534,12 +566,16 @@ export function regenerateXtermPatches({
       continue
     }
 
-    if (readLockfilePatchHash(lockfile, packageKey) !== hash) {
+    if (lockfilePatchHashIsStale(lockfile, packageKey, hash)) {
+      const stale = Array.from(
+        new Set(readLockfileResolutionHashes(lockfile, packageKey).filter((v) => v !== hash))
+      )
       failures.push(
         [
           `${packageKey}: pnpm-lock.yaml records a stale patch hash.`,
-          `  lockfile: ${readLockfilePatchHash(lockfile, packageKey)}`,
-          `  patch:    ${hash}`,
+          `  patchedDependencies: ${readLockfilePatchHash(lockfile, packageKey)}`,
+          `  resolution keys:     ${stale.length > 0 ? stale.join(', ') : 'in sync'}`,
+          `  patch:               ${hash}`,
           '',
           'pnpm keys the patched package by the sha256 of the patch file, so',
           '`pnpm install --frozen-lockfile` will fail. Rerun with --write.'
