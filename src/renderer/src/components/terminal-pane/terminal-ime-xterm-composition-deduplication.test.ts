@@ -302,6 +302,36 @@ describe('xterm IME composition de-duplication', () => {
     terminal.dispose()
   })
 
+  it('emits nothing when a keydown-229 change replaces text rather than inserting', async () => {
+    const { emitted, terminal, textarea } = openTerminal()
+    textarea.value = 'n'
+    textarea.setSelectionRange(1, 1)
+
+    dispatchKeydown(textarea, 'Process', 'KeyN', 229)
+    // Arithmetically indistinguishable from a one-character insertion at the caret, but the
+    // text before the caret changed too, so nothing here says which characters are new.
+    textarea.value = '你好'
+    textarea.setSelectionRange(2, 2)
+    await nextEventLoop()
+
+    expect(emitted.join('')).toBe('')
+    terminal.dispose()
+  })
+
+  it('still emits the inserted run when a keydown-229 change is a true insertion', async () => {
+    const { emitted, terminal, textarea } = openTerminal()
+    textarea.value = 'ab'
+    textarea.setSelectionRange(1, 1)
+
+    dispatchKeydown(textarea, 'Process', 'KeyX', 229)
+    textarea.value = 'axb'
+    textarea.setSelectionRange(2, 2)
+    await nextEventLoop()
+
+    expect(emitted.join('')).toBe('x')
+    terminal.dispose()
+  })
+
   it('emits repeated Korean insertText within one composition exactly twice', async () => {
     const { emitted, terminal, textarea } = openTerminal()
     startComposition(textarea, '가가')

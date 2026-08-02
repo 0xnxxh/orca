@@ -88,7 +88,7 @@ index 497afcf535f3eaca00889525a77e15eb633ccd96..96d499b34605f860608382114c3fbdc0
  
  export interface IBrowser {
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..665f5f81c56fc59d3bcbf19239ff93cbaea01f88 100644
+index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..88afc251d7963459d0263da84699c49a10ca2708 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -12,6 +12,28 @@ interface IPosition {
@@ -796,7 +796,7 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..665f5f81c56fc59d3bcbf19239ff93cb
    }
  
    /**
-@@ -214,21 +702,39 @@ export class CompositionHelper {
+@@ -214,21 +702,48 @@ export class CompositionHelper {
        return;
      }
      const oldValue = this._textarea.value;
@@ -830,6 +830,15 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..665f5f81c56fc59d3bcbf19239ff93cb
 +            // ambiguous. Emit nothing rather than guess text straight into the pty.
 +            return;
 +          }
++          if (
++            newValue.slice(0, oldSelectionStart) !== oldValue.slice(0, oldSelectionStart) ||
++            newValue.slice(newSelectionEnd) !== oldValue.slice(oldSelectionStart)
++          ) {
++            // The arithmetic above also fits a replacement that grows by the same amount
++            // ("n" -> "你好"), which would emit only the tail. The range identifies an
++            // insertion only if the text on either side of it survived unchanged.
++            return;
++          }
 +          const inserted = newValue.substring(oldSelectionStart, newSelectionEnd);
 +          this._dataAlreadySent = inserted;
 +          this._coreService.triggerDataEvent(inserted, true);
@@ -840,7 +849,7 @@ index c9ec396ab66cb966d49aa63bed09cdf9cd6c4246..665f5f81c56fc59d3bcbf19239ff93cb
            this._coreService.triggerDataEvent(newValue, true);
          }
  
-@@ -278,7 +784,8 @@ export class CompositionHelper {
+@@ -278,7 +793,8 @@ export class CompositionHelper {
      }
  
      if (!dontRecurse) {
