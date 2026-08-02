@@ -1911,11 +1911,10 @@ function App(): React.JSX.Element {
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
-      // Ahead of the detector: a composing chord must not arm a double-tap either, and the
-      // synthetic input a detection produces carries no markers to be refused by later.
-      if (isImeCompositionKeyDown(e)) {
-        return
-      }
+      // Why the detector still sees an IME-owned event instead of an early return: withholding
+      // the press leaves the gesture armed, and a later real press then completes a tap the user
+      // never made. Passing ownership in lets the detector refuse *and* reset in one place.
+      const imeOwned = isImeCompositionKeyDown(e)
       const detected = doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyDown',
@@ -1925,6 +1924,7 @@ function App(): React.JSX.Element {
           control: e.ctrlKey,
           alt: e.altKey,
           meta: e.metaKey,
+          isComposing: imeOwned,
           isAutoRepeat: e.repeat
         }),
         Date.now()
@@ -1941,11 +1941,8 @@ function App(): React.JSX.Element {
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
-      // The detector is stateful across keydown/keyup, so a composing release must not
-      // complete a tap pair the matching press was already withheld from.
-      if (isImeCompositionKeyDown(e)) {
-        return
-      }
+      // Fed rather than withheld, for the same reason as the keydown path.
+      const imeOwned = isImeCompositionKeyDown(e)
       doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyUp',
@@ -1954,7 +1951,8 @@ function App(): React.JSX.Element {
           shift: e.shiftKey,
           control: e.ctrlKey,
           alt: e.altKey,
-          meta: e.metaKey
+          meta: e.metaKey,
+          isComposing: imeOwned
         }),
         Date.now()
       )

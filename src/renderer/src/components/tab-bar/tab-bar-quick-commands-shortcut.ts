@@ -9,6 +9,8 @@ import {
   toModifierDoubleTapEvent
 } from '../../../../shared/modifier-double-tap-detector'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
+import { toShortcutDispatchInput } from '@/lib/app-shortcut-dispatch-input'
 import { TOGGLE_QUICK_COMMANDS_MENU_EVENT } from '@/lib/quick-commands-menu-events'
 import { useAppStore } from '@/store'
 
@@ -67,6 +69,10 @@ export function useTabBarQuickCommandsShortcut({
         doubleTapDetector.reset()
         return
       }
+      // Why the detector still sees an IME-owned event instead of an early return: withholding
+      // the press leaves the gesture armed, and a later real press then completes a tap the user
+      // never made. Passing ownership in lets the detector refuse *and* reset in one place.
+      const imeOwned = isImeCompositionKeyDown(e)
       const detected = doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyDown',
@@ -76,6 +82,7 @@ export function useTabBarQuickCommandsShortcut({
           control: e.ctrlKey,
           alt: e.altKey,
           meta: e.metaKey,
+          isComposing: imeOwned,
           isAutoRepeat: e.repeat
         }),
         Date.now()
@@ -89,19 +96,11 @@ export function useTabBarQuickCommandsShortcut({
       if (e.repeat) {
         return
       }
-      if (
-        !matchesShortcut(
-          {
-            key: e.key,
-            code: e.code,
-            altKey: e.altKey,
-            metaKey: e.metaKey,
-            ctrlKey: e.ctrlKey,
-            shiftKey: e.shiftKey
-          },
-          e.target
-        )
-      ) {
+      // Built by the shared adapter rather than field-by-field: an adapter that forgets the
+      // IME markers leaves the matcher nothing to refuse on, and that omission is invisible
+      // here at the call site.
+      const input = toShortcutDispatchInput(e)
+      if (!input || !matchesShortcut(input, e.target)) {
         return
       }
       toggleMenu(e)
@@ -111,6 +110,8 @@ export function useTabBarQuickCommandsShortcut({
         doubleTapDetector.reset()
         return
       }
+      // Fed rather than withheld, for the same reason as the keydown path.
+      const imeOwned = isImeCompositionKeyDown(e)
       doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyUp',
@@ -119,7 +120,8 @@ export function useTabBarQuickCommandsShortcut({
           shift: e.shiftKey,
           control: e.ctrlKey,
           alt: e.altKey,
-          meta: e.metaKey
+          meta: e.metaKey,
+          isComposing: imeOwned
         }),
         Date.now()
       )

@@ -3,7 +3,8 @@ import {
   ModifierDoubleTapDetector,
   modifierFromKeyEvent,
   toModifierDoubleTapEvent,
-  type ModifierDoubleTapEvent
+  type ModifierDoubleTapEvent,
+  type ModifierKeyEventLike
 } from './modifier-double-tap-detector'
 
 function down(
@@ -132,5 +133,64 @@ describe('ModifierDoubleTapDetector', () => {
       modifier: null,
       isModifierOnly: false
     })
+  })
+})
+
+// A detected tap is dispatched as `{ doubleTapModifier }` with no key or modifier flags, so once
+// one is armed there is nothing left for the shortcut matcher to refuse on. That makes this the
+// only place the refusal can happen — and normalizing it here means a listener that forgets the
+// check still cannot arm a gesture from a keystroke the IME owns.
+describe('toModifierDoubleTapEvent refuses input an IME owns', () => {
+  const shiftTap = (over: Partial<ModifierKeyEventLike> = {}): ModifierKeyEventLike => ({
+    type: 'keyDown',
+    code: 'ShiftLeft',
+    key: 'Shift',
+    shift: true,
+    ...over
+  })
+
+  it('reads a bare modifier press as a tap when nothing marks it', () => {
+    expect(toModifierDoubleTapEvent(shiftTap())).toMatchObject({
+      modifier: 'Shift',
+      isModifierOnly: true
+    })
+  })
+
+  it.each([
+    ['isComposing', { isComposing: true }],
+    ['keyCode 229', { keyCode: 229 }],
+    ['key Process', { key: 'Process' }]
+  ])('drops the modifier when the event is marked by %s', (_marker, over) => {
+    expect(toModifierDoubleTapEvent(shiftTap(over))).toMatchObject({
+      modifier: null,
+      isModifierOnly: false
+    })
+  })
+
+  it('leaves callers that pass no marker fields unchanged', () => {
+    // Electron's before-input-event carries neither marker; it must keep working.
+    expect(
+      toModifierDoubleTapEvent({ type: 'keyDown', code: 'MetaLeft', meta: true })
+    ).toMatchObject({ modifier: 'Cmd' })
+  })
+
+  it('breaks a gesture whose second press the IME owns, rather than emitting', () => {
+    const d = new ModifierDoubleTapDetector()
+    d.process(toModifierDoubleTapEvent(shiftTap()), 0)
+    d.process(toModifierDoubleTapEvent(shiftTap({ type: 'keyUp' })), 10)
+
+    expect(d.process(toModifierDoubleTapEvent(shiftTap({ isComposing: true })), 20)).toBeNull()
+    // And the armed state is gone, so the next unmarked press starts over instead of completing.
+    expect(d.process(toModifierDoubleTapEvent(shiftTap()), 30)).toBeNull()
+  })
+
+  // The release is what arms the second half of the gesture, so it needs the same refusal as the
+  // press — otherwise a composition that starts mid-gesture still completes a tap.
+  it('does not let a composing release arm the gesture', () => {
+    const d = new ModifierDoubleTapDetector()
+    d.process(toModifierDoubleTapEvent(shiftTap()), 0)
+    d.process(toModifierDoubleTapEvent(shiftTap({ type: 'keyUp', isComposing: true })), 10)
+
+    expect(d.process(toModifierDoubleTapEvent(shiftTap()), 20)).toBeNull()
   })
 })

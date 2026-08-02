@@ -54,7 +54,10 @@ vi.mock('react', async () => {
   }
 })
 
-vi.mock('../../../../shared/keybindings', () => ({
+// Only the matcher is stubbed. `keybindingInputIsImeOwned` stays real so the IME refusal in this
+// dispatcher runs for real rather than being mocked into always-false.
+vi.mock(import('../../../../shared/keybindings'), async (importOriginal) => ({
+  ...(await importOriginal()),
   keybindingMatchesAction: keybindingsMock.matchAction
 }))
 
@@ -365,6 +368,71 @@ describe('TabBarQuickCommandsMenu keyboard shortcut', () => {
     expect(reactRuntime.states[0]).toBe(true)
     expect(secondDown.preventDefault).toHaveBeenCalled()
     expect(secondDown.stopImmediatePropagation).toHaveBeenCalled()
+  })
+
+  // These run against the real listener rather than the shared matcher, which is the gap that let
+  // a composing chord through after the matcher was already guarded: the matcher is forced to
+  // match here, so a toggle can only be stopped by the dispatcher's own refusal.
+  describe('while an IME owns the keystroke', () => {
+    const composingChord = (): KeyboardEvent =>
+      // The real key shape a composing chord has — not `key: 'Process'`, which no binding
+      // resolves to and which would therefore pass with the guard deleted.
+      makeKeyEvent({ keyCode: 229, isComposing: true } as Partial<KeyboardEvent>)
+
+    const shiftTap = (over: Partial<KeyboardEvent> = {}): KeyboardEvent =>
+      makeKeyEvent({ key: 'Shift', code: 'ShiftLeft', metaKey: false, shiftKey: true, ...over })
+
+    async function mountListeners(): Promise<void> {
+      reactRuntime.index = 0
+      const { TabBarQuickCommandsMenu } = await import('./TabBarQuickCommandsMenu')
+      TabBarQuickCommandsMenu(makeProps())
+      reactRuntime.effects[0]()
+    }
+
+    // Bound to the gesture only, so the bare Shift presses that build it are not themselves
+    // chords that toggle — the toggle can only come from a completed double-tap.
+    const matchDoubleTapOnly = (): void => {
+      keybindingsMock.matchAction.mockImplementation(
+        (_actionId, input: { doubleTapModifier?: string }) => input.doubleTapModifier === 'Shift'
+      )
+    }
+
+    it('does not toggle on a marked chord', async () => {
+      await mountListeners()
+      keybindingsMock.matchAction.mockReturnValue(true)
+      const event = composingChord()
+
+      windowListeners.get('keydown')!(event)
+
+      expect(reactRuntime.states[0]).toBe(false)
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('does not complete a double-tap whose second press is marked', async () => {
+      await mountListeners()
+      matchDoubleTapOnly()
+      const keyDown = windowListeners.get('keydown')!
+
+      keyDown(shiftTap())
+      windowListeners.get('keyup')!(shiftTap())
+      keyDown(shiftTap({ keyCode: 229, isComposing: true } as Partial<KeyboardEvent>))
+
+      expect(reactRuntime.states[0]).toBe(false)
+    })
+
+    it('does not let a marked release arm the second half of a double-tap', async () => {
+      await mountListeners()
+      matchDoubleTapOnly()
+      const keyDown = windowListeners.get('keydown')!
+
+      keyDown(shiftTap())
+      windowListeners.get('keyup')!(
+        shiftTap({ keyCode: 229, isComposing: true } as Partial<KeyboardEvent>)
+      )
+      keyDown(shiftTap())
+
+      expect(reactRuntime.states[0]).toBe(false)
+    })
   })
 
   it('removes the listener when the effect is cleaned up', async () => {

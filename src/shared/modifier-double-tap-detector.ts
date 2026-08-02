@@ -1,4 +1,4 @@
-import type { PhysicalModifierToken } from './keybindings'
+import { keybindingInputIsImeOwned, type PhysicalModifierToken } from './keybindings'
 
 // Why: max gap between the first release and the second press. Internal — not
 // user-configurable — and tight enough that normal fast typing never triggers.
@@ -27,6 +27,9 @@ export type ModifierKeyEventLike = {
   alt?: boolean
   meta?: boolean
   isAutoRepeat?: boolean
+  // Optional so non-DOM callers (Electron before-input-event) keep their current behavior.
+  isComposing?: boolean
+  keyCode?: number
 }
 
 const MODIFIER_BY_CODE: Record<string, PhysicalModifierToken> = {
@@ -77,7 +80,13 @@ function otherModifierHeld(event: ModifierKeyEventLike, modifier: PhysicalModifi
 
 // Normalizes a platform key event (DOM or Electron) into the detector input.
 export function toModifierDoubleTapEvent(event: ModifierKeyEventLike): ModifierDoubleTapEvent {
-  const modifier = modifierFromKeyEvent(event.code, event.key)
+  // A null modifier resets the gesture, which is what an IME-owned keystroke should do: the
+  // synthetic input a detection produces carries no key or modifier flags, so once a tap is
+  // armed there is nothing left for the shortcut matcher to refuse on. Deciding it here
+  // rather than at each listener means a site that forgets the check still cannot arm one.
+  const modifier = keybindingInputIsImeOwned(event)
+    ? null
+    : modifierFromKeyEvent(event.code, event.key)
   return {
     type: event.type,
     modifier,

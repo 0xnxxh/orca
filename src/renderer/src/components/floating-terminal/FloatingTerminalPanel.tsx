@@ -60,6 +60,7 @@ import {
 } from '@/lib/floating-workspace-guest-bridge'
 import { closeTerminalTab } from '@/components/terminal/terminal-tab-actions'
 import { guardPinnedTabClose, resolvePinnedTabLabel } from '@/store/pinned-tab-close-guard'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { extractIpcErrorMessage } from '@/lib/ipc-error'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import {
@@ -1409,6 +1410,10 @@ export function FloatingTerminalPanel({
         return
       }
 
+      // Why the detector still sees an IME-owned event instead of an early return: withholding
+      // the press leaves the gesture armed, and a later real press then completes a tap the user
+      // never made. Passing ownership in lets the detector refuse *and* reset in one place.
+      const imeOwned = isImeCompositionKeyDown(event)
       const detected = doubleTapDetectorRef.current?.process(
         toModifierDoubleTapEvent({
           type: 'keyDown',
@@ -1418,6 +1423,7 @@ export function FloatingTerminalPanel({
           control: event.ctrlKey,
           alt: event.altKey,
           meta: event.metaKey,
+          isComposing: imeOwned,
           isAutoRepeat: event.repeat
         }),
         Date.now()
@@ -1495,6 +1501,8 @@ export function FloatingTerminalPanel({
         doubleTapDetectorRef.current?.reset()
         return
       }
+      // Fed rather than withheld, for the same reason as the keydown path.
+      const imeOwned = isImeCompositionKeyDown(event)
       doubleTapDetectorRef.current?.process(
         toModifierDoubleTapEvent({
           type: 'keyUp',
@@ -1503,7 +1511,8 @@ export function FloatingTerminalPanel({
           shift: event.shiftKey,
           control: event.ctrlKey,
           alt: event.altKey,
-          meta: event.metaKey
+          meta: event.metaKey,
+          isComposing: imeOwned
         }),
         Date.now()
       )
