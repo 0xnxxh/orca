@@ -85,10 +85,15 @@ async function focusNativeTerminalWindow(
   await expect.poll(() => page.title(), { timeout: 5_000 }).toBe(title)
 
   runXdotool('search', '--onlyvisible', '--name', title, 'windowfocus', '--sync')
-  execFileSync('ibus', ['engine', engine.ibusEngineName], {
-    stdio: 'pipe',
-    timeout: NATIVE_COMMAND_TIMEOUT_MS
-  })
+  try {
+    execFileSync('ibus', ['engine', engine.ibusEngineName], {
+      stdio: 'pipe',
+      timeout: NATIVE_COMMAND_TIMEOUT_MS
+    })
+  } catch {
+    // Why: selection succeeds over D-Bus before the non-zero exit an engine with no
+    // XKB layout of its own produces; the read-back below is the real assertion.
+  }
   const active = execFileSync('ibus', ['engine'], {
     encoding: 'utf8',
     timeout: NATIVE_COMMAND_TIMEOUT_MS

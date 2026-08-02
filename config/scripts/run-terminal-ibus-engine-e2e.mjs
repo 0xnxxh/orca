@@ -110,6 +110,7 @@ function configureEngine(profile) {
 async function waitForEngine(ibusProcess, profile) {
   const deadline = Date.now() + 15_000
   let lastFailure = ''
+  let attempts = 0
   while (Date.now() < deadline) {
     if (ibusProcess.exitCode !== null) {
       throw new Error(`ibus-daemon exited early with code ${ibusProcess.exitCode}`)
@@ -118,18 +119,32 @@ async function waitForEngine(ibusProcess, profile) {
       encoding: 'utf8',
       stdio: 'pipe'
     })
-    if (result.status === 0) {
+    // Why: the selection lands over D-Bus first and only then runs setxkbmap, which
+    // exits non-zero — silently — for any engine declaring no XKB layout of its own.
+    // Read the engine back instead of trusting the status.
+    const active = spawnSync('ibus', ['engine'], { encoding: 'utf8', stdio: 'pipe' })
+    if (active.status === 0 && active.stdout.trim() === profile.ibusEngineName) {
       return
     }
-    lastFailure = (result.stderr || result.stdout || '').trim()
+    attempts += 1
+    lastFailure = [
+      `status=${result.status} signal=${result.signal ?? 'none'}`,
+      result.error ? `error=${result.error.message}` : '',
+      result.stderr?.trim() ? `stderr=${result.stderr.trim()}` : '',
+      result.stdout?.trim() ? `stdout=${result.stdout.trim()}` : '',
+      `active=${active.stdout?.trim() || '(none)'}`
+    ]
+      .filter(Boolean)
+      .join(' | ')
     await delay(100)
   }
   // Why: the engine name a package registers is not always its apt suffix, so the
   // available list is the only thing that tells you which of the two is wrong.
   const available = commandOutput('ibus', ['list-engine'])
   throw new Error(
-    `Timed out while selecting the IBus ${profile.ibusEngineName} engine.\n` +
+    `Timed out while selecting the IBus ${profile.ibusEngineName} engine after ${attempts} attempts.\n` +
       `Last 'ibus engine' failure: ${lastFailure || '(no output)'}\n` +
+      `Engine ibus reports as current: ${commandOutput('ibus', ['engine'])}\n` +
       `Engines ibus reports as available:\n${available}`
   )
 }
