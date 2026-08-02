@@ -2614,6 +2614,20 @@ function deleteScannedSessionFieldsForOwners(
   )
 }
 
+// Remote (ssh:/runtime:) workspace state can exist in both the renderer's local blob and main's host
+// partition, because the renderer falls back to 'local' whenever worktree ownership is unresolved.
+function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined): ExecutionHostId[] {
+  const parsed = parseExecutionHostId(hostId)
+  return parsed && parsed.id !== LOCAL_EXECUTION_HOST_ID
+    ? [LOCAL_EXECUTION_HOST_ID, parsed.id]
+    : [LOCAL_EXECUTION_HOST_ID]
+}
+
+/** The partition the host actually owns; the others are only spill surfaces for it. */
+function workspaceSessionOwnerPartitionForHost(hostId: string | null | undefined): ExecutionHostId {
+  return parseExecutionHostId(hostId)?.id ?? LOCAL_EXECUTION_HOST_ID
+}
+
 function removeWorkspaceSessionOwner(
   session: WorkspaceSessionState | undefined,
   ownerKey: string,
@@ -5332,15 +5346,34 @@ export class Store {
     return updated
   }
 
-  removeWorktreeMeta(worktreeId: string): void {
+  removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
+    // Persisted ownership beats stale live routing; hostId is only an ownerless fallback.
+    const owner = this.state.worktreeMeta[worktreeId]?.hostId ?? hostId
+    // Skip partitions main never wrote: materializing one fences every sibling worktree of the repo.
+    const partitions = new Set<ExecutionHostId>(
+      workspaceSessionPartitionIdsForHost(owner).filter((partition) =>
+        this.hasPersistedWorkspaceSession(partition)
+      )
+    )
+    // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy, and a spill
+    // partition that never held this worktree has no claim on the repo at all.
+    const ownerPartition = workspaceSessionOwnerPartitionForHost(owner)
+    const fencedPartitions = new Set(
+      [...partitions].filter(
+        (partition) =>
+          this.partitionOwnsWorktreeTabs(worktreeId, partition) ||
+          (partition === ownerPartition &&
+            !this.partitionHasOtherRepoWorktreeTabs(worktreeId, partition))
+      )
+    )
     delete this.state.worktreeMeta[worktreeId]
     delete this.state.worktreeLineageById[worktreeId]
     delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
-    this.state.workspaceSession = removeWorkspaceSessionOwner(
-      this.state.workspaceSession,
-      worktreeId,
-      { advanceTerminalTopologyRevision: true }
-    )!
+    for (const partition of partitions) {
+      this.removeWorkspaceSessionOwnerInPartition(worktreeId, partition, {
+        advanceTerminalTopologyRevision: fencedPartitions.has(partition)
+      })
+    }
     this.scheduleSave()
   }
 
@@ -6107,6 +6140,14 @@ export class Store {
     return this.state.workspaceSessionsByHostId?.[resolved] ?? getDefaultWorkspaceSession()
   }
 
+  /** Whether a partition was ever written; `getWorkspaceSession` defaults absent ones and cannot tell them apart. */
+  private hasPersistedWorkspaceSession(hostId: ExecutionHostId): boolean {
+    return (
+      hostId === LOCAL_EXECUTION_HOST_ID ||
+      this.state.workspaceSessionsByHostId?.[hostId] !== undefined
+    )
+  }
+
   getWorkspaceSessionHostIds(): ExecutionHostId[] {
     const hostIds = new Set<ExecutionHostId>([LOCAL_EXECUTION_HOST_ID])
     for (const key of Object.keys(this.state.workspaceSessionsByHostId ?? {})) {
@@ -6134,6 +6175,58 @@ export class Store {
       return
     }
     this.setHostWorkspaceSession(resolved, session)
+  }
+
+  removeWorkspaceSessionStateForWorktree(
+    worktreeId: string,
+    hostId?: ExecutionHostId | null,
+    options: { advanceTerminalTopologyRevision?: boolean } = {}
+  ): void {
+    for (const resolved of workspaceSessionPartitionIdsForHost(hostId)) {
+      this.removeWorkspaceSessionOwnerInPartition(worktreeId, resolved, options)
+    }
+  }
+
+  private removeWorkspaceSessionOwnerInPartition(
+    worktreeId: string,
+    resolved: ExecutionHostId,
+    options: { advanceTerminalTopologyRevision?: boolean }
+  ): void {
+    if (!this.hasPersistedWorkspaceSession(resolved)) {
+      return
+    }
+    const current = this.getWorkspaceSession(resolved)
+    const session = removeWorkspaceSessionOwner(current, worktreeId, {
+      advanceTerminalTopologyRevision: options.advanceTerminalTopologyRevision ?? true
+    })
+    if (!session) {
+      return
+    }
+    if (resolved === LOCAL_EXECUTION_HOST_ID) {
+      this.state.workspaceSession = session
+    } else {
+      // Host scoping matters because identical repo/path ids may exist on two servers.
+      this.state.workspaceSessionsByHostId = {
+        ...this.state.workspaceSessionsByHostId,
+        [resolved]: session
+      }
+    }
+    this.scheduleSave()
+  }
+
+  /** Whether a partition still holds terminal membership for `worktreeId`. */
+  private partitionOwnsWorktreeTabs(worktreeId: string, hostId: ExecutionHostId): boolean {
+    return this.getWorkspaceSession(hostId).tabsByWorktree?.[worktreeId] !== undefined
+  }
+
+  /** Whether fencing this partition would rebase a sibling worktree of the same repo. */
+  private partitionHasOtherRepoWorktreeTabs(worktreeId: string, hostId: ExecutionHostId): boolean {
+    const repoId = getRepoIdFromWorktreeId(worktreeId)
+    const tabsByWorktree = this.getWorkspaceSession(hostId).tabsByWorktree ?? {}
+    return Object.entries(tabsByWorktree).some(
+      ([id, tabs]) =>
+        id !== worktreeId && getRepoIdFromWorktreeId(id) === repoId && (tabs?.length ?? 0) > 0
+    )
   }
 
   stageWorkspaceSessionBeforeUnload(
