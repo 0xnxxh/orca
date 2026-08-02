@@ -3174,7 +3174,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
     }
 
-    // Why no 'remove-worktree' guard here: exact stop targets specific runtime handles a caller still owns, so it is incompatible with removal (whose backend teardown owns the PTYs); never pass expectedRuntimePtyIds with that reason.
+    // Exact-stop callers own physical teardown and must not use the remove-worktree reason.
     if (expectedRuntimePtyIds.length > 0) {
       if (!runtimeEnvironmentId) {
         throw new Error('missing_runtime_for_exact_terminal_stop')

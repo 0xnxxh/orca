@@ -2238,8 +2238,7 @@ export function registerWorktreeHandlers(
       if (!repo) {
         throw new Error(`Repo not found: ${repoId}`)
       }
-      // Why: the resolved repo is the canonical owner; args.hostId may be absent, so derive it here for
-      // every teardown below or an ownerless remote worktree would clear the local session instead.
+      // The resolved repo supplies host ownership when legacy callers omit args.hostId.
       const removalHostId = getRepoExecutionHostId(repo)
       const inFlightKey = getWorktreeRemovalInFlightKey(args.worktreeId, removalHostId)
       const optionsKey = getWorktreeRemovalOptionsKey(args)
@@ -2820,10 +2819,7 @@ export function registerWorktreeHandlers(
     ): Promise<RemoveWorktreeResult> => {
       const { repoId } = parseWorktreeId(args.worktreeId)
       const repo = getRepoForWorktreeRemoval(store, repoId, args.hostId)
-      // Why: metadata-only cleanup must work after the owning project disappears. When the repo
-      // can't be resolved (gone, or ambiguous across hosts), key on the persisted owner rather than
-      // args.hostId: meta.hostId is stamped from getRepoExecutionHostId, so two forget-local calls
-      // for the same workspace still dedupe onto one promise even if their callers disagree.
+      // Persisted ownership keeps ownerless concurrent forgets on one in-flight key.
       const inFlightKey = getWorktreeRemovalInFlightKey(
         args.worktreeId,
         repo
@@ -2840,9 +2836,7 @@ export function registerWorktreeHandlers(
       }
 
       const forget = (async (): Promise<RemoveWorktreeResult> => {
-        // Why also scan every repo: getRepoForWorktreeRemoval returns undefined when the id is
-        // ambiguous across hosts, not just when it is gone, and treating that as "already gone"
-        // would strip a live folder root's metadata (displayName, links, pins, instanceId).
+        // Ambiguous repo lookup must not bypass a live folder root's deletion guard.
         const isFolderRootOf = (candidate: Repo): boolean =>
           isFolderRepo(candidate) && args.worktreeId === getFolderWorkspaceRootId(candidate)
         if (repo ? isFolderRootOf(repo) : store.getRepos().some(isFolderRootOf)) {
@@ -2851,15 +2845,29 @@ export function registerWorktreeHandlers(
           )
         }
 
-        // Why: best-effort PTY sweep; resolves synchronously for a dead SSH relay (tombstoned lease) so it never hangs.
+        const ownerHost = parseExecutionHostId(
+          store.getWorktreeMeta(args.worktreeId)?.hostId ??
+            (repo ? getRepoExecutionHostId(repo) : args.hostId)
+        )
+        const sshPtyProvider =
+          ownerHost?.kind === 'ssh' ? getSshPtyProvider(ownerHost.targetId) : undefined
+        const externalHost = ownerHost?.kind === 'ssh' || ownerHost?.kind === 'runtime'
+        // External host inventories must never sweep a same-id local workspace.
         await killAllProcessesForWorktree(args.worktreeId, {
           runtime,
-          // Why: forget-local exists for workspaces whose project is gone or unreachable, so the
-          // selector no longer resolves. The sweep tolerates that failure silently (it is best-effort
-          // here), so without the exact id graph-owned PTYs keep running with no handle left to retry.
           resolvedWorktreeId: args.worktreeId,
-          localProvider: getLocalPtyProvider(),
-          onPtyStopped: clearProviderPtyState
+          ...(ownerHost?.kind === 'ssh' ? { resolvedConnectionId: ownerHost.targetId } : {}),
+          ...(ownerHost?.kind === 'runtime'
+            ? { resolvedRuntimeEnvironmentId: ownerHost.environmentId }
+            : {}),
+          localProvider: sshPtyProvider ?? getLocalPtyProvider(),
+          onPtyStopped: clearProviderPtyState,
+          ...(externalHost
+            ? {
+                includeProviderInventory: ownerHost?.kind === 'ssh' && Boolean(sshPtyProvider),
+                includeLocalRegistry: false
+              }
+            : {})
         }).catch((err) => {
           console.warn(`[worktree-teardown] forget-local failed for ${args.worktreeId}:`, err)
         })

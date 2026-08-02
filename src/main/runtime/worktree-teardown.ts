@@ -13,10 +13,15 @@ export type WorktreeTeardownDeps = {
   runtime?: OrcaRuntimeService
   /** Authoritative id for callers whose selector no longer resolves (orphaned workspace). */
   resolvedWorktreeId?: string
+  /** SSH connection owning `resolvedWorktreeId`; prevents same-id cross-host graph matches. */
+  resolvedConnectionId?: string
+  /** Runtime environment owning a mirrored `resolvedWorktreeId`. */
+  resolvedRuntimeEnvironmentId?: string
   localProvider: IPtyProvider
   onPtyStopped?: (ptyId: string) => void
   timeoutMs?: number
   requirePhysicalStop?: boolean
+  includeProviderInventory?: boolean
   includeLocalRegistry?: boolean
 }
 
@@ -64,11 +69,6 @@ export async function killAllProcessesForWorktree(
   worktreeId: string,
   deps: WorktreeTeardownDeps
 ): Promise<WorktreeTeardownResult> {
-  const result: WorktreeTeardownResult = {
-    runtimeStopped: 0,
-    providerStopped: 0,
-    registryStopped: 0
-  }
   const deadline = Date.now() + Math.max(1, deps.timeoutMs ?? WORKTREE_PROCESS_SWEEP_TIMEOUT_MS)
   const deadlineError = new Error(`Timed out waiting for physical PTY teardown: ${worktreeId}`)
   const stopAttempts = new Map<string, Promise<boolean>>()
@@ -103,7 +103,13 @@ export async function killAllProcessesForWorktree(
           deps.runtime!.stopTerminalsForWorktree(worktreeId, {
             deadline,
             stopPty,
-            ...(deps.resolvedWorktreeId ? { resolvedWorktreeId: deps.resolvedWorktreeId } : {})
+            ...(deps.resolvedWorktreeId ? { resolvedWorktreeId: deps.resolvedWorktreeId } : {}),
+            ...(deps.resolvedConnectionId
+              ? { resolvedConnectionId: deps.resolvedConnectionId }
+              : {}),
+            ...(deps.resolvedRuntimeEnvironmentId
+              ? { resolvedRuntimeEnvironmentId: deps.resolvedRuntimeEnvironmentId }
+              : {})
           }),
         { stopped: 0 },
         deadline,
@@ -115,20 +121,23 @@ export async function killAllProcessesForWorktree(
           )
       )
     : Promise.resolve({ stopped: 0 })
-  const providerSweep = settleBeforeDeadline(
-    () =>
-      sweepProviderByPrefix(
-        worktreeId,
-        deps.localProvider,
-        deadline,
-        stopPty,
-        deps.onPtyStopped,
-        deps.requirePhysicalStop
-      ),
-    0,
-    deadline,
-    deps.requirePhysicalStop ? deadlineError : undefined
-  )
+  const providerSweep =
+    deps.includeProviderInventory === false
+      ? Promise.resolve(0)
+      : settleBeforeDeadline(
+          () =>
+            sweepProviderByPrefix(
+              worktreeId,
+              deps.localProvider,
+              deadline,
+              stopPty,
+              deps.onPtyStopped,
+              deps.requirePhysicalStop
+            ),
+          0,
+          deadline,
+          deps.requirePhysicalStop ? deadlineError : undefined
+        )
   const registrySweep =
     deps.includeLocalRegistry === false
       ? Promise.resolve(0)
@@ -150,9 +159,6 @@ export async function killAllProcessesForWorktree(
     providerSweep,
     registrySweep
   ])
-  result.runtimeStopped = runtimeResult.stopped
-  result.providerStopped = providerStopped
-  result.registryStopped = registryStopped
   if (deps.requirePhysicalStop) {
     const stopResults = await Promise.all(
       [...stopAttempts].map(async ([ptyId, stopped]) => [ptyId, await stopped] as const)
@@ -169,7 +175,7 @@ export async function killAllProcessesForWorktree(
     }
   }
 
-  return result
+  return { runtimeStopped: runtimeResult.stopped, providerStopped, registryStopped }
 }
 
 async function verifyFailedPtysExited(

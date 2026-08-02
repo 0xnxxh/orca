@@ -23235,18 +23235,23 @@ export class OrcaRuntimeService {
       return withWorktreeSpan({ stage: 'remove', path: removalTarget.path }, async () => {
         const repo = store.getRepo(removalTarget.repoId)
         if (!repo) {
-          // The parent project is already gone, so no Git/filesystem target can be
-          // resolved. Stop any surviving session before forgetting orphaned Orca state.
-          const localProvider = this.getLocalProvider()
-          if (localProvider) {
+          const orphanHost = parseExecutionHostId(store.getWorktreeMeta(removalTarget.id)?.hostId)
+          const sshPtyProvider =
+            orphanHost?.kind === 'ssh' ? this.getSshProviderFn?.(orphanHost.targetId) : undefined
+          const ptyProvider = sshPtyProvider ?? this.getLocalProvider()
+          if (ptyProvider) {
             await killAllProcessesForWorktree(removalTarget.id, {
               runtime: this,
-              // Why: the repo is gone, so the selector cannot resolve. The sweep tolerates that
-              // failure silently, so without the authoritative id graph-owned PTYs survive with no
-              // UI handle left to retry from once the metadata below is dropped.
               resolvedWorktreeId: removalTarget.id,
-              localProvider,
-              onPtyStopped: this.onPtyStopped ?? undefined
+              ...(orphanHost?.kind === 'ssh' ? { resolvedConnectionId: orphanHost.targetId } : {}),
+              localProvider: ptyProvider,
+              onPtyStopped: this.onPtyStopped ?? undefined,
+              ...(orphanHost?.kind === 'ssh'
+                ? {
+                    includeProviderInventory: Boolean(sshPtyProvider),
+                    includeLocalRegistry: false
+                  }
+                : {})
             }).catch((error) => {
               console.warn(
                 `[worktree-teardown] orphan cleanup failed for ${removalTarget.id}:`,
@@ -23254,23 +23259,13 @@ export class OrcaRuntimeService {
               )
             })
           }
-          // Why: nothing is deleted on disk here, so the directory and its watchers survive the
-          // removal; without this they keep firing change events into a workspace-less runtime.
-          // Why the gate rather than a bare close: closeFileWatchersForRemoval only suspends
-          // listeners — only finish(true) forgets the snapshot, so an unbalanced close would strand
-          // them permanently.
-          // Why skip when the suffix was stripped (#10252): a folder-workspace instance shares its
-          // checkout directory with the root and its siblings, so forgetting watchers for that path
-          // would kill file watching for workspaces we are not removing.
+          // Finish the watcher gate because the directory survives; shared folder-instance paths stay live.
           const orphanFullPath = splitWorktreeId(removalTarget.id)?.worktreePath
           const orphanWatcherPath =
             splitWorktreeIdForFilesystem(removalTarget.id)?.worktreePath === orphanFullPath
               ? orphanFullPath
               : undefined
           if (orphanWatcherPath) {
-            // Why meta: the repo record is gone, so recorded ownership is the only way left to learn
-            // this was SSH-hosted — without it only the local watcher closes and the remote one keeps firing.
-            const orphanHost = parseExecutionHostId(store.getWorktreeMeta(removalTarget.id)?.hostId)
             await this.acquireFileWatcherRemoval(
               orphanWatcherPath,
               orphanHost?.kind === 'ssh' ? orphanHost.targetId : undefined
@@ -26075,10 +26070,10 @@ export class OrcaRuntimeService {
         ptyId: string,
         stop: () => boolean | Promise<boolean>
       ) => Promise<{ stopped: boolean; owner: boolean }>
-      /** Skip selector resolution when the caller already holds the authoritative id.
-       *  Why: an orphaned workspace's repo is gone, so the selector no longer resolves —
-       *  without this the sweep throws selector_not_found and silently stops nothing. */
+      /** Authoritative id for an orphan whose selector no longer resolves. */
       resolvedWorktreeId?: string
+      resolvedConnectionId?: string
+      resolvedRuntimeEnvironmentId?: string
     } = {}
   ): Promise<{ stopped: number }> {
     // Why: this mutates live PTYs, so reject while the graph is reloading rather than act on cached leaf ownership.
@@ -26090,11 +26085,7 @@ export class OrcaRuntimeService {
     if (options.deadline !== undefined && Date.now() >= options.deadline) {
       return { stopped: 0 }
     }
-    // Why not plain ===: a resolved selector returns the graph's own spelling, but a caller-supplied
-    // id has not been canonicalized, so separator/case differences would match nothing silently.
-    // Why splitWorktreeId and NOT ...ForFilesystem (#10252): the latter strips `::workspace:<uuid>`,
-    // which would make a folder-workspace instance compare equal to its root and its siblings and
-    // sweep their live terminals.
+    // Preserve folder-instance suffixes while normalizing cross-platform path spelling.
     const parsedTarget = splitWorktreeId(worktree.id)
     const ownsWorktree = options.resolvedWorktreeId
       ? (candidate: string | undefined): boolean => {
@@ -26108,14 +26099,28 @@ export class OrcaRuntimeService {
             : candidate === worktree.id
         }
       : (candidate: string | undefined): boolean => candidate === worktree.id
+    const ownsHost = (ptyId: string, connectionId?: string | null): boolean => {
+      if (options.resolvedRuntimeEnvironmentId !== undefined) {
+        return ptyId.startsWith(
+          `remote:${encodeURIComponent(options.resolvedRuntimeEnvironmentId)}@@`
+        )
+      }
+      return (
+        options.resolvedConnectionId === undefined || connectionId === options.resolvedConnectionId
+      )
+    }
     const ptyIds = new Set<string>()
     for (const leaf of this.leaves.values()) {
-      if (ownsWorktree(leaf.worktreeId) && leaf.ptyId) {
+      if (
+        ownsWorktree(leaf.worktreeId) &&
+        leaf.ptyId &&
+        ownsHost(leaf.ptyId, this.ptysById.get(leaf.ptyId)?.connectionId)
+      ) {
         ptyIds.add(leaf.ptyId)
       }
     }
     for (const pty of this.ptysById.values()) {
-      if (ownsWorktree(pty.worktreeId) && pty.connected) {
+      if (ownsWorktree(pty.worktreeId) && pty.connected && ownsHost(pty.ptyId, pty.connectionId)) {
         ptyIds.add(pty.ptyId)
       }
     }

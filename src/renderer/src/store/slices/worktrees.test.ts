@@ -5540,6 +5540,44 @@ describe('worktree remote runtime mutations', () => {
     }
   )
 
+  it('does not forget a row that becomes ambiguous while remote removal is in flight', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo-shared::/path/stale'
+    const original = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'runtime:env-1'
+    })
+    const rival = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'runtime:env-2'
+    })
+    runtimeEnvironmentCall.mockImplementationOnce(async () => {
+      store.setState({ worktreesByRepo: { 'repo-shared': [original, rival] } })
+      return {
+        id: 'rpc-rm',
+        ok: false,
+        error: { code: 'selector_not_found', message: 'selector_not_found' },
+        _meta: { runtimeId: 'runtime-remote' }
+      }
+    })
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      trustedOrcaHooks: { 'repo-shared': { all: { approvedAt: 1 } } },
+      worktreesByRepo: { 'repo-shared': [original] }
+    } as Partial<AppState>)
+
+    const result = await store.getState().removeWorktree(worktreeId)
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'selector_not_found'
+    })
+    expect(mockApi.worktrees.forgetLocal).not.toHaveBeenCalled()
+    expect(store.getState().worktreesByRepo['repo-shared']).toEqual([original, rival])
+  })
+
   it('does not forget a mirrored row when diagnostics merely mention a missing code', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

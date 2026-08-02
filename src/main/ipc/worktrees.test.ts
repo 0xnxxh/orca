@@ -10308,10 +10308,12 @@ describe('registerWorktreeHandlers', () => {
       }
       const ptyProvider = {} as never
       const worktreeId = 'repo-1::/workspace/feature-wt'
+      store.getRepos.mockReturnValue([repo])
       store.getRepo.mockReturnValue(repo)
       getLocalPtyProviderMock.mockReturnValue(ptyProvider)
       // Why: a removed/disconnected SSH target has no live provider; forgetLocal must not reach for one.
       getSshGitProviderMock.mockReturnValue(undefined)
+      getSshPtyProviderMock.mockReturnValue(undefined)
 
       const result = await handlers['worktrees:forgetLocal'](null, { worktreeId })
 
@@ -10320,8 +10322,11 @@ describe('registerWorktreeHandlers', () => {
         runtime: runtimeStub,
         // Without the exact id the sweep resolves a selector that no longer exists and stops nothing.
         resolvedWorktreeId: worktreeId,
+        resolvedConnectionId: 'ssh-dead',
         localProvider: ptyProvider,
-        onPtyStopped: clearProviderPtyStateMock
+        onPtyStopped: clearProviderPtyStateMock,
+        includeProviderInventory: false,
+        includeLocalRegistry: false
       })
       expect(runtimeStub.clearOptimisticReconcileToken).toHaveBeenCalledWith(worktreeId)
       expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
@@ -10335,6 +10340,31 @@ describe('registerWorktreeHandlers', () => {
       expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
       expect(listWorktreesMock).not.toHaveBeenCalled()
       expect(removeWorktreeMock).not.toHaveBeenCalled()
+    })
+
+    it('sweeps a connected SSH owner through its PTY provider', async () => {
+      const worktreeId = 'repo-gone::/workspace/feature-wt'
+      const sshProvider = {} as never
+      store.getRepos.mockReturnValue([])
+      store.getRepo.mockReturnValue(undefined)
+      store.getWorktreeMeta.mockReturnValue({ hostId: 'ssh:ssh-live' })
+      getSshPtyProviderMock.mockReturnValue(sshProvider)
+
+      await expect(
+        handlers['worktrees:forgetLocal'](null, { worktreeId, hostId: 'ssh:ssh-live' })
+      ).resolves.toEqual({})
+
+      expect(getSshPtyProviderMock).toHaveBeenCalledWith('ssh-live')
+      expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(worktreeId, {
+        runtime: runtimeStub,
+        resolvedWorktreeId: worktreeId,
+        resolvedConnectionId: 'ssh-live',
+        localProvider: sshProvider,
+        onPtyStopped: clearProviderPtyStateMock,
+        includeProviderInventory: true,
+        includeLocalRegistry: false
+      })
+      expect(getLocalPtyProviderMock).not.toHaveBeenCalled()
     })
 
     it('forgets an ownerless workspace after its repo is already gone', async () => {

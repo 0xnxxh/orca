@@ -33639,6 +33639,26 @@ describe('OrcaRuntimeService', () => {
     expect(kill).not.toHaveBeenCalled()
   })
 
+  it('does not sweep a same-id terminal owned by another connection', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const kill = vi.fn(() => true)
+    runtime.setPtyController({
+      write: () => true,
+      kill,
+      stopAndWait: vi.fn(async () => true),
+      getForegroundProcess: async () => null
+    })
+    syncSinglePty(runtime)
+
+    await expect(
+      runtime.stopTerminalsForWorktree('id:repo-gone::/tmp/gone', {
+        resolvedWorktreeId: TEST_WORKTREE_ID,
+        resolvedConnectionId: 'ssh-1'
+      })
+    ).resolves.toEqual({ stopped: 0 })
+    expect(kill).not.toHaveBeenCalled()
+  })
+
   it('awaits physical PTY stop when destructive teardown supplies shared dedupe', async () => {
     const runtime = new OrcaRuntimeService(store)
     const physicalStop = makeDeferred()
@@ -41677,7 +41697,41 @@ describe('OrcaRuntimeService', () => {
     expect(invalidateAuthorizedRootsCacheMock).toHaveBeenCalled()
     expect(removeWorktree).not.toHaveBeenCalled()
     // Nothing is deleted on disk here, so the surviving directory's watchers must still be released.
-    expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledWith(TEST_WORKTREE_PATH)
+    expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledWith(
+      TEST_WORKTREE_PATH,
+      expect.objectContaining({ remainingMs: expect.any(Function) })
+    )
+  })
+
+  it('sweeps an orphaned SSH worktree through its host provider', async () => {
+    const { runtimeStore } = createStaleRuntimeWorktreeStore(TEST_WORKTREE_ID, {
+      hostId: 'ssh:ssh-1'
+    })
+    const orphanStore = {
+      ...runtimeStore,
+      getRepos: () => [],
+      getRepo: () => undefined
+    }
+    const localProvider = {
+      listProcesses: vi.fn(async () => []),
+      shutdown: vi.fn(async () => {})
+    }
+    const sshProvider = {
+      listProcesses: vi.fn(async () => []),
+      shutdown: vi.fn(async () => {})
+    }
+    const getSshProvider = vi.fn(() => sshProvider as never)
+    const runtime = new OrcaRuntimeService(orphanStore as never, undefined, {
+      getLocalProvider: () => localProvider as never,
+      getSshProvider
+    })
+
+    await expect(runtime.removeManagedWorktree(TEST_WORKTREE_ID)).resolves.toEqual({})
+
+    expect(getSshProvider).toHaveBeenCalledWith('ssh-1')
+    expect(sshProvider.listProcesses).toHaveBeenCalled()
+    expect(localProvider.listProcesses).not.toHaveBeenCalled()
+    expect(closeRemoteWatcherForWorktreePathMock).toHaveBeenCalledWith('ssh-1', TEST_WORKTREE_PATH)
   })
 
   it('does not remove a runtime worktree when watcher teardown cannot release it', async () => {

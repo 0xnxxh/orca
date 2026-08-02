@@ -2604,13 +2604,7 @@ function deleteScannedSessionFieldsForOwners(
   )
 }
 
-/** Every session partition that can hold state for a worktree owned by `hostId`.
- *
- *  Why more than one: an SSH workspace is persisted twice. The renderer keeps it in the legacy
- *  local blob (buildHostIdByWorktreeId maps everything non-runtime to 'local'), while the main
- *  process writes its terminal state to the host's own `ssh:*` partition
- *  (getWorkspaceSessionHostIdForWorktree). Cleaning only one strands the other — and leaves that
- *  side's topology fence un-bumped, so a delayed write there can resurrect the removed worktree. */
+// SSH workspace state can exist in both the renderer's local blob and main's host partition.
 function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined): ExecutionHostId[] {
   const parsed = parseExecutionHostId(hostId)
   if (parsed?.kind === 'runtime') {
@@ -5280,17 +5274,10 @@ export class Store {
   }
 
   removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
-    // Why recorded ownership wins over the caller's hostId: owner keys carry no host, so the same
-    // `${repoId}::${path}` can name a live worktree on another host (see pruneWorktreeStateForRepo).
-    // A caller derives its hostId from live routing, which can go stale mid-removal — trusting it
-    // over the meta would wipe the surviving host's tabs. The arg is only a fallback for the orphan
-    // case, where the meta is already gone.
+    // Persisted ownership beats stale live routing; hostId is only an ownerless fallback.
     const owner = this.state.worktreeMeta[worktreeId]?.hostId ?? hostId
     const partitions = new Set<ExecutionHostId>(workspaceSessionPartitionIdsForHost(owner))
-    // Why scope the fence: the topology watermark is per-REPO, so bumping a partition makes every
-    // later renderer write for that repo rebase onto main's copy, silently dropping not-yet-persisted
-    // tabs of the repo's OTHER worktrees. Fence wherever it is free (this worktree's tabs live here,
-    // or no sibling of the same repo would be rebased) and skip only where it would cost someone else.
+    // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy.
     const fencedPartitions = new Set(
       [...partitions].filter(
         (partition) =>

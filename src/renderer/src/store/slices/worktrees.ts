@@ -85,6 +85,7 @@ import {
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
   resolveWorktreeOperationRoute,
+  resolveWorktreeOperationRouteResult,
   settingsForWorktreeOperationRoute
 } from '@/lib/worktree-operation-route'
 import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operation-generation'
@@ -3998,27 +3999,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           target.kind !== 'local' &&
           (isRuntimeRepoNotFoundError(error) || isRuntimeSelectorNotFoundError(error))
         ) {
-          // The remote project/workspace is authoritative and already gone. Finish
-          // by dropping this client's orphaned metadata instead of trapping the row.
-          // Why not the full assertCurrent(): a remote "already gone" verdict usually arrives with
-          // the very refresh that drops the row, so the generation guard would throw ambiguous in
-          // exactly the race this fallback exists for and re-trap the metadata. But if the route
-          // now names a DIFFERENT host, the verdict came from a remote we never meant to ask (an
-          // environment re-paired mid-call), and forgetting would discard the still-live original's
-          // displayName, links, pins and diff comments for good.
-          const currentRoute = resolveWorktreeOperationRoute(get(), worktreeId)
-          if (
-            currentRoute &&
-            (currentRoute.executionHostId !== removalRoute?.executionHostId ||
-              currentRoute.runtimeEnvironmentId !== removalRoute?.runtimeEnvironmentId)
-          ) {
+          // Missing means stale mirror; ambiguous or changed ownership must fail closed.
+          const currentResolution = resolveWorktreeOperationRouteResult(get(), worktreeId)
+          if (currentResolution.kind === 'ambiguous') {
             throw error
+          }
+          if (currentResolution.kind === 'resolved') {
+            removalGenerationGuard?.assertCurrent()
           }
           try {
             removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
           } catch (fallbackError) {
-            // Why: the fallback's message is what the failure toast renders, so keep the remote's
-            // verdict attached rather than reporting only "deletion already in progress".
+            // Preserve the remote verdict as fallback failure context.
             throw new Error(
               fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
               { cause: error }
