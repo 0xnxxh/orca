@@ -243,9 +243,16 @@ export function WorktreeParentPickerPopover({
   )
 
   const virtualRows = virtualizer.getVirtualItems()
-  const statuses = useWorktreeActivityStatuses(
-    virtualRows.map((row) => filtered[row.index]?.id).filter((id): id is string => id !== undefined)
+  // Why: the hook memoizes its store selector on this array's identity, so a
+  // fresh array each render would rebuild the status map on every render.
+  const visibleWorktreeIds = useMemo(
+    () =>
+      virtualRows
+        .map((row) => filtered[row.index]?.id)
+        .filter((id): id is string => id !== undefined),
+    [filtered, virtualRows]
   )
+  const statuses = useWorktreeActivityStatuses(visibleWorktreeIds)
 
   const moveHighlight = useCallback(
     (nextIndex: number) => {

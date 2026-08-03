@@ -15,7 +15,7 @@ export function filterWorktreeParentCandidates(
 ): Worktree[] {
   const query = search.trim()
   if (!query) {
-    return candidates as Worktree[]
+    return [...candidates]
   }
   return candidates
     .map((candidate) => ({
