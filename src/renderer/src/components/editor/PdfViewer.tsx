@@ -189,6 +189,14 @@ export default function PdfViewer({
       detachInputWatcher?.()
       if (!cancelled && destination && !userMoved) {
         viewer.scrollPageIntoView(destination)
+        // Why: scrollPageIntoView nulls pdf.js's own `_location` whenever
+        // `currentScaleValue` is unset, and it stays unset here because
+        // page-width resolves against a not-yet-built page list. A null
+        // `_location` makes the next zoom fall back to scrolling the page top,
+        // losing the intra-page offset. update() recomputes it; on a
+        // uniform-page document the re-apply moves nothing, so no scroll event
+        // would otherwise fire to do it for us.
+        viewer.update()
       }
       recorder?.arm()
     }
@@ -196,6 +204,10 @@ export default function PdfViewer({
     eventBus.on('pagesinit', handlePagesInit)
     eventBus.on('pagesloaded', handlePagesLoaded)
     eventBus.on('updateviewarea', handleUpdateViewArea)
+    // Why: the find controller scrolls to a match programmatically, and the find
+    // bar sits outside this container — so a search is reader movement that no
+    // input listener above can see.
+    eventBus.on('find', markUserMoved)
 
     const loadingTask = pdfjsLib.getDocument({ data: bytes })
 
@@ -231,6 +243,7 @@ export default function PdfViewer({
       eventBus.off('pagesinit', handlePagesInit)
       eventBus.off('pagesloaded', handlePagesLoaded)
       eventBus.off('updateviewarea', handleUpdateViewArea)
+      eventBus.off('find', markUserMoved)
       setFindOpen(false)
       loadingTask.destroy().catch(() => {})
       if (pdfDocument) {
