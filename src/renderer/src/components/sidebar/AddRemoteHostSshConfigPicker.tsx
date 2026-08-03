@@ -135,6 +135,7 @@ export function AddRemoteHostSshConfigPicker({
                 <button
                   type="button"
                   role="option"
+                  aria-selected={false}
                   disabled={isBulkImporting || host.alreadyInOrca}
                   className={cn(
                     'flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left',

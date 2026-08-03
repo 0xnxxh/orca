@@ -56,6 +56,7 @@ export function AddRemoteHostDialog({
   const [allowLoopback, setAllowLoopback] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const configSearchGeneration = useRef(0)
+  const configSearchQuery = useRef('')
   const parsedServerLink = useMemo(() => parseHostAccessLink(pairingCode), [pairingCode])
   const serverFormCanSubmit =
     serverName.trim() !== '' &&
@@ -77,6 +78,7 @@ export function AddRemoteHostDialog({
     setNewConfigHostCount(0)
     setConfigHostMatchesTruncated(false)
     setConfigHostsError(null)
+    configSearchQuery.current = ''
     setPreferAdvancedOpen(false)
     setIsBulkImporting(false)
     setServerName('')
@@ -112,6 +114,7 @@ export function AddRemoteHostDialog({
   }
 
   const loadSshConfigHosts = async (query = '') => {
+    configSearchQuery.current = query
     const generation = configSearchGeneration.current + 1
     configSearchGeneration.current = generation
     setIsLoadingConfigHosts(true)
@@ -193,13 +196,9 @@ export function AddRemoteHostDialog({
         return
       }
       if (result.kind === 'already-synced') {
-        const refreshed = await loadSshConfigHostsForPicker(window.api.ssh)
-        if (refreshed.ok) {
-          setConfigHosts(refreshed.result.hosts)
-          setConfigHostCount(refreshed.result.totalHostCount)
-          setNewConfigHostCount(refreshed.result.newHostCount)
-          setConfigHostMatchesTruncated(refreshed.result.hasMore)
-        }
+        // Why: reuse the loader so the refresh keeps the active filter and stays inside the
+        // generation guard against an in-flight debounced search.
+        await loadSshConfigHosts(configSearchQuery.current)
       }
     } finally {
       setIsBulkImporting(false)

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SshTarget } from '../../../../shared/ssh-types'
+import { EMPTY_FORM } from '../settings/ssh-target-draft'
 
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
@@ -81,6 +82,37 @@ describe('individual SSH config host selection', () => {
     })
     expect(savedTarget).not.toHaveProperty('identityFile')
     expect(savedTarget).not.toHaveProperty('source')
+  })
+})
+
+describe('manual SSH host label fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('labels a bare host with its hostname instead of an empty string', async () => {
+    let savedTarget: Omit<SshTarget, 'id'> | undefined
+    const ssh = {
+      resolveConfigHost: vi.fn(),
+      listTargets: vi.fn().mockResolvedValue([]),
+      addTarget: vi.fn().mockImplementation(async ({ target }) => {
+        savedTarget = target
+        return { target: { ...target, id: 'ssh-1', source: 'manual' }, repoReadoptions: [] }
+      }),
+      listConfigHosts: vi.fn(),
+      importConfig: vi.fn()
+    }
+
+    const outcome = await saveNewSshHostFromForm({
+      form: { ...EMPTY_FORM, host: '10.0.0.7' },
+      ssh,
+      recordSshRepoReadoptions: vi.fn(),
+      setSshTargetsMetadata: vi.fn(),
+      recordFeatureInteraction: vi.fn()
+    })
+
+    expect(outcome).toBe('saved')
+    expect(savedTarget?.label).toBe('10.0.0.7')
   })
 })
 

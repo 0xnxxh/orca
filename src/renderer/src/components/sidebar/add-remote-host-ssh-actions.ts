@@ -80,7 +80,7 @@ export async function saveNewSshHostFromForm({
   const jumpHost = form.jumpHost.trim() || undefined
   const systemSshConnectionReuse = form.systemSshConnectionReuse ? undefined : false
   const target = {
-    label: form.label.trim() || (username ? `${username}@${host}` : configHost),
+    label: form.label.trim() || (username ? `${username}@${host}` : configHost || host),
     configHost,
     host,
     port,

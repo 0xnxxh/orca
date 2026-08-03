@@ -12,12 +12,14 @@ export function isDuplicateSshTargetAlias({
   label: string
   host: string
 }): boolean {
-  const alias = configHost.trim() || label.trim() || host.trim()
+  // Why: the config picker's `alreadyInOrca` flag compares lowercased aliases; match it or the
+  // two checks disagree on case-only variants.
+  const alias = (configHost.trim() || label.trim() || host.trim()).toLowerCase()
   if (!alias) {
     return false
   }
   return existingTargets.some((target) => {
     const existingAlias = (target.configHost ?? target.label ?? target.host).trim()
-    return existingAlias === alias
+    return existingAlias.toLowerCase() === alias
   })
 }

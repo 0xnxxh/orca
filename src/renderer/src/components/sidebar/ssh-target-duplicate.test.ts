@@ -24,6 +24,17 @@ describe('isDuplicateSshTargetAlias', () => {
     ).toBe(true)
   })
 
+  it('matches case-only alias variants like the config picker does', () => {
+    expect(
+      isDuplicateSshTargetAlias({
+        existingTargets: [{ configHost: 'Staging', label: 'Staging', host: '10.0.0.1' }],
+        configHost: 'staging',
+        label: 'staging',
+        host: 'staging.internal'
+      })
+    ).toBe(true)
+  })
+
   it('returns false for a new alias', () => {
     expect(
       isDuplicateSshTargetAlias({

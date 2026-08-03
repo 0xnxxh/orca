@@ -720,13 +720,16 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       return
     }
     const nextGroup = projectGroups.find(
-      (group) => group.id === initialFolderProjectGroupId && Boolean(group.parentPath?.trim())
+      (group) =>
+        group.id === initialFolderProjectGroupId &&
+        Boolean(group.parentPath?.trim()) &&
+        actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
     )
     if (nextGroup) {
       initialProjectGroupAppliedRef.current = true
       setSelectedProjectGroupId(nextGroup.id)
     }
-  }, [initialFolderProjectGroupId, projectGroups, selectedProjectGroupId])
+  }, [actionableHostIds, initialFolderProjectGroupId, projectGroups, selectedProjectGroupId])
   const isProjectGroupTarget = selectedProjectGroup !== null
   const folderSourceRepos = useMemo(
     () => getFolderSourceRepos(repos, projectGroups, selectedProjectGroup),

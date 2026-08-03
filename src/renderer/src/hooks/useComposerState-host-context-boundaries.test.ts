@@ -511,6 +511,22 @@ describe('useComposerState host-context boundaries', () => {
     expect(handleProjectChange).not.toContain('hostId: preferredHostId')
   })
 
+  it('leaves an initial project group unselected when its host is unavailable', () => {
+    // Regression: the restoration effect re-selected the initial group without the
+    // actionable-host check, so a removed host could still back a folder workspace.
+    const restoreEffect = sourceBetween(
+      HOOK_SOURCE,
+      'const nextGroup = projectGroups.find(',
+      'const isProjectGroupTarget'
+    )
+    expect(restoreEffect).toContain(
+      'actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))'
+    )
+    expect(restoreEffect).toContain(
+      '}, [actionableHostIds, initialFolderProjectGroupId, projectGroups, selectedProjectGroupId])'
+    )
+  })
+
   it('clears GitLab-specific linked state when clearing smart-name selection', () => {
     const section = sourceBetween(
       HOOK_SOURCE,
