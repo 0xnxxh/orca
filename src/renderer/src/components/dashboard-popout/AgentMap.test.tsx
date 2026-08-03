@@ -264,7 +264,7 @@ describe('AgentMap', () => {
   it('shows map filters at the pop-out default-width breakpoint', () => {
     renderMap([card()])
 
-    expect(screen.getByRole('complementary', { name: 'Map filters' })).toHaveClass('md:flex')
+    expect(screen.getByText('Map filters').closest('aside')).toHaveClass('md:flex')
   })
 
   it('increases map label scale when users zoom out', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Plus } from 'lucide-react'
 import {
   ContextMenu,
@@ -8,8 +8,10 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { useAppStore } from '@/store'
-import { useRepoById } from '@/store/selectors'
 import { getRepoHeaderCreateState } from '@/components/sidebar/repo-header-create-state'
+import { translate } from '@/i18n/i18n'
+
+const FOLDER_PROJECT_PREFIX = 'folder-workspace:'
 
 export type AgentMapProjectContextMenuRequest = {
   id: number
@@ -28,13 +30,28 @@ export function AgentMapProjectContextMenu({
   onOpenChange
 }: AgentMapProjectContextMenuProps): React.JSX.Element | null {
   const triggerRef = useRef<HTMLSpanElement>(null)
-  const repo = useRepoById(request.projectId)
+  const repos = useAppStore((state) => state.repos)
+  const projectGroups = useAppStore((state) => state.projectGroups)
+  const target = useMemo(() => {
+    if (request.projectId.startsWith(FOLDER_PROJECT_PREFIX)) {
+      const groupId = request.projectId.slice(FOLDER_PROJECT_PREFIX.length)
+      const groups = projectGroups.filter((group) => group.id === groupId)
+      return groups.length === 1 ? { kind: 'folder' as const, group: groups[0] } : null
+    }
+    const owners = repos.filter((repo) => repo.id === request.projectId)
+    return owners.length === 1 ? { kind: 'repo' as const, repo: owners[0] } : null
+  }, [projectGroups, repos, request.projectId])
+  const repo = target?.kind === 'repo' ? target.repo : null
   const sshStatus = useAppStore((state) =>
     repo?.connectionId ? (state.sshConnectionStates.get(repo.connectionId)?.status ?? null) : null
   )
   const openModal = useAppStore((state) => state.openModal)
 
   useEffect(() => {
+    if (!target) {
+      onOpenChange?.(false)
+      return
+    }
     triggerRef.current?.dispatchEvent(
       new MouseEvent('contextmenu', {
         bubbles: true,
@@ -44,16 +61,28 @@ export function AgentMapProjectContextMenu({
         button: 2
       })
     )
-  }, [request])
+  }, [onOpenChange, request, target])
 
-  if (!repo) {
+  if (!target) {
     return null
   }
-  const createState = getRepoHeaderCreateState({
-    repo,
-    label: repo.displayName,
-    sshStatus
-  })
+  const label = target.kind === 'repo' ? target.repo.displayName : target.group.name
+  const createState =
+    target.kind === 'repo'
+      ? getRepoHeaderCreateState({ repo: target.repo, label, sshStatus })
+      : {
+          disabled: false,
+          tooltip: translate(
+            'auto.components.sidebar.repo.header.create.state.62e71f2d5d',
+            'Create workspace for {{value0}}',
+            { value0: label }
+          ),
+          ariaLabel: translate(
+            'auto.components.sidebar.repo.header.create.state.62e71f2d5d',
+            'Create workspace for {{value0}}',
+            { value0: label }
+          )
+        }
 
   return (
     <div className="pointer-events-none absolute inset-0">
@@ -62,15 +91,17 @@ export function AgentMapProjectContextMenu({
           <span ref={triggerRef} aria-hidden />
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuLabel>{repo.displayName}</ContextMenuLabel>
+          <ContextMenuLabel>{label}</ContextMenuLabel>
           <ContextMenuItem
             disabled={createState.disabled}
             aria-label={createState.ariaLabel}
             onSelect={() => {
-              openModal('new-workspace-composer', {
-                initialRepoId: repo.id,
-                telemetrySource: 'sidebar'
-              })
+              openModal(
+                'new-workspace-composer',
+                target.kind === 'repo'
+                  ? { initialRepoId: target.repo.id, telemetrySource: 'sidebar' }
+                  : { initialProjectGroupId: target.group.id, telemetrySource: 'sidebar' }
+              )
             }}
           >
             <Plus />

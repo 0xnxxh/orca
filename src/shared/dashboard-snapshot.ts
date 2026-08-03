@@ -169,6 +169,7 @@ export const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
 export type DashboardRevealAgentArgs = {
   repoId: string
   worktreeId: string
+  executionHostId?: ExecutionHostId
   tabId: string
   leafId: string | null
 }

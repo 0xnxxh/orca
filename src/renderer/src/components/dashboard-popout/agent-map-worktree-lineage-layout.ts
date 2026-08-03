@@ -67,7 +67,7 @@ function buildFamily<T extends LineageWorktree>(
   }
 
   const childFamilies = packAgentMapWorktrees(
-    children.map((child) => buildFamily(child, childrenByParent, emitted, nextAncestors))
+    children.map((child) => buildExactFamily(child, childrenByParent, emitted))
   )
   const childLeft = Math.min(...childFamilies.map((family) => family.x - family.radius))
   const childRight = Math.max(...childFamilies.map((family) => family.x + family.radius))
@@ -87,6 +87,58 @@ function buildFamily<T extends LineageWorktree>(
   return encloseFamily(root.id, worktrees)
 }
 
+function collectLinearFamily<T extends LineageWorktree>(
+  root: T,
+  childrenByParent: ReadonlyMap<string, T[]>,
+  emitted: ReadonlySet<string>
+): T[] | null {
+  const worktrees: T[] = []
+  const ancestors = new Set<string>()
+  let current: T | undefined = root
+  while (current) {
+    worktrees.push(current)
+    ancestors.add(current.id)
+    const children = (childrenByParent.get(current.id) ?? []).filter(
+      (child) => !ancestors.has(child.id) && !emitted.has(child.id)
+    )
+    if (children.length > 1) {
+      return null
+    }
+    current = children[0]
+  }
+  return worktrees
+}
+
+function buildLinearFamily<T extends LineageWorktree>(worktrees: T[]): WorktreeFamily<T> {
+  const positioned = worktrees.map((worktree) => ({ ...worktree, x: 0, y: 0 }))
+  let radius = worktrees.at(-1)?.radius ?? 0
+  for (let index = worktrees.length - 2; index >= 0; index -= 1) {
+    positioned[index].y = -(radius + LINEAGE_VERTICAL_GAP / 2)
+    radius += worktrees[index].radius + LINEAGE_VERTICAL_GAP / 2
+  }
+  let familyCenterY = 0
+  for (let index = 0; index < positioned.length; index += 1) {
+    positioned[index].y += familyCenterY
+    familyCenterY += worktrees[index].radius + LINEAGE_VERTICAL_GAP / 2
+  }
+  return { id: worktrees[0].id, x: 0, y: 0, radius, worktrees: positioned }
+}
+
+function buildExactFamily<T extends LineageWorktree>(
+  root: T,
+  childrenByParent: ReadonlyMap<string, T[]>,
+  emitted: Set<string>
+): WorktreeFamily<T> {
+  const linearFamily = collectLinearFamily(root, childrenByParent, emitted)
+  if (!linearFamily) {
+    return buildFamily(root, childrenByParent, emitted, new Set())
+  }
+  for (const worktree of linearFamily) {
+    emitted.add(worktree.id)
+  }
+  return buildLinearFamily(linearFamily)
+}
+
 export function layoutAgentMapWorktreeLineage<T extends LineageWorktree>(worktrees: T[]): T[] {
   const sorted = [...worktrees].sort((a, b) => compareStable(a.id, b.id))
   const worktreesById = new Map(sorted.map((worktree) => [worktree.id, worktree]))
@@ -98,19 +150,24 @@ export function layoutAgentMapWorktreeLineage<T extends LineageWorktree>(worktre
       continue
     }
     childIds.add(worktree.id)
-    childrenByParent.set(parentId, [...(childrenByParent.get(parentId) ?? []), worktree])
+    const siblings = childrenByParent.get(parentId)
+    if (siblings) {
+      siblings.push(worktree)
+    } else {
+      childrenByParent.set(parentId, [worktree])
+    }
   }
 
   const emitted = new Set<string>()
   const families: WorktreeFamily<T>[] = []
   for (const root of sorted.filter((worktree) => !childIds.has(worktree.id))) {
     if (!emitted.has(root.id)) {
-      families.push(buildFamily(root, childrenByParent, emitted, new Set()))
+      families.push(buildExactFamily(root, childrenByParent, emitted))
     }
   }
   for (const worktree of sorted) {
     if (!emitted.has(worktree.id)) {
-      families.push(buildFamily(worktree, childrenByParent, emitted, new Set()))
+      families.push(buildExactFamily(worktree, childrenByParent, emitted))
     }
   }
 

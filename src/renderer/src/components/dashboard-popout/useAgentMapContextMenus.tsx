@@ -59,16 +59,32 @@ export function useAgentMapContextMenus({ enabled, onOpenChange }: UseAgentMapCo
     },
     []
   )
+  const handleWorkspaceLifecycleComplete = useCallback((): void => {
+    setWorkspaceRequest(null)
+  }, [])
+  const handleProjectOpenChange = useCallback(
+    (open: boolean): void => {
+      onOpenChange?.(open)
+      if (!open) {
+        setProjectRequest(null)
+      }
+    },
+    [onOpenChange]
+  )
   const contextMenus = enabled ? (
     <>
       {workspaceRequest ? (
         <AgentMapWorkspaceContextMenuLoader
           request={workspaceRequest}
           onOpenChange={onOpenChange}
+          onLifecycleComplete={handleWorkspaceLifecycleComplete}
         />
       ) : null}
       {projectRequest ? (
-        <AgentMapProjectContextMenuLoader request={projectRequest} onOpenChange={onOpenChange} />
+        <AgentMapProjectContextMenuLoader
+          request={projectRequest}
+          onOpenChange={handleProjectOpenChange}
+        />
       ) : null}
     </>
   ) : null

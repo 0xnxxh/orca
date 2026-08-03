@@ -13,15 +13,21 @@ const AgentMapWorkspaceContextMenu = lazyWithRetry(
 type AgentMapWorkspaceContextMenuLoaderProps = {
   request: AgentMapWorkspaceContextMenuRequest
   onOpenChange?: (open: boolean) => void
+  onLifecycleComplete?: () => void
 }
 
 export function AgentMapWorkspaceContextMenuLoader({
   request,
-  onOpenChange
+  onOpenChange,
+  onLifecycleComplete
 }: AgentMapWorkspaceContextMenuLoaderProps): React.JSX.Element {
   return (
     <Suspense fallback={null}>
-      <AgentMapWorkspaceContextMenu request={request} onOpenChange={onOpenChange} />
+      <AgentMapWorkspaceContextMenu
+        request={request}
+        onOpenChange={onOpenChange}
+        onLifecycleComplete={onLifecycleComplete}
+      />
     </Suspense>
   )
 }

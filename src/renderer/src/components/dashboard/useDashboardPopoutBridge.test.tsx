@@ -156,6 +156,22 @@ describe('useDashboardPopoutBridge', () => {
     expect(mocks.buildDashboardSnapshot).toHaveBeenCalledTimes(1)
   })
 
+  it('reveals the agent on its exact execution host', async () => {
+    await act(async () => root.render(<Harness enabled />))
+
+    await act(async () =>
+      mocks.onRevealAgent.mock.calls[0][0]({
+        repoId: 'repo-1',
+        worktreeId: 'shared-worktree',
+        executionHostId: 'runtime:env-1',
+        tabId: 'tab-1',
+        leafId: 'leaf-1'
+      })
+    )
+
+    expect(mocks.setActiveWorktree).toHaveBeenCalledWith('shared-worktree', 'runtime:env-1')
+  })
+
   it('ignores unrelated store writes while retaining every snapshot input', () => {
     const previousState = makeSnapshotWatchState()
     expect(dashboardSnapshotInputsChanged({ ...previousState }, previousState)).toBe(false)

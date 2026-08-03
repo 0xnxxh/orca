@@ -7,19 +7,15 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import {
   dashboardCardDisplayState,
-  type DashboardCard
+  type DashboardCard,
+  type DashboardRevealAgentArgs
 } from '../../../../shared/dashboard-snapshot'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 
 /** Routing payload for focusing an agent's pane in the main window. */
-export type AgentRevealArgs = {
-  repoId: string
-  worktreeId: string
-  tabId: string
-  leafId: string | null
-}
+export type AgentRevealArgs = DashboardRevealAgentArgs
 
 type AgentTerminalDialogProps = {
   /** The agent shown in the dialog; null renders the dialog closed. */
@@ -47,6 +43,7 @@ function AgentTerminalFrame({
     onReveal({
       repoId: card.repoId,
       worktreeId: card.worktreeId,
+      executionHostId: card.executionHostId,
       tabId: card.tabId,
       leafId: card.leafId
     })

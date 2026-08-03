@@ -100,6 +100,6 @@ describe('packAgentMapWorktrees', () => {
 
     packAgentMapWorktrees(worktrees)
 
-    expect(coordinateReads()).toBeLessThan(14_500_000)
+    expect(coordinateReads()).toBeLessThan(13_200_000)
   })
 })

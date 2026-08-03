@@ -24,18 +24,12 @@ const LAYOUT: AgentMapLayout = {
 }
 
 describe('AgentMapScene project labels', () => {
-  it('renders the configured repository image next to its name', () => {
+  it('renders the configured repository icon next to its name', () => {
     const { container } = render(
       <svg>
         <AgentMapScene
           layout={LAYOUT}
-          repoIconsByRepoId={{
-            'repo-1': {
-              type: 'image',
-              src: 'data:image/png;base64,AAAA',
-              source: 'upload'
-            }
-          }}
+          repoIconsByRepoId={{ 'repo-1': { type: 'emoji', emoji: '🦑' } }}
           zoom={1}
           labelScale={1}
           mapScale={1}
@@ -48,9 +42,6 @@ describe('AgentMapScene project labels', () => {
       </svg>
     )
 
-    const label = container.querySelector('.agent-map-project-label')!
-    expect(label).toHaveTextContent('ORCA')
-    expect(label.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,AAAA')
-    expect(label.firstElementChild?.querySelector('img')).toBeInTheDocument()
+    expect(container.querySelector('.agent-map-project-label')).toHaveTextContent('🦑ORCA')
   })
 })

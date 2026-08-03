@@ -117,6 +117,26 @@ describe('AgentTerminalDialog', () => {
     expect(screen.getByText(/Claude · Done/)).toBeInTheDocument()
   })
 
+  it('preserves the execution host when revealing a colliding worktree ID', () => {
+    const onReveal = vi.fn()
+    render(
+      <AgentTerminalDialog
+        card={card({ executionHostId: 'runtime:env-1' })}
+        onOpenChange={() => {}}
+        onReveal={onReveal}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open worktree' }))
+    expect(onReveal).toHaveBeenCalledWith({
+      repoId: 'r1',
+      worktreeId: 'w1',
+      executionHostId: 'runtime:env-1',
+      tabId: 'tab1',
+      leafId: 'leaf1'
+    })
+  })
+
   it('reuses the terminal surface as a non-modal adjacent panel', () => {
     render(<AgentTerminalPanel card={card()} onOpenChange={() => {}} onReveal={() => {}} />)
 

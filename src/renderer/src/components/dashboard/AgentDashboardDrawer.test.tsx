@@ -7,7 +7,12 @@ import { useAppStore } from '@/store'
 const mocks = vi.hoisted(() => ({
   useLiveDashboardSnapshot: vi.fn(() => ({ generatedAt: 1, cards: [] })),
   blockingOverlay: false,
-  boardProps: null as Record<string, unknown> | null
+  boardProps: null as Record<string, unknown> | null,
+  activateTabAndFocusPane: vi.fn()
+}))
+
+vi.mock('@/lib/activate-tab-and-focus-pane', () => ({
+  activateTabAndFocusPane: mocks.activateTabAndFocusPane
 }))
 
 vi.mock('./useLiveDashboardSnapshot', () => ({
@@ -84,5 +89,36 @@ describe('AgentDashboardDrawer', () => {
     act(() => useAppStore.setState({ agentDashboardDrawerOpen: true }))
     expect(mocks.boardProps?.workspaceContextMenusEnabled).toBe(true)
     expect(mocks.boardProps?.onWorkspaceContextMenuOpenChange).toBeTypeOf('function')
+  })
+
+  it('reveals a colliding worktree on the card execution host', () => {
+    const setActiveWorktree = vi.spyOn(useAppStore.getState(), 'setActiveWorktree')
+    render(<AgentDashboardDrawer statusBarVisible />)
+    act(() => useAppStore.setState({ agentDashboardDrawerOpen: true }))
+    const onRevealAgent = mocks.boardProps?.onRevealAgent
+    expect(onRevealAgent).toBeTypeOf('function')
+
+    act(() => {
+      ;(
+        onRevealAgent as (args: {
+          repoId: string
+          worktreeId: string
+          executionHostId?: string
+          tabId: string
+          leafId: string | null
+        }) => void
+      )({
+        repoId: 'repo-1',
+        worktreeId: 'shared-worktree',
+        executionHostId: 'runtime:env-1',
+        tabId: 'tab-1',
+        leafId: 'leaf-1'
+      })
+    })
+
+    expect(setActiveWorktree).toHaveBeenCalledWith('shared-worktree', 'runtime:env-1')
+    expect(mocks.activateTabAndFocusPane).toHaveBeenCalledWith('tab-1', 'leaf-1', {
+      flashFocusedPane: true
+    })
   })
 })

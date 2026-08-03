@@ -67,6 +67,9 @@ export function isDashboardRevealAgentArgs(value: unknown): value is DashboardRe
   return (
     isBoundedString(args.repoId, MAX_ID_LENGTH) &&
     isBoundedString(args.worktreeId, MAX_ID_LENGTH) &&
+    (args.executionHostId === undefined ||
+      (isBoundedString(args.executionHostId, MAX_ID_LENGTH) &&
+        normalizeExecutionHostId(args.executionHostId) !== null)) &&
     isBoundedString(args.tabId, MAX_ID_LENGTH) &&
     (args.leafId === null || isBoundedString(args.leafId, MAX_ID_LENGTH))
   )
