@@ -69,7 +69,12 @@ describe('terminal recently-closed capture', () => {
     store.getState().closeTab(tab.id)
 
     expect(store.getState().recentlyClosedTerminalTabsByWorktree[WT]).toEqual([
-      { startupCwd: '/path/wt1/packages/app', customTitle: 'build shell', color: '#ff0000' }
+      expect.objectContaining({
+        startupCwd: '/path/wt1/packages/app',
+        customTitle: 'build shell',
+        color: '#ff0000',
+        position: expect.objectContaining({ groupIndex: 0 })
+      })
     ])
     expect(store.getState().recentlyClosedTabKindsByWorktree[WT]).toEqual(['terminal'])
   })
@@ -140,6 +145,30 @@ describe('terminal snapshot cwd remapping', () => {
 })
 
 describe('reopenClosedTerminalTab', () => {
+  it('restores the tab bar and group position of a closed middle tab', () => {
+    const store = makeSeededStore()
+    const first = store.getState().createTab(WT)
+    const middle = store.getState().createTab(WT)
+    const last = store.getState().createTab(WT)
+    store.getState().setTabBarOrder(WT, [first.id, middle.id, last.id])
+
+    store.getState().closeTab(middle.id)
+    expect(store.getState().reopenClosedTerminalTab(WT)).toBe(true)
+
+    const restored = store
+      .getState()
+      .tabsByWorktree[WT]?.find((tab) => tab.id !== first.id && tab.id !== last.id)
+    expect(restored).toBeDefined()
+    expect(store.getState().tabBarOrderByWorktree[WT]).toEqual([first.id, restored!.id, last.id])
+
+    const group = store.getState().groupsByWorktree[WT]?.[0]
+    expect(
+      group?.tabOrder.map(
+        (id) => store.getState().unifiedTabsByWorktree[WT]?.find((tab) => tab.id === id)?.entityId
+      )
+    ).toEqual([first.id, restored!.id, last.id])
+  })
+
   it('recreates a fresh terminal with the snapshot cwd, shell, title, and color', () => {
     const store = makeSeededStore()
     const tab = store

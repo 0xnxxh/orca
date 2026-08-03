@@ -1,7 +1,12 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
-import { pushRecentlyClosedTabKind } from './recently-closed-tabs'
+import {
+  getRecentlyClosedTabPosition,
+  restoreRecentlyClosedTabPosition,
+  pushRecentlyClosedTabKind
+} from './recently-closed-tabs'
+import type { RecentlyClosedTabPosition } from './recently-closed-tabs'
 import { joinPath } from '@/lib/path'
 import { toast } from 'sonner'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
@@ -281,7 +286,9 @@ export type EditorViewMode = 'edit' | 'changes'
 export type ClosedEditorTabSnapshot = Omit<
   OpenFile,
   'id' | 'isDirty' | 'mirroredFromRuntimeSession'
->
+> & {
+  position?: RecentlyClosedTabPosition
+}
 
 const MAX_RECENT_CLOSED_EDITOR_TABS = 10
 
@@ -1799,12 +1806,13 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
               ...snap
             } = replacedPreview
             const stack = s.recentlyClosedEditorTabsByWorktree[worktreeId] ?? []
+            const position = getRecentlyClosedTabPosition(s, worktreeId, replacedPreview.id)
             nextRecentlyClosed = {
               ...s.recentlyClosedEditorTabsByWorktree,
-              [worktreeId]: [snap as ClosedEditorTabSnapshot, ...stack].slice(
-                0,
-                MAX_RECENT_CLOSED_EDITOR_TABS
-              )
+              [worktreeId]: [
+                { ...(snap as ClosedEditorTabSnapshot), ...(position ? { position } : {}) },
+                ...stack
+              ].slice(0, MAX_RECENT_CLOSED_EDITOR_TABS)
             }
             nextRecentlyClosedKinds = pushRecentlyClosedTabKind(
               s.recentlyClosedTabKindsByWorktree,
@@ -2188,12 +2196,13 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           ...snap
         } = closedFile
         const stack = s.recentlyClosedEditorTabsByWorktree[wtRecent] ?? []
+        const position = getRecentlyClosedTabPosition(s, wtRecent, fileId)
         nextRecentlyClosed = {
           ...s.recentlyClosedEditorTabsByWorktree,
-          [wtRecent]: [snap as ClosedEditorTabSnapshot, ...stack].slice(
-            0,
-            MAX_RECENT_CLOSED_EDITOR_TABS
-          )
+          [wtRecent]: [
+            { ...(snap as ClosedEditorTabSnapshot), ...(position ? { position } : {}) },
+            ...stack
+          ].slice(0, MAX_RECENT_CLOSED_EDITOR_TABS)
         }
         nextRecentlyClosedKinds = pushRecentlyClosedTabKind(
           s.recentlyClosedTabKindsByWorktree,
@@ -2264,7 +2273,14 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         [worktreeId]: (s.recentlyClosedEditorTabsByWorktree[worktreeId] ?? []).slice(1)
       }
     }))
-    get().openFile(next)
+    const { position, ...file } = next
+    get().openFile(file, { targetGroupId: position?.groupId })
+    const restored = get().openFiles.find(
+      (candidate) => candidate.filePath === file.filePath && candidate.worktreeId === worktreeId
+    )
+    if (restored) {
+      restoreRecentlyClosedTabPosition(get, worktreeId, restored.id, position)
+    }
     return true
   },
 
