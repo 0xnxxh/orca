@@ -92,6 +92,45 @@ export type SshConfigImportResult = {
   repoReadoptions: SshRepoReadoption[]
 }
 
+/** Concrete Host entry from ~/.ssh/config, for pickers that prefill the add-host form. */
+export type SshConfigHostSummary = {
+  alias: string
+  hostname: string
+  port: number
+  username: string
+  identityFile?: string
+  proxyCommand?: string
+  jumpHost?: string
+  /** True when an Orca SSH target already uses this config alias. */
+  alreadyInOrca: boolean
+}
+
+export type SshConfigHostListResult = {
+  hosts: SshConfigHostSummary[]
+  totalHostCount: number
+  newHostCount: number
+  matchCount: number
+  hasMore: boolean
+}
+
+export type SshConfigHostListArgs = { query?: string }
+
+/** Effective OpenSSH values used to prefill one manually managed target. */
+export type SshConfigHostResolution = {
+  alias: string
+  hostname: string
+  port: number
+  username: string
+  identityFiles: string[]
+  identityAgent?: string
+  identitiesOnly: boolean
+  forwardAgent: boolean
+  gssapiAuthentication?: boolean
+  proxyCommand?: string
+  proxyUseFdpass: boolean
+  jumpHost?: string
+}
+
 export type SavedPortForward = {
   localPort: number
   remoteHost: string

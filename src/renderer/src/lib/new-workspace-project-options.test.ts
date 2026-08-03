@@ -108,6 +108,35 @@ describe('buildNewWorkspaceProjectOptions', () => {
     expect(options.map((option) => option.id)).toEqual(['github:stablyai/orca'])
   })
 
+  it('excludes projects configured only on removed hosts', () => {
+    const options = buildNewWorkspaceProjectOptions({
+      projects: [project()],
+      projectHostSetups: [
+        setup({ id: 'removed-setup', hostId: 'ssh:removed', repoId: 'ssh-repo' })
+      ],
+      eligibleRepos: [repo('ssh-repo', { connectionId: 'removed' })],
+      hosts: [{ id: 'local', label: 'Local Mac' }]
+    })
+
+    expect(options).toEqual([])
+  })
+
+  it('keeps projects with an actionable sibling setup', () => {
+    const options = buildNewWorkspaceProjectOptions({
+      projects: [project()],
+      projectHostSetups: [
+        setup({ id: 'local-setup', hostId: 'local', repoId: 'local-repo' }),
+        setup({ id: 'removed-setup', hostId: 'ssh:removed', repoId: 'ssh-repo' })
+      ],
+      eligibleRepos: [repo('local-repo'), repo('ssh-repo', { connectionId: 'removed' })],
+      hosts: [{ id: 'local', label: 'Local Mac' }]
+    })
+
+    expect(options).toEqual([
+      expect.objectContaining({ id: 'github:stablyai/orca', detail: 'stablyai/orca' })
+    ])
+  })
+
   it('shows configured directories when project names are duplicated', () => {
     const options = buildNewWorkspaceProjectOptions({
       projects: [
@@ -432,9 +461,16 @@ describe('buildNewWorkspaceCreateTargetOptions', () => {
       projects: [project()],
       projectHostSetups: [setup({ id: 'local-setup', repoId: 'local-repo' })],
       eligibleRepos: [repo('local-repo')],
+      hosts: [{ id: 'local', label: 'Local Mac' }],
       projectGroups: [
         group({ id: 'folder-group', name: 'Platform', parentPath: '/tmp/platform' }),
-        group({ id: 'org-group', name: 'Org', parentPath: null })
+        group({ id: 'org-group', name: 'Org', parentPath: null }),
+        group({
+          id: 'removed-folder-group',
+          name: 'Removed Remote',
+          parentPath: '/srv/removed',
+          connectionId: 'removed'
+        })
       ]
     })
 

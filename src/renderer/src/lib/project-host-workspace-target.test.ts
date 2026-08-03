@@ -246,6 +246,49 @@ describe('project-host workspace target resolution', () => {
     })
   })
 
+  it('does not resolve workspace creation through a removed host', () => {
+    const remoteRepo = makeRepo('remote-repo', { connectionId: 'removed' })
+    const projects = [makeProject('repo:remote', ['remote-repo'])]
+    const projectHostSetups = [
+      makeSetup('removed-setup', 'repo:remote', 'ssh:removed', 'remote-repo')
+    ]
+
+    expect(
+      resolveWorkspaceCreationTarget({
+        eligibleRepos: [remoteRepo],
+        projects,
+        projectHostSetups,
+        draftRepoId: remoteRepo.id,
+        projectHostSetupId: 'removed-setup',
+        actionableHostIds: new Set(['local'])
+      })
+    ).toEqual({ status: 'unavailable', reason: 'setup-not-found' })
+  })
+
+  it('falls back from a removed draft host to an actionable sibling setup', () => {
+    const remoteRepo = makeRepo('remote-repo', { connectionId: 'removed' })
+    const localRepo = makeRepo('local-repo')
+    const projects = [makeProject('repo:orca', ['remote-repo', 'local-repo'])]
+    const projectHostSetups = [
+      makeSetup('removed-setup', 'repo:orca', 'ssh:removed', 'remote-repo'),
+      makeSetup('local-setup', 'repo:orca', 'local', 'local-repo')
+    ]
+
+    expect(
+      resolveWorkspaceCreationTarget({
+        eligibleRepos: [remoteRepo, localRepo],
+        projects,
+        projectHostSetups,
+        draftRepoId: remoteRepo.id,
+        projectHostSetupId: 'removed-setup',
+        actionableHostIds: new Set(['local'])
+      })
+    ).toMatchObject({
+      status: 'ready',
+      target: { hostId: 'local', repoId: 'local-repo' }
+    })
+  })
+
   // Regression: selecting a project in the new-workspace dropdown must not be
   // pinned to the host of the currently-active workspace. Each project below is
   // set up on exactly one (different) host; picking the other project while the

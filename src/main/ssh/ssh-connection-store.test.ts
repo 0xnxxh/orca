@@ -85,6 +85,22 @@ describe('SshConnectionStore', () => {
     expect(mockStore.getSshTargets).toHaveBeenCalled()
   })
 
+  it('lists picker suppression aliases without consulting re-adoption tombstones', () => {
+    mockStore.addDeletedSshConfigAlias('config-removed')
+    mockStore.addRemovedSshTargetTombstone({
+      oldTargetId: 'ssh-manual',
+      configHost: 'manual-removed',
+      host: 'manual.internal',
+      port: 22,
+      username: 'deploy',
+      label: 'Manual',
+      removedAt: 1
+    })
+
+    expect(sshStore.listSuppressedSshConfigAliases()).toEqual(['config-removed'])
+    expect(mockStore.getRemovedSshTargetTombstones).not.toHaveBeenCalled()
+  })
+
   it('getTarget delegates to store', () => {
     sshStore.getTarget('test-id')
     expect(mockStore.getSshTarget).toHaveBeenCalledWith('test-id')
@@ -423,7 +439,7 @@ describe('SshConnectionStore', () => {
       expect(result).toEqual([])
     })
 
-    it('does not tombstone a manual target on delete', () => {
+    it('suppresses a deleted manual target from config discovery', () => {
       mockStore.addSshTarget({
         id: 'ssh-1',
         label: 'mini',
@@ -435,7 +451,7 @@ describe('SshConnectionStore', () => {
       })
 
       sshStore.removeTarget('ssh-1')
-      expect(mockStore.addDeletedSshConfigAlias).not.toHaveBeenCalled()
+      expect(mockStore.addDeletedSshConfigAlias).toHaveBeenCalledWith('mini')
     })
 
     it('re-adding a deleted host reclaims its alias so sync stops suppressing it', () => {
@@ -557,6 +573,7 @@ describe('SshConnectionStore', () => {
       sshStore.removeTarget('runtime-ssh-abc')
 
       expect(mockStore.addRemovedSshTargetTombstone).not.toHaveBeenCalled()
+      expect(mockStore.addDeletedSshConfigAlias).not.toHaveBeenCalled()
     })
 
     it('re-adopts orphaned repos when the same host is re-added', () => {

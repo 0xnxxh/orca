@@ -25,6 +25,10 @@ export class SshConnectionStore {
     return labels
   }
 
+  listSuppressedSshConfigAliases(): string[] {
+    return this.store.getDeletedSshConfigAliases()
+  }
+
   getTarget(id: string): SshTarget | undefined {
     return this.store.getSshTarget(id)
   }
@@ -87,21 +91,12 @@ export class SshConnectionStore {
 
   removeTarget(id: string): void {
     const target = this.store.getSshTarget(id)
-    // Why: deleting a config-managed target must record a tombstone; otherwise
-    // the next ~/.ssh/config sync re-inserts it verbatim (the config entry still
-    // exists on disk) and the host reappears. Manual targets need no tombstone —
-    // sync never re-adds them.
-    if (target && isConfigManagedTarget(target)) {
+    if (target && !isRuntimeOwnedSshTarget(target)) {
       const alias = target.configHost ?? target.label
       if (alias) {
+        // Why: one suppression source keeps passive import and the config picker consistent.
         this.store.addDeletedSshConfigAlias(alias)
       }
-    }
-    // Why: record the removed target's host identity (for ALL user-facing
-    // targets, config-managed or manual) so a later re-add of the same host can
-    // re-adopt any workspaces orphaned on this id. Runtime-owned targets manage
-    // their own lifecycle and are never re-adopted.
-    if (target && !isRuntimeOwnedSshTarget(target)) {
       this.store.addRemovedSshTargetTombstone(buildRemovedSshTargetTombstone(target, Date.now()))
     }
     this.store.removeSshTarget(id)
@@ -228,16 +223,6 @@ export function getRuntimeOwnedSshTargetId(runtimeId: string): string {
 
 export function isRuntimeOwnedSshTarget(target: SshTarget): boolean {
   return target.owner?.type === 'on-demand-runtime'
-}
-
-function isConfigManagedTarget(target: SshTarget): boolean {
-  // Why: a target is subject to config sync (and therefore needs a tombstone on
-  // delete) when it is explicitly config-sourced, or a legacy import that sync
-  // still adopts. Manual targets are excluded — sync never re-adds them.
-  return (
-    target.source === 'ssh-config' ||
-    (target.source === undefined && isLegacyConfigImportTarget(target))
-  )
 }
 
 function isLegacyConfigImportTarget(target: SshTarget): boolean {

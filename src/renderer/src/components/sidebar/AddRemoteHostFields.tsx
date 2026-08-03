@@ -15,15 +15,18 @@ import { SshHostAdvancedFields } from '../settings/SshHostAdvancedFields'
 export function SshHostFields({
   form,
   disabled,
+  preferAdvancedOpen = false,
   onFormChange,
   onSubmit
 }: {
   form: EditingTarget
   disabled: boolean
+  /** When true after a config pick, expand Advanced so proxy/jump stay visible. */
+  preferAdvancedOpen?: boolean
   onFormChange: (updater: (prev: EditingTarget) => EditingTarget) => void
   onSubmit: () => void
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(preferAdvancedOpen)
   return (
     <form
       className="grid gap-3 sm:grid-cols-2"

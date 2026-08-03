@@ -127,6 +127,7 @@ import {
 } from '@/lib/project-host-setup-options'
 import {
   buildNewWorkspaceCreateTargetOptions,
+  getNewWorkspaceProjectGroupHostId,
   getProjectGroupIdFromNewWorkspaceOptionId,
   type NewWorkspaceProjectOption
 } from '@/lib/new-workspace-project-options'
@@ -613,6 +614,31 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
   const workspaceHostScope = useAppStore((s) => s.workspaceHostScope)
   const eligibleRepos = useMemo(() => getComposerEligibleRepos(repos), [repos])
+  const hostOptions = useMemo(
+    () =>
+      buildExecutionHostRegistry({
+        repos,
+        settings,
+        hostSource: 'configured-only',
+        sshTargetLabels,
+        sshConnectionStates,
+        runtimeEnvironments,
+        runtimeStatusByEnvironmentId,
+        hostLabelOverrides: getHostDisplayLabelOverrides(settings)
+      }),
+    [
+      repos,
+      settings,
+      sshConnectionStates,
+      sshTargetLabels,
+      runtimeEnvironments,
+      runtimeStatusByEnvironmentId
+    ]
+  )
+  const actionableHostIds = useMemo(
+    () => new Set(hostOptions.map((host) => host.id)),
+    [hostOptions]
+  )
   // Why: a runtime-owned SSH repo (active right after creating a per-workspace-env) is ineligible; seed from its local same-project sibling, not another project.
   const seedActiveRepoId = useMemo(
     () => resolveComposerActiveRepoId(repos, eligibleRepos, activeRepoId),
@@ -650,13 +676,17 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     projectId: initialRunSeed.projectId,
     hostId: initialRunSeed.hostId,
     projectHostSetupId: initialRunSeed.projectHostSetupId,
-    focusedHostScope: workspaceHostScope
+    focusedHostScope: workspaceHostScope,
+    actionableHostIds
   })
 
   const [internalRepoId, setInternalRepoId] = useState<string>(resolvedInitialRepoId)
   const initialFolderProjectGroupId = initialProjectGroupId ?? draftProjectGroupId
   const initialFolderProjectGroup = projectGroups.find(
-    (group) => group.id === initialFolderProjectGroupId && Boolean(group.parentPath?.trim())
+    (group) =>
+      group.id === initialFolderProjectGroupId &&
+      Boolean(group.parentPath?.trim()) &&
+      actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
   )
   const [selectedProjectGroupId, setSelectedProjectGroupId] = useState<string | null>(
     initialFolderProjectGroup?.id ?? null
@@ -668,10 +698,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     () =>
       selectedProjectGroupId
         ? (projectGroups.find(
-            (group) => group.id === selectedProjectGroupId && Boolean(group.parentPath?.trim())
+            (group) =>
+              group.id === selectedProjectGroupId &&
+              Boolean(group.parentPath?.trim()) &&
+              actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
           ) ?? null)
         : null,
-    [projectGroups, selectedProjectGroupId]
+    [actionableHostIds, projectGroups, selectedProjectGroupId]
   )
   useEffect(() => {
     if (selectedProjectGroupId && !selectedProjectGroup) {
@@ -742,9 +775,10 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         projects,
         projectHostSetups,
         draftRepoId: repoId,
-        focusedHostScope: workspaceHostScope
+        focusedHostScope: workspaceHostScope,
+        actionableHostIds
       }),
-    [eligibleRepos, projectHostSetups, projects, repoId, workspaceHostScope]
+    [actionableHostIds, eligibleRepos, projectHostSetups, projects, repoId, workspaceHostScope]
   )
   const selectedRepo = eligibleRepos.find((repo) => repo.id === repoId)
   const selectedRepoIsGit = selectedRepo ? isGitRepoKind(selectedRepo) : false
@@ -784,26 +818,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     !selectedProjectGroup && selectedWorkspaceTarget.status === 'ready'
       ? selectedWorkspaceTarget.target.projectHostSetupId
       : null
-  const hostOptions = useMemo(
-    () =>
-      buildExecutionHostRegistry({
-        repos,
-        settings,
-        sshTargetLabels,
-        sshConnectionStates,
-        runtimeEnvironments,
-        runtimeStatusByEnvironmentId,
-        hostLabelOverrides: getHostDisplayLabelOverrides(settings)
-      }),
-    [
-      repos,
-      settings,
-      sshConnectionStates,
-      sshTargetLabels,
-      runtimeEnvironments,
-      runtimeStatusByEnvironmentId
-    ]
-  )
   const projectHostSetupOptions = useMemo(
     () =>
       buildProjectHostSetupOptions({
@@ -2649,7 +2663,10 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       const projectGroupId = getProjectGroupIdFromNewWorkspaceOptionId(projectId)
       if (projectGroupId) {
         const nextProjectGroup = projectGroups.find(
-          (group) => group.id === projectGroupId && Boolean(group.parentPath?.trim())
+          (group) =>
+            group.id === projectGroupId &&
+            Boolean(group.parentPath?.trim()) &&
+            actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
         )
         if (!nextProjectGroup) {
           setSelectedProjectGroupId(null)
@@ -2697,7 +2714,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         projects,
         projectHostSetups,
         projectId,
-        focusedHostScope: preferredHostId ?? workspaceHostScope
+        focusedHostScope: preferredHostId ?? workspaceHostScope,
+        actionableHostIds
       })
       if (!nextRepoId) {
         return
@@ -2706,6 +2724,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     },
     [
       eligibleRepos,
+      actionableHostIds,
       handleRepoChange,
       isProjectGroupTarget,
       linkedWorkItem,
