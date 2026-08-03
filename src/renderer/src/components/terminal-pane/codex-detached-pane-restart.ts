@@ -160,12 +160,13 @@ async function executeDetachedCodexPaneRestart(
       reopenCurrentCodexRestartPrompt(located, ptyId)
       return
     }
-    const killPromise = killReplacedCodexPanePty(ptyId)
     const store = useAppStore.getState()
+    store.suppressPtyExit(ptyId)
     store.clearTabPtyId(located.tab.id, ptyId)
+    store.consumeSuppressedPtyExit(ptyId)
     store.queueTabStartupCommand(located.tab.id, { ...CODEX_ACCOUNT_RESTART_STARTUP })
     store.clearCodexRestartNotice(ptyId)
-    await killPromise
+    await killReplacedCodexPanePty(ptyId)
     return
   }
   const { worktreeId, tab, leafId } = located
@@ -310,7 +311,6 @@ async function killReplacedCodexPanePty(ptyId: string): Promise<void> {
   // Why the disposal: a parked tab's exit sidecar treats any exit as the pane
   // dying — it would collapse the just-rebound leaf or close the whole tab.
   disposeParkedTerminalWatchersForPtyIds([ptyId])
-  useAppStore.getState().suppressPtyExit(ptyId)
   for (const snapshot of unregisterPtyDataHandlers([ptyId])) {
     snapshot.commit()
   }
@@ -322,6 +322,4 @@ async function killReplacedCodexPanePty(ptyId: string): Promise<void> {
     console.warn('[codex-restart] failed to kill replaced Codex pane PTY:', err)
   }
   discardPreHandlerPtyState(ptyId)
-  // No exit consumer remains after the watcher/handler disposal above.
-  useAppStore.getState().consumeSuppressedPtyExit(ptyId)
 }

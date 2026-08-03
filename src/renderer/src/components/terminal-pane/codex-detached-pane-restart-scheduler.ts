@@ -70,8 +70,12 @@ function scheduleClaimSweep(): void {
   const generation = executorGeneration
   // Exact mounted-owner checks fence the claim; a microtask only exits the store write.
   queueMicrotask(() => {
-    sweepQueued = false
     if (!executorInstalled || executorGeneration !== generation) {
+      return
+    }
+    sweepQueued = false
+    if (sweepRunning) {
+      sweepRequestedAfterRun = true
       return
     }
     sweepRunning = true

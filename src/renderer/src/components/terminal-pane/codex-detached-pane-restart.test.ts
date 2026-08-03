@@ -395,6 +395,7 @@ describe('codex detached pane restart executor', () => {
       command: 'codex',
       launchAgent: 'codex'
     })
+    expect(useAppStore.getState().suppressedPtyExitIds[OLD_PTY]).toBeUndefined()
     pendingKill.resolve()
     await restart
   })
