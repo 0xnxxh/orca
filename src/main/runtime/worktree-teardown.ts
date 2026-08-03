@@ -29,7 +29,7 @@ export type WorktreeTeardownDeps = {
   onPtyStopped?: (ptyId: string) => void
   timeoutMs?: number
   requirePhysicalStop?: boolean
-  /** Escape hatch for `--force`: warn instead of throwing when a stop stays unproven (#11960). */
+  /** Explicit Force Delete only: warn instead of throwing when a stop stays unproven (#11960). */
   allowUnverifiedStop?: boolean
   includeProviderInventory?: boolean
   includeLocalRegistry?: boolean
@@ -43,8 +43,10 @@ export type WorktreeTeardownResult = {
 
 export const WORKTREE_PROCESS_SWEEP_TIMEOUT_MS = 10_000
 
-// Why: reserve time after bounded stop RPCs to recheck whether a reported
-// failure actually left a live PTY before the outer sweep deadline.
+// Why: keep each bounded stop RPC settling before the sweep deadline itself, so
+// a wedged provider surfaces as a stop failure rather than as the outer timeout.
+// (The recheck this margin once also reserved time for now runs on its own
+// budget — see verifyUnstoppedPtys — because sharing this one wedged #11960.)
 export const WORKTREE_TEARDOWN_RPC_MARGIN_MS = 500
 
 // Absolute deadline (epoch ms) threaded into provider RPCs on the destructive
@@ -73,9 +75,11 @@ export function teardownRpcDeadline(sweepDeadline: number): number {
  *    daemon spawns.
  *
  * Sweeps are best-effort by default. Destructive removal callers set
- * `requirePhysicalStop` so a timeout or unproven stop blocks filesystem work,
- * and pass `allowUnverifiedStop` for `--force` so that gate can never wedge a
- * workspace permanently (#11960).
+ * `requirePhysicalStop` so a timeout or unproven stop blocks filesystem work.
+ * `allowUnverifiedStop` waives that proof so the gate can never wedge a
+ * workspace permanently (#11960) — it must come only from an explicit Force
+ * Delete or `--force`, never from the `force` an ordinary confirmed delete
+ * already sets to skip the dirty-file prompt.
  */
 export async function killAllProcessesForWorktree(
   worktreeId: string,
