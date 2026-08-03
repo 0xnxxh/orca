@@ -103,8 +103,8 @@ describe('codex detached pane restart executor', () => {
 
     expect(window.api.pty.spawn).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        cols: 120,
-        rows: 30,
+        cols: 80,
+        rows: 24,
         cwd: '/Users/dev/code/orca',
         command: 'codex',
         startupCommandDelivery: 'shell-ready',
@@ -115,6 +115,7 @@ describe('codex detached pane restart executor', () => {
         initiallyHidden: true
       })
     )
+    expect(window.api.pty.getSize).not.toHaveBeenCalled()
     expect(vi.mocked(window.api.pty.spawn).mock.calls[0]?.[0]?.env).toEqual(
       expect.objectContaining({
         ORCA_PANE_KEY: `tab-1:${LEAF_ID}`,

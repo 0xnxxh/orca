@@ -171,7 +171,6 @@ async function executeDetachedCodexPaneRestart(
   }
   const { worktreeId, tab, leafId } = located
 
-  const size = await window.api.pty.getSize(ptyId).catch(() => null)
   const workspacePath = getWorkspacePath(state, worktreeId)
   const cwd = tab.startupCwd ?? workspacePath ?? undefined
   const capabilities = hasCachedWindowsTerminalCapabilities()
@@ -194,9 +193,10 @@ async function executeDetachedCodexPaneRestart(
     return
   }
 
+  // Hidden replacements converge on mount; provider sizing must not delay ownership transfer.
   const spawned = await window.api.pty.spawn({
-    cols: size?.cols ?? 80,
-    rows: size?.rows ?? 24,
+    cols: 80,
+    rows: 24,
     ...(cwd ? { cwd } : {}),
     cwdFallback: 'worktree',
     env: buildPaneIdentityEnv(state, worktreeId, tab.id, leafId),
