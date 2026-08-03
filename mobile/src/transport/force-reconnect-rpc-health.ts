@@ -4,6 +4,11 @@ import { isLogicalClientCutoverError } from './stable-logical-rpc-client'
 
 export const FORCE_RECONNECT_TIMEOUT_MS = 15_000
 
+// Why: recoverable rejections can settle synchronously (suspended client, relay
+// cutover races); pacing fast failures keeps the retry loop from spinning the
+// RN event loop for the whole budget while leaving slow real waits unpenalized.
+const RETRY_PAUSE_MS = 250
+
 export async function verifyForceReconnectRpcHealth(
   client: RpcClient,
   deadline = Date.now() + FORCE_RECONNECT_TIMEOUT_MS
@@ -14,6 +19,7 @@ export async function verifyForceReconnectRpcHealth(
     if (timeoutMs <= 0) {
       throw lastError ?? new Error('Force Reconnect health check timed out')
     }
+    const attemptStartedAt = Date.now()
     try {
       const response = await client.sendRequest(
         'worktree.ps',
@@ -24,7 +30,12 @@ export async function verifyForceReconnectRpcHealth(
           strictDeadline: true
         }
       )
-      if (!response.ok) {
+      // Why: any resolved reply — success or application error — round-tripped the
+      // control channel, which is what this check verifies; failing on ok:false would
+      // retire a healthy replacement over a host-side application fault. Auth
+      // rejections never resolve a request (both transports divert them), but guard
+      // anyway so a future transport cannot report a dead pairing as recovered.
+      if (!response.ok && response.error.code === 'unauthorized') {
         throw new Error(response.error.message)
       }
       if (client.getRpcUnresponsiveSince?.() != null) {
@@ -39,9 +50,19 @@ export async function verifyForceReconnectRpcHealth(
       lastError = error
       if (state === 'disconnected') {
         await waitForReconnectState(client, deadline, error)
+      } else if (Date.now() - attemptStartedAt < RETRY_PAUSE_MS) {
+        await pauseBeforeRetry(deadline)
       }
     }
   }
+}
+
+function pauseBeforeRetry(deadline: number): Promise<void> {
+  const delayMs = Math.min(RETRY_PAUSE_MS, deadline - Date.now())
+  if (delayMs <= 0) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
 }
 
 function isRecoverableHealthError(
@@ -52,11 +73,18 @@ function isRecoverableHealthError(
     state === 'reconnecting' ||
     isLogicalClientCutoverError(error) ||
     isRpcDeliveryUnknown(error) ||
+    // Why: every literal is a recoverable mid-cutover state minted by rpc-client,
+    // stable-logical-rpc-client, mobile-relay-rpc-session, or the relay connect
+    // wait ('relay session disconnected' comes from its `relay session ${state}`
+    // template); missing one turns a benign cutover into replacement retirement.
     (error instanceof Error &&
       [
         'Connection interrupted',
+        'Client suspended',
         'relay session disconnected',
-        'relay session not connected'
+        'relay session not connected',
+        'relay session connection timed out',
+        'relay E2EE channel not ready'
       ].includes(error.message))
   )
 }

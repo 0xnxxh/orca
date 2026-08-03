@@ -123,7 +123,7 @@ describe('Force Reconnect RPC health', () => {
     )
   })
 
-  it('rejects an unsuccessful application response', async () => {
+  it('treats an application-error reply as proof of control-channel liveness', async () => {
     const responsiveness = new RpcApplicationResponsiveness()
     responsiveness.recordTimeout('browser.screenshot', 123)
     const sendRequest = vi.fn(async (method: string) => {
@@ -131,7 +131,7 @@ describe('Force Reconnect RPC health', () => {
       return {
         id: 'rpc-1',
         ok: false,
-        error: { code: 'runtime_error', message: 'worktree scan failed' }
+        error: { code: 'internal_error', message: 'worktree scan failed' }
       } as RpcResponse
     })
     const client = {
@@ -140,7 +140,43 @@ describe('Force Reconnect RPC health', () => {
       getRpcUnresponsiveSince: () => responsiveness.getUnresponsiveSince()
     } as unknown as RpcClient
 
-    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow('worktree scan failed')
+    await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
+    expect(sendRequest).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an unauthorized reply instead of reporting recovery', async () => {
+    const sendRequest = vi.fn(
+      async () =>
+        ({
+          id: 'rpc-1',
+          ok: false,
+          error: { code: 'unauthorized', message: 'Invalid device token' }
+        }) as RpcResponse
+    )
+    const client = {
+      sendRequest,
+      getState: () => 'connected' as const
+    } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow('Invalid device token')
+    expect(sendRequest).toHaveBeenCalledOnce()
+  })
+
+  it('paces immediately-rejecting recoverable errors instead of spinning', async () => {
+    vi.useFakeTimers()
+    const sendRequest = vi.fn(() => Promise.reject(new Error('Client suspended')))
+    const client = { sendRequest, getState: () => 'connected' as const } as unknown as RpcClient
+    let outcome = 'pending'
+    const verification = verifyForceReconnectRpcHealth(client).catch((error: Error) => {
+      outcome = error.message
+    })
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await verification
+
+    expect(outcome).toBe('Client suspended')
+    expect(sendRequest.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(sendRequest.mock.calls.length).toBeLessThanOrEqual(61)
   })
 
   it('fails when authorization retries reach auth-failed', async () => {
