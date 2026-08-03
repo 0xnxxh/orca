@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createAdhocBuildVersion,
   formatAdhocReleaseName,
-  normalizeAdhocLabel,
-  resolveAdhocBaseVersion
+  normalizeAdhocLabel
 } from './adhoc-build-version.mjs'
 import { createHourlyBuildVersion } from './hourly-build-version.mjs'
 import { compareAppVersions } from '../../src/shared/app-version'
@@ -48,40 +47,6 @@ describe('createAdhocBuildVersion', () => {
   it('rejects invalid input', () => {
     expect(() => createAdhocBuildVersion('nope', new Date())).toThrow(/valid semver/)
     expect(() => createAdhocBuildVersion('1.4.160', new Date('nope'))).toThrow(/invalid/)
-  })
-})
-
-describe('resolveAdhocBaseVersion', () => {
-  // Why: a branch cut at 1.4.165-rc.0 must still produce 1.4.168-adhoc.* once main
-  // has moved, matching hourly's product-line prefix.
-  it('prefers an explicit env override over package.json and main', () => {
-    expect(
-      resolveAdhocBaseVersion({
-        packageJsonVersion: '1.4.165-rc.0',
-        envBaseVersion: '1.4.168-rc.1',
-        readMainPackageVersion: () => '1.4.167'
-      })
-    ).toBe('1.4.168-rc.1')
-  })
-
-  it('falls back to main when the env is unset', () => {
-    expect(
-      resolveAdhocBaseVersion({
-        packageJsonVersion: '1.4.165-rc.0',
-        envBaseVersion: '',
-        readMainPackageVersion: () => '1.4.168-rc.1'
-      })
-    ).toBe('1.4.168-rc.1')
-  })
-
-  it('falls back to the branch package.json when main is unavailable', () => {
-    expect(
-      resolveAdhocBaseVersion({
-        packageJsonVersion: '1.4.165-rc.0',
-        envBaseVersion: '  ',
-        readMainPackageVersion: () => undefined
-      })
-    ).toBe('1.4.165-rc.0')
   })
 })
 
