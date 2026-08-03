@@ -1,10 +1,7 @@
 import type { IPtyProvider } from '../providers/types'
 import { settleBeforeDeadline } from './settle-before-deadline'
 
-// Why (#11960): the sweeps normally spend the whole teardown deadline, so
-// re-listing on that same budget answered "unverifiable" for PTYs that had
-// already exited and wedged the workspace forever. Verification gets its own
-// small window instead of inheriting an exhausted one.
+// Floor for the verification window when the sweep ran on a very short budget.
 export const WORKTREE_TEARDOWN_VERIFY_GRACE_MS = 2_000
 
 export type UnstoppedPtyVerdict =
@@ -16,13 +13,21 @@ export type UnstoppedPtyVerdict =
  * Re-lists the provider's processes to decide what a failed stop RPC actually
  * meant. The three verdicts stay distinct on purpose: "we could not ask" is not
  * evidence that a PTY survived, and callers word their errors differently.
+ *
+ * Why (#11960): this re-list used to run on the sweep's own deadline, which the
+ * sweeps had normally just spent. An inventory that answers perfectly well in
+ * 1s then "timed out" against a 0ms budget, so a PTY that had already exited
+ * read as unverifiable and the workspace could never be removed. Verification
+ * gets a budget of its own, sized like the sweep's rather than its leftovers.
  */
 export async function verifyUnstoppedPtys(
   failedPtyIds: readonly string[],
   provider: IPtyProvider,
-  deadline: number
+  deadline: number,
+  sweepBudgetMs: number
 ): Promise<UnstoppedPtyVerdict> {
-  const verifyDeadline = Math.max(deadline, Date.now() + WORKTREE_TEARDOWN_VERIFY_GRACE_MS)
+  const verifyBudgetMs = Math.max(WORKTREE_TEARDOWN_VERIFY_GRACE_MS, sweepBudgetMs)
+  const verifyDeadline = Math.max(deadline, Date.now() + verifyBudgetMs)
   let listError: unknown
   const sessions = await settleBeforeDeadline(
     async () => {

@@ -79,7 +79,8 @@ export async function killAllProcessesForWorktree(
   worktreeId: string,
   deps: WorktreeTeardownDeps
 ): Promise<WorktreeTeardownResult> {
-  const deadline = Date.now() + Math.max(1, deps.timeoutMs ?? WORKTREE_PROCESS_SWEEP_TIMEOUT_MS)
+  const sweepBudgetMs = Math.max(1, deps.timeoutMs ?? WORKTREE_PROCESS_SWEEP_TIMEOUT_MS)
+  const deadline = Date.now() + sweepBudgetMs
   const deadlineError = new Error(`Timed out waiting for physical PTY teardown: ${worktreeId}`)
   const stopAttempts = new Map<string, Promise<boolean>>()
   const stopPty = (
@@ -177,7 +178,7 @@ export async function killAllProcessesForWorktree(
     const verdict: UnstoppedPtyVerdict =
       failedPtyIds.length === 0
         ? { status: 'exited' }
-        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, deadline)
+        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, deadline, sweepBudgetMs)
     if (verdict.status !== 'exited') {
       const summary = describeUnstoppedPtys(worktreeId, failedPtyIds, verdict)
       if (!deps.allowUnverifiedStop) {

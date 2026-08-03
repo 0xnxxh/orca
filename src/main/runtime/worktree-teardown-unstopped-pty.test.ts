@@ -62,6 +62,39 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
     }
   })
 
+  // The reported shape: an automation workspace whose only trace is a stale
+  // registry row the daemon 404s on, behind an inventory slow enough to consume
+  // the sweep budget. Verification must still get far enough to prove absence.
+  it('removes the reported wedged automation workspace without --force', async () => {
+    const worktreeId = 'repo-1::C:/Users/admin/orca/workspaces/repo/auto-review-run-28'
+    vi.useFakeTimers()
+    try {
+      const localProvider = createProviderStub(
+        () => new Promise((resolve) => setTimeout(() => resolve([]), 9_900))
+      )
+      ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Session not found: term_abab11ee')
+      )
+      listRegisteredPtysMock.mockReturnValue([
+        { ptyId: 'term_abab11ee', worktreeId, sessionId: null, paneKey: null, pid: 4242 }
+      ])
+
+      const teardown = killAllProcessesForWorktree(worktreeId, {
+        localProvider,
+        requirePhysicalStop: true
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await expect(teardown).resolves.toEqual({
+        runtimeStopped: 0,
+        providerStopped: 0,
+        registryStopped: 0
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('names the blocking PTYs and the escape hatch when one is still live', async () => {
     const localProvider = createProviderStub(async () => [
       { id: 'w1@@live-1', cwd: '/tmp/w1', title: 'shell' }
