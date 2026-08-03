@@ -563,9 +563,15 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
               return { delivered: false, reason: 'not-displayed' }
             }
             // Why: macOS emits 'show' for requests it queues behind an unanswered permission dialog, so
-            // a confirmed show proves nothing while undecided; let the authoritative poll settle it.
+            // a confirmed show proves nothing while undecided — re-read to see whether the user just allowed it.
             if (awaitingPermission) {
-              return { delivered: false, reason: 'blocked-by-system' }
+              return readNotificationAuthorizationStatus().then((authorization) => {
+                if (authorization !== 'authorized') {
+                  return { delivered: false, reason: 'blocked-by-system' as const }
+                }
+                lastObservedDeliveryOutcome = 'delivered'
+                return { delivered: true }
+              })
             }
             lastObservedDeliveryOutcome = 'delivered'
             return { delivered: true }

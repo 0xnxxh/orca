@@ -167,9 +167,27 @@ describe('macOS notification permission prompt while the decision is pending', (
     await vi.advanceTimersByTimeAsync(0)
     expect(notificationShowMock).toHaveBeenCalledTimes(1)
 
-    // A queued-behind-the-dialog request still emits 'show', so it must not be reported as success.
+    // A queued-behind-the-dialog request still emits 'show', so while the decision stays pending
+    // the re-read keeps the answer honest.
     getNotificationOnceEventHandler('show')()
+    await vi.advanceTimersByTimeAsync(0)
     await expect(result).resolves.toEqual({ delivered: false, reason: 'blocked-by-system' })
+  })
+
+  it('reports success when the user allows and the banner really displays', async () => {
+    const store = createStore({ notificationPermissionRequested: true })
+    registerNotificationHandlers(store as never)
+    // The dialog opens on show(); by the time 'show' confirms, the user has clicked Allow.
+    readAuthorizationStatusMock.mockResolvedValueOnce('not-determined')
+    readAuthorizationStatusMock.mockResolvedValue('authorized')
+
+    const result = getDispatchHandler()({}, { source: 'test', requireDisplayConfirmation: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(notificationShowMock).toHaveBeenCalledTimes(1)
+
+    getNotificationOnceEventHandler('show')()
+    await vi.advanceTimersByTimeAsync(0)
+    await expect(result).resolves.toEqual({ delivered: true })
   })
 
   it('leaves no delivered evidence behind when the helper later goes missing', async () => {
