@@ -93,6 +93,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   rmSync(root, { recursive: true, force: true })
 })
@@ -164,6 +165,19 @@ describe('repairCodexWindowsPackageLayout', () => {
     ])
   })
 
+  it('restores over empty sibling directories left by a partial install', () => {
+    const installPath = join(root, 'install')
+    writeReleaseLayout(installPath, { withResources: false })
+    mkdirSync(join(installPath, 'codex-resources'))
+    mkdirSync(join(installPath, 'codex-path'))
+    writeReleaseLayout(getStandaloneReleasePath('0.145.0-x86_64-pc-windows-msvc'))
+
+    expect(repair(join(installPath, 'bin', 'codex.exe')).status).toBe('restored')
+    expect(
+      existsSync(join(installPath, 'codex-resources', 'codex-windows-sandbox-setup.exe'))
+    ).toBe(true)
+  })
+
   it('honours directory names declared by the manifest', () => {
     const installPath = join(root, 'install')
     writeReleaseLayout(installPath, {
@@ -214,5 +228,19 @@ describe('repairCodexWindowsPackageLayout', () => {
     writeReleaseLayout(installPath, { withResources: false })
 
     expect(repair(join(installPath, 'bin', 'codex.exe')).status).toBe('no-donor')
+  })
+
+  it('retries a failed donor lookup after its brief cache expires', () => {
+    vi.useFakeTimers()
+    const installPath = join(root, 'install')
+    writeReleaseLayout(installPath, { withResources: false })
+    const commandPath = join(installPath, 'bin', 'codex.exe')
+
+    expect(repair(commandPath).status).toBe('no-donor')
+    writeReleaseLayout(getStandaloneReleasePath('0.145.0-x86_64-pc-windows-msvc'))
+    expect(repair(commandPath).status).toBe('no-donor')
+
+    vi.advanceTimersByTime(60_001)
+    expect(repair(commandPath).status).toBe('restored')
   })
 })
