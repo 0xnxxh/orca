@@ -191,4 +191,15 @@ describe('the "Hide sleeping" exemption for project entry-point rows', () => {
 
     expect(visible([mainA, mainB], {})).toEqual([mainA.id, mainB.id])
   })
+
+  it('does not flicker out while an SSH host is offline', () => {
+    // A disconnected SSH provider re-synthesizes persisted worktrees with empty
+    // head/branch (orca-runtime.ts) while isMainWorktree stays a path compare —
+    // and the dead PTYs make the row read as sleeping at exactly that moment.
+    const awake = makeDefaultBranchWorktree()
+    const offline: Worktree = { ...awake, head: '', branch: '' }
+
+    expect(visible([offline], {})).toEqual([offline.id])
+    expect(visible([awake], {})).toEqual([awake.id])
+  })
 })
