@@ -13,6 +13,7 @@ import {
   createTerminalImeDeferredNewlineSender,
   createTerminalImeModifiedEnterChordOwner,
   getTerminalImeModifiedEnterKind,
+  isTerminalImeConsumedKey,
   isTerminalImeEnterKeyUp,
   isTerminalImeProcessEnter
 } from './terminal-ime-deferred-newline'
@@ -477,6 +478,22 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
+      const terminalPaneForImeShortcut = manager.getActivePane() ?? manager.getPanes()[0]
+      const hasPendingImeComposition = hasPendingTerminalImeComposition(
+        terminalPaneForImeShortcut?.terminal.element
+      )
+      const imeProcessEnter = isWindows && hasPendingImeComposition && isTerminalImeProcessEnter(e)
+      if (
+        isWindows &&
+        hasPendingImeComposition &&
+        !imeProcessEnter &&
+        isTerminalImeConsumedKey(e)
+      ) {
+        // Process has no logical key, so shortcut matching would fall back to its physical code.
+        e.stopImmediatePropagation()
+        return
+      }
+
       if (matchFileSearchShortcut(e, shortcutPlatform, keybindings, terminalShortcutPolicy)) {
         const pane = manager.getActivePane() ?? manager.getPanes()[0]
         const selectedText = normalizeSelectedTextForFileSearch(pane?.terminal.getSelection())
@@ -516,11 +533,6 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
-      const terminalPaneForImeShortcut = manager.getActivePane() ?? manager.getPanes()[0]
-      const hasPendingImeComposition = hasPendingTerminalImeComposition(
-        terminalPaneForImeShortcut?.terminal.element
-      )
-      const imeProcessEnter = isWindows && hasPendingImeComposition && isTerminalImeProcessEnter(e)
       const shortcutEvent = imeProcessEnter
         ? {
             key: 'Enter',
