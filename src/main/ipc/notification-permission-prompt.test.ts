@@ -117,6 +117,16 @@ describe('macOS notification permission prompt while the decision is pending', (
     return call[1] as (event: unknown, args: unknown) => unknown
   }
 
+  function getProbeDeliveryHandler(): (event: unknown, args?: unknown) => Promise<unknown> {
+    const call = handleMock.mock.calls.findLast(
+      (c: unknown[]) => c[0] === 'notifications:probeDelivery'
+    )
+    if (!call) {
+      throw new Error('notifications:probeDelivery handler not registered')
+    }
+    return call[1] as (event: unknown, args?: unknown) => Promise<unknown>
+  }
+
   function getNotificationOnceEventHandler(eventName: string): () => void {
     const call = notificationOnceMock.mock.calls.findLast((c: unknown[]) => c[0] === eventName)
     if (!call) {
@@ -157,8 +167,32 @@ describe('macOS notification permission prompt while the decision is pending', (
     await vi.advanceTimersByTimeAsync(0)
     expect(notificationShowMock).toHaveBeenCalledTimes(1)
 
+    // A queued-behind-the-dialog request still emits 'show', so it must not be reported as success.
     getNotificationOnceEventHandler('show')()
-    await expect(result).resolves.toEqual({ delivered: true })
+    await expect(result).resolves.toEqual({ delivered: false, reason: 'blocked-by-system' })
+  })
+
+  it('leaves no delivered evidence behind when the helper later goes missing', async () => {
+    const store = createStore({ notificationPermissionRequested: true })
+    registerNotificationHandlers(store as never)
+
+    const dispatched = getDispatchHandler()(
+      {},
+      { source: 'test', requireDisplayConfirmation: true }
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    getNotificationOnceEventHandler('show')()
+    await dispatched
+
+    // Helper gone (timeout / missing binary): the cached-evidence branch must not claim success.
+    readAuthorizationStatusMock.mockResolvedValue(null)
+    const probe = getProbeDeliveryHandler()({})
+    await vi.advanceTimersByTimeAsync(0)
+    getNotificationOnceEventHandler('show')()
+
+    await expect(probe).resolves.toEqual({ state: 'delivered', authoritative: false })
+    // Why: 'delivered' here comes from a fresh probe, not stale dispatch evidence.
+    expect(notificationShowMock).toHaveBeenCalledTimes(2)
   })
 
   it('reports not-displayed when the pending decision swallows the test notification', async () => {
