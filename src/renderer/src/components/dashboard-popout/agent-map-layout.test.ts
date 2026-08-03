@@ -158,6 +158,39 @@ describe('agent map layout', () => {
     }
   })
 
+  it('packs high-fanout orchestrated children into a compact deterministic cluster', () => {
+    const cards = [
+      card({ paneKey: 'parent' }),
+      ...Array.from({ length: 29 }, (_, index) =>
+        card({
+          paneKey: `child-${index.toString().padStart(2, '0')}`,
+          parentPaneKey: 'parent'
+        })
+      )
+    ]
+    const first = deriveAgentMapLayout(cards, NOW).projects[0].worktrees[0]
+    const second = deriveAgentMapLayout(cards, NOW).projects[0].worktrees[0]
+    const parent = first.agents.find((agent) => agent.card.paneKey === 'parent')!
+    const children = first.agents.filter((agent) => agent.card.parentPaneKey === 'parent')
+
+    expect(new Set(children.map((child) => child.y.toFixed(3))).size).toBeGreaterThan(4)
+    expect(children.every((child) => child.y > parent.y)).toBe(true)
+    expect(
+      Math.max(...children.map((child) => child.x)) - Math.min(...children.map((child) => child.x))
+    ).toBeLessThan(500)
+    expect(first.radius).toBeLessThan(350)
+    for (const [index, child] of children.entries()) {
+      for (const other of children.slice(index + 1)) {
+        expect(Math.hypot(child.x - other.x, child.y - other.y)).toBeGreaterThanOrEqual(
+          AGENT_MAP_AGENT_RADIUS * 2
+        )
+      }
+    }
+    expect(first.agents.map(({ card, x, y }) => ({ paneKey: card.paneKey, x, y }))).toEqual(
+      second.agents.map(({ card, x, y }) => ({ paneKey: card.paneKey, x, y }))
+    )
+  })
+
   it('places visible child worktrees beneath their direct parent', () => {
     const layout = deriveAgentMapLayout(
       [
@@ -398,6 +431,58 @@ describe('agent map layout', () => {
         minimumDistance = Math.min(
           minimumDistance,
           Math.hypot(agent.x - other.x, agent.y - other.y)
+        )
+      }
+    }
+    expect(minimumDistance).toBeGreaterThanOrEqual(AGENT_MAP_AGENT_RADIUS * 2)
+  })
+
+  it('keeps deeply nested orchestration finite without recursive stack growth', () => {
+    const layout = deriveAgentMapLayout(
+      Array.from({ length: 5_000 }, (_, index) =>
+        card({
+          paneKey: `agent-${index.toString().padStart(4, '0')}`,
+          parentPaneKey:
+            index === 0 ? undefined : `agent-${(index - 1).toString().padStart(4, '0')}`
+        })
+      ),
+      NOW
+    )
+    const worktree = layout.projects[0].worktrees[0]
+    const agents = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
+
+    expect(worktree.agents).toHaveLength(5_000)
+    expect(Number.isFinite(worktree.radius)).toBe(true)
+    expect(worktree.radius).toBeLessThan(1_000_000)
+    for (const agent of worktree.agents) {
+      if (agent.card.parentPaneKey) {
+        expect(agent.y).toBeGreaterThan(agents.get(agent.card.parentPaneKey)!.y)
+      }
+    }
+  })
+
+  it('wraps very large orchestration fanout without overlap', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({ paneKey: 'parent' }),
+        ...Array.from({ length: 300 }, (_, index) =>
+          card({ paneKey: `child-${index}`, parentPaneKey: 'parent' })
+        )
+      ],
+      NOW
+    )
+    const worktree = layout.projects[0].worktrees[0]
+    const parent = worktree.agents.find((agent) => agent.card.paneKey === 'parent')!
+    const children = worktree.agents.filter((agent) => agent.card.parentPaneKey === 'parent')
+    let minimumDistance = Number.POSITIVE_INFINITY
+
+    expect(children.every((child) => child.y > parent.y)).toBe(true)
+    expect(worktree.radius).toBeLessThan(1_000)
+    for (const [index, child] of children.entries()) {
+      for (const other of children.slice(index + 1)) {
+        minimumDistance = Math.min(
+          minimumDistance,
+          Math.hypot(child.x - other.x, child.y - other.y)
         )
       }
     }

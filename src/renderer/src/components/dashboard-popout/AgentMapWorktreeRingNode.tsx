@@ -76,13 +76,12 @@ function WorktreeDetails({
         <strong className="block truncate text-[13px]">{worktree.name}</strong>
         <span className="mt-1 block text-[11px] text-muted-foreground">
           {translate(
-            worktree.agents.length === 1
-              ? 'dashboardPopout.map.worktreeSummary_one'
-              : 'dashboardPopout.map.worktreeSummary_other',
-            worktree.agents.length === 1
-              ? '{{total}} agent · {{active}} active · {{done}} done'
-              : '{{total}} agents · {{active}} active · {{done}} done',
+            'dashboardPopout.map.worktreeSummary',
+            '{{total}} agents · {{active}} active · {{done}} done',
             {
+              count: worktree.agents.length,
+              defaultValue_one: '{{total}} agent · {{active}} active · {{done}} done',
+              defaultValue_other: '{{total}} agents · {{active}} active · {{done}} done',
               total: worktree.agents.length,
               active: activeCount,
               done: worktree.statusCounts.done
@@ -171,7 +170,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
             onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault()
-                setDetailsOpen(true)
+                setDetailsOpen((open) => !open)
               }
             }}
             onContextMenu={
@@ -194,9 +193,11 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
             {worktree.name}
           </text>
           <text className="agent-map-worktree-count" y={32}>
-            {translate('dashboardPopout.map.agentCount', '{{count}} agents', {
-              count: worktree.agents.length
-            })}
+            {translate(
+              'dashboardPopout.map.agentCount',
+              worktree.agents.length === 1 ? '{{count}} agent' : '{{count}} agents',
+              { count: worktree.agents.length }
+            )}
           </text>
         </g>
         {aggregate ? (

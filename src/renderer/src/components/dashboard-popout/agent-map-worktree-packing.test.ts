@@ -102,4 +102,67 @@ describe('packAgentMapWorktrees', () => {
 
     expect(coordinateReads()).toBeLessThan(13_200_000)
   })
+
+  it('bounds packing work for a thousand rings', () => {
+    const { worktrees, coordinateReads } = measuredCircles(1_000)
+    const packed = packAgentMapWorktrees(worktrees)
+    const positions = packed.map(({ id, x, y, radius }) => ({ id, x, y, radius }))
+
+    expect(packed).toHaveLength(1_000)
+    expect(
+      packed.every((worktree) => Number.isFinite(worktree.x) && Number.isFinite(worktree.y))
+    ).toBe(true)
+    expect(coordinateReads()).toBeLessThan(10_000_000)
+    expect(packAgentMapWorktrees(circles(1_000))).toEqual(positions)
+    let minimumGap = Number.POSITIVE_INFINITY
+    for (const [index, worktree] of positions.entries()) {
+      for (const other of positions.slice(index + 1)) {
+        minimumGap = Math.min(
+          minimumGap,
+          Math.hypot(worktree.x - other.x, worktree.y - other.y) - worktree.radius - other.radius
+        )
+      }
+    }
+    expect(minimumGap).toBeGreaterThanOrEqual(AGENT_MAP_WORKTREE_GAP - 0.001)
+  })
+
+  it('bounds packing work when one ring dwarfs the rest', () => {
+    const { worktrees, coordinateReads } = measuredCircles(1_000)
+    worktrees[0].radius = 50_000_000
+    const packed = packAgentMapWorktrees(worktrees)
+
+    expect(packed).toHaveLength(1_000)
+    expect(
+      packed.every((worktree) => Number.isFinite(worktree.x) && Number.isFinite(worktree.y))
+    ).toBe(true)
+    expect(coordinateReads()).toBeLessThan(10_000_000)
+  })
+
+  it('keeps the spatial index bounded for very large rings', () => {
+    const set = Map.prototype.set
+    let numericMapSets = 0
+    Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+      if (typeof key === 'number') {
+        numericMapSets += 1
+      }
+      return Reflect.apply(set, this, [key, value])
+    } as typeof Map.prototype.set
+    try {
+      const packed = packAgentMapWorktrees(
+        Array.from({ length: 5 }, (_, index) => ({
+          id: `huge-${index}`,
+          x: 0,
+          y: 0,
+          radius: 50_000_000 - index * 1_000_000
+        }))
+      )
+
+      expect(
+        packed.every((worktree) => Number.isFinite(worktree.x) && Number.isFinite(worktree.y))
+      ).toBe(true)
+      expect(numericMapSets).toBeLessThan(100)
+    } finally {
+      Map.prototype.set = set
+    }
+  })
 })

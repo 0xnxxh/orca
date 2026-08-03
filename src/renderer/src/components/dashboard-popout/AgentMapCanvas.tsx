@@ -73,6 +73,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const pendingViewportRef = useRef<Viewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
     const focusedAgentRef = useRef<{ paneKey: string; x: number; y: number } | null>(null)
+    const hasShownProjectsRef = useRef(layout.projects.length > 0)
     const [size, setSize] = useState<ViewportSize>({ width: 800, height: 560 })
     const [viewport, setViewport] = useState<Viewport>({
       center: { x: layout.width / 2, y: layout.height / 2 },
@@ -90,6 +91,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       () => navigableAgentMapAgents(layout, zoom, allowAggregation, selectedPaneKey),
       [allowAggregation, layout, selectedPaneKey, zoom]
     )
+    const hasProjects = layout.projects.length > 0
     const aspect = size.width / Math.max(1, size.height)
     const baseWidth = Math.max(layout.width, layout.height * aspect)
     const baseHeight = baseWidth / aspect
@@ -140,6 +142,13 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       [applyViewport, baseHeight, baseWidth]
     )
     useImperativeHandle(forwardedRef, () => ({ fit, focusProject }), [fit, focusProject])
+
+    useEffect(() => {
+      if (hasProjects && !hasShownProjectsRef.current) {
+        hasShownProjectsRef.current = true
+        fit()
+      }
+    }, [fit, hasProjects])
 
     useEffect(() => {
       const container = containerRef.current
@@ -266,9 +275,29 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       [applyViewport, baseHeight, baseWidth, scheduleViewport]
     )
 
+    useEffect(() => {
+      if (!hasProjects) {
+        return
+      }
+      const svg = svgRef.current
+      if (!svg) {
+        return
+      }
+      const handleWheel = (event: WheelEvent): void => {
+        event.preventDefault()
+        zoomAt(
+          viewportRef.current.zoom * Math.exp(-event.deltaY * 0.0015),
+          event.clientX,
+          event.clientY
+        )
+      }
+      svg.addEventListener('wheel', handleWheel, { passive: false })
+      return () => svg.removeEventListener('wheel', handleWheel)
+    }, [hasProjects, zoomAt])
+
     return (
       <div ref={containerRef} className="agent-map-canvas relative min-h-0 flex-1 overflow-hidden">
-        {layout.projects.length === 0 ? (
+        {!hasProjects ? (
           <div className="absolute inset-0 grid place-items-center text-center text-xs text-muted-foreground">
             {translate('dashboardPopout.map.empty', 'No agents match the current filters.')}
           </div>
@@ -281,14 +310,6 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               'dashboardPopout.map.canvasLabel',
               'Nested project, workspace, and agent map'
             )}
-            onWheel={(event) => {
-              event.preventDefault()
-              zoomAt(
-                viewportRef.current.zoom * Math.exp(-event.deltaY * 0.0015),
-                event.clientX,
-                event.clientY
-              )
-            }}
             onPointerDown={(event) => {
               if (event.button !== 0) {
                 return

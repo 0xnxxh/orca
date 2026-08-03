@@ -1,10 +1,20 @@
-export const AGENT_MAP_WORKTREE_GAP = 10
+import {
+  addAgentMapPackingCircle,
+  agentMapPackingCircleOverlaps,
+  AGENT_MAP_PACKING_SCORE_TOLERANCE,
+  AGENT_MAP_WORKTREE_GAP,
+  type AgentMapPackableCircle,
+  type AgentMapPackingSpatialIndex
+} from './agent-map-packing-spatial-index'
+
+export { AGENT_MAP_WORKTREE_GAP } from './agent-map-packing-spatial-index'
 
 const PACKING_ANGLE_STEPS = 72
 const MAX_PACKING_CANDIDATE_ANCHORS = 128
 const MAX_DIRECT_OVERLAP_WORKTREES = 4
-const PACKING_GRID_SIZE = 128
-const SCORE_TOLERANCE = 0.001
+const LARGE_PACKING_THRESHOLD = 256
+const VERY_LARGE_PACKING_THRESHOLD = 512
+const SCORE_TOLERANCE = AGENT_MAP_PACKING_SCORE_TOLERANCE
 const CENTER_DIRECTIONS = [
   [-1, -1],
   [0, -1],
@@ -16,12 +26,7 @@ const CENTER_DIRECTIONS = [
   [1, 1]
 ] as const
 
-type PackableWorktree = {
-  id: string
-  x: number
-  y: number
-  radius: number
-}
+type PackableWorktree = AgentMapPackableCircle
 
 type PackingCandidate = {
   x: number
@@ -31,7 +36,10 @@ type PackingCandidate = {
   neighborDistance?: number
 }
 
-type PackingSpatialIndex = Map<number, Map<number, PackableWorktree[]>>
+type PackingSearchBudget = {
+  angleSteps: number
+  candidateAnchors: number
+}
 
 function compareStable(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
@@ -44,61 +52,6 @@ function hashFraction(value: string): number {
     hash = Math.imul(hash, 16777619)
   }
   return (hash >>> 0) / 0xffffffff
-}
-
-function addToPackingSpatialIndex(index: PackingSpatialIndex, worktree: PackableWorktree): void {
-  const left = Math.floor((worktree.x - worktree.radius) / PACKING_GRID_SIZE)
-  const right = Math.floor((worktree.x + worktree.radius) / PACKING_GRID_SIZE)
-  const top = Math.floor((worktree.y - worktree.radius) / PACKING_GRID_SIZE)
-  const bottom = Math.floor((worktree.y + worktree.radius) / PACKING_GRID_SIZE)
-  for (let x = left; x <= right; x += 1) {
-    let column = index.get(x)
-    if (!column) {
-      column = new Map()
-      index.set(x, column)
-    }
-    for (let y = top; y <= bottom; y += 1) {
-      const cell = column.get(y)
-      if (cell) {
-        cell.push(worktree)
-      } else {
-        column.set(y, [worktree])
-      }
-    }
-  }
-}
-
-function indexedWorktreesOverlap(
-  candidate: Pick<PackableWorktree, 'x' | 'y' | 'radius'>,
-  index: PackingSpatialIndex
-): boolean {
-  const searchRadius = candidate.radius + AGENT_MAP_WORKTREE_GAP
-  const left = Math.floor((candidate.x - searchRadius) / PACKING_GRID_SIZE)
-  const right = Math.floor((candidate.x + searchRadius) / PACKING_GRID_SIZE)
-  const top = Math.floor((candidate.y - searchRadius) / PACKING_GRID_SIZE)
-  const bottom = Math.floor((candidate.y + searchRadius) / PACKING_GRID_SIZE)
-  const checked = new Set<PackableWorktree>()
-  for (let x = left; x <= right; x += 1) {
-    const column = index.get(x)
-    if (!column) {
-      continue
-    }
-    for (let y = top; y <= bottom; y += 1) {
-      for (const worktree of column.get(y) ?? []) {
-        if (checked.has(worktree)) {
-          continue
-        }
-        checked.add(worktree)
-        if (
-          Math.hypot(candidate.x - worktree.x, candidate.y - worktree.y) <
-          candidate.radius + worktree.radius + AGENT_MAP_WORKTREE_GAP - SCORE_TOLERANCE
-        ) {
-          return true
-        }
-      }
-    }
-  }
-  return false
 }
 
 function placedWorktreesOverlap(
@@ -141,7 +94,11 @@ function compareBoundaryAnchors(a: PackableWorktree, b: PackableWorktree): numbe
   )
 }
 
-function addBoundaryAnchor(boundaryAnchors: PackableWorktree[], worktree: PackableWorktree): void {
+function addBoundaryAnchor(
+  boundaryAnchors: PackableWorktree[],
+  worktree: PackableWorktree,
+  maxAnchors: number
+): void {
   let low = 0
   let high = boundaryAnchors.length
   while (low < high) {
@@ -153,7 +110,7 @@ function addBoundaryAnchor(boundaryAnchors: PackableWorktree[], worktree: Packab
     }
   }
   boundaryAnchors.splice(low, 0, worktree)
-  if (boundaryAnchors.length > MAX_PACKING_CANDIDATE_ANCHORS) {
+  if (boundaryAnchors.length > maxAnchors) {
     boundaryAnchors.pop()
   }
 }
@@ -162,23 +119,26 @@ function placePackedWorktree(
   worktree: PackableWorktree,
   placed: PackableWorktree[],
   boundaryAnchors: PackableWorktree[],
-  spatialIndex: PackingSpatialIndex | null,
-  currentRadius: number
+  spatialIndex: AgentMapPackingSpatialIndex | null,
+  currentRadius: number,
+  searchBudget: PackingSearchBudget
 ): void {
   let best: PackingCandidate | undefined
 
-  const anchors = placed.length <= MAX_PACKING_CANDIDATE_ANCHORS ? placed : boundaryAnchors
+  const anchors = placed.length <= searchBudget.candidateAnchors ? placed : boundaryAnchors
+  const scoreNeighbors =
+    searchBudget.candidateAnchors === MAX_PACKING_CANDIDATE_ANCHORS ? placed : anchors
   for (const anchor of anchors) {
     const orbit = anchor.radius + worktree.radius + AGENT_MAP_WORKTREE_GAP
     const angleOffset = hashFraction(`${worktree.id}:${anchor.id}`) * Math.PI * 2
-    for (let step = 0; step < PACKING_ANGLE_STEPS; step += 1) {
-      const angle = angleOffset + (step / PACKING_ANGLE_STEPS) * Math.PI * 2
+    for (let step = 0; step < searchBudget.angleSteps; step += 1) {
+      const angle = angleOffset + (step / searchBudget.angleSteps) * Math.PI * 2
       const x = anchor.x + Math.cos(angle) * orbit
       const y = anchor.y + Math.sin(angle) * orbit
       const overlapCandidate = { x, y, radius: worktree.radius }
       if (
         spatialIndex
-          ? indexedWorktreesOverlap(overlapCandidate, spatialIndex)
+          ? agentMapPackingCircleOverlaps(overlapCandidate, spatialIndex)
           : placedWorktreesOverlap(overlapCandidate, placed)
       ) {
         continue
@@ -190,24 +150,44 @@ function placePackedWorktree(
         enclosingRadius: Math.max(currentRadius, distanceFromCenter + worktree.radius),
         distanceFromCenter
       }
-      if (!best || comparePackingScores(candidate, best, placed) < 0) {
+      if (!best || comparePackingScores(candidate, best, scoreNeighbors) < 0) {
         best = candidate
       }
     }
   }
 
-  worktree.x =
-    best?.x ??
-    Math.max(...placed.map((candidate) => candidate.x + candidate.radius)) +
-      worktree.radius +
-      AGENT_MAP_WORKTREE_GAP
-  worktree.y = best?.y ?? 0
+  if (best) {
+    worktree.x = best.x
+    worktree.y = best.y
+    return
+  }
+  let fallbackX = Number.NEGATIVE_INFINITY
+  for (const candidate of placed) {
+    fallbackX = Math.max(fallbackX, candidate.x + candidate.radius)
+  }
+  worktree.x = fallbackX + worktree.radius + AGENT_MAP_WORKTREE_GAP
+  worktree.y = 0
 }
 
 function enclosingRadius(worktrees: PackableWorktree[], x: number, y: number): number {
-  return Math.max(
-    ...worktrees.map((worktree) => Math.hypot(worktree.x - x, worktree.y - y) + worktree.radius)
-  )
+  let radius = 0
+  for (const worktree of worktrees) {
+    radius = Math.max(radius, Math.hypot(worktree.x - x, worktree.y - y) + worktree.radius)
+  }
+  return radius
+}
+
+function packingSearchBudget(count: number): PackingSearchBudget {
+  if (count > VERY_LARGE_PACKING_THRESHOLD) {
+    return { angleSteps: 16, candidateAnchors: 12 }
+  }
+  if (count > LARGE_PACKING_THRESHOLD) {
+    return { angleSteps: 24, candidateAnchors: 64 }
+  }
+  return {
+    angleSteps: PACKING_ANGLE_STEPS,
+    candidateAnchors: MAX_PACKING_CANDIDATE_ANCHORS
+  }
 }
 
 function findEnclosingCenter(
@@ -243,27 +223,41 @@ export function packAgentMapWorktrees<T extends PackableWorktree>(worktrees: T[]
   const packed = [...worktrees].sort((a, b) => b.radius - a.radius || compareStable(a.id, b.id))
   const placed: PackableWorktree[] = []
   const boundaryAnchors: PackableWorktree[] = []
-  const spatialIndex: PackingSpatialIndex | null =
+  const searchBudget = packingSearchBudget(packed.length)
+  const spatialIndex: AgentMapPackingSpatialIndex | null =
     packed.length > MAX_DIRECT_OVERLAP_WORKTREES ? new Map() : null
   let currentRadius = 0
   for (const worktree of packed) {
     if (placed.length > 0) {
-      placePackedWorktree(worktree, placed, boundaryAnchors, spatialIndex, currentRadius)
+      placePackedWorktree(
+        worktree,
+        placed,
+        boundaryAnchors,
+        spatialIndex,
+        currentRadius,
+        searchBudget
+      )
     }
     placed.push(worktree)
-    addBoundaryAnchor(boundaryAnchors, worktree)
+    addBoundaryAnchor(boundaryAnchors, worktree, searchBudget.candidateAnchors)
     if (spatialIndex) {
-      addToPackingSpatialIndex(spatialIndex, worktree)
+      addAgentMapPackingCircle(spatialIndex, worktree)
     }
     currentRadius = Math.max(currentRadius, Math.hypot(worktree.x, worktree.y) + worktree.radius)
   }
   if (packed.length === 0) {
     return packed
   }
-  const left = Math.min(...packed.map((worktree) => worktree.x - worktree.radius))
-  const right = Math.max(...packed.map((worktree) => worktree.x + worktree.radius))
-  const top = Math.min(...packed.map((worktree) => worktree.y - worktree.radius))
-  const bottom = Math.max(...packed.map((worktree) => worktree.y + worktree.radius))
+  let left = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  let top = Number.POSITIVE_INFINITY
+  let bottom = Number.NEGATIVE_INFINITY
+  for (const worktree of packed) {
+    left = Math.min(left, worktree.x - worktree.radius)
+    right = Math.max(right, worktree.x + worktree.radius)
+    top = Math.min(top, worktree.y - worktree.radius)
+    bottom = Math.max(bottom, worktree.y + worktree.radius)
+  }
   const center = findEnclosingCenter(packed, { left, right, top, bottom })
   for (const worktree of packed) {
     worktree.x -= center.x

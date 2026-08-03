@@ -14692,6 +14692,8 @@
         "control": "Choose what stays visible",
         "showStates": "Agent states",
         "hidden": "{{count}} agents hidden",
+        "hidden_one": "{{count}} agent hidden",
+        "hidden_other": "{{count}} agents hidden",
         "showAll": "Show all",
         "canvasSummary": "{{shown}} of {{total}} agents shown"
       },
@@ -14704,11 +14706,14 @@
       "fit": "Fit",
       "openWorktree": "Open {{worktree}} worktree details",
       "openFolderWorkspace": "Open {{workspace}} folder workspace details",
+      "worktreeSummary": "{{total}} agents · {{active}} active · {{done}} done",
       "worktreeSummary_one": "{{total}} agent · {{active}} active · {{done}} done",
       "worktreeSummary_other": "{{total}} agents · {{active}} active · {{done}} done",
       "runningAgents": "Agents",
       "projectCount": "{{agents}} agents · {{workspaces}} workspaces",
-      "agentCount": "{{count}} agents"
+      "agentCount": "{{count}} agents",
+      "agentCount_one": "{{count}} agent",
+      "agentCount_other": "{{count}} agents"
     },
     "placeholder": {
       "title": "Agent dashboard",

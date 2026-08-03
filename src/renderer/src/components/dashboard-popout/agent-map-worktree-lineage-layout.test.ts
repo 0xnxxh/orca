@@ -150,4 +150,55 @@ describe('layoutAgentMapWorktreeLineage', () => {
     expect(numericMapSets).toBeLessThan(10)
     expect(layoutAgentMapWorktreeLineage(worktrees)).toEqual(layout)
   })
+
+  it('keeps a deeply branched lineage finite without recursive stack growth', () => {
+    const worktrees = buildComb(2_500)
+    const layout = layoutAgentMapWorktreeLineage(worktrees)
+    const byId = new Map(layout.map((worktree) => [worktree.id, worktree]))
+
+    expect(layout).toHaveLength(4_999)
+    expect(
+      layout.every(
+        (worktree) =>
+          Number.isFinite(worktree.x) &&
+          Number.isFinite(worktree.y) &&
+          Math.abs(worktree.x) < 1_000_000 &&
+          Math.abs(worktree.y) < 1_000_000
+      )
+    ).toBe(true)
+    for (const worktree of layout) {
+      if (worktree.parentId) {
+        expect(worktree.y).toBeGreaterThan(byId.get(worktree.parentId)!.y)
+      }
+    }
+  })
+
+  it('wraps very large worktree fanout without overlap', () => {
+    const layout = layoutAgentMapWorktreeLineage([
+      { id: 'parent', x: 0, y: 0, radius: 32 },
+      ...Array.from({ length: 300 }, (_, index) => ({
+        id: `child-${index}`,
+        parentId: 'parent',
+        x: 0,
+        y: 0,
+        radius: 24
+      }))
+    ])
+    const parent = layout.find((worktree) => worktree.id === 'parent')!
+    const children = layout.filter(
+      (worktree) => 'parentId' in worktree && worktree.parentId === 'parent'
+    )
+    let minimumGap = Number.POSITIVE_INFINITY
+
+    expect(children.every((child) => child.y > parent.y)).toBe(true)
+    for (const [index, child] of children.entries()) {
+      for (const other of children.slice(index + 1)) {
+        minimumGap = Math.min(
+          minimumGap,
+          Math.hypot(child.x - other.x, child.y - other.y) - child.radius - other.radius
+        )
+      }
+    }
+    expect(minimumGap).toBeGreaterThanOrEqual(AGENT_MAP_WORKTREE_GAP)
+  })
 })

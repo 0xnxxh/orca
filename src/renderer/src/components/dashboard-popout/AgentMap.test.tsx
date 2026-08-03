@@ -135,9 +135,7 @@ describe('AgentMap', () => {
   it('shows worktree details and opens a running agent', () => {
     const onOpenTerminal = vi.fn()
     const running = card()
-    const { container } = renderMap([running], { onOpenTerminal })
-
-    fireEvent.click(container.querySelector('.agent-map-worktree-label')!)
+    renderMap([running], { onOpenTerminal })
     const ring = screen.getByRole('button', { name: 'Open Agent map worktree details' })
     fireEvent.click(ring)
 
@@ -148,6 +146,16 @@ describe('AgentMap', () => {
     expect(screen.getByText('Agent alpha')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: /Agent alpha/ })[1])
     expect(onOpenTerminal).toHaveBeenCalledWith(running, 'right')
+    expect(ring).not.toHaveClass('is-open')
+  })
+
+  it('toggles worktree details from the keyboard', () => {
+    renderMap([card()])
+    const ring = screen.getByRole('button', { name: 'Open Agent map worktree details' })
+
+    fireEvent.keyDown(ring, { key: 'Enter' })
+    expect(ring).toHaveClass('is-open')
+    fireEvent.keyDown(ring, { key: 'Enter' })
     expect(ring).not.toHaveClass('is-open')
   })
 
@@ -264,7 +272,7 @@ describe('AgentMap', () => {
   it('shows map filters at the pop-out default-width breakpoint', () => {
     renderMap([card()])
 
-    expect(screen.getByText('Map filters').closest('aside')).toHaveClass('md:flex')
+    expect(screen.getByRole('complementary', { name: 'Map filters' })).toHaveClass('md:flex')
   })
 
   it('increases map label scale when users zoom out', () => {
@@ -327,6 +335,7 @@ describe('AgentMap', () => {
         clientY: { value: 100 }
       })
       fireEvent(svg, event)
+      expect(event.defaultPrevented).toBe(true)
     }
     wheel()
     wheel()
@@ -397,6 +406,39 @@ describe('AgentMap', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Mobile/ }))
     expect(screen.getByRole('button', { name: /Agent alpha/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Other project/ })).not.toBeInTheDocument()
+  })
+
+  it('preserves the viewport when filters temporarily empty the map', () => {
+    const { container } = renderMap([card()])
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    const viewBox = container
+      .querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
+      .getAttribute('viewBox')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
+    expect(container.querySelector('.agent-map-canvas > svg')).not.toBeInTheDocument()
+    expect(screen.getByText('1 agent hidden')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
+
+    expect(container.querySelector('.agent-map-canvas > svg')).toHaveAttribute('viewBox', viewBox)
+  })
+
+  it('preserves the viewport through an empty source snapshot', () => {
+    const agent = card()
+    const view = renderMap([agent])
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    const viewBox = view.container
+      .querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
+      .getAttribute('viewBox')
+
+    view.rerender(<AgentMap cards={[]} now={NOW} onOpenTerminal={vi.fn()} />)
+    expect(view.container.querySelector('.agent-map-canvas > svg')).not.toBeInTheDocument()
+    view.rerender(<AgentMap cards={[agent]} now={NOW} onOpenTerminal={vi.fn()} />)
+
+    expect(view.container.querySelector('.agent-map-canvas > svg')).toHaveAttribute(
+      'viewBox',
+      viewBox
+    )
   })
 
   it('aggregates only acknowledged idle results without repacking topology', () => {

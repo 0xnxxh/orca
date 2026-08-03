@@ -153,21 +153,16 @@ export function AgentMap({
       ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-border px-3 py-2">
-          <span className="min-w-0">
-            <span className="block text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-              {translate('dashboardPopout.map.liveContainmentMap', 'Live containment map')}
-            </span>
-            <strong className="block truncate text-xs">
-              {translate(
-                'dashboardPopout.map.filters.canvasSummary',
-                '{{shown}} of {{total}} agents shown',
-                {
-                  shown: visibleCards.length,
-                  total: cards.length
-                }
-              )}
-            </strong>
-          </span>
+          <strong className="min-w-0 truncate text-xs">
+            {translate(
+              'dashboardPopout.map.filters.canvasSummary',
+              '{{shown}} of {{total}} agents shown',
+              {
+                shown: visibleCards.length,
+                total: cards.length
+              }
+            )}
+          </strong>
           {!compact ? (
             <div
               className="ml-auto flex items-center gap-0.5 rounded-md border border-border p-0.5"
@@ -196,7 +191,6 @@ export function AgentMap({
           ) : null}
         </header>
         <AgentMapCanvas
-          key={layout.projects.length === 0 ? 'empty' : 'map'}
           ref={canvasRef}
           layout={layout}
           repoIconsByRepoId={repoIconsByRepoId}

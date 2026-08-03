@@ -60,17 +60,11 @@ export function AgentMapFilterRail({
   onStateToggle
 }: AgentMapFilterRailProps): React.JSX.Element {
   return (
-    <aside className="scrollbar-sleek hidden min-h-0 w-56 shrink-0 overflow-y-auto border-r border-border bg-card/35 p-3 md:flex md:flex-col">
-      <header className="border-b border-border px-1 pb-3">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-          {translate('dashboardPopout.map.filters.title', 'Map filters')}
-        </span>
-        <strong className="mt-1 block text-xs">
-          {translate('dashboardPopout.map.filters.control', 'Choose what stays visible')}
-        </strong>
-      </header>
-
-      <section className="border-b border-border py-3">
+    <aside
+      aria-label={translate('dashboardPopout.map.filters.title', 'Map filters')}
+      className="scrollbar-sleek hidden min-h-0 w-56 shrink-0 overflow-y-auto border-r border-border bg-card/35 p-3 md:flex md:flex-col"
+    >
+      <section className="border-b border-border pb-3">
         <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
           {translate('dashboardPopout.map.filters.showStates', 'Agent states')}
         </span>
@@ -133,9 +127,11 @@ export function AgentMapFilterRail({
           })}
         </strong>
         <span className="text-[10px] text-muted-foreground">
-          {translate('dashboardPopout.map.filters.hidden', '{{count}} agents hidden', {
-            count: totalCount - visibleCount
-          })}
+          {translate(
+            'dashboardPopout.map.filters.hidden',
+            totalCount - visibleCount === 1 ? '{{count}} agent hidden' : '{{count}} agents hidden',
+            { count: totalCount - visibleCount }
+          )}
         </span>
       </div>
 
