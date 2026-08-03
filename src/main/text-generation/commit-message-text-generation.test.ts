@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: local/remote generation, cancellation, and
    env propagation share subprocess mocks; splitting would obscure the
    cross-path invariants these tests protect. */
-import { exec, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import type * as ChildProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,21 +20,22 @@ import {
   trimGeneratedCommitMessage
 } from './commit-message-text-generation'
 
+const { terminateWindowsProcessTreeMock } = vi.hoisted(() => ({
+  terminateWindowsProcessTreeMock: vi.fn(async () => {})
+}))
+
+vi.mock('../windows-process-tree-kill', () => ({
+  terminateWindowsProcessTree: terminateWindowsProcessTreeMock
+}))
+
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof ChildProcess>()
   return {
     ...actual,
-    exec: vi.fn((_command, callback) => {
-      if (typeof callback === 'function') {
-        callback(null, '', '')
-      }
-      return new actual.ChildProcess()
-    }),
     spawn: vi.fn(actual.spawn)
   }
 })
 
-const execMock = vi.mocked(exec)
 const spawnMock = vi.mocked(spawn)
 
 type MockDiscoveryChild = EventEmitter & {
@@ -71,7 +72,7 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
 
 function expectChildTerminated(child: { pid: number; kill: ReturnType<typeof vi.fn> }): void {
   if (process.platform === 'win32') {
-    expect(execMock).toHaveBeenCalledWith(`taskkill /pid ${child.pid} /T /F`, expect.any(Function))
+    expect(terminateWindowsProcessTreeMock).toHaveBeenCalledWith(child.pid)
     expect(child.kill).not.toHaveBeenCalled()
     return
   }
@@ -79,7 +80,8 @@ function expectChildTerminated(child: { pid: number; kill: ReturnType<typeof vi.
 }
 
 beforeEach(() => {
-  execMock.mockClear()
+  terminateWindowsProcessTreeMock.mockClear()
+  terminateWindowsProcessTreeMock.mockResolvedValue(undefined)
   spawnMock.mockClear()
 })
 
@@ -1688,6 +1690,51 @@ describe('generateCommitMessageFromContext', () => {
     secondChild.stdout.emit('data', Buffer.from('Update README\n'))
     secondChild.emit('close', 0)
     await expect(second).resolves.toMatchObject({ success: true, message: 'Update README' })
+  })
+
+  it('holds the Codex home lock until Windows tree termination and wrapper close', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    let finishTreeKill!: () => void
+    terminateWindowsProcessTreeMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishTreeKill = resolve
+      })
+    )
+    const firstChild = createMockDiscoveryChild()
+    const secondChild = createMockDiscoveryChild()
+    spawnMock.mockReturnValueOnce(firstChild as never).mockReturnValueOnce(secondChild as never)
+    const env = { CODEX_HOME: 'C:\\managed\\codex-generation-home' }
+    const context = { branch: 'main', stagedSummary: 'M\tREADME.md', stagedPatch: '+hello' }
+    const params = { agentId: 'codex' as const, model: 'gpt-5.5' }
+
+    try {
+      const first = generateCommitMessageFromContext(context, params, {
+        kind: 'local',
+        cwd: 'C:\\repo',
+        env
+      })
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1))
+      cancelGenerateCommitMessageLocal('C:\\repo')
+      await expect(first).resolves.toMatchObject({ canceled: true })
+
+      const second = generateCommitMessageFromContext(context, params, {
+        kind: 'local',
+        cwd: 'C:\\repo-2',
+        env
+      })
+      firstChild.emit('close', null)
+      await Promise.resolve()
+      expect(spawnMock).toHaveBeenCalledTimes(1)
+
+      finishTreeKill()
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2))
+      secondChild.stdout.emit('data', Buffer.from('Update README\n'))
+      secondChild.emit('close', 0)
+      await expect(second).resolves.toMatchObject({ success: true, message: 'Update README' })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
   })
 
   it('cancels Codex generation promptly while it is queued behind the home lock', async () => {

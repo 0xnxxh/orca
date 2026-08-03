@@ -54,6 +54,7 @@ function makeRpcChild() {
   const exitNow = (): void => {
     child.exitCode = 0
     child.emit('exit', 0, null)
+    child.emit('close', 0, null)
   }
   child.stdin = Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn(exitNow) })
   child.exitCode = null
@@ -336,6 +337,7 @@ describe('fetchCodexRateLimits', () => {
       weekly: null,
       status: 'error'
     })
+    expect(rpcChild.stdin.listenerCount('error')).toBe(0)
     expect(ptySpawnMock).not.toHaveBeenCalled()
   })
 

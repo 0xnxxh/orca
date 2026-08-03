@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: local and SSH generation share cancellation,
    spawn failure handling, and output normalization; keeping them together
    prevents those paths from drifting. */
-import { exec, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import type { GlobalSettings, Repo, TuiAgent } from '../../shared/types'
 import {
   buildCommitMessagePrompt,
@@ -58,6 +58,7 @@ import {
 } from '../win32-utils'
 import { withMacTailscaleDnsHint } from '../network/macos-tailscale-dns-diagnostic'
 import { wslAwareSpawn } from '../git/runner'
+import { terminateWindowsProcessTree } from '../windows-process-tree-kill'
 
 const GENERATION_TIMEOUT_MS = 60_000
 const MAX_AGENT_OUTPUT_BYTES = 4 * 1024 * 1024
@@ -374,7 +375,14 @@ export async function discoverCommitMessageModelsLocal(
       let outputLimitExceeded = false
       let settled = false
       let timer: ReturnType<typeof setTimeout> | null = null
+      let terminationComplete: Promise<void> | null = null
       let detachChildListeners = (): void => {}
+      const startTermination = (): void => {
+        terminationComplete ??= killProcessTree(child)
+      }
+      const markClosedAfterTermination = (): void => {
+        void (terminationComplete ?? Promise.resolve()).then(markProcessClosed)
+      }
       const finish = (result: DiscoverCommitMessageModelsResult): void => {
         if (settled) {
           return
@@ -391,7 +399,7 @@ export async function discoverCommitMessageModelsLocal(
         resolve(result)
       }
       timer = setTimeout(() => {
-        killProcessTree(child)
+        startTermination()
         finish({
           success: false,
           error: `${spec.label} model discovery timed out after ${GENERATION_TIMEOUT_MS / 1000}s.`
@@ -401,7 +409,7 @@ export async function discoverCommitMessageModelsLocal(
       const onData = (chunk: Buffer, append: (text: string) => void): void => {
         if (stdout.length + stderr.length + chunk.byteLength > MAX_AGENT_OUTPUT_BYTES) {
           outputLimitExceeded = true
-          killProcessTree(child)
+          startTermination()
           finish({ success: false, error: `${spec.label} returned too much model data.` })
           return
         }
@@ -427,7 +435,7 @@ export async function discoverCommitMessageModelsLocal(
         })
       }
       const onClose = (code: number | null): void => {
-        markProcessClosed()
+        markClosedAfterTermination()
         if (outputLimitExceeded) {
           finish({ success: false, error: `${spec.label} returned too much model data.` })
           return
@@ -444,7 +452,7 @@ export async function discoverCommitMessageModelsLocal(
       if (agentId === 'codex') {
         // Result publication stays prompt while the home lock follows the
         // process lifetime after asynchronous timeout/output-limit kills.
-        child.once('close', markProcessClosed)
+        child.once('close', markClosedAfterTermination)
       }
       child.on('error', onError)
       child.on('close', onClose)
@@ -533,16 +541,13 @@ export async function discoverCommitMessageModelsRemote(
 // `child.kill()` would only terminate the wrapper. `taskkill /T /F` walks the
 // process tree from the wrapper PID and force-kills every descendant, which is
 // what users expect when they hit "stop generating".
-function killProcessTree(child: ChildProcess): void {
+function killProcessTree(child: ChildProcess): Promise<void> {
   const pid = child.pid
   if (!pid) {
-    return
+    return Promise.resolve()
   }
   if (process.platform === 'win32') {
-    exec(`taskkill /pid ${pid} /T /F`, () => {
-      // Best-effort; the spawn's `close` listener fires once the tree exits.
-    })
-    return
+    return terminateWindowsProcessTree(pid)
   }
   try {
     child.kill('SIGKILL')
@@ -550,6 +555,7 @@ function killProcessTree(child: ChildProcess): void {
     // The child may have already exited between the in-flight check and the
     // kill - that race is benign and can be ignored.
   }
+  return Promise.resolve()
 }
 
 // Keying by operation plus `local:${cwd}` keeps local cancellation independent
@@ -658,7 +664,14 @@ function runLocalPlan(
     const laneKey = localLaneKey(operation, cwd)
     let cancelToken: (() => void) | null = null
     let timer: ReturnType<typeof setTimeout> | null = null
+    let terminationComplete: Promise<void> | null = null
     let detachChildListeners = (): void => {}
+    const startTermination = (): void => {
+      terminationComplete ??= killProcessTree(child)
+    }
+    const markClosedAfterTermination = (): void => {
+      void (terminationComplete ?? Promise.resolve()).then(markProcessClosed)
+    }
     const finalize = (result: InternalTextGenerationResult): void => {
       if (settled) {
         return
@@ -680,7 +693,7 @@ function runLocalPlan(
 
     cancelToken = () => {
       canceledByUser = true
-      killProcessTree(child)
+      startTermination()
       // Why: cancellation is a user-visible UI command; do not wait for a
       // wedged agent CLI to emit `close` before the request leaves loading.
       finalize({ success: false, error: 'Generation canceled.', canceled: true })
@@ -688,7 +701,7 @@ function runLocalPlan(
     cancelTokensByLane.set(laneKey, cancelToken)
 
     timer = setTimeout(() => {
-      killProcessTree(child)
+      startTermination()
       finalize({
         success: false,
         error: `Generation timed out after ${GENERATION_TIMEOUT_MS / 1000}s.`
@@ -699,7 +712,7 @@ function runLocalPlan(
       stdoutBytes += chunk.byteLength
       if (stdoutBytes > MAX_AGENT_OUTPUT_BYTES) {
         outputLimitExceeded = true
-        killProcessTree(child)
+        startTermination()
         return
       }
       stdout += chunk.toString('utf-8')
@@ -708,7 +721,7 @@ function runLocalPlan(
       stderrBytes += chunk.byteLength
       if (stderrBytes > MAX_AGENT_OUTPUT_BYTES) {
         outputLimitExceeded = true
-        killProcessTree(child)
+        startTermination()
         return
       }
       stderr += chunk.toString('utf-8')
@@ -732,7 +745,7 @@ function runLocalPlan(
       })
     }
     const onClose = (code: number | null): void => {
-      markProcessClosed()
+      markClosedAfterTermination()
       if (canceledByUser) {
         finalize({ success: false, error: 'Generation canceled.', canceled: true })
         return
@@ -757,7 +770,7 @@ function runLocalPlan(
     child.stdout?.on('data', onStdoutData)
     child.stderr?.on('data', onStderrData)
     if (holdHomeLockUntilClose) {
-      child.once('close', markProcessClosed)
+      child.once('close', markClosedAfterTermination)
     }
     child.on('error', onError)
     child.on('close', onClose)
@@ -771,7 +784,7 @@ function runLocalPlan(
     try {
       child.stdin?.end(stdinPayload ?? undefined)
     } catch (error) {
-      killProcessTree(child)
+      startTermination()
       onError(error instanceof Error ? error : new Error(String(error)))
     }
   })
