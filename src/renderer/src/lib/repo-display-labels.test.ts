@@ -85,6 +85,39 @@ describe('getRepoDisplayLabelsByPath', () => {
     expect(labels.get(getRepoDisplayLabelKey(runtimeRepo))).toBe('app (sandbox-1)')
   })
 
+  it('renders the user-facing host name, not the generated host id', () => {
+    // SshConnectionStore mints ids like this, so a bare getExecutionHostLabel
+    // would put 'app (ssh-1754190000000-a1b2)' in front of the user.
+    const localRepo = { path: '/Users/dev/app', displayName: 'app' }
+    const sshRepo = {
+      path: '/Users/dev/app',
+      displayName: 'app',
+      connectionId: 'ssh-1754190000000-a1b2'
+    }
+    const runtimeRepo = {
+      path: '/Users/dev/app',
+      displayName: 'app',
+      executionHostId: 'runtime:03ef704c-b180-4b10-998d-e28fbd5de9a3' as const
+    }
+    const hostLabelById = new Map([
+      ['ssh:ssh-1754190000000-a1b2', 'My Server'],
+      ['runtime:03ef704c-b180-4b10-998d-e28fbd5de9a3', 'dev box']
+    ])
+    const labels = getRepoDisplayLabelsByPath([localRepo, sshRepo, runtimeRepo], hostLabelById)
+
+    expect(labels.get(getRepoDisplayLabelKey(sshRepo))).toBe('app (My Server)')
+    expect(labels.get(getRepoDisplayLabelKey(runtimeRepo))).toBe('app (dev box)')
+    expect(labels.get(getRepoDisplayLabelKey(localRepo))).toBe('app')
+  })
+
+  it('falls back to the raw host id when the lookup has no entry for it', () => {
+    const localRepo = { path: '/srv/app', displayName: 'app' }
+    const sshRepo = { path: '/srv/app', displayName: 'app', connectionId: 'prod-ssh' }
+    const labels = getRepoDisplayLabelsByPath([localRepo, sshRepo], new Map())
+
+    expect(labels.get(getRepoDisplayLabelKey(sshRepo))).toBe('app (prod-ssh)')
+  })
+
   it('host-qualifies only the tied entries and keeps parent expansion minimal', () => {
     // The two /srv/app copies can only be split by host; the third sibling is
     // already unique at one parent segment, so it must not gain a host suffix or

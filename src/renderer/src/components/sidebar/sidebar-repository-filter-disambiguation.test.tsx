@@ -235,6 +235,59 @@ describe('#6235 duplicate project names in the sidebar repository filters', () =
     expect(rowTexts[1]).toBe('app (prod-ssh)SSH')
   })
 
+  it("names the remote twin's host by the user's label, not its generated id", async () => {
+    // SshConnectionStore mints ids like this; only sshTargetLabels holds 'My Server'.
+    const crossHostRepos = [
+      { id: 'repo-local', path: '/Users/dev/app', displayName: 'app', badgeColor: '#f00' },
+      {
+        id: 'repo-remote',
+        path: '/Users/dev/app',
+        displayName: 'app',
+        badgeColor: '#0f0',
+        connectionId: 'ssh-1754190000000-a1b2'
+      }
+    ] as Repo[]
+    mocks.state = {
+      ...filterMenuState(crossHostRepos),
+      sshTargetLabels: new Map([['ssh-1754190000000-a1b2', 'My Server']])
+    } as Partial<AppState>
+
+    const { default: SidebarFilter } = await import('./SidebarFilter')
+    expect(readProjectRowTexts(await render(<SidebarFilter />))).toEqual([
+      'app',
+      'app (My Server)SSH'
+    ])
+
+    const { default: SidebarRepositoryFilterSection } =
+      await import('./SidebarRepositoryFilterSection')
+    expect(readProjectRowTexts(await render(<SidebarRepositoryFilterSection />))).toEqual([
+      'app',
+      'app (My Server)SSH'
+    ])
+  })
+
+  it('falls back to the host id when its stored label is blank', async () => {
+    // Parity with buildExecutionHostRegistry's `label || targetId`; without it the
+    // row reads 'app ()' while the group header for the same repo reads 'app (prod)'.
+    const crossHostRepos = [
+      { id: 'repo-local', path: '/Users/dev/app', displayName: 'app', badgeColor: '#f00' },
+      {
+        id: 'repo-remote',
+        path: '/Users/dev/app',
+        displayName: 'app',
+        badgeColor: '#0f0',
+        connectionId: 'prod'
+      }
+    ] as Repo[]
+    mocks.state = {
+      ...filterMenuState(crossHostRepos),
+      sshTargetLabels: new Map([['prod', '   ']])
+    } as Partial<AppState>
+
+    const { default: SidebarFilter } = await import('./SidebarFilter')
+    expect(readProjectRowTexts(await render(<SidebarFilter />))).toEqual(['app', 'app (prod)SSH'])
+  })
+
   it('keeps a row disambiguated after the search query narrows the list', async () => {
     mocks.state = filterMenuState(duplicateRepos)
 

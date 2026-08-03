@@ -28,8 +28,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import RepoBadgeLabel from '@/components/repo/RepoBadgeLabel'
+import { useRepoDisplayLabel } from '@/hooks/repo-display-label-lookup'
 import { useShortcutLabel } from '@/hooks/useShortcutLabel'
-import { getRepoDisplayLabelKey, getRepoDisplayLabelsByPath } from '@/lib/repo-display-labels'
 import { searchRepos } from '@/lib/repo-search'
 import { cn } from '@/lib/utils'
 import { DEFAULT_SHOW_SLEEPING_WORKSPACES } from '../../../../shared/constants'
@@ -127,7 +127,7 @@ const SidebarFilter = React.memo(function SidebarFilter({
   const filteredRepos = useMemo(() => searchRepos(repos, query), [repos, query])
   // Why: derive over every repo, not the search result, so a row keeps the same
   // disambiguated label the sidebar's project headers show as the query narrows.
-  const repoLabelsByPath = useMemo(() => getRepoDisplayLabelsByPath(repos), [repos])
+  const getRepoLabel = useRepoDisplayLabel(repos)
   const commandValue =
     commandValueOverride && filteredRepos.some((repo) => repo.id === commandValueOverride)
       ? commandValueOverride
@@ -324,7 +324,7 @@ const SidebarFilter = React.memo(function SidebarFilter({
                     >
                       <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
                         <RepoBadgeLabel
-                          name={repoLabelsByPath.get(getRepoDisplayLabelKey(r)) ?? r.displayName}
+                          name={getRepoLabel(r)}
                           color={r.badgeColor}
                           className="max-w-full"
                         />

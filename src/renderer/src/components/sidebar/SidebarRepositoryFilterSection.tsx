@@ -11,7 +11,7 @@ import {
   CommandList
 } from '@/components/ui/command'
 import RepoBadgeLabel from '@/components/repo/RepoBadgeLabel'
-import { getRepoDisplayLabelKey, getRepoDisplayLabelsByPath } from '@/lib/repo-display-labels'
+import { useRepoDisplayLabel } from '@/hooks/repo-display-label-lookup'
 import { searchRepos } from '@/lib/repo-search'
 import type { Repo } from '../../../../shared/types'
 import { translate } from '@/i18n/i18n'
@@ -72,7 +72,7 @@ const SidebarRepositoryFilterSection = React.memo(function SidebarRepositoryFilt
   )
   // Why: derive over every repo so a label doesn't collapse back to the ambiguous
   // name once its same-named twin moves into the selected pills.
-  const repoLabelsByPath = useMemo(() => getRepoDisplayLabelsByPath(repos), [repos])
+  const getRepoLabel = useRepoDisplayLabel(repos)
 
   const handleSelectRepo = useCallback(
     (repoId: string) => {
@@ -152,7 +152,7 @@ const SidebarRepositoryFilterSection = React.memo(function SidebarRepositoryFilt
       >
         <SelectedProjectPills
           selectedRepos={selectedRepos}
-          repoLabelsByPath={repoLabelsByPath}
+          getRepoLabel={getRepoLabel}
           onRemoveProject={handleRemoveProject}
         />
         <CommandInput
@@ -191,16 +191,16 @@ const SidebarRepositoryFilterSection = React.memo(function SidebarRepositoryFilt
             <CommandItem
               key={repo.id}
               value={repo.id}
-              keywords={[
-                repoLabelsByPath.get(getRepoDisplayLabelKey(repo)) ?? repo.displayName,
-                repo.path
-              ]}
+              // Why keep displayName, not the disambiguated label: projectCommandFilter
+              // ranks by match offset, so a prepended parent segment would demote an
+              // exact name match below unrelated repos.
+              keywords={[repo.displayName, repo.path]}
               onSelect={() => handleSelectRepo(repo.id)}
               className="mx-1 my-0.5 items-center gap-2 rounded-[7px] px-2 py-1 text-[12px] leading-5 font-medium data-[selected=true]:bg-black/8 dark:data-[selected=true]:bg-white/14"
             >
               <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
                 <RepoBadgeLabel
-                  name={repoLabelsByPath.get(getRepoDisplayLabelKey(repo)) ?? repo.displayName}
+                  name={getRepoLabel(repo)}
                   color={repo.badgeColor}
                   className="max-w-full"
                 />
@@ -224,11 +224,11 @@ const SidebarRepositoryFilterSection = React.memo(function SidebarRepositoryFilt
 
 function SelectedProjectPills({
   selectedRepos,
-  repoLabelsByPath,
+  getRepoLabel,
   onRemoveProject
 }: {
   selectedRepos: Repo[]
-  repoLabelsByPath: Map<string, string>
+  getRepoLabel: (repo: Repo) => string
   onRemoveProject: (repoId: string) => void
 }) {
   if (selectedRepos.length === 0) {
@@ -238,7 +238,7 @@ function SelectedProjectPills({
   return (
     <div className="scrollbar-sleek mx-1 mb-1 flex max-h-16 flex-wrap gap-1 overflow-y-auto rounded-[7px] border border-border/70 bg-muted/25 p-1">
       {selectedRepos.map((repo) => {
-        const label = repoLabelsByPath.get(getRepoDisplayLabelKey(repo)) ?? repo.displayName
+        const label = getRepoLabel(repo)
         return (
           <Badge
             key={repo.id}

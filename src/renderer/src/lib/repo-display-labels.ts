@@ -5,7 +5,10 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 
-type RepoDisplayLabelItem = {
+/** User-facing host names keyed by execution-host id; see useExecutionHostDisplayLabels. */
+type HostLabelLookup = ReadonlyMap<string, string>
+
+export type RepoDisplayLabelItem = {
   path: string
   displayName: string
   connectionId?: string | null
@@ -42,17 +45,25 @@ function hasDuplicateLabels(labels: readonly string[]): boolean {
 }
 
 // Why: the local host label is hardcoded English in shared/, so only remote
-// hosts (whose labels are user-chosen ids) are safe to render here.
-function hostQualifier(item: RepoDisplayLabelItem): string {
+// hosts are safe to render here. Remote ids are generated ('ssh:ssh-1754-a1b2'),
+// so the caller's lookup of the user's host name is what makes this readable.
+function hostQualifier(
+  item: RepoDisplayLabelItem,
+  hostLabelById: HostLabelLookup | undefined
+): string {
   const hostId = getRepoExecutionHostId(item)
-  return hostId === LOCAL_EXECUTION_HOST_ID ? '' : ` (${getExecutionHostLabel(hostId)})`
+  if (hostId === LOCAL_EXECUTION_HOST_ID) {
+    return ''
+  }
+  return ` (${hostLabelById?.get(hostId) ?? getExecutionHostLabel(hostId)})`
 }
 
 // Why: byte-identical paths on different hosts can never be split by adding
 // parent segments, so name the host for the entries that still tie.
 function qualifyRemainingTiesByHost(
   items: readonly RepoDisplayLabelItem[],
-  labels: readonly string[]
+  labels: readonly string[],
+  hostLabelById: HostLabelLookup | undefined
 ): string[] {
   if (!hasDuplicateLabels(labels)) {
     return [...labels]
@@ -63,12 +74,15 @@ function qualifyRemainingTiesByHost(
   }
   return labels.map((label, index) => {
     const item = items[index]
-    return item && (counts.get(label) ?? 0) > 1 ? `${label}${hostQualifier(item)}` : label
+    return item && (counts.get(label) ?? 0) > 1
+      ? `${label}${hostQualifier(item, hostLabelById)}`
+      : label
   })
 }
 
 export function getRepoDisplayLabelsByPath(
-  items: readonly RepoDisplayLabelItem[]
+  items: readonly RepoDisplayLabelItem[],
+  hostLabelById?: HostLabelLookup
 ): Map<string, string> {
   const labels = new Map<string, string>()
   const itemsByName = new Map<string, RepoDisplayLabelItem[]>()
@@ -107,7 +121,7 @@ export function getRepoDisplayLabelsByPath(
       depth += 1
     }
     const nextLabels = collidingItems.map((item) => labelForDepth(item, depth))
-    const finalLabels = qualifyRemainingTiesByHost(collidingItems, nextLabels)
+    const finalLabels = qualifyRemainingTiesByHost(collidingItems, nextLabels, hostLabelById)
     collidingItems.forEach((item, index) => {
       labels.set(getRepoDisplayLabelKey(item), finalLabels[index] ?? item.displayName)
     })
