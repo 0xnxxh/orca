@@ -91,8 +91,16 @@ export function listUserSshConfigHostSummaries(
 export async function resolveUserSshConfigHost(
   alias: string,
   resolver: (host: string) => Promise<SshResolvedConfig | null> = resolveWithSshG,
-  loadConfigHosts: () => SshConfigHost[] = () => getUserSshConfigHosts(false)
+  // Why: read the file again rather than the picker-session cache — the point of the check
+  // below is to catch a row the user edited out of ~/.ssh/config after opening the picker.
+  loadConfigHosts: () => SshConfigHost[] = () => getUserSshConfigHosts(true)
 ): Promise<SshConfigHostResolution | null> {
+  const configHosts = loadConfigHosts()
+  // Why: `ssh -G` answers for unknown aliases too, echoing the alias back as the hostname.
+  // Resolving one would mint a target for a host that is no longer configured.
+  if (!configHostMatches(configHosts, alias)) {
+    return null
+  }
   const resolved = await resolver(alias)
   if (!resolved?.hostname) {
     return null
@@ -109,18 +117,25 @@ export async function resolveUserSshConfigHost(
     // Why: `ssh -G` reports the effective value, which on many distros is the /etc/ssh
     // default `GSSAPIAuthentication yes`. Stamping that onto a manual target would force
     // a GSSAPI-first handshake the user never asked for, so honour the Host entry only.
-    gssapiAuthentication: configHostRequestsGssapi(loadConfigHosts(), alias),
+    gssapiAuthentication: configHostRequestsGssapi(configHosts, alias),
     ...(resolved.proxyCommand ? { proxyCommand: resolved.proxyCommand } : {}),
     proxyUseFdpass: resolved.proxyUseFdpass,
     ...(resolved.proxyJump ? { jumpHost: resolved.proxyJump } : {})
   }
 }
 
+function configHostMatches(hosts: readonly SshConfigHost[], alias: string): boolean {
+  const normalized = normalizeSshConfigAlias(alias)
+  return Boolean(normalized) && hosts.some((entry) => matchesAlias(entry, normalized))
+}
+
 function configHostRequestsGssapi(hosts: readonly SshConfigHost[], alias: string): boolean {
   const normalized = normalizeSshConfigAlias(alias)
-  return hosts.some(
-    (entry) => normalizeSshConfigAlias(entry.host) === normalized && entry.gssapiAuthentication
-  )
+  return hosts.some((entry) => matchesAlias(entry, normalized) && entry.gssapiAuthentication)
+}
+
+function matchesAlias(entry: SshConfigHost, normalizedAlias: string): boolean {
+  return normalizeSshConfigAlias(entry.host) === normalizedAlias
 }
 
 function toSummary(entry: SshConfigHost, alreadyInOrca: boolean): SshConfigHostSummary {

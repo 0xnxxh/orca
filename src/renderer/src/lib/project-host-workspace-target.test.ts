@@ -200,6 +200,29 @@ describe('project-host workspace target resolution', () => {
     })
   })
 
+  it('does not fall back to another host when only a host is selected', () => {
+    const localRepo = makeRepo('orca-local')
+    const remoteRepo = makeRepo('orca-ssh', { connectionId: 'builder' })
+    const projects = [makeProject('github:stablyai/orca', ['orca-local', 'orca-ssh'])]
+    const projectHostSetups = [
+      makeSetup('orca-local', 'github:stablyai/orca', 'local', 'orca-local')
+    ]
+
+    expect(
+      resolveWorkspaceCreationTarget({
+        eligibleRepos: [localRepo, remoteRepo],
+        projects,
+        projectHostSetups,
+        draftRepoId: 'orca-local',
+        hostId: 'ssh:builder',
+        actionableHostIds: new Set(['local', 'ssh:builder'])
+      })
+    ).toEqual({
+      status: 'unavailable',
+      reason: 'project-not-set-up-on-host'
+    })
+  })
+
   it('reports setup-not-ready when the selected host has pending setup metadata', () => {
     const repo = makeRepo('orca')
     const projects = [makeProject('github:stablyai/orca', ['orca'])]

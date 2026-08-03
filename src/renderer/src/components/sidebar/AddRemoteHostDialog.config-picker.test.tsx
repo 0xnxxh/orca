@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SshConfigHostResolution } from '../../../../shared/ssh-types'
@@ -116,8 +116,11 @@ describe('SSH config picker host selection', () => {
       )
     )
 
-    slowAlpha.resolve(resolution('alpha', 'alpha.internal'))
-    await new Promise((settle) => setTimeout(settle, 10))
+    await act(async () => {
+      slowAlpha.resolve(resolution('alpha', 'alpha.internal'))
+      await slowAlpha.promise
+    })
+
     expect((screen.getByLabelText('Host or alias') as HTMLInputElement).value).toBe(
       'bravo.internal'
     )
@@ -133,7 +136,10 @@ describe('SSH config picker host selection', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /bravo/ }).hasAttribute('disabled')).toBe(true)
     )
-    pending.resolve(resolution('alpha', 'alpha.internal'))
+    await act(async () => {
+      pending.resolve(resolution('alpha', 'alpha.internal'))
+      await pending.promise
+    })
   })
 })
 

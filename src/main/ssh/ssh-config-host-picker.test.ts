@@ -157,12 +157,21 @@ describe('resolveUserSshConfigHost', () => {
     ).resolves.toMatchObject({ gssapiAuthentication: true })
   })
 
+  it('returns null for an alias the config no longer declares, even though ssh -G answers', async () => {
+    const resolver = vi.fn().mockResolvedValue(resolved({ hostname: 'deleted' }))
+
+    await expect(
+      resolveUserSshConfigHost('deleted', resolver, () => [{ host: 'prod' }])
+    ).resolves.toBeNull()
+    expect(resolver).not.toHaveBeenCalled()
+  })
+
   it('returns null when OpenSSH cannot resolve an endpoint', async () => {
     await expect(
       resolveUserSshConfigHost(
         'missing',
         async () => null,
-        () => []
+        () => [{ host: 'missing' }]
       )
     ).resolves.toBeNull()
   })

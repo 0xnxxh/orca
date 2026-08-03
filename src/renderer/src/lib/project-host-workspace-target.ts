@@ -203,6 +203,9 @@ export function resolveWorkspaceCreationTarget(
     if (target) {
       return { status: 'ready', target }
     }
+    // Why: the caller named this host. Falling through to the legacy repo (or any other
+    // actionable host) would create the workspace somewhere the user never selected.
+    return { status: 'unavailable', reason: 'project-not-set-up-on-host' }
   }
 
   const repoId = resolveComposerRepoId(input)

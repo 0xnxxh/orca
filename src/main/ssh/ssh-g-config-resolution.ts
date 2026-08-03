@@ -12,7 +12,10 @@ export type SshResolvedConfig = {
   identityAgent?: string
   identitiesOnly: boolean
   forwardAgent: boolean
-  /** Effective GSSAPIAuthentication, including distro-wide /etc/ssh defaults. */
+  /**
+   * Effective GSSAPIAuthentication, including distro-wide /etc/ssh defaults — except on the
+   * HOME-divergent `-F` path (see sshGArgsForHost), where OpenSSH skips the system config.
+   */
   gssapiAuthentication?: boolean
   proxyCommand?: string
   proxyUseFdpass: boolean
@@ -32,12 +35,16 @@ function passwdHomeSshConfigPath(): string {
   }
 }
 
-function sshGArgsForHost(host: string): string[] {
+export function sshGArgsForHost(host: string): string[] {
   // Why: OpenSSH resolves the default user config via getpwuid, not $HOME.
   // Node's loadUserSshConfig uses os.homedir() (HOME-aware). When those differ
   // (E2E HOME isolation, sandboxes), pass -F so resolve sees the same file the
   // picker listed. Leave the default path alone when HOME matches passwd home
   // so /etc/ssh/ssh_config still participates.
+  // -F also suppresses /etc/ssh/ssh_config, so that path resolves user-only.
+  // existsSync is load-bearing: ssh exits 255 on a missing -F file. Without a HOME
+  // config we fall back to passwd-home resolution, whose aliases the picker cannot
+  // list — resolveUserSshConfigHost rejects those before trusting ssh -G.
   const homeConfigPath = join(homedir(), '.ssh', 'config')
   if (existsSync(homeConfigPath) && homeConfigPath !== passwdHomeSshConfigPath()) {
     return ['-F', homeConfigPath, '-G', '--', host]
