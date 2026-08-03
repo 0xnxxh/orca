@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir, userInfo } from 'node:os'
 import { resolveSshConfigHomePath } from './ssh-config-path-expansion'
 
 export type SshResolvedConfig = {
@@ -20,6 +23,27 @@ export type SshResolvedConfig = {
 }
 
 const SSH_G_TIMEOUT_MS = 5000
+
+function passwdHomeSshConfigPath(): string {
+  try {
+    return join(userInfo().homedir, '.ssh', 'config')
+  } catch {
+    return join(homedir(), '.ssh', 'config')
+  }
+}
+
+function sshGArgsForHost(host: string): string[] {
+  // Why: OpenSSH resolves the default user config via getpwuid, not $HOME.
+  // Node's loadUserSshConfig uses os.homedir() (HOME-aware). When those differ
+  // (E2E HOME isolation, sandboxes), pass -F so resolve sees the same file the
+  // picker listed. Leave the default path alone when HOME matches passwd home
+  // so /etc/ssh/ssh_config still participates.
+  const homeConfigPath = join(homedir(), '.ssh', 'config')
+  if (existsSync(homeConfigPath) && homeConfigPath !== passwdHomeSshConfigPath()) {
+    return ['-F', homeConfigPath, '-G', '--', host]
+  }
+  return ['-G', '--', host]
+}
 
 // Why: `ssh -G <host>` asks OpenSSH for the effective config, including
 // Include/Match/wildcard inheritance, without reimplementing OpenSSH matching.
@@ -48,13 +72,18 @@ export function resolveWithSshG(host: string): Promise<SshResolvedConfig | null>
     // Why: '--' prevents host labels starting with '-' from becoming SSH flags.
     // execFile's timeout only signals ssh; keep the null fallback for stuck callbacks.
     try {
-      child = execFile('ssh', ['-G', '--', host], { timeout: SSH_G_TIMEOUT_MS }, (err, stdout) => {
-        if (err) {
-          settle(() => resolve(null))
-          return
+      child = execFile(
+        'ssh',
+        sshGArgsForHost(host),
+        { timeout: SSH_G_TIMEOUT_MS },
+        (err, stdout) => {
+          if (err) {
+            settle(() => resolve(null))
+            return
+          }
+          settle(() => resolve(parseSshGOutput(stdout)))
         }
-        settle(() => resolve(parseSshGOutput(stdout)))
-      })
+      )
     } catch {
       settle(() => resolve(null))
     }
