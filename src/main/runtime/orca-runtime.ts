@@ -23884,13 +23884,10 @@ export class OrcaRuntimeService {
       opts.claudeAgentTeamsSourceCommand
     const store = this.store
     if (opts.startupAgent) {
-      // Why: returning opts unresolved here would spawn a bare shell that can only
-      // time out waiting for an agent — the silent failure startupAgent exists to
-      // prevent. An explicit agent needs no command sniffing and no repo, so the
-      // only unresolvable cases are a contradictory caller or a dead runtime.
-      // `command` and `resumeProviderSession` count as contradictions too: the
-      // first would be silently overwritten, the second would pair resume identity
-      // with a freshly built launch.
+      // Why: falling through unresolved would spawn a bare shell that can only time
+      // out waiting for an agent. A caller-supplied launch contradicts the agent:
+      // `command` would be overwritten, `resumeProviderSession` would pair resume
+      // identity with a fresh launch.
       if (callerSuppliedLaunch || opts.command || opts.resumeProviderSession) {
         throw new Error(
           `startupAgent ${opts.startupAgent} cannot combine with a caller-supplied launch.`

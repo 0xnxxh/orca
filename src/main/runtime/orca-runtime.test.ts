@@ -12656,6 +12656,33 @@ describe('OrcaRuntimeService', () => {
     }
   )
 
+  // Why: a user who worked around this bug by pointing the override at their own
+  // cursor-agent path must keep that override once the id resolves properly.
+  it('honors an agentCmdOverrides entry for a startupAgent', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: { cursor: 'cursor-agent --beta' },
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: {}
+      })
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, { startupAgent: 'cursor' })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
+    expect(spawnCall?.command).toBe("cursor-agent --beta '--force'")
+  })
+
   // Why: folder workspaces have no repo, so command sniffing skipped them entirely
   // and spawned the bare string; an explicit agent must still resolve.
   it('resolves a startupAgent in a repo-less folder workspace', async () => {
