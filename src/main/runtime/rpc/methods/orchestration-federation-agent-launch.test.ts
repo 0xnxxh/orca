@@ -35,6 +35,18 @@ describe('federated worker agent launch', () => {
       status: 'running',
       exitCode: null
     })
+    // Why: without a stable pane the handler bails at agent_readiness, so the
+    // assertions below would pass against a worker that never actually started.
+    vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue('tab_remote:leaf_remote')
+    vi.spyOn(runtime, 'getTerminalProcessIncarnation').mockReturnValue(
+      'runtime_test:term_remote_worker:1'
+    )
+    vi.spyOn(runtime, 'getTerminalOrchestrationCliCommand').mockReturnValue('orca')
+    vi.spyOn(runtime, 'sendTerminalAgentPrompt').mockResolvedValue({
+      handle: 'term_remote_worker',
+      accepted: true,
+      bytesWritten: 1
+    })
     const method = ORCHESTRATION_METHODS.find(
       (candidate) => candidate.name === 'orchestration.federationAttachStart'
     )
@@ -42,7 +54,7 @@ describe('federated worker agent launch', () => {
       throw new Error('federationAttachStart method is not registered')
     }
 
-    await method.handler(
+    const result = (await method.handler(
       method.params!.parse({
         dispatchId: 'ctx_remote',
         taskId: 'task_remote',
@@ -60,8 +72,11 @@ describe('federated worker agent launch', () => {
           payloadHash: 'remote_payload'
         }
       }
-    )
+    )) as { state: string; failedStage?: string; lastError?: string }
 
+    // Why: assert the worker actually reached ready — a spy-only assertion would
+    // stay green even if every stage after terminal_create regressed.
+    expect(result).toMatchObject({ state: 'ready' })
     expect(createTerminal).toHaveBeenCalledWith(
       'id:repo::remote-worktree',
       expect.objectContaining({ startupAgent: 'cursor' })

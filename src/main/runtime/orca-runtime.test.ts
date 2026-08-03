@@ -12683,6 +12683,23 @@ describe('OrcaRuntimeService', () => {
     expect(spawnCall?.command).toBe("cursor-agent --beta '--force'")
   })
 
+  // Why: with no selector the launch is never resolved, so a dropped startupAgent
+  // would reach the renderer as a bare shell — the failure this option prevents.
+  it('rejects a startupAgent create with no workspace selector', async () => {
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {}
+      })
+    })
+
+    await expect(
+      runtime.createTerminal(undefined, { startupAgent: 'cursor', rendererBacked: true })
+    ).rejects.toThrow(/requires a workspace selector/)
+  })
+
   // Why: folder workspaces have no repo, so command sniffing skipped them entirely
   // and spawned the bare string; an explicit agent must still resolve.
   it('resolves a startupAgent in a repo-less folder workspace', async () => {
