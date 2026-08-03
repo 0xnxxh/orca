@@ -157,8 +157,9 @@ type DetectedWorktreeRequestArgs = { repoId: string } | ListDetectedWorktreesArg
 async function stopPtysForDestructiveWorktreeRemoval(
   runtime: OrcaRuntimeService,
   worktreeId: string,
-  connectionId?: string
+  options: { connectionId?: string; force?: boolean } = {}
 ): Promise<void> {
+  const { connectionId, force } = options
   const provider = connectionId ? getSshPtyProvider(connectionId) : getLocalPtyProvider()
   if (!provider) {
     throw new Error(`PTY provider unavailable for worktree deletion: ${worktreeId}`)
@@ -168,6 +169,8 @@ async function stopPtysForDestructiveWorktreeRemoval(
     localProvider: provider,
     onPtyStopped: clearProviderPtyState,
     requirePhysicalStop: true,
+    // Why (#11960): without this, an unprovable stop left the workspace permanently unremovable — force had no way past the gate.
+    ...(force ? { allowUnverifiedStop: true } : {}),
     ...(connectionId ? { includeLocalRegistry: false } : {})
   })
   const total =
@@ -2357,11 +2360,10 @@ export function registerWorktreeHandlers(
                 )
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(
-                    runtime,
-                    args.worktreeId,
-                    repo.connectionId
-                  )
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    connectionId: repo.connectionId,
+                    force: args.force
+                  })
                   await fsProvider!.deletePath(worktreePath, true)
                   removalCompleted = true
                 } finally {
@@ -2378,7 +2380,9 @@ export function registerWorktreeHandlers(
                 const removalGate = await runtime.acquireFileWatcherRemoval(worktreePath)
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    force: args.force
+                  })
                   await removeLocalWorktreePath(worktreePath, localWorktreeGitOptions)
                   removalCompleted = true
                 } finally {
@@ -2423,7 +2427,9 @@ export function registerWorktreeHandlers(
                 const removalGate = await runtime.acquireFileWatcherRemoval(worktreePath)
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    force: args.force
+                  })
                   await removeLocalWorktreePath(worktreePath, localWorktreeGitOptions)
                   removalCompleted = true
                 } finally {
@@ -2581,11 +2587,10 @@ export function registerWorktreeHandlers(
             let removalCompleted = false
             try {
               await withWorktreeRemoveStageSpan('pty_sweep', 'remote', async () => {
-                await stopPtysForDestructiveWorktreeRemoval(
-                  runtime,
-                  args.worktreeId,
-                  remoteConnectionId
-                )
+                await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                  connectionId: remoteConnectionId,
+                  force: args.force
+                })
               })
               rawRemovalResult = await withWorktreeRemoveStageSpan(
                 'git_remove',
@@ -2688,7 +2693,9 @@ export function registerWorktreeHandlers(
             // Why: hold the watcher/terminal gate through Git and any recursive fallback so no late spawn recreates a native handle.
             // Linked-path deletion is destructive too, so PTYs must release every handle before Windows or WSL filesystem cleanup starts.
             await withWorktreeRemoveStageSpan('pty_sweep', 'local', async () => {
-              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                force: args.force
+              })
             })
 
             // Why: preflight only ignored these paths, not mutated them; keep watcher installs fenced through Git removal.

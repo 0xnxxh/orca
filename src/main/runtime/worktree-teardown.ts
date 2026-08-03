@@ -4,6 +4,12 @@ import { listRegisteredPtys } from '../memory/pty-registry'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
 import { splitWorktreeId, splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { mapWithConcurrency } from '../../shared/map-with-concurrency'
+import { settleBeforeDeadline } from './settle-before-deadline'
+import {
+  describeUnstoppedPtys,
+  verifyUnstoppedPtys,
+  type UnstoppedPtyVerdict
+} from './unstopped-pty-verification'
 
 // Why: normal inventories still coalesce into one process scan, while a stale
 // or pathological inventory cannot fan out unbounded provider/RPC shutdowns.
@@ -21,6 +27,8 @@ export type WorktreeTeardownDeps = {
   onPtyStopped?: (ptyId: string) => void
   timeoutMs?: number
   requirePhysicalStop?: boolean
+  /** Escape hatch for `--force`: warn instead of throwing when a stop stays unproven (#11960). */
+  allowUnverifiedStop?: boolean
   includeProviderInventory?: boolean
   includeLocalRegistry?: boolean
 }
@@ -63,7 +71,9 @@ export function teardownRpcDeadline(sweepDeadline: number): number {
  *    daemon spawns.
  *
  * Sweeps are best-effort by default. Destructive removal callers set
- * `requirePhysicalStop` so a timeout or unproven stop blocks filesystem work.
+ * `requirePhysicalStop` so a timeout or unproven stop blocks filesystem work,
+ * and pass `allowUnverifiedStop` for `--force` so that gate can never wedge a
+ * workspace permanently (#11960).
  */
 export async function killAllProcessesForWorktree(
   worktreeId: string,
@@ -164,11 +174,18 @@ export async function killAllProcessesForWorktree(
       [...stopAttempts].map(async ([ptyId, stopped]) => [ptyId, await stopped] as const)
     )
     const failedPtyIds = stopResults.filter(([, stopped]) => !stopped).map(([ptyId]) => ptyId)
-    const failedPtysExited =
-      failedPtyIds.length === 0 ||
-      (await verifyFailedPtysExited(failedPtyIds, deps.localProvider, deadline))
-    if (!failedPtysExited) {
-      throw new Error(`Failed to physically stop every PTY for worktree: ${worktreeId}`)
+    const verdict: UnstoppedPtyVerdict =
+      failedPtyIds.length === 0
+        ? { status: 'exited' }
+        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, deadline)
+    if (verdict.status !== 'exited') {
+      const summary = describeUnstoppedPtys(worktreeId, failedPtyIds, verdict)
+      if (!deps.allowUnverifiedStop) {
+        throw new Error(`${summary}. Retry with force delete (--force) to remove it anyway.`)
+      }
+      // Why: force is the documented escape hatch, so the removal continues —
+      // but the orphaned PTYs must stay visible instead of vanishing silently.
+      console.warn(`[worktree-teardown] forcing removal despite unstopped PTYs — ${summary}`)
     }
     for (const ptyId of failedPtyIds) {
       clearStoppedPtyState(ptyId, deps.onPtyStopped)
@@ -176,66 +193,6 @@ export async function killAllProcessesForWorktree(
   }
 
   return { runtimeStopped: runtimeResult.stopped, providerStopped, registryStopped }
-}
-
-async function verifyFailedPtysExited(
-  failedPtyIds: readonly string[],
-  provider: IPtyProvider,
-  deadline: number
-): Promise<boolean> {
-  const sessions = await settleBeforeDeadline(
-    () => provider.listProcesses({ deadlineMs: deadline }),
-    null,
-    deadline
-  ).catch(() => null)
-  if (!sessions) {
-    return false
-  }
-  const livePtyIds = new Set(sessions.map((session) => session.id))
-  return failedPtyIds.every((ptyId) => !livePtyIds.has(ptyId))
-}
-
-async function settleBeforeDeadline<T>(
-  run: () => Promise<T>,
-  fallback: T,
-  deadline: number,
-  failClosedError?: Error,
-  failClosedOnRunError: (error: unknown) => boolean = () => true
-): Promise<T> {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) {
-    if (failClosedError) {
-      throw failClosedError
-    }
-    return fallback
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const finish = (value: T): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      resolve(value)
-    }
-    const fail = (error: unknown): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      reject(error)
-    }
-    const timer = setTimeout(
-      () => (failClosedError ? fail(failClosedError) : finish(fallback)),
-      remaining
-    )
-    timer.unref?.()
-    void run().then(finish, (error: unknown) =>
-      failClosedError && failClosedOnRunError(error) ? fail(error) : finish(fallback)
-    )
-  })
 }
 
 async function sweepProviderByPrefix(

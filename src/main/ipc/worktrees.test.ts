@@ -9840,6 +9840,37 @@ describe('registerWorktreeHandlers', () => {
     expect(callOrder).toEqual(['preflight', 'kill', 'git'])
   })
 
+  // Why (#11960): --force previously stopped at the same PTY gate as a normal
+  // delete, leaving a workspace with an unprovable PTY unremovable forever.
+  it('forwards force to the PTY gate so a forced delete has an escape hatch', async () => {
+    mockKnownFeatureWorktree()
+    getEffectiveHooksMock.mockReturnValue(null)
+
+    await handlers['worktrees:remove'](null, {
+      worktreeId: 'repo-1::/workspace/feature-wt',
+      force: true
+    })
+
+    expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(
+      'repo-1::/workspace/feature-wt',
+      expect.objectContaining({ requirePhysicalStop: true, allowUnverifiedStop: true })
+    )
+  })
+
+  it('keeps the PTY gate strict for a non-forced delete', async () => {
+    mockKnownFeatureWorktree()
+    getEffectiveHooksMock.mockReturnValue(null)
+
+    await handlers['worktrees:remove'](null, {
+      worktreeId: 'repo-1::/workspace/feature-wt'
+    })
+
+    expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(
+      'repo-1::/workspace/feature-wt',
+      expect.not.objectContaining({ allowUnverifiedStop: true })
+    )
+  })
+
   it('does not start Git removal when physical PTY teardown cannot be proven', async () => {
     mockKnownFeatureWorktree()
     getEffectiveHooksMock.mockReturnValue(null)
