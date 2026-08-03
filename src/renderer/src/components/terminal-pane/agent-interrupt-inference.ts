@@ -11,7 +11,7 @@ import { isAskUserQuestionTool } from '../../../../shared/agent-question-answere
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 
 export type AgentInterruptInference = {
-  observeInputIntent(intent: AgentInterruptInputIntent, entry?: AgentStatusEntry): void
+  observeInputIntent(intent: AgentInterruptInputIntent, entry?: AgentStatusEntry | null): void
   flushPending(): boolean | Promise<boolean>
   dispose(): void
 }
@@ -207,7 +207,7 @@ export function createAgentInterruptInference({
       if (disposed) {
         return
       }
-      const entry = capturedEntry ?? getStatusEntry()
+      const entry = capturedEntry === undefined ? getStatusEntry() : capturedEntry
       if (!entry) {
         clearPending()
         return
