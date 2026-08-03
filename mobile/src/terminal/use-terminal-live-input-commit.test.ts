@@ -7,6 +7,75 @@ import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
 
 type Handlers = ReturnType<typeof useTerminalLiveInputCommit<string>>
 
+type RecordedChange = {
+  readonly text: string
+  readonly isComposing: boolean
+  readonly replacementText: string
+  readonly start: number
+  readonly end: number
+}
+
+const RECORDED_IOS_KANA_TRACE: readonly RecordedChange[] = [
+  { text: 'あ', isComposing: true, replacementText: 'あ', start: 0, end: 0 },
+  { text: 'あ', isComposing: true, replacementText: 'あ', start: 0, end: 1 },
+  { text: 'あ', isComposing: false, replacementText: 'あ', start: 0, end: 1 },
+  { text: 'あき', isComposing: true, replacementText: 'き', start: 1, end: 1 },
+  { text: 'あき', isComposing: true, replacementText: 'き', start: 1, end: 2 },
+  { text: 'あき', isComposing: false, replacementText: 'き', start: 1, end: 2 },
+  { text: 'あきか', isComposing: true, replacementText: 'か', start: 2, end: 2 },
+  { text: 'あきかな', isComposing: true, replacementText: 'な', start: 3, end: 3 },
+  { text: 'あきカナ', isComposing: true, replacementText: 'カナ', start: 2, end: 4 },
+  { text: 'あきカナ', isComposing: false, replacementText: 'カナ', start: 2, end: 4 },
+  { text: 'あきカナさ', isComposing: true, replacementText: 'さ', start: 4, end: 4 },
+  { text: 'あきカナ', isComposing: false, replacementText: '', start: 4, end: 5 }
+]
+
+const IOS_ROMAJI_RECORDED_PREFIX = 'あきカナたあbcabc'
+const RECORDED_IOS_ROMAJI_TRACE: readonly RecordedChange[] = [
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}k`,
+    isComposing: true,
+    replacementText: 'k',
+    start: 11,
+    end: 11
+  },
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}か`,
+    isComposing: true,
+    replacementText: 'a',
+    start: 12,
+    end: 12
+  },
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}かn`,
+    isComposing: true,
+    replacementText: 'n',
+    start: 12,
+    end: 12
+  },
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}かな`,
+    isComposing: true,
+    replacementText: 'a',
+    start: 13,
+    end: 13
+  },
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}かな`,
+    isComposing: true,
+    replacementText: 'かな',
+    start: 11,
+    end: 13
+  },
+  {
+    text: `${IOS_ROMAJI_RECORDED_PREFIX}かな`,
+    isComposing: false,
+    replacementText: 'かな',
+    start: 11,
+    end: 13
+  }
+]
+
 function createHarness(): {
   readonly captures: string[]
   readonly handlers: Handlers
@@ -64,16 +133,7 @@ function createHarness(): {
   return { captures, handlers, sent }
 }
 
-function change(
-  handlers: Handlers,
-  event: {
-    readonly text: string
-    readonly isComposing: boolean
-    readonly replacementText: string
-    readonly start: number
-    readonly end: number
-  }
-): void {
+function change(handlers: Handlers, event: RecordedChange): void {
   handlers.handleLiveInputChange({
     nativeEvent: {
       text: event.text,
@@ -82,6 +142,12 @@ function change(
       replacementRange: { start: event.start, end: event.end }
     }
   })
+}
+
+function replay(handlers: Handlers, trace: readonly RecordedChange[]): void {
+  for (const event of trace) {
+    change(handlers, event)
+  }
 }
 
 describe('terminal live input commit hook', () => {
@@ -149,6 +215,35 @@ describe('terminal live input commit hook', () => {
       end: 2
     })
     await vi.waitFor(() => expect(sent).toEqual(['a', 'b', 'c']))
+  })
+
+  it('replays the recorded iOS Kana tap, flick, candidate, and cancellation trace', async () => {
+    const { handlers, sent } = createHarness()
+
+    change(handlers, RECORDED_IOS_KANA_TRACE[0])
+    await expect(handlers.handleLiveInputAccessoryBytes({ bytes: '\r' })).resolves.toEqual({
+      kind: 'suppress-raw'
+    })
+    replay(handlers, RECORDED_IOS_KANA_TRACE.slice(1))
+
+    await vi.waitFor(() => expect(sent).toEqual(['あ', 'き', 'カナ']))
+  })
+
+  it('replays the recorded iOS Japanese Romaji candidate trace', async () => {
+    const { handlers, sent } = createHarness()
+    change(handlers, {
+      text: IOS_ROMAJI_RECORDED_PREFIX,
+      isComposing: false,
+      replacementText: IOS_ROMAJI_RECORDED_PREFIX,
+      start: 0,
+      end: 0
+    })
+    await vi.waitFor(() => expect(sent).toEqual([IOS_ROMAJI_RECORDED_PREFIX]))
+    sent.length = 0
+
+    replay(handlers, RECORDED_IOS_ROMAJI_TRACE)
+
+    await vi.waitFor(() => expect(sent).toEqual(['かな']))
   })
 
   it('emits nothing for the recorded Pinyin cancellation trace', () => {
