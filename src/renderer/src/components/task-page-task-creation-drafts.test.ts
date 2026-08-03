@@ -12,8 +12,15 @@ function sectionBetween(startAnchor: string, endAnchor: string): string {
 }
 
 describe('TaskPage Linear/Jira creation drafts', () => {
-  it('mirrors typed text into each session draft behind the contentful gate', () => {
+  it('uses the contentful gate for each session draft writer', () => {
     expect(taskPageSource.split('isTaskCreationDraftContentful(draft)')).toHaveLength(4)
+  })
+
+  it('retains all three drafts on dismissal without subscribing TaskPage to draft actions', () => {
+    expect(taskPageSource.split('useTaskCreationDraftRetention({')).toHaveLength(4)
+    expect(taskPageSource).not.toMatch(
+      /useAppStore\(\(s\) => s\.(?:set|clear)New(?:LinearProject|LinearIssue|JiraIssue)Draft\)/
+    )
   })
 
   it('restores dismissed typed text when each dialog reopens', () => {
@@ -31,18 +38,18 @@ describe('TaskPage Linear/Jira creation drafts', () => {
       'const handleCreateNewLinearProject',
       'const handleCreateNewLinearIssue'
     )
-    expect(linearProjectSection).toContain('clearNewLinearProjectDraft()')
+    expect(linearProjectSection).toContain('discardNewLinearProjectDraft()')
 
     const linearIssueSection = sectionBetween(
       'const handleCreateNewLinearIssue',
       'const handleCreateNewJiraIssue'
     )
-    expect(linearIssueSection).toContain('clearNewLinearIssueDraft()')
+    expect(linearIssueSection).toContain('discardNewLinearIssueDraft()')
 
     const jiraIssueSection = sectionBetween(
       'const handleCreateNewJiraIssue',
       'const githubTasksBusy'
     )
-    expect(jiraIssueSection).toContain('clearNewJiraIssueDraft()')
+    expect(jiraIssueSection).toContain('discardNewJiraIssueDraft()')
   })
 })

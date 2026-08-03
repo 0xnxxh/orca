@@ -1,20 +1,12 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 
-/** In-progress New Linear issue / New Linear project / New Jira issue composer
- *  drafts. Session-only (never `persist`-wrapped, no disk surface): they exist
- *  so an accidental dismissal (outside click / Escape / Cancel) doesn't discard
- *  typed text, and are cleared on a successful submit or app restart. Mirrors
- *  `newIssueDraft` (GitHub) but text-only — picker selections keep their
- *  existing open-time defaults. */
+/** Session-only text drafts for Linear/Jira creation dialogs; picker selections stay fresh. */
 export type NewLinearIssueDraft = { title: string; body: string }
 export type NewLinearProjectDraft = { name: string; description: string; content: string }
 export type NewJiraIssueDraft = { title: string; body: string }
 
-/** A draft is worth keeping only once some field carries real typed text; a
- *  whitespace-only form never pins a draft, so an "opened but never edited"
- *  dialog can't hijack a later open. Shared by every write-through gate so
- *  mirror and clear agree on "has content". */
+/** Empty forms do not replace a later open with a meaningless draft. */
 export function isTaskCreationDraftContentful(fields: Record<string, string>): boolean {
   return Object.values(fields).some((value) => value.trim().length > 0)
 }

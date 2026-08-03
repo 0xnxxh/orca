@@ -239,7 +239,13 @@ import {
   resolveUserRepoSwitchReset,
   resolveVanishedNewIssueRepoReset
 } from '@/components/task-page-new-issue-draft'
-import { isTaskCreationDraftContentful } from '@/store/slices/task-creation-drafts'
+import {
+  isTaskCreationDraftContentful,
+  type NewJiraIssueDraft,
+  type NewLinearIssueDraft,
+  type NewLinearProjectDraft
+} from '@/store/slices/task-creation-drafts'
+import { useTaskCreationDraftRetention } from '@/components/use-task-creation-draft-retention'
 import { findTaskPageJiraIssue } from '@/components/task-page-jira-cache-selectors'
 import { getRepoBackedTaskEmptyState } from '@/components/task-page-empty-state'
 import {
@@ -3046,6 +3052,33 @@ const hasUpstreamCandidateDivergence = (
   !!s.sources.upstreamCandidate &&
   !sameGitHubOwnerRepo(s.sources.originCandidate, s.sources.upstreamCandidate)
 
+function writeNewLinearProjectDraft(draft: NewLinearProjectDraft | null): void {
+  const state = useAppStore.getState()
+  if (draft && isTaskCreationDraftContentful(draft)) {
+    state.setNewLinearProjectDraft(draft)
+  } else {
+    state.clearNewLinearProjectDraft()
+  }
+}
+
+function writeNewLinearIssueDraft(draft: NewLinearIssueDraft | null): void {
+  const state = useAppStore.getState()
+  if (draft && isTaskCreationDraftContentful(draft)) {
+    state.setNewLinearIssueDraft(draft)
+  } else {
+    state.clearNewLinearIssueDraft()
+  }
+}
+
+function writeNewJiraIssueDraft(draft: NewJiraIssueDraft | null): void {
+  const state = useAppStore.getState()
+  if (draft && isTaskCreationDraftContentful(draft)) {
+    state.setNewJiraIssueDraft(draft)
+  } else {
+    state.clearNewJiraIssueDraft()
+  }
+}
+
 export default function TaskPage(): React.JSX.Element {
   useTranslation()
   const settings = useAppStore((s) => s.settings)
@@ -5639,31 +5672,15 @@ export default function TaskPage(): React.JSX.Element {
     setNewLinearProjectLabelIds([])
   }, [newLinearProjectTargetTeam?.id, newLinearProjectTargetTeam?.workspaceId])
 
-  // Why: session-only draft recovers typed text across dismissal; read imperatively on open so per-keystroke writes don't re-render TaskPage.
-  const setNewLinearProjectDraft = useAppStore((s) => s.setNewLinearProjectDraft)
-  const clearNewLinearProjectDraft = useAppStore((s) => s.clearNewLinearProjectDraft)
-  useEffect(() => {
-    if (!newLinearProjectOpen) {
-      return
-    }
-    const draft = {
+  const discardNewLinearProjectDraft = useTaskCreationDraftRetention({
+    open: newLinearProjectOpen,
+    draft: {
       name: newLinearProjectName,
       description: newLinearProjectDescription,
       content: newLinearProjectContent
-    }
-    if (isTaskCreationDraftContentful(draft)) {
-      setNewLinearProjectDraft(draft)
-    } else {
-      clearNewLinearProjectDraft()
-    }
-  }, [
-    newLinearProjectOpen,
-    newLinearProjectName,
-    newLinearProjectDescription,
-    newLinearProjectContent,
-    setNewLinearProjectDraft,
-    clearNewLinearProjectDraft
-  ])
+    },
+    writeDraft: writeNewLinearProjectDraft
+  })
 
   // New Linear issue dialog state
   const [newLinearIssueOpen, setNewLinearIssueOpen] = useState(false)
@@ -5678,26 +5695,11 @@ export default function TaskPage(): React.JSX.Element {
   const [newLinearIssueProjectId, setNewLinearIssueProjectId] = useState<string | null>(null)
   const [newLinearIssueLabelIds, setNewLinearIssueLabelIds] = useState<string[]>([])
 
-  // Why: session-only draft recovers typed text across dismissal; read imperatively on open so per-keystroke writes don't re-render TaskPage.
-  const setNewLinearIssueDraft = useAppStore((s) => s.setNewLinearIssueDraft)
-  const clearNewLinearIssueDraft = useAppStore((s) => s.clearNewLinearIssueDraft)
-  useEffect(() => {
-    if (!newLinearIssueOpen) {
-      return
-    }
-    const draft = { title: newLinearIssueTitle, body: newLinearIssueBody }
-    if (isTaskCreationDraftContentful(draft)) {
-      setNewLinearIssueDraft(draft)
-    } else {
-      clearNewLinearIssueDraft()
-    }
-  }, [
-    newLinearIssueOpen,
-    newLinearIssueTitle,
-    newLinearIssueBody,
-    setNewLinearIssueDraft,
-    clearNewLinearIssueDraft
-  ])
+  const discardNewLinearIssueDraft = useTaskCreationDraftRetention({
+    open: newLinearIssueOpen,
+    draft: { title: newLinearIssueTitle, body: newLinearIssueBody },
+    writeDraft: writeNewLinearIssueDraft
+  })
 
   const newLinearIssueTargetTeam = useMemo(
     () => availableTeams.find((t) => t.id === newLinearIssueTeamId) ?? availableTeams[0] ?? null,
@@ -5837,26 +5839,11 @@ export default function TaskPage(): React.JSX.Element {
     Record<string, string>
   >({})
 
-  // Why: session-only draft recovers typed text across dismissal; read imperatively on open so per-keystroke writes don't re-render TaskPage.
-  const setNewJiraIssueDraft = useAppStore((s) => s.setNewJiraIssueDraft)
-  const clearNewJiraIssueDraft = useAppStore((s) => s.clearNewJiraIssueDraft)
-  useEffect(() => {
-    if (!newJiraIssueOpen) {
-      return
-    }
-    const draft = { title: newJiraIssueTitle, body: newJiraIssueBody }
-    if (isTaskCreationDraftContentful(draft)) {
-      setNewJiraIssueDraft(draft)
-    } else {
-      clearNewJiraIssueDraft()
-    }
-  }, [
-    newJiraIssueOpen,
-    newJiraIssueTitle,
-    newJiraIssueBody,
-    setNewJiraIssueDraft,
-    clearNewJiraIssueDraft
-  ])
+  const discardNewJiraIssueDraft = useTaskCreationDraftRetention({
+    open: newJiraIssueOpen,
+    draft: { title: newJiraIssueTitle, body: newJiraIssueBody },
+    writeDraft: writeNewJiraIssueDraft
+  })
   const includeJiraSiteNameInProjectLabel = selectedJiraSiteId === 'all'
   const previousProviderRuntimeContextKeyRef = useRef(providerRuntimeContextKey)
 
@@ -6998,12 +6985,11 @@ export default function TaskPage(): React.JSX.Element {
             : undefined
         }
       )
+      discardNewLinearProjectDraft()
       setNewLinearProjectOpen(false)
       setNewLinearProjectName('')
       setNewLinearProjectDescription('')
       setNewLinearProjectContent('')
-      // Why: only a successful create discards the recovery draft.
-      clearNewLinearProjectDraft()
       setNewLinearProjectLeadId(null)
       setNewLinearProjectMemberIds([])
       setNewLinearProjectLabelIds([])
@@ -7043,7 +7029,7 @@ export default function TaskPage(): React.JSX.Element {
     openLinearProjectContext,
     linearTaskSourceContext,
     settings,
-    clearNewLinearProjectDraft
+    discardNewLinearProjectDraft
   ])
 
   const handleCreateNewLinearIssue = useCallback(async (): Promise<void> => {
@@ -7104,11 +7090,10 @@ export default function TaskPage(): React.JSX.Element {
             : undefined
         }
       )
+      discardNewLinearIssueDraft()
       setNewLinearIssueOpen(false)
       setNewLinearIssueTitle('')
       setNewLinearIssueBody('')
-      // Why: only a successful create discards the recovery draft.
-      clearNewLinearIssueDraft()
       setNewLinearIssueStateId(null)
       setNewLinearIssueAssigneeId(null)
       setNewLinearIssuePriority(0)
@@ -7152,7 +7137,7 @@ export default function TaskPage(): React.JSX.Element {
     setSelectedLinearIssue,
     linearTaskSourceContext,
     settings,
-    clearNewLinearIssueDraft
+    discardNewLinearIssueDraft
   ])
 
   const handleCreateNewJiraIssue = useCallback(async (): Promise<void> => {
@@ -7201,11 +7186,10 @@ export default function TaskPage(): React.JSX.Element {
             : undefined
         }
       )
+      discardNewJiraIssueDraft()
       setNewJiraIssueOpen(false)
       setNewJiraIssueTitle('')
       setNewJiraIssueBody('')
-      // Why: only a successful create discards the recovery draft.
-      clearNewJiraIssueDraft()
       setNewJiraIssueCustomFieldValues({})
       setJiraRefreshNonce((n) => n + 1)
 
@@ -7244,7 +7228,7 @@ export default function TaskPage(): React.JSX.Element {
     settings,
     setSelectedJiraIssue,
     visibleJiraCreateFields,
-    clearNewJiraIssueDraft
+    discardNewJiraIssueDraft
   ])
 
   const githubTasksBusy = tasksLoading || tasksRefreshing || tasksFiltering
