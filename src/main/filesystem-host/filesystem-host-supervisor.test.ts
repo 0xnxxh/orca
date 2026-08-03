@@ -170,7 +170,7 @@ describe('FilesystemHostSupervisor', () => {
           invoke: async () => {
             throw new FilesystemHostProcessError('deadline', 'timed out')
           },
-          retire: async () => true
+          retire: async () => false
         }
       }
       return {
@@ -194,7 +194,7 @@ describe('FilesystemHostSupervisor', () => {
     await vi.waitFor(() => expect(supervisor.health().abandonedChildren).toBe(1))
     expect(supervisor.health()).toMatchObject({
       physicalChildren: 1,
-      didNotExitDomains: 0,
+      didNotExitDomains: 1,
       breakers: { 'native:a': 'open' }
     })
     await expect(
@@ -202,17 +202,16 @@ describe('FilesystemHostSupervisor', () => {
     ).rejects.toMatchObject({ code: 'breaker-open' })
 
     now = 1_100
+    await expect(
+      supervisor.dispatch(dispatch('/a/repo', 'blocked-canary', 'foreground'))
+    ).rejects.toMatchObject({ code: 'unreaped' })
+    exits[0]()
+    now = 2_200
     await expect(supervisor.dispatch(dispatch('/a/repo', 'canary', 'foreground'))).resolves.toEqual(
       canonical('/a/repo')
     )
     expect(supervisor.health().breakers['native:a']).toBe('closed')
-    await expect(
-      supervisor.dispatch(dispatch('/b/repo', 'background', 'background'))
-    ).rejects.toMatchObject({ code: 'capacity' })
-    await expect(
-      supervisor.dispatch(dispatch('/b/repo', 'foreground', 'foreground'))
-    ).resolves.toEqual(canonical('/b/repo'))
-    expect(supervisor.health().physicalChildren).toBe(3)
+    expect(supervisor.health().physicalChildren).toBe(1)
     exits.forEach((exit) => exit())
   })
 
@@ -257,7 +256,7 @@ describe('FilesystemHostSupervisor', () => {
       now = probeAt
       await expect(
         supervisor.dispatch(dispatch('/a/repo', `probe-${probeAt}`, 'foreground'))
-      ).rejects.toMatchObject({ code: 'capacity' })
+      ).rejects.toMatchObject({ code: 'unreaped' })
     }
     expect(startProcess).toHaveBeenCalledTimes(1)
     expect(supervisor.health().physicalChildren).toBe(1)

@@ -81,6 +81,18 @@ describe('fetchKimiRateLimits', () => {
     expect(netFetchMock).not.toHaveBeenCalled()
   })
 
+  it('reports transient credential reads as errors so prior usage can survive', async () => {
+    const result = await fetchKimiRateLimits({
+      value: { access_token: 'cached', expires_at: 99_999_999_999 },
+      stale: true,
+      age: 10,
+      availability: 'unavailable'
+    })
+
+    expect(result.status).toBe('error')
+    expect(netFetchMock).not.toHaveBeenCalled()
+  })
+
   it('maps the usages payload to session (5h) and weekly windows', async () => {
     fsState.credentials = freshCredentials()
     netFetchMock.mockResolvedValueOnce(jsonResponse(USAGE_RESPONSE))
@@ -113,7 +125,7 @@ describe('fetchKimiRateLimits', () => {
     fsState.credentials = '{'
 
     const result = await fetchCurrent()
-    expect(result.status).toBe('unavailable')
+    expect(result.status).toBe('error')
     expect(result.error).not.toContain('{')
     expect(netFetchMock).not.toHaveBeenCalled()
   })

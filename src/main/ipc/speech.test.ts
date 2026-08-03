@@ -60,7 +60,7 @@ vi.mock('../speech/openai-api-key-store', () => ({
 
 import { registerSpeechHandlers } from './speech'
 
-type SpeechHandler = (event: { sender: { id: number } }, value?: string) => Promise<unknown>
+type SpeechHandler = (event: { sender: { id: number } }, value?: string) => unknown
 
 function getHandler(channel: string): SpeechHandler {
   const call = handleMock.mock.calls.find((entry) => entry[0] === channel)
@@ -182,42 +182,13 @@ describe('registerSpeechHandlers', () => {
     })
   })
 
-  it('waits for bridged API-key persistence before returning status', async () => {
-    let finishSave!: () => void
-    saveOpenAiSpeechApiKeyMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finishSave = resolve
-      })
-    )
-    registerSpeechHandlers({} as never)
-    let settled = false
-    const saving = getHandler('speech:saveOpenAiApiKey')({ sender: { id: 7 } }, 'sk-test').then(
-      () => {
-        settled = true
-      }
-    )
-
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(settled).toBe(false)
-    expect(getOpenAiSpeechApiKeySnapshotMock).not.toHaveBeenCalled()
-    getOpenAiSpeechApiKeySnapshotMock.mockReturnValue({
-      value: true,
-      stale: false,
-      age: 0,
-      availability: 'ready'
+  it('propagates a rejected API-key clear without publishing status', () => {
+    clearOpenAiSpeechApiKeyMock.mockImplementationOnce(() => {
+      throw new Error('contended')
     })
-    finishSave()
-    await saving
-    expect(getOpenAiSpeechApiKeySnapshotMock).toHaveBeenCalledOnce()
-  })
-
-  it('propagates a rejected bridged API-key clear without publishing status', async () => {
-    clearOpenAiSpeechApiKeyMock.mockRejectedValueOnce(new Error('contended'))
     registerSpeechHandlers({} as never)
 
-    await expect(getHandler('speech:clearOpenAiApiKey')({ sender: { id: 7 } })).rejects.toThrow(
-      'contended'
-    )
+    expect(() => getHandler('speech:clearOpenAiApiKey')({ sender: { id: 7 } })).toThrow('contended')
 
     expect(getOpenAiSpeechApiKeySnapshotMock).not.toHaveBeenCalled()
   })

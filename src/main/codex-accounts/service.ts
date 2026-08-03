@@ -66,6 +66,7 @@ import {
 import type { MemorySnapshot } from '../../shared/memory-snapshot'
 
 const LOGIN_TIMEOUT_MS = 120_000
+const SYSTEM_IDENTITY_REVALIDATION_MS = 30_000
 const MAX_LOGIN_OUTPUT_CHARS = 4_000
 // Why: mirrors the Windows rm retry policy in local-worktree-filesystem — a
 // just-terminated codex login can briefly keep handles inside a managed home.
@@ -286,9 +287,16 @@ export class CodexAccountService {
 
   listAccounts(): CodexRateLimitAccountsState {
     this.normalizeActiveSelection()
+    const identitySnapshot = this.systemDefaultIdentitySnapshot.get()
     // Why: keeps push-based consumers (mobile) converging on an out-of-band `codex login`;
-    // single-flight, so repeated reads coalesce into one bounded host dispatch.
-    void this.hydrateSystemDefaultIdentity()
+    // fresh reads avoid repeating the explicit IPC hydration that called this method.
+    if (
+      identitySnapshot.stale ||
+      identitySnapshot.age === null ||
+      identitySnapshot.age >= SYSTEM_IDENTITY_REVALIDATION_MS
+    ) {
+      void this.hydrateSystemDefaultIdentity()
+    }
     return this.getSnapshot()
   }
 

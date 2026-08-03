@@ -17,4 +17,19 @@ describe('resolveFilesystemHostEntryPath', () => {
       join('Resources', 'app.asar.unpacked', 'out', 'main', 'filesystem-host-entry.js')
     )
   })
+
+  it('only replaces the terminal app.asar path segment', () => {
+    const appPath = join('app.asar-cache', 'Resources', 'app.asar')
+
+    expect(resolveFilesystemHostEntryPath(appPath, true)).toBe(
+      join(
+        'app.asar-cache',
+        'Resources',
+        'app.asar.unpacked',
+        'out',
+        'main',
+        'filesystem-host-entry.js'
+      )
+    )
+  })
 })

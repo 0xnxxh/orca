@@ -8,7 +8,8 @@ import {
   clearConfiguredWorktreeSharedDirectoriesCacheForTests,
   getConfiguredWorktreeSharedDirectories,
   getWorktreeSharedLinkPaths,
-  resolveWorktreeSharedDirectories
+  resolveWorktreeSharedDirectories,
+  resolveWorktreeSharedLinkPaths
 } from './worktree-shared-directories'
 import {
   createWorktreeSharedPaths,
@@ -191,6 +192,16 @@ describe('getConfiguredWorktreeSharedDirectories', () => {
       '.cache',
       'node_modules'
     ])
+  })
+
+  it('refreshes repo configuration before resolving destructive-cleanup paths', async () => {
+    writeFileSync(join(repo, 'orca.yaml'), 'worktree:\n  sharedDirectories:\n    - old-cache\n')
+    await refreshLocalOrcaYamlSnapshot(repo)
+    writeFileSync(join(repo, 'orca.yaml'), 'worktree:\n  sharedDirectories:\n    - current-cache\n')
+
+    await expect(
+      resolveWorktreeSharedLinkPaths({ path: repo, symlinkPaths: ['user-cache'] })
+    ).resolves.toEqual(['user-cache', 'old-cache', 'current-cache'])
   })
 
   it('returns [] when orca.yaml is absent or has no worktree key', async () => {

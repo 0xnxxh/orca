@@ -109,7 +109,7 @@ describe('minimax-cookie-store', () => {
 
   it('refuses empty cookies', async () => {
     const store = await loadStore()
-    await expect(store.saveMiniMaxSessionCookie('   ')).rejects.toThrow(/required/)
+    expect(() => store.saveMiniMaxSessionCookie('   ')).toThrow(/required/)
   })
 
   it('hydrates a decrypted cookie and serves later reads from memory', async () => {
@@ -227,7 +227,7 @@ describe('minimax-cookie-store', () => {
     })
     const store = await loadStore()
 
-    await expect(store.saveMiniMaxSessionCookie('_token=blocked')).rejects.toThrow('contended')
+    expect(() => store.saveMiniMaxSessionCookie('_token=blocked')).toThrow('contended')
 
     expect(store.getMiniMaxCredentialSnapshot()).toMatchObject({
       value: null,
@@ -236,18 +236,19 @@ describe('minimax-cookie-store', () => {
     })
   })
 
-  it('revokes memory before the file is removed', async () => {
+  it('keeps the cached cookie when file removal fails', async () => {
     readFileMock.mockResolvedValueOnce(Buffer.from(envelope('encrypted', 'encrypted-payload')))
     safeStorageMock.decryptString.mockReturnValueOnce('_token=preclear')
     const store = await loadStore()
     await store.hydrateMiniMaxSessionCookie()
     rmSyncMock.mockImplementationOnce(() => {
-      expect(store.readMiniMaxSessionCookie()).toBeNull()
+      throw new Error('contended')
     })
 
-    await store.clearMiniMaxSessionCookie()
+    expect(() => store.clearMiniMaxSessionCookie()).toThrow('contended')
 
     expect(rmSyncMock).toHaveBeenCalledTimes(1)
-    expect(store.getMiniMaxCredentialSnapshot().availability).toBe('missing')
+    expect(store.readMiniMaxSessionCookie()).toBe('_token=preclear')
+    expect(store.getMiniMaxCredentialSnapshot().availability).toBe('ready')
   })
 })

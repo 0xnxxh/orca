@@ -25,6 +25,7 @@ export type FilesystemHostReadClient = {
 
 export type FilesystemHostReadAuthorityOptions = {
   entryPath: string
+  platform?: NodeJS.Platform
   supervisor?: {
     dispatch: Dispatch
     publishFailureDomain: PublishFailureDomain
@@ -69,16 +70,23 @@ export class FilesystemHostReadError extends Error {
 
 function routePath(
   path: string,
-  defaultStorageClass: FilesystemStorageClass
+  defaultStorageClass: FilesystemStorageClass,
+  platform: NodeJS.Platform
 ): {
   executionHost: 'native' | 'windows-host'
   storageClass: FilesystemStorageClass
 } {
   if (isWslUncPath(path)) {
-    return { executionHost: 'windows-host', storageClass: 'wsl' }
+    return {
+      executionHost: platform === 'win32' ? 'windows-host' : 'native',
+      storageClass: 'wsl'
+    }
   }
   if (UNC_PATH_PREFIX.test(path)) {
-    return { executionHost: 'windows-host', storageClass: 'unc' }
+    return {
+      executionHost: platform === 'win32' ? 'windows-host' : 'native',
+      storageClass: platform === 'win32' || path.startsWith('\\\\') ? 'unc' : defaultStorageClass
+    }
   }
   return { executionHost: 'native', storageClass: defaultStorageClass }
 }
@@ -118,8 +126,10 @@ function requireResult<T extends FilesystemHostResult['kind']>(
 
 export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   private readonly supervisor: NonNullable<FilesystemHostReadAuthorityOptions['supervisor']>
+  private readonly platform: NodeJS.Platform
 
   constructor(options: FilesystemHostReadAuthorityOptions) {
+    this.platform = options.platform ?? process.platform
     this.supervisor =
       options.supervisor ?? new FilesystemHostSupervisor({ entryPath: options.entryPath })
   }
@@ -128,7 +138,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
     path: string,
     storageClass: FilesystemStorageClass = 'workspace'
   ): Promise<string> {
-    const route = routePath(path, storageClass)
+    const route = routePath(path, storageClass, this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -144,7 +154,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   async readOrcaYaml(path: string): Promise<string> {
-    const route = routePath(path, 'workspace')
+    const route = routePath(path, 'workspace', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -160,7 +170,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   async readKeybindings(path: string): Promise<string> {
-    const route = routePath(path, 'home')
+    const route = routePath(path, 'home', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -176,7 +186,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   async readSnapshotFile(path: string, fileKind: FilesystemSnapshotFileKind): Promise<Buffer> {
-    const route = routePath(path, 'home')
+    const route = routePath(path, 'home', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -192,7 +202,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   async prepareRateLimitPtyCwd(path: string): Promise<string> {
-    const route = routePath(path, 'user-data')
+    const route = routePath(path, 'user-data', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -218,7 +228,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   private async classifyAndPublish(path: string): Promise<void> {
-    const route = routePath(path, 'workspace')
+    const route = routePath(path, 'workspace', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),

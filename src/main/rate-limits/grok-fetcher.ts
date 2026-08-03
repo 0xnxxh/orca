@@ -243,7 +243,7 @@ export async function fetchGrokRateLimits(options: {
     return result('error', 'Grok credential access was denied')
   }
   if (snapshot.stale || snapshot.availability === 'unavailable') {
-    return result('unavailable', 'Grok credentials are unavailable — retry sign-in refresh')
+    return result('error', 'Grok credentials are unavailable — retry sign-in refresh')
   }
   if (snapshot.availability === 'missing' || snapshot.value === null) {
     return result('unavailable', 'Not signed in to Grok — run grok login')

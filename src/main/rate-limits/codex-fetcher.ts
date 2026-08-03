@@ -345,7 +345,12 @@ async function getCodexBackendAuthHeaders(
   if (!authJson) {
     return null
   }
-  const auth = JSON.parse(authJson) as CodexAuthFile
+  let auth: CodexAuthFile
+  try {
+    auth = JSON.parse(authJson) as CodexAuthFile
+  } catch {
+    return null
+  }
   const accessToken = auth.tokens?.access_token
   if (!accessToken) {
     return null

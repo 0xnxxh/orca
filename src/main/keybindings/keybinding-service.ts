@@ -33,6 +33,7 @@ export class KeybindingService {
   private readonly configPath: string
   private readonly platform: NodeJS.Platform
   private snapshot: KeybindingFileSnapshot
+  private generation = 0
 
   constructor(options: KeybindingServiceOptions) {
     this.configPath = getUserKeybindingsPath(options.homePath)
@@ -69,6 +70,7 @@ export class KeybindingService {
   }
 
   async hydrate(): Promise<KeybindingFileSnapshot> {
+    const generation = this.generation
     let contents: string | null
     try {
       contents = await readKeybindingsThroughFilesystemHost(this.configPath)
@@ -77,24 +79,28 @@ export class KeybindingService {
       if (code === 'ENOENT' || code === 'ENOTDIR') {
         contents = null
       } else {
-        this.snapshot = {
-          ...this.snapshot,
-          diagnostics: [
-            ...this.snapshot.diagnostics.filter(
-              (diagnostic) => diagnostic.section !== FILESYSTEM_HOST_DIAGNOSTIC_SECTION
-            ),
-            {
-              severity: 'warning',
-              section: FILESYSTEM_HOST_DIAGNOSTIC_SECTION,
-              message:
-                'Keybindings could not be refreshed; Orca is using the last available shortcuts.'
-            }
-          ]
+        if (generation === this.generation) {
+          this.snapshot = {
+            ...this.snapshot,
+            diagnostics: [
+              ...this.snapshot.diagnostics.filter(
+                (diagnostic) => diagnostic.section !== FILESYSTEM_HOST_DIAGNOSTIC_SECTION
+              ),
+              {
+                severity: 'warning',
+                section: FILESYSTEM_HOST_DIAGNOSTIC_SECTION,
+                message:
+                  'Keybindings could not be refreshed; Orca is using the last available shortcuts.'
+              }
+            ]
+          }
         }
         return this.snapshot
       }
     }
-    this.snapshot = parseKeybindingFileContents(this.configPath, contents, this.platform)
+    if (generation === this.generation) {
+      this.snapshot = parseKeybindingFileContents(this.configPath, contents, this.platform)
+    }
     return this.snapshot
   }
 
@@ -108,6 +114,7 @@ export class KeybindingService {
 
   async ensureFile(): Promise<KeybindingFileSnapshot> {
     ensureKeybindingFile(this.configPath)
+    this.generation += 1
     return await this.reload()
   }
 
@@ -116,6 +123,7 @@ export class KeybindingService {
     bindings: string[] | null
   ): KeybindingFileSnapshot {
     this.snapshot = writeKeybindingOverride(this.configPath, this.platform, actionId, bindings)
+    this.generation += 1
     return this.snapshot
   }
 }

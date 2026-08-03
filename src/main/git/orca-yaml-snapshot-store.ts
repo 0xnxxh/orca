@@ -31,6 +31,12 @@ type SnapshotEntry = {
   generation: number
 }
 type ContentReader = () => Promise<string | null>
+type SnapshotRefreshFlight = {
+  generation: number
+  promise: Promise<OrcaYamlSnapshot>
+}
+
+const SNAPSHOT_REVALIDATION_MS = 30_000
 
 const RECOGNIZED_KEYS = new Set([
   'scripts',
@@ -58,7 +64,7 @@ function failureAvailability(
 
 export class OrcaYamlSnapshotStore {
   private readonly entries = new Map<string, SnapshotEntry>()
-  private readonly inFlight = new Map<string, Promise<OrcaYamlSnapshot>>()
+  private readonly inFlight = new Map<string, SnapshotRefreshFlight>()
   private readonly removedGenerations = new Map<string, number>()
 
   constructor(private readonly now: () => number = Date.now) {}
@@ -108,11 +114,17 @@ export class OrcaYamlSnapshotStore {
   }
 
   refresh(key: string, reader: ContentReader): Promise<OrcaYamlSnapshot> {
+    const requestedGeneration = this.generation(key)
     const existing = this.inFlight.get(key)
     if (existing) {
-      return existing
+      if (existing.generation === requestedGeneration) {
+        return existing.promise
+      }
+      return existing.promise.then(() =>
+        this.generation(key) === requestedGeneration ? this.refresh(key, reader) : this.read(key)
+      )
     }
-    const generation = this.generation(key)
+    const generation = requestedGeneration
     const refresh = Promise.resolve()
       .then(reader)
       .then((content) => {
@@ -128,11 +140,11 @@ export class OrcaYamlSnapshotStore {
         return this.read(key)
       })
       .finally(() => {
-        if (this.inFlight.get(key) === refresh) {
+        if (this.inFlight.get(key)?.promise === refresh) {
           this.inFlight.delete(key)
         }
       })
-    this.inFlight.set(key, refresh)
+    this.inFlight.set(key, { generation, promise: refresh })
     return refresh
   }
 
@@ -193,6 +205,14 @@ export function refreshLocalOrcaYamlSnapshot(repoPath: string): Promise<OrcaYaml
       throw error
     }
   })
+}
+
+export function readLocalOrcaYamlSnapshot(repoPath: string): OrcaYamlSnapshot {
+  const snapshot = orcaYamlSnapshots.read(repoPath)
+  if (snapshot.stale || snapshot.age === null || snapshot.age >= SNAPSHOT_REVALIDATION_MS) {
+    void refreshLocalOrcaYamlSnapshot(repoPath)
+  }
+  return snapshot
 }
 
 export function seedLocalOrcaYamlSnapshot(

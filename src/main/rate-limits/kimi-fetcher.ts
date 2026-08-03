@@ -262,7 +262,7 @@ export async function fetchKimiRateLimits(
     return result('error', 'Kimi credential access was denied')
   }
   if (snapshot.stale || snapshot.availability === 'unavailable') {
-    return result('unavailable', 'Kimi credentials are unavailable')
+    return result('error', 'Kimi credentials are unavailable')
   }
   if (snapshot.availability === 'missing' || snapshot.value === null) {
     return result('unavailable', 'Not signed in to Kimi Code')

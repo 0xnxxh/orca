@@ -14,7 +14,9 @@ vi.mock('../filesystem-host/filesystem-host-read-authority', () => ({
 import {
   orcaYamlSnapshots,
   OrcaYamlSnapshotStore,
+  readLocalOrcaYamlSnapshot,
   reconcileLocalOrcaYamlSnapshots,
+  refreshLocalOrcaYamlSnapshot,
   seedLocalOrcaYamlSnapshot
 } from './orca-yaml-snapshot-store'
 
@@ -121,6 +123,36 @@ describe('OrcaYamlSnapshotStore', () => {
     expect(reader).toHaveBeenCalledTimes(1)
   })
 
+  it('queues a current-generation read after invalidating an active refresh', async () => {
+    const store = new OrcaYamlSnapshotStore()
+    let resolveFirst: (content: string | null) => void = () => {}
+    const reader = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValueOnce('scripts:\n  setup: current\n')
+
+    const first = store.refresh('/repo', reader)
+    await Promise.resolve()
+    store.invalidate('/repo')
+    const replacement = store.refresh('/repo', reader)
+    expect(replacement).not.toBe(first)
+
+    resolveFirst('scripts:\n  setup: stale\n')
+    await replacement
+
+    expect(reader).toHaveBeenCalledTimes(2)
+    expect(store.read('/repo')).toMatchObject({
+      stale: false,
+      availability: 'ready',
+      value: { hooks: { scripts: { setup: 'current' } } }
+    })
+  })
+
   it('does not resurrect a removed repo from an in-flight refresh', async () => {
     const store = new OrcaYamlSnapshotStore()
     let resolveRead: (content: string | null) => void = () => {}
@@ -156,6 +188,27 @@ describe('OrcaYamlSnapshotStore', () => {
       availability: 'denied',
       lastError: 'permission denied'
     })
+  })
+
+  it('revalidates an aged local snapshot without blocking its memory read', async () => {
+    vi.useFakeTimers({ now: 1 })
+    try {
+      readOrcaYamlMock
+        .mockResolvedValueOnce('scripts:\n  setup: old\n')
+        .mockResolvedValueOnce('scripts:\n  setup: current\n')
+      await refreshLocalOrcaYamlSnapshot('/repo')
+      vi.setSystemTime(30_002)
+
+      expect(readLocalOrcaYamlSnapshot('/repo').value?.hooks).toEqual({
+        scripts: { setup: 'old' }
+      })
+      await refreshLocalOrcaYamlSnapshot('/repo')
+      expect(orcaYamlSnapshots.read('/repo').value?.hooks).toEqual({
+        scripts: { setup: 'current' }
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('marks only valid unknown-key-only content as needing an update', () => {

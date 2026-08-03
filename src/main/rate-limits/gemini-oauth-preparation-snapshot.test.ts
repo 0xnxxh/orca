@@ -110,4 +110,59 @@ describe('Gemini OAuth preparation snapshot', () => {
       availability: 'missing'
     })
   })
+
+  it('keeps refreshed tokens when disk credentials have not changed', async () => {
+    const diskCredentials = {
+      access_token: 'expired',
+      refresh_token: 'disk-refresh',
+      expiry_date: 10
+    }
+    readAuthJsonMock.mockResolvedValue(null)
+    readGeminiCredentialsMock.mockResolvedValue(diskCredentials)
+    const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
+    const preparation = hydrated.value!
+
+    publishGeminiOAuthTokenRefresh(preparation, {
+      accessToken: 'memory-access',
+      newRefreshToken: 'memory-refresh',
+      expiresIn: 3600
+    })
+    await hydrateGeminiOAuthPreparationSnapshot(true)
+
+    expect(getGeminiOAuthPreparationSnapshot().value).toMatchObject({
+      credentials: {
+        access_token: 'memory-access',
+        refresh_token: 'memory-refresh'
+      }
+    })
+  })
+
+  it('adopts credentials that changed on disk after an in-memory refresh', async () => {
+    readAuthJsonMock.mockResolvedValue(null)
+    readGeminiCredentialsMock.mockResolvedValue({
+      access_token: 'old-disk',
+      refresh_token: 'old-refresh',
+      expiry_date: 10
+    })
+    const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
+    publishGeminiOAuthTokenRefresh(hydrated.value!, {
+      accessToken: 'memory-access',
+      newRefreshToken: null,
+      expiresIn: 3600
+    })
+    readGeminiCredentialsMock.mockResolvedValue({
+      access_token: 'new-disk',
+      refresh_token: 'new-refresh',
+      expiry_date: 20
+    })
+
+    await hydrateGeminiOAuthPreparationSnapshot(true)
+
+    expect(getGeminiOAuthPreparationSnapshot().value).toMatchObject({
+      credentials: {
+        access_token: 'new-disk',
+        refresh_token: 'new-refresh'
+      }
+    })
+  })
 })

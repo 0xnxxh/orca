@@ -16,4 +16,13 @@ describe('FilesystemHostBreaker', () => {
     breaker.recordSuccess(true)
     expect(breaker.admit(2_100)).toEqual({ allowed: true, probe: false })
   })
+
+  it('defers a probe rejected by process-wide capacity without blaming the lane', () => {
+    const breaker = new FilesystemHostBreaker(1_000)
+    breaker.recordFailure(100)
+
+    expect(breaker.admit(1_100)).toEqual({ allowed: true, probe: true })
+    breaker.deferProbe()
+    expect(breaker.admit(1_100)).toEqual({ allowed: true, probe: true })
+  })
 })

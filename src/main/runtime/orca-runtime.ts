@@ -861,8 +861,8 @@ import {
 import { formatWorktreeIncludeCopyWarning } from '../ipc/worktree-include-copy-budget'
 import { resolveWorktreeIncludePaths } from '../git/worktree-include-file'
 import {
-  getWorktreeSharedLinkPaths,
-  resolveWorktreeSharedDirectories
+  resolveWorktreeSharedDirectories,
+  resolveWorktreeSharedLinkPaths
 } from '../git/worktree-shared-directories'
 import { deleteWorktreeHistoryDir } from '../terminal-history-deletion'
 import {
@@ -23719,7 +23719,7 @@ export class OrcaRuntimeService {
         // Why: `orca.yaml` shared directories are symlinked in too, and a
         // directory-only ignore rule leaves those links untracked, so removal must
         // tolerate and unlink them exactly like the per-user shared paths.
-        const linkedPaths = getWorktreeSharedLinkPaths(repo)
+        const linkedPaths = await resolveWorktreeSharedLinkPaths(repo)
         const ignoredLinkedPaths = force
           ? []
           : await findExistingWorktreeSymlinkPaths(canonicalWorktreePath, linkedPaths)

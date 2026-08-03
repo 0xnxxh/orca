@@ -33,13 +33,13 @@ export function registerSpeechHandlers(store: Store): void {
     return getOpenAiApiKeyStatus()
   })
 
-  ipcMain.handle('speech:saveOpenAiApiKey', async (_event, apiKey: string) => {
-    await saveOpenAiSpeechApiKey(apiKey)
+  ipcMain.handle('speech:saveOpenAiApiKey', (_event, apiKey: string) => {
+    saveOpenAiSpeechApiKey(apiKey)
     return getOpenAiApiKeyStatus()
   })
 
-  ipcMain.handle('speech:clearOpenAiApiKey', async () => {
-    await clearOpenAiSpeechApiKey()
+  ipcMain.handle('speech:clearOpenAiApiKey', () => {
+    clearOpenAiSpeechApiKey()
     return getOpenAiApiKeyStatus()
   })
 

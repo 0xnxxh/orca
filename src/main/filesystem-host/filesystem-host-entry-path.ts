@@ -6,7 +6,9 @@ export function resolveFilesystemHostEntryPath(
   isPackaged: boolean,
   pathExists: (candidate: string) => boolean = existsSync
 ): string {
-  const basePath = isPackaged ? appPath.replace('app.asar', 'app.asar.unpacked') : appPath
+  const basePath = isPackaged
+    ? appPath.replace(/(^|[\\/])app\.asar$/, '$1app.asar.unpacked')
+    : appPath
   const adjacentEntry = join(basePath, 'filesystem-host-entry.js')
   if (!isPackaged && pathExists(adjacentEntry)) {
     return adjacentEntry

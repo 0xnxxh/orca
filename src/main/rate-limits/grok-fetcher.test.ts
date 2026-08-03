@@ -97,6 +97,15 @@ describe('fetchGrokRateLimits', () => {
     expect(netFetchMock).not.toHaveBeenCalled()
   })
 
+  it('reports transient credential reads as errors so prior usage can survive', async () => {
+    authState.readError = new Error('host unavailable')
+
+    const result = await fetchCurrent()
+
+    expect(result.status).toBe('error')
+    expect(netFetchMock).not.toHaveBeenCalled()
+  })
+
   it('maps weekly credit usage from billing config', async () => {
     authState.file = freshAuthJson()
     netFetchMock.mockResolvedValueOnce(jsonResponse(BILLING_RESPONSE))

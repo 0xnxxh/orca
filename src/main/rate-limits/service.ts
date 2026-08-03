@@ -564,7 +564,6 @@ export class RateLimitService {
       ...this.state,
       codex: this.withFetchingStatus(null, 'codex')
     })
-    await this.hydrateCodexTarget(nextTarget)
     await this.fetchCodexOnly({ force: true })
     return this.getState()
   }
@@ -580,7 +579,6 @@ export class RateLimitService {
       ...this.state,
       codex: this.withFetchingStatus(targetChanged ? null : this.state.codex, 'codex')
     })
-    await this.hydrateCodexTarget(nextTarget)
     await this.fetchCodexOnly({ force: true })
     return this.getState()
   }
@@ -603,15 +601,27 @@ export class RateLimitService {
       throw new Error(missingWslCodexHome.error ?? 'Codex home unavailable')
     }
     try {
+      const generation = this.codexFetchGeneration
+      if (!this.isSameCodexTarget(this.codexFetchTarget, codexTarget)) {
+        throw new Error('The active Codex rate-limit target changed before reset.')
+      }
+      const authSnapshot = await hydrateCodexCredentialSnapshot(codexHomePath)
+      if (
+        generation !== this.codexFetchGeneration ||
+        !this.isSameCodexTarget(this.codexFetchTarget, codexTarget)
+      ) {
+        throw new Error('The active Codex rate-limit target changed before reset.')
+      }
       const outcome = await consumeCodexRateLimitResetCredit({
         codexHomePath,
-        authSnapshot: this.getCodexHomeSnapshotStore(codexTarget).get().value?.authSnapshot,
+        authSnapshot,
         idempotencyKey: options.idempotencyKey
       })
       const state = await this.fetchCodexResetResultState(
         codexTarget,
         codexHomePath,
-        scopedStateBeforeReset
+        scopedStateBeforeReset,
+        authSnapshot
       )
       return { outcome, state }
     } catch (error) {
@@ -649,7 +659,6 @@ export class RateLimitService {
       ...this.state,
       claude: this.withFetchingStatus(null, 'claude')
     })
-    await this.hydrateClaudeTarget(nextTarget)
     await this.fetchClaudeOnly({ force: true })
     return this.getState()
   }
@@ -669,7 +678,6 @@ export class RateLimitService {
       ...this.state,
       claude: this.withFetchingStatus(targetChanged ? null : this.state.claude, 'claude')
     })
-    await this.hydrateClaudeTarget(nextTarget)
     await this.fetchClaudeOnly({ force: true })
     return this.getState()
   }
@@ -1490,7 +1498,8 @@ export class RateLimitService {
   private async fetchCodexResetResultState(
     target: NormalizedCodexAccountSelectionTarget,
     codexHomePath: string | null,
-    stateBeforeReset: RateLimitState
+    stateBeforeReset: RateLimitState,
+    authSnapshot: CodexCredentialSnapshot
   ): Promise<RateLimitState> {
     const controller = this.beginFetchCycle()
     let fresh: ProviderRateLimits
@@ -1499,7 +1508,7 @@ export class RateLimitService {
         codexHomePath,
         codexCommand: this.getCodexHomeSnapshotStore(target).get().value?.command ?? 'codex',
         hiddenPtyCwd: this.getCodexHomeSnapshotStore(target).get().value?.hiddenPtyCwd,
-        authSnapshot: this.getCodexHomeSnapshotStore(target).get().value?.authSnapshot,
+        authSnapshot,
         allowPtyFallback: this.shouldAllowCodexPtyFallback(),
         signal: controller.signal
       })
@@ -1794,6 +1803,11 @@ export class RateLimitService {
     const cookie = openCodeGoConfig?.sessionCookie ?? ''
     const workspaceIdOverride = openCodeGoConfig?.workspaceIdOverride ?? ''
     const miniMaxConfigResult = this.resolveMiniMaxConfig()
+    const miniMaxCredentialSnapshot = getMiniMaxCredentialSnapshot()
+    const miniMaxCredentialUnavailable =
+      miniMaxCredentialSnapshot.stale ||
+      miniMaxCredentialSnapshot.availability === 'denied' ||
+      miniMaxCredentialSnapshot.availability === 'unavailable'
     const miniMaxCookie = miniMaxConfigResult.config.sessionCookie
     const miniMaxGroupId = miniMaxConfigResult.config.groupId
     const miniMaxModels = miniMaxConfigResult.config.models
@@ -1812,7 +1826,9 @@ export class RateLimitService {
     }
     const opencodeGeneration = this.opencodeFetchGeneration
 
-    const currentMiniMaxConfigHash = `${miniMaxCookie}|${miniMaxGroupId}|${miniMaxModels}|${miniMaxConfigResult.error ?? ''}`
+    const currentMiniMaxConfigHash = miniMaxCredentialUnavailable
+      ? this.lastMiniMaxConfigHash
+      : `${miniMaxCookie}|${miniMaxGroupId}|${miniMaxModels}|${miniMaxConfigResult.error ?? ''}`
     const miniMaxConfigChanged = currentMiniMaxConfigHash !== this.lastMiniMaxConfigHash
     if (miniMaxConfigChanged) {
       this.lastMiniMaxConfigHash = currentMiniMaxConfigHash
@@ -1883,13 +1899,15 @@ export class RateLimitService {
           this.networkProxySettingsResolver?.()
         ),
         fetchKimiRateLimits(kimiCredentialSnapshot),
-        miniMaxConfigResult.error
-          ? Promise.resolve(this.getMiniMaxCredentialError(miniMaxConfigResult.error))
-          : fetchMiniMaxRateLimits({
-              cookie: miniMaxCookie,
-              groupId: miniMaxGroupId,
-              models: miniMaxModels
-            })
+        miniMaxCredentialUnavailable
+          ? Promise.resolve(this.getMiniMaxCredentialError('MiniMax credentials are unavailable'))
+          : miniMaxConfigResult.error
+            ? Promise.resolve(this.getMiniMaxCredentialError(miniMaxConfigResult.error))
+            : fetchMiniMaxRateLimits({
+                cookie: miniMaxCookie,
+                groupId: miniMaxGroupId,
+                models: miniMaxModels
+              })
       ])
 
     if (signal.aborted) {
@@ -2075,13 +2093,21 @@ export class RateLimitService {
       return
     }
     const codexTarget = this.codexFetchTarget
+    const codexGeneration = this.codexFetchGeneration
+    await this.hydrateCodexTarget(codexTarget)
+    if (
+      signal.aborted ||
+      codexGeneration !== this.codexFetchGeneration ||
+      !this.isSameCodexTarget(codexTarget, this.codexFetchTarget)
+    ) {
+      return
+    }
     const codexHomeSnapshot = this.getCodexHomeSnapshotStore(codexTarget).get()
     const codexHomePath = codexHomeSnapshot.stale
       ? null
       : (codexHomeSnapshot.value?.homePath ?? null)
     const codexCommand = codexHomeSnapshot.value?.command ?? 'codex'
     const codexProvenance = this.getCodexProvenance(codexTarget, codexHomePath)
-    const codexGeneration = this.codexFetchGeneration
     const previousState = this.state
 
     this.updateState({
@@ -2152,6 +2178,14 @@ export class RateLimitService {
     }
     const claudeTarget = this.claudeFetchTarget
     const claudeGeneration = this.claudeFetchGeneration
+    await this.hydrateClaudeTarget(claudeTarget)
+    if (
+      signal.aborted ||
+      claudeGeneration !== this.claudeFetchGeneration ||
+      !this.isSameClaudeTarget(claudeTarget, this.claudeFetchTarget)
+    ) {
+      return
+    }
     const claudeAuthSnapshot = this.getClaudeAuthSnapshotStore(claudeTarget).get()
     const claudeAuthPreparation = claudeAuthSnapshot.stale
       ? undefined

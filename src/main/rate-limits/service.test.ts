@@ -25,6 +25,7 @@ import { fetchGrokRateLimits } from './grok-fetcher'
 import { getGrokAuthSnapshot, refreshGrokAuthSnapshot } from './grok-auth-snapshot'
 import { fetchOpenCodeGoRateLimits } from './opencode-go-usage-fetcher'
 import {
+  getMiniMaxCredentialSnapshot,
   hasMiniMaxSessionCookie,
   hydrateMiniMaxSessionCookie
 } from '../minimax/minimax-cookie-store'
@@ -1636,6 +1637,45 @@ describe('RateLimitService', () => {
     )
   })
 
+  it('hydrates the selected Codex credential immediately before consuming a reset credit', async () => {
+    const service = new RateLimitService()
+    const freshAuth = { status: 'present' as const, authJson: '{"fresh":true}' }
+    vi.mocked(hydrateCodexCredentialSnapshot).mockResolvedValueOnce(freshAuth)
+    vi.mocked(consumeCodexRateLimitResetCredit).mockResolvedValueOnce('reset')
+    vi.mocked(fetchCodexRateLimits).mockResolvedValueOnce(okProvider('codex', 0))
+
+    await service.consumeCodexRateLimitResetCredit({
+      idempotencyKey: 'fresh-credential',
+      target: { runtime: 'host', wslDistro: null },
+      codexHomePath: '/tmp/codex-home'
+    })
+
+    expect(hydrateCodexCredentialSnapshot).toHaveBeenCalledWith('/tmp/codex-home')
+    expect(consumeCodexRateLimitResetCredit).toHaveBeenCalledWith(
+      expect.objectContaining({ authSnapshot: freshAuth })
+    )
+    expect(fetchCodexRateLimits).toHaveBeenCalledWith(
+      expect.objectContaining({ authSnapshot: freshAuth })
+    )
+  })
+
+  it('does not consume a reset credit after the active target changes during hydration', async () => {
+    const service = new RateLimitService()
+    const hydration = deferred<{ status: 'present'; authJson: string }>()
+    vi.mocked(hydrateCodexCredentialSnapshot).mockReturnValueOnce(hydration.promise)
+
+    const pending = service.consumeCodexRateLimitResetCredit({
+      idempotencyKey: 'raced-credential',
+      target: { runtime: 'host', wslDistro: null },
+      codexHomePath: '/tmp/codex-home'
+    })
+    service.setCodexFetchTarget({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+    hydration.resolve({ status: 'present', authJson: '{}' })
+
+    await expect(pending).rejects.toThrow('target changed before reset')
+    expect(consumeCodexRateLimitResetCredit).not.toHaveBeenCalled()
+  })
+
   it('returns a refreshed scoped state without overwriting a target selected during reset', async () => {
     const service = new RateLimitService()
     const idempotencyKey = '22222222-2222-4222-8222-222222222222'
@@ -2539,6 +2579,33 @@ describe('RateLimitService', () => {
     expect(state.minimax?.status).toBe('error')
     expect(state.minimax?.error).toBe('MiniMax session cookie could not be decrypted')
     expect(state.claude?.status).toBe('ok')
+  })
+
+  it('keeps known MiniMax usage when credential hydration is transiently unavailable', async () => {
+    const service = new RateLimitService()
+    service.setMiniMaxConfigResolver(() => ({
+      sessionCookie: '_token=abc',
+      groupId: '',
+      models: 'general'
+    }))
+    vi.mocked(fetchMiniMaxRateLimits).mockResolvedValueOnce(okProvider('minimax', 40))
+    await service.refresh()
+    expect(service.getState().minimax?.session?.usedPercent).toBe(40)
+
+    vi.mocked(getMiniMaxCredentialSnapshot).mockReturnValue({
+      value: { configured: true },
+      stale: true,
+      age: 1,
+      availability: 'unavailable'
+    })
+    await service.refresh()
+
+    expect(fetchMiniMaxRateLimits).toHaveBeenCalledTimes(1)
+    expect(service.getState().minimax).toMatchObject({
+      status: 'error',
+      error: 'MiniMax credentials are unavailable',
+      session: { usedPercent: 40 }
+    })
   })
 
   describe('refreshAfterClaudeLivePtysDrained', () => {

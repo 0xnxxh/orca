@@ -29,6 +29,12 @@ export class FilesystemHostBreaker {
     this.retryAt = now + this.recoveryDelayMs
   }
 
+  deferProbe(): void {
+    if (this.state === 'probe') {
+      this.state = 'open'
+    }
+  }
+
   snapshot(): { state: FilesystemHostBreakerState; retryAt: number } {
     return { state: this.state, retryAt: this.retryAt }
   }

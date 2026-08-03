@@ -1,6 +1,7 @@
 export type FilesystemHostSupervisorFailureCode =
   | 'breaker-open'
   | 'capacity'
+  | 'unreaped'
   | 'queue-full'
   | 'remote-host'
   | 'deadline'

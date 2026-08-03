@@ -215,6 +215,17 @@ describe('Codex backend rate-limit requests', () => {
     )
   })
 
+  it('rejects corrupt auth JSON without issuing a reset request', async () => {
+    await expect(
+      consumeCodexRateLimitResetCredit({
+        authSnapshot: { status: 'present', authJson: '{invalid' },
+        idempotencyKey: 'corrupt-auth'
+      })
+    ).rejects.toThrow('Codex not signed in')
+
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('cancels the unread error-response body so bundled undici cannot crash on socket close', async () => {
     let cancelledBodies = 0
     vi.mocked(fetch).mockResolvedValue(

@@ -27,18 +27,18 @@ function refreshAfterMiniMaxCredentialChange(
 
 export function registerMiniMaxCredentialsHandlers(rateLimits: RateLimitService | null): void {
   ipcMain.handle('minimaxCredentials:getStatus', () => getMiniMaxCredentialsStatus())
-  ipcMain.handle('minimaxCredentials:saveCookie', async (_event, cookie: string) => {
+  ipcMain.handle('minimaxCredentials:saveCookie', (_event, cookie: string) => {
     // Validate the IPC argument in the main process; the renderer-declared type
     // is compile-time only and the value arrives as unknown over IPC.
     if (typeof cookie !== 'string') {
       throw new Error('MiniMax session cookie must be a string')
     }
-    await saveMiniMaxSessionCookie(cookie)
+    saveMiniMaxSessionCookie(cookie)
     refreshAfterMiniMaxCredentialChange(rateLimits, 'save')
     return getMiniMaxCredentialsStatus()
   })
   ipcMain.handle('minimaxCredentials:clearCookie', async () => {
-    await clearMiniMaxSessionCookie()
+    clearMiniMaxSessionCookie()
     try {
       await clearMiniMaxSessionCookieJar()
     } catch (error) {

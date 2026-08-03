@@ -49,7 +49,11 @@ export async function executeFilesystemHostDispatch(
   } catch (error) {
     if (error instanceof FilesystemHostSupervisorError) {
       if (admission.probe) {
-        lane.breaker.recordFailure(context.now())
+        if (error.code === 'capacity') {
+          lane.breaker.deferProbe()
+        } else {
+          lane.breaker.recordFailure(context.now())
+        }
       }
       context.recordTelemetry(input, lane, startedAt, 'rejected')
       throw error

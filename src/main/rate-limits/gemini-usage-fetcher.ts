@@ -212,6 +212,14 @@ function unavailableResult(error: string): ProviderRateLimits {
   }
 }
 
+function credentialReadError(error: string): ProviderRateLimits {
+  return {
+    ...unavailableResult(error),
+    status: 'error',
+    usageMetadata: { failureKind: 'keychain-unavailable', source: 'oauth' }
+  }
+}
+
 export async function fetchGeminiRateLimits(
   geminiCliOAuthEnabled: boolean,
   snapshot: MemorySnapshot<GeminiOAuthPreparation>
@@ -222,7 +230,10 @@ export async function fetchGeminiRateLimits(
     return unavailableResult('Gemini CLI OAuth is disabled in settings')
   }
   if (snapshot.stale || snapshot.availability === 'denied') {
-    return unavailableResult('Gemini credential snapshot is stale; refresh to retry')
+    return credentialReadError('Gemini credential snapshot is stale; refresh to retry')
+  }
+  if (snapshot.availability === 'unavailable') {
+    return credentialReadError('Gemini credential snapshot is unavailable; refresh to retry')
   }
   if (snapshot.availability !== 'ready' || !snapshot.value) {
     return unavailableResult(

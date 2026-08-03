@@ -27,6 +27,11 @@ export type GeminiOAuthPreparation =
     }
 
 let preparationStore = new MemorySnapshotStore<GeminiOAuthPreparation>()
+let preparationSourceRevisions = new WeakMap<object, string>()
+
+function sourceRevision(preparation: GeminiOAuthPreparation): string {
+  return JSON.stringify(preparation)
+}
 
 async function loadPreparation(): Promise<{
   value: GeminiOAuthPreparation | null
@@ -39,10 +44,21 @@ async function loadPreparation(): Promise<{
     return { value: null, availability: 'missing' }
   }
   const clientCredentials = await extractOAuthClientCredentials()
+  const preparation: GeminiOAuthPreparation = auth
+    ? { source: 'auth-json', auth, clientCredentials }
+    : { source: 'oauth-creds', credentials: credentials!, clientCredentials }
+  const revision = sourceRevision(preparation)
+  const current = preparationStore.get()
+  if (
+    current.value &&
+    !current.stale &&
+    preparationSourceRevisions.get(current.value) === revision
+  ) {
+    return { value: current.value, availability: 'ready' }
+  }
+  preparationSourceRevisions.set(preparation, revision)
   return {
-    value: auth
-      ? { source: 'auth-json', auth, clientCredentials }
-      : { source: 'oauth-creds', credentials: credentials!, clientCredentials },
+    value: preparation,
     availability: 'ready'
   }
 }
@@ -107,15 +123,21 @@ export function publishGeminiOAuthTokenRefresh(
   if (!result.accessToken || current.stale || current.value !== preparation) {
     return
   }
+  const refreshed =
+    preparation.source === 'auth-json'
+      ? refreshedAuthValue(preparation, result)
+      : refreshedCredentialsValue(preparation, result)
+  const revision = preparationSourceRevisions.get(preparation)
+  if (revision) {
+    preparationSourceRevisions.set(refreshed, revision)
+  }
   preparationStore.publishOwned({
-    value:
-      preparation.source === 'auth-json'
-        ? refreshedAuthValue(preparation, result)
-        : refreshedCredentialsValue(preparation, result),
+    value: refreshed,
     availability: 'ready'
   })
 }
 
 export function resetGeminiOAuthPreparationSnapshotForTests(): void {
   preparationStore = new MemorySnapshotStore<GeminiOAuthPreparation>()
+  preparationSourceRevisions = new WeakMap<object, string>()
 }

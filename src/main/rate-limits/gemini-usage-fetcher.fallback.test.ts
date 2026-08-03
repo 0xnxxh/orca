@@ -236,7 +236,7 @@ describe('fetchGeminiRateLimits fallback oauth creds', () => {
       availability: 'unavailable'
     })
 
-    expect(result).toMatchObject({ status: 'unavailable', error: expect.stringContaining('stale') })
+    expect(result).toMatchObject({ status: 'error', error: expect.stringContaining('stale') })
     expect(readFileMock).not.toHaveBeenCalled()
     expect(extractCredsMock).not.toHaveBeenCalled()
     expect(netFetchMock).not.toHaveBeenCalled()

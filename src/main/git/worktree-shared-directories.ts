@@ -3,7 +3,11 @@ import { join } from 'node:path'
 import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
 import type { Repo } from '../../shared/types'
-import { orcaYamlSnapshots, refreshLocalOrcaYamlSnapshot } from './orca-yaml-snapshot-store'
+import {
+  orcaYamlSnapshots,
+  readLocalOrcaYamlSnapshot,
+  refreshLocalOrcaYamlSnapshot
+} from './orca-yaml-snapshot-store'
 
 // Why: a fresh worktree has no node_modules/.cache, and copying them is slow and
 // duplicates disk; `orca.yaml` names the ones every worktree should share instead.
@@ -20,7 +24,7 @@ import { orcaYamlSnapshots, refreshLocalOrcaYamlSnapshot } from './orca-yaml-sna
  *  corrupt every later read for the rest of the TTL. Copying on return would fix
  *  that too, but this runs on the status-polling path — the type costs nothing. */
 export function getConfiguredWorktreeSharedDirectories(repoPath: string): readonly string[] {
-  return orcaYamlSnapshots.read(repoPath).value?.sharedDirectories ?? []
+  return readLocalOrcaYamlSnapshot(repoPath).value?.sharedDirectories ?? []
 }
 
 /** Reset the process cache between tests. */
@@ -37,6 +41,20 @@ export function clearConfiguredWorktreeSharedDirectoriesCacheForTests(): void {
 export function getWorktreeSharedLinkPaths(repo: Pick<Repo, 'path' | 'symlinkPaths'>): string[] {
   return Array.from(
     new Set([...(repo.symlinkPaths ?? []), ...getConfiguredWorktreeSharedDirectories(repo.path)])
+  )
+}
+
+export async function resolveWorktreeSharedLinkPaths(
+  repo: Pick<Repo, 'path' | 'symlinkPaths'>
+): Promise<string[]> {
+  const previous = orcaYamlSnapshots.read(repo.path).value?.sharedDirectories ?? []
+  const current = await refreshLocalOrcaYamlSnapshot(repo.path)
+  return Array.from(
+    new Set([
+      ...(repo.symlinkPaths ?? []),
+      ...previous,
+      ...(current.value?.sharedDirectories ?? [])
+    ])
   )
 }
 

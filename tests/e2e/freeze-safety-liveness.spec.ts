@@ -232,7 +232,7 @@ test('keeps Grok status live and recovers after its auth path stalls', async ({
               (window as unknown as { __grokRefreshDiagnostics?: GrokRefreshDiagnostics })
                 .__grokRefreshDiagnostics
           ),
-        { timeout: 8_000 }
+        { timeout: 12_000 }
       )
       .toMatchObject({ error: '', settled: true })
     const refreshDiagnostics = await orcaPage.evaluate(

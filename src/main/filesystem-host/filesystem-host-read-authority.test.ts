@@ -39,6 +39,7 @@ describe('FilesystemHostReadAuthority', () => {
     }))
     const authority = new FilesystemHostReadAuthority({
       entryPath: '/unused',
+      platform: 'win32',
       supervisor: createSupervisor(dispatch)
     })
 
@@ -55,6 +56,24 @@ describe('FilesystemHostReadAuthority', () => {
       storageClass: 'unc',
       admission: 'foreground'
     })
+  })
+
+  it('keeps POSIX double-slash paths on the native host', async () => {
+    const dispatch = vi.fn(async (input) => ({
+      kind: 'canonicalize-path' as const,
+      canonicalPath: input.operation.path
+    }))
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      platform: 'darwin',
+      supervisor: createSupervisor(dispatch)
+    })
+
+    await authority.canonicalizePath('//server/share/repo')
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ executionHost: 'native', storageClass: 'workspace' })
+    )
   })
 
   it('maps domain and deadline failures to compatible Node error codes', async () => {

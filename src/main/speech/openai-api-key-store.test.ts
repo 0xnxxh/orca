@@ -123,7 +123,7 @@ describe('OpenAI speech API key store', () => {
     expect(safeStorageMock.decryptString).not.toHaveBeenCalled()
   })
 
-  it('publishes revocation to memory before removing persisted state', async () => {
+  it('publishes revocation after removing persisted state', async () => {
     writeStoredOpenAiKey('encrypted-key')
     const store = await loadStoreModule()
     await store.hydrateOpenAiSpeechApiKeySnapshot()
@@ -155,7 +155,7 @@ describe('OpenAI speech API key store', () => {
     writeFileSync(join(tempHome, '.orca'), 'not-a-directory')
     const store = await loadStoreModule()
 
-    await expect(store.saveOpenAiSpeechApiKey('after')).rejects.toThrow()
+    expect(() => store.saveOpenAiSpeechApiKey('after')).toThrow()
 
     expect(store.getOpenAiSpeechApiKeySnapshot()).toMatchObject({
       value: false,

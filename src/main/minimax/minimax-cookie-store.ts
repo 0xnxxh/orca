@@ -102,7 +102,7 @@ function readLegacyCookie(raw: Buffer): string {
 }
 
 export function hasMiniMaxSessionCookie(): boolean {
-  return cookieSnapshot.getFreshValue() !== null
+  return cookieSnapshot.get().value !== null
 }
 
 export function getMiniMaxCredentialSnapshot(): MemorySnapshot<{ configured: true }> {
@@ -113,7 +113,7 @@ export function getMiniMaxCredentialSnapshot(): MemorySnapshot<{ configured: tru
   }
 }
 
-export async function saveMiniMaxSessionCookie(cookie: string): Promise<void> {
+export function saveMiniMaxSessionCookie(cookie: string): void {
   const trimmed = cookie.trim()
   if (!trimmed) {
     throw new Error('MiniMax session cookie is required')
@@ -164,7 +164,7 @@ export async function hydrateMiniMaxSessionCookie(): Promise<MemorySnapshot<{ co
   return getMiniMaxCredentialSnapshot()
 }
 
-export async function clearMiniMaxSessionCookie(): Promise<void> {
-  cookieSnapshot.revoke()
+export function clearMiniMaxSessionCookie(): void {
   rmSync(getMiniMaxCookiePath(), { force: true })
+  cookieSnapshot.revoke()
 }

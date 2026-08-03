@@ -121,30 +121,11 @@ describe('registerMiniMaxCredentialsHandlers', () => {
     await expect(invoke('minimaxCredentials:saveCookie', '_token=abc')).resolves.toBeDefined()
   })
 
-  it('waits for bridged persistence before publishing save status', async () => {
-    let finishSave!: () => void
-    saveMiniMaxSessionCookieMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        finishSave = resolve
-      })
-    )
-    registerMiniMaxCredentialsHandlers(null)
-    let settled = false
-    const saving = invoke('minimaxCredentials:saveCookie', '_token=abc').then(() => {
-      settled = true
-    })
-
-    await new Promise((resolve) => setImmediate(resolve))
-    expect(settled).toBe(false)
-    expect(getMiniMaxCredentialSnapshotMock).not.toHaveBeenCalled()
-    finishSave()
-    await saving
-    expect(getMiniMaxCredentialSnapshotMock).toHaveBeenCalledOnce()
-  })
-
-  it('does not refresh after a rejected bridged save', async () => {
+  it('does not refresh after a rejected save', async () => {
     const { refresh, invalidateMiniMaxCredentialState, service } = makeRefreshMock()
-    saveMiniMaxSessionCookieMock.mockRejectedValueOnce(new Error('contended'))
+    saveMiniMaxSessionCookieMock.mockImplementationOnce(() => {
+      throw new Error('contended')
+    })
     registerMiniMaxCredentialsHandlers(service as RateLimitService)
 
     await expect(invoke('minimaxCredentials:saveCookie', '_token=abc')).rejects.toThrow('contended')
@@ -187,9 +168,11 @@ describe('registerMiniMaxCredentialsHandlers', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
   })
 
-  it('does not clear the jar or refresh after a rejected bridged clear', async () => {
+  it('does not clear the jar or refresh after a rejected clear', async () => {
     const { refresh, invalidateMiniMaxCredentialState, service } = makeRefreshMock()
-    clearMiniMaxSessionCookieMock.mockRejectedValueOnce(new Error('contended'))
+    clearMiniMaxSessionCookieMock.mockImplementationOnce(() => {
+      throw new Error('contended')
+    })
     registerMiniMaxCredentialsHandlers(service as RateLimitService)
 
     await expect(invoke('minimaxCredentials:clearCookie')).rejects.toThrow('contended')

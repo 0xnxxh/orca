@@ -41,6 +41,14 @@ function makeCohort(pending: boolean): {
   }
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 // A physical bracket press. Mod is Cmd on macOS and Ctrl elsewhere; the matcher
 // resolves brackets by `code`, so this stays layout-independent.
 function bracketPress(opts: {
@@ -174,6 +182,29 @@ describe('KeybindingService tab-switch cohort seeding', () => {
       ])
     })
     expect(service.getOverrides()).toEqual(hydrated.overrides)
+  })
+
+  it('does not overwrite a newer mutation with an older hydration result', async () => {
+    const read = deferred<string>()
+    setFilesystemHostReadClientForTests({
+      canonicalizePath: async (path) => path,
+      readOrcaYaml: async () => {
+        throw new Error('unused')
+      },
+      readKeybindings: () => read.promise,
+      readSnapshotFile: async () => Buffer.from(''),
+      prepareRateLimitPtyCwd: async (path) => path
+    })
+    const service = new KeybindingService({ homePath: home, platform: 'linux' })
+    const hydration = service.hydrate()
+    service.setActionBindings('tab.nextAllTypes', ['Mod+K'])
+
+    read.resolve(
+      JSON.stringify({ version: 1, keybindings: { 'tab.nextAllTypes': ['Mod+Shift+P'] } })
+    )
+    await hydration
+
+    expect(service.getOverrides()).toEqual({ 'tab.nextAllTypes': ['Mod+K'] })
   })
 
   it.each(PLATFORMS)(

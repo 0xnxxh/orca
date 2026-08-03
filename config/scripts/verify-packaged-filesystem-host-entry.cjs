@@ -18,12 +18,25 @@ function assertPackagedFilesystemHostEntryExists(resourcesDir) {
   return entryPath
 }
 
+function buildPackagedFilesystemHostSelfTestEnv(source = process.env, platform = process.platform) {
+  if (platform !== 'win32') {
+    return {}
+  }
+  const env = {}
+  for (const key of ['SystemRoot', 'WINDIR']) {
+    if (source[key] !== undefined) {
+      env[key] = source[key]
+    }
+  }
+  return env
+}
+
 function verifyPackagedFilesystemHostEntryBoots(resourcesDir, options = {}) {
   const entryPath = assertPackagedFilesystemHostEntryExists(resourcesDir)
   const result = spawnSync(options.execPath || process.execPath, [entryPath, '--self-test'], {
     encoding: 'utf8',
     timeout: 10_000,
-    env: {}
+    env: buildPackagedFilesystemHostSelfTestEnv()
   })
   if (result.error) {
     throw new Error(
@@ -40,5 +53,6 @@ function verifyPackagedFilesystemHostEntryBoots(resourcesDir, options = {}) {
 
 module.exports = {
   assertPackagedFilesystemHostEntryExists,
+  buildPackagedFilesystemHostSelfTestEnv,
   verifyPackagedFilesystemHostEntryBoots
 }

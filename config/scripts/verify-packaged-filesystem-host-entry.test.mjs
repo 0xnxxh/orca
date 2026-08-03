@@ -7,7 +7,11 @@ import verifier from './verify-packaged-filesystem-host-entry.cjs'
 
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
-const { assertPackagedFilesystemHostEntryExists, verifyPackagedFilesystemHostEntryBoots } = verifier
+const {
+  assertPackagedFilesystemHostEntryExists,
+  buildPackagedFilesystemHostSelfTestEnv,
+  verifyPackagedFilesystemHostEntryBoots
+} = verifier
 
 describe('packaged filesystem host entry verification', () => {
   const roots = []
@@ -46,6 +50,15 @@ describe('packaged filesystem host entry verification', () => {
       `process.stdout.write(JSON.stringify({ protocolVersion: 1 }) + '\\n')\n`
     )
     expect(() => verifyPackagedFilesystemHostEntryBoots(resources)).not.toThrow()
+  })
+
+  it('keeps only Windows loader roots in the Windows self-test environment', () => {
+    expect(
+      buildPackagedFilesystemHostSelfTestEnv(
+        { SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Tools' },
+        'win32'
+      )
+    ).toEqual({ SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows' })
   })
 
   it('rejects an entry that loads but misses the protocol self-test', () => {

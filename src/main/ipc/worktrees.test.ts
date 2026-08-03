@@ -213,7 +213,9 @@ vi.mock('../git/orca-yaml-snapshot-store', () => ({
   orcaYamlSnapshots: {
     read: readOrcaYamlSnapshotMock,
     resetForTests: vi.fn()
-  }
+  },
+  readLocalOrcaYamlSnapshot: (...args: unknown[]) => readOrcaYamlSnapshotMock(...args),
+  refreshLocalOrcaYamlSnapshot: async (...args: unknown[]) => readOrcaYamlSnapshotMock(...args)
 }))
 
 vi.mock('./worktree-logic', async (importOriginal) => {

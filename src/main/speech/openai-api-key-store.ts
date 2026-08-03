@@ -94,7 +94,7 @@ export function hasOpenAiSpeechApiKey(): boolean {
   return getOpenAiSpeechApiKeySnapshot().value === true
 }
 
-export async function saveOpenAiSpeechApiKey(apiKey: string): Promise<void> {
+export function saveOpenAiSpeechApiKey(apiKey: string): void {
   const trimmed = apiKey.trim()
   if (!trimmed) {
     throw new Error('OpenAI API key is required')
@@ -149,14 +149,14 @@ export function readOpenAiSpeechApiKey(): string {
   }
 }
 
-export async function clearOpenAiSpeechApiKey(): Promise<void> {
-  apiKeyStatusGeneration += 1
-  cachedOpenAiSpeechApiKey = null
-  publishApiKeyStatus(false, 'missing')
+export function clearOpenAiSpeechApiKey(): void {
   try {
     rmSync(getOpenAiKeyPath(), { force: true })
   } catch (error) {
     markApiKeyStatusUnavailable()
     throw error
   }
+  apiKeyStatusGeneration += 1
+  cachedOpenAiSpeechApiKey = null
+  publishApiKeyStatus(false, 'missing')
 }

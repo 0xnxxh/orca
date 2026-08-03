@@ -26,6 +26,8 @@ import type {
   FilesystemHostProcessHandle
 } from './filesystem-host-supervisor-scheduling'
 import { recordFilesystemHostSupervisorTelemetry } from './filesystem-host-supervisor-telemetry'
+import { reclaimIdleFilesystemHostProcess } from './filesystem-host-idle-process-reclamation'
+import { FilesystemHostProcessRetirement } from './filesystem-host-process-retirement'
 
 export type { FilesystemHostDispatch } from './filesystem-host-supervisor-scheduling'
 
@@ -48,8 +50,8 @@ export class FilesystemHostSupervisor {
   private readonly capacity: FilesystemHostCapacity
   private readonly domains = new FilesystemFailureDomainRegistry()
   private readonly lanes = new Map<string, FilesystemHostLane>()
-  private readonly abandoned = new Set<FilesystemHostProcessHandle>()
-  private readonly didNotExitDomainByChild = new Map<FilesystemHostProcessHandle, string>()
+  private readonly retirement = new FilesystemHostProcessRetirement()
+  private readonly launches = new Set<Promise<FilesystemHostProcessHandle>>()
   private readonly maximumPendingPerLane: number
   private readonly foregroundPendingReserve: number
   private readonly breakerRecoveryDelayMs: number
@@ -142,20 +144,21 @@ export class FilesystemHostSupervisor {
         job.reject(failure)
       }
     }
-    const processes = [...this.lanes.values()]
-      .map((lane) => lane.process)
-      .filter((process): process is FilesystemHostProcessHandle => process !== null)
+    const retirements: Promise<boolean>[] = []
     for (const lane of this.lanes.values()) {
-      lane.process = null
+      if (lane.process) {
+        retirements.push(this.retirement.retire(lane.key, lane, lane.process))
+      }
     }
-    await Promise.all(processes.map((process) => process.retire()))
+    await Promise.all(retirements)
+    await Promise.allSettled(this.launches)
   }
 
   health(): FilesystemHostSupervisorHealth {
     return snapshotFilesystemHostSupervisorHealth({
       physicalChildren: this.capacity.reservedCount,
-      abandoned: this.abandoned,
-      didNotExitDomainByChild: this.didNotExitDomainByChild,
+      abandoned: this.retirement.abandoned,
+      didNotExitDomainByChild: this.retirement.didNotExitDomainByChild,
       lanes: this.lanes
     })
   }
@@ -190,7 +193,9 @@ export class FilesystemHostSupervisor {
       {
         now: this.now,
         launch: (targetLane, admission) => this.launch(targetLane, admission),
-        abandon: (laneKey, targetLane, process) => this.abandon(laneKey, targetLane, process),
+        abandon: (laneKey, targetLane, process) => {
+          void this.retirement.retire(laneKey, targetLane, process)
+        },
         recordTelemetry: (input, targetLane, startedAt, result) =>
           recordFilesystemHostSupervisorTelemetry({
             dispatch: input,
@@ -198,7 +203,7 @@ export class FilesystemHostSupervisor {
             startedAt,
             result,
             now: this.now,
-            abandonedChildren: this.abandoned.size,
+            abandonedChildren: this.retirement.abandoned.size,
             emit: this.options.onTelemetry
           })
       },
@@ -214,7 +219,7 @@ export class FilesystemHostSupervisor {
   }
 
   private hasUnreapedChild(laneKey: string): boolean {
-    for (const domain of this.didNotExitDomainByChild.values()) {
+    for (const domain of this.retirement.didNotExitDomainByChild.values()) {
       if (domain === laneKey) {
         return true
       }
@@ -222,7 +227,20 @@ export class FilesystemHostSupervisor {
     return false
   }
 
-  private async launch(
+  private launch(
+    lane: FilesystemHostLane,
+    admission: FilesystemHostAdmissionClass
+  ): Promise<FilesystemHostProcessHandle> {
+    const launch = this.launchProcess(lane, admission)
+    this.launches.add(launch)
+    void launch.then(
+      () => this.launches.delete(launch),
+      () => this.launches.delete(launch)
+    )
+    return launch
+  }
+
+  private async launchProcess(
     lane: FilesystemHostLane,
     admission: FilesystemHostAdmissionClass
   ): Promise<FilesystemHostProcessHandle> {
@@ -231,11 +249,20 @@ export class FilesystemHostSupervisor {
     // child per breaker probe. Its physical exit clears this and reopens the lane.
     if (this.hasUnreapedChild(lane.key)) {
       throw new FilesystemHostSupervisorError(
-        'capacity',
+        'unreaped',
         'Filesystem failure domain still holds an unreaped child'
       )
     }
-    const release = this.capacity.reserve(admission)
+    let release = this.capacity.reserve(admission)
+    if (!release) {
+      await reclaimIdleFilesystemHostProcess({
+        lanes: this.lanes.values(),
+        excludedLane: lane,
+        retire: async (idleLane, process) =>
+          await this.retirement.retire(idleLane.key, idleLane, process)
+      })
+      release = this.capacity.reserve(admission)
+    }
     if (!release) {
       throw new FilesystemHostSupervisorError(
         'capacity',
@@ -243,36 +270,29 @@ export class FilesystemHostSupervisor {
       )
     }
     let process: FilesystemHostProcessHandle | null = null
-    process = await this.startProcess({
-      entryPath: this.options.entryPath,
-      onPhysicalExit: () => {
-        release()
-        if (process) {
-          this.abandoned.delete(process)
-          this.didNotExitDomainByChild.delete(process)
+    try {
+      process = await this.startProcess({
+        entryPath: this.options.entryPath,
+        onPhysicalExit: () => {
+          release()
+          if (process) {
+            this.retirement.physicalExit(lane, process)
+          }
         }
-        if (lane.process === process) {
-          lane.process = null
-        }
-      }
-    })
-    lane.process = process
-    return process
-  }
-
-  private abandon(
-    laneKey: string,
-    lane: FilesystemHostLane,
-    process: FilesystemHostProcessHandle
-  ): void {
-    if (lane.process === process) {
-      lane.process = null
+      })
+    } catch (error) {
+      release()
+      throw error
     }
-    this.abandoned.add(process)
-    void process.retire().then((didExit) => {
-      if (!didExit) {
-        this.didNotExitDomainByChild.set(process, laneKey)
-      }
-    })
+    this.retirement.track(process, release)
+    lane.process = process
+    if (this.disposed) {
+      await this.retirement.retire(lane.key, lane, process)
+      throw new FilesystemHostSupervisorError(
+        'unavailable',
+        'Filesystem host supervisor is disposed'
+      )
+    }
+    return process
   }
 }
