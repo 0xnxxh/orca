@@ -343,7 +343,25 @@ describe('SidebarSettingsHelpMenu', () => {
   // intermediate column that is allowed to shrink — otherwise they share one row and overflow w-52.
   it('stacks the menu hint under the label in a shrinkable column', () => {
     const html = renderToStaticMarkup(<SidebarSettingsHelpMenu />)
-    expect(html).toContain('class="flex min-w-0 flex-col gap-0.5"')
+    const columnClass = /class="([^"]*flex-col[^"]*)"/.exec(html)?.[1] ?? ''
+    expect(columnClass.split(' ')).toEqual(expect.arrayContaining(['flex', 'min-w-0', 'flex-col']))
+  })
+
+  // #10590: web's updater bridge is `check: () => Promise.resolve()`, so the gesture cannot work
+  // there — the menu must not advertise it, matching the Updates settings section.
+  it('omits the menu hint in the web client, whose updater bridge is a no-op', async () => {
+    ;(window as unknown as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ = true
+    try {
+      const visibleText = renderToStaticMarkup(<SidebarSettingsHelpMenu />).replace(/<[^>]*>/g, ' ')
+      expect(visibleText).toContain('Check for Updates')
+      expect(visibleText).not.toMatch(/RC/)
+      expect(visibleText).not.toMatch(/perf/)
+
+      const container = await renderMenu()
+      expect(findMenuItem(container, 'Check for Updates').getAttribute('title')).toBeNull()
+    } finally {
+      delete (window as unknown as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
+    }
   })
 
   it('renders shortcut keys in the settings tooltip', () => {

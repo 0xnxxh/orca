@@ -33,11 +33,13 @@ import { SetupGuideProgressRing } from '../setup-guide/SetupGuideProgressRing'
 import { useSetupGuideProgress } from '../setup-guide/use-setup-guide-progress'
 import { SidebarFeedbackDialog } from './SidebarFeedbackDialog'
 import { translate } from '@/i18n/i18n'
+import { cn } from '@/lib/utils'
 import {
   getUpdateCheckClickOptions,
   getUpdateCheckHint,
   getUpdateCheckMenuHint
 } from '@/lib/update-check-click-options'
+import { isWebClientLocation } from '@/lib/web-client-location'
 
 const DOCS_URL = 'https://www.onorca.dev/docs'
 const CHANGELOG_URL = 'https://onorca.dev/changelog'
@@ -104,8 +106,11 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
   const lastShowOnboardingAtRef = React.useRef(0)
   const updateCheckModifiersRef = React.useRef(NO_UPDATE_CHECK_MODIFIERS)
   const mountedRef = useMountedRef()
-  const updateCheckHint = getUpdateCheckHint()
-  const updateCheckMenuHint = getUpdateCheckMenuHint()
+  // Why: the web client's updater bridge resolves without doing anything, so advertising the
+  // modifier gestures there would teach a gesture that cannot work.
+  const showUpdateCheckHint = !isWebClientLocation()
+  const updateCheckHint = showUpdateCheckHint ? getUpdateCheckHint() : undefined
+  const updateCheckMenuHint = showUpdateCheckHint ? getUpdateCheckMenuHint() : null
 
   const showMilestones =
     setupProgress.ready && setupProgress.coreDoneCount < setupProgress.coreTotal
@@ -162,7 +167,9 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
     openSettingsPage()
   }
 
-  const handleCheckForUpdatesPointerDown = (event: React.PointerEvent): void => {
+  const captureUpdateCheckModifiers = (
+    event: Pick<React.PointerEvent, 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>
+  ): void => {
     updateCheckModifiersRef.current = {
       altKey: event.altKey,
       ctrlKey: event.ctrlKey,
@@ -177,12 +184,7 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return
     }
-    updateCheckModifiersRef.current = {
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      shiftKey: event.shiftKey
-    }
+    captureUpdateCheckModifiers(event)
   }
 
   const handleCheckForUpdates = (): void => {
@@ -337,17 +339,17 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              className="items-start"
+              className={cn(updateCheckMenuHint && 'items-start')}
               disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
               onKeyDown={handleCheckForUpdatesKeyDown}
-              onPointerDown={handleCheckForUpdatesPointerDown}
+              onPointerDown={captureUpdateCheckModifiers}
               onSelect={handleCheckForUpdates}
               title={updateCheckHint}
             >
               {updateStatus.state === 'checking' ? (
-                <Loader2 className="mt-0.5 size-3.5 animate-spin" />
+                <Loader2 className={cn('size-3.5 animate-spin', updateCheckMenuHint && 'mt-0.5')} />
               ) : (
-                <RefreshCw className="mt-0.5 size-3.5" />
+                <RefreshCw className={cn('size-3.5', updateCheckMenuHint && 'mt-0.5')} />
               )}
               {/* Why: min-w-0 lets this stack shrink inside the w-52 menu; a flex item defaults to
                   min-width:auto and the non-mac hint would overflow rather than wrap. */}
@@ -358,7 +360,9 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
                     'Check for Updates'
                   )}
                 </span>
-                <span className="text-[11px] text-muted-foreground">{updateCheckMenuHint}</span>
+                {updateCheckMenuHint ? (
+                  <span className="text-[11px] text-muted-foreground">{updateCheckMenuHint}</span>
+                ) : null}
               </span>
             </DropdownMenuItem>
             {showAdminOptions ? (
