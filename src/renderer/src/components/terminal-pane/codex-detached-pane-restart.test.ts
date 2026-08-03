@@ -15,6 +15,7 @@ const ACCOUNT_B = 'b@example.com'
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
 const OLD_PTY = 'wt1@@old'
 const NEW_PTY = 'wt1@@new'
+const UNLOCATED_PTY = 'wt1@@unlocated'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -164,6 +165,43 @@ describe('codex detached pane restart executor', () => {
 
     expect(hasAddedPendingCodexPaneRestart(unchanged, unchanged)).toBe(false)
     expect(hasAddedPendingCodexPaneRestart({ [OLD_PTY]: true }, {})).toBe(true)
+  })
+
+  it('contains one claim failure so later queued panes still restart', async () => {
+    useAppStore
+      .getState()
+      .markCodexRestartNotices([
+        { ptyId: UNLOCATED_PTY, previousAccountLabel: ACCOUNT_A, nextAccountLabel: ACCOUNT_B }
+      ])
+    useAppStore.getState().queueCodexPaneRestarts([UNLOCATED_PTY])
+    seedQueuedRestart()
+    const consumePendingCodexPaneRestart = useAppStore.getState().consumePendingCodexPaneRestart
+    useAppStore.setState({
+      consumePendingCodexPaneRestart: (ptyId) => {
+        if (ptyId === UNLOCATED_PTY) {
+          throw new Error('corrupt restored claim')
+        }
+        return consumePendingCodexPaneRestart(ptyId)
+      }
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const uninstall = installCodexDetachedPaneRestartExecutor()
+
+    try {
+      await vi.waitFor(() => expect(window.api.pty.spawn).toHaveBeenCalledTimes(1))
+
+      const state = useAppStore.getState()
+      expect(state.pendingCodexPaneRestartIds).toEqual({})
+      expect(awaitsCodexRestartAnswer(state.codexRestartNoticeByPtyId[UNLOCATED_PTY])).toBe(true)
+      expect(state.ptyIdsByTabId['tab-1']).toEqual([NEW_PTY])
+      expect(warn).toHaveBeenCalledWith(
+        '[codex-restart] detached pane restart failed:',
+        expect.objectContaining({ message: 'corrupt restored claim' })
+      )
+    } finally {
+      uninstall()
+      warn.mockRestore()
+    }
   })
 
   it('leaves a PTY owned by a mounted transport to the pane effect', async () => {

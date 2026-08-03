@@ -79,12 +79,16 @@ function scheduleClaimSweep(): void {
       return
     }
     sweepRunning = true
-    void sweepUnclaimedCodexPaneRestarts().finally(() => {
-      sweepRunning = false
-      if (executorInstalled && sweepRequestedAfterRun) {
-        sweepRequestedAfterRun = false
-        scheduleClaimSweep()
-      }
-    })
+    void sweepUnclaimedCodexPaneRestarts()
+      .catch((err) => {
+        console.warn('[codex-restart] detached restart sweep failed:', err)
+      })
+      .finally(() => {
+        sweepRunning = false
+        if (executorInstalled && sweepRequestedAfterRun) {
+          sweepRequestedAfterRun = false
+          scheduleClaimSweep()
+        }
+      })
   })
 }
