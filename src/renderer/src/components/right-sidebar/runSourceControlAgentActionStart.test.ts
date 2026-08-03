@@ -71,6 +71,122 @@ describe('runSourceControlAgentActionStart', () => {
     expect(mocks.toastError).not.toHaveBeenCalled()
   })
 
+  it('notifies onLaunchAccepted as soon as the agent tab is created, before prompt delivery', async () => {
+    let resolveDelivery: (value: {
+      delivered: boolean
+      failureNotified: boolean
+    }) => void = () => {}
+    const promptDeliveryResult = new Promise<{ delivered: boolean; failureNotified: boolean }>(
+      (resolve) => {
+        resolveDelivery = resolve
+      }
+    )
+    const onLaunchAccepted = vi.fn()
+    const onLaunchAborted = vi.fn()
+    mocks.launchAgentInNewTab.mockReturnValue({
+      tabId: 'tab-1',
+      startupPlan: {} as never,
+      pasteDraftAfterLaunch: true,
+      promptDeliveryResult
+    })
+
+    const launchPromise = runSourceControlAgentActionStart(
+      buildArgs({ onLaunchAccepted, onLaunchAborted })
+    )
+
+    await vi.waitFor(() => {
+      expect(onLaunchAccepted).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.onLaunched).not.toHaveBeenCalled()
+
+    resolveDelivery({ delivered: true, failureNotified: false })
+    await expect(launchPromise).resolves.toBe(true)
+    expect(mocks.onLaunched).toHaveBeenCalledTimes(1)
+    expect(onLaunchAborted).not.toHaveBeenCalled()
+  })
+
+  // Why: onLaunchAccepted only parks launch-scoped state; firing it twice or on a dead
+  // launch would leave a caller believing an agent is running.
+  it('fires onLaunchAccepted exactly once and only when a tab was created', async () => {
+    const onLaunchAccepted = vi.fn()
+    mocks.launchAgentInNewTab.mockReturnValue({
+      tabId: 'tab-1',
+      startupPlan: {} as never,
+      pasteDraftAfterLaunch: true,
+      promptDeliveryResult: Promise.resolve({ delivered: true, failureNotified: false })
+    })
+
+    await expect(runSourceControlAgentActionStart(buildArgs({ onLaunchAccepted }))).resolves.toBe(
+      true
+    )
+    expect(onLaunchAccepted).toHaveBeenCalledTimes(1)
+
+    vi.clearAllMocks()
+    mocks.launchAgentInNewTab.mockReturnValue(null)
+
+    await expect(runSourceControlAgentActionStart(buildArgs({ onLaunchAccepted }))).resolves.toBe(
+      false
+    )
+    expect(onLaunchAccepted).not.toHaveBeenCalled()
+  })
+
+  // Why: irreversible host writes (fixing replies, thread resolves) hang off onLaunched, so a
+  // launch whose prompt never landed must report the abort and never reach onLaunched.
+  it('aborts an accepted launch when deferred prompt delivery fails', async () => {
+    const onLaunchAccepted = vi.fn()
+    const onLaunchAborted = vi.fn()
+    mocks.launchAgentInNewTab.mockReturnValue({
+      tabId: 'tab-1',
+      startupPlan: {} as never,
+      pasteDraftAfterLaunch: true,
+      promptDeliveryResult: Promise.resolve({ delivered: false, failureNotified: true })
+    })
+
+    await expect(
+      runSourceControlAgentActionStart(buildArgs({ onLaunchAccepted, onLaunchAborted }))
+    ).resolves.toBe(false)
+
+    expect(onLaunchAccepted).toHaveBeenCalledTimes(1)
+    expect(onLaunchAborted).toHaveBeenCalledTimes(1)
+    expect(mocks.onLaunched).not.toHaveBeenCalled()
+  })
+
+  it('aborts an accepted launch when promptDeliveryResult rejects', async () => {
+    const onLaunchAccepted = vi.fn()
+    const onLaunchAborted = vi.fn()
+    const originalConsole = console
+    vi.stubGlobal('console', { ...originalConsole, error: vi.fn() })
+    mocks.launchAgentInNewTab.mockReturnValue({
+      tabId: 'tab-1',
+      startupPlan: {} as never,
+      pasteDraftAfterLaunch: true,
+      promptDeliveryResult: Promise.reject(new Error('boom'))
+    })
+
+    try {
+      await expect(
+        runSourceControlAgentActionStart(buildArgs({ onLaunchAccepted, onLaunchAborted }))
+      ).resolves.toBe(false)
+
+      expect(onLaunchAccepted).toHaveBeenCalledTimes(1)
+      expect(onLaunchAborted).toHaveBeenCalledTimes(1)
+      expect(mocks.onLaunched).not.toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('console', originalConsole)
+    }
+  })
+
+  it('does not report an abort when no tab was ever created', async () => {
+    const onLaunchAborted = vi.fn()
+    mocks.launchAgentInNewTab.mockReturnValue(null)
+
+    await expect(runSourceControlAgentActionStart(buildArgs({ onLaunchAborted }))).resolves.toBe(
+      false
+    )
+
+    expect(onLaunchAborted).not.toHaveBeenCalled()
+  })
+
   it('keeps the source-control dialog open when deferred prompt delivery fails', async () => {
     mocks.launchAgentInNewTab.mockReturnValue({
       tabId: 'tab-1',

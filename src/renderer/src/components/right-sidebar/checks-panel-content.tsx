@@ -2020,7 +2020,13 @@ function PRCommentGroupView({
   // nested reply — can be replied to, not just the thread root.
   const renderReplyComposer = (comment: PRComment): React.ReactNode =>
     replyingCommentId === comment.id && onReply ? (
-      <div className={cn('px-3 pb-2', group.kind === 'thread' && 'pl-6')}>
+      <div
+        className={cn(
+          'px-3 pb-2',
+          // Why: nest the composer under the parent the same way GitHub nests thread replies.
+          group.kind === 'thread' && 'ml-3 border-l-2 border-border/50 pl-3'
+        )}
+      >
         <RightPanelCommentComposer
           placeholder={translate(
             'auto.components.right.sidebar.checks.panel.content.ba20d1a896',

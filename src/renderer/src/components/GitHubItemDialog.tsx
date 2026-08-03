@@ -153,6 +153,10 @@ import {
   getCommentReplyTargetCandidates,
   resolveCommentReplyTarget
 } from '@/components/comment-reply-target-state'
+import {
+  attachPRReviewReplyParent,
+  canPostPRReviewThreadReply
+} from '@/components/right-sidebar/pr-comments-ai-launch-ack'
 import { useAppStore } from '@/store'
 import { useAllWorktrees } from '@/store/selectors'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
@@ -3253,8 +3257,10 @@ function ConversationTab({
         )
         return false
       }
+      // Why: nest under review threads (path/threadId/discussion_r); never post a
+      // separate top-level conversation comment for those.
       const result =
-        comment.path && item.type === 'pr'
+        item.type === 'pr' && canPostPRReviewThreadReply(comment)
           ? await addPRReviewCommentReplyForRepo({
               repoPath: repoPath ?? '',
               repoId: item.repoId,
@@ -3284,7 +3290,11 @@ function ConversationTab({
         )
         return false
       }
-      onCommentAdded(result.comment)
+      onCommentAdded(
+        item.type === 'pr' && canPostPRReviewThreadReply(comment)
+          ? attachPRReviewReplyParent(result.comment, comment)
+          : result.comment
+      )
       setReplyingTo(null)
       toast.success(translate('auto.components.GitHubItemDialog.10f4ff5be8', 'Reply posted.'))
       return true
