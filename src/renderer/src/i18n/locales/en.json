@@ -7192,7 +7192,12 @@
           "4a342f44c1": "Advanced Connection",
           "e9609ddca6": "Proxy, jump host, and connection reuse",
           "8c922dffba": "Reuse SSH connection for faster setup",
-          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions."
+          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions.",
+          "editTitle": "Edit SSH host",
+          "addTitle": "Add SSH host",
+          "editDescription": "Update connection details for this machine. Changes apply on next connect.",
+          "addDescription": "Add a persistent machine you can log into over SSH.",
+          "editingPrefix": "Editing"
         },
         "TasksPane": {
           "f71d8a9dd3": "Task Providers",
