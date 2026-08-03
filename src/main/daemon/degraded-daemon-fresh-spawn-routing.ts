@@ -20,6 +20,18 @@ export class DegradedDaemonFreshSpawnRouter {
     return this.target === this.fallback ? true : undefined
   }
 
+  supportsGitGuardHost(sessionId?: string): boolean {
+    const provider = (sessionId ? this.sessionProviders.get(sessionId) : undefined) ?? this.target
+    return provider.supportsGitCredentialGuardHost?.(sessionId) === true
+  }
+
+  canProvideSnapshot(sessionId: string): boolean {
+    return (
+      this.sessionProviders.get(sessionId)?.canProvideAuthoritativeBufferSnapshot?.(sessionId) ===
+      true
+    )
+  }
+
   async recover(): Promise<boolean> {
     if (this.target === this.current) {
       return true

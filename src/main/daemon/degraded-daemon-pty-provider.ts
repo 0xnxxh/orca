@@ -20,6 +20,8 @@ import { probePtyOwners } from './daemon-pty-liveness-probe'
 import { DegradedDaemonFreshSpawnRouter } from './degraded-daemon-fresh-spawn-routing'
 
 export class DegradedDaemonPtyProvider implements IPtyProvider {
+  readonly isDegraded = true
+
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private fallback: IPtyProvider
@@ -72,13 +74,15 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   recoverFreshSpawnRouting = (): Promise<boolean> => this.freshSpawns.recover()
 
-  async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
-    return this.freshSpawns.spawn(opts)
-  }
+  supportsGitCredentialGuardHost = (id?: string): boolean =>
+    this.freshSpawns.supportsGitGuardHost(id)
 
-  async attach(id: string): Promise<void> {
-    await this.providerFor(id).attach(id)
-  }
+  canProvideAuthoritativeBufferSnapshot = (id: string): boolean =>
+    this.freshSpawns.canProvideSnapshot(id)
+
+  spawn = (opts: PtySpawnOptions): Promise<PtySpawnResult> => this.freshSpawns.spawn(opts)
+
+  attach = (id: string): Promise<void> => this.providerFor(id).attach(id)
 
   hasPty(id: string): boolean {
     const mapped = this.sessionProviders.get(id)
@@ -149,9 +153,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return (await this.providerFor(id).getBufferSnapshot?.(id, opts)) ?? null
   }
 
-  async clearBuffer(id: string): Promise<void> {
-    await this.providerFor(id).clearBuffer(id)
-  }
+  clearBuffer = (id: string): Promise<void> => this.providerFor(id).clearBuffer(id)
 
   async closeStartupQueryAuthority(id: string): Promise<number> {
     return (await this.providerFor(id).closeStartupQueryAuthority?.(id)) ?? 0

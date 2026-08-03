@@ -125,6 +125,8 @@ function createDaemonAdapter(
   return {
     ...createProvider(label, sessions, true),
     protocolVersion: 13,
+    supportsGitCredentialGuardHost: vi.fn(() => true),
+    canProvideAuthoritativeBufferSnapshot: vi.fn(() => true),
     listSessions: vi.fn(async () => []),
     ackColdRestore: vi.fn(),
     clearTombstone: vi.fn(),
@@ -254,9 +256,12 @@ describe('DegradedDaemonPtyProvider', () => {
       const recovered = await provider.spawn({ cols: 80, rows: 24, worktreeId: 'wt-1' })
 
       expect(provider.routesFreshSpawnsToLocalProvider).toBeUndefined()
+      expect(provider.isDegraded).toBe(true)
+      expect(provider.supportsGitCredentialGuardHost()).toBe(true)
       expect(fallback.spawn).toHaveBeenCalledOnce()
       expect(current.spawn).toHaveBeenCalledWith({ cols: 80, rows: 24, worktreeId: 'wt-1' })
       expect(recovered.id).toBe('daemon-new')
+      expect(provider.canProvideAuthoritativeBufferSnapshot(recovered.id)).toBe(true)
     } finally {
       now.mockRestore()
     }

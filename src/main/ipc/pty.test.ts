@@ -1078,6 +1078,41 @@ describe('registerPtyHandlers', () => {
     }
   )
 
+  it('recovers degraded routing for a fresh runtime session with a stable id', async () => {
+    let degraded = true
+    const daemonSpawn = vi.fn(async (options: { sessionId?: string; isNewSession?: boolean }) => ({
+      id: options.sessionId ?? 'unexpected-fallback-id'
+    }))
+    const provider = createAgentClaimProvider({ spawn: daemonSpawn })
+    const recoverFreshSpawnRouting = vi.fn(async () => {
+      degraded = false
+      return true
+    })
+    Object.defineProperties(provider, {
+      routesFreshSpawnsToLocalProvider: {
+        configurable: true,
+        get: () => (degraded ? true : undefined)
+      },
+      recoverFreshSpawnRouting: { value: recoverFreshSpawnRouting }
+    })
+    setLocalPtyProvider(provider as never)
+    const controller = registerAgentClaimController()
+
+    await controller.spawn({
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp/recovered-stable-session',
+      worktreeId: 'repo::/tmp/recovered-stable-session',
+      sessionId: 'serve-stable-session',
+      isNewSession: true
+    })
+
+    expect(recoverFreshSpawnRouting).toHaveBeenCalledOnce()
+    expect(daemonSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'serve-stable-session', isNewSession: true })
+    )
+  })
+
   it('adopts a daemon owner recovered from provider listing before claimed ensure', async () => {
     const owner: AgentSessionOwnerBinding = {
       claim: recoveredAgentClaim,

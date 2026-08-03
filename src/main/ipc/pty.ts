@@ -1452,9 +1452,10 @@ function routesFreshSpawnsToLocalProvider(provider: IPtyProvider): boolean {
 function recoverFreshSpawnProviderRouting(
   provider: IPtyProvider,
   connectionId: string | null | undefined,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  isNewSession = sessionId === undefined
 ): Promise<boolean> | undefined {
-  if (connectionId || sessionId || !routesFreshSpawnsToLocalProvider(provider)) {
+  if (connectionId || (!isNewSession && sessionId) || !routesFreshSpawnsToLocalProvider(provider)) {
     return
   }
   return provider.recoverFreshSpawnRouting?.()
@@ -3830,7 +3831,8 @@ export function registerPtyHandlers(
       const freshSpawnRecovery = recoverFreshSpawnProviderRouting(
         provider,
         args.connectionId,
-        args.sessionId
+        args.sessionId,
+        args.isNewSession
       )
       if (freshSpawnRecovery) {
         await freshSpawnRecovery
@@ -3866,7 +3868,8 @@ export function registerPtyHandlers(
         sessionId !== undefined ? getRelayPtyId(args.connectionId, sessionId) : undefined
       const effectiveSessionAppId =
         sessionId !== undefined ? getAppPtyId(args.connectionId, sessionId) : undefined
-      const isMintedSessionId = callerRequestedSessionId === undefined && isDaemonHostSpawn
+      const isNewDaemonSession =
+        isDaemonHostSpawn && (callerRequestedSessionId === undefined || args.isNewSession === true)
       const expectedWslDistro = !args.connectionId
         ? (resolveWslSessionContext({
             cwd,
@@ -4030,7 +4033,7 @@ export function registerPtyHandlers(
         rows: args.rows,
         cwd,
         env,
-        ...(isMintedSessionId ? { isNewSession: true } : {})
+        ...(isNewDaemonSession ? { isNewSession: true } : {})
       }
       if (!args.connectionId && !isDaemonHostSpawn) {
         spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
@@ -4186,8 +4189,8 @@ export function registerPtyHandlers(
           if (isDaemonHostSpawn && expectedPtyId) {
             preparedProvisionalExecutionContext =
               runtime?.preparePtyExecutionContext?.(expectedPtyId, expectedWslDistro, {
-                resetIncarnation: isMintedSessionId,
-                preserveExisting: !isMintedSessionId
+                resetIncarnation: isNewDaemonSession,
+                preserveExisting: !isNewDaemonSession
               }) ?? false
           }
           const sequenceBeforeProviderSpawn = expectedPtyId
@@ -4296,7 +4299,10 @@ export function registerPtyHandlers(
                 : result.wslDistro
           )
         } catch (err) {
-          if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {
+          if (
+            (isNewDaemonSession || preparedProvisionalExecutionContext) &&
+            effectiveSessionAppId
+          ) {
             runtime?.preparePtyExecutionContext?.(effectiveSessionAppId, null, {
               resetIncarnation: true
             })
@@ -4339,7 +4345,7 @@ export function registerPtyHandlers(
               store?.markSshRemotePtyLease(args.connectionId, effectiveSessionRelayId, 'expired')
             }
           }
-          if (isMintedSessionId && sessionId !== undefined) {
+          if (isNewDaemonSession && sessionId !== undefined) {
             clearProviderPtyState(sessionId)
           }
           throw spawnError
