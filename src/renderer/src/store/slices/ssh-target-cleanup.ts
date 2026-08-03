@@ -207,6 +207,9 @@ export function buildRemovedSshTargetCleanupPatch(
   delete nextTransientClearedConnections[targetId]
   const nextConnectionStates = new Map(state.sshConnectionStates)
   const removedConnectionState = nextConnectionStates.delete(targetId)
+  // Why: a torn-down VM must stop authorizing writes, or the gate passes and main rejects instead.
+  const nextRuntimeOwnedGenerations = new Map(state.runtimeOwnedSshConnectionGenerations)
+  const removedRuntimeOwnedGeneration = nextRuntimeOwnedGenerations.delete(targetId)
   const nextLabels = new Map(state.sshTargetLabels)
   const removedLabel = nextLabels.delete(targetId)
   const nextHydrated = new Set(state.remoteWorkspaceHydratedTargetIds)
@@ -236,6 +239,7 @@ export function buildRemovedSshTargetCleanupPatch(
   const changed =
     removedTransientClearBlock ||
     removedConnectionState ||
+    removedRuntimeOwnedGeneration ||
     removedLabel ||
     removedHydrated ||
     removedSyncStatus ||
@@ -258,6 +262,9 @@ export function buildRemovedSshTargetCleanupPatch(
       ? { transientClearedAgentStatusConnectionIds: nextTransientClearedConnections }
       : {}),
     ...(removedConnectionState ? { sshConnectionStates: nextConnectionStates } : {}),
+    ...(removedRuntimeOwnedGeneration
+      ? { runtimeOwnedSshConnectionGenerations: nextRuntimeOwnedGenerations }
+      : {}),
     ...(removedLabel ? { sshTargetLabels: nextLabels } : {}),
     ...(removedHydrated ? { remoteWorkspaceHydratedTargetIds: nextHydrated } : {}),
     ...(removedSyncStatus ? { remoteWorkspaceSyncStatusByTargetId: nextSyncStatus } : {}),
