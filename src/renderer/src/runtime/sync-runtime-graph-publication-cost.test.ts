@@ -46,6 +46,72 @@ function makeCountingState(worktreeCount: number): {
   }
 }
 
+// Why: tab.title is read only while a worktree's snapshot content is built, so a counting
+// getter measures rebuilds rather than reads — the reads above survive a cheap hoist alone.
+function makeTitleCountingState(worktreeCount: number): {
+  state: AppState
+  titleReads: () => number
+  resetTitleReads: () => void
+  withOneChangedWorktree: () => AppState
+} {
+  let titleReads = 0
+  const leafIdFor = (index: number): string =>
+    `${String(index).padStart(8, '0')}-1111-4111-8111-111111111111`
+  const makeTab = (index: number, label: string): unknown => ({
+    id: `title-term-${index}`,
+    customTitle: null,
+    ptyId: null,
+    get title() {
+      titleReads++
+      return label
+    }
+  })
+
+  const tabsByWorktree: Record<string, unknown[]> = {}
+  const terminalLayoutsByTabId: Record<string, unknown> = {}
+  for (let i = 0; i < worktreeCount; i++) {
+    tabsByWorktree[`repo::/title-wt-${i}`] = [makeTab(i, `Agent ${i}`)]
+    terminalLayoutsByTabId[`title-term-${i}`] = {
+      root: { type: 'leaf', leafId: leafIdFor(i) },
+      activeLeafId: leafIdFor(i),
+      expandedLeafId: null
+    }
+  }
+
+  const state = {
+    tabsByWorktree,
+    terminalLayoutsByTabId,
+    runtimePaneTitlesByTabId: {},
+    groupsByWorktree: {},
+    activeGroupIdByWorktree: {},
+    unifiedTabsByWorktree: {},
+    tabBarOrderByWorktree: {},
+    activeFileId: null,
+    activeFileIdByWorktree: {},
+    openFiles: [],
+    editorDrafts: {},
+    activeTabId: null,
+    agentStatusByPaneKey: {},
+    browserTabsByWorktree: {}
+  } as unknown as AppState
+
+  return {
+    state,
+    titleReads: () => titleReads,
+    resetTitleReads: () => {
+      titleReads = 0
+    },
+    withOneChangedWorktree: () =>
+      ({
+        ...state,
+        tabsByWorktree: {
+          ...tabsByWorktree,
+          'repo::/title-wt-7': [makeTab(7, 'Agent 7 (done)')]
+        }
+      }) as unknown as AppState
+  }
+}
+
 describe('mobile session publication cost', () => {
   it('does not redo per-worktree work when nothing changed', () => {
     const WORKTREES = 300
@@ -84,5 +150,32 @@ describe('mobile session publication cost', () => {
     buildMobileSessionTabSnapshots(next)
 
     expect(reads()).toBeLessThan(WORKTREES / 10)
+  })
+
+  it('builds no worktree content when nothing changed', () => {
+    const { state, titleReads, resetTitleReads } = makeTitleCountingState(300)
+
+    buildMobileSessionTabSnapshots(state)
+    expect(titleReads()).toBeGreaterThan(0)
+    resetTitleReads()
+
+    buildMobileSessionTabSnapshots(state)
+
+    expect(titleReads()).toBe(0)
+  })
+
+  it('builds content only for the worktree whose inputs changed', () => {
+    const WORKTREES = 300
+    const { state, titleReads, resetTitleReads, withOneChangedWorktree } =
+      makeTitleCountingState(WORKTREES)
+
+    buildMobileSessionTabSnapshots(state)
+    const fullBuildReads = titleReads()
+    resetTitleReads()
+
+    buildMobileSessionTabSnapshots(withOneChangedWorktree())
+
+    expect(titleReads()).toBeGreaterThan(0)
+    expect(titleReads()).toBeLessThan(fullBuildReads / WORKTREES + 1)
   })
 })

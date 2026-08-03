@@ -159,7 +159,11 @@ let mobileSessionSnapshotVersion = 0
 // unchanged, and bump the version only for worktrees that actually changed.
 const mobileSessionSnapshotCacheByWorktree = new Map<
   string,
-  { content: unknown; snapshot: RuntimeMobileSessionTabsSnapshot }
+  {
+    inputs: MobileSessionWorktreeInputs
+    content: unknown
+    snapshot: RuntimeMobileSessionTabsSnapshot
+  }
 >()
 
 // Structural equality under JSON-serialization semantics (undefined-valued
@@ -205,6 +209,13 @@ let cachedMobileTerminalThemeSystemPrefersDark: boolean | null = null
 let cachedMobileTerminalTheme: RuntimeMobileTerminalTheme | undefined
 let hasCachedMobileTerminalTheme = false
 const EMPTY_NARROWED_BY_KEY: ReadonlyMap<string, never> = new Map<string, never>()
+// Why: absent per-worktree slices must resolve to one shared value, or every empty
+// worktree would present a fresh `[]` and never compare equal to its last publication.
+const EMPTY_WORKTREE_TERMINAL_TABS: AppState['tabsByWorktree'][string] = []
+const EMPTY_WORKTREE_BROWSER_WORKSPACES: AppState['browserTabsByWorktree'][string] = []
+const EMPTY_WORKTREE_UNIFIED_TABS: AppState['unifiedTabsByWorktree'][string] = []
+const EMPTY_WORKTREE_TAB_GROUPS: AppState['groupsByWorktree'][string] = []
+const EMPTY_WORKTREE_OPEN_FILE_IDS: readonly string[] = []
 const mobileSessionPublicationEpoch = `renderer:${createBrowserUuid()}`
 
 export function setRuntimeGraphStoreStateGetter(getter: (() => AppState) | null): void {
@@ -908,9 +919,10 @@ function buildMobileSessionWorktreeInputs(
   worktreeId: string,
   publication: MobileSessionPublicationInputs
 ): MobileSessionWorktreeInputs {
-  const terminalTabs = state.tabsByWorktree[worktreeId] ?? []
+  const terminalTabs = state.tabsByWorktree[worktreeId] ?? EMPTY_WORKTREE_TERMINAL_TABS
   const terminalTabIds = terminalTabs.map((tab) => tab.id)
-  const browserWorkspaces = publication.browserTabsByWorktree[worktreeId] ?? []
+  const browserWorkspaces =
+    publication.browserTabsByWorktree[worktreeId] ?? EMPTY_WORKTREE_BROWSER_WORKSPACES
   const pagesByBrowserWorkspaceId = narrowRecordByKeys(
     state.browserPagesByWorkspace,
     browserWorkspaces.map((workspace) => workspace.id)
@@ -922,7 +934,8 @@ function buildMobileSessionWorktreeInputs(
     }
   }
   const openFilesById = publication.openFileIndexes.byWorktreeAndId.get(worktreeId)
-  const openFileIds = publication.openFileIndexes.idsByWorktree.get(worktreeId) ?? []
+  const openFileIds =
+    publication.openFileIndexes.idsByWorktree.get(worktreeId) ?? EMPTY_WORKTREE_OPEN_FILE_IDS
   // Why: the global activeFileId/activeTabType fallbacks only matter when the active file lives here, so resolve them per worktree.
   const resolvedActiveFileId = state.activeFileIdByWorktree?.[worktreeId] ?? state.activeFileId
   const activeEditorFileId =
@@ -932,8 +945,8 @@ function buildMobileSessionWorktreeInputs(
     worktreeId,
     terminalTabs,
     browserWorkspaces,
-    unifiedTabs: state.unifiedTabsByWorktree[worktreeId] ?? [],
-    groups: state.groupsByWorktree[worktreeId] ?? [],
+    unifiedTabs: state.unifiedTabsByWorktree[worktreeId] ?? EMPTY_WORKTREE_UNIFIED_TABS,
+    groups: state.groupsByWorktree[worktreeId] ?? EMPTY_WORKTREE_TAB_GROUPS,
     tabBarOrder: state.tabBarOrderByWorktree[worktreeId],
     activeGroupId: state.activeGroupIdByWorktree[worktreeId] ?? null,
     tabGroupLayout: (state.layoutByWorktree ?? EMPTY_LAYOUT_BY_WORKTREE)[worktreeId],
@@ -964,6 +977,64 @@ function buildMobileSessionWorktreeInputs(
     terminalTheme: publication.terminalTheme,
     hasMountedTerminalSurface: terminalTabs.some((tab) => registeredTabs.has(tab.id))
   }
+}
+
+function narrowedEntriesEqual<T>(a: ReadonlyMap<string, T>, b: ReadonlyMap<string, T>): boolean {
+  if (a === b) {
+    return true
+  }
+  if (a.size !== b.size) {
+    return false
+  }
+  for (const [key, value] of a) {
+    if (b.get(key) !== value) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * True when a worktree's snapshot can be reused without rebuilding its content.
+ *
+ * Every field of `MobileSessionWorktreeInputs` is compared, so a missed input
+ * is a compile error rather than a stale publication to paired clients.
+ */
+function canReuseMobileSessionSnapshot(
+  previous: MobileSessionWorktreeInputs,
+  next: MobileSessionWorktreeInputs
+): boolean {
+  return (
+    // Why: live DOM/PaneManager state is invisible to store references, so a mounted surface always rebuilds.
+    !previous.hasMountedTerminalSurface &&
+    !next.hasMountedTerminalSurface &&
+    previous.worktreeId === next.worktreeId &&
+    previous.terminalTabs === next.terminalTabs &&
+    previous.browserWorkspaces === next.browserWorkspaces &&
+    previous.unifiedTabs === next.unifiedTabs &&
+    previous.groups === next.groups &&
+    previous.tabBarOrder === next.tabBarOrder &&
+    previous.activeGroupId === next.activeGroupId &&
+    previous.tabGroupLayout === next.tabGroupLayout &&
+    previous.openFilesById === next.openFilesById &&
+    previous.openFileIds === next.openFileIds &&
+    previous.activeEditorFileId === next.activeEditorFileId &&
+    previous.activeEditorTabType === next.activeEditorTabType &&
+    previous.activeTerminalTabId === next.activeTerminalTabId &&
+    previous.activeBrowserWorkspaceId === next.activeBrowserWorkspaceId &&
+    previous.generatedTitlesEnabled === next.generatedTitlesEnabled &&
+    previous.terminalTheme === next.terminalTheme &&
+    narrowedEntriesEqual(previous.terminalLayoutByTabId, next.terminalLayoutByTabId) &&
+    narrowedEntriesEqual(previous.paneTitlesByTabId, next.paneTitlesByTabId) &&
+    narrowedEntriesEqual(previous.launchDraftByTabId, next.launchDraftByTabId) &&
+    narrowedEntriesEqual(previous.agentStatusByPaneKey, next.agentStatusByPaneKey) &&
+    narrowedEntriesEqual(previous.editorDraftVersionByFileId, next.editorDraftVersionByFileId) &&
+    narrowedEntriesEqual(previous.pagesByBrowserWorkspaceId, next.pagesByBrowserWorkspaceId) &&
+    narrowedEntriesEqual(
+      previous.certificateFailureByBrowserPageId,
+      next.certificateFailureByBrowserPageId
+    )
+  )
 }
 
 export function buildMobileSessionTabSnapshots(
@@ -1006,6 +1077,13 @@ export function buildMobileSessionTabSnapshots(
       continue
     }
     const inputs = buildMobileSessionWorktreeInputs(state, worktreeId, publicationInputs)
+    const cached = mobileSessionSnapshotCacheByWorktree.get(worktreeId)
+    // Why: invalidate before computing — building the maps, projection, and tab
+    // array first made the cache save the fanout but none of the per-worktree work.
+    if (cached && canReuseMobileSessionSnapshot(cached.inputs, inputs)) {
+      snapshots.push(cached.snapshot)
+      continue
+    }
     const activeGroupId = inputs.activeGroupId
     const terminalTabByIdForWorktree = new Map(inputs.terminalTabs.map((tab) => [tab.id, tab]))
     const browserWorkspaceByIdForWorktree = new Map(
@@ -1145,12 +1223,16 @@ export function buildMobileSessionTabSnapshots(
       tabs
     }
     // Why: main suppresses per-worktree fanout on an unchanged (epoch, version)
-    // pair, so reuse the cached version for structurally-identical content. The
-    // global counter still advances per worktree per build (as before caching)
-    // so a changed worktree's fresh version stays ahead of main's +1 bumps.
+    // pair, so reuse the cached version for structurally-identical content —
+    // the backstop for inputs that churn by reference without changing output.
+    // The counter only ever advances, so a later real change still outranks it.
     const candidateVersion = ++mobileSessionSnapshotVersion
-    const cached = mobileSessionSnapshotCacheByWorktree.get(worktreeId)
     if (cached && jsonContentEquals(cached.content, content)) {
+      mobileSessionSnapshotCacheByWorktree.set(worktreeId, {
+        inputs,
+        content,
+        snapshot: cached.snapshot
+      })
       snapshots.push(cached.snapshot)
       continue
     }
@@ -1160,7 +1242,7 @@ export function buildMobileSessionTabSnapshots(
       snapshotVersion: candidateVersion,
       ...content
     }
-    mobileSessionSnapshotCacheByWorktree.set(worktreeId, { content, snapshot })
+    mobileSessionSnapshotCacheByWorktree.set(worktreeId, { inputs, content, snapshot })
     snapshots.push(snapshot)
   }
 
