@@ -25,6 +25,7 @@ type SshTargetFormProps = {
   open: boolean
   editingId: string | null
   form: EditingTarget
+  saving: boolean
   onFormChange: (updater: (prev: EditingTarget) => EditingTarget) => void
   onSave: () => void
   onOpenChange: (open: boolean) => void
@@ -45,6 +46,7 @@ export function SshTargetForm({
   open,
   editingId,
   form,
+  saving,
   onFormChange,
   onSave,
   onOpenChange
@@ -55,6 +57,10 @@ export function SshTargetForm({
   const hasAdvancedConnectionFields = hasAdvancedConnectionValues(form)
   const [advancedOpen, setAdvancedOpen] = useState(hasAdvancedConnectionFields)
   const baselineRef = useRef(form)
+  // Why: the session effect and the outside-dismiss handler need the latest draft
+  // without re-subscribing the effect to every keystroke.
+  const formRef = useRef(form)
+  formRef.current = form
   const sessionRef = useRef<{ open: boolean; editingId: string | null }>({
     open: false,
     editingId: null
@@ -70,12 +76,11 @@ export function SshTargetForm({
       return
     }
     sessionRef.current = { open: true, editingId }
-    baselineRef.current = form
-    setAdvancedOpen(hasAdvancedConnectionValues(form))
-  }, [open, editingId, form])
+    baselineRef.current = formRef.current
+    setAdvancedOpen(hasAdvancedConnectionValues(formRef.current))
+  }, [open, editingId])
 
   const isEditing = editingId != null
-  const isDirty = isSshTargetFormDirty(form, baselineRef.current)
   const editingLabel = form.label.trim()
   const endpointSummary = editingEndpointSummary(form)
   const showEditingChip =
@@ -84,8 +89,9 @@ export function SshTargetForm({
 
   const preventOutsideDismiss = (event: Event): void => {
     // Why: outside click is easy to hit by accident with a long multi-field form;
-    // keep Escape / Cancel / × as explicit discard paths.
-    if (isDirty) {
+    // keep Escape / Cancel / × as explicit discard paths. Read both refs at call
+    // time — the session effect can rewrite the baseline without a re-render.
+    if (isSshTargetFormDirty(formRef.current, baselineRef.current)) {
       event.preventDefault()
     }
   }
@@ -101,6 +107,10 @@ export function SshTargetForm({
           className="flex min-h-0 flex-1 flex-col"
           onSubmit={(e) => {
             e.preventDefault()
+            // Why: Enter still submits while the button is disabled, so gate here too.
+            if (saving) {
+              return
+            }
             onSave()
           }}
         >
@@ -239,7 +249,7 @@ export function SshTargetForm({
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
               {translate('auto.components.settings.SshTargetForm.fea9cb402e', 'Cancel')}
             </Button>
-            <Button type="submit" size="sm">
+            <Button type="submit" size="sm" disabled={saving}>
               {isEditing
                 ? translate('auto.components.settings.SshTargetForm.a62b4cb39a', 'Save Changes')
                 : translate('auto.components.settings.SshTargetForm.9518545cb6', 'Add Target')}

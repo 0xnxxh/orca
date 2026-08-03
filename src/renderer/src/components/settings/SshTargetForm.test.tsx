@@ -13,6 +13,7 @@ type RenderProps = {
   open?: boolean
   editingId?: string | null
   form?: EditingTarget
+  saving?: boolean
   onSave?: () => void
   onOpenChange?: (open: boolean) => void
   onFormChange?: (updater: (prev: EditingTarget) => EditingTarget) => void
@@ -30,6 +31,7 @@ async function renderForm(props: RenderProps, root?: Root): Promise<Root> {
         open={props.open ?? true}
         editingId={props.editingId ?? null}
         form={props.form ?? EMPTY_FORM}
+        saving={props.saving ?? false}
         onFormChange={props.onFormChange ?? vi.fn()}
         onSave={props.onSave ?? vi.fn()}
         onOpenChange={props.onOpenChange ?? vi.fn()}
@@ -142,6 +144,43 @@ describe('SshTargetForm', () => {
     await renderForm({ open: true, form: EMPTY_FORM, onFormChange }, root)
 
     expect(button('Advanced').getAttribute('data-state')).toBe('closed')
+    act(() => root.unmount())
+  })
+
+  it('blocks a second submit while a save is in flight', async () => {
+    const onSave = vi.fn()
+    const root = await renderForm({ saving: true, onSave })
+
+    expect(button('Add Target').disabled).toBe(true)
+    // Why: Enter submits past a disabled button, so the form itself must gate too.
+    await act(async () => {
+      document
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(onSave).not.toHaveBeenCalled()
+    act(() => root.unmount())
+  })
+
+  it('treats a freshly opened edit session as clean', async () => {
+    const editTarget: EditingTarget = { ...EMPTY_FORM, label: 'dev-box', host: 'dev-box.lan' }
+    const onOpenChange = vi.fn()
+    // Start closed so the previous baseline (EMPTY_FORM) differs from the edit draft.
+    const root = await renderForm({ open: false, onOpenChange })
+    await renderForm({ open: true, editingId: 'target-1', form: editTarget, onOpenChange }, root)
+
+    // Why: the session effect rewrites the baseline without forcing a re-render,
+    // so a render-captured isDirty would wrongly block this dismissal.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    await act(async () => {
+      document.body.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
+      )
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
     act(() => root.unmount())
   })
 

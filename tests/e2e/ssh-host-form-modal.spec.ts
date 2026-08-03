@@ -8,11 +8,18 @@ import type { Page } from '@stablyai/playwright-test'
 import { expect, test } from './helpers/orca-app'
 import { waitForSessionReady } from './helpers/store'
 
-const HOST_PREFIX = `e2e-ssh-modal-${Date.now().toString(36)}`
+// Why: afterEach deletes every target carrying this prefix, so two workers loading
+// the module in the same millisecond must not collide on a shared Date.now().
+const HOST_PREFIX = `e2e-ssh-modal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 async function dismissTransientAnnouncement(page: Page): Promise<void> {
   const maybeLaterButton = page.getByRole('button', { name: 'Maybe Later' })
-  const visible = await maybeLaterButton.isVisible({ timeout: 1_000 }).catch(() => false)
+  // Why: isVisible() is one-shot (its timeout is ignored); the retrying assertion
+  // gives a late-rendering announcement a chance to appear before we move on.
+  const visible = await expect(maybeLaterButton)
+    .toBeVisible({ timeout: 1_000 })
+    .then(() => true)
+    .catch(() => false)
   if (visible) {
     await maybeLaterButton.click()
   }
@@ -149,9 +156,9 @@ test.describe('SSH host add/edit modal', () => {
     await expect(sshSection.getByText('alice@created.example.test:2222')).toBeVisible()
 
     // ── Edit flow stays in viewport even with a long list above ─────
-    const createdCard = sshSection.locator('div.rounded-lg.border').filter({
-      has: orcaPage.getByText(createdLabel, { exact: true })
-    })
+    const createdCard = sshSection.locator(
+      `[data-ssh-target-card][data-ssh-target-label="${createdLabel}"]`
+    )
     await createdCard.getByRole('button', { name: 'Edit target' }).click()
 
     const editDialog = orcaPage.getByRole('dialog', { name: 'Edit SSH host' })
