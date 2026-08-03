@@ -83,6 +83,10 @@ function makeMessage(text: string): NativeChatMessage {
   }
 }
 
+function makeTextMessage(text: string): NativeChatMessage {
+  return { ...makeMessage(''), blocks: [{ type: 'text', text }] }
+}
+
 function readSessionHandler(): (params: unknown, ctx: RpcContext) => Promise<unknown> {
   const method = NATIVE_CHAT_METHODS.find((m) => m.name === 'nativeChat.readSession')
   if (!method) {
@@ -146,6 +150,35 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
     const output = firstOutput(result)
     expect(output.length).toBeLessThan(OVERSIZED.length)
     expect(output).toContain('truncated')
+  })
+
+  // STA-3230: a paired desktop or mobile client saw long assistant replies cut
+  // at the tool-preview cap with `… (truncated)` and no way to read the rest.
+  it('passes a long assistant text block through unclipped for mobile clients', async () => {
+    const text = 'prose '.repeat(1000)
+    cachedResult.value = { messages: [makeTextMessage(text)] }
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      text: string
+    }
+    expect(block.text).toBe(text)
+  })
+
+  it('clips a pathological text block at the safety ceiling for mobile clients', async () => {
+    const text = 'y'.repeat(70_000)
+    cachedResult.value = { messages: [makeTextMessage(text)] }
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      text: string
+    }
+    expect(block.text.length).toBeLessThan(text.length)
+    expect(block.text).toContain('truncated')
   })
 
   it('bounds raw tool-call inputs before sending them to mobile', async () => {
