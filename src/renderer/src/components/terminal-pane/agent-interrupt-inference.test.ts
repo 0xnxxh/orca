@@ -422,6 +422,23 @@ describe('agent interrupt inference', () => {
     expect(inferInterrupt).not.toHaveBeenCalled()
   })
 
+  it('does not rearm after disposal', () => {
+    vi.useFakeTimers()
+    const inferInterrupt = vi.fn()
+    const tracker = createAgentInterruptInference({
+      paneKey: PANE_KEY,
+      getStatusEntry: () => makeEntry(),
+      inferInterrupt,
+      now: () => 1_100
+    })
+
+    tracker.dispose()
+    tracker.observeInputIntent('plain-escape')
+    vi.advanceTimersByTime(500)
+
+    expect(inferInterrupt).not.toHaveBeenCalled()
+  })
+
   it('requires exact plain Escape and Ctrl+C key events', () => {
     expect(isPlainEscapeKeyEvent(keyEvent({ key: 'Escape' }))).toBe(true)
     expect(isCtrlCKeyEvent(keyEvent({ key: 'c', ctrlKey: true }))).toBe(true)

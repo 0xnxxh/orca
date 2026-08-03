@@ -4053,6 +4053,7 @@ export function connectPanePty(
     // excluded because those transports do not expose sendInputAccepted.
     const acknowledgedIntent = intent ?? inferIntentFromExactTerminalInput(data)
     if (acknowledgedIntent && transport.sendInputAccepted) {
+      const interruptStatusBaseline = useAppStore.getState().agentStatusByPaneKey[cacheKey]
       claimViewportForUserActivity()
       if (acknowledgedIntent === 'ctrl-c') {
         // Why: the accepted-write callback is async; let the next command be
@@ -4068,7 +4069,7 @@ export function connectPanePty(
             markAcceptedTerminalInputSent()
             observeAcceptedShellCommandInput(data)
             observeAcceptedTerminalInput(data, acknowledgedIntent)
-            interruptInference.observeInputIntent(acknowledgedIntent)
+            interruptInference.observeInputIntent(acknowledgedIntent, interruptStatusBaseline)
             observeTitleOnlyInterrupt()
           } else {
             // Why: Esc/Ctrl+C are the first keys users press on a frozen pane;

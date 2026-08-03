@@ -11,7 +11,7 @@ import { isAskUserQuestionTool } from '../../../../shared/agent-question-answere
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 
 export type AgentInterruptInference = {
-  observeInputIntent(intent: AgentInterruptInputIntent): void
+  observeInputIntent(intent: AgentInterruptInputIntent, entry?: AgentStatusEntry): void
   flushPending(): boolean | Promise<boolean>
   dispose(): void
 }
@@ -112,6 +112,7 @@ export function createAgentInterruptInference({
   setTimer = (callback, ms) => setTimeout(callback, ms),
   clearTimer = (timer) => clearTimeout(timer)
 }: AgentInterruptInferenceDeps): AgentInterruptInference {
+  let disposed = false
   let pendingTimer: ReturnType<typeof setTimeout> | null = null
   let pendingBaseline: CapturedInterruptBaseline | null = null
   let doubleEscapeBaseline: CapturedInterruptBaseline | null = null
@@ -159,6 +160,9 @@ export function createAgentInterruptInference({
   }
 
   const flushPending = (): boolean | Promise<boolean> => {
+    if (disposed) {
+      return false
+    }
     const baseline = pendingBaseline
     pendingTimer = null
     pendingBaseline = null
@@ -199,8 +203,11 @@ export function createAgentInterruptInference({
   }
 
   return {
-    observeInputIntent(intent) {
-      const entry = getStatusEntry()
+    observeInputIntent(intent, capturedEntry) {
+      if (disposed) {
+        return
+      }
+      const entry = capturedEntry ?? getStatusEntry()
       if (!entry) {
         clearPending()
         return
@@ -247,6 +254,7 @@ export function createAgentInterruptInference({
     },
     flushPending,
     dispose() {
+      disposed = true
       clearPending()
     }
   }
