@@ -25,9 +25,17 @@ const MANIFEST_FILE_NAME = 'codex-package.json'
 const DEFAULT_RESOURCES_DIR_NAME = 'codex-resources'
 const DEFAULT_PATH_DIR_NAME = 'codex-path'
 const ENTRYPOINT_DIR_NAME = 'bin'
-const NO_DONOR_CACHE_TTL_MS = 60_000
+const UNREPAIRED_ATTEMPT_TTL_MS = 60_000
 
-let noDonorCache: { key: string; expiresAt: number } | null = null
+// Backs off after an unsuccessful repair — no donor found, or a donor found but
+// the copy could not be published (read-only Program Files, an antivirus lock).
+// Without this the failed case re-scans releases and re-hashes the ~100MB+
+// entrypoint on every PTY spawn, blocking the main process indefinitely.
+let lastUnrepairedAttempt: {
+  key: string
+  expiresAt: number
+  status: 'no-donor' | 'failed'
+} | null = null
 
 export type CodexWindowsPackageLayoutStatus =
   | 'not-applicable'
@@ -78,17 +86,21 @@ export function repairCodexWindowsPackageLayout(
 
   const homePath = options.homePath ?? homedir()
   const appDataPath = options.appDataPath ?? process.env.APPDATA ?? null
-  const noDonorCacheKey = getNoDonorCacheKey({
+  const attemptKey = getUnrepairedAttemptKey({
     entrypointPath,
     homePath,
     appDataPath,
     missingDirNames
   })
-  if (noDonorCacheKey && noDonorCache?.key === noDonorCacheKey) {
-    if (noDonorCache.expiresAt > Date.now()) {
-      return { status: 'no-donor', packageRootPath, restoredDirectories: [] }
+  if (attemptKey && lastUnrepairedAttempt?.key === attemptKey) {
+    if (lastUnrepairedAttempt.expiresAt > Date.now()) {
+      return {
+        status: lastUnrepairedAttempt.status,
+        packageRootPath,
+        restoredDirectories: []
+      }
     }
-    noDonorCache = null
+    lastUnrepairedAttempt = null
   }
 
   const donorRootPath = findCodexWindowsPackageDonor({
@@ -99,9 +111,7 @@ export function repairCodexWindowsPackageLayout(
     requiredDirNames: missingDirNames
   })
   if (!donorRootPath) {
-    if (noDonorCacheKey) {
-      noDonorCache = { key: noDonorCacheKey, expiresAt: Date.now() + NO_DONOR_CACHE_TTL_MS }
-    }
+    cacheUnrepairedAttempt(attemptKey, 'no-donor')
     console.warn(
       '[codex-package-layout] Codex install is missing sandbox resources and no matching release was found:',
       packageRootPath,
@@ -119,8 +129,13 @@ export function repairCodexWindowsPackageLayout(
     }
   }
   if (restoredDirectories.length !== missingDirNames.length) {
+    // A donor exists but publishing it failed (locked/read-only target). Back off
+    // like the no-donor case so a wedged install can't re-hash on every spawn.
+    cacheUnrepairedAttempt(attemptKey, 'failed')
     return { status: 'failed', packageRootPath, restoredDirectories }
   }
+  // A later restore succeeds after e.g. the lock clears; drop any stale backoff.
+  lastUnrepairedAttempt = null
   copyCodexPackageManifestIfMissing(donorRootPath, packageRootPath)
   console.log(
     '[codex-package-layout] Restored Codex sandbox resources from',
@@ -189,7 +204,14 @@ function readRelativeDirName(value: unknown): string | null {
   return value
 }
 
-function getNoDonorCacheKey({
+function cacheUnrepairedAttempt(key: string | null, status: 'no-donor' | 'failed'): void {
+  if (!key) {
+    return
+  }
+  lastUnrepairedAttempt = { key, status, expiresAt: Date.now() + UNREPAIRED_ATTEMPT_TTL_MS }
+}
+
+function getUnrepairedAttemptKey({
   entrypointPath,
   homePath,
   appDataPath,

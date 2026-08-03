@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -242,5 +250,33 @@ describe('repairCodexWindowsPackageLayout', () => {
 
     vi.advanceTimersByTime(60_001)
     expect(repair(commandPath).status).toBe('restored')
+  })
+
+  // POSIX-only: forces a real publish failure via a read-only root. On win32 the
+  // suite would need ACL manipulation; the cached-backoff logic is platform-agnostic.
+  const itWithChmod = process.platform === 'win32' ? it.skip : it
+  itWithChmod('caches a failed restore and retries only after the cache expires', () => {
+    vi.useFakeTimers()
+    const installPath = join(root, 'install')
+    writeReleaseLayout(installPath, { withResources: false })
+    writeReleaseLayout(getStandaloneReleasePath('0.145.0-x86_64-pc-windows-msvc'))
+    const commandPath = join(installPath, 'bin', 'codex.exe')
+
+    // A read-only root makes the staged copy unpublishable, so restore fails
+    // even though a byte-identical donor was found.
+    chmodSync(installPath, 0o500)
+    try {
+      expect(repair(commandPath).status).toBe('failed')
+
+      // Within the TTL the backoff short-circuits: the second call returns the
+      // cached failure without re-scanning, even though the root is writable again.
+      chmodSync(installPath, 0o700)
+      expect(repair(commandPath).status).toBe('failed')
+
+      vi.advanceTimersByTime(60_001)
+      expect(repair(commandPath).status).toBe('restored')
+    } finally {
+      chmodSync(installPath, 0o700)
+    }
   })
 })
