@@ -11,7 +11,11 @@ import { isAskUserQuestionTool } from '../../../../shared/agent-question-answere
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 
 export type AgentInterruptInference = {
-  observeInputIntent(intent: AgentInterruptInputIntent, entry?: AgentStatusEntry | null): void
+  observeInputIntent(
+    intent: AgentInterruptInputIntent,
+    entry?: AgentStatusEntry | null,
+    baselineSequence?: number
+  ): void
   flushPending(): boolean | Promise<boolean>
   dispose(): void
 }
@@ -117,6 +121,7 @@ export function createAgentInterruptInference({
   let pendingBaseline: CapturedInterruptBaseline | null = null
   let doubleEscapeBaseline: CapturedInterruptBaseline | null = null
   let doubleEscapeTimer: ReturnType<typeof setTimeout> | null = null
+  let latestBaselineSequence = 0
 
   const clearPendingTimer = (): void => {
     if (pendingTimer !== null) {
@@ -203,9 +208,15 @@ export function createAgentInterruptInference({
   }
 
   return {
-    observeInputIntent(intent, capturedEntry) {
+    observeInputIntent(intent, capturedEntry, baselineSequence) {
       if (disposed) {
         return
+      }
+      if (baselineSequence !== undefined) {
+        if (baselineSequence < latestBaselineSequence) {
+          return
+        }
+        latestBaselineSequence = baselineSequence
       }
       const currentEntry = getStatusEntry()
       // Why: an older acknowledged write must not replace a newer turn's pending inference.

@@ -1950,6 +1950,8 @@ export function connectPanePty(
     questionAnsweredInference.observeSentTerminalInput(data)
   }
   let pendingTerminalInputWrite: Promise<void> | null = null
+  let sequencedInterruptStatusBaseline: AgentStatusEntry | null | undefined
+  let interruptStatusBaselineSequence = 0
   const setPendingTerminalInputWrite = (promise: Promise<void>): void => {
     pendingTerminalInputWrite = promise
     void promise.finally(() => {
@@ -4054,6 +4056,12 @@ export function connectPanePty(
     const acknowledgedIntent = intent ?? inferIntentFromExactTerminalInput(data)
     if (acknowledgedIntent && transport.sendInputAccepted) {
       const interruptStatusBaseline = useAppStore.getState().agentStatusByPaneKey[cacheKey] ?? null
+      // Why: equal snapshots retain double-Escape semantics while older snapshots lose ack races.
+      if (sequencedInterruptStatusBaseline !== interruptStatusBaseline) {
+        sequencedInterruptStatusBaseline = interruptStatusBaseline
+        interruptStatusBaselineSequence += 1
+      }
+      const capturedBaselineSequence = interruptStatusBaselineSequence
       claimViewportForUserActivity()
       if (acknowledgedIntent === 'ctrl-c') {
         // Why: the accepted-write callback is async; let the next command be
@@ -4069,7 +4077,11 @@ export function connectPanePty(
             markAcceptedTerminalInputSent()
             observeAcceptedShellCommandInput(data)
             observeAcceptedTerminalInput(data, acknowledgedIntent)
-            interruptInference.observeInputIntent(acknowledgedIntent, interruptStatusBaseline)
+            interruptInference.observeInputIntent(
+              acknowledgedIntent,
+              interruptStatusBaseline,
+              capturedBaselineSequence
+            )
             observeTitleOnlyInterrupt()
           } else {
             // Why: Esc/Ctrl+C are the first keys users press on a frozen pane;
