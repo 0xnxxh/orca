@@ -1499,7 +1499,7 @@ describe('notifications:probeDelivery', () => {
     expect(notificationCtorMock).toHaveBeenCalledTimes(1)
   })
 
-  it('marks the one-shot permission registration as done so startup cannot re-prompt', async () => {
+  it('stamps the one-shot only when it actually fires a prompt probe', async () => {
     const store = createStore()
     registerNotificationHandlers(store as never)
 
@@ -1509,6 +1509,34 @@ describe('notifications:probeDelivery', () => {
 
     getProbeOnceEventHandler('failed')({}, 'not allowed')
     await expect(result).resolves.toEqual({ state: 'blocked', authoritative: false })
+  })
+
+  it('stamps the one-shot once across repeated authorized polls', async () => {
+    const store = createStore()
+    registerNotificationHandlers(store as never)
+    const handler = getProbeDeliveryHandler()
+    readAuthorizationStatusMock.mockResolvedValue('authorized')
+
+    await handler({})
+    await handler({}, { force: true })
+
+    expect(store.updateUI).toHaveBeenCalledTimes(1)
+    expect(store.updateUI).toHaveBeenCalledWith({ notificationPermissionRequested: true })
+  })
+
+  it('does not stamp the one-shot when cached evidence answers without probing', async () => {
+    const store = createStore()
+    registerNotificationHandlers(store as never)
+    const handler = getProbeDeliveryHandler()
+
+    const probeResult = handler({}) as Promise<unknown>
+    await vi.advanceTimersByTimeAsync(0)
+    getProbeOnceEventHandler('show')()
+    await probeResult
+    store.updateUI.mockClear()
+
+    expect(await handler({})).toEqual({ state: 'delivered', authoritative: false })
+    expect(store.updateUI).not.toHaveBeenCalled()
   })
 
   it('falls back to delivery probes when the readout is unavailable', async () => {
@@ -1602,6 +1630,9 @@ describe('triggerStartupNotificationRegistration', () => {
     notificationRemoveListenerMock.mockClear()
     notificationIsSupportedMock.mockReset()
     notificationIsSupportedMock.mockReturnValue(true)
+    // Why: an 'authorized'/'denied' readout short-circuits registration, which would make every case below vacuous.
+    readAuthorizationStatusMock.mockReset()
+    readAuthorizationStatusMock.mockResolvedValue(null)
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   })
 
@@ -1615,7 +1646,7 @@ describe('triggerStartupNotificationRegistration', () => {
       updateUI: vi.fn()
     }
 
-    triggerStartupNotificationRegistration(store as never)
+    await triggerStartupNotificationRegistration(store as never)
 
     expect(store.updateUI).toHaveBeenCalledWith({ notificationPermissionRequested: true })
     expect(notificationCtorMock).toHaveBeenCalledWith({
@@ -1631,9 +1662,24 @@ describe('triggerStartupNotificationRegistration', () => {
       updateUI: vi.fn()
     }
 
-    triggerStartupNotificationRegistration(store as never)
+    await triggerStartupNotificationRegistration(store as never)
 
     expect(notificationCtorMock).not.toHaveBeenCalled()
+  })
+
+  it('does not fire once the readout is definitive', async () => {
+    for (const authorization of ['authorized', 'denied'] as const) {
+      const store = {
+        getUI: () => ({ notificationPermissionRequested: undefined }),
+        updateUI: vi.fn()
+      }
+      readAuthorizationStatusMock.mockResolvedValue(authorization)
+
+      await triggerStartupNotificationRegistration(store as never)
+
+      expect(notificationCtorMock).not.toHaveBeenCalled()
+      expect(store.updateUI).not.toHaveBeenCalled()
+    }
   })
 
   it('does nothing on non-darwin platforms', async () => {
@@ -1643,7 +1689,7 @@ describe('triggerStartupNotificationRegistration', () => {
       updateUI: vi.fn()
     }
 
-    triggerStartupNotificationRegistration(store as never)
+    await triggerStartupNotificationRegistration(store as never)
 
     expect(notificationCtorMock).not.toHaveBeenCalled()
   })
@@ -1654,7 +1700,7 @@ describe('triggerStartupNotificationRegistration', () => {
       updateUI: vi.fn()
     }
 
-    triggerStartupNotificationRegistration(store as never)
+    await triggerStartupNotificationRegistration(store as never)
     expect(vi.getTimerCount()).toBe(1)
 
     getStartupNotificationEventHandler('click')()
@@ -1674,7 +1720,7 @@ describe('triggerStartupNotificationRegistration', () => {
         updateUI: vi.fn()
       }
 
-      triggerStartupNotificationRegistration(store as never)
+      await triggerStartupNotificationRegistration(store as never)
       expect(vi.getTimerCount()).toBe(1)
 
       const failedHandler = getStartupNotificationEventHandler('failed')
