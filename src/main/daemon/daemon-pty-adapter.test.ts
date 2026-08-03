@@ -848,13 +848,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
-    it('delegates scan authority to a v29 daemon, which can retract', () => {
+    it('delegates scan authority to a v32 daemon with faithful snapshots', () => {
       const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
-      const current = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 29 })
+      const current = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 32 })
       try {
-        current.setPtyBackgrounded('v29-session', true)
+        current.setPtyBackgrounded('v32-session', true)
         expect(notifySpy).toHaveBeenCalledWith('setSessionBackground', {
-          sessionId: 'v29-session',
+          sessionId: 'v32-session',
           background: true
         })
       } finally {
@@ -939,8 +939,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('background stream thinning compatibility', () => {
-    it('reports authoritative snapshot support only for protocol v20 and newer', () => {
-      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+    it('reports authoritative snapshot support only for the corrected serializer protocol', () => {
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 31 })
       try {
         expect(legacy.canProvideAuthoritativeBufferSnapshot('legacy-session')).toBe(false)
         expect(adapter.canProvideAuthoritativeBufferSnapshot('current-session')).toBe(true)
@@ -962,9 +962,9 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
-    it('keeps preserved v19 sessions unthinned because their snapshots have no sequence', () => {
+    it('keeps preserved v31 sessions unthinned because their snapshots can corrupt replay', () => {
       const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
-      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 31 })
       try {
         legacy.setPtyBackgrounded('legacy-session', true)
         expect(notifySpy).toHaveBeenCalledWith('setSessionBackground', {
@@ -977,7 +977,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
-    it('clears a preserved v19 background hint before attaching its stream', async () => {
+    it('clears a preserved v31 background hint before attaching its stream', async () => {
       const ensureConnectedSpy = vi
         .spyOn(DaemonClient.prototype, 'ensureConnected')
         .mockResolvedValue()
@@ -988,7 +988,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         snapshot: null
       } as never)
       const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
-      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 31 })
       try {
         await legacy.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
 
@@ -1009,7 +1009,9 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
     it.each([
       { protocolVersion: 28, clearsHint: true },
-      { protocolVersion: 29, clearsHint: false }
+      { protocolVersion: 29, clearsHint: true },
+      { protocolVersion: 31, clearsHint: true },
+      { protocolVersion: 32, clearsHint: false }
     ])(
       'uses protocol v$protocolVersion background authority before spawn',
       async ({ protocolVersion, clearsHint }) => {
@@ -1085,7 +1087,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
-    it('leaves a v29 background hint alone on attach, because it can retract on its own', async () => {
+    it('leaves a v32 background hint alone on attach', async () => {
       const ensureConnectedSpy = vi
         .spyOn(DaemonClient.prototype, 'ensureConnected')
         .mockResolvedValue()
@@ -1096,13 +1098,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         snapshot: null
       } as never)
       const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
-      const current = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 29 })
+      const current = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 32 })
       try {
-        await current.attach('preserved-v29-session')
+        await current.attach('preserved-v32-session')
 
         expect(notifySpy).not.toHaveBeenCalledWith(
           'setSessionBackground',
-          expect.objectContaining({ sessionId: 'preserved-v29-session' })
+          expect.objectContaining({ sessionId: 'preserved-v32-session' })
         )
       } finally {
         current.dispose()
@@ -1112,7 +1114,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
-    it('still returns the v19 attach snapshot for a desktop renderer replay', async () => {
+    it('still returns the v31 attach snapshot so desktop replay retains shell history', async () => {
       const ensureConnectedSpy = vi
         .spyOn(DaemonClient.prototype, 'ensureConnected')
         .mockResolvedValue()
@@ -1129,7 +1131,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           rows: 24
         }
       } as never)
-      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 31 })
       try {
         const result = await legacy.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
 
