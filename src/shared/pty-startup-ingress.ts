@@ -5,6 +5,7 @@ import {
 } from './terminal-osc-color-reply'
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 import type { PtyOwnerBackend } from './pty-owner-backend'
+import { PtyStartupReplyDelivery } from './pty-startup-reply-delivery'
 import {
   combinePtyIngressSourceSpans,
   slicePtyIngressSourceSpan,
@@ -22,11 +23,9 @@ export type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 export type { PtyIngressEmission, PtyStartupIngressOptions } from './pty-startup-ingress-contract'
 
 const MAX_QUERY_CANDIDATE_CHARS = 64
-
-function projectedWindowsConptyReply(reply: string): string {
-  // Why: the native provider harness observes ConPTY's cooked echo with ESC removed.
-  return reply.replaceAll('\x1b', '')
-}
+// Why short: a held partial echo is real output if the rest never arrives, and the
+// startup deadline is far too long to stall a pane on that guess.
+const ECHO_CONTINUATION_HOLD_MS = 50
 
 /**
  * Serialized source-side startup classifier. Its raw sequence begins after
@@ -35,23 +34,23 @@ function projectedWindowsConptyReply(reply: string): string {
 export class PtyStartupIngress {
   private readonly intent: PtyStartupIngressIntent | undefined
   private readonly ownerBackend: PtyOwnerBackend
-  private readonly writeProvider: (data: string) => void
+  private readonly delivery: PtyStartupReplyDelivery
   private readonly onEmission: (emission: PtyIngressEmission) => void
   private readonly operations: PtyStartupIngressOperation[] = []
   private readonly answeredSlots = new Set<TerminalOscColorQuerySlot>()
-  private readonly expectedEchoes: string[] = []
   private processing = false
   private closed = false
   private queryOpen: boolean
   private rawHighWater = 0
   private queryPending: PtyIngressSourceSpan | null = null
   private echoPending: PtyIngressSourceSpan | null = null
+  private echoHoldTimer: ReturnType<typeof setTimeout> | null = null
   private deadlineTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: PtyStartupIngressOptions) {
     this.intent = options.intent
     this.ownerBackend = options.ownerBackend ?? 'posix-pty'
-    this.writeProvider = options.write
+    this.delivery = new PtyStartupReplyDelivery(this.ownerBackend, options.write)
     this.onEmission = options.onEmission
     this.queryOpen = options.intent !== undefined
     if (options.intent) {
@@ -127,55 +126,53 @@ export class PtyStartupIngress {
         return
       case 'expire':
         this.queryOpen = false
-        this.releaseEchoPending()
-        if (this.ownerBackend !== 'windows-conpty') {
-          this.releaseQueryPending()
-        }
-        this.expectedEchoes.length = 0
+        this.releasePendingInSourceOrder(false)
+        this.delivery.reset()
         this.clearDeadline()
         return
       case 'snapshot':
-        this.releaseSnapshotPending()
+      case 'release-echo':
+        this.releasePendingInSourceOrder(false)
         return
       case 'teardown':
         this.queryOpen = false
-        this.releaseAllPending()
-        this.expectedEchoes.length = 0
+        this.releasePendingInSourceOrder(true)
+        this.delivery.close()
         this.clearDeadline()
         this.closed = true
     }
   }
 
   private processEchoSpan(span: PtyIngressSourceSpan): void {
-    let input = combinePtyIngressSourceSpans(this.echoPending, span)
-    this.echoPending = null
+    let input = combinePtyIngressSourceSpans(this.takeEchoPending(), span)
 
-    while (this.expectedEchoes.length > 0) {
-      const expected = this.expectedEchoes[0]
-      const compared = Math.min(input.data.length, expected.length)
-      let matching = 0
-      while (matching < compared && input.data[matching] === expected[matching]) {
-        matching += 1
+    while (this.delivery.hasExpectedEcho && input.data.length > 0) {
+      const match = this.delivery.matchEcho(input.data)
+      if (match.kind !== 'complete') {
+        // Why so narrow: holding a tail that merely looks like an echo head steals a
+        // BEL that terminates a torn query. Only a whole span with no query outstanding
+        // is worth the guess; the projection survives the miss either way.
+        if (match.kind === 'partial' && match.offset === 0 && !this.queryPending) {
+          this.echoPending = input
+          this.armEchoHold()
+          return
+        }
+        break
       }
-      if (matching < compared) {
-        this.expectedEchoes.shift()
-        this.processQuerySpan(input)
-        return
+      if (match.offset > 0) {
+        this.processQuerySpan(slicePtyIngressSourceSpan(input, 0, match.offset))
       }
-      if (input.data.length < expected.length) {
-        this.echoPending = input
-        return
-      }
-
-      this.expectedEchoes.shift()
-      this.emit(slicePtyIngressSourceSpan(input, 0, expected.length), true, '')
-      input = slicePtyIngressSourceSpan(input, expected.length)
-      if (input.data.length === 0) {
-        return
-      }
+      // Why release first: a retained torn candidate cannot straddle the suppressed
+      // range without desynchronizing its raw sequence arithmetic.
+      this.releaseQueryPending()
+      const echoEnd = match.offset + match.length
+      this.emit(slicePtyIngressSourceSpan(input, match.offset, echoEnd), true, '')
+      input = slicePtyIngressSourceSpan(input, echoEnd)
     }
 
-    this.processQuerySpan(input)
+    if (input.data.length > 0) {
+      this.processQuerySpan(input)
+    }
   }
 
   private processQuerySpan(span: PtyIngressSourceSpan): void {
@@ -244,22 +241,11 @@ export class PtyStartupIngress {
         return wroteAny
       }
       this.answeredSlots.add(slot)
-      const projected =
-        this.ownerBackend === 'windows-conpty' ? projectedWindowsConptyReply(reply) : null
-      if (projected) {
-        // Why: register before write because node-pty can synchronously re-enter onData.
-        this.expectedEchoes.push(projected)
-      }
-      try {
-        this.writeProvider(reply)
-        wroteAny = true
-      } catch {
+      if (!this.delivery.answer(reply)) {
         this.answeredSlots.delete(slot)
-        if (projected) {
-          this.expectedEchoes.pop()
-        }
         return wroteAny
       }
+      wroteAny = true
     }
 
     if (this.answeredSlots.has(10) && this.answeredSlots.has(11)) {
@@ -277,28 +263,36 @@ export class PtyStartupIngress {
     this.emit(pending, false)
   }
 
-  private releaseAllPending(): void {
-    this.releaseEchoPending()
-    this.releaseQueryPending()
-  }
-
-  private releaseEchoPending(): void {
-    if (!this.echoPending) {
-      return
-    }
-    const pending = this.echoPending
-    this.echoPending = null
-    this.emit(pending, false)
-  }
-
-  private releaseSnapshotPending(): void {
-    if (this.echoPending) {
-      this.expectedEchoes.shift()
-      this.releaseEchoPending()
-    }
-    if (this.ownerBackend !== 'windows-conpty') {
+  /** Why this order: queryPending always holds strictly earlier source bytes than echoPending. */
+  private releasePendingInSourceOrder(includeConptyQuery: boolean): void {
+    if (includeConptyQuery || this.ownerBackend !== 'windows-conpty') {
       this.releaseQueryPending()
     }
+    const pending = this.takeEchoPending()
+    if (pending) {
+      this.emit(pending, false)
+    }
+  }
+
+  private takeEchoPending(): PtyIngressSourceSpan | null {
+    const pending = this.echoPending
+    this.echoPending = null
+    if (this.echoHoldTimer) {
+      clearTimeout(this.echoHoldTimer)
+      this.echoHoldTimer = null
+    }
+    return pending
+  }
+
+  private armEchoHold(): void {
+    if (this.echoHoldTimer) {
+      return
+    }
+    this.echoHoldTimer = setTimeout(
+      () => this.enqueue({ kind: 'release-echo' }),
+      ECHO_CONTINUATION_HOLD_MS
+    )
+    this.echoHoldTimer.unref?.()
   }
 
   private emit(span: PtyIngressSourceSpan, transformed: boolean, data = span.data): void {
