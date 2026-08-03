@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { useRpcClientContext } from './rpc-client-react-context'
 import type { RpcClientContextValue } from './rpc-client-context-contract'
 
-const RPC_UNRESPONSIVE_POLL_MS = 1_000
-
 export function useReconnectAttempt(hostId: string | undefined): number {
   return useHostMetric(hostId, (context, id) => context.getReconnectAttempt(id), 0)
 }
@@ -12,10 +10,10 @@ export function useLastConnectedAt(hostId: string | undefined): number | null {
   return useHostMetric(hostId, (context, id) => context.getLastConnectedAt(id), null)
 }
 
+// Why: latch/recovery notifications arrive through subscribeHostState — the
+// context re-broadcasts responsiveness transitions, so no hook ever polls.
 export function useRpcUnresponsiveSince(hostId: string | undefined): number | null {
-  return useHostMetric(hostId, (context, id) => context.getRpcUnresponsiveSince(id), null, {
-    pollMs: RPC_UNRESPONSIVE_POLL_MS
-  })
+  return useHostMetric(hostId, (context, id) => context.getRpcUnresponsiveSince(id), null)
 }
 
 export function useConnectionHealthInputs(hostId: string | undefined) {
@@ -32,20 +30,42 @@ export function useRpcUnresponsiveByHost(hostIds: string[]): Record<string, numb
   const hostKey = hostIds.join('\u0000')
   useEffect(() => {
     const read = () => {
-      setValues(Object.fromEntries(hostIds.map((id) => [id, context.getRpcUnresponsiveSince(id)])))
+      setValues((previous) => {
+        const next = Object.fromEntries(
+          hostIds.map((id) => [id, context.getRpcUnresponsiveSince(id)])
+        )
+        // Why: state churn fans out here on every reconnect tick — keep the
+        // previous identity when no host's verdict actually changed.
+        return recordsEqual(previous, next) ? previous : next
+      })
     }
     read()
-    const interval = setInterval(read, RPC_UNRESPONSIVE_POLL_MS)
-    return () => clearInterval(interval)
+    const unsubscribes = hostIds.map((id) => context.subscribeHostState(id, read))
+    return () => {
+      for (const unsubscribe of unsubscribes) {
+        unsubscribe()
+      }
+    }
   }, [context, hostIds, hostKey])
   return values
+}
+
+function recordsEqual(
+  previous: Record<string, number | null>,
+  next: Record<string, number | null>
+): boolean {
+  const previousKeys = Object.keys(previous)
+  const nextKeys = Object.keys(next)
+  return (
+    previousKeys.length === nextKeys.length &&
+    nextKeys.every((key) => key in previous && previous[key] === next[key])
+  )
 }
 
 function useHostMetric<T>(
   hostId: string | undefined,
   read: (context: RpcClientContextValue, hostId: string) => T,
-  fallback: T,
-  options: { pollMs?: number } = {}
+  fallback: T
 ): T {
   const context = useRpcClientContext()
   const [, force] = useState(0)
@@ -55,12 +75,5 @@ function useHostMetric<T>(
     }
     return context.subscribeHostState(hostId, () => force((count) => count + 1))
   }, [context, hostId])
-  useEffect(() => {
-    if (!hostId || !options.pollMs) {
-      return
-    }
-    const interval = setInterval(() => force((count) => count + 1), options.pollMs)
-    return () => clearInterval(interval)
-  }, [hostId, options.pollMs])
   return hostId ? read(context, hostId) : fallback
 }

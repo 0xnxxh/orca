@@ -3,6 +3,14 @@ const RPC_TIMEOUT_RECYCLE_STREAK = 2
 export class RpcApplicationResponsiveness {
   private unresponsiveSince: number | null = null
   private timeoutStreak = 0
+  private readonly listeners = new Set<() => void>()
+
+  // Why: latch/recovery are the only two transitions of unresponsiveSince —
+  // subscribers re-read on notify, so the UI needs no polling.
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
 
   recordResponse(method: string, now = Date.now()): boolean {
     if (isRpcHealthProbeMethod(method)) {
@@ -15,6 +23,9 @@ export class RpcApplicationResponsiveness {
     const recovered = this.unresponsiveSince !== null
     this.unresponsiveSince = null
     this.timeoutStreak = 0
+    if (recovered) {
+      this.notifyChanged()
+    }
     return recovered
   }
 
@@ -25,11 +36,20 @@ export class RpcApplicationResponsiveness {
     this.timeoutStreak += 1
     const latched = this.unresponsiveSince === null
     this.unresponsiveSince ??= now
+    if (latched) {
+      this.notifyChanged()
+    }
     return { latched, recycle: this.timeoutStreak >= RPC_TIMEOUT_RECYCLE_STREAK }
   }
 
   getUnresponsiveSince(): number | null {
     return this.unresponsiveSince
+  }
+
+  private notifyChanged(): void {
+    for (const listener of this.listeners) {
+      listener()
+    }
   }
 }
 

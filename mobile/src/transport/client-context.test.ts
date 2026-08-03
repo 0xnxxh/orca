@@ -32,6 +32,8 @@ import {
   useHostClient,
   usePrimeHosts
 } from './client-context'
+import { useRpcUnresponsiveSince } from './client-context-connection-metrics'
+import type { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
 
 type FakeClient = RpcClient & {
   emitState: (state: ConnectionState) => void
@@ -428,13 +430,53 @@ describe('useHostClient', () => {
     const harness = await renderHarness(HOST.id)
     const staleSourceRevision = getHostListLoadRevision()
     dropSharedHostListLoad()
-    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
-    harness.primeHosts([updatedHost], staleSourceRevision)
+    // Why: the primed endpoint must differ from the saved profile — with equal
+    // values this test passes whether stale priming was rejected or adopted.
+    const stalePrimedHost = { ...HOST, endpoint: 'ws://127.0.0.1:9' }
+    const savedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([stalePrimedHost], staleSourceRevision)
 
-    await act(async () => harness.forceReconnect(HOST.id, updatedHost))
+    await act(async () => harness.forceReconnect(HOST.id, savedHost))
 
-    expect(connectMock.mock.calls[1]?.[0]).toEqual(updatedHost)
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(savedHost)
     harness.unmount()
+  })
+
+  it('re-renders unresponsive subscribers on latch and recovery without polling', async () => {
+    const client = makeFakeClient('connected')
+    connectMock.mockReturnValue(client)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    let observed: number | null = null
+    function UnresponsiveProbe(): null {
+      useHostClient(HOST.id)
+      observed = useRpcUnresponsiveSince(HOST.id)
+      return null
+    }
+    const restore = suppressReactTestRendererDeprecationWarning()
+    let renderer: ReactTestRenderer | null = null
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(UnresponsiveProbe)))
+      })
+    } finally {
+      restore()
+    }
+    expect(observed).toBeNull()
+
+    // Why: the responsiveness instance handed to the transport is the context's
+    // own — latching it must re-render metric subscribers with no timers.
+    const responsiveness = connectMock.mock.calls[0]?.[3] as RpcApplicationResponsiveness
+    await act(async () => {
+      responsiveness.recordTimeout('worktree.ps', 4242)
+    })
+    expect(observed).toBe(4242)
+
+    await act(async () => {
+      responsiveness.recordApplicationResponse()
+    })
+    expect(observed).toBeNull()
+    ;(renderer as unknown as ReactTestRenderer).unmount()
   })
 
   it('supersedes a pending old-profile open when Force Reconnect uses a saved endpoint', async () => {

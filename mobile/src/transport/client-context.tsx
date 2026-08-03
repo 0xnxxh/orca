@@ -34,6 +34,12 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     let responsiveness = responsivenessRef.current.get(hostId)
     if (!responsiveness) {
       responsiveness = new RpcApplicationResponsiveness()
+      // Why: latch/recovery re-renders host subscribers through the existing
+      // state channel — the unresponsive verdict needs no UI polling.
+      responsiveness.subscribe(() => {
+        const entry = storeRef.current.get(hostId)
+        notifyHostState(hostId, entry?.state ?? 'disconnected')
+      })
       responsivenessRef.current.set(hostId, responsiveness)
     }
     return responsiveness
