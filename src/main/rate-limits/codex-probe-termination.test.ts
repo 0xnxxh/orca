@@ -5,6 +5,7 @@ import { CODEX_PROBE_SHUTDOWN_DRAIN_MS, terminateCodexProbeChild } from './codex
 function makeFakeChild() {
   const emitter = new EventEmitter()
   const child = {
+    pid: 4321,
     exitCode: null as number | null,
     signalCode: null as NodeJS.Signals | null,
     stdin: { end: vi.fn() },
@@ -89,17 +90,47 @@ describe('terminateCodexProbeChild', () => {
 
   it('sends no signal during the drain window on Windows where kill is always forceful', async () => {
     const child = makeFakeChild()
-    const done = terminateCodexProbeChild(child, { platform: 'win32' })
+    const killWindowsProcessTree = vi.fn(async () => {})
+    const done = terminateCodexProbeChild(child, { platform: 'win32', killWindowsProcessTree })
 
     expect(child.stdin.end).toHaveBeenCalledTimes(1)
     expect(child.kill).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(CODEX_PROBE_SHUTDOWN_DRAIN_MS)
+    expect(killWindowsProcessTree).toHaveBeenCalledWith(child.pid)
     expect(child.kill).toHaveBeenCalledTimes(1)
     expect(child.kill).toHaveBeenCalledWith()
 
     child.exit()
     await done
+  })
+
+  it('waits for the Windows descendant tree kill before releasing the probe', async () => {
+    const child = makeFakeChild()
+    let finishTreeKill!: () => void
+    const treeKill = new Promise<void>((resolve) => {
+      finishTreeKill = resolve
+    })
+    const killWindowsProcessTree = vi.fn(() => treeKill)
+    let settled = false
+    const done = terminateCodexProbeChild(child, {
+      platform: 'win32',
+      drainMs: 0,
+      killWindowsProcessTree
+    }).then(() => {
+      settled = true
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(killWindowsProcessTree).toHaveBeenCalledWith(child.pid)
+    child.exit()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    finishTreeKill()
+    await done
+    expect(settled).toBe(true)
+    expect(child.kill).not.toHaveBeenCalled()
   })
 
   it('does nothing for a child that already exited', async () => {

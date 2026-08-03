@@ -265,4 +265,74 @@ describe('fetchCodexRateLimits probe shutdown', () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }
   })
+
+  it.each([
+    { failAt: 1, phase: 'initial request' },
+    { failAt: 2, phase: 'initialized notification' },
+    { failAt: 3, phase: 'rate-limit request' }
+  ])('keeps the home lock when the $phase stdin write throws', async ({ failAt, phase }) => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const firstChild = makeRpcChild()
+    let writeCount = 0
+    firstChild.stdin.write.mockImplementation((line: string) => {
+      writeCount += 1
+      if (writeCount === failAt) {
+        throw new Error(`${phase} stdin failed`)
+      }
+      const message = JSON.parse(line) as { id?: number; method?: string }
+      if (message.method === 'initialize') {
+        setTimeout(() => {
+          firstChild.stdout.emit(
+            'data',
+            Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} })}\n`)
+          )
+        }, 0)
+      }
+    })
+    firstChild.stdin.end = vi.fn()
+    firstChild.kill = vi.fn((signal?: string) => {
+      if (signal === 'SIGKILL') {
+        firstChild.exitCode = 1
+        firstChild.emit('exit', 1, 'SIGKILL')
+      }
+      return true
+    })
+    const secondChild = makeRpcChild()
+    childSpawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild)
+    respondToRpcRateLimitRead(secondChild, {
+      primary: { usedPercent: 3 },
+      secondary: { usedPercent: 4 }
+    })
+    const home = `/managed/home-stdin-error-${failAt}`
+
+    try {
+      const first = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: home
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(firstChild.kill).toHaveBeenCalledWith('SIGTERM')
+
+      const second = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: home
+      })
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(childSpawnMock).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(firstChild.kill).toHaveBeenCalledWith('SIGKILL')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(childSpawnMock).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(first).resolves.toMatchObject({
+        status: 'error',
+        error: `${phase} stdin failed`
+      })
+      await expect(second).resolves.toMatchObject({ status: 'ok' })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
 })

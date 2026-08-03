@@ -722,9 +722,17 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
     // Why: send initialized after initialize or the server rejects methods.
     let rateLimitsId: number | null = null
 
-    const initId = sendRpc('initialize', {
-      clientInfo: { name: 'orca', version: '1.0.0' }
-    })
+    let initId: number
+    try {
+      initId = sendRpc('initialize', {
+        clientInfo: { name: 'orca', version: '1.0.0' }
+      })
+    } catch (error) {
+      // A child already exists, so a synchronous pipe failure must follow the
+      // same reaping path as an asynchronous ChildProcess error.
+      onError(error instanceof Error ? error : new Error(String(error)))
+      return
+    }
 
     function sendNotification(method: string): void {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params: {} })}\n`)
@@ -753,9 +761,13 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
           if (msg.id === initId) {
             // Why: the boot/auth-refresh budget ends here; the read gets its own deadline.
             armRpcDeadline(rpcTimeoutMs)
-            // Initialize succeeded — send `initialized`, then request rate limits.
-            sendNotification('initialized')
-            rateLimitsId = sendRpc('account/rateLimits/read')
+            try {
+              // Initialize succeeded — send `initialized`, then request rate limits.
+              sendNotification('initialized')
+              rateLimitsId = sendRpc('account/rateLimits/read')
+            } catch (error) {
+              onError(error instanceof Error ? error : new Error(String(error)))
+            }
             continue
           }
 

@@ -1,3 +1,5 @@
+import { terminateWindowsProcessTree, type WindowsTreeKiller } from '../windows-process-tree-kill'
+
 // Why: Codex OAuth uses rotating refresh tokens. Hard-killing a probe's
 // app-server mid-refresh can strand auth.json between rotations and permanently
 // invalidate the stored credential, so termination always requests shutdown
@@ -7,6 +9,7 @@ export const CODEX_PROBE_SHUTDOWN_DRAIN_MS = 5_000
 const HARD_KILL_EXIT_WAIT_MS = 1_000
 
 export type TerminatableProbeChild = {
+  pid?: number
   exitCode: number | null
   signalCode?: NodeJS.Signals | null
   kill: (signal?: NodeJS.Signals) => boolean
@@ -21,6 +24,7 @@ export type TerminateCodexProbeOptions = {
   hardKillWaitMs?: number
   // Why: injectable so the Windows branch is testable from POSIX CI hosts.
   platform?: NodeJS.Platform
+  killWindowsProcessTree?: WindowsTreeKiller
 }
 
 function hasExited(child: TerminatableProbeChild): boolean {
@@ -80,6 +84,18 @@ export async function terminateCodexProbeChild(
     }
   }
   if (await waitForExit(child, options?.drainMs ?? CODEX_PROBE_SHUTDOWN_DRAIN_MS)) {
+    return
+  }
+  if (platform === 'win32' && child.pid) {
+    try {
+      // npm-installed Codex runs beneath cmd.exe; killing only that wrapper can
+      // leave app-server alive after the credential-home lock is released.
+      await (options?.killWindowsProcessTree ?? terminateWindowsProcessTree)(child.pid)
+    } catch {
+      // The direct-child fallback still applies if an injected killer rejects.
+    }
+  }
+  if (hasExited(child)) {
     return
   }
   try {
