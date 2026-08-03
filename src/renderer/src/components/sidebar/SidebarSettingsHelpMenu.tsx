@@ -33,7 +33,11 @@ import { SetupGuideProgressRing } from '../setup-guide/SetupGuideProgressRing'
 import { useSetupGuideProgress } from '../setup-guide/use-setup-guide-progress'
 import { SidebarFeedbackDialog } from './SidebarFeedbackDialog'
 import { translate } from '@/i18n/i18n'
-import { getUpdateCheckClickOptions, getUpdateCheckHint } from '@/lib/update-check-click-options'
+import {
+  getUpdateCheckClickOptions,
+  getUpdateCheckHint,
+  getUpdateCheckMenuHint
+} from '@/lib/update-check-click-options'
 
 const DOCS_URL = 'https://www.onorca.dev/docs'
 const CHANGELOG_URL = 'https://onorca.dev/changelog'
@@ -101,6 +105,7 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
   const updateCheckModifiersRef = React.useRef(NO_UPDATE_CHECK_MODIFIERS)
   const mountedRef = useMountedRef()
   const updateCheckHint = getUpdateCheckHint()
+  const updateCheckMenuHint = getUpdateCheckMenuHint()
 
   const showMilestones =
     setupProgress.ready && setupProgress.coreDoneCount < setupProgress.coreTotal
@@ -158,6 +163,20 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
   }
 
   const handleCheckForUpdatesPointerDown = (event: React.PointerEvent): void => {
+    updateCheckModifiersRef.current = {
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey
+    }
+  }
+
+  // Why: Radix selects a menu item on Enter/Space by synthesising a click that carries no
+  // modifiers, so without this the advertised gesture would be pointer-only.
+  const handleCheckForUpdatesKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
     updateCheckModifiersRef.current = {
       altKey: event.altKey,
       ctrlKey: event.ctrlKey,
@@ -318,20 +337,29 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              className="items-start"
               disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
+              onKeyDown={handleCheckForUpdatesKeyDown}
               onPointerDown={handleCheckForUpdatesPointerDown}
               onSelect={handleCheckForUpdates}
               title={updateCheckHint}
             >
               {updateStatus.state === 'checking' ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <Loader2 className="mt-0.5 size-3.5 animate-spin" />
               ) : (
-                <RefreshCw className="size-3.5" />
+                <RefreshCw className="mt-0.5 size-3.5" />
               )}
-              {translate(
-                'auto.components.sidebar.SidebarSettingsHelpMenu.29c56f30ee',
-                'Check for Updates'
-              )}
+              {/* Why: min-w-0 lets this stack shrink inside the w-52 menu; a flex item defaults to
+                  min-width:auto and the non-mac hint would overflow rather than wrap. */}
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span>
+                  {translate(
+                    'auto.components.sidebar.SidebarSettingsHelpMenu.29c56f30ee',
+                    'Check for Updates'
+                  )}
+                </span>
+                <span className="text-[11px] text-muted-foreground">{updateCheckMenuHint}</span>
+              </span>
             </DropdownMenuItem>
             {showAdminOptions ? (
               <>
