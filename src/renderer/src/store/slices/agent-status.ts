@@ -156,6 +156,7 @@ export type AgentStatusSlice = {
     payload: ParsedAgentStatusPayload & {
       orchestration?: AgentStatusOrchestrationContext
       promptInteractionKey?: string
+      restoredUnconfirmed?: boolean
     },
     terminalTitle?: string,
     timing?: { updatedAt?: number; stateStartedAt?: number },
@@ -1877,6 +1878,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             : payload.subagents,
           ...(providerSession ? { providerSession } : {}),
           ...(promptInteractionKey ? { promptInteractionKey } : {}),
+          ...(payload.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
           // Why: `interrupted` is done-only; parseAgentStatusPayload already clamps it for non-done states, so write it through directly.
           interrupted: payload.interrupted
         }

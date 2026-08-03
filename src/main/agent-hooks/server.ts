@@ -83,6 +83,8 @@ export type { AgentHookSource }
 type EnrichedAgentHookEventPayload = AgentHookEventPayload & {
   receivedAt: number
   stateStartedAt: number
+  /** Stamped at hydrate for nonterminal states; never persisted (hydrate re-stamps) and cleared by any accepted live event replacing the entry. */
+  restoredUnconfirmed?: true
 }
 
 type NormalizedLocalHook = {
@@ -92,7 +94,7 @@ type NormalizedLocalHook = {
 
 type PersistedAgentHookEventPayload = Omit<
   EnrichedAgentHookEventPayload,
-  'claudeRunningNonAgentTask' | 'launchToken' | 'promptInteractionKey'
+  'claudeRunningNonAgentTask' | 'launchToken' | 'promptInteractionKey' | 'restoredUnconfirmed'
 > & {
   launchTokenHash?: string
 }
@@ -378,6 +380,7 @@ function toAgentStatusIpcPayload(entry: EnrichedAgentHookEventPayload): AgentSta
     ...(entry.providerSession ? { providerSession: entry.providerSession } : {}),
     ...(entry.providerSessionOnly ? { providerSessionOnly: true } : {}),
     ...(entry.promptInteractionKey ? { promptInteractionKey: entry.promptInteractionKey } : {}),
+    ...(entry.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
     ...entry.payload
   }
 }
@@ -728,6 +731,10 @@ export class AgentHookServer {
     if (existing.providerSessionOnly) {
       return false
     }
+    // Why: inference must not fabricate a `done` onto a row whose `working` was never confirmed this runtime.
+    if (existing.restoredUnconfirmed) {
+      return false
+    }
     const payload = existing.payload
     const agentType: AgentType | undefined = payload.agentType
     // Why: Droid's Ctrl+C exits the CLI (handled by PTY lifecycle) rather than interrupting the current turn.
@@ -814,6 +821,10 @@ export class AgentHookServer {
       | EnrichedAgentHookEventPayload
       | undefined
     if (!existing) {
+      return false
+    }
+    // Why: inference must not fabricate a transition onto a row whose state was never confirmed this runtime.
+    if (existing.restoredUnconfirmed) {
       return false
     }
     const payload = existing.payload
@@ -2505,6 +2516,10 @@ export class AgentHookServer {
             (entry.payload.subagents?.length ?? 0) - (hydratedPayload.subagents?.length ?? 0)
           entry.payload = hydratedPayload
         }
+        if (entry.payload.state !== 'done') {
+          // Why: the terminal transition may have fired while no receiver was up; restore as unconfirmed, never as live truth.
+          entry.restoredUnconfirmed = true
+        }
         this.state.lastStatusByPaneKey.set(resolvedPaneKey, entry)
         if (entry.connectionId) {
           // Why: a restart can see an earlier wall clock; seed ordering so new events stay after disk state.
@@ -2621,6 +2636,8 @@ export class AgentHookServer {
       const {
         claudeRunningNonAgentTask: _claudeRunningNonAgentTask,
         promptInteractionKey: _promptInteractionKey,
+        // Why: never persisted — hydrate re-stamps it, so a stored copy could only drift.
+        restoredUnconfirmed: _restoredUnconfirmed,
         launchToken,
         ...persistedPayload
       } = payload as EnrichedAgentHookEventPayload
