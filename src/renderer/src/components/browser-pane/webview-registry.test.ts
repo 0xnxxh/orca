@@ -227,8 +227,8 @@ describe('webview registry drag listeners', () => {
     expect(webview.style.pointerEvents).toBe('auto')
   })
 
-  it('preserves explicit zoom across a parent-drift rebuild (preserveViewport)', async () => {
-    const { destroyPersistentWebview, registerPersistentWebview } =
+  it('preserves explicit zoom across a parent-drift replacement', async () => {
+    const { registerPersistentWebview, replacePersistentWebview } =
       await import('./webview-registry')
     const { getExplicitBrowserPageZoomLevel, rememberExplicitBrowserPageZoomLevel } =
       await import('./browser-page-zoom')
@@ -236,7 +236,7 @@ describe('webview registry drag listeners', () => {
     registerPersistentWebview('page-1', createWebview())
     rememberExplicitBrowserPageZoomLevel('page-1', 1.5)
 
-    destroyPersistentWebview('page-1', { preserveViewport: true })
+    await replacePersistentWebview('page-1', { preserveViewport: true })
 
     expect(getExplicitBrowserPageZoomLevel('page-1')).toBe(1.5)
   })
