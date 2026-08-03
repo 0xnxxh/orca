@@ -1999,14 +1999,15 @@ export class SshRelaySession {
       return
     }
     const previous = this.store.getSshRelayIncarnation(this.targetId)
-    this.store.setSshRelayIncarnation(identity)
     if (previous && isSameRelayIncarnation(previous, identity)) {
+      this.store.setSshRelayIncarnation(identity)
       return
     }
     this.disarmReapDrain(
       previous ? 'the relay incarnation changed' : 'no previous relay incarnation was recorded'
     )
     if (!previous) {
+      this.store.setSshRelayIncarnation(identity)
       return
     }
     const retired = this.store.retireAllLeasesSparingPtys(
@@ -2015,6 +2016,9 @@ export class SshRelaySession {
         `relay incarnation changed: pid ${previous.pid} -> ${identity.pid}, start ${previous.derivedStartAt} -> ${identity.derivedStartAt}, token ${previous.token ?? 'none'} -> ${identity.token ?? 'none'}`
       )
     )
+    // Why: these are two durable writes. Recording the new owner first means a crash in between
+    // makes the next connect read "unchanged" and never retire the old incarnation's leases.
+    this.store.setSshRelayIncarnation(identity)
     if (retired > 0) {
       console.warn(
         `[ssh-relay-session] Retired ${retired} lease(s) for ${this.targetId}: a different relay incarnation owns the socket`

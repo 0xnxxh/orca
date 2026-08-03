@@ -101,8 +101,9 @@ test.describe('SSH reconnect: closed panes stay closed', () => {
       }
       const readLayout = (tabId: string): PersistedTerminalLayout | null =>
         readPersistedTerminalLayout(dataFile, tabId)
-      // Scope pane reads to one tab so the count and the pty list can never come from
-      // different populations.
+      // Only the pty list is scoped to `tabId`; `count` comes from the helper, which
+      // resolves the active tab itself and falls back to the persisted layout when the
+      // pane manager is empty under hidden-window mode.
       const readPaneState = async (
         tabId: string
       ): Promise<{ count: number; ptyIds: (string | undefined)[] }> => {
@@ -283,8 +284,14 @@ test.describe('SSH reconnect: closed panes stay closed', () => {
         samplesWithExtraPane,
         'visible pane count must not exceed the post-close count at any sampled point after reconnect'
       ).toEqual([])
+      // Without this guard a layout that vanished during the scenario would satisfy the
+      // binding assertion below for the wrong reason.
       expect(
-        Object.values(afterReconnect.layout?.ptyIdsByLeafId ?? {}),
+        afterReconnect.layout,
+        'the tab must still have a persisted layout after reconnect settles'
+      ).not.toBeNull()
+      expect(
+        Object.values(afterReconnect.layout!.ptyIdsByLeafId),
         'the closed pty must not be bound to any leaf after reconnect settles'
       ).not.toContain(closedPtyId)
     } finally {

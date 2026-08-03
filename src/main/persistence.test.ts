@@ -9819,6 +9819,18 @@ describe('Store', () => {
     store.setSshRelayIncarnation({ targetId: 'target-2', pid: 7, derivedStartAt: 1_900_000 })
     store.flush()
 
+    // Rows only a hand-edited or downgraded profile can produce: setSshRelayIncarnation cannot mint them,
+    // so the reject branches are unreachable without writing them into the file directly.
+    const persisted = readDataFile() as { sshRelayIncarnations: unknown[] }
+    persisted.sshRelayIncarnations.push(
+      { targetId: 7, pid: 1, derivedStartAt: 1 },
+      { targetId: 'target-bad-pid', pid: 'nope', derivedStartAt: 1 },
+      { targetId: 'target-bad-start', pid: 1, derivedStartAt: null },
+      'not-an-object',
+      { targetId: 'target-empty-token', pid: 5, derivedStartAt: 2_000_000, token: '' }
+    )
+    writeDataFile(persisted)
+
     // Why: normalize is a strict allowlist, so set-then-read would pass even if the field never persisted.
     // Losing `token` here would silently demote D7 to its clock-based fallback on every restart.
     const reloaded = await createStore()
@@ -9831,6 +9843,21 @@ describe('Store', () => {
     // A token-less relay must stay token-less, not gain an empty one.
     expect(reloaded.getSshRelayIncarnation('target-2')).not.toHaveProperty('token')
     expect(reloaded.getSshRelayIncarnation('target-absent')).toBeNull()
+    expect(reloaded.getSshRelayIncarnation('target-bad-pid')).toBeNull()
+    expect(reloaded.getSshRelayIncarnation('target-bad-start')).toBeNull()
+    // An empty token is not an identity: keeping it would compare tokens that always match.
+    expect(reloaded.getSshRelayIncarnation('target-empty-token')).toEqual({
+      targetId: 'target-empty-token',
+      pid: 5,
+      derivedStartAt: 2_000_000
+    })
+    // The keyless rows (non-string targetId, non-object) have no lookup to assert on, so check the survivors.
+    reloaded.flush()
+    expect(
+      (readDataFile() as { sshRelayIncarnations: { targetId: string }[] }).sshRelayIncarnations.map(
+        (entry) => entry.targetId
+      )
+    ).toEqual(['target-1', 'target-2', 'target-empty-token'])
   })
 
   it('forgets the recorded incarnation when a target’s leases are removed', async () => {

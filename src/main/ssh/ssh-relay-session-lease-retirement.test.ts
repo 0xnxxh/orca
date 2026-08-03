@@ -259,6 +259,11 @@ describe('SSH relay lease retirement and orphan reaping', () => {
     expect(mockStore.setSshRelayIncarnation).toHaveBeenCalledWith(
       expect.objectContaining({ targetId: 'target-1', pid: 4242 })
     )
+    // Two durable writes: recording the new owner first would let a crash in between turn the next
+    // connect into a "same incarnation" no-op that never retires the old incarnation's leases.
+    expect(vi.mocked(mockStore.setSshRelayIncarnation).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(mockStore.retireAllLeasesSparingPtys).mock.invocationCallOrder[0]!
+    )
   })
 
   it('leaves leases alone when the same relay answers, tolerating RPC latency in the derived start', async () => {

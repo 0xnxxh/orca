@@ -55,6 +55,7 @@ import {
   readPersistedTerminalLayout,
   type PersistedTerminalLayout
 } from './helpers/persisted-terminal-layout'
+import { toAppSshPtyId } from '../../src/shared/ssh-pty-id'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import {
   countVisibleTerminalPanes,
@@ -244,7 +245,9 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
           const beforeCreatedAt = createdAtBeforeByLeaseKey.get(key)
           return beforeCreatedAt !== undefined && lease.createdAt === beforeCreatedAt
         })
-        .map((lease) => `ssh:${lease.targetId}@@${lease.ptyId}`)
+        // Derive the composite id through the main process's own encoder: hardcoding the
+        // format would make this filter silently empty if the format ever changed.
+        .map((lease) => toAppSshPtyId(lease.targetId, lease.ptyId))
         .filter((compositeId) => visiblePtyIds.has(compositeId))
       expect(
         staleVisibleLeaseKeys,
@@ -255,7 +258,13 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
       // leaves during this recovery path (that would be RC3's split-and-graft
       // signature -- it's the duplication defect, not this loss scenario, but
       // it's cheap to guard here too since the layout is captured either way).
-      const leafCountAfter = Object.keys(layoutAfter?.ptyIdsByLeafId ?? {}).length
+      // Same reason as the `layoutBefore` guard: a vanished layout would satisfy the
+      // leaf-count comparison for the wrong reason.
+      expect(
+        layoutAfter,
+        'the tab must still have a persisted layout after the redeploy settles'
+      ).not.toBeNull()
+      const leafCountAfter = Object.keys(layoutAfter!.ptyIdsByLeafId).length
       expect(
         leafCountAfter,
         'reconnect after a relay redeploy must not graft additional leaves into the layout'
