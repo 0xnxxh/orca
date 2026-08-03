@@ -1052,6 +1052,9 @@ describe('LocalPtyProvider', () => {
         expect.arrayContaining([
           'ORCA_TERMINAL_HANDLE/u',
           'ORCA_HERMES_STARTUP_QUERY',
+          'ORCA_TERM_PROGRAM',
+          'TERM_PROGRAM',
+          'TERM_PROGRAM_VERSION',
           POWERLEVEL10K_WIZARD_DISABLE_ENV
         ])
       )

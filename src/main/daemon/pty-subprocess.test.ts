@@ -1730,6 +1730,17 @@ describe('createPtySubprocess', () => {
     expect(spawnEnv.MY_VAR).toBe('test-value')
   })
 
+  it('advertises xterm.js compatibility while preserving Orca identity', () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+
+    createPtySubprocess({ sessionId: 'test', cols: 80, rows: 24 })
+
+    const spawnEnv = spawnMock.mock.calls.at(-1)![2].env
+    expect(spawnEnv.TERM_PROGRAM).toBe('vscode')
+    expect(spawnEnv.ORCA_TERM_PROGRAM).toBe('Orca')
+  })
+
   it('uses shell wrapper when attribution shims must survive shell startup', () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)
@@ -2825,6 +2836,9 @@ describe('createPtySubprocess', () => {
         'FOO/u',
         'ORCA_TERMINAL_HANDLE/u',
         'ORCA_HERMES_STARTUP_QUERY',
+        'ORCA_TERM_PROGRAM',
+        'TERM_PROGRAM',
+        'TERM_PROGRAM_VERSION',
         POWERLEVEL10K_WIZARD_DISABLE_ENV
       ])
     )

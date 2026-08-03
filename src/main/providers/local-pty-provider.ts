@@ -66,6 +66,11 @@ import { mergeGitConfigEnvProtocol } from '../../shared/git-credential-prompt-en
 import { PtyStartupIngress, type PtyIngressEmission } from '../../shared/pty-startup-ingress'
 import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
 import {
+  ORCA_TERMINAL_BRAND_ENV_KEYS,
+  ORCA_TERM_PROGRAM,
+  ORCA_XTERM_TERM_PROGRAM
+} from '../../shared/terminal-brand-env'
+import {
   expandWindowsEnvironmentVariables,
   expandWindowsPathEnvironmentVariables
 } from '../../shared/windows-environment-expansion'
@@ -665,10 +670,11 @@ export class LocalPtyProvider implements IPtyProvider {
       ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), args.env),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'Orca',
+      TERM_PROGRAM: ORCA_XTERM_TERM_PROGRAM,
+      ORCA_TERM_PROGRAM,
       // Why: TUIs feature-gate on TERM_PROGRAM_VERSION; the fallback keeps tests and non-Electron runs working.
       TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev',
-      // Why: supports-hyperlinks rejects TERM_PROGRAM=Orca, so tools drop OSC 8 links; force it since xterm.js parses them.
+      // Why: callers can replace the compatibility brand; xterm.js still supports OSC 8 links.
       FORCE_HYPERLINK: '1'
     } as Record<string, string>
     // Why: Orca can be launched from an Orca terminal; pane identity belongs to the child PTY, not the parent shell.
@@ -716,6 +722,10 @@ export class LocalPtyProvider implements IPtyProvider {
     if (process.platform === 'win32') {
       const codexHomeWslInfo = finalEnv.CODEX_HOME ? parseWslPath(finalEnv.CODEX_HOME) : null
       if (pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe') {
+        addWslEnvKeys(
+          finalEnv,
+          ORCA_TERMINAL_BRAND_ENV_KEYS.filter((key) => finalEnv[key] !== undefined)
+        )
         if (codexHomeWslInfo) {
           if (launchWslDistro && launchWslDistro !== codexHomeWslInfo.distro) {
             delete finalEnv.CODEX_HOME

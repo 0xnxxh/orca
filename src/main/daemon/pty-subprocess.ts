@@ -64,6 +64,11 @@ import { parsePtySessionId } from './pty-session-id'
 import { getAgentForegroundContextPaths } from '../providers/agent-foreground-context-paths'
 import { assertSafeAgentStartupCwd, resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { ORCA_HERMES_STARTUP_QUERY_ENV } from '../../shared/hermes-startup-query'
+import {
+  ORCA_TERMINAL_BRAND_ENV_KEYS,
+  ORCA_TERM_PROGRAM,
+  ORCA_XTERM_TERM_PROGRAM
+} from '../../shared/terminal-brand-env'
 import type { TuiAgent } from '../../shared/types'
 import {
   expandWindowsEnvironmentVariables,
@@ -572,10 +577,11 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), opts.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Orca',
+    TERM_PROGRAM: ORCA_XTERM_TERM_PROGRAM,
+    ORCA_TERM_PROGRAM,
     // Why: TUIs feature-gate on TERM_PROGRAM_VERSION; ORCA_APP_VERSION is inherited from the forking main process.
     TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev',
-    // Why: `supports-hyperlinks` gates OSC 8 on a TERM_PROGRAM allowlist excluding Orca; force it since xterm.js parses OSC 8 for clickable links.
+    // Why: callers can replace the compatibility brand; xterm.js still supports OSC 8 links.
     FORCE_HYPERLINK: '1'
   } as Record<string, string>
   composeGuardedDaemonGitConfigEnv(env, opts.env, opts.launchAgent)
@@ -673,6 +679,10 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     }
     const codexHomeWslInfo = env.CODEX_HOME ? parseWslPath(env.CODEX_HOME) : null
     if (pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe') {
+      addWslEnvKeys(
+        env,
+        ORCA_TERMINAL_BRAND_ENV_KEYS.filter((key) => env[key] !== undefined)
+      )
       if (codexHomeWslInfo) {
         const launchWslDistro = resolvedWslContext?.distro
         if (launchWslDistro && launchWslDistro !== codexHomeWslInfo.distro) {
