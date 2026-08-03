@@ -41,6 +41,7 @@ import {
   isStreamingSubscriptionReadyResult,
   isTerminalSubscribedResult
 } from './rpc-stream-response-shape'
+import { isStaleForegroundDial } from './rpc-stale-dial'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 import { RpcApplicationResponseTracker } from './rpc-application-response-tracker'
@@ -130,6 +131,7 @@ export function connect(
   let inboundActivitySequence = 0
   let lastWsClosedAt: number | null = null
   let wsConstructionCounter = 0
+  let dialStartedAt = 0
 
   // Why: fresh ephemeral keypair per connection provides forward secrecy.
   let sharedKey: Uint8Array | null = null
@@ -260,6 +262,7 @@ export function connect(
       msSinceLastInbound: lastInboundAt != null ? now - lastInboundAt : null
     })
     setState('connecting')
+    dialStartedAt = now
     sharedKey = null
 
     emitLog(
@@ -286,11 +289,7 @@ export function connect(
           'WebSocket connect timeout',
           `No TCP/WS handshake within ${CONNECT_TIMEOUT_MS / 1000}s — endpoint unreachable?`
         )
-        openingWs.close()
-        if (ws === openingWs) {
-          synthesizedCloses.remember(openingWs, authenticationGeneration)
-          handleSocketClosed(openingWs, { timedOut: true })
-        }
+        closeAndSynthesize(openingWs)
       }
     }, CONNECT_TIMEOUT_MS)
 
@@ -330,12 +329,7 @@ export function connect(
           'Handshake timeout',
           `No e2ee_ready/e2ee_authenticated within ${HANDSHAKE_TIMEOUT_MS / 1000}s`
         )
-        openingWs.close()
-        // Why: React Native can omit onclose for a wedged iOS transport.
-        if (ws === openingWs) {
-          synthesizedCloses.remember(openingWs, authenticationGeneration)
-          handleSocketClosed(openingWs, { timedOut: true })
-        }
+        closeAndSynthesize(openingWs)
       }, HANDSHAKE_TIMEOUT_MS)
     }
 
@@ -378,10 +372,7 @@ export function connect(
         try {
           const msg = JSON.parse(plaintext)
           if (msg.type === 'e2ee_authenticated') {
-            if (handshakeTimer) {
-              clearTimeout(handshakeTimer)
-              handshakeTimer = null
-            }
+            clearHandshakeTimer()
             console.log('[net] e2ee_authenticated — connected', {
               streamCount: streamListeners.size
             })
@@ -418,14 +409,8 @@ export function connect(
               }
             }
           } else if (msg.type === 'e2ee_error' || (!msg.ok && msg.error?.code === 'unauthorized')) {
-            console.log('[net] e2ee auth FAILED', {
-              msgType: msg.type,
-              error: msg.error
-            })
-            if (handshakeTimer) {
-              clearTimeout(handshakeTimer)
-              handshakeTimer = null
-            }
+            console.log('[net] e2ee auth FAILED', { msgType: msg.type, error: msg.error })
+            clearHandshakeTimer()
             handleAuthRejection('Unauthorized — pairing may be revoked')
           }
         } catch {
@@ -641,10 +626,7 @@ export function connect(
     activeBrowserScreencastRequestId = null
     pendingBrowserScreencastRequestId = null
     markStreamsForReplay()
-    if (handshakeTimer) {
-      clearTimeout(handshakeTimer)
-      handshakeTimer = null
-    }
+    clearHandshakeTimer()
     activityProbe.stop()
     activityProbe.finishFollowUp()
     if (intentionallyClosed) {
@@ -760,18 +742,41 @@ export function connect(
     }
   }
 
+  function clearHandshakeTimer() {
+    if (handshakeTimer) {
+      clearTimeout(handshakeTimer)
+      handshakeTimer = null
+    }
+  }
+
+  // Why: a revival signal dials at once rather than waiting out the armed backoff.
+  // Only the caller knows whether the attempt that led here should be forgiven.
+  function redialNow(resetAttempts: boolean) {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (resetAttempts) {
+      reconnectAttempt = 0
+    }
+    openConnection()
+  }
+
+  // Why: React Native can omit onclose for a wedged iOS transport, so every forced
+  // close has to synthesize the close event it may never deliver.
+  function closeAndSynthesize(socket: WebSocket) {
+    socket.close()
+    if (ws === socket) {
+      synthesizedCloses.remember(socket, authenticationGeneration)
+      handleSocketClosed(socket, { timedOut: true })
+    }
+  }
+
   function forceSocketReconnect(socket: WebSocket | null): void {
     if (!socket || socket !== ws) {
       return
     }
-    if (socket.readyState === WebSocket.OPEN) {
-      socket.close()
-    }
-    // Why: RN can omit onclose for a half-open socket; demote locally instead of staying falsely connected.
-    if (socket === ws) {
-      synthesizedCloses.remember(socket, authenticationGeneration)
-      handleSocketClosed(socket, { timedOut: true })
-    }
+    closeAndSynthesize(socket)
   }
 
   function rejectAllPending(reason: string, options?: { deliveryUnknown?: boolean }) {
@@ -1106,18 +1111,27 @@ export function connect(
         activityProbe.run()
         return
       }
+      const dialing = ws
+      const dialAgeMs = Date.now() - dialStartedAt
+      let abandoned = false
+      if (dialing && isStaleForegroundDial(state, dialAgeMs)) {
+        console.log('[net] foreground — abandoning stale dial', { state, dialAgeMs })
+        closeAndSynthesize(dialing)
+        abandoned = true
+      }
       if (state === 'reconnecting') {
         // Why: foreground is a strong user signal — restart immediately instead of waiting out a 60s/90s backoff timer.
         console.log('[net] foreground — restarting reconnect loop', {
           attempt: reconnectAttempt,
           hadTimer: !!reconnectTimer
         })
-        if (reconnectTimer) {
-          clearTimeout(reconnectTimer)
-          reconnectTimer = null
-        }
-        reconnectAttempt = 0
-        openConnection()
+        // Why: an abandoned dial keeps the failure it already represents. It never
+        // authenticated, so it is the same failure the connect timeout would have
+        // booked had we waited it out — we skip the wait, we don't pardon it. Zeroing
+        // there would let a resume (or a flapping network) reset the counter faster
+        // than it climbs, pinning the card at "Connecting…" through a real outage
+        // (issue #10119). A redial with no dial to abandon is a genuinely fresh start.
+        redialNow(!abandoned)
       }
     },
 
@@ -1128,10 +1142,7 @@ export function connect(
         reconnectTimer = null
       }
       clearConnectTimer()
-      if (handshakeTimer) {
-        clearTimeout(handshakeTimer)
-        handshakeTimer = null
-      }
+      clearHandshakeTimer()
       activityProbe.stop()
       activityProbe.finishFollowUp()
       if (ws) {
