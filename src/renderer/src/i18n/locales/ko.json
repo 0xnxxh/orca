@@ -14598,7 +14598,7 @@
       "sending": "보내는 중…",
       "send": "보내기"
     },
-    "rings": {
+    "map": {
       "host": {
         "all": "모든 호스트",
         "local": "로컬",
@@ -14651,7 +14651,7 @@
       "pinAgent": "에이전트 고정",
       "doubleClick": "두 번 클릭",
       "zoomWorkspace": "작업 공간 확대",
-      "fitFleet": "전체 플릿 맞춤",
+      "fitMap": "맵 전체 맞춤",
       "live": "실시간",
       "snapshot": "스냅샷",
       "clickToPin": "에이전트를 클릭하여 고정",
@@ -14660,7 +14660,7 @@
     },
     "view": {
       "label": "대시보드 보기",
-      "rings": "에이전트 링",
+      "map": "에이전트 맵",
       "cells": "셀",
       "board": "대시보드"
     },

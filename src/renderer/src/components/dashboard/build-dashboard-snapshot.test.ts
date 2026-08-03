@@ -145,10 +145,54 @@ describe('buildDashboardSnapshot', () => {
     expect(card.leafId).toBe(LEAF_ID)
     expect(card.lastUserMessage).toBe('do the thing')
     expect(card.lastAgentMessage).toBe('Working on it now')
+    expect(card.lastResponseAt).toBe(NOW)
     // Column ordering key: when the agent entered its current state.
     expect(card.stateChangedAt).toBe(NOW - 5000)
     // No ack yet → unseen, mirroring the sidebar's unvisited signal.
     expect(card.unseen).toBe(true)
+  })
+
+  it('carries the provider session identity so the pop-out can read the transcript', () => {
+    const withSession = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            providerSession: {
+              key: 'session_id',
+              id: 'session-abc',
+              transcriptPath: '/home/dev/.claude/projects/orca/session-abc.jsonl'
+            }
+          })
+        }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+    expect(withSession.cards[0].sessionId).toBe('session-abc')
+    expect(withSession.cards[0].transcriptPath).toBe(
+      '/home/dev/.claude/projects/orca/session-abc.jsonl'
+    )
+
+    // A session without a reported path still resumes by id; the path stays absent
+    // rather than being reconstructed here.
+    const idOnly = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            providerSession: { key: 'session_id', id: 'session-def' }
+          })
+        }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+    expect(idOnly.cards[0].sessionId).toBe('session-def')
+    expect(idOnly.cards[0].transcriptPath).toBeUndefined()
+
+    const none = buildDashboardSnapshot(
+      baseState({ agentStatusByPaneKey: { [PANE_KEY]: entry({}) } }),
+      NOW
+    )
+    expect(none.cards[0].sessionId).toBeUndefined()
+    expect(none.cards[0].transcriptPath).toBeUndefined()
   })
 
   it('publishes terminal-backed orchestrated workers under their direct parent', () => {
@@ -205,6 +249,70 @@ describe('buildDashboardSnapshot', () => {
     })
   })
 
+  it('preserves explicit lineage when a child runs in another worktree', () => {
+    const childTabId = 'child-tab'
+    const childPaneKey = makePaneKey(childTabId, CHILD_LEAF_ID)
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        worktreesByRepo: { r1: [worktree(), worktree('w2', 'wt-two')] },
+        tabsByWorktree: { w1: [tab()], w2: [tab(childTabId, 'w2')] },
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({ paneKey: PANE_KEY }),
+          [childPaneKey]: entry({
+            paneKey: childPaneKey,
+            tabId: childTabId,
+            worktreeId: 'w2',
+            orchestration: {
+              taskId: 'child-task',
+              dispatchId: 'child-dispatch',
+              parentPaneKey: PANE_KEY
+            }
+          })
+        },
+        terminalLayoutsByTabId: {
+          [TAB_ID]: {
+            root: { type: 'leaf', leafId: LEAF_ID },
+            activeLeafId: LEAF_ID,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [LEAF_ID]: 'pty1' }
+          },
+          [childTabId]: {
+            root: { type: 'leaf', leafId: CHILD_LEAF_ID },
+            activeLeafId: CHILD_LEAF_ID,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [CHILD_LEAF_ID]: 'pty-child' }
+          }
+        },
+        ptyIdsByTabId: { [TAB_ID]: ['pty1'], [childTabId]: ['pty-child'] }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards.find((item) => item.paneKey === childPaneKey)).toMatchObject({
+      worktreeName: 'wt-two',
+      parentPaneKey: PANE_KEY
+    })
+  })
+
+  it('does not publish malformed self-parent lineage', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            orchestration: {
+              taskId: 'self-task',
+              dispatchId: 'self-dispatch',
+              parentPaneKey: PANE_KEY
+            }
+          })
+        }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards[0].parentPaneKey).toBeUndefined()
+  })
+
   it('carries the tab conversation name and drops status-only titles', () => {
     const named = buildDashboardSnapshot(
       baseState({
@@ -221,6 +329,24 @@ describe('buildDashboardSnapshot', () => {
       NOW
     )
     expect(unnamed.cards[0].conversationName).toBeUndefined()
+
+    const orchestrated = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            orchestration: {
+              taskId: 'task-deadbeef',
+              dispatchId: 'ctx-deadbeef',
+              taskTitle: 'Review the dashboard lineage',
+              displayName: 'Dashboard lineage review'
+            }
+          })
+        },
+        tabsByWorktree: { w1: [{ ...tab(), title: 'worker-task_deadbeef' }] }
+      }),
+      NOW
+    )
+    expect(orchestrated.cards[0].conversationName).toBe('Dashboard lineage review')
   })
 
   // Why: `orca terminal rename --title` is unbounded, and the main-process

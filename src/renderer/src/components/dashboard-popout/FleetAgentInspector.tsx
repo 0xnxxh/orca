@@ -10,11 +10,11 @@ import {
   NATIVE_CHAT_SUBMIT
 } from '@/components/native-chat/native-chat-send'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
-import type { FleetWorktreeRing } from './fleet-rings-layout'
+import type { AgentMapWorktreeRing } from './agent-map-layout'
 
 type FleetAgentInspectorProps = {
   card: DashboardCard | null
-  worktree: FleetWorktreeRing | null
+  worktree: AgentMapWorktreeRing | null
   draft: string
   onDraftChange: (value: string) => void
   onOpenTerminal: (card: DashboardCard) => void
@@ -22,16 +22,16 @@ type FleetAgentInspectorProps = {
 
 function compactDuration(card: DashboardCard, now: number): string {
   if (card.startedAt <= 0) {
-    return translate('dashboardPopout.rings.durationUnknown', 'Duration unavailable')
+    return translate('dashboardPopout.map.durationUnknown', 'Duration unavailable')
   }
   const end = card.finishedAt ?? now
   const minutes = Math.max(0, Math.floor((end - card.startedAt) / 60_000))
   if (minutes < 60) {
-    return translate('dashboardPopout.rings.durationMinutes', '{{count}}m active', {
+    return translate('dashboardPopout.map.durationMinutes', '{{count}}m active', {
       count: minutes
     })
   }
-  return translate('dashboardPopout.rings.durationHours', '{{count}}h active', {
+  return translate('dashboardPopout.map.durationHours', '{{count}}h active', {
     count: Math.floor(minutes / 60)
   })
 }
@@ -51,11 +51,11 @@ export function FleetAgentInspector({
     return (
       <aside className="hidden min-h-0 w-64 shrink-0 border-l border-border bg-card/35 p-4 md:block">
         <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-          {translate('dashboardPopout.rings.selectedAgent', 'Selected agent')}
+          {translate('dashboardPopout.map.selectedAgent', 'Selected agent')}
         </span>
         <p className="mt-2 text-xs text-muted-foreground">
           {translate(
-            'dashboardPopout.rings.selectAgentHint',
+            'dashboardPopout.map.selectAgentHint',
             'Select an agent node to pin its details and response draft.'
           )}
         </p>
@@ -94,7 +94,7 @@ export function FleetAgentInspector({
     <aside className="scrollbar-sleek hidden min-h-0 w-64 shrink-0 overflow-y-auto border-l border-border bg-card/35 p-4 md:flex md:flex-col">
       <header>
         <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-          {translate('dashboardPopout.rings.selectedAgent', 'Selected agent')}
+          {translate('dashboardPopout.map.selectedAgent', 'Selected agent')}
         </span>
         <h2 className="mt-1 truncate text-sm font-semibold">
           {card.conversationName ?? formatAgentTypeLabel(card.agentType)}
@@ -115,7 +115,7 @@ export function FleetAgentInspector({
         </span>
         <span className="rounded-md bg-muted p-2 text-[10px] text-muted-foreground">
           <strong className="block text-sm text-foreground">{worktree.agents.length}</strong>
-          {translate('dashboardPopout.rings.inRing', 'In ring')}
+          {translate('dashboardPopout.map.inRing', 'In ring')}
         </span>
       </div>
 
@@ -142,7 +142,7 @@ export function FleetAgentInspector({
           onClick={() => onOpenTerminal(card)}
         >
           <SquareArrowOutUpRight className="size-3" />
-          {translate('dashboardPopout.rings.openLiveTerminal', 'Open live terminal')}
+          {translate('dashboardPopout.map.openLiveTerminal', 'Open live terminal')}
         </Button>
       </section>
 
@@ -152,7 +152,7 @@ export function FleetAgentInspector({
             htmlFor={`fleet-response-${card.paneKey}`}
             className="block border-b border-border px-2.5 py-2 text-[11px] font-semibold"
           >
-            {translate('dashboardPopout.rings.respondToAgent', 'Respond to agent')}
+            {translate('dashboardPopout.map.respondToAgent', 'Respond to agent')}
           </label>
           <textarea
             id={`fleet-response-${card.paneKey}`}
@@ -165,19 +165,19 @@ export function FleetAgentInspector({
                 void sendDraft()
               }
             }}
-            placeholder={translate('dashboardPopout.rings.responsePlaceholder', 'Send direction…')}
+            placeholder={translate('dashboardPopout.map.responsePlaceholder', 'Send direction…')}
             className="scrollbar-sleek min-h-24 w-full resize-none bg-transparent px-2.5 py-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
           <footer className="flex items-center gap-2 border-t border-border px-2 py-1.5">
             {sendError ? (
               <span className="text-[10px] text-destructive">
-                {translate('dashboardPopout.rings.sendFailed', 'Send failed')}
+                {translate('dashboardPopout.map.sendFailed', 'Send failed')}
               </span>
             ) : (
               <span className="text-[10px] text-muted-foreground">
                 {card.ptyId
-                  ? translate('dashboardPopout.rings.routesToTerminal', 'Routes to live terminal')
-                  : translate('dashboardPopout.rings.terminalUnavailable', 'Terminal unavailable')}
+                  ? translate('dashboardPopout.map.routesToTerminal', 'Routes to live terminal')
+                  : translate('dashboardPopout.map.terminalUnavailable', 'Terminal unavailable')}
               </span>
             )}
             <Button
@@ -189,8 +189,8 @@ export function FleetAgentInspector({
             >
               <Send className="size-3" />
               {sending
-                ? translate('dashboardPopout.rings.sending', 'Sending…')
-                : translate('dashboardPopout.rings.send', 'Send')}
+                ? translate('dashboardPopout.map.sending', 'Sending…')
+                : translate('dashboardPopout.map.send', 'Send')}
               <ShortcutKeyCombo
                 keys={[isMac ? '⌘' : 'Ctrl', '↵']}
                 keyCapClassName="min-w-4 border-primary-foreground/20 bg-primary-foreground/10 px-1 py-0 text-[9px] text-primary-foreground shadow-none"

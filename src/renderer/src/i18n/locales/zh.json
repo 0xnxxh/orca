@@ -4817,7 +4817,7 @@
           "missingCli": "缺少 Orca CLI。",
           "missingSkill": "缺少 Linear 智能体技能。",
           "title": "设置 Linear 智能体技能",
-          "remoteCopy": "这会安装主机设置；远程智能体环境可能需要单独设置。",
+          "remoteCopy": "这会安装主机设置；远程智能体地图境可能需要单独设置。",
           "hostCopy": "为已链接 Linear 工作的主机智能体交接安装此项。",
           "dismiss": "关闭 Linear 智能体技能设置",
           "setup": "设置",
@@ -4830,7 +4830,7 @@
           "successTitle": "Linear 议题访问已就绪",
           "successDescription": "智能体现在可以从此工作区读取和更新已链接的 Linear 议题。",
           "successDescriptionWsl": "WSL 智能体现在可以从此工作区使用已链接的 Linear 议题。",
-          "successDescriptionRemote": "主机智能体现在可以使用已链接的 Linear 议题。远程智能体环境可能仍需要单独设置。",
+          "successDescriptionRemote": "主机智能体现在可以使用已链接的 Linear 议题。远程智能体地图境可能仍需要单独设置。",
           "successStatus": "Linear 议题访问已就绪",
           "done": "完成",
           "wslCopy": "为已链接 Linear 工作的 WSL 智能体交接安装此项。",
@@ -4841,7 +4841,7 @@
           "toastInstallCliAndSkillDescription": "安装 Orca CLI 和 Linear 技能，让智能体可以读取并编辑 Linear 任务。",
           "toastInstallCliDescription": "安装 Orca CLI，让智能体可以读取并编辑 Linear 任务。",
           "toastInstallSkillDescription": "安装 Linear 技能，让智能体可以通过 Orca CLI 读取并编辑 Linear 任务。",
-          "toastRemoteDescription": "{{value0}} 远程智能体环境可能仍需要自己的设置。",
+          "toastRemoteDescription": "{{value0}} 远程智能体地图境可能仍需要自己的设置。",
           "toastWslDescription": "{{value0}} 此设置会在所选 WSL 智能体运行时中执行。"
         },
         "FolderWorkspaceComposerDialog": {
@@ -14598,7 +14598,7 @@
       "sending": "正在发送…",
       "send": "发送"
     },
-    "rings": {
+    "map": {
       "host": {
         "all": "所有主机",
         "local": "本地",
@@ -14651,7 +14651,7 @@
       "pinAgent": "固定智能体",
       "doubleClick": "双击",
       "zoomWorkspace": "放大工作区",
-      "fitFleet": "适应整个集群",
+      "fitMap": "适应整个地图",
       "live": "实时",
       "snapshot": "快照",
       "clickToPin": "点击智能体以固定",
@@ -14660,7 +14660,7 @@
     },
     "view": {
       "label": "仪表盘视图",
-      "rings": "智能体环",
+      "map": "智能体地图",
       "cells": "单元格",
       "board": "仪表盘"
     },

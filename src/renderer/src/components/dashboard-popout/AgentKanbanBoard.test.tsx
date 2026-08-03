@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { i18n } from '@/i18n/i18n'
+import { useAppStore } from '@/store'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
@@ -111,6 +112,26 @@ vi.mock('./AgentTerminalDialog', () => ({
   )
 }))
 
+// The chat panel owns real transcript IO; the board only decides when it opens.
+vi.mock('./AgentChatPanel', () => ({
+  AgentChatPanel: ({
+    card,
+    onClose,
+    onOpenTerminal
+  }: {
+    card: DashboardCard
+    onClose: () => void
+    onOpenTerminal?: () => void
+  }) => (
+    <div data-testid="chat-panel" data-pane-key={card.paneKey}>
+      <button data-testid="chat-panel-close" onClick={onClose} />
+      {onOpenTerminal ? (
+        <button data-testid="chat-panel-open-terminal" onClick={onOpenTerminal} />
+      ) : null}
+    </div>
+  )
+}))
+
 function card(overrides: Partial<DashboardCard>): DashboardCard {
   return {
     paneKey: Math.random().toString(36),
@@ -153,6 +174,7 @@ describe('AgentKanbanBoard', () => {
     localStorage.clear()
     // The board relays seen-acks through the dashboard preload API.
     ;(window as unknown as { api: unknown }).api = { dashboard: { ackAgent } }
+    useAppStore.setState({ settings: null })
   })
   afterEach(() => {
     cleanup()
@@ -167,10 +189,14 @@ describe('AgentKanbanBoard', () => {
     expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Done'])
   })
 
-  it('keeps board, rings, and cells available as separate views', () => {
+  it('keeps board, lanes, and map available as separate views', () => {
     renderBoard([])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent Rings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Activity Lanes' }))
+    expect(screen.getByText('Worktree · session duration')).toBeInTheDocument()
+    expect(screen.getByText('No matching agents')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
     expect(screen.getByText('Live containment map')).toBeInTheDocument()
     expect(screen.getByText('Focus view')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Orchestrate' })).toBeInTheDocument()
@@ -179,20 +205,84 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByText('Needs You')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Orchestrate' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cells' }))
-    expect(screen.getByRole('button', { name: 'Cells' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('No agents match the current filters.')).toBeInTheDocument()
+    // 'cells' is hidden from the selector for now but stays reachable via initialView.
+    expect(screen.queryByRole('button', { name: 'Cells' })).not.toBeInTheDocument()
   })
 
-  it('keeps the selected cell map visible beside its terminal panel', () => {
+  it('answers a cell-map agent in chat, keeping the map beside it', () => {
+    useAppStore.setState({
+      settings: { experimentalAgentDashboardAgentViewMode: 'native-chat' } as never
+    })
     const agent = card({ paneKey: 'cell-agent', conversationName: 'Cell agent' })
     render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="cells" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cell agent, Working' }))
 
     expect(screen.getByTestId('agent-cell-project')).toBeInTheDocument()
-    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+    expect(screen.getByTestId('chat-panel')).toHaveAttribute('data-pane-key', 'cell-agent')
     expect(screen.getByRole('button', { name: 'Cell agent, Working' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
+  })
+
+  it('escalates a cell-map chat to the live terminal on request', () => {
+    useAppStore.setState({
+      settings: { experimentalAgentDashboardAgentViewMode: 'native-chat' } as never
+    })
+    const agent = card({ paneKey: 'cell-agent', conversationName: 'Cell agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="cells" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cell agent, Working' }))
+    fireEvent.click(screen.getByTestId('chat-panel-open-terminal'))
+
+    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+  })
+
+  it('closes the cell-map chat panel without leaving a selection behind', () => {
+    useAppStore.setState({
+      settings: { experimentalAgentDashboardAgentViewMode: 'native-chat' } as never
+    })
+    const agent = card({ paneKey: 'cell-agent', conversationName: 'Cell agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="cells" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cell agent, Working' }))
+    fireEvent.click(screen.getByTestId('chat-panel-close'))
+
+    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cell agent, Working' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  })
+
+  it('keeps lanes and map on the terminal panel', () => {
+    const agent = card({ paneKey: 'lane-agent', conversationName: 'Lane agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="lanes" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Lane agent,/ }))
+
+    expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument()
+  })
+
+  it('keeps the selected activity timeline visible beside its terminal panel', () => {
+    const agent = card({
+      paneKey: 'lane-agent',
+      conversationName: 'Lane agent',
+      startedAt: Date.now() - 60_000,
+      lastResponseAt: Date.now() - 30_000
+    })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="lanes" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Lane agent,/ }))
+
+    expect(screen.getByText('Worktree · session duration')).toBeInTheDocument()
+    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+    expect(screen.getByRole('button', { name: /Lane agent,/ })).toHaveAttribute(
       'aria-pressed',
       'true'
     )
@@ -201,7 +291,7 @@ describe('AgentKanbanBoard', () => {
 
   it('keeps the selected ring map visible beside its terminal panel', () => {
     const agent = card({ paneKey: 'ring-agent', conversationName: 'Ring agent' })
-    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="rings" />)
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)
 
     fireEvent.click(screen.getByRole('button', { name: /Ring agent/ }))
 
@@ -435,7 +525,7 @@ describe('AgentKanbanBoard', () => {
       unseen: false
     })
     const view = render(
-      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh, old] }} initialView="rings" />
+      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh, old] }} initialView="map" />
     )
 
     expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
@@ -446,7 +536,7 @@ describe('AgentKanbanBoard', () => {
     view.rerender(
       <AgentKanbanBoard
         snapshot={{ generatedAt: 2, cards: [{ ...fresh, unseen: false }, old] }}
-        initialView="rings"
+        initialView="map"
       />
     )
     expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
@@ -455,7 +545,7 @@ describe('AgentKanbanBoard', () => {
     const reopened = render(
       <AgentKanbanBoard
         snapshot={{ generatedAt: 3, cards: [{ ...fresh, unseen: false }, old] }}
-        initialView="rings"
+        initialView="map"
       />
     )
     expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
@@ -468,7 +558,7 @@ describe('AgentKanbanBoard', () => {
     render(
       <AgentKanbanBoard
         snapshot={{ generatedAt: 4, cards: [{ ...fresh, unseen: false }, old] }}
-        initialView="rings"
+        initialView="map"
       />
     )
     expect(screen.queryByRole('button', { name: /Fresh result/ })).not.toBeInTheDocument()

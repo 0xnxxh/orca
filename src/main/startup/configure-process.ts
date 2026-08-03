@@ -7,6 +7,7 @@ import { getMainE2EConfig } from '../e2e-config'
 
 const DEV_PARENT_SHUTDOWN_GRACE_MS = 3000
 const HTTP1_COMPATIBILITY_ENV_VAR = 'ORCA_DISABLE_HTTP2'
+const DEV_PRODUCTION_PROFILE_ENV_VAR = 'ORCA_DEV_PRODUCTION_PROFILE'
 const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on'])
 const FALSE_ENV_VALUES = new Set(['0', 'false', 'no', 'off'])
 let devParentShutdownRequested = false
@@ -161,6 +162,10 @@ export function configureDevUserDataPath(isDev: boolean): void {
   if (!isDev) {
     return
   }
+  if (isProductionProfileDevMode(isDev)) {
+    app.setPath('userData', join(app.getPath('appData'), 'orca'))
+    return
+  }
   const overrideUserDataPath = process.env.ORCA_DEV_USER_DATA_PATH
   if (overrideUserDataPath) {
     // Why: automated repros need an isolated profile so the dev's persisted tabs/worktrees don't skew startup and hide window bugs.
@@ -169,6 +174,20 @@ export function configureDevUserDataPath(isDev: boolean): void {
   }
   // Why: without a dev-only path, pnpm dev overwrites the packaged app's runtime pointer under userData and breaks the orca CLI.
   app.setPath('userData', join(app.getPath('appData'), 'orca-dev'))
+}
+
+export function isProductionProfileDevMode(
+  isDev: boolean,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return isDev && env[DEV_PRODUCTION_PROFILE_ENV_VAR] === '1'
+}
+
+export function devParentShutdownOwnsDaemon(
+  isDev: boolean,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return isDev && !isProductionProfileDevMode(isDev, env)
 }
 
 function areSameE2EHomePath(left: string, right: string): boolean {

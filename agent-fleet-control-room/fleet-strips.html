@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet · Strips</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-strips.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="title">Fleet</h1>
+          <nav class="tabs" aria-label="Fleet views">
+            <a class="tab" href="./fleet-map.html">Map</a>
+            <span class="tab is-active" aria-current="page">Strips</span>
+            <a class="tab" href="./mission-control.html">Mission Control</a>
+          </nav>
+          <p class="accounting" id="accounting"></p>
+        </div>
+
+        <div class="topbar-right">
+          <div class="group-toggle">
+            <span class="eyebrow">Group</span>
+            <div class="segmented" role="group" aria-label="Group strips by">
+              <button type="button" class="seg is-active" aria-pressed="true">State</button>
+              <button type="button" class="seg" aria-pressed="false">Project</button>
+            </div>
+          </div>
+          <button type="button" class="needs-pill" id="needsPill"></button>
+        </div>
+      </header>
+
+      <main class="bays" id="bays"></main>
+
+      <footer class="footer">
+        <div class="legend-keys" id="legendKeys"></div>
+        <div class="legend-motion">
+          <span class="legend-sample sample-blink" aria-hidden="true"></span>
+          fast blink = needs you
+          <span class="legend-dot">·</span>
+          <span class="legend-sample sample-pulse" aria-hidden="true"></span>
+          slow pulse = awaiting review
+          <span class="legend-dot">·</span>
+          <span class="legend-sample sample-still" aria-hidden="true"></span>
+          still = settled
+        </div>
+      </footer>
+    </div>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-strips.js"></script>
+  </body>
+</html>

@@ -45,7 +45,7 @@ describe('useFleetResultDisposition', () => {
     expect(result.current.pinnedPaneKeys.has('pane-0')).toBe(false)
     expect(result.current.pinnedPaneKeys.has('pane-509')).toBe(true)
     expect(
-      JSON.parse(localStorage.getItem('orca.dashboard.rings.pinned-pane-keys') ?? '[]')
+      JSON.parse(localStorage.getItem('orca.dashboard.map.pinned-pane-keys') ?? '[]')
     ).toHaveLength(500)
   })
 
@@ -61,6 +61,7 @@ describe('useFleetResultDisposition', () => {
     expect(result.current.pinnedPaneKeys.has('stored-9')).toBe(false)
     expect(result.current.pinnedPaneKeys.has('stored-10')).toBe(true)
     expect(result.current.pinnedPaneKeys.has('stored-509')).toBe(true)
+    expect(localStorage.getItem('orca.dashboard.map.pinned-pane-keys')).not.toBeNull()
   })
 
   it('drops reviewed identities that are absent from the current snapshot', () => {

@@ -1,0 +1,107 @@
+/* Shared tokens for the control-room mocks.
+   Values copied from src/renderer/src/assets/main.css (.dark) and AgentStateDot.tsx —
+   do not invent new colors; chrome stays monochrome, hue is reserved for agent state. */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../src/renderer/src/assets/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  /* Surfaces */
+  --background: #0a0a0a;
+  --card: #171717;
+  --popover: #171717;
+  --secondary: #262626;
+  --muted: #262626;
+  --accent: #404040;
+  --border: rgb(255 255 255 / 0.07);
+  --input: rgb(255 255 255 / 0.15);
+  --ring: #737373;
+
+  /* Text */
+  --foreground: #fafafa;
+  --muted-foreground: #a1a1a1;
+  --primary: #e5e5e5;
+  --primary-foreground: #171717;
+
+  /* Agent state — the ONLY saturated hues on screen. Never used without a glyph
+     shape: yellow≈amber fails CVD separation (ΔE 2.5 deutan), shape must carry it. */
+  --state-working: #eab308;   /* yellow-500 — rendered dim/desaturated at rest */
+  --state-attention: #f59e0b; /* amber-500 — waiting on the user */
+  --state-blocked: #ef4444;   /* red-500 — failed / blocked */
+  --state-done: #10b981;      /* emerald-500 — finished */
+  --state-idle: rgb(115 115 115 / 0.4);
+
+  --glow-attention: 0 0 7px color-mix(in srgb, var(--state-attention) 70%, transparent);
+  --glow-working: 0 0 6px color-mix(in srgb, var(--state-working) 45%, transparent);
+  --glow-done: 0 0 6px color-mix(in srgb, var(--state-done) 48%, transparent);
+
+  /* Radius / shadow — three shadow tiers only: hairline border, subtle lift, floating */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-floating: 0 10px 24px rgba(0, 0, 0, 0.18);
+
+  /* Type */
+  --font-ui: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', SFMono-Regular, ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+
+  /* Motion grammar (ISA-18.1 sequence R, web-tempered):
+     fast = unacknowledged needs-you · slow = finished-unreviewed · steady = everything else */
+  --blink-fast: 0.9s;
+  --pulse-slow: 2.8s;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+.eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+}
+
+kbd {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* Border blinks between neutral and priority color — never fill, never text,
+   so the card is legible in both phases and never vanishes from its slot. */
+@keyframes blink-border-attention {
+  0%, 44% { border-color: var(--state-attention); box-shadow: var(--glow-attention); }
+  50%, 94% { border-color: var(--border); box-shadow: none; }
+}
+@keyframes blink-border-blocked {
+  0%, 44% { border-color: var(--state-blocked); box-shadow: 0 0 7px color-mix(in srgb, var(--state-blocked) 60%, transparent); }
+  50%, 94% { border-color: var(--border); box-shadow: none; }
+}
+@keyframes pulse-review {
+  0%, 100% { border-color: color-mix(in srgb, var(--state-done) 55%, var(--border)); }
+  50% { border-color: var(--border); }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -151,7 +151,7 @@ export function FleetTerminalStreamPreview({ ptyId }: { ptyId: string }): React.
   return (
     <div
       className="relative h-32 overflow-hidden bg-background"
-      aria-label={translate('dashboardPopout.rings.liveTerminalPreview', 'Live terminal preview')}
+      aria-label={translate('dashboardPopout.map.liveTerminalPreview', 'Live terminal preview')}
     >
       {ptyGone ? (
         <div className="absolute inset-0 grid place-items-center px-3 text-center text-[11px] text-muted-foreground">

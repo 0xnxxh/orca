@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useAppStore, type AppState } from '@/store'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
+import { launchDashboardAgent } from './launch-dashboard-agent'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { buildDashboardSnapshot, type DashboardSnapshotState } from './build-dashboard-snapshot'
 
@@ -69,6 +70,9 @@ export function dashboardSnapshotInputsChanged(
     state.sshStateByEnvironment !== previousState.sshStateByEnvironment ||
     state.runtimeStatusByEnvironmentId !== previousState.runtimeStatusByEnvironmentId ||
     state.paneForegroundAgentByPaneKey !== previousState.paneForegroundAgentByPaneKey ||
+    state.detectedAgentIds !== previousState.detectedAgentIds ||
+    state.remoteDetectedAgentIds !== previousState.remoteDetectedAgentIds ||
+    state.runtimeDetectedAgentIds !== previousState.runtimeDetectedAgentIds ||
     state.detectedWorktreesByRepo !== previousState.detectedWorktreesByRepo ||
     // Why: a folder workspace is not a git worktree — its host resolves through
     // these two instead of worktreesByRepo.
@@ -110,6 +114,15 @@ export function useDashboardPopoutBridge(enabled: boolean): void {
     return window.api.dashboard.onRevealAgent((args) => {
       useAppStore.getState().setActiveWorktree(args.worktreeId)
       activateTabAndFocusPane(args.tabId, args.leafId, { flashFocusedPane: true })
+    })
+  }, [enabled])
+
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    return window.api.dashboard.onSpawnAgent?.((args) => {
+      launchDashboardAgent(args)
     })
   }, [enabled])
 

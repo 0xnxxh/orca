@@ -1,0 +1,591 @@
+/* Fleet containment map — deterministic Nomad-style containment.
+   Project band → worktree cell → agent glyph. Document order is alphabetical and
+   NEVER re-sorted by state: an agent keeps its slot so muscle memory survives a refresh. */
+
+.svg-defs { position: absolute; width: 0; height: 0; }
+.icon {
+  width: 13px; height: 13px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+.shell {
+  height: 100vh;
+  min-width: 1280px;
+  padding: 11px 14px 12px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+/* ---------- top bar ---------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.viewtabs { display: flex; gap: 2px; }
+.viewtabs a {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+.viewtabs a:hover { color: var(--foreground); background: var(--muted); }
+.viewtabs a.is-active { color: var(--foreground); background: var(--secondary); }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 300px;
+  padding: 0 8px;
+  height: 27px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.search:focus-within { border-color: var(--ring); }
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--foreground);
+}
+.search input::placeholder { color: var(--muted-foreground); }
+.search input::-webkit-search-cancel-button { display: none; }
+
+.match-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--secondary);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.accounting {
+  margin: 0 0 0 auto;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.accounting b { color: var(--foreground); font-weight: 550; }
+
+/* ---------- pulse dials ------------------------------------------------ */
+
+.dials {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.dial {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 12px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+}
+.dial strong {
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.dial .eyebrow { line-height: 1.4; }
+
+/* Steady annunciation, never blinking — the blink budget belongs to the cards. */
+.dial.is-needs {
+  border-color: color-mix(in srgb, var(--state-attention) 55%, var(--border));
+  box-shadow: var(--shadow-lift), 0 0 12px color-mix(in srgb, var(--state-attention) 18%, transparent);
+}
+.dial.is-review { border-color: color-mix(in srgb, var(--state-done) 40%, var(--border)); }
+/* A zero dial drops all tint — nothing to annunciate. */
+.dial.is-zero,
+.dial.is-needs.is-zero,
+.dial.is-review.is-zero { border-color: var(--border); box-shadow: var(--shadow-lift); }
+.dial.is-zero strong { color: var(--muted-foreground); }
+
+.dial-head { display: flex; align-items: baseline; gap: 6px; }
+.delta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- workspace split -------------------------------------------- */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 428px;
+  gap: 12px;
+  min-height: 0;
+}
+
+.canvas {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.bands {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* ---------- project band (group annunciator) --------------------------- */
+
+.band {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.band { flex: 0 1 auto; }
+.band.grows { flex: 1 1 auto; }
+/* A squeezed band must still show one full cell row; two rows max before it scrolls. */
+.band:not(.grows) .band-cells { min-height: 72px; max-height: 152px; }
+.band-head { display: flex; align-items: center; gap: 8px; }
+.band-head .eyebrow { letter-spacing: 0.08em; }
+.band-head .band-meta { margin-left: auto; font-size: 10px; color: var(--muted-foreground); }
+
+/* Tint carries the band's worst state at low intensity. */
+.band.worst-attention,
+.band.worst-permission { border-color: color-mix(in srgb, var(--state-attention) 35%, var(--border)); }
+.band.worst-failed { border-color: color-mix(in srgb, var(--state-blocked) 35%, var(--border)); }
+.band.worst-working { border-color: color-mix(in srgb, var(--state-working) 28%, var(--border)); }
+.band.worst-review { border-color: color-mix(in srgb, var(--state-done) 30%, var(--border)); }
+
+/* Group annunciation: someone inside is waiting on you. */
+@keyframes band-annunciate {
+  0%, 100% { border-color: color-mix(in srgb, var(--state-attention) 45%, var(--border)); }
+  50% { border-color: color-mix(in srgb, var(--state-attention) 10%, var(--border)); }
+}
+.band.worst-attention,
+.band.worst-permission { animation: band-annunciate var(--pulse-slow) ease-in-out infinite; }
+/* Severity-ordered: a band containing a failure annunciates too, in red. */
+@keyframes band-annunciate-failed {
+  0%, 100% { border-color: color-mix(in srgb, var(--state-blocked) 45%, var(--border)); }
+  50% { border-color: color-mix(in srgb, var(--state-blocked) 12%, var(--border)); }
+}
+.band.worst-failed { animation: band-annunciate-failed var(--pulse-slow) ease-in-out infinite; }
+
+.band-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  grid-auto-rows: min-content;
+  gap: 7px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+.band-cells::-webkit-scrollbar { width: 8px; }
+.band-cells::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
+
+.band-empty { font-size: 11.5px; color: var(--muted-foreground); padding: 6px 2px; }
+
+/* ---------- worktree cell ---------------------------------------------- */
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 7px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.cell.worst-attention,
+.cell.worst-permission { border-color: color-mix(in srgb, var(--state-attention) 30%, var(--border)); }
+.cell.worst-failed { border-color: color-mix(in srgb, var(--state-blocked) 30%, var(--border)); }
+.cell.worst-working { border-color: color-mix(in srgb, var(--state-working) 22%, var(--border)); }
+.cell.worst-review { border-color: color-mix(in srgb, var(--state-done) 24%, var(--border)); }
+
+.cell-head { display: flex; align-items: center; gap: 5px; }
+.cell-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unread-dot {
+  flex: none;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.cell-count {
+  flex: none;
+  min-width: 12px;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.cell-glyphs { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ---------- agent glyph ------------------------------------------------ */
+
+.glyph {
+  --gbg: color-mix(in srgb, var(--sc) 14%, var(--card));
+  position: relative;
+  width: 16px; height: 16px;
+  flex: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--sc);
+  border-radius: 5px;
+  background: var(--gbg);
+  color: var(--sc);
+  cursor: default;
+  font: inherit;
+}
+button.glyph { cursor: pointer; }
+button.glyph:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.glyph .g { font-size: 10px; line-height: 1; display: block; }
+
+/* Working is deliberately quiet so amber/red are the only loud warm hues. */
+.glyph.st-working { opacity: 0.65; }
+.glyph.st-done { opacity: 0.8; }
+
+/* Liveness is a separate channel from state: filled = process live, outline-only = exited. */
+.glyph.is-dead {
+  --gbg: transparent;
+  border-color: color-mix(in srgb, var(--sc) 50%, transparent);
+  color: color-mix(in srgb, var(--sc) 60%, transparent);
+}
+
+.g.ring {
+  width: 9px; height: 9px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 3.6s linear infinite;
+}
+.g.dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.g.crescent {
+  position: relative;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  overflow: hidden;
+}
+.g.crescent::after {
+  content: '';
+  position: absolute;
+  inset: -1px -2px -1px 3px;
+  border-radius: 50%;
+  background: var(--card);
+}
+
+/* Motion grammar: fast blink = unacknowledged needs-you, and nothing else. */
+.glyph.blink-attention { animation: blink-border-attention var(--blink-fast) infinite; }
+.glyph.blink-blocked { animation: blink-border-blocked var(--blink-fast) infinite; }
+/* Slow pulse = finished, waiting on your review. */
+.glyph.pulse-review { animation: pulse-review var(--pulse-slow) ease-in-out infinite; }
+
+.glyph.is-selected { outline: 2px solid var(--ring); outline-offset: 2px; }
+.glyph.is-kin { outline: 1px solid color-mix(in srgb, var(--ring) 65%, transparent); outline-offset: 2px; }
+
+/* Search never removes or reflows a glyph — it only drains it of interest. */
+.cell.dim, .glyph.dim { filter: grayscale(1); opacity: 0.25; }
+.glyph.dim { animation: none; }
+
+/* ---------- lineage overlay -------------------------------------------- */
+
+.lineage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+.lineage path {
+  fill: none;
+  stroke: var(--ring);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.lineage circle { fill: var(--ring); opacity: 0.55; }
+
+/* ---------- legend ------------------------------------------------------ */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-motion { margin-left: auto; }
+
+/* ---------- detail panel ------------------------------------------------ */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+.detail::-webkit-scrollbar { width: 8px; }
+.detail::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 4px; }
+
+.detail-empty {
+  margin: auto;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.detail-empty strong { display: block; font-weight: 550; color: var(--foreground); margin-bottom: 3px; }
+
+.detail-name {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+}
+.detail-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--foreground);
+}
+.detail-state small { color: var(--muted-foreground); }
+.detail-path {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  word-break: break-word;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.facts div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.facts b {
+  font-size: 12px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tail {
+  margin: 10px 0 0;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+}
+.tail .last { color: var(--foreground); }
+
+.respond { margin-top: 11px; display: flex; flex-direction: column; gap: 8px; }
+.respond .question {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--foreground);
+}
+.respond .failure {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--foreground);
+  word-break: break-word;
+}
+.cmd {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.options { display: flex; flex-direction: column; gap: 5px; }
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.opt:hover { border-color: var(--input); background: var(--accent); }
+.opt kbd { flex: none; }
+
+.reply-row { display: flex; gap: 6px; }
+.reply-row input {
+  flex: 1;
+  min-width: 0;
+  height: 29px;
+  padding: 0 9px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.reply-row input::placeholder { color: var(--muted-foreground); }
+.reply-row input:focus { border-color: var(--ring); }
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn {
+  height: 29px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover { background: var(--accent); }
+.btn.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+  font-weight: 550;
+}
+.btn.primary:hover { background: var(--foreground); }
+.btn.ghost { background: none; color: var(--muted-foreground); }
+.btn.ghost:hover { background: var(--muted); color: var(--foreground); }
+
+.pr-chip {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--secondary);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- tooltip (the only floating layer) --------------------------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 40;
+  width: 268px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--popover);
+  box-shadow: var(--shadow-floating);
+  pointer-events: none;
+}
+.tooltip[hidden] { display: none; }
+.tooltip .tt-name {
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.tooltip .tt-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--foreground);
+}
+.tooltip dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 7px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.tooltip dt { color: var(--muted-foreground); }
+.tooltip dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

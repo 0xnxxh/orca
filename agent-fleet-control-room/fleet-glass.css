@@ -1,0 +1,479 @@
+/* Fleet · Glass — board structure, rendered as living material.
+   Words exist only where something needs you; everyone else is light.
+   Depth comes from neutral gradients and glow, never from new hues. */
+
+html,
+body {
+  height: 100%;
+}
+body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1100px 700px at 24% -12%, rgb(255 255 255 / 0.045), transparent 60%),
+    radial-gradient(900px 600px at 88% 110%, rgb(255 255 255 / 0.025), transparent 55%),
+    var(--background);
+}
+
+/* ---- chrome ---------------------------------------------------------------- */
+
+.bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 52px;
+  padding: 0 26px;
+}
+.wordmark {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.tabs {
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+}
+.tabs a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  opacity: 0.75;
+}
+.tabs a:hover {
+  color: var(--foreground);
+  opacity: 1;
+}
+.tabs .is-active {
+  color: var(--foreground);
+  font-weight: 550;
+}
+.search {
+  margin-left: auto;
+  width: 200px;
+  height: 30px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--foreground);
+  background: rgb(255 255 255 / 0.04);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.search::placeholder {
+  color: var(--muted-foreground);
+}
+.search:focus {
+  outline: none;
+  background: rgb(255 255 255 / 0.06);
+  border-color: var(--ring);
+}
+.accounting {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+/* ---- stat band: typographic drama ----------------------------------------- */
+
+.stats {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 44px;
+  padding: 10px 28px 20px;
+}
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.stat .n {
+  font-size: 34px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.stat .l {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.stat.is-attention .n {
+  color: var(--state-attention);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--state-attention) 45%, transparent);
+}
+.stat.is-working .n {
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+}
+.stat.is-review .n {
+  color: color-mix(in srgb, var(--state-done) 80%, var(--foreground));
+}
+.stat.is-done .n {
+  color: color-mix(in srgb, var(--foreground) 38%, transparent);
+}
+
+/* ---- field ----------------------------------------------------------------- */
+
+.field {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 26px 46px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+  transition: padding-right 190ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+body.panel-open .field {
+  padding-right: 402px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 26px 4px 14px;
+}
+.section-head:first-child {
+  margin-top: 4px;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.section-head .meta {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  opacity: 0.8;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+/* ---- the glass card -------------------------------------------------------- */
+
+.wt {
+  position: relative;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.055), rgb(255 255 255 / 0.02) 55%);
+  border: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 14px;
+  padding: 12px 14px 11px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 10px 28px -14px rgb(0 0 0 / 0.7);
+  transition: transform 0.16s ease, border-color 0.16s ease, opacity 0.14s ease;
+}
+.wt:hover {
+  transform: translateY(-1px);
+  border-color: rgb(255 255 255 / 0.13);
+}
+.wt.is-dim {
+  opacity: 0.18;
+}
+
+/* Needs-you cards bloom. */
+.wt[data-worst='attention'],
+.wt[data-worst='permission'] {
+  border-color: color-mix(in srgb, var(--state-attention) 50%, rgb(255 255 255 / 0.08));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 0 30px -8px color-mix(in srgb, var(--state-attention) 55%, transparent),
+    0 10px 28px -14px rgb(0 0 0 / 0.7);
+}
+.wt[data-worst='failed'] {
+  border-color: color-mix(in srgb, var(--state-blocked) 55%, rgb(255 255 255 / 0.08));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 0 30px -8px color-mix(in srgb, var(--state-blocked) 50%, transparent),
+    0 10px 28px -14px rgb(0 0 0 / 0.7);
+}
+
+.wt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wt-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 560;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wt-count {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- orbs: agents as light ------------------------------------------------- */
+
+.orbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  min-height: 12px;
+}
+.orb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.14s ease;
+}
+.orb:hover {
+  transform: scale(1.45);
+}
+.orb.is-selected {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.orb[data-state='done'] {
+  width: 7px;
+  height: 7px;
+  background: rgb(255 255 255 / 0.14);
+}
+.orb[data-state='review'] {
+  background: color-mix(in srgb, var(--state-done) 72%, transparent);
+  box-shadow: 0 0 10px -1px color-mix(in srgb, var(--state-done) 55%, transparent);
+}
+.orb[data-state='working'] {
+  background: color-mix(in srgb, var(--state-working) 62%, transparent);
+  box-shadow: 0 0 10px -1px color-mix(in srgb, var(--state-working) 50%, transparent);
+  animation: orb-breathe 3.2s ease-in-out infinite;
+}
+.orb[data-state='attention'],
+.orb[data-state='permission'] {
+  width: 12px;
+  height: 12px;
+  background: var(--state-attention);
+  box-shadow: 0 0 14px 0 color-mix(in srgb, var(--state-attention) 70%, transparent);
+  animation: orb-alert var(--blink-fast) steps(1, end) infinite;
+}
+.orb[data-state='failed'] {
+  width: 12px;
+  height: 12px;
+  background: var(--state-blocked);
+  box-shadow: 0 0 14px 0 color-mix(in srgb, var(--state-blocked) 65%, transparent);
+  animation: orb-alert var(--blink-fast) steps(1, end) infinite;
+}
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.12); opacity: 1; }
+}
+@keyframes orb-alert {
+  0%, 44% { opacity: 1; }
+  50%, 94% { opacity: 0.45; }
+}
+
+/* Words only where something needs you. */
+.ask {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--foreground) 92%, transparent);
+}
+.ask .orb {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+.ask span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ---- tooltip ---------------------------------------------------------------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  max-width: 300px;
+  background: var(--popover);
+  border: 1px solid rgb(255 255 255 / 0.09);
+  border-radius: 10px;
+  box-shadow: var(--shadow-floating);
+  padding: 9px 11px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.tooltip .t-name {
+  color: var(--foreground);
+  font-weight: 550;
+}
+.tooltip .t-meta {
+  color: var(--muted-foreground);
+}
+
+/* ---- panel ------------------------------------------------------------------ */
+
+.panel {
+  position: fixed;
+  top: 52px;
+  right: 14px;
+  bottom: 34px;
+  width: 376px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02) 40%), var(--card);
+  border: 1px solid rgb(255 255 255 / 0.09);
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), var(--shadow-floating);
+  padding: 20px;
+  overflow-y: auto;
+  z-index: 30;
+}
+.panel h1 {
+  margin: 0 34px 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.008em;
+}
+.panel .close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  cursor: pointer;
+}
+.panel .state-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+.panel .path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.85;
+  margin: 0 0 14px;
+}
+.panel .tail {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: rgb(0 0 0 / 0.35);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+.panel .tail .now {
+  color: var(--foreground);
+}
+.panel .question {
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
+.panel .opts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.panel .opts button,
+.panel .actions button {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-size: 12.5px;
+  border-radius: 10px;
+  padding: 9px 13px;
+  text-align: left;
+  color: var(--foreground);
+  background: rgb(255 255 255 / 0.055);
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.panel .opts button:hover,
+.panel .actions button:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+.panel .opts kbd {
+  margin-right: 9px;
+}
+.panel .actions {
+  display: flex;
+  gap: 8px;
+}
+.panel .actions .primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+.panel .reply {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.panel .reply input {
+  flex: 1;
+  height: 34px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--foreground);
+  background: rgb(0 0 0 / 0.3);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 10px;
+}
+.panel .reply input:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+
+/* ---- whisper ---------------------------------------------------------------- */
+
+.whisper {
+  flex: 0 0 auto;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 15px;
+  padding: 0 18px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+.whisper span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.whisper i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}

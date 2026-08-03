@@ -1,0 +1,703 @@
+/* Fleet Terminal Wall — a video wall of miniature agent terminals.
+   The only text in the field is the agents' own output; chrome is a whisper.
+   Tile geometry is solved in JS and arrives as --cols / --tile-h per band. */
+
+:root {
+  --tile-pad: 7px;
+  --tile-line: 13px; /* 9px mono × 1.45 */
+  --name-lane: 13px; /* bottom strip reserved for the agent-name whisper */
+  --dim: 0.16;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---- top bar --------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  height: 46px;
+  flex: 0 0 46px;
+  padding: 0 22px;
+}
+
+.brand {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 14px;
+}
+
+.tabs a {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+
+.tabs a:hover {
+  color: var(--primary);
+}
+
+.tabs a.is-active {
+  color: var(--foreground);
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+  opacity: 0.55;
+}
+
+.chip .n {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.chip .lbl {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.chip.is-loud .dot {
+  opacity: 1;
+  box-shadow: var(--glow-attention);
+}
+
+.chip.is-loud .n {
+  color: var(--state-attention);
+  font-weight: 600;
+}
+
+.chips .sep {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.search {
+  width: 190px;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 4px 0;
+  text-align: right;
+}
+
+.search::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+.search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.accounting {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- the wall -------------------------------------------------------------- */
+
+.wall {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 22px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+/* Never shrink: the JS solver has already sized every band to fit the viewport,
+   and a flex shrink here would clip a band mid-tile. */
+.band-wrap {
+  flex: 0 0 auto;
+}
+
+.band-label {
+  margin: 0 0 6px;
+  line-height: 12px;
+}
+
+.band {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-auto-rows: var(--tile-h);
+  gap: 8px;
+  align-content: start;
+}
+
+.band-micro {
+  gap: 5px;
+}
+
+/* ---- terminal tile --------------------------------------------------------- */
+
+/* Tiles are screens, not cards: --background, not --card. The hairline edge is
+   the only thing separating them from the wall behind. */
+.tile {
+  position: relative;
+  overflow: hidden;
+  padding: var(--tile-pad);
+  padding-bottom: calc(var(--tile-pad) + var(--name-lane));
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+
+.tile.is-dim {
+  opacity: var(--dim);
+}
+
+/* Bottom-anchored so the newest line sits still and older ones scroll off the top. */
+.term {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: var(--tile-line);
+  color: var(--muted-foreground);
+}
+
+.term > div {
+  flex: 0 0 var(--tile-line);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.term .last,
+.p-tail .last {
+  color: var(--foreground);
+  display: flex;
+  align-items: baseline;
+}
+
+.term .last .txt,
+.p-tail .last .txt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.cur {
+  flex: 0 0 auto;
+  margin-left: 1px;
+  color: var(--foreground);
+  animation: cursor-blink 1.05s steps(1, end) infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The one identity concession — a name whisper inside the screen. */
+.who {
+  position: absolute;
+  left: var(--tile-pad);
+  right: var(--tile-pad);
+  bottom: 4px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* Corner mark: shape carries state so hue never rides alone. */
+.mark {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--hue);
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.mark.dot {
+  top: 7px;
+  right: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--hue);
+  opacity: 0.7;
+}
+
+.mark.crescent {
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset -2px 0 0 0 currentColor;
+  opacity: 0.7;
+}
+
+/* -- per state -- */
+
+.tile[data-state='working'] {
+  --hue: var(--state-working);
+}
+
+/* Static tint under the pulse so reduced-motion still reads the review edge as green. */
+.tile[data-state='review'] {
+  --hue: var(--state-done);
+  border-color: color-mix(in srgb, var(--state-done) 40%, var(--border));
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.tile[data-state='review'] .mark {
+  opacity: 0.55;
+}
+
+.tile[data-state='attention'],
+.tile[data-state='permission'] {
+  --hue: var(--state-attention);
+}
+
+.tile[data-state='failed'] {
+  --hue: var(--state-blocked);
+}
+
+.tile[data-state='attention'],
+.tile[data-state='permission'],
+.tile[data-state='failed'] {
+  border-width: 1.5px;
+  padding: calc(var(--tile-pad) - 0.5px);
+  padding-bottom: calc(var(--tile-pad) + var(--name-lane) - 0.5px);
+}
+
+.tile[data-state='attention'],
+.tile[data-state='permission'] {
+  border-color: var(--state-attention);
+  box-shadow: var(--glow-attention);
+  animation: blink-border-attention var(--blink-fast) steps(1, end) infinite;
+}
+
+.tile[data-state='failed'] {
+  border-color: var(--state-blocked);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--state-blocked) 60%, transparent);
+  animation: blink-border-blocked var(--blink-fast) steps(1, end) infinite;
+}
+
+/* The needs-you last line is the loudest text on the wall. */
+.tile[data-state='attention'] .term .last,
+.tile[data-state='permission'] .term .last,
+.tile[data-state='failed'] .term .last {
+  color: var(--hue);
+}
+
+/* -- done: present and accounted for, visually silent -- */
+
+.tile[data-state='done'] {
+  --hue: var(--state-idle);
+}
+
+.tile.micro {
+  padding: 0;
+  border-color: color-mix(in srgb, var(--border) 55%, transparent);
+  display: grid;
+  place-items: center;
+}
+
+.tile.micro .pr {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--muted-foreground);
+  opacity: 0.45;
+}
+
+/* -- hover / selection -- */
+
+.tile:hover,
+.tile:focus-visible {
+  border-color: color-mix(in srgb, var(--ring) 55%, var(--border));
+}
+
+.tile.is-selected {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+/* ---- footer whisper -------------------------------------------------------- */
+
+.whisper {
+  flex: 0 0 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 22px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.whisper .key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.whisper .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.whisper .sep {
+  opacity: 0.4;
+}
+
+/* ---- tooltip --------------------------------------------------------------- */
+
+.tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 300px;
+  padding: 9px 11px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-floating);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tip .t-name {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.tip .t-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.tip .t-state .live {
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta .mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ---- selection panel ------------------------------------------------------- */
+
+/* Spans the wall, not the window, so the accounting line and the legend survive. */
+.panel {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 22px;
+  z-index: 50;
+  width: 370px;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+  transform: translateX(101%);
+  visibility: hidden;
+  transition:
+    transform 190ms cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 190ms;
+}
+
+.panel.is-open {
+  transform: none;
+  visibility: visible;
+}
+
+.panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 22px 8px;
+}
+
+.panel-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.panel-close:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.p-name {
+  margin: 0 30px 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.p-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.p-state .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.p-state .live {
+  color: var(--muted-foreground);
+}
+
+.p-path {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  word-break: break-all;
+}
+
+.p-facts {
+  display: flex;
+  gap: 26px;
+  margin: 16px 0 14px;
+}
+
+.p-facts .v {
+  margin-top: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.p-tail {
+  padding: 9px 11px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.p-tail > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-respond {
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.p-ask {
+  margin: 0 0 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.p-cmd {
+  margin: 0 0 11px;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+}
+
+.p-fail {
+  margin: 0 0 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--state-blocked);
+}
+
+.opts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 11px;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.opt:hover {
+  border-color: var(--input);
+}
+
+.opt .num {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.reply {
+  display: flex;
+  gap: 7px;
+}
+
+.reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.reply input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.reply input:focus {
+  border-color: var(--ring);
+}
+
+.btnrow {
+  display: flex;
+  gap: 7px;
+}
+
+.btn {
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--secondary);
+}
+
+.btn.is-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 550;
+}
+
+.btn.is-primary:hover {
+  background: var(--foreground);
+}
+
+.btn.is-danger:hover {
+  border-color: color-mix(in srgb, var(--state-blocked) 55%, var(--border));
+  color: var(--state-blocked);
+}

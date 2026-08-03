@@ -37047,7 +37047,7 @@ describe('OrcaRuntimeService', () => {
     const workerPaneKey = makePaneKey('tab-worker', workerLeafId)
     const coordinatorPaneKey = makePaneKey('tab-coordinator', coordinatorLeafId)
     const workerHandle = runtime.preAllocateHandleForPty('pty-worker')
-    const coordinatorHandle = runtime.preAllocateHandleForPty('pty-coordinator')
+    const staleCoordinatorHandle = 'term-stale-coordinator'
     runtime.setOrchestrationDb({
       getActiveDispatchForTerminal: vi.fn(() => undefined),
       getLatestDispatchForTerminal: vi.fn((handle: string) =>
@@ -37063,7 +37063,13 @@ describe('OrcaRuntimeService', () => {
       ),
       getTask: vi.fn(() => ({
         id: 'task-done',
-        created_by_terminal_handle: coordinatorHandle
+        run_id: 'run-done',
+        created_by_terminal_handle: staleCoordinatorHandle
+      })),
+      getRun: vi.fn(() => ({
+        id: 'run-done',
+        coordinator_handle: staleCoordinatorHandle,
+        coordinator_pane_key: coordinatorPaneKey
       }))
     } as never)
     runtime.attachWindow(1)
@@ -37110,7 +37116,9 @@ describe('OrcaRuntimeService', () => {
       dispatchId: 'ctx-done',
       dispatchStatus: 'completed',
       parentPaneKey: coordinatorPaneKey,
-      parentTerminalHandle: coordinatorHandle
+      parentTerminalHandle: staleCoordinatorHandle,
+      coordinatorHandle: staleCoordinatorHandle,
+      orchestrationRunId: 'run-done'
     })
   })
 

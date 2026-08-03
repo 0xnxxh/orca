@@ -1,0 +1,106 @@
+/* Fleet · Space — the glass cards, set free on an open pan/zoom field.
+   Loads after fleet-glass.css and overrides only the layout layer. */
+
+.stage {
+  position: absolute;
+  inset: 52px 0 26px;
+  overflow: hidden;
+  cursor: grab;
+}
+.stage.is-panning {
+  cursor: grabbing;
+}
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* Stat band floats over the field. */
+.stats {
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+  padding-bottom: 14px;
+  background: linear-gradient(180deg, rgb(10 10 10 / 0.92) 40%, transparent);
+}
+
+/* Project labels: light in the dark, not containers. */
+.region {
+  position: absolute;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.region .r-name {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: color-mix(in srgb, var(--foreground) 55%, transparent);
+}
+.region .r-meta {
+  margin-left: 10px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+}
+
+/* Cards become free-floating world objects. */
+.world .wt {
+  position: absolute;
+  width: 252px;
+  cursor: grab;
+}
+.world .wt:active {
+  cursor: grabbing;
+}
+.world .wt.is-dragging {
+  transition: none;
+  z-index: 6;
+}
+.world .wt:hover {
+  transform: none;
+}
+
+/* Keep orbs clickable while the card itself drags. */
+.world .wt .orb,
+.world .wt .ask {
+  cursor: pointer;
+}
+
+.viewtools {
+  position: fixed;
+  left: 20px;
+  bottom: 38px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+.vt {
+  padding: 5px 11px;
+  border: 1px solid rgb(255 255 255 / 0.09);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.045);
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.vt:hover {
+  background: rgb(255 255 255 / 0.09);
+  color: var(--foreground);
+}
+.vt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Footer pinned (the stage is absolute, so flex flow would float this). */
+.whisper {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+}

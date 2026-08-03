@@ -14618,6 +14618,10 @@
     "total": "{{count}} total",
     "close": "Close dashboard",
     "settings": {
+      "agentView": "Open agents in",
+      "agentViewCopy": "Choose the native transcript drawer or the live terminal preview.",
+      "nativeChat": "Native chat",
+      "terminal": "Terminal",
       "showIdle": "Show idle agents",
       "showIdleCopy": "Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default."
     },
@@ -14637,7 +14641,8 @@
         "closed": "Closed review"
       },
       "subagents_one": "{{count}} subagent",
-      "subagents_other": "{{count}} subagents"
+      "subagents_other": "{{count}} subagents",
+      "spawnedBy": "Spawned by {{name}}"
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",
@@ -14710,7 +14715,7 @@
       "sending": "Sending…",
       "send": "Send"
     },
-    "rings": {
+    "map": {
       "host": {
         "all": "All hosts",
         "local": "Local",
@@ -14785,18 +14790,67 @@
       "pinAgent": "Pin agent",
       "doubleClick": "Double-click",
       "zoomWorkspace": "Zoom workspace",
-      "fitFleet": "Fit fleet",
+      "fitMap": "Fit map",
       "live": "Live",
       "snapshot": "Snapshot",
       "clickToPin": "Click agent to pin",
+      "openWorktree": "Open {{worktree}} worktree details",
+      "worktreeSummary_one": "{{total}} agent · {{active}} active · {{done}} done",
+      "worktreeSummary_other": "{{total}} agents · {{active}} active · {{done}} done",
+      "runningAgents": "Agents",
+      "spawnAgent": "Start a new agent",
+      "noLaunchableAgents": "No enabled agents detected.",
       "projectCount": "{{agents}} agents · {{workspaces}} workspaces",
       "agentCount": "{{count}} agents"
     },
     "view": {
       "label": "Dashboard view",
-      "rings": "Agent Rings",
+      "map": "Agent Map",
       "cells": "Cells",
-      "board": "Dashboard"
+      "board": "Dashboard",
+      "lanes": "Activity Lanes"
+    },
+    "lanes": {
+      "responseUnknown": "response time unavailable",
+      "responseNow": "response just now",
+      "responseMinutes": "{{count}}m since response",
+      "responseHours": "{{count}}h since response",
+      "responseDays": "{{count}}d since response",
+      "now": "Now",
+      "child": "child agent",
+      "agentCount": "{{count}} agents",
+      "shown": "{{count}} shown",
+      "olderHidden": "{{count}} older hidden",
+      "status": "Status",
+      "anyStatus": "Any status",
+      "recent": "Recent",
+      "last30Minutes": "Last 30 minutes",
+      "last2Hours": "Last 2 hours",
+      "last24Hours": "Last 24 hours",
+      "hideOlder": "Hide older",
+      "showOlder": "Show older",
+      "axis": "Worktree · session duration",
+      "empty": "No matching agents",
+      "emptyHint": "Broaden a search or filter, or show older completed sessions."
+    },
+    "cells": {
+      "ask": "Open the question from {{agent}}",
+      "agentCount": "{{count}} agents",
+      "sectionMeta": "{{worktrees}} worktrees · {{agents}} agents"
+    },
+    "chat": {
+      "drawerTitle": "Native chat",
+      "empty": "No messages in this transcript yet.",
+      "remoteHost": "This agent runs on a remote host, so its transcript is not readable here.",
+      "noSession": "This agent has not reported a session yet, so there is no transcript to read.",
+      "pendingQuestion": "Pending question",
+      "lastMessage": "Last message",
+      "noPane": "No live pane, so a reply cannot reach this agent.",
+      "placeholder": "Reply to this agent",
+      "send": "Send",
+      "sendFailed": "The reply did not reach the agent. Open the terminal to check it.",
+      "openTerminal": "Open terminal",
+      "close": "Close chat"
     }
   },
   "dashboard": {

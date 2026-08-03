@@ -14598,7 +14598,7 @@
       "sending": "Enviando…",
       "send": "Enviar"
     },
-    "rings": {
+    "map": {
       "host": {
         "all": "Todos los hosts",
         "local": "Local",
@@ -14651,7 +14651,7 @@
       "pinAgent": "Fijar agente",
       "doubleClick": "Doble clic",
       "zoomWorkspace": "Ampliar espacio",
-      "fitFleet": "Ajustar flota",
+      "fitMap": "Ajustar mapa",
       "live": "En vivo",
       "snapshot": "Instantánea",
       "clickToPin": "Haz clic en el agente para fijarlo",
@@ -14660,7 +14660,7 @@
     },
     "view": {
       "label": "Vista del panel",
-      "rings": "Anillos de agentes",
+      "map": "Mapa de agentes",
       "cells": "Celdas",
       "board": "Panel"
     },

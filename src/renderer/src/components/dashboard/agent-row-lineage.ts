@@ -71,3 +71,11 @@ export function applyAgentRowLineage(rows: DashboardAgentRow[]): DashboardAgentR
 
   return ordered
 }
+
+export function dashboardCardParentPaneKey(row: DashboardAgentRowWithLineage): string | undefined {
+  const directParentPaneKey = row.entry.orchestration?.parentPaneKey
+  return (
+    row.lineage.parentPaneKey ??
+    (directParentPaneKey === row.paneKey ? undefined : directParentPaneKey)
+  )
+}

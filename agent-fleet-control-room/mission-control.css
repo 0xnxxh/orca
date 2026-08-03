@@ -1,0 +1,1030 @@
+/* Mission Control — deterministic containment map (left) fused to an intervention rail (right).
+   Chrome is monochrome; the only saturated hue on screen is an agent's --state-* token, and it
+   never appears without a glyph shape carrying the same meaning. */
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr) 28px;
+  height: 100vh;
+  min-width: 1280px;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 55%, var(--background));
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+.brand-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.tab {
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.tab:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tab.is-active {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+/* Dials — numeral first, label under. NEEDS YOU is the only one allowed to glow. */
+
+.dials {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.dial {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 74px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+
+.dial-value {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+
+.dial-label {
+  white-space: nowrap;
+}
+
+.dial[data-tone='attention'][data-live='true'] {
+  border-color: color-mix(in srgb, var(--state-attention) 60%, var(--border));
+  box-shadow: var(--glow-attention);
+  background: color-mix(in srgb, var(--state-attention) 7%, var(--card));
+}
+
+.dial[data-tone='review'] {
+  border-color: color-mix(in srgb, var(--state-done) 30%, var(--border));
+  background: color-mix(in srgb, var(--state-done) 5%, var(--card));
+}
+
+.dial[data-tone='quiet'] {
+  background: transparent;
+}
+
+.dial[data-tone='quiet'] .dial-value {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.accounting {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 232px;
+  padding: 0 8px;
+  height: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.search:focus-within {
+  border-color: var(--input);
+}
+
+.search-glyph {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+}
+
+.search input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+/* ------------------------------------------------------------------ board */
+
+.board {
+  display: grid;
+  grid-template-columns: 62fr 38fr;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------- containment map */
+
+.map {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow: hidden;
+}
+
+.bands {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.band {
+  --band-tint: var(--state-idle);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--band-tint) 22%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--card) 42%, var(--background));
+}
+
+.band[data-grow='true'] {
+  flex: 1 1 auto;
+}
+
+/* Group annunciation: a band holding an unacknowledged needs-you item breathes at its own
+   slow tempo — deliberately below the item-level blink so it reads as context, not alarm. */
+@keyframes band-annunciate {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, var(--band-tint) 46%, var(--border));
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--band-tint) 12%, var(--border));
+  }
+}
+
+.band[data-annunciate='true'] {
+  animation: band-annunciate 4.2s ease-in-out infinite;
+}
+
+.band-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 6px;
+  flex: 0 0 auto;
+}
+
+.band-head .eyebrow {
+  font-variant-numeric: tabular-nums;
+}
+
+.band-worst {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+}
+
+.cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  align-content: start;
+  gap: 5px;
+  padding: 0 8px 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cell {
+  padding: 5px 7px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  transition: border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.cell:hover {
+  border-color: var(--input);
+}
+
+.cell.is-dimmed {
+  opacity: 0.16;
+}
+
+.cell.is-hit {
+  border-color: var(--ring);
+}
+
+.cell-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.cell-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-unread {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.cell-count {
+  flex: 0 0 auto;
+  min-width: 10px;
+  text-align: right;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.cell-glyphs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+/* ----------------------------------------------------------------- glyphs */
+/* Rounded square, state hue at 14% for fill and full strength on the 1.5px rule, with the
+   state's shape centred inside. Hue and shape always travel together. */
+
+.glyph {
+  --gc: var(--state-idle);
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1.5px solid var(--gc);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--gc) 14%, var(--card));
+  color: var(--gc);
+  font-family: var(--font-ui);
+  font-size: 8px;
+  line-height: 1;
+  cursor: default;
+  transition: transform 0.1s ease;
+}
+
+button.glyph {
+  cursor: pointer;
+}
+
+button.glyph:hover {
+  transform: scale(1.18);
+  z-index: 2;
+}
+
+.glyph:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.glyph[data-state='attention'],
+.glyph[data-state='permission'] {
+  --gc: var(--state-attention);
+}
+.glyph[data-state='failed'] {
+  --gc: var(--state-blocked);
+}
+.glyph[data-state='working'] {
+  --gc: var(--state-working);
+  opacity: 0.65; /* working is the resting majority — it must not compete with amber/red */
+}
+.glyph[data-state='review'] {
+  --gc: var(--state-done);
+}
+.glyph[data-state='done'] {
+  --gc: var(--state-idle);
+  color: var(--muted-foreground);
+}
+
+/* Liveness is its own channel, independent of state: solid = alive, hollow = exited. */
+.glyph[data-live='exited'] {
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.5;
+}
+
+.glyph[data-state='working'][data-live='exited'] {
+  opacity: 0.34;
+}
+
+.g-ring {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--gc);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 5.5s linear infinite;
+}
+
+.g-crescent {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gc);
+  -webkit-mask: radial-gradient(circle at 122% 50%, transparent 62%, #000 63%);
+  mask: radial-gradient(circle at 122% 50%, transparent 62%, #000 63%);
+}
+
+.glyph[data-live='exited'] .g-ring {
+  animation: none;
+}
+
+/* Motion is rationed: only unacknowledged needs-you blinks fast, only unreviewed work
+   pulses slow. Everything else holds still, so a quiet screen means a quiet fleet. */
+.glyph[data-motion='blink'] {
+  animation: blink-border-attention var(--blink-fast) step-end infinite;
+}
+
+.glyph[data-motion='blink'][data-state='failed'] {
+  animation-name: blink-border-blocked;
+}
+
+.glyph[data-motion='pulse'] {
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.glyph.is-selected {
+  outline: 1.5px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.glyph.is-linked {
+  outline: 1px dashed var(--ring);
+  outline-offset: 2px;
+}
+
+.glyph.is-dimmed {
+  opacity: 0.12;
+}
+
+/* Lineage overlay — drawn on demand for the selected agent only. */
+.lineage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.lineage path {
+  fill: none;
+  stroke: var(--ring);
+  stroke-width: 1;
+}
+
+.lineage circle {
+  fill: var(--ring);
+}
+
+.map-empty {
+  position: absolute;
+  inset: 40% 0 auto;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ------------------------------------------------------- intervention rail */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+  padding: 10px 12px 14px;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 30%, var(--background));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.rail-head:not(:first-child) {
+  margin-top: 6px;
+}
+
+.rail-head .eyebrow {
+  font-variant-numeric: tabular-nums;
+}
+
+.cycle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 2px 7px 2px 4px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.cycle:hover {
+  color: var(--foreground);
+  border-color: var(--input);
+}
+
+.cycle[data-exhausted='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* One card tier only — nothing inside a card is itself a card. */
+.item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 8px 10px 9px;
+}
+
+.item[data-motion='blink'] {
+  animation: blink-border-attention var(--blink-fast) step-end infinite;
+}
+
+.item[data-motion='blink'][data-kind='failed'] {
+  animation-name: blink-border-blocked;
+}
+
+.item[data-motion='pulse'] {
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.item.is-selected {
+  outline: 1px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.item.is-flash {
+  border-color: var(--ring);
+}
+
+.item-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.item-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-where {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-age {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  text-align: right;
+}
+
+.chip-selected {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border: 1px solid var(--ring);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.command {
+  display: block;
+  margin: 7px 0 6px;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--primary);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Micro-rows: the agents a single decision would unblock. Flat rows, never nested cards. */
+.microrows {
+  margin: 8px 0 0;
+  padding: 0 0 0 8px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.microrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 0;
+  cursor: pointer;
+}
+
+.microrow .item-name {
+  font-size: 11px;
+}
+
+.microrow.is-selected .item-name {
+  color: var(--foreground);
+}
+
+.microrow.is-selected::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ring);
+  flex: 0 0 auto;
+}
+
+.microrow:hover .item-name,
+.microrow:hover .item-where {
+  color: var(--foreground);
+}
+
+.evidence {
+  margin-top: 7px;
+  padding-left: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+  border-left: 1px solid var(--border);
+}
+
+.evidence b {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.question {
+  margin: 6px 0 7px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--primary);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 7px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.option:hover {
+  border-color: var(--input);
+  background: var(--secondary);
+}
+
+.reply {
+  display: flex;
+  gap: 6px;
+}
+
+.reply input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  outline: 0;
+}
+
+.reply input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Scope segmented control — the blast radius of the answer, chosen before it is given. */
+.scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 8px;
+}
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.segment {
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.segment:hover {
+  color: var(--foreground);
+}
+
+.segment[aria-pressed='true'] {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 11.5px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--foreground);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.btn:hover {
+  border-color: var(--input);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--foreground);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.btn-ghost:hover {
+  color: var(--foreground);
+}
+
+.failure {
+  margin: 6px 0 0;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--state-blocked) 40%, var(--border));
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.pr-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.rail-empty,
+.fold {
+  padding: 7px 2px 2px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.fold {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.resolved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* --------------------------------------------------------------- tooltip */
+
+.tooltip {
+  position: fixed;
+  z-index: 40;
+  width: 268px;
+  padding: 9px 11px 10px;
+  background: var(--popover);
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-floating);
+  pointer-events: none;
+}
+
+.tooltip-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+}
+
+.tooltip-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-line .eyebrow {
+  flex: 0 0 46px;
+}
+
+.tooltip-line span {
+  flex: 1;
+  min-width: 0;
+  color: var(--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tooltip-tail {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ------------------------------------------------------------ status strip */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 55%, var(--background));
+  font-size: 10px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend .glyph {
+  cursor: default;
+  transform: none;
+}
+
+.legend .glyph:hover {
+  transform: none;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border);
+}
+
+.swatch-blink {
+  border-color: var(--state-attention);
+  animation: blink-border-attention var(--blink-fast) step-end infinite;
+}
+
+.swatch-pulse {
+  border-color: color-mix(in srgb, var(--state-done) 55%, var(--border));
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.legend-keys {
+  gap: 10px;
+}
+
+.legend-keys span {
+  gap: 4px;
+}
+
+.capture {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.capture[data-paused='true'] {
+  color: var(--primary);
+}
+
+/* Thin, unobtrusive scrollbars — the map must not look like a scrolling document. */
+.cells::-webkit-scrollbar,
+.rail::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cells::-webkit-scrollbar-thumb,
+.rail::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.cells::-webkit-scrollbar-track,
+.rail::-webkit-scrollbar-track {
+  background: transparent;
+}

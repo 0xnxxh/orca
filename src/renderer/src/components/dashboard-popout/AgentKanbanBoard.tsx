@@ -1,22 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Columns3, LayoutGrid, Orbit, XIcon } from 'lucide-react'
+import { XIcon } from 'lucide-react'
 import {
   DASHBOARD_BUCKET_ORDER,
   type DashboardBucket,
   type DashboardCard,
+  type DashboardSpawnAgentArgs,
   type DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
-import { AgentKanbanCard } from './AgentKanbanCard'
 import { AgentDashboardToolbar } from './AgentDashboardToolbar'
-import {
-  AgentTerminalDialog,
-  AgentTerminalPanel,
-  type AgentRevealArgs
-} from './AgentTerminalDialog'
+import { AgentTerminalDialog, type AgentRevealArgs } from './AgentTerminalDialog'
 import {
   EMPTY_DASHBOARD_FILTERS,
   filterDashboardCards,
@@ -24,13 +21,16 @@ import {
 } from './agent-board-filtering'
 import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
-import { Button } from '@/components/ui/button'
-import { AgentFleetRings } from './AgentFleetRings'
-import { AgentCellMap } from './AgentCellMap'
 import { DashboardOrchestratorChat } from './DashboardOrchestratorChat'
 import { useFleetResultDisposition } from './use-fleet-result-disposition'
+import { AgentKanbanLineage } from './AgentKanbanLineage'
+import { buildAgentKanbanLineage } from './agent-kanban-lineage'
+import { AgentDashboardViewPane, type AgentDashboardPanelMode } from './AgentDashboardViewPane'
+import { AgentDashboardViewSelector } from './AgentDashboardViewSelector'
+import type { AgentDashboardView } from './agent-dashboard-view'
+import { AgentNativeChatDrawer } from './AgentNativeChatDrawer'
 
-export type AgentDashboardView = 'rings' | 'board' | 'cells'
+export type { AgentDashboardView } from './agent-dashboard-view'
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
  *  ?. shields dialog-opening from dev-HMR preload skew (renderer updates hot,
@@ -44,6 +44,10 @@ function ackAgentViaPopoutRelay(paneKey: string): void {
  *  both channels ship together, so a stale preload lacks both. */
 function revealAgentViaPopoutRelay(args: AgentRevealArgs): void {
   void window.api.dashboard.revealAgent?.(args)
+}
+
+function spawnAgentViaPopoutRelay(args: DashboardSpawnAgentArgs): void {
+  void window.api.dashboard.spawnAgent?.(args)
 }
 
 function bucketLabel(bucket: DashboardBucket): string {
@@ -80,12 +84,14 @@ function groupByBucket(cards: DashboardCard[]): Record<DashboardBucket, Dashboar
 function KanbanColumn({
   bucket,
   cards,
+  cardsByPaneKey,
   repoIconsByRepoId,
   now,
   onOpenTerminal
 }: {
   bucket: DashboardBucket
   cards: DashboardCard[]
+  cardsByPaneKey: Map<string, DashboardCard>
   repoIconsByRepoId: Record<string, RepoIcon | null> | undefined
   now: number
   onOpenTerminal: (card: DashboardCard) => void
@@ -108,15 +114,13 @@ function KanbanColumn({
             {translate('dashboardPopout.bucket.empty', 'None')}
           </p>
         ) : (
-          cards.map((card) => (
-            <AgentKanbanCard
-              key={card.paneKey}
-              card={card}
-              repoIcon={repoIconsByRepoId?.[card.repoId] ?? null}
-              now={now}
-              onOpenTerminal={onOpenTerminal}
-            />
-          ))
+          <AgentKanbanLineage
+            nodes={buildAgentKanbanLineage(cards)}
+            cardsByPaneKey={cardsByPaneKey}
+            repoIconsByRepoId={repoIconsByRepoId}
+            now={now}
+            onOpenTerminal={onOpenTerminal}
+          />
         )}
       </div>
     </section>
@@ -135,11 +139,12 @@ type AgentKanbanBoardProps = {
   /** Focuses the agent's pane. Defaults to the pop-out IPC relay; the in-window
    *  host activates the worktree/pane locally and closes the overlay. */
   onRevealAgent?: (args: AgentRevealArgs) => void
+  /** Starts an agent in a workspace. Defaults to the pop-out IPC relay. */
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   /** When provided, renders a close control in the header (in-window mode). The
    *  pop-out relies on its native window controls, so it omits this. */
   onClose?: () => void
-  /** Header controls rendered before the close button. The in-window host
-   *  passes its settings menu; the pop-out renderer has no store to drive it. */
+  /** Header controls rendered before the close button. */
   headerActions?: React.ReactNode
 }
 
@@ -152,9 +157,13 @@ export function AgentKanbanBoard({
   containerClassName = 'h-screen w-screen',
   onAckAgent = ackAgentViaPopoutRelay,
   onRevealAgent = revealAgentViaPopoutRelay,
+  onSpawnAgent = spawnAgentViaPopoutRelay,
   onClose,
   headerActions
 }: AgentKanbanBoardProps): React.JSX.Element {
+  const agentViewMode = useAppStore(
+    (state) => state.settings?.experimentalAgentDashboardAgentViewMode ?? 'terminal'
+  )
   const [view, setView] = useState(initialView)
   const visibleBuckets = useMemo(
     () =>
@@ -173,12 +182,17 @@ export function AgentKanbanBoard({
     [filters, query, visibleCards]
   )
   const grouped = useMemo(() => groupByBucket(filteredCards), [filteredCards])
+  const filteredCardsByPaneKey = useMemo(
+    () => new Map(filteredCards.map((card) => [card.paneKey, card])),
+    [filteredCards]
+  )
   const hasRelativeTimestamps = useMemo(
     () => snapshot.cards.some((card) => (card.finishedAt ?? card.startedAt) > 0),
     [snapshot.cards]
   )
   const [now, setNow] = useState(() => Date.now())
   const [terminalPanelSide, setTerminalPanelSide] = useState<'left' | 'right'>('right')
+  const [panelMode, setPanelMode] = useState<AgentDashboardPanelMode>(agentViewMode)
   const { reviewedPaneKeys, pinnedPaneKeys, acknowledge, markReviewed, togglePinned } =
     useFleetResultDisposition(snapshot.cards, onAckAgent)
 
@@ -247,12 +261,19 @@ export function AgentKanbanBoard({
     },
     [acknowledge]
   )
-  const handleOpenAdjacentTerminal = useCallback(
-    (card: DashboardCard, side: 'left' | 'right') => {
-      setTerminalPanelSide(side)
+  const handleOpenDashboardAgent = useCallback(
+    (card: DashboardCard) => {
+      setPanelMode(agentViewMode)
       handleOpenTerminal(card)
     },
-    [handleOpenTerminal]
+    [agentViewMode, handleOpenTerminal]
+  )
+  const handleOpenAdjacentAgent = useCallback(
+    (card: DashboardCard, side: 'left' | 'right') => {
+      setTerminalPanelSide(side)
+      handleOpenDashboardAgent(card)
+    },
+    [handleOpenDashboardAgent]
   )
   // Watching the open dialog counts as seeing state changes as they happen —
   // without this, an agent finishing while you watch would re-flag its card.
@@ -279,45 +300,7 @@ export function AgentKanbanBoard({
               count: visibleCards.length
             })}
           </span>
-          <div
-            className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
-            role="group"
-            aria-label={translate('dashboardPopout.view.label', 'Dashboard view')}
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              aria-pressed={view === 'board'}
-              className={cn('h-6 gap-1 px-2', view === 'board' && 'bg-accent')}
-              onClick={() => setView('board')}
-            >
-              <Columns3 className="size-3" />
-              {translate('dashboardPopout.view.board', 'Dashboard')}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              aria-pressed={view === 'rings'}
-              className={cn('h-6 gap-1 px-2', view === 'rings' && 'bg-accent')}
-              onClick={() => setView('rings')}
-            >
-              <Orbit className="size-3" />
-              {translate('dashboardPopout.view.rings', 'Agent Rings')}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              aria-pressed={view === 'cells'}
-              className={cn('h-6 gap-1 px-2', view === 'cells' && 'bg-accent')}
-              onClick={() => setView('cells')}
-            >
-              <LayoutGrid className="size-3" />
-              {translate('dashboardPopout.view.cells', 'Cells')}
-            </Button>
-          </div>
+          <AgentDashboardViewSelector view={view} onViewChange={setView} />
           {headerActions || onClose ? (
             <div className="ml-auto flex items-center gap-1">
               {headerActions}
@@ -345,58 +328,23 @@ export function AgentKanbanBoard({
           searchInputRef={searchInputRef}
         />
         {view !== 'board' ? (
-          <div
-            className={cn(
-              'flex min-h-0 flex-1',
-              dialogCard && terminalPanelSide === 'left' && 'flex-row-reverse'
-            )}
-          >
-            {view === 'rings' ? (
-              <AgentFleetRings
-                cards={filteredCards}
-                now={now}
-                className={
-                  dialogCard
-                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
-                    : undefined
-                }
-                compact={dialogCard !== null}
-                selectedPaneKey={dialogCard?.paneKey}
-                pinnedPaneKeys={pinnedPaneKeys}
-                reviewedPaneKeys={reviewedPaneKeys}
-                onMarkReviewed={markReviewed}
-                onOpenTerminal={handleOpenAdjacentTerminal}
-              />
-            ) : (
-              <AgentCellMap
-                cards={filteredCards}
-                now={now}
-                className={
-                  dialogCard
-                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
-                    : undefined
-                }
-                selectedPaneKey={dialogCard?.paneKey}
-                onOpenTerminal={handleOpenAdjacentTerminal}
-              />
-            )}
-            {dialogCard ? (
-              <AgentTerminalPanel
-                card={dialogCard}
-                onOpenChange={handleDialogOpenChange}
-                onReveal={onRevealAgent}
-                reviewed={reviewedPaneKeys.has(dialogCard.paneKey)}
-                pinned={pinnedPaneKeys.has(dialogCard.paneKey)}
-                onMarkReviewed={(card) => markReviewed([card])}
-                onTogglePinned={togglePinned}
-                className={cn(
-                  terminalPanelSide === 'right' ? 'ml-0' : 'mr-0',
-                  'animate-in fade-in-0 duration-200 motion-reduce:animate-none',
-                  terminalPanelSide === 'right' ? 'slide-in-from-right-2' : 'slide-in-from-left-2'
-                )}
-              />
-            ) : null}
-          </div>
+          <AgentDashboardViewPane
+            view={view}
+            cards={filteredCards}
+            now={now}
+            selectedCard={dialogCard}
+            panelMode={panelMode}
+            panelSide={terminalPanelSide}
+            pinnedPaneKeys={pinnedPaneKeys}
+            reviewedPaneKeys={reviewedPaneKeys}
+            launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId ?? {}}
+            onMarkReviewed={markReviewed}
+            onTogglePinned={togglePinned}
+            onOpenTerminal={handleOpenAdjacentAgent}
+            onSpawnAgent={onSpawnAgent}
+            onPanelOpenChange={handleDialogOpenChange}
+            onRevealAgent={onRevealAgent}
+          />
         ) : (
           <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
             {/* Auto margins center the capped board and collapse during horizontal overflow. */}
@@ -406,19 +354,27 @@ export function AgentKanbanBoard({
                   key={bucket}
                   bucket={bucket}
                   cards={grouped[bucket]}
+                  cardsByPaneKey={filteredCardsByPaneKey}
                   repoIconsByRepoId={snapshot.repoIconsByRepoId}
                   now={now}
-                  onOpenTerminal={handleOpenTerminal}
+                  onOpenTerminal={handleOpenDashboardAgent}
                 />
               ))}
             </div>
           </div>
         )}
-        {view === 'board' ? (
+        {view === 'board' && panelMode === 'terminal' ? (
           <AgentTerminalDialog
             card={dialogCard}
             onOpenChange={handleDialogOpenChange}
             onReveal={onRevealAgent}
+          />
+        ) : null}
+        {dialogCard && panelMode === 'native-chat' ? (
+          <AgentNativeChatDrawer
+            card={dialogCard}
+            onClose={() => handleDialogOpenChange(false)}
+            onOpenTerminal={() => setPanelMode('terminal')}
           />
         ) : null}
         <DashboardOrchestratorChat cards={visibleCards} />

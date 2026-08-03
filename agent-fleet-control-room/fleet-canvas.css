@@ -1,0 +1,813 @@
+/* Fleet Canvas — an infinite pan/zoom space where each repo is a concentric system:
+   repo core → worktree orbits → agent nodes. Zoom is altitude: the further out you
+   are, the fewer words render, so labels are never unreadable mush. */
+
+:root {
+  --dim: 0.15;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---- top bar (hexmap language) --------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  height: 46px;
+  flex: 0 0 46px;
+  padding: 0 22px;
+}
+
+.brand {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 14px;
+}
+
+.tabs a {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tabs a:hover {
+  color: var(--primary);
+}
+
+.tabs a.is-active {
+  color: var(--foreground);
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+  opacity: 0.55;
+}
+
+.chip .n {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.chip .lbl {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.chip.is-loud .dot {
+  opacity: 1;
+  box-shadow: var(--glow-attention);
+}
+
+.chip.is-loud .n {
+  color: var(--state-attention);
+  font-weight: 600;
+}
+
+.chips .sep {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.search {
+  width: 170px;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 4px 0;
+  text-align: right;
+}
+
+.search::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+.search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.accounting {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- stage ----------------------------------------------------------------- */
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.stage.is-panning {
+  cursor: grabbing;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  /* Counter-scale factor for chrome text: 1 / zoom, so labels hold a constant
+     screen size while the map grows around them. Node glyphs deliberately do
+     NOT use it — they are contents of a node and scale with it. */
+  --k: 1;
+}
+
+.grid-dot {
+  fill: var(--border);
+}
+
+.orbit {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* ---- repo core ------------------------------------------------------------- */
+
+.core {
+  fill: var(--card);
+  stroke: var(--input);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.core-pip {
+  fill: var(--muted-foreground);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.repo-name {
+  font-size: calc(var(--k) * 14px);
+  font-weight: 600;
+  fill: var(--foreground);
+  text-anchor: middle;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+}
+
+.repo-sub {
+  font-size: calc(var(--k) * 9.5px);
+  fill: var(--muted-foreground);
+  text-anchor: middle;
+  opacity: 0;
+  transition: opacity 130ms ease;
+  pointer-events: none;
+}
+
+/* ---- worktree cluster ------------------------------------------------------ */
+
+.wt-label {
+  font-size: calc(var(--k) * 10px);
+  fill: var(--muted-foreground);
+  text-anchor: middle;
+  opacity: 0;
+  transition: opacity 130ms ease;
+  pointer-events: none;
+}
+
+.wt-unread {
+  fill: color-mix(in srgb, var(--foreground) 72%, transparent);
+  pointer-events: none;
+}
+
+.cluster.is-dim .wt-label,
+.cluster.is-dim .wt-unread {
+  opacity: 0;
+}
+
+/* ---- agent node ------------------------------------------------------------ */
+
+.node {
+  --hue: var(--state-idle);
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+
+.node.is-dim {
+  opacity: var(--dim);
+}
+
+.n-core {
+  fill: color-mix(in srgb, var(--hue) 16%, var(--card));
+  stroke: var(--hue);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Liveness is its own channel: an exited process draws hollow. */
+.node.is-dead .n-core {
+  fill: transparent;
+}
+
+.n-glyph {
+  font-size: 9px;
+  fill: var(--hue);
+  text-anchor: middle;
+  dominant-baseline: central;
+  opacity: 0;
+  transition: opacity 130ms ease;
+  pointer-events: none;
+}
+
+.n-cap {
+  font-size: calc(var(--k) * 11px);
+  fill: var(--muted-foreground);
+  opacity: 0;
+  transition: opacity 130ms ease;
+  pointer-events: none;
+}
+
+.n-sel {
+  fill: none;
+  stroke: var(--ring);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.node:hover .n-sel,
+.node:focus-visible .n-sel {
+  opacity: 0.45;
+}
+
+.node.is-selected .n-sel {
+  opacity: 1;
+}
+
+/* -- per state --
+   SVG strokes can't be driven by the shared border-color keyframes, so these
+   mirror them exactly: same stops, same steps(1, end), same duration tokens. */
+
+@keyframes blink-node-attention {
+  0%,
+  44% {
+    stroke: var(--state-attention);
+    filter: drop-shadow(var(--glow-attention));
+  }
+  50%,
+  94% {
+    stroke: var(--muted-foreground);
+    filter: none;
+  }
+}
+
+@keyframes blink-node-blocked {
+  0%,
+  44% {
+    stroke: var(--state-blocked);
+    filter: drop-shadow(0 0 7px color-mix(in srgb, var(--state-blocked) 60%, transparent));
+  }
+  50%,
+  94% {
+    stroke: var(--muted-foreground);
+    filter: none;
+  }
+}
+
+@keyframes pulse-node-review {
+  0%,
+  100% {
+    stroke: color-mix(in srgb, var(--state-done) 70%, var(--border));
+  }
+  50% {
+    stroke: color-mix(in srgb, var(--state-done) 20%, var(--border));
+  }
+}
+
+.node[data-state='attention'],
+.node[data-state='permission'] {
+  --hue: var(--state-attention);
+}
+
+.node[data-state='attention'] .n-core,
+.node[data-state='permission'] .n-core {
+  animation: blink-node-attention var(--blink-fast) steps(1, end) infinite;
+}
+
+.node[data-state='failed'] {
+  --hue: var(--state-blocked);
+}
+
+.node[data-state='failed'] .n-core {
+  animation: blink-node-blocked var(--blink-fast) steps(1, end) infinite;
+}
+
+.node[data-state='working'] {
+  --hue: var(--state-working);
+}
+
+.node[data-state='working'] .n-core {
+  stroke: color-mix(in srgb, var(--state-working) 50%, var(--card));
+}
+
+/* Full-circle geometry with a dash gap: the bbox stays centred on the node, so
+   fill-box rotation spins true. */
+.n-spin {
+  fill: none;
+  stroke: var(--state-working);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.6;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spin calc(var(--pulse-slow) * 1.7) linear infinite;
+  pointer-events: none;
+}
+
+.node.is-dead .n-spin,
+.node.is-sleeping .n-spin {
+  animation: none;
+  opacity: 0.3;
+}
+
+.node[data-state='review'] {
+  --hue: var(--state-done);
+}
+
+.node[data-state='review'] .n-core {
+  animation: pulse-node-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.node[data-state='done'] .n-core {
+  fill: color-mix(in srgb, var(--state-done) 7%, var(--card));
+}
+
+/* ---- zoom as altitude ------------------------------------------------------
+   far  (<0.7)  nodes + repo names only
+   mid  (<1.6)  worktree names for anything not settled, or on hover
+   near (≥1.6)  every worktree name, node glyphs, needs-you captions */
+
+.canvas[data-zoom='mid'] .repo-sub,
+.canvas[data-zoom='near'] .repo-sub {
+  opacity: 1;
+}
+
+.canvas[data-zoom='mid'] .cluster:not(.is-quiet) .wt-label,
+.canvas[data-zoom='near'] .wt-label {
+  opacity: 1;
+}
+
+/* Thinned at build time so mid-band labels never overlap; hover overrides. */
+.canvas[data-zoom='mid'] .cluster.is-crowded .wt-label {
+  opacity: 0;
+}
+
+.canvas[data-zoom='mid'] .cluster:hover .wt-label {
+  opacity: 1;
+}
+
+.canvas[data-zoom='near'] .n-glyph {
+  opacity: 0.75;
+}
+
+.canvas[data-zoom='near'] .node[data-state='review'] .n-glyph {
+  opacity: 0.5;
+}
+
+.canvas[data-zoom='near'] .n-cap {
+  opacity: 1;
+}
+
+.canvas[data-zoom='mid'] .cluster.is-dim .wt-label,
+.canvas[data-zoom='near'] .cluster.is-dim .wt-label {
+  opacity: 0;
+}
+
+/* ---- lineage --------------------------------------------------------------- */
+
+.edge {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.edge-end {
+  fill: var(--muted-foreground);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* ---- viewport tools -------------------------------------------------------- */
+
+.viewtools {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vt {
+  border: 0;
+  background: none;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.vt:hover {
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.empty {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ---- footer whisper -------------------------------------------------------- */
+
+.whisper {
+  flex: 0 0 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 22px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.whisper .key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.whisper .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.whisper .sep {
+  opacity: 0.4;
+}
+
+/* ---- tooltip --------------------------------------------------------------- */
+
+.tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 280px;
+  padding: 9px 11px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-floating);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tip .t-name {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.tip .t-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.tip .t-state .live {
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta .mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ---- selection panel ------------------------------------------------------- */
+
+/* Spans the stage, not the window: the accounting whisper and the legend stay
+   readable while the panel is open, and the canvas underneath never reflows. */
+.panel {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 22px;
+  z-index: 50;
+  width: 370px;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+  transform: translateX(101%);
+  visibility: hidden;
+  transition:
+    transform 190ms cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 190ms;
+}
+
+.panel.is-open {
+  transform: none;
+  visibility: visible;
+}
+
+.panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 22px 8px;
+}
+
+.panel-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.panel-close:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.p-name {
+  margin: 0 30px 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.p-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.p-state .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.p-state .live {
+  color: var(--muted-foreground);
+}
+
+.p-path {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  word-break: break-all;
+}
+
+.p-facts {
+  display: flex;
+  gap: 26px;
+  margin: 16px 0 14px;
+}
+
+.p-facts .v {
+  margin-top: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.p-tail {
+  padding: 9px 11px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.p-tail > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-tail .last {
+  color: var(--foreground);
+}
+
+.p-respond {
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.p-ask {
+  margin: 0 0 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.p-cmd {
+  margin: 0 0 11px;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+}
+
+.p-fail {
+  margin: 0 0 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--state-blocked);
+}
+
+.opts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 11px;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.opt:hover {
+  border-color: var(--input);
+}
+
+.opt .num {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.reply {
+  display: flex;
+  gap: 7px;
+}
+
+.reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.reply input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.reply input:focus {
+  border-color: var(--ring);
+}
+
+.btnrow {
+  display: flex;
+  gap: 7px;
+}
+
+.btn {
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--secondary);
+}
+
+.btn.is-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 550;
+}
+
+.btn.is-primary:hover {
+  background: var(--foreground);
+}
+
+.btn.is-danger:hover {
+  border-color: color-mix(in srgb, var(--state-blocked) 55%, var(--border));
+  color: var(--state-blocked);
+}

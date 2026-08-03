@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet — Glass</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-glass.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">Fleet</span>
+      <nav class="tabs">
+        <a href="./fleet-board.html">Board</a>
+        <a href="./fleet-tiles.html">Tiles</a>
+        <a href="./fleet-triage.html">Triage</a>
+        <span class="is-active">Glass</span>
+      </nav>
+      <input class="search" id="search" type="text" />
+      <span class="accounting" id="accounting"></span>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <main class="field" id="field"></main>
+
+    <aside class="panel" id="panel" hidden></aside>
+    <div class="tooltip" id="tooltip" hidden></div>
+
+    <footer class="whisper" id="whisper"></footer>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-glass.js"></script>
+  </body>
+</html>

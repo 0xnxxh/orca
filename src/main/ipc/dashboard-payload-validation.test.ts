@@ -19,6 +19,7 @@ vi.mock('../../shared/repo-icon', async (importOriginal) => {
 import {
   admitDashboardSnapshot,
   isDashboardRevealAgentArgs,
+  isDashboardSpawnAgentArgs,
   isDashboardSnapshot
 } from './dashboard-payload-validation'
 
@@ -34,6 +35,7 @@ const SNAPSHOT = {
       task: 'Review the dashboard',
       lastUserMessage: 'Please review this',
       lastAgentMessage: 'I need a decision.',
+      lastResponseAt: 1_699_999_600_000,
       repoId: 'repo-1',
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
@@ -123,6 +125,46 @@ describe('dashboard payload validation', () => {
         cards: [{ ...SNAPSHOT.cards[0], parentPaneKey: 'x'.repeat(4_097) }]
       })
     ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], lastResponseAt: Number.NaN }]
+      })
+    ).toBe(false)
+  })
+
+  it('validates the optional chat session identity instead of passing it through', () => {
+    // Absent is the normal case — the hook has not reported a session yet.
+    expect(isDashboardSnapshot(SNAPSHOT)).toBe(true)
+    const withSession = {
+      ...SNAPSHOT,
+      cards: [
+        {
+          ...SNAPSHOT.cards[0],
+          sessionId: 'b6e5f0aa-1f1e-4f6c-9f4d-2f3a5c7d9e11',
+          transcriptPath: '/Users/dev/.claude/projects/orca/session.jsonl'
+        }
+      ]
+    }
+    expect(isDashboardSnapshot(withSession)).toBe(true)
+    // A widened card must still be admitted, not silently dropped from the board.
+    expect(admitDashboardSnapshot(withSession)?.droppedCardCount).toBe(0)
+
+    expect(
+      isDashboardSnapshot({ ...SNAPSHOT, cards: [{ ...SNAPSHOT.cards[0], sessionId: 42 }] })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], transcriptPath: { path: '/tmp/x' } }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], transcriptPath: `/${'x'.repeat(4_096)}` }]
+      })
+    ).toBe(false)
   })
 
   it('accepts repo icons a pop-out can safely render, and rejects the rest', () => {
@@ -181,6 +223,26 @@ describe('dashboard payload validation', () => {
         }
       })
     ).toBe(false)
+  })
+
+  it('validates bounded launch choices and spawn requests', () => {
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        launchableAgentsByWorktreeId: { 'worktree-1': ['codex', 'claude'] }
+      })
+    ).toBe(true)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        launchableAgentsByWorktreeId: { 'worktree-1': ['not-an-agent'] }
+      })
+    ).toBe(false)
+    expect(isDashboardSnapshot({ ...SNAPSHOT, launchableAgentsByWorktreeId: [] })).toBe(false)
+
+    expect(isDashboardSpawnAgentArgs({ worktreeId: 'worktree-1', agent: 'codex' })).toBe(true)
+    expect(isDashboardSpawnAgentArgs({ worktreeId: '', agent: 'codex' })).toBe(false)
+    expect(isDashboardSpawnAgentArgs({ worktreeId: 'worktree-1', agent: 'unknown' })).toBe(false)
   })
 
   it('bounds the conversation name', () => {

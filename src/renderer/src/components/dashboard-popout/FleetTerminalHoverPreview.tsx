@@ -36,8 +36,8 @@ export function FleetTerminalHoverPreview({
         </span>
         <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.05em] text-status-success">
           {card.ptyId
-            ? translate('dashboardPopout.rings.live', 'Live')
-            : translate('dashboardPopout.rings.snapshot', 'Snapshot')}
+            ? translate('dashboardPopout.map.live', 'Live')
+            : translate('dashboardPopout.map.snapshot', 'Snapshot')}
         </span>
       </header>
       {card.ptyId ? (
@@ -53,7 +53,7 @@ export function FleetTerminalHoverPreview({
         </p>
       )}
       <footer className="border-t border-border px-2.5 py-1.5 text-[10px] text-muted-foreground">
-        {translate('dashboardPopout.rings.clickToPin', 'Click agent to pin')}
+        {translate('dashboardPopout.map.clickToPin', 'Click agent to pin')}
       </footer>
     </section>
   )

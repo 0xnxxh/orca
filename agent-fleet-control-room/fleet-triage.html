@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet — Triage</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-triage.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="list">
+        <header class="list-head">
+          <span class="wordmark">Fleet</span>
+          <span class="list-counts" id="list-counts"></span>
+        </header>
+        <div class="sections" id="sections"></div>
+        <footer class="list-foot" id="list-foot"></footer>
+      </aside>
+      <main class="detail" id="detail"></main>
+    </div>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-triage.js"></script>
+  </body>
+</html>

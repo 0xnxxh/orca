@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 
-const PENDING_REVIEW_STORAGE_KEY = 'orca.dashboard.rings.pending-review-pane-keys'
-const PINNED_STORAGE_KEY = 'orca.dashboard.rings.pinned-pane-keys'
+const PENDING_REVIEW_STORAGE_KEY = 'orca.dashboard.map.pending-review-pane-keys'
+const PINNED_STORAGE_KEY = 'orca.dashboard.map.pinned-pane-keys'
+const LEGACY_PENDING_REVIEW_STORAGE_KEY = 'orca.dashboard.rings.pending-review-pane-keys'
+const LEGACY_PINNED_STORAGE_KEY = 'orca.dashboard.rings.pinned-pane-keys'
 const MAX_STORED_PANE_KEYS = 500
 
-function readStoredPaneKeys(key: string): Set<string> {
+function readStoredPaneKeys(key: string, legacyKey: string): Set<string> {
   try {
-    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '[]')
+    const stored: unknown = JSON.parse(
+      localStorage.getItem(key) ?? localStorage.getItem(legacyKey) ?? '[]'
+    )
     if (!Array.isArray(stored)) {
       return new Set()
     }
@@ -81,10 +85,10 @@ export function useFleetResultDisposition(
 } {
   const [explicitlyReviewed, setExplicitlyReviewed] = useState<Set<string>>(() => new Set())
   const [keptForReview, setKeptForReview] = useState<Set<string>>(() =>
-    readStoredPaneKeys(PENDING_REVIEW_STORAGE_KEY)
+    readStoredPaneKeys(PENDING_REVIEW_STORAGE_KEY, LEGACY_PENDING_REVIEW_STORAGE_KEY)
   )
   const [pinnedPaneKeys, setPinnedPaneKeys] = useState<Set<string>>(() =>
-    readStoredPaneKeys(PINNED_STORAGE_KEY)
+    readStoredPaneKeys(PINNED_STORAGE_KEY, LEGACY_PINNED_STORAGE_KEY)
   )
   const reviewedPaneKeys = useMemo(() => {
     const reviewed = new Set<string>()

@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Orca Global Agent Viewer Alternatives</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260731b" />
+  </head>
+  <body>
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-bot" viewBox="0 0 24 24">
+        <rect x="4" y="7" width="16" height="12" rx="3"></rect>
+        <path d="M12 3v4M8 12h.01M16 12h.01M9 16h6"></path>
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="m21 21-4.3-4.3"></path>
+      </symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24">
+        <path d="M4 5h16M7 12h10M10 19h4"></path>
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path
+          d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+        ></path>
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="m6 6 12 12M18 6 6 18"></path>
+      </symbol>
+      <symbol id="i-message" viewBox="0 0 24 24">
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="m8 12 3 3 5-6"></path>
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="M12 3 2 21h20zM12 9v5M12 18h.01"></path>
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 6 5 5-5 5M12 18h8"></path>
+      </symbol>
+      <symbol id="i-send" viewBox="0 0 24 24">
+        <path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path>
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14"></path>
+      </symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24">
+        <circle cx="6" cy="5" r="2"></circle>
+        <circle cx="18" cy="6" r="2"></circle>
+        <circle cx="6" cy="19" r="2"></circle>
+        <path d="M6 7v10M8 9c5 0 4-3 8-3"></path>
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6"></path>
+      </symbol>
+    </svg>
+
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand" aria-label="Orca Agents">
+          <span class="orca-mark" aria-hidden="true">O</span>
+          <span><strong>Agents</strong><small>Global viewer alternatives</small></span>
+        </div>
+        <nav class="concept-tabs" aria-label="Agent viewer concept" role="tablist">
+          <button
+            class="concept-tab"
+            id="tab-lineage"
+            data-concept="lineage"
+            role="tab"
+            aria-selected="false"
+            aria-controls="concept-lineage"
+          >
+            Lineage atlas
+          </button>
+          <button
+            class="concept-tab is-active"
+            id="tab-lanes"
+            data-concept="lanes"
+            role="tab"
+            aria-selected="true"
+            aria-controls="concept-lanes"
+          >
+            Activity lanes
+          </button>
+        </nav>
+        <button class="icon-button" id="theme-toggle" aria-label="Switch to light theme">
+          <svg class="icon"><use href="#i-sun"></use></svg>
+        </button>
+      </header>
+
+      <section class="filter-bar" aria-label="Agent filters">
+        <label class="search-field">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <input id="search" type="search" placeholder="Search agents, projects, or worktrees…" />
+          <kbd id="search-shortcut">⌘ K</kbd>
+        </label>
+        <label class="compact-field">
+          <span>Recent</span>
+          <select id="recent-filter">
+            <option value="1440">Today</option>
+            <option value="120">Last 2 hours</option>
+            <option value="30">Last 30 minutes</option>
+            <option value="5">Last 5 minutes</option>
+          </select>
+        </label>
+        <label class="compact-field">
+          <span>Status</span>
+          <select id="status-filter">
+            <option value="all">Any status</option>
+            <option value="attention">Needs you</option>
+            <option value="working">Working</option>
+            <option value="done">Done</option>
+            <option value="blocked">Blocked</option>
+            <option value="idle">Idle</option>
+          </select>
+        </label>
+        <label class="compact-field">
+          <span>Project</span>
+          <select id="project-filter">
+            <option value="all">All projects</option>
+          </select>
+        </label>
+        <label class="compact-field">
+          <span>Worktree</span>
+          <select id="worktree-filter">
+            <option value="all">All worktrees</option>
+          </select>
+        </label>
+        <button class="button button-outline older-toggle" id="older-toggle" aria-pressed="false">
+          <svg class="icon"><use href="#i-check"></use></svg>
+          <span>Show older</span>
+        </button>
+      </section>
+
+      <section class="concept-summary" aria-live="polite">
+        <div>
+          <span class="eyebrow" id="concept-kicker">Current-data prototype</span>
+          <h1 id="concept-title">Activity lanes</h1>
+          <p id="concept-description">
+            Each agent runs from its session start to completion or Now; children stay with their
+            parent.
+          </p>
+        </div>
+        <div class="tradeoff" id="concept-tradeoff">
+          <strong>Tradeoff</strong>
+          <span
+            >Completed sessions older than two hours stay collapsed until you ask for them.</span
+          >
+        </div>
+        <div class="filter-result" id="filter-result"></div>
+      </section>
+
+      <section class="viewer-layout" id="viewer-layout">
+        <div class="concept-stage" id="concept-stage">
+          <section
+            class="concept-panel"
+            id="concept-lineage"
+            data-panel="lineage"
+            role="tabpanel"
+            aria-labelledby="tab-lineage"
+          ></section>
+          <section
+            class="concept-panel is-active"
+            id="concept-lanes"
+            data-panel="lanes"
+            role="tabpanel"
+            aria-labelledby="tab-lanes"
+          ></section>
+        </div>
+
+        <aside class="agent-panel" id="agent-panel" aria-labelledby="agent-panel-title" hidden>
+          <header class="panel-header">
+            <span class="agent-icon" aria-hidden="true">
+              <svg class="icon"><use href="#i-bot"></use></svg>
+            </span>
+            <div>
+              <h2 id="agent-panel-title">Agent</h2>
+              <p id="agent-panel-meta"></p>
+            </div>
+            <button class="icon-button" id="close-panel" aria-label="Close agent panel">
+              <svg class="icon"><use href="#i-close"></use></svg>
+            </button>
+          </header>
+          <div class="panel-status-line">
+            <span id="panel-status"></span>
+            <time id="panel-age"></time>
+          </div>
+          <section class="panel-summary">
+            <span class="eyebrow">Latest response</span>
+            <p id="panel-response"></p>
+          </section>
+          <section class="terminal-frame" aria-label="Agent terminal preview">
+            <header>
+              <span
+                ><svg class="icon"><use href="#i-terminal"></use></svg>Agent</span
+              >
+              <b>LIVE</b>
+            </header>
+            <pre id="panel-terminal"></pre>
+          </section>
+          <section class="panel-files">
+            <span class="eyebrow">What changed</span>
+            <ul id="panel-files"></ul>
+          </section>
+          <div class="panel-actions">
+            <button class="button button-outline" id="panel-add-talk">
+              <svg class="icon"><use href="#i-plus"></use></svg>
+              Add to Talk
+            </button>
+            <button class="button button-primary" id="panel-open-worktree">Open worktree</button>
+          </div>
+        </aside>
+      </section>
+
+      <form class="talk-dock" id="talk-form">
+        <div
+          class="talk-drop"
+          id="talk-drop"
+          tabindex="0"
+          role="group"
+          aria-label="Talk to any agent recipients"
+        >
+          <span class="talk-label">
+            <svg class="icon"><use href="#i-message"></use></svg>
+            <span
+              ><strong>Talk to any agent</strong
+              ><small>Drop an agent here or use Add to Talk</small></span
+            >
+          </span>
+          <span class="recipient-list" id="recipient-list"></span>
+        </div>
+        <label class="talk-input">
+          <span class="sr-only">Follow-up message</span>
+          <input id="talk-message" placeholder="Write a follow-up…" />
+        </label>
+        <button class="button button-primary talk-send" type="submit" disabled>
+          <svg class="icon"><use href="#i-send"></use></svg>
+          Send follow-up
+        </button>
+        <p class="talk-note" id="talk-note" aria-live="polite">
+          Nothing sends until you choose Send follow-up.
+        </p>
+      </form>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./actual-agent-activity.js?v=20260731b"></script>
+    <script src="./app.js?v=20260731b"></script>
+  </body>
+</html>

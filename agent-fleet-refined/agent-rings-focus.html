@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Agent Rings — Focused Fleet</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./agent-rings-focus.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-board" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+        <rect x="14" y="3" width="7" height="11" rx="1"></rect>
+      </symbol>
+      <symbol id="i-orbit" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M4.5 9.5C2.8 14.8 6.2 20 12 20c5.5 0 9-4.7 7.8-9.8"></path>
+        <path d="M19.5 14.5C21.2 9.2 17.8 4 12 4 6.5 4 3 8.7 4.2 13.8"></path>
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="m21 21-4.3-4.3"></path>
+      </symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24">
+        <path d="M4 5h16M7 12h10M10 19h4"></path>
+      </symbol>
+      <symbol id="i-focus" viewBox="0 0 24 24">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3"></path>
+        <path d="M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6"></path>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6"></path>
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="m9 12 2 2 4-4"></path>
+      </symbol>
+      <symbol id="i-message-question" viewBox="0 0 24 24">
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+        <path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"></path>
+        <path d="M12 17h.01"></path>
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="m6 6 12 12M18 6 6 18"></path>
+      </symbol>
+      <symbol id="i-external" viewBox="0 0 24 24">
+        <path d="M15 3h6v6M10 14 21 3"></path>
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 6 5 5-5 5M12 18h8"></path>
+      </symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24">
+        <rect x="4" y="7" width="16" height="12" rx="3"></rect>
+        <path d="M12 3v4M8 12h.01M16 12h.01M9 16h6"></path>
+      </symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24">
+        <path d="m12 17v5M5 17h14l-3-5V5l2-2H6l2 2v7z"></path>
+      </symbol>
+    </svg>
+
+    <main class="app-shell" data-mode="inbox">
+      <header class="titlebar">
+        <div class="window-controls" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h1>Orca Agent Dashboard</h1>
+      </header>
+
+      <header class="app-header">
+        <div class="app-title">
+          <strong>Agents</strong>
+          <span>196 total</span>
+        </div>
+        <nav class="view-switcher" aria-label="Dashboard view">
+          <button>
+            <svg class="icon"><use href="#i-board"></use></svg>
+            Dashboard
+          </button>
+          <button class="is-active">
+            <svg class="icon"><use href="#i-orbit"></use></svg>
+            Agent Rings
+          </button>
+        </nav>
+      </header>
+
+      <section class="toolbar">
+        <label class="search">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <input id="agent-search" placeholder="Search workspace, project, or agent…" />
+          <kbd data-mac="⌘ K" data-other="Ctrl+K">⌘ K</kbd>
+        </label>
+        <button class="toolbar-filter">
+          <svg class="icon"><use href="#i-filter"></use></svg>
+          Filter
+          <svg class="icon chevron"><use href="#i-chevron"></use></svg>
+        </button>
+      </section>
+
+      <section class="fleet-layout">
+        <aside class="filter-rail">
+          <header>
+            <span class="eyebrow">Focus view</span>
+            <h2>You decide what stays visible</h2>
+            <p>Opening a result marks it seen. Only Mark reviewed removes it from Focus.</p>
+          </header>
+
+          <section class="state-filters">
+            <span class="eyebrow">Show agent states</span>
+            <button
+              class="state-filter is-active"
+              data-state-toggle="attention"
+              aria-pressed="true"
+            >
+              <span class="state-mark waiting">
+                <svg class="icon"><use href="#i-message-question"></use></svg>
+              </span>
+              <span>Needs you</span>
+              <b>0</b>
+            </button>
+            <button class="state-filter is-active" data-state-toggle="working" aria-pressed="true">
+              <span class="state-mark working"></span>
+              <span>Working</span>
+              <b id="working-count">7</b>
+            </button>
+            <button class="state-filter is-active" data-state-toggle="finished" aria-pressed="true">
+              <span class="state-mark done">
+                <svg class="icon"><use href="#i-circle-check"></use></svg>
+              </span>
+              <span>Finished</span>
+              <b id="finished-count">189</b>
+            </button>
+          </section>
+
+          <section class="finished-scopes">
+            <span class="eyebrow">Finished results</span>
+            <button class="scope-filter is-active" data-finished-scope="review">
+              <span>To review</span>
+              <b id="review-count">8</b>
+            </button>
+            <button class="scope-filter" data-finished-scope="day">
+              <span>Last 24 hours</span>
+              <b id="day-count">34</b>
+            </button>
+            <button class="scope-filter" data-finished-scope="week">
+              <span>Last 7 days</span>
+              <b id="week-count">112</b>
+            </button>
+            <button class="scope-filter" data-finished-scope="all">
+              <span>All finished</span>
+              <b id="all-finished-count">189</b>
+            </button>
+            <p>
+              <svg class="icon"><use href="#i-pin"></use></svg>Pinned agents always remain visible.
+            </p>
+          </section>
+
+          <section class="project-filters">
+            <span class="eyebrow">Project</span>
+            <button
+              class="project-filter is-active"
+              data-project-toggle="local"
+              aria-pressed="true"
+            >
+              <span>
+                <strong>orca</strong>
+                <small>87 workspaces</small>
+              </span>
+              <b><em>12 focus</em> · 163</b>
+            </button>
+            <button
+              class="project-filter is-active"
+              data-project-toggle="remote"
+              aria-pressed="true"
+            >
+              <span>
+                <strong>orca · remote</strong>
+                <small>7 workspaces</small>
+              </span>
+              <b><em>3 focus</em> · 33</b>
+            </button>
+          </section>
+
+          <div class="filter-summary">
+            <strong id="visible-summary">15 of 196 shown</strong>
+            <button id="show-reviewed">181 reviewed results hidden</button>
+          </div>
+
+          <div class="bulk-actions">
+            <button id="review-visible">
+              <svg class="icon"><use href="#i-check"></use></svg>
+              Mark visible results reviewed
+            </button>
+          </div>
+
+          <footer>
+            <button id="clear-filters">Clear filters</button>
+            <button>
+              <svg class="icon"><use href="#i-focus"></use></svg>
+              Fit visible
+            </button>
+          </footer>
+        </aside>
+
+        <section class="canvas-column">
+          <header class="canvas-header">
+            <div>
+              <span class="eyebrow">Live containment map</span>
+              <strong id="canvas-title">Focus · 15 of 196 agents</strong>
+            </div>
+            <button class="hidden-summary" id="hidden-summary">
+              <svg class="icon"><use href="#i-check"></use></svg>
+              <span id="hidden-summary-copy">181 earlier results hidden</span>
+            </button>
+            <div class="host-switcher" role="group" aria-label="Host filter">
+              <button class="is-active" data-host-filter="all">All hosts</button>
+              <button data-host-filter="local">Local</button>
+              <button data-host-filter="remote">Remote</button>
+            </div>
+          </header>
+
+          <div class="rings-canvas" id="rings-canvas">
+            <div class="empty-state" id="empty-state">
+              <span class="empty-orbit"><i></i></span>
+              <strong>No agents need attention</strong>
+              <p>Turn on Working or Finished, or broaden the finished-result window.</p>
+              <button id="reset-empty-state">Reset Focus</button>
+            </div>
+
+            <section class="project-ring project-primary" data-project-key="local">
+              <header class="project-label">
+                <strong>orca</strong>
+                <span data-open-label>6 working · 6 new results · 151 earlier</span>
+              </header>
+
+              <article class="workspace-ring workspace-large">
+                <header>
+                  <strong>albacore</strong>
+                  <span>2 working · 1 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-xl"
+                  style="--x: 29%; --y: 40%"
+                  data-agent="Cross-platform reviewer"
+                  data-workspace="albacore"
+                  data-duration="52m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Cross-platform reviewer</span>
+                  <small>52m</small>
+                </button>
+                <button
+                  class="agent-node agent-md"
+                  style="--x: 71%; --y: 42%"
+                  data-agent="Test auditor"
+                  data-workspace="albacore"
+                  data-duration="18m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Test auditor</span>
+                  <small>18m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-lg"
+                  style="--x: 50%; --y: 72%"
+                  data-agent="Layout implementation"
+                  data-workspace="albacore"
+                  data-duration="2m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Layout implementation</span>
+                  <small>2m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 53%; --y: 91%"
+                  data-day-count="8"
+                  data-week-count="35"
+                  data-all-count="63"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>63 earlier</strong>
+                </button>
+              </article>
+
+              <article class="workspace-ring workspace-top">
+                <header>
+                  <strong>orca-trust-dialog</strong>
+                  <span>1 working · 2 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-lg"
+                  style="--x: 50%; --y: 29%"
+                  data-agent="Permission flow"
+                  data-workspace="orca-trust-dialog"
+                  data-duration="37m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Permission flow</span>
+                  <small>37m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 30%; --y: 70%"
+                  data-agent="Dialog review"
+                  data-workspace="orca-trust-dialog"
+                  data-duration="4m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Dialog review</span>
+                  <small>4m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 70%; --y: 70%"
+                  data-agent="Accessibility pass"
+                  data-workspace="orca-trust-dialog"
+                  data-duration="7m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Accessibility pass</span>
+                  <small>7m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 50%; --y: 94%"
+                  data-day-count="3"
+                  data-week-count="11"
+                  data-all-count="19"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>19 earlier</strong>
+                </button>
+              </article>
+
+              <article class="workspace-ring workspace-mid">
+                <header>
+                  <strong>dashboard-popout</strong>
+                  <span>1 working · 1 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-sm"
+                  style="--x: 50%; --y: 29%"
+                  data-agent="Popover polish"
+                  data-workspace="dashboard-popout"
+                  data-duration="6m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Popover polish</span>
+                  <small>6m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 50%; --y: 72%"
+                  data-agent="Terminal parity"
+                  data-workspace="dashboard-popout"
+                  data-duration="8m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Terminal parity</span>
+                  <small>8m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 50%; --y: 95%"
+                  data-day-count="5"
+                  data-week-count="17"
+                  data-all-count="28"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>28 earlier</strong>
+                </button>
+              </article>
+
+              <article class="workspace-ring workspace-bottom">
+                <header>
+                  <strong>terminal-recovery</strong>
+                  <span>1 working · 1 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-md"
+                  style="--x: 50%; --y: 29%"
+                  data-agent="SSH recovery"
+                  data-workspace="terminal-recovery"
+                  data-duration="24m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">SSH recovery</span>
+                  <small>24m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 50%; --y: 72%"
+                  data-agent="SSH matrix"
+                  data-workspace="terminal-recovery"
+                  data-duration="12m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">SSH matrix</span>
+                  <small>12m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 50%; --y: 95%"
+                  data-day-count="2"
+                  data-week-count="10"
+                  data-all-count="17"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>17 earlier</strong>
+                </button>
+              </article>
+
+              <article class="workspace-ring workspace-small">
+                <header>
+                  <strong>git-compat</strong>
+                  <span>1 working · 1 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-lg"
+                  style="--x: 50%; --y: 29%"
+                  data-agent="Git 2.25 audit"
+                  data-workspace="git-compat"
+                  data-duration="41m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Git 2.25 audit</span>
+                  <small>41m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 50%; --y: 72%"
+                  data-agent="Compatibility notes"
+                  data-workspace="git-compat"
+                  data-duration="18m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Compatibility notes</span>
+                  <small>18m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 50%; --y: 95%"
+                  data-day-count="4"
+                  data-week-count="14"
+                  data-all-count="24"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>24 earlier</strong>
+                </button>
+              </article>
+            </section>
+
+            <section class="project-ring project-secondary" data-project-key="remote">
+              <header class="project-label">
+                <strong>orca · remote</strong>
+                <span>1 working · 2 new results · 30 earlier</span>
+              </header>
+              <article class="workspace-ring workspace-remote">
+                <header>
+                  <strong>relay-session</strong>
+                  <span>1 working · 2 finished</span>
+                </header>
+                <button
+                  class="agent-node agent-xl"
+                  style="--x: 50%; --y: 27%"
+                  data-agent="Relay reconnect"
+                  data-workspace="relay-session"
+                  data-duration="58m"
+                  data-agent-status="working"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Relay reconnect</span>
+                  <small>58m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 30%; --y: 70%"
+                  data-agent="Reconnect audit"
+                  data-workspace="relay-session"
+                  data-duration="3m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Reconnect audit</span>
+                  <small>3m</small>
+                </button>
+                <button
+                  class="agent-node agent-finished agent-sm"
+                  style="--x: 70%; --y: 70%"
+                  data-agent="Log review"
+                  data-workspace="relay-session"
+                  data-duration="22m ago"
+                  data-agent-status="finished"
+                  data-review-state="unreviewed"
+                  data-seen="false"
+                >
+                  <span class="agent-avatar"
+                    ><svg class="icon"><use href="#i-bot"></use></svg
+                  ></span>
+                  <span class="agent-name">Log review</span>
+                  <small>22m</small>
+                </button>
+                <button
+                  class="done-cluster"
+                  style="--x: 50%; --y: 92%"
+                  data-day-count="4"
+                  data-week-count="17"
+                  data-all-count="30"
+                >
+                  <span class="dot-stack"><i></i><i></i><i></i></span>
+                  <strong>30 earlier</strong>
+                </button>
+              </article>
+            </section>
+
+            <div class="done-mode-note">
+              <strong>New results stay visible; earlier results are summarized</strong>
+              <span>Choose an agent to continue it, or a summary to browse older results.</span>
+            </div>
+
+            <div class="done-inspector" id="done-inspector">
+              <header>
+                <div>
+                  <span class="eyebrow">Earlier results</span>
+                  <strong id="done-workspace-name">albacore</strong>
+                </div>
+                <span id="done-count-label">64 agents</span>
+                <button id="close-done-inspector" aria-label="Close completed agents">
+                  <svg class="icon"><use href="#i-close"></use></svg>
+                </button>
+              </header>
+              <div class="done-agent-grid" id="done-agent-grid"></div>
+              <footer>Select an agent to reopen its terminal conversation</footer>
+            </div>
+
+            <div class="zoom-controls">
+              <button aria-label="Zoom out">−</button>
+              <span>100%</span>
+              <button aria-label="Zoom in">+</button>
+              <button>
+                <svg class="icon"><use href="#i-focus"></use></svg> Fit
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <button class="orchestrate">
+        <svg class="icon"><use href="#i-bot"></use></svg>
+        Orchestrate
+        <i></i>
+      </button>
+    </main>
+
+    <div class="terminal-overlay" id="terminal-overlay" aria-hidden="true">
+      <section class="terminal-dialog" role="dialog" aria-modal="true" aria-label="Agent terminal">
+        <header>
+          <span class="terminal-agent-icon">
+            <svg class="icon"><use href="#i-bot"></use></svg>
+          </span>
+          <strong id="terminal-workspace">albacore</strong>
+          <span id="terminal-meta">Cross-platform reviewer · Working</span>
+          <button id="close-terminal" aria-label="Close terminal">
+            <svg class="icon"><use href="#i-close"></use></svg>
+          </button>
+        </header>
+        <pre><span class="prompt">›</span> <span id="terminal-command">Reviewing cross-platform behavior…</span>
+
+<span class="muted">Result summary</span>
+<span class="success">✓</span> macOS native
+<span class="success">✓</span> Linux SSH
+<span class="success">✓</span> Windows WSL
+
+<span class="muted">All targeted checks pass. Ready for review or follow-up.</span>
+
+<span class="cursor">▋</span></pre>
+        <label class="terminal-compose">
+          <span>›</span>
+          <input id="terminal-reply" placeholder="Send another message to this agent…" />
+          <kbd>Enter</kbd>
+        </label>
+        <footer>
+          <span id="result-disposition">Unreviewed · remains in Focus</span>
+          <button class="terminal-action" id="pin-agent" aria-pressed="false">
+            <svg class="icon"><use href="#i-pin"></use></svg>
+            Keep visible
+          </button>
+          <button class="terminal-action" id="review-agent">
+            <svg class="icon"><use href="#i-check"></use></svg>
+            Mark reviewed
+          </button>
+          <button class="open-worktree">
+            <svg class="icon"><use href="#i-external"></use></svg>
+            Open worktree
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <script src="./agent-rings-focus.js"></script>
+  </body>
+</html>

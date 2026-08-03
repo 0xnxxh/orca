@@ -16,6 +16,7 @@ export function AgentDashboardExperimentalSetting({
 }: AgentDashboardExperimentalSettingProps): React.JSX.Element {
   const enabled = settings.experimentalAgentDashboardPopout === true
   const mode = settings.experimentalAgentDashboardMode ?? 'in-window'
+  const agentViewMode = settings.experimentalAgentDashboardAgentViewMode ?? 'terminal'
   const showIdle = settings.experimentalAgentDashboardShowIdle === true
 
   return (
@@ -95,6 +96,33 @@ export function AgentDashboardExperimentalSetting({
                     'auto.components.settings.ExperimentalPane.agentDashboard.modePopout',
                     'Pop-out'
                   )
+                }
+              ]}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 shrink space-y-0.5">
+              <Label>{translate('dashboardPopout.settings.agentView', 'Open agents in')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {translate(
+                  'dashboardPopout.settings.agentViewCopy',
+                  'Choose the native transcript drawer or the live terminal preview.'
+                )}
+              </p>
+            </div>
+            <SettingsSegmentedControl
+              value={agentViewMode}
+              onChange={(next) => updateSettings({ experimentalAgentDashboardAgentViewMode: next })}
+              ariaLabel={translate('dashboardPopout.settings.agentView', 'Open agents in')}
+              size="sm"
+              options={[
+                {
+                  value: 'native-chat',
+                  label: translate('dashboardPopout.settings.nativeChat', 'Native chat')
+                },
+                {
+                  value: 'terminal',
+                  label: translate('dashboardPopout.settings.terminal', 'Terminal')
                 }
               ]}
             />

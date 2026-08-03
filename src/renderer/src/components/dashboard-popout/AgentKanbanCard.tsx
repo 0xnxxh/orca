@@ -86,6 +86,7 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.task === b.task &&
     a.lastUserMessage === b.lastUserMessage &&
     a.lastAgentMessage === b.lastAgentMessage &&
+    a.lastResponseAt === b.lastResponseAt &&
     a.repoId === b.repoId &&
     a.worktreeId === b.worktreeId &&
     a.tabId === b.tabId &&

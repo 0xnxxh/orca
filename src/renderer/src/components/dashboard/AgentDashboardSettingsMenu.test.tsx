@@ -10,6 +10,7 @@ vi.mock('@/store', () => ({
     selector: (state: {
       settings: {
         experimentalAgentDashboardMode: 'in-window'
+        experimentalAgentDashboardAgentViewMode: 'terminal'
         experimentalAgentDashboardShowIdle: boolean
       }
       updateSettings: typeof updateSettings
@@ -18,6 +19,7 @@ vi.mock('@/store', () => ({
     selector({
       settings: {
         experimentalAgentDashboardMode: 'in-window',
+        experimentalAgentDashboardAgentViewMode: 'terminal',
         experimentalAgentDashboardShowIdle: false
       },
       updateSettings
@@ -67,5 +69,24 @@ describe('AgentDashboardSettingsMenu', () => {
     act(() => toggle?.click())
 
     expect(updateSettings).toHaveBeenCalledWith({ experimentalAgentDashboardShowIdle: true })
+  })
+
+  it('persists native chat as the agent view mode', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    act(() => {
+      root?.render(<AgentDashboardSettingsMenu showOpenMode={false} />)
+    })
+
+    const group = container.querySelector('[role="radiogroup"][aria-label="Open agents in"]')
+    const nativeChat = [
+      ...(group?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])
+    ].find((option) => option.textContent === 'Native chat')
+    act(() => nativeChat?.click())
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      experimentalAgentDashboardAgentViewMode: 'native-chat'
+    })
   })
 })

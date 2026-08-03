@@ -306,18 +306,19 @@ function getDevUserDataPath() {
   if (process.env.ORCA_DEV_USER_DATA_PATH) {
     return process.env.ORCA_DEV_USER_DATA_PATH
   }
+  const profileDirectory = process.env.ORCA_DEV_PRODUCTION_PROFILE === '1' ? 'orca' : 'orca-dev'
   if (process.platform === 'darwin') {
-    return path.join(process.env.HOME ?? '', 'Library', 'Application Support', 'orca-dev')
+    return path.join(process.env.HOME ?? '', 'Library', 'Application Support', profileDirectory)
   }
   if (process.platform === 'win32') {
     return path.join(
       process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Roaming'),
-      'orca-dev'
+      profileDirectory
     )
   }
   return path.join(
     process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? '', '.config'),
-    'orca-dev'
+    profileDirectory
   )
 }
 

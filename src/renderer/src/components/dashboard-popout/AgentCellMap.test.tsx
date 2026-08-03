@@ -43,7 +43,7 @@ function renderCells(cards: DashboardCard[], onOpenTerminal = vi.fn()): ReturnTy
 afterEach(cleanup)
 
 describe('AgentCellMap', () => {
-  it('groups fixed-size agents into project and worktree cells', () => {
+  it('groups agents into repo sections of glass worktree cells', () => {
     renderCells([
       card(),
       card({
@@ -66,7 +66,10 @@ describe('AgentCellMap', () => {
     expect(screen.getAllByTestId('agent-cell-worktree')).toHaveLength(2)
     expect(screen.getByText('Cell map')).toBeInTheDocument()
     expect(screen.getByText('Mobile cells')).toBeInTheDocument()
+    expect(screen.getByText('1 worktrees · 2 agents')).toBeInTheDocument()
+    // Each agent is an orb carrying its own state class.
     expect(screen.getByRole('button', { name: 'Agent alpha, Working' })).toHaveClass(
+      'agent-cell-orb',
       'fleet-status-working'
     )
     expect(screen.getByRole('button', { name: 'Agent beta, Done' })).toHaveClass(
@@ -74,32 +77,84 @@ describe('AgentCellMap', () => {
     )
   })
 
-  it('opens the shared terminal flow from an agent node', () => {
-    const onOpenTerminal = vi.fn()
-    const agent = card()
-    renderCells([agent], onOpenTerminal)
+  it('blooms a cell with the worst state its agents are in', () => {
+    renderCells([
+      card(),
+      card({ paneKey: 'pane-2', bucket: 'attention', dotState: 'waiting' }),
+      card({ paneKey: 'pane-3', bucket: 'attention', dotState: 'blocked' })
+    ])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent alpha, Working' }))
-    expect(onOpenTerminal).toHaveBeenCalledWith(agent, 'right')
+    expect(screen.getByTestId('agent-cell-worktree')).toHaveAttribute('data-worst', 'blocked')
   })
 
-  it('shows the most recent response age instead of an agent count', () => {
+  it('writes words only for an agent that needs the user', () => {
     renderCells([
+      card({ task: 'Silent work' }),
       card({
-        paneKey: 'pane-1',
-        bucket: 'done',
-        dotState: 'done',
-        finishedAt: NOW - 10 * 60_000,
-        stateChangedAt: NOW - 10 * 60_000
-      }),
-      card({
-        paneKey: 'pane-2',
-        conversationName: 'Agent beta',
-        startedAt: NOW - 30 * 60_000,
-        stateChangedAt: NOW - 2 * 60_000
+        paneKey: 'pane-ask',
+        conversationName: 'Agent ask',
+        bucket: 'attention',
+        dotState: 'waiting',
+        askSummary: 'Should I force-push the rebase?',
+        stateChangedAt: NOW - 5 * 60_000
       })
     ])
 
-    expect(screen.getByText('2m')).toBeInTheDocument()
+    expect(screen.getByText('Should I force-push the rebase?')).toBeInTheDocument()
+    expect(screen.getByText('5m')).toBeInTheDocument()
+    // The working agent contributes an orb, not a line of text.
+    expect(screen.queryByText('Silent work')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the last agent message when no ask summary was captured', () => {
+    renderCells([
+      card({
+        bucket: 'attention',
+        dotState: 'waiting',
+        lastAgentMessage: 'Which migration should run first?'
+      })
+    ])
+
+    expect(screen.getByText('Which migration should run first?')).toBeInTheDocument()
+  })
+
+  it('opens the responder from an orb and from the ask line', () => {
+    const onOpenTerminal = vi.fn()
+    const asking = card({
+      bucket: 'attention',
+      dotState: 'waiting',
+      askSummary: 'Ready to merge?'
+    })
+    renderCells([asking], onOpenTerminal)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent alpha, Waiting for input' }))
+    expect(onOpenTerminal).toHaveBeenCalledWith(asking, 'right')
+
+    onOpenTerminal.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Open the question from Agent alpha' }))
+    expect(onOpenTerminal).toHaveBeenCalledWith(asking, 'right')
+  })
+
+  it('rings the selected agent orb', () => {
+    render(
+      <TooltipProvider>
+        <AgentCellMap
+          cards={[card(), card({ paneKey: 'pane-2', conversationName: 'Agent beta' })]}
+          now={NOW}
+          selectedPaneKey="pane-2"
+          onOpenTerminal={vi.fn()}
+        />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByRole('button', { name: 'Agent beta, Working' })).toHaveClass('is-selected')
+    expect(screen.getByRole('button', { name: 'Agent alpha, Working' })).not.toHaveClass(
+      'is-selected'
+    )
+  })
+
+  it('keeps its own scroll container on the sleek scrollbar', () => {
+    const { container } = renderCells([card()])
+    expect(container.querySelector('.agent-cell-map')).toHaveClass('scrollbar-sleek')
   })
 })

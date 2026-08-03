@@ -1,5 +1,7 @@
-import { AgentKanbanBoard, type AgentDashboardView } from './AgentKanbanBoard'
+import { AgentKanbanBoard } from './AgentKanbanBoard'
+import { resolveAgentDashboardView } from './agent-dashboard-view'
 import { useDashboardSnapshot } from './useDashboardSnapshot'
+import { AgentDashboardSettingsMenu } from '../dashboard/AgentDashboardSettingsMenu'
 
 type DashboardPopoutRootProps = {
   /** The layout requested via popout.html?view=<name>. */
@@ -12,7 +14,12 @@ type DashboardPopoutRootProps = {
  */
 export function DashboardPopoutRoot(_props: DashboardPopoutRootProps): React.JSX.Element {
   const snapshot = useDashboardSnapshot()
-  const initialView: AgentDashboardView =
-    _props.view === 'rings' || _props.view === 'cells' ? _props.view : 'board'
-  return <AgentKanbanBoard snapshot={snapshot} initialView={initialView} />
+  const initialView = resolveAgentDashboardView(_props.view) ?? 'board'
+  return (
+    <AgentKanbanBoard
+      snapshot={snapshot}
+      initialView={initialView}
+      headerActions={<AgentDashboardSettingsMenu showOpenMode={false} />}
+    />
+  )
 }

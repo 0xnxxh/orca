@@ -98,9 +98,9 @@ function AgentTerminalFrame({
           <>
             <span className="mr-1 text-[10px] text-muted-foreground">
               {reviewed
-                ? translate('dashboardPopout.rings.focus.reviewed', 'Reviewed result')
+                ? translate('dashboardPopout.map.focus.reviewed', 'Reviewed result')
                 : translate(
-                    'dashboardPopout.rings.focus.seenPendingReview',
+                    'dashboardPopout.map.focus.seenPendingReview',
                     'Seen · remains in Focus until reviewed'
                   )}
             </span>
@@ -113,8 +113,8 @@ function AgentTerminalFrame({
             >
               <Pin className="size-3" />
               {pinned
-                ? translate('dashboardPopout.rings.focus.pinned', 'Pinned')
-                : translate('dashboardPopout.rings.focus.keepVisible', 'Keep visible')}
+                ? translate('dashboardPopout.map.focus.pinned', 'Pinned')
+                : translate('dashboardPopout.map.focus.keepVisible', 'Keep visible')}
             </Button>
             {!reviewed ? (
               <Button
@@ -129,7 +129,7 @@ function AgentTerminalFrame({
                 }}
               >
                 <Check className="size-3" />
-                {translate('dashboardPopout.rings.focus.markReviewed', 'Mark reviewed')}
+                {translate('dashboardPopout.map.focus.markReviewed', 'Mark reviewed')}
               </Button>
             ) : null}
           </>

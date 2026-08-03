@@ -2681,6 +2681,7 @@ export type HostSettingOverrides = {
 
 /** Presentation mode for the experimental Agent Dashboard. */
 export type AgentDashboardMode = 'in-window' | 'popout'
+export type AgentDashboardAgentViewMode = 'native-chat' | 'terminal'
 
 export type GlobalSettings = {
   workspaceDir: string
@@ -3024,6 +3025,8 @@ export type GlobalSettings = {
   experimentalAgentDashboardPopout?: boolean
   /** How the Agent Dashboard opens: an in-window companion board or a separate pop-out window. Defaults to in-window. */
   experimentalAgentDashboardMode?: AgentDashboardMode
+  /** Surface opened when an Agent Dashboard agent is selected. */
+  experimentalAgentDashboardAgentViewMode?: AgentDashboardAgentViewMode
   /** Includes stale quiet agents as a fourth Agent Dashboard column. */
   experimentalAgentDashboardShowIdle?: boolean
   /** One-shot migration guard for defaulting the Agents view off; later explicit opt-ins persist normally. */

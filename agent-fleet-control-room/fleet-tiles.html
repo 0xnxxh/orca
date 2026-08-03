@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Fleet — Tiles</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-tiles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <span class="brand">Fleet</span>
+        <nav class="tabs" aria-label="Fleet views">
+          <a href="./fleet-map.html">Map</a>
+          <a href="./fleet-strips.html">Strips</a>
+          <a href="./mission-control.html">Mission Control</a>
+          <a href="./fleet-hexmap.html">Hexmap</a>
+          <a href="./fleet-terminal-wall.html">Wall</a>
+          <a href="./fleet-triage.html">Triage</a>
+          <a href="./fleet-canvas.html">Canvas</a>
+          <a class="is-active" href="./fleet-tiles.html" aria-current="page">Tiles</a>
+        </nav>
+        <div class="chips" id="chips"></div>
+        <div class="topright">
+          <input
+            id="search"
+            class="search"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Filter the fleet"
+          />
+          <span class="accounting" id="accounting"></span>
+        </div>
+      </header>
+
+      <div class="stage" id="stage" data-zoom="mid">
+        <div class="world" id="world">
+          <div class="grid" aria-hidden="true"></div>
+          <svg class="lineage" id="lineage" aria-hidden="true"></svg>
+        </div>
+
+        <p class="empty" id="empty" hidden></p>
+
+        <div class="viewtools">
+          <button class="vt" id="fit" type="button">Fit</button>
+          <button class="vt" id="resetlayout" type="button">Reset layout</button>
+        </div>
+
+        <div class="minimap" id="minimap" role="group" aria-label="Minimap — click to recentre">
+          <svg id="mmsvg" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <g id="mmislands"></g>
+            <g id="mmdots"></g>
+            <rect class="mm-view" id="mmview" />
+          </svg>
+        </div>
+      </div>
+
+      <footer class="whisper" id="whisper"></footer>
+    </main>
+
+    <aside class="panel" id="panel" aria-label="Agent detail" aria-hidden="true"></aside>
+    <div class="tip" id="tip" role="tooltip" hidden></div>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-tiles.js"></script>
+  </body>
+</html>

@@ -1,0 +1,974 @@
+/* Fleet Tiles — one semantic-zoom canvas. Every agent is the same rounded tile in
+   world units; only its INNER content swaps by altitude, so nothing counter-scales
+   and text only exists in the band where the world scale makes it legible.
+   Chrome is monochrome; hue is reserved for agent state. */
+
+:root {
+  /* World geometry — these are world units, which are CSS px before #world's transform. */
+  --tile-w: 132px;
+  --tile-h: 80px;
+  --tile-r: 14px;
+  --dim: 0.15;
+  /* Slid left while the detail panel is open so the tools stay reachable. */
+  --panel-inset: 0px;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---- top bar (hexmap language) --------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  height: 46px;
+  flex: 0 0 46px;
+  padding: 0 22px;
+}
+
+.brand {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 14px;
+}
+
+.tabs a {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+
+.tabs a:hover {
+  color: var(--primary);
+}
+
+.tabs a.is-active {
+  color: var(--foreground);
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+  opacity: 0.55;
+}
+
+.chip .n {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.chip .lbl {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.chip.is-loud .dot {
+  opacity: 1;
+  box-shadow: var(--glow-attention);
+}
+
+.chip.is-loud .n {
+  color: var(--state-attention);
+  font-weight: 600;
+}
+
+.chips .sep {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.search {
+  width: 190px;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 4px 0;
+  text-align: right;
+}
+
+.search::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+.search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.accounting {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- stage / world --------------------------------------------------------- */
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: default;
+}
+
+.stage.is-panning {
+  cursor: grabbing;
+}
+
+.stage.is-arranging {
+  cursor: grabbing;
+}
+
+/* Pan and zoom mutate this transform and nothing else. */
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* Scales with the world, so the grain reads as ground rather than as chrome. */
+.grid {
+  position: absolute;
+  left: -4000px;
+  top: -4000px;
+  width: 14000px;
+  height: 10000px;
+  background-image: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
+  background-size: 44px 44px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Drawn over the tiles: a hairline at 0.5 opacity reads as kinship without
+   burying the cards it connects, and cross-island edges must stay visible. */
+.lineage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.lineage .edge {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.lineage .edge-end {
+  fill: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+/* ---- island (repo containment) --------------------------------------------- */
+
+.island {
+  position: absolute;
+  border: 1px solid color-mix(in srgb, var(--hue) 26%, var(--border));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card) 40%, transparent);
+  z-index: 1;
+}
+
+.island[data-worst='done'] {
+  --hue: var(--state-idle);
+}
+
+.island[data-worst='review'] {
+  --hue: var(--state-done);
+}
+
+.island[data-worst='working'] {
+  --hue: var(--state-working);
+}
+
+.island[data-worst='attention'],
+.island[data-worst='permission'] {
+  --hue: var(--state-attention);
+}
+
+.island[data-worst='failed'] {
+  --hue: var(--state-blocked);
+}
+
+.isl-head {
+  position: absolute;
+  left: 26px;
+  top: 15px;
+  cursor: grab;
+  user-select: none;
+}
+
+.isl-head:active {
+  cursor: grabbing;
+}
+
+/* Big enough in world units to survive the far band without counter-scaling. */
+.isl-name {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 28px;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+.isl-sub {
+  margin-top: 2px;
+  font-size: 14px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+/* ---- worktree group -------------------------------------------------------- */
+
+.group {
+  position: absolute;
+}
+
+.wt-label {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+  user-select: none;
+}
+
+.wt-label:active {
+  cursor: grabbing;
+}
+
+/* The ellipsis has to live on the flex item, not on the flex container. */
+.wt-label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-label .unread {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  opacity: 0.65;
+}
+
+.group.is-arranged .wt-label {
+  color: var(--foreground);
+}
+
+/* ---- tile ------------------------------------------------------------------ */
+
+.tile {
+  position: absolute;
+  width: var(--tile-w);
+  height: var(--tile-h);
+  border: 1.5px solid var(--border);
+  border-radius: var(--tile-r);
+  background: color-mix(in srgb, var(--hue) 16%, var(--card));
+  overflow: hidden;
+  cursor: pointer;
+  outline: none;
+  z-index: 2;
+  transition: opacity 140ms ease;
+}
+
+.tile.is-dim {
+  opacity: var(--dim);
+}
+
+/* Liveness is its own channel: an exited process draws hollow. */
+.tile.is-dead {
+  border-style: dashed;
+}
+
+.tile.is-dead .t-glyph {
+  color: transparent;
+  -webkit-text-stroke: 0.8px var(--hue);
+}
+
+/* -- band swap: one tile, three insides -- */
+
+.stage[data-zoom='far'] .t-card,
+.stage[data-zoom='far'] .t-term,
+.stage[data-zoom='mid'] .t-term,
+.stage[data-zoom='near'] .t-card {
+  display: none;
+}
+
+.stage[data-zoom='far'] .wt-label,
+.stage[data-zoom='far'] .isl-sub {
+  display: none;
+}
+
+/* Kiali's label rule: at mid only the groups that still owe you something are
+   named; at near every group is named because there is room for all of them. */
+.stage[data-zoom='mid'] .group.is-quiet .wt-label {
+  display: none;
+}
+
+/* -- mid: the card -- */
+
+.t-card {
+  position: absolute;
+  inset: 0;
+  padding: 8px 9px 6px;
+}
+
+.t-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-right: 16px;
+  font-size: 15px;
+  line-height: 17px;
+  color: var(--muted-foreground);
+}
+
+.tile[data-bucket='needsYou'] .t-name {
+  color: var(--foreground);
+}
+
+.t-glyph {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 15px;
+  line-height: 15px;
+  color: var(--hue);
+}
+
+.t-foot {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 14px;
+  color: var(--muted-foreground);
+}
+
+.t-type {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 13px;
+  opacity: 0.8;
+}
+
+.t-age {
+  font-variant-numeric: tabular-nums;
+}
+
+.t-pr {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* -- near: the mini terminal -- */
+
+/* --background, not --card: up close a tile is a screen, not a card. */
+.t-term {
+  position: absolute;
+  inset: 0;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 12.5px;
+  color: var(--muted-foreground);
+}
+
+.t-term > div {
+  flex: 0 0 12.5px;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.t-term .last,
+.p-tail .last {
+  color: var(--foreground);
+  display: flex;
+  align-items: baseline;
+}
+
+.t-term .last .txt,
+.p-tail .last .txt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.cur {
+  flex: 0 0 auto;
+  margin-left: 1px;
+  color: var(--foreground);
+  animation: cursor-blink 1.05s steps(1, end) infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The line that needs a human is the loudest text in the field. */
+.tile[data-bucket='needsYou'] .t-term .last {
+  color: var(--hue);
+}
+
+/* -- per state -- */
+
+.tile[data-state='done'] {
+  --hue: var(--state-idle);
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.tile[data-state='done'] .t-name,
+.tile[data-state='done'] .t-term {
+  opacity: 0.62;
+}
+
+.tile[data-state='review'] {
+  --hue: var(--state-done);
+  background: color-mix(in srgb, var(--state-done) 6%, var(--card));
+  border-color: color-mix(in srgb, var(--state-done) 40%, var(--border));
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+.tile[data-state='review'] .t-glyph {
+  opacity: 0.6;
+}
+
+.tile[data-state='working'] {
+  --hue: var(--state-working);
+  background: color-mix(in srgb, var(--state-working) 6%, var(--card));
+  border-color: color-mix(in srgb, var(--state-working) 24%, var(--border));
+}
+
+.tile[data-state='working'] .t-glyph {
+  opacity: 0.62;
+}
+
+.tile[data-state='attention'],
+.tile[data-state='permission'] {
+  --hue: var(--state-attention);
+  border-color: var(--state-attention);
+  box-shadow: var(--glow-attention);
+  animation: blink-border-attention var(--blink-fast) steps(1, end) infinite;
+}
+
+.tile[data-state='failed'] {
+  --hue: var(--state-blocked);
+  border-color: var(--state-blocked);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--state-blocked) 60%, transparent);
+  animation: blink-border-blocked var(--blink-fast) steps(1, end) infinite;
+}
+
+/* -- hover / selection -- */
+
+.tile:hover,
+.tile:focus-visible {
+  border-color: color-mix(in srgb, var(--ring) 60%, var(--border));
+}
+
+.tile.is-selected {
+  z-index: 3;
+  outline: 2.5px solid var(--ring);
+  outline-offset: 1.5px;
+}
+
+/* ---- viewport tools -------------------------------------------------------- */
+
+.viewtools {
+  position: absolute;
+  left: 20px;
+  bottom: 34px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+
+.vt {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--popover) 82%, transparent);
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.vt:hover {
+  color: var(--foreground);
+  border-color: var(--input);
+}
+
+.vt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---- minimap --------------------------------------------------------------- */
+
+.minimap {
+  position: absolute;
+  right: calc(20px + var(--panel-inset));
+  bottom: 16px;
+  z-index: 20;
+  width: 200px;
+  height: 130px;
+  padding: 6px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-floating);
+  cursor: crosshair;
+  transition: right 190ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Clipped: when the viewport is wider than the fleet, the view rect is meant to
+   fill the minimap rather than spill over its frame. */
+.minimap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.mm-island {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.mm-dot {
+  fill: var(--hue);
+}
+
+.mm-view {
+  fill: color-mix(in srgb, var(--ring) 10%, transparent);
+  stroke: var(--ring);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ---- empty state ----------------------------------------------------------- */
+
+.empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 15;
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-floating);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* ---- footer whisper -------------------------------------------------------- */
+
+.whisper {
+  flex: 0 0 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 22px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.whisper .key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.whisper .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.whisper .sep {
+  opacity: 0.4;
+}
+
+/* ---- tooltip --------------------------------------------------------------- */
+
+.tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 300px;
+  padding: 9px 11px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-floating);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tip .t-title {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.tip .t-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.tip .t-state .live {
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.tip .t-meta .mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ---- selection panel (hexmap language) ------------------------------------- */
+
+.panel {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 22px;
+  z-index: 50;
+  width: 370px;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+  transform: translateX(101%);
+  visibility: hidden;
+  transition:
+    transform 190ms cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 190ms;
+}
+
+.panel.is-open {
+  transform: none;
+  visibility: visible;
+}
+
+.panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 22px 8px;
+}
+
+.panel-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.panel-close:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.p-name {
+  margin: 0 30px 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.p-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--hue);
+}
+
+.p-state .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hue);
+}
+
+.p-state .live {
+  color: var(--muted-foreground);
+}
+
+.p-path {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  word-break: break-all;
+}
+
+.p-facts {
+  display: flex;
+  gap: 26px;
+  margin: 16px 0 14px;
+}
+
+.p-facts .v {
+  margin-top: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.p-tail {
+  margin-top: 12px;
+  padding: 9px 11px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.p-tail > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.p-respond {
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.p-ask {
+  margin: 0 0 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.p-cmd {
+  margin: 0 0 11px;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+}
+
+.p-fail {
+  margin: 0 0 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--state-blocked);
+}
+
+.opts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 11px;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.opt:hover {
+  border-color: var(--input);
+}
+
+.opt .num {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.reply {
+  display: flex;
+  gap: 7px;
+}
+
+.reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.reply input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.reply input:focus {
+  border-color: var(--ring);
+}
+
+.btnrow {
+  display: flex;
+  gap: 7px;
+}
+
+.btn {
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--secondary);
+}
+
+.btn.is-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 550;
+}
+
+.btn.is-primary:hover {
+  background: var(--foreground);
+}
+
+.btn.is-danger:hover {
+  border-color: color-mix(in srgb, var(--state-blocked) 55%, var(--border));
+  color: var(--state-blocked);
+}

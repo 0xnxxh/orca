@@ -11,6 +11,8 @@ import {
   AGENT_STATUS_MAX_FIELD_LENGTH,
   AGENT_TYPE_MAX_LENGTH
 } from '../../shared/agent-status-types'
+import { isDashboardLaunchOptions } from './dashboard-agent-launch-validation'
+export { isDashboardSpawnAgentArgs } from './dashboard-agent-launch-validation'
 
 const MAX_DASHBOARD_CARDS = 1_000
 const MAX_DASHBOARD_SUBAGENTS = 100
@@ -87,6 +89,7 @@ export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot 
     snapshot.cards.every(isDashboardCard) &&
     (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean') &&
     isDashboardFilterOptions(snapshot.filterOptions) &&
+    isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) &&
     isDashboardRepoIcons(snapshot.repoIconsByRepoId)
   )
 }
@@ -115,6 +118,7 @@ export function admitDashboardSnapshot(value: unknown): DashboardSnapshotAdmissi
     snapshot.cards.length > MAX_DASHBOARD_CARDS ||
     (snapshot.showIdle !== undefined && typeof snapshot.showIdle !== 'boolean') ||
     !isDashboardFilterOptions(snapshot.filterOptions) ||
+    !isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) ||
     !isDashboardRepoIcons(snapshot.repoIconsByRepoId)
   ) {
     return null
@@ -262,6 +266,7 @@ function isDashboardCard(value: unknown): boolean {
     isBoundedString(card.task, AGENT_STATUS_MAX_FIELD_LENGTH, true) &&
     isOptionalBoundedString(card.lastUserMessage, AGENT_STATUS_MAX_FIELD_LENGTH) &&
     isOptionalBoundedString(card.lastAgentMessage, AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH) &&
+    (card.lastResponseAt === undefined || isFiniteNumber(card.lastResponseAt)) &&
     isBoundedString(card.repoId, MAX_ID_LENGTH) &&
     isBoundedString(card.worktreeId, MAX_ID_LENGTH) &&
     isBoundedString(card.tabId, MAX_ID_LENGTH) &&
@@ -286,7 +291,10 @@ function isDashboardCard(value: unknown): boolean {
     typeof card.unseen === 'boolean' &&
     isOptionalBoundedString(card.askSummary, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH) &&
     isOptionalBoundedString(card.conversationName, MAX_LABEL_LENGTH) &&
-    isDashboardTerminalInput(card.terminalInput)
+    isDashboardTerminalInput(card.terminalInput) &&
+    isOptionalBoundedString(card.sessionId, MAX_ID_LENGTH) &&
+    // MAX_ID_LENGTH doubles as the path bound: it already matches PATH_MAX.
+    isOptionalBoundedString(card.transcriptPath, MAX_ID_LENGTH)
   )
 }
 

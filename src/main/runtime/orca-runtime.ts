@@ -29476,18 +29476,18 @@ export class OrcaRuntimeService {
             displayName: task.display_name
           })
         : { taskTitle: '', displayName: '' }
-    const activeRun =
-      dispatch.status === 'pending' || dispatch.status === 'dispatched'
-        ? db?.getActiveCoordinatorRun?.()
-        : undefined
+    const isSettled = dispatch.status !== 'pending' && dispatch.status !== 'dispatched'
+    const storedRun = isSettled && task?.run_id ? db?.getRun?.(task.run_id) : undefined
+    const activeRun = isSettled ? undefined : db?.getActiveCoordinatorRun?.()
+    const orchestrationRun = storedRun ?? activeRun
     const parentTerminalHandle =
       task?.created_by_terminal_handle ??
-      (activeRun?.coordinator_handle && activeRun.coordinator_handle !== handle
-        ? activeRun.coordinator_handle
+      (orchestrationRun?.coordinator_handle && orchestrationRun.coordinator_handle !== handle
+        ? orchestrationRun.coordinator_handle
         : undefined)
-    const parentPaneKey = parentTerminalHandle
-      ? this.getPaneKeyForTerminalHandle(parentTerminalHandle)
-      : undefined
+    const parentPaneKey =
+      (parentTerminalHandle ? this.getPaneKeyForTerminalHandle(parentTerminalHandle) : undefined) ??
+      storedRun?.coordinator_pane_key
 
     return {
       taskId: dispatch.task_id,
@@ -29497,8 +29497,10 @@ export class OrcaRuntimeService {
       ...(display.displayName ? { displayName: display.displayName } : {}),
       ...(parentTerminalHandle ? { parentTerminalHandle } : {}),
       ...(parentPaneKey ? { parentPaneKey } : {}),
-      ...(activeRun?.coordinator_handle ? { coordinatorHandle: activeRun.coordinator_handle } : {}),
-      ...(activeRun?.id ? { orchestrationRunId: activeRun.id } : {})
+      ...(orchestrationRun?.coordinator_handle
+        ? { coordinatorHandle: orchestrationRun.coordinator_handle }
+        : {}),
+      ...(orchestrationRun?.id ? { orchestrationRunId: orchestrationRun.id } : {})
     }
   }
 

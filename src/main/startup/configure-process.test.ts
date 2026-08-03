@@ -197,6 +197,34 @@ describe('configureDevUserDataPath', () => {
     expect(app.setPath).toHaveBeenCalledWith('userData', '/tmp/orca-dev-repro')
   })
 
+  it('uses the packaged profile only with the explicit production-profile flag', async () => {
+    const { app } = await import('electron')
+    const { configureDevUserDataPath, devParentShutdownOwnsDaemon } =
+      await import('./configure-process')
+    const originalProductionProfile = process.env.ORCA_DEV_PRODUCTION_PROFILE
+    const originalOverride = process.env.ORCA_DEV_USER_DATA_PATH
+    process.env.ORCA_DEV_PRODUCTION_PROFILE = '1'
+    process.env.ORCA_DEV_USER_DATA_PATH = '/tmp/ignored-dev-profile'
+
+    try {
+      configureDevUserDataPath(true)
+      expect(devParentShutdownOwnsDaemon(true)).toBe(false)
+    } finally {
+      restoreEnv('ORCA_DEV_PRODUCTION_PROFILE', originalProductionProfile)
+      restoreEnv('ORCA_DEV_USER_DATA_PATH', originalOverride)
+    }
+
+    expect(app.setPath).toHaveBeenCalledWith('userData', join('/tmp/app-data', 'orca'))
+  })
+
+  it('owns the detached daemon for ordinary dev profiles only', async () => {
+    const { devParentShutdownOwnsDaemon } = await import('./configure-process')
+
+    expect(devParentShutdownOwnsDaemon(true, {})).toBe(true)
+    expect(devParentShutdownOwnsDaemon(true, { ORCA_DEV_PRODUCTION_PROFILE: '1' })).toBe(false)
+    expect(devParentShutdownOwnsDaemon(false, {})).toBe(false)
+  })
+
   it('moves dev runs onto an orca-dev userData path', async () => {
     const { app } = await import('electron')
     const { configureDevUserDataPath } = await import('./configure-process')
