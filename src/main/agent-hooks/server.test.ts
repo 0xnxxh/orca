@@ -7068,13 +7068,168 @@ describe('Last-status persistence', () => {
           paneKey: PANE,
           tabId: 'tab-1',
           worktreeId: 'wt-1',
-          payload: { state: 'working', prompt: 'confirmed live', agentType: 'claude' }
+          payload: { state: 'done', prompt: 'confirmed live', agentType: 'codex' }
         },
         'conn-1'
       )
       const confirmed = server.getStatusSnapshot().find((entry) => entry.paneKey === PANE)
-      expect(confirmed).toMatchObject({ state: 'working', prompt: 'confirmed live' })
+      expect(confirmed).toMatchObject({
+        state: 'done',
+        prompt: 'confirmed live',
+        agentType: 'codex'
+      })
       expect(confirmed?.restoredUnconfirmed).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('lets an identical live OSC observation confirm a hydrated row', async () => {
+    const payload = {
+      state: 'working' as const,
+      prompt: 'still running',
+      agentType: 'claude' as const
+    }
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    firstServer.ingestRemote(
+      { paneKey: PANE, tabId: 'tab-1', worktreeId: 'wt-1', payload },
+      'conn-1'
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBe(true)
+      server.ingestTerminalStatus({
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        connectionId: 'conn-1',
+        payload
+      })
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('does not let a hydrated Claude permission suppress the first live working event', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    firstServer.ingestRemote(
+      {
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        hookEventName: 'PermissionRequest',
+        payload: {
+          state: 'waiting',
+          prompt: 'review command',
+          agentType: 'claude',
+          toolName: 'Bash',
+          toolInput: 'dangerous command'
+        }
+      },
+      'conn-1'
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      server.ingestRemote(
+        {
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          hookEventName: 'PreToolUse',
+          payload: {
+            state: 'working',
+            prompt: 'review command',
+            agentType: 'claude',
+            toolName: 'Read',
+            toolInput: 'package.json'
+          }
+        },
+        'conn-1'
+      )
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        toolName: 'Read'
+      })
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('does not inherit a stale tool id from hydrated Claude progress', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    firstServer.ingestRemote(
+      {
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        hookEventName: 'PreToolUse',
+        toolUseId: 'tool-old',
+        toolAgentType: 'main',
+        payload: {
+          state: 'working',
+          prompt: 'run tests',
+          agentType: 'claude',
+          toolName: 'Bash',
+          toolInput: 'pnpm test'
+        }
+      },
+      'conn-1'
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      server.ingestRemote(
+        {
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          hookEventName: 'PermissionRequest',
+          toolAgentType: 'main',
+          payload: {
+            state: 'waiting',
+            prompt: 'run tests',
+            agentType: 'claude',
+            toolName: 'Bash',
+            toolInput: 'pnpm test'
+          }
+        },
+        'conn-1'
+      )
+      server.ingestRemote(
+        {
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          hookEventName: 'PostToolUse',
+          toolUseId: 'tool-new',
+          toolAgentType: 'main',
+          payload: {
+            state: 'working',
+            prompt: 'run tests',
+            agentType: 'claude',
+            toolName: 'Bash',
+            toolInput: 'pnpm test'
+          }
+        },
+        'conn-1'
+      )
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'working' })
     } finally {
       server.stop()
     }

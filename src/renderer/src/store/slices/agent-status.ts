@@ -1713,7 +1713,8 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             ? {
                 agentType: existing.agentType,
                 state: existing.state,
-                updatedAt: existing.updatedAt
+                updatedAt: existing.updatedAt,
+                restoredUnconfirmed: existing.restoredUnconfirmed
               }
             : undefined,
           incoming: payload.agentType,

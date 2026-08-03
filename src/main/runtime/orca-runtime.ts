@@ -16314,9 +16314,10 @@ export class OrcaRuntimeService {
 
     const consider = (
       state: AgentStatusEntry['state'] | undefined,
-      updatedAt: number | null | undefined
+      updatedAt: number | null | undefined,
+      restoredUnconfirmed = false
     ): void => {
-      if (!state) {
+      if (!state || restoredUnconfirmed) {
         return
       }
       if (typeof updatedAt !== 'number' || now - updatedAt > AGENT_STATUS_STALE_AFTER_MS) {
@@ -16340,7 +16341,7 @@ export class OrcaRuntimeService {
       if (entry.terminalHandle !== handle && (!paneKey || entry.paneKey !== paneKey)) {
         continue
       }
-      consider(entry.state, entry.receivedAt)
+      consider(entry.state, entry.receivedAt, entry.restoredUnconfirmed)
     }
 
     return bestStatus ? { status: bestStatus, updatedAt: bestUpdatedAt } : null
