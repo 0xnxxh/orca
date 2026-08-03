@@ -408,7 +408,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         : undefined
       if (remoteAttachment) {
         rejectFederatedExplicitTarget(params)
-        const processIncarnation = runtime.getTerminalProcessIncarnation(from)
+        const processIncarnation =
+          attestedCaller?.processIncarnation ?? runtime.getTerminalProcessIncarnation(from)
         if (
           !db.verifyRemoteAttachmentAuthority({
             dispatchId: remoteAttachment.dispatch_id,

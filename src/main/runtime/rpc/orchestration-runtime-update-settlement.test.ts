@@ -17,11 +17,13 @@ const COORDINATOR_HANDLE = 'term_pre_update_coordinator'
 const CURRENT_COORDINATOR_HANDLE = 'term_current_coordinator'
 const CURRENT_COORDINATOR_PANE = 'tab_current:44444444-4444-4444-8444-444444444444'
 const PROCESS_INCARNATION = 'pty-stable:incarnation-stable'
+const CURRENT_COORDINATOR_PROCESS_INCARNATION =
+  'pty-current-coordinator:incarnation-current-coordinator'
 const WORK_BYTES = Buffer.from('preserved filesystem work\n', 'utf8')
 
 type Harness = {
   db: OrchestrationDb
-  dispatcher: RpcDispatcher
+  createDispatcher: () => RpcDispatcher
   taskId: string
   dispatchId: string
   capability: string
@@ -84,38 +86,68 @@ function createUpdateHarness(): Harness {
   const db = new OrchestrationDb(dbPath)
   const adoptedRunId = db.getTask(task.id)?.run_id
   expect(adoptedRunId).toBeTruthy()
-  const runtime = new OrcaRuntimeService()
-  runtime.setOrchestrationDb(db)
-  vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue(null)
-  vi.spyOn(runtime, 'getTerminalProcessIncarnation').mockImplementation((handle) =>
-    handle === WORKER_HANDLE ? PROCESS_INCARNATION : null
-  )
-  Object.defineProperty(runtime, 'verifyOrchestrationCompatibilityCaller', {
-    value: vi.fn((evidence: UpdateRpcRequest['orchestrationCompatibilityEvidence']) => {
-      if (
-        !evidence?.launchToken ||
-        !evidence.terminalHandle ||
-        !evidence.paneKey ||
-        ![
-          `${WORKER_HANDLE}:${WORKER_PANE}`,
-          `${CURRENT_COORDINATOR_HANDLE}:${CURRENT_COORDINATOR_PANE}`
-        ].includes(`${evidence.terminalHandle}:${evidence.paneKey}`)
-      ) {
-        return null
+  const createDispatcher = (): RpcDispatcher => {
+    const authorities = [
+      {
+        handle: WORKER_HANDLE,
+        paneKey: WORKER_PANE,
+        ptyId: 'pty-stable',
+        incarnationId: 'incarnation-stable',
+        launchToken: 'worker-launch-token'
+      },
+      {
+        handle: CURRENT_COORDINATOR_HANDLE,
+        paneKey: CURRENT_COORDINATOR_PANE,
+        ptyId: 'pty-current-coordinator',
+        incarnationId: 'incarnation-current-coordinator',
+        launchToken: 'current-coordinator-launch-token'
       }
-      return {
-        hostScope: { kind: 'local', hostId: 'local' },
-        terminalHandle: evidence.terminalHandle,
-        paneKey: evidence.paneKey,
-        processIncarnation: PROCESS_INCARNATION,
-        launchTokenHash: createHash('sha256').update(evidence.launchToken).digest('hex')
+    ]
+    const runtime = new OrcaRuntimeService(null, undefined, {
+      attestAgentHookCompatibilityAuthority: ({ paneKey, launchTokenHash }) => {
+        const authority = authorities.find((candidate) => candidate.paneKey === paneKey)
+        return authority &&
+          createHash('sha256').update(authority.launchToken).digest('hex') === launchTokenHash
+          ? { paneKey, source: 'hydrated_commitment' }
+          : null
       }
     })
-  })
-  vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+    const internals = runtime as unknown as {
+      recordPtyWorktree: (ptyId: string, worktreeId: string, state: Record<string, unknown>) => void
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+      handleByPtyId: Map<string, string>
+      restoredOrchestrationAuthorityByPtyId: Map<string, Record<string, unknown>>
+    }
+    for (const authority of authorities) {
+      internals.recordPtyWorktree(authority.ptyId, 'repo::/retained-worktree', {
+        connected: true,
+        paneKey: authority.paneKey,
+        incarnationId: authority.incarnationId
+      })
+      internals.handleByPtyId.set(authority.ptyId, authority.handle)
+      internals.issuePtyHandle(internals.ptysById.get(authority.ptyId))
+      internals.restoredOrchestrationAuthorityByPtyId.set(authority.ptyId, {
+        ptyId: authority.ptyId,
+        worktreeId: 'repo::/retained-worktree',
+        terminalHandle: authority.handle,
+        paneKey: authority.paneKey,
+        processIncarnation: `${authority.ptyId}:${authority.incarnationId}`,
+        hostScope: { kind: 'local', hostId: 'local' }
+      })
+    }
+    runtime.setOrchestrationDb(db)
+    vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue(null)
+    const getProcessIncarnation = runtime.getTerminalProcessIncarnation.bind(runtime)
+    vi.spyOn(runtime, 'getTerminalProcessIncarnation')
+      .mockImplementationOnce(getProcessIncarnation)
+      .mockReturnValue(null)
+    vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+    return new RpcDispatcher({ runtime, methods: ORCHESTRATION_METHODS })
+  }
   const harness = {
     db,
-    dispatcher: new RpcDispatcher({ runtime, methods: ORCHESTRATION_METHODS }),
+    createDispatcher,
     taskId: task.id,
     dispatchId: dispatch.id,
     capability,
@@ -201,8 +233,8 @@ describe('orchestration runtime update settlement', () => {
     )
     completion.orchestrationCapability = harness.capability
 
-    const first = await harness.dispatcher.dispatch(completion)
-    const replay = await harness.dispatcher.dispatch({ ...completion, id: 'rpc_replay' })
+    const first = await harness.createDispatcher().dispatch(completion)
+    const replay = await harness.createDispatcher().dispatch({ ...completion, id: 'rpc_replay' })
     const firstResult = resultOf(first)
     const replayResult = resultOf(replay)
 
@@ -237,13 +269,15 @@ describe('orchestration runtime update settlement', () => {
       'authenticated-takeover'
     )
 
-    const spoofed = await harness.dispatcher.dispatch({
+    const spoofed = await harness.createDispatcher().dispatch({
       ...takeover,
       id: 'rpc_spoofed',
       params: { ...(takeover.params as Record<string, unknown>), from: COORDINATOR_HANDLE }
     })
-    const first = await harness.dispatcher.dispatch(takeover)
-    const replay = await harness.dispatcher.dispatch({ ...takeover, id: 'rpc_takeover_replay' })
+    const first = await harness.createDispatcher().dispatch(takeover)
+    const replay = await harness
+      .createDispatcher()
+      .dispatch({ ...takeover, id: 'rpc_takeover_replay' })
     const firstResult = resultOf(first)
     const replayResult = resultOf(replay)
 
@@ -297,7 +331,7 @@ describe('orchestration runtime update settlement', () => {
       paneKey: 'tab_foreign:99999999-9999-4999-8999-999999999999'
     }
 
-    const response = await harness.dispatcher.dispatch(completion)
+    const response = await harness.createDispatcher().dispatch(completion)
 
     expect(response).toMatchObject({
       ok: true,
@@ -314,5 +348,81 @@ describe('orchestration runtime update settlement', () => {
       status: 'dispatched'
     })
     expectIdentityAndWorkPreserved(harness)
+  })
+
+  it('routes ordinary mail with the same attested authority without settling work', async () => {
+    const harness = createUpdateHarness()
+    const response = await harness.createDispatcher().dispatch(
+      request(
+        'orchestration.send',
+        {
+          from: WORKER_HANDLE,
+          to: COORDINATOR_HANDLE,
+          type: 'status',
+          subject: 'Retained worker checkpoint',
+          body: readFileSync(harness.markerPath, 'utf8')
+        },
+        'worker',
+        'retained-worker-status'
+      )
+    )
+
+    expect(resultOf(response)).toMatchObject({
+      message: { type: 'status', body: WORK_BYTES.toString('utf8') }
+    })
+    expect(harness.db.getTask(harness.taskId)).toMatchObject({ status: 'dispatched' })
+    expect(harness.db.getDispatchContextById(harness.dispatchId)).toMatchObject({
+      status: 'dispatched'
+    })
+    expect(entityCounts(harness.db)).toEqual({
+      tasks: 1,
+      dispatch_contexts: 1,
+      messages: 1,
+      legacy_compatibility_principals: 0
+    })
+    expectIdentityAndWorkPreserved(harness)
+  })
+
+  it('uses attested process authority when a remote attachment loses runtime lookup', async () => {
+    const harness = createUpdateHarness()
+    const attachment = {
+      dispatch_id: 'dispatch-remote-retained',
+      task_id: 'task-remote-retained',
+      process_incarnation: CURRENT_COORDINATOR_PROCESS_INCARNATION
+    }
+    vi.spyOn(harness.db, 'findActiveRemoteAttachmentForPane').mockReturnValue(attachment as never)
+    const verifyAuthority = vi
+      .spyOn(harness.db, 'verifyRemoteAttachmentAuthority')
+      .mockReturnValue(true)
+    vi.spyOn(harness.db, 'enqueueFederationRelay').mockReturnValue({
+      message_id: 'relay-retained-status',
+      sequence: 1,
+      dispatch_id: attachment.dispatch_id
+    } as never)
+
+    const response = await harness.createDispatcher().dispatch({
+      ...request(
+        'orchestration.send',
+        {
+          from: CURRENT_COORDINATOR_HANDLE,
+          type: 'status',
+          subject: 'Retained remote checkpoint',
+          body: 'remote work survived'
+        },
+        'current-coordinator',
+        'retained-remote-status'
+      ),
+      orchestrationCapability: 'dcap_remote_retained'
+    })
+
+    expect(resultOf(response)).toMatchObject({
+      relay: { dispatchId: attachment.dispatch_id, accepted: true }
+    })
+    expect(verifyAuthority).toHaveBeenCalledWith({
+      dispatchId: attachment.dispatch_id,
+      capability: 'dcap_remote_retained',
+      paneKey: CURRENT_COORDINATOR_PANE,
+      processIncarnation: CURRENT_COORDINATOR_PROCESS_INCARNATION
+    })
   })
 })
