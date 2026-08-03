@@ -14674,6 +14674,56 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "Dashboard view",
+      "board": "Dashboard",
+      "map": "Agent Map"
+    },
+    "map": {
+      "host": {
+        "all": "All hosts",
+        "local": "Local",
+        "ssh": "SSH",
+        "wsl": "WSL",
+        "remote": "Remote"
+      },
+      "focus": {
+        "title": "Focus view",
+        "control": "You decide what stays visible",
+        "reviewCopy": "Opening a result marks it seen. Only Mark reviewed removes it from Focus.",
+        "showStates": "Show agent states",
+        "finished": "Finished",
+        "finishedResults": "Finished results",
+        "toReview": "To review",
+        "lastDay": "Last 24 hours",
+        "lastWeek": "Last 7 days",
+        "allFinished": "All finished",
+        "pinnedVisible": "Pinned results stay visible.",
+        "hidden": "{{count}} agents hidden",
+        "reviewVisible": "Mark visible results reviewed",
+        "showAll": "Show all",
+        "canvasSummary": "Focus · {{shown}} of {{total}} agents",
+        "reviewed": "Reviewed result",
+        "seenPendingReview": "Seen · remains in Focus until reviewed",
+        "pinned": "Pinned",
+        "keepVisible": "Keep visible",
+        "markReviewed": "Mark reviewed"
+      },
+      "liveContainmentMap": "Live containment map",
+      "hostFilter": "Host filter",
+      "empty": "No agents match the current filters.",
+      "canvasLabel": "Nested project, workspace, and agent map",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "fit": "Fit",
+      "openWorktree": "Open {{worktree}} worktree details",
+      "openFolderWorkspace": "Open {{workspace}} folder workspace details",
+      "worktreeSummary_one": "{{total}} agent · {{active}} active · {{done}} done",
+      "worktreeSummary_other": "{{total}} agents · {{active}} active · {{done}} done",
+      "runningAgents": "Agents",
+      "projectCount": "{{agents}} agents · {{workspaces}} workspaces",
+      "agentCount": "{{count}} agents"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

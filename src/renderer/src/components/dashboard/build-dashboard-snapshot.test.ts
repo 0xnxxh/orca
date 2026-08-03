@@ -13,8 +13,12 @@ import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-
 const NOW = 1_000_000_000
 const TAB_ID = 'tab1'
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
+const CHILD_LEAF_ID = '33333333-3333-4333-8333-333333333333'
+const GRANDCHILD_LEAF_ID = '44444444-4444-4444-8444-444444444444'
 const GONE_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const PANE_KEY = makePaneKey(TAB_ID, LEAF_ID)
+const CHILD_PANE_KEY = makePaneKey(TAB_ID, CHILD_LEAF_ID)
+const GRANDCHILD_PANE_KEY = makePaneKey(TAB_ID, GRANDCHILD_LEAF_ID)
 
 function entry(overrides: Partial<AgentStatusEntry>): AgentStatusEntry {
   return {
@@ -145,6 +149,124 @@ describe('buildDashboardSnapshot', () => {
     expect(card.stateChangedAt).toBe(NOW - 5000)
     // No ack yet → unseen, mirroring the sidebar's unvisited signal.
     expect(card.unseen).toBe(true)
+  })
+
+  it('publishes terminal-backed orchestrated workers under their direct parent', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({ paneKey: PANE_KEY }),
+          [CHILD_PANE_KEY]: entry({ paneKey: CHILD_PANE_KEY }),
+          [GRANDCHILD_PANE_KEY]: entry({ paneKey: GRANDCHILD_PANE_KEY })
+        },
+        runtimeAgentOrchestrationByPaneKey: {
+          [CHILD_PANE_KEY]: {
+            taskId: 'worker-task',
+            dispatchId: 'worker-dispatch',
+            parentPaneKey: PANE_KEY
+          },
+          [GRANDCHILD_PANE_KEY]: {
+            taskId: 'nested-worker-task',
+            dispatchId: 'nested-worker-dispatch',
+            parentPaneKey: CHILD_PANE_KEY
+          }
+        },
+        terminalLayoutsByTabId: {
+          [TAB_ID]: {
+            root: { type: 'leaf', leafId: LEAF_ID },
+            activeLeafId: LEAF_ID,
+            expandedLeafId: null,
+            ptyIdsByLeafId: {
+              [LEAF_ID]: 'pty1',
+              [CHILD_LEAF_ID]: 'pty-child',
+              [GRANDCHILD_LEAF_ID]: 'pty-grandchild'
+            }
+          }
+        },
+        ptyIdsByTabId: { [TAB_ID]: ['pty1', 'pty-child', 'pty-grandchild'] }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards.map((card) => card.paneKey)).toEqual([
+      PANE_KEY,
+      CHILD_PANE_KEY,
+      GRANDCHILD_PANE_KEY
+    ])
+    expect(snapshot.cards[1]).toMatchObject({
+      paneKey: CHILD_PANE_KEY,
+      parentPaneKey: PANE_KEY,
+      ptyId: 'pty-child'
+    })
+    expect(snapshot.cards[2]).toMatchObject({
+      paneKey: GRANDCHILD_PANE_KEY,
+      parentPaneKey: CHILD_PANE_KEY,
+      ptyId: 'pty-grandchild'
+    })
+  })
+
+  it('preserves explicit lineage when a child runs in another worktree', () => {
+    const childTabId = 'child-tab'
+    const childPaneKey = makePaneKey(childTabId, CHILD_LEAF_ID)
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        worktreesByRepo: { r1: [worktree(), worktree('w2', 'wt-two')] },
+        tabsByWorktree: { w1: [tab()], w2: [tab(childTabId, 'w2')] },
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({ paneKey: PANE_KEY }),
+          [childPaneKey]: entry({
+            paneKey: childPaneKey,
+            tabId: childTabId,
+            worktreeId: 'w2',
+            orchestration: {
+              taskId: 'child-task',
+              dispatchId: 'child-dispatch',
+              parentPaneKey: PANE_KEY
+            }
+          })
+        },
+        terminalLayoutsByTabId: {
+          [TAB_ID]: {
+            root: { type: 'leaf', leafId: LEAF_ID },
+            activeLeafId: LEAF_ID,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [LEAF_ID]: 'pty1' }
+          },
+          [childTabId]: {
+            root: { type: 'leaf', leafId: CHILD_LEAF_ID },
+            activeLeafId: CHILD_LEAF_ID,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [CHILD_LEAF_ID]: 'pty-child' }
+          }
+        },
+        ptyIdsByTabId: { [TAB_ID]: ['pty1'], [childTabId]: ['pty-child'] }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards.find((item) => item.paneKey === childPaneKey)).toMatchObject({
+      worktreeName: 'wt-two',
+      parentPaneKey: PANE_KEY
+    })
+  })
+
+  it('does not publish malformed self-parent lineage', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            orchestration: {
+              taskId: 'self-task',
+              dispatchId: 'self-dispatch',
+              parentPaneKey: PANE_KEY
+            }
+          })
+        }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards[0].parentPaneKey).toBeUndefined()
   })
 
   it('carries the tab conversation name and drops status-only titles', () => {

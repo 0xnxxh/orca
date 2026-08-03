@@ -38,8 +38,11 @@ const SNAPSHOT = {
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
       leafId: 'leaf-1',
+      parentPaneKey: 'tab-parent:leaf-parent',
       repoName: 'Orca',
       worktreeName: 'Dashboard',
+      hostKind: 'ssh',
+      workspaceKind: 'worktree',
       workspaceStatusId: 'in-review',
       workspaceStatusLabel: 'In review',
       workspaceStatusColor: 'emerald',
@@ -100,6 +103,24 @@ describe('dashboard payload validation', () => {
       isDashboardSnapshot({
         ...SNAPSHOT,
         cards: [{ ...SNAPSHOT.cards[0], subagents: [{ id: '', name: 'bad', dotState: 'idle' }] }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], hostKind: 'satellite' }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], workspaceKind: 'repository' }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], parentPaneKey: 'x'.repeat(4_097) }]
       })
     ).toBe(false)
   })

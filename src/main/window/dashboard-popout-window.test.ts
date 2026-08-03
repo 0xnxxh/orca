@@ -231,6 +231,12 @@ describe('createOrFocusDashboardPopout', () => {
     expect(options).toEqual({ search: 'view=kanban' })
   })
 
+  it('opens on the current dashboard view by default', () => {
+    createOrFocusDashboardPopout(makeStore() as never)
+
+    expect(instances[0].loadFile.mock.calls[0][1]).toEqual({ search: 'view=board' })
+  })
+
   it('loads the dev server URL with the requested view when in dev', () => {
     isMock.dev = true
     vi.stubEnv('ELECTRON_RENDERER_URL', RENDERER_URL)
