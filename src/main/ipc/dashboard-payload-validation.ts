@@ -28,6 +28,7 @@ const MAX_ID_LENGTH = 4_096
 const MAX_LABEL_LENGTH = DASHBOARD_MAX_LABEL_LENGTH
 const DASHBOARD_BUCKETS = new Set(['attention', 'working', 'done', 'idle'])
 const DASHBOARD_DOT_STATES = new Set(['working', 'blocked', 'waiting', 'done', 'idle'])
+const DASHBOARD_HOST_KINDS = new Set(['local', 'ssh', 'wsl', 'remote'])
 const DASHBOARD_REVIEW_STATES = new Set(['open', 'closed', 'merged', 'draft'])
 const DASHBOARD_HOST_PLATFORMS = new Set([
   'aix',
@@ -266,6 +267,8 @@ function isDashboardCard(value: unknown): boolean {
     (card.leafId === null || isBoundedString(card.leafId, MAX_ID_LENGTH)) &&
     isBoundedString(card.repoName, MAX_LABEL_LENGTH, true) &&
     isBoundedString(card.worktreeName, MAX_LABEL_LENGTH, true) &&
+    (card.hostKind === undefined ||
+      (typeof card.hostKind === 'string' && DASHBOARD_HOST_KINDS.has(card.hostKind))) &&
     isOptionalBoundedString(card.workspaceStatusId, MAX_ID_LENGTH) &&
     isOptionalBoundedString(card.workspaceStatusLabel, MAX_LABEL_LENGTH) &&
     isOptionalBoundedString(card.workspaceStatusColor, MAX_ID_LENGTH) &&
@@ -278,6 +281,8 @@ function isDashboardCard(value: unknown): boolean {
     typeof card.unseen === 'boolean' &&
     isOptionalBoundedString(card.askSummary, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH) &&
     isOptionalBoundedString(card.conversationName, MAX_LABEL_LENGTH) &&
+    isOptionalBoundedString(card.sessionId, MAX_ID_LENGTH) &&
+    isOptionalBoundedString(card.transcriptPath, MAX_ID_LENGTH) &&
     isDashboardTerminalInput(card.terminalInput)
   )
 }

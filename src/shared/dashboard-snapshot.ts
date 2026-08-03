@@ -38,6 +38,8 @@ export type DashboardCardSubagent = {
   dotState: DashboardCardDotState
 }
 
+export type DashboardCardHostKind = 'local' | 'ssh' | 'wsl' | 'remote'
+
 export type DashboardCard = {
   /** Stable identity for React keys. */
   paneKey: string
@@ -60,6 +62,8 @@ export type DashboardCard = {
   leafId: string | null
   repoName: string
   worktreeName: string
+  /** Execution host classification used to avoid reading remote transcript paths locally. */
+  hostKind?: DashboardCardHostKind
   workspaceStatusId?: string
   workspaceStatusLabel?: string
   workspaceStatusColor?: string
@@ -90,6 +94,10 @@ export type DashboardCard = {
    *  the main renderer owns the store these derive from, so they ride the
    *  snapshot to reach the pop-out. */
   terminalInput?: DashboardCardTerminalInput
+  /** Provider session identity used by the native dashboard chat. */
+  sessionId?: string
+  /** Authoritative on-disk transcript path for the provider session. */
+  transcriptPath?: string
 }
 
 /**

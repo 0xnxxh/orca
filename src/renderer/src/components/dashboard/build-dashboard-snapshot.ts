@@ -15,6 +15,7 @@ import {
   type DashboardCardTerminalInputState
 } from './dashboard-card-terminal-input'
 import { readDashboardClientHost } from './dashboard-client-host'
+import { chatHostKind } from './dashboard-chat-host-kind'
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
 import { applyAgentRowLineage } from './agent-row-lineage'
@@ -42,8 +43,7 @@ import {
   type DashboardCardContextState
 } from './dashboard-card-context'
 
-/** The store slices the snapshot builder reads. Kept as a Pick so unit tests
- *  can pass a partial store without constructing the whole AppState. */
+/** Store slices needed to build a snapshot without constructing the full AppState in tests. */
 export type DashboardSnapshotState = Pick<
   AppState,
   | 'repos'
@@ -249,10 +249,7 @@ export function buildDashboardSnapshot(
       if (row.rowSource === 'subagent') {
         continue
       }
-      // Title-derived rows (a live pane read only from its terminal title, no
-      // agent-hook status) carry synthetic prompt/lastAssistantMessage — the
-      // agent LABEL and a status word like "Idle". They're marked by
-      // startedAt === 0, and must NOT be shown as real conversation.
+      // Status-only title rows do not carry real conversation content.
       const isTitleDerived = row.startedAt === 0
       const routingPaneKey = row.activationPaneKey ?? row.paneKey
       const parsed = parsePaneKey(routingPaneKey)
@@ -269,9 +266,7 @@ export function buildDashboardSnapshot(
           : null
       const dotState = row.state as DashboardCardDotState
       const bucket = bucketForState(row.state)
-      // Why: only a live pty can open a preview terminal, and only a
-      // card-rendering caller can open one — the sidebar's bucket counts must
-      // not pay host resolution on every agent-status tick.
+      // Sidebar bucket counts skip host resolution because they cannot open previews.
       const terminalInput =
         ptyId && includeCardDetails
           ? resolveDashboardCardTerminalInput(state, {
@@ -302,6 +297,7 @@ export function buildDashboardSnapshot(
         leafId,
         repoName: boundedLabel(repo.displayName),
         worktreeName: boundedLabel(worktree.displayName),
+        hostKind: chatHostKind(repo, worktree, ptyId, terminalInput, clientHost.platform),
         workspaceStatusId: context?.workspaceStatus.id,
         workspaceStatusLabel: context?.workspaceStatus.label,
         workspaceStatusColor: context?.workspaceStatus.color,
@@ -320,7 +316,11 @@ export function buildDashboardSnapshot(
           (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
         askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
         conversationName: boundedLabelOrUndefined(rowConversationName(row, generatedTitlesEnabled)),
-        ...(terminalInput ? { terminalInput } : {})
+        ...(terminalInput ? { terminalInput } : {}),
+        ...(row.entry.providerSession?.id ? { sessionId: row.entry.providerSession.id } : {}),
+        ...(row.entry.providerSession?.transcriptPath
+          ? { transcriptPath: row.entry.providerSession.transcriptPath }
+          : {})
       })
     }
   }
