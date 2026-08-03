@@ -5818,6 +5818,11 @@ export class OrchestrationDb {
     if (!ctx) {
       return undefined
     }
+    // Why: settled contexts are immutable — a late exit of an already-completed
+    // or already-failed dispatch must not re-fail it (#11499).
+    if (ctx.status !== 'pending' && ctx.status !== 'dispatched') {
+      return ctx
+    }
 
     const newFailureCount = ctx.failure_count + 1
     const newStatus: DispatchStatus = newFailureCount >= 3 ? 'circuit_broken' : 'failed'
@@ -5832,9 +5837,17 @@ export class OrchestrationDb {
       )
       .run(newStatus, newFailureCount, error, ctxId)
 
-    // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
-    const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
-    this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(taskStatus, ctx.task_id)
+    // Why: only the task's CURRENT dispatch may move the task, and only while the
+    // task is still on an active attempt — mirrors settleWorkerReport's
+    // inactive/stale-dispatch guards. A superseded dispatch's terminal exiting
+    // must not reopen a task another dispatch already completed (#11499).
+    const task = this.getTask(ctx.task_id)
+    const currentDispatch = this.getDispatchContext(ctx.task_id)
+    if (task?.status === 'dispatched' && currentDispatch?.id === ctx.id) {
+      // Why: back to 'ready' not 'pending' — 'pending' would strand it since promoteReadyTasks only runs when a dep completes.
+      const taskStatus: TaskStatus = newStatus === 'circuit_broken' ? 'failed' : 'ready'
+      this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(taskStatus, ctx.task_id)
+    }
 
     return this.db.prepare('SELECT * FROM dispatch_contexts WHERE id = ?').get(ctxId) as
       | DispatchContextRow
