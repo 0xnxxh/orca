@@ -1060,12 +1060,12 @@ export default function SessionScreen() {
   const activeSessionTab = sessionTabs.find((tab) => tab.id === activeSessionTabId) ?? null
   const {
     clearPendingLiveInputCommit,
-    flushPendingLiveInputBeforeExternalSend,
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
     handleLiveInputSubmit,
-    liveInputKey
+    liveInputKey,
+    runTerminalLiveExternalInput
   } = useTerminalLiveInputCommit({
     activeHandle,
     activeHandleRef,
@@ -1238,9 +1238,9 @@ export default function SessionScreen() {
           return
         }
         void insertLiveDictationTranscript({
-          flushPendingInput: flushPendingLiveInputBeforeExternalSend,
           handle: insertHandle,
           onSendError: triggerError,
+          runTerminalLiveExternalInput,
           sendInput: sendLiveTerminalInput,
           showToast,
           text: route.text
@@ -3647,7 +3647,7 @@ export default function SessionScreen() {
     connStateRef,
     clientRef,
     deviceTokenRef,
-    flushPendingLiveInputBeforeExternalSend,
+    runTerminalLiveExternalInput,
     getActiveWorktreeConnectionId,
     onError: triggerError,
     onSuccess: triggerSelection,
@@ -3656,8 +3656,8 @@ export default function SessionScreen() {
     showToast
   })
 
-  const flushPendingLiveInputBeforeAttachmentSend = useMobileAttachmentInputLeaseGate({
-    flushPendingLiveInputBeforeExternalSend,
+  const runTerminalLiveAttachmentSend = useMobileAttachmentInputLeaseGate({
+    runTerminalLiveExternalInput,
     connStateRef,
     activeHandleRef,
     activeSessionTabTypeRef,
@@ -3677,7 +3677,7 @@ export default function SessionScreen() {
     nativeChatScopeKey,
     nativeChatInputLeaseReady,
     getActiveWorktreeConnectionId,
-    beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,
+    runTerminalSend: runTerminalLiveAttachmentSend,
     nativeChatBaseSend: nativeChatController.handleNativeChatSendWithOutcome,
     readSeededLaunchDraft: nativeChatController.readSeededLaunchDraft,
     showToast,

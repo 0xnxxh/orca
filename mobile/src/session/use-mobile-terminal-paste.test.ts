@@ -43,7 +43,7 @@ describe('useMobileTerminalPaste', () => {
   it('surfaces cancellation when marked-text waiting invalidates the original target', async () => {
     const sendRequest = vi.fn()
     const client = { sendRequest } as unknown as RpcClient
-    const flushPendingLiveInputBeforeExternalSend = vi.fn(async () => false)
+    const runTerminalLiveExternalInput = vi.fn(async () => false)
     const onError = vi.fn()
     const showToast = vi.fn()
     let paste: () => Promise<void> = async () => undefined
@@ -59,7 +59,7 @@ describe('useMobileTerminalPaste', () => {
         connState: 'connected',
         connStateRef: { current: 'connected' },
         deviceTokenRef: { current: null },
-        flushPendingLiveInputBeforeExternalSend,
+        runTerminalLiveExternalInput,
         getActiveWorktreeConnectionId: async () => null,
         onError,
         onSuccess: vi.fn(),
@@ -75,18 +75,22 @@ describe('useMobileTerminalPaste', () => {
     })
     await paste()
 
-    expect(flushPendingLiveInputBeforeExternalSend).toHaveBeenCalledWith('terminal-a')
+    expect(runTerminalLiveExternalInput).toHaveBeenCalledWith('terminal-a', expect.any(Function))
     expect(sendRequest).not.toHaveBeenCalled()
     expect(onError).toHaveBeenCalledOnce()
     expect(showToast).toHaveBeenCalledWith('Paste canceled before send', 1500)
   })
 
-  it('keeps concurrent pastes behind their pending-input waits', async () => {
+  it('routes concurrent paste sends through the external-input queue', async () => {
     const sendRequest = vi.fn()
     const client = { sendRequest } as unknown as RpcClient
-    const releaseWaits: Array<(flushed: boolean) => void> = []
-    const flushPendingLiveInputBeforeExternalSend = vi.fn(
-      async () => new Promise<boolean>((resolve) => releaseWaits.push(resolve))
+    const pending: Array<{
+      operation: () => Promise<boolean>
+      resolve: (sent: boolean) => void
+    }> = []
+    const runTerminalLiveExternalInput = vi.fn(
+      async (_handle: string, operation: () => Promise<boolean>) =>
+        new Promise<boolean>((resolve) => pending.push({ operation, resolve }))
     )
     let paste: () => Promise<void> = async () => undefined
 
@@ -101,7 +105,7 @@ describe('useMobileTerminalPaste', () => {
         connState: 'connected',
         connStateRef: { current: 'connected' },
         deviceTokenRef: { current: null },
-        flushPendingLiveInputBeforeExternalSend,
+        runTerminalLiveExternalInput,
         getActiveWorktreeConnectionId: async () => null,
         onError: vi.fn(),
         onSuccess: vi.fn(),
@@ -116,11 +120,11 @@ describe('useMobileTerminalPaste', () => {
       renderer = create(createElement(Probe))
     })
     const pastes = [paste(), paste()]
-    await vi.waitFor(() => expect(flushPendingLiveInputBeforeExternalSend).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(runTerminalLiveExternalInput).toHaveBeenCalledTimes(2))
     expect(sendRequest).not.toHaveBeenCalled()
 
-    for (const release of releaseWaits) {
-      release(true)
+    for (const queued of pending) {
+      queued.resolve(await queued.operation())
     }
     await Promise.all(pastes)
 

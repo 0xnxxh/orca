@@ -131,7 +131,7 @@ describe('attachMobileImageToTerminal', () => {
     ])
     // Why: upload can outlive the stream subscription whose acknowledgement
     // originally enabled the composer.
-    const beforeTerminalSend = vi.fn(async () => false)
+    const runTerminalSend = vi.fn(async () => false)
 
     const sent = await attachMobileImageToTerminal('library', {
       client,
@@ -139,12 +139,50 @@ describe('attachMobileImageToTerminal', () => {
       deviceToken: null,
       getConnectionId: async () => null,
       pickImage: vi.fn().mockResolvedValue({ base64: 'DDDD' }),
-      beforeTerminalSend
+      runTerminalSend
     })
 
     expect(sent).toBe(false)
-    expect(beforeTerminalSend).toHaveBeenCalledWith('term-pending')
+    expect(runTerminalSend).toHaveBeenCalledWith('term-pending', expect.any(Function))
     expect(client.calls.some((call) => call.method === 'terminal.send')).toBe(false)
+  })
+
+  it('keeps the actual terminal send inside the injected runner', async () => {
+    const client = clientWithResponses([
+      {
+        id: 'start',
+        ok: false,
+        error: { code: 'method_not_found', message: 'no' },
+        _meta: { runtimeId: 'r' }
+      },
+      ok('save', '/tmp/queued.png'),
+      ok('send', { send: { accepted: true } })
+    ])
+    let queuedSend: (() => Promise<boolean>) | null = null
+    let releaseRunner: (sent: boolean) => void = () => undefined
+    const runTerminalSend = vi.fn(
+      async (_terminal: string, send: () => Promise<boolean>) =>
+        new Promise<boolean>((resolve) => {
+          queuedSend = send
+          releaseRunner = resolve
+        })
+    )
+
+    const attached = attachMobileImageToTerminal('library', {
+      client,
+      terminal: 'term-queued',
+      deviceToken: null,
+      getConnectionId: async () => null,
+      pickImage: vi.fn().mockResolvedValue({ base64: 'FFFF' }),
+      runTerminalSend
+    })
+    await vi.waitFor(() => expect(queuedSend).not.toBeNull())
+    expect(client.calls.some((call) => call.method === 'terminal.send')).toBe(false)
+
+    releaseRunner(await queuedSend!())
+
+    await expect(attached).resolves.toBe(true)
+    expect(client.calls.some((call) => call.method === 'terminal.send')).toBe(true)
   })
 
   it('reports failure when the terminal rejects the uploaded image path', async () => {

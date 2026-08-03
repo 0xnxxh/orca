@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
+import type { TerminalLiveExternalInputRunner } from '../terminal/terminal-live-input-sender'
 import { attachMobileImageToTerminal } from './mobile-image-attachment'
 import {
   ImageLibraryPermissionError,
@@ -24,7 +25,7 @@ type UseMobileImageAttachmentArgs = {
   readonly showToast: ShowToast
   readonly onSuccess: () => void
   readonly onError: () => void
-  readonly beforeTerminalSend?: (terminal: string) => Promise<boolean>
+  readonly runTerminalSend?: TerminalLiveExternalInputRunner
 }
 
 type MobileImageAttachment = {
@@ -48,7 +49,7 @@ export function useMobileImageAttachment({
   showToast,
   onSuccess,
   onError,
-  beforeTerminalSend
+  runTerminalSend
 }: UseMobileImageAttachmentArgs): MobileImageAttachment {
   const [isAttaching, setIsAttaching] = useState(false)
   const attachImage = useCallback(
@@ -64,7 +65,7 @@ export function useMobileImageAttachment({
           getConnectionId: getActiveWorktreeConnectionId,
           pickImage: pickMobileImage,
           onUploadStart: () => setIsAttaching(true),
-          beforeTerminalSend
+          runTerminalSend
         })
         // Cancelled picker: no error, no toast.
         if (sent) {
@@ -91,7 +92,7 @@ export function useMobileImageAttachment({
     },
     [
       activeHandle,
-      beforeTerminalSend,
+      runTerminalSend,
       canSend,
       client,
       connState,

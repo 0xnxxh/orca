@@ -344,7 +344,7 @@ describe('terminal live input commit hook', () => {
     changeLiveInput(harness.handlers, 'かな', true)
     let settled = false
 
-    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
     void flush.then(() => {
       settled = true
     })
@@ -370,7 +370,7 @@ describe('terminal live input commit hook', () => {
       return sendCount === 1 ? firstSend : true
     })
     changeLiveInput(harness.handlers, 'かな', true)
-    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
     let flushSettled = false
     void flush.then(() => {
       flushSettled = true
@@ -407,13 +407,16 @@ describe('terminal live input commit hook', () => {
     })
     const settled: string[] = []
     changeLiveInput(harness.handlers, 'かな', true)
-    const firstFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const firstFlush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
     void firstFlush.then(() => settled.push('first'))
     changeLiveInput(harness.handlers, '仮名', false)
     await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
 
     changeLiveInput(harness.handlers, '仮名か', true)
-    const secondFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const secondFlush = harness.handlers.runTerminalLiveExternalInput(
+      'terminal-a',
+      async () => true
+    )
     void secondFlush.then(() => settled.push('second'))
     changeLiveInput(harness.handlers, '仮名漢字', false)
     releaseFirstSend(true)
@@ -421,6 +424,32 @@ describe('terminal live input commit hook', () => {
     await expect(Promise.all([firstFlush, secondFlush])).resolves.toEqual([true, true])
     expect(harness.sent).toEqual(['仮名', '漢字'])
     expect(settled).toEqual(['first', 'second'])
+  })
+
+  it('Given queued external sends When the first operation is pending Then holds the second operation', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    let releaseFirst: (sent: boolean) => void = () => undefined
+    const firstPending = new Promise<boolean>((resolve) => {
+      releaseFirst = resolve
+    })
+    const sends: string[] = []
+
+    const first = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
+      sends.push('first-start')
+      const sent = await firstPending
+      sends.push('first-end')
+      return sent
+    })
+    const second = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
+      sends.push('second')
+      return true
+    })
+
+    await vi.waitFor(() => expect(sends).toEqual(['first-start']))
+    releaseFirst(true)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+    expect(sends).toEqual(['first-start', 'first-end', 'second'])
   })
 
   it('Given an old flush is invalidated Then it cannot clear new fallback input', async () => {
@@ -435,7 +464,7 @@ describe('terminal live input commit hook', () => {
       return sendCount === 1 ? oldSend : true
     })
     changeLiveInput(harness.handlers, 'かな', true)
-    const oldFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const oldFlush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
     changeLiveInput(harness.handlers, '仮名', false)
     await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
 
@@ -446,7 +475,7 @@ describe('terminal live input commit hook', () => {
     await expect(oldFlush).resolves.toBe(false)
     expect(harness.captures.at(-1)).toBe('한')
     await expect(
-      harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-b')
+      harness.handlers.runTerminalLiveExternalInput('terminal-b', async () => true)
     ).resolves.toBe(true)
     expect(harness.sentByHandle).toEqual([
       { bytes: '仮名', handle: 'terminal-a' },
@@ -457,7 +486,7 @@ describe('terminal live input commit hook', () => {
   it('Given a deferred external send When the terminal switches Then cancels the original target', async () => {
     const harness = createTerminalLiveInputCommitHarness()
     changeLiveInput(harness.handlers, 'かな', true)
-    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
 
     harness.setActiveHandle('terminal-b')
 
@@ -486,7 +515,7 @@ describe('terminal live input commit hook', () => {
     harness.setActiveHandle('terminal-b')
 
     await expect(
-      harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-b')
+      harness.handlers.runTerminalLiveExternalInput('terminal-b', async () => true)
     ).resolves.toBe(true)
     await expect(
       harness.handlers.handleLiveInputAccessoryBytes({ bytes: '\x1b' })
@@ -547,7 +576,7 @@ describe('terminal live input commit hook', () => {
     changeLiveInput(handlers, '한')
 
     // When
-    const flushed = await handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const flushed = await handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
 
     // Then
     expect(flushed).toBe(true)
@@ -560,7 +589,7 @@ describe('terminal live input commit hook', () => {
     changeLiveInput(handlers, '한')
 
     // When
-    const flushed = await handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    const flushed = await handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
 
     // Then
     expect(flushed).toBe(false)

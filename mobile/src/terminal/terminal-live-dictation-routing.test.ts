@@ -36,9 +36,9 @@ describe('terminal live dictation routing', () => {
 
     await expect(
       insertLiveDictationTranscript({
-        flushPendingInput: async () => false,
         handle: 'terminal-a',
         onSendError: vi.fn(),
+        runTerminalLiveExternalInput: async () => false,
         sendInput,
         showToast,
         text: 'dictated text'
@@ -49,29 +49,33 @@ describe('terminal live dictation routing', () => {
     expect(showToast).toHaveBeenCalledWith('Dictation insert canceled', 1500)
   })
 
-  it('keeps concurrent transcripts behind their pending-input waits', async () => {
-    const releaseWaits: Array<(flushed: boolean) => void> = []
-    const flushPendingInput = vi.fn(
-      async () => new Promise<boolean>((resolve) => releaseWaits.push(resolve))
+  it('routes concurrent transcript sends through the external-input queue', async () => {
+    const pending: Array<{
+      operation: () => Promise<boolean>
+      resolve: (sent: boolean) => void
+    }> = []
+    const runTerminalLiveExternalInput = vi.fn(
+      async (_handle: string, operation: () => Promise<boolean>) =>
+        new Promise<boolean>((resolve) => pending.push({ operation, resolve }))
     )
     const sendInput = vi.fn(async () => true)
     const showToast = vi.fn()
     const insert = (text: string): Promise<boolean> =>
       insertLiveDictationTranscript({
-        flushPendingInput,
         handle: 'terminal-a',
         onSendError: vi.fn(),
+        runTerminalLiveExternalInput,
         sendInput,
         showToast,
         text
       })
 
     const inserts = [insert('first'), insert('second')]
-    await vi.waitFor(() => expect(flushPendingInput).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(runTerminalLiveExternalInput).toHaveBeenCalledTimes(2))
     expect(sendInput).not.toHaveBeenCalled()
 
-    for (const release of releaseWaits) {
-      release(true)
+    for (const queued of pending) {
+      queued.resolve(await queued.operation())
     }
 
     await expect(Promise.all(inserts)).resolves.toEqual([true, true])

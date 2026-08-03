@@ -4,7 +4,10 @@ import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
 import { sendTerminalLiveControlAfterPendingFlush } from './terminal-live-control-send-order'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import { flushTerminalLiveExternalInput } from './terminal-live-external-input-flush'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveExternalInputRunner,
+  TerminalLiveInputSender
+} from './terminal-live-input-sender'
 import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
 import {
   beginTerminalLiveImeComposition,
@@ -47,7 +50,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
 
 type TerminalLiveInputCommitHandlers = {
   readonly clearPendingLiveInputCommit: () => void
-  readonly flushPendingLiveInputBeforeExternalSend: (handle: string) => Promise<boolean>
+  readonly runTerminalLiveExternalInput: TerminalLiveExternalInputRunner
   readonly handleLiveInputAccessoryBytes: (
     input: TerminalLiveAccessoryInput
   ) => Promise<TerminalLiveAccessoryInputCommitResult>
@@ -133,10 +136,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     []
   )
 
-  const flushPendingLiveInputBeforeExternalSend = useCallback(
-    (handle: string): Promise<boolean> => {
-      const queuedFlush = externalFlushTailRef.current.then(() =>
-        flushTerminalLiveExternalInput({
+  const runTerminalLiveExternalInput = useCallback<TerminalLiveExternalInputRunner>(
+    (handle, operation) => {
+      const queuedOperation = externalFlushTailRef.current.then(async () => {
+        const flushed = await flushTerminalLiveExternalInput({
           boundary: { generation: liveInputGenerationRef.current, handle },
           clearPendingInput: clearPendingLiveInputMirror,
           flushPendingText: flushPendingLiveInputText,
@@ -146,9 +149,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
           pendingHandleRef: pendingLiveInputHandleRef,
           waitForPendingFlush: waitForPendingLiveInputFlush
         })
-      )
-      externalFlushTailRef.current = queuedFlush.catch(() => false)
-      return queuedFlush
+        return flushed ? operation() : false
+      })
+      externalFlushTailRef.current = queuedOperation.catch(() => false)
+      return queuedOperation
     },
     [
       clearPendingLiveInputMirror,
@@ -297,7 +301,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   return {
     clearPendingLiveInputCommit,
-    flushPendingLiveInputBeforeExternalSend,
+    runTerminalLiveExternalInput,
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
