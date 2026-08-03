@@ -704,9 +704,8 @@ export default function ChecksPanel(): React.JSX.Element {
     setIsPublishingBranch(false)
     setAgentComposerState(null)
     // Why: an accepted launch owns its snapshotted payload; only unaccepted queues drop here.
+    // Ref clears run in the panelContextKey effect below (React render must stay pure).
     if (!commentResolutionLaunchAcceptedRef.current) {
-      pendingCommentResolutionRef.current = null
-      claimedCommentResolutionRef.current = null
       setCommentResolutionAckBusyNow(false)
       clearPendingPRCommentAiAck()
     }
@@ -850,6 +849,15 @@ export default function ChecksPanel(): React.JSX.Element {
     }
     panelVisibleSinceRef.current = Date.now()
   }, [isPanelVisible, panelContextKey])
+
+  // Why: drop unaccepted launch payloads when the panel switches context (refs stay pure in render).
+  useEffect(() => {
+    if (commentResolutionLaunchAcceptedRef.current) {
+      return
+    }
+    pendingCommentResolutionRef.current = null
+    claimedCommentResolutionRef.current = null
+  }, [panelContextKey])
 
   // Record the latest hard refresh error, kept sticky so a background auto-retry can't silently re-enable Create while lookup is impossible.
   useEffect(() => {
@@ -3363,15 +3371,21 @@ export default function ChecksPanel(): React.JSX.Element {
   const consumeClaimedCommentResolutionAfterDeliveryRef = useRef(
     consumeClaimedCommentResolutionAfterDelivery
   )
-  consumeClaimedCommentResolutionAfterDeliveryRef.current =
-    consumeClaimedCommentResolutionAfterDelivery
   const claimPendingCommentResolutionForLaunchRef = useRef(claimPendingCommentResolutionForLaunch)
-  claimPendingCommentResolutionForLaunchRef.current = claimPendingCommentResolutionForLaunch
   const releaseClaimedCommentResolutionAfterFailedLaunchRef = useRef(
     releaseClaimedCommentResolutionAfterFailedLaunch
   )
-  releaseClaimedCommentResolutionAfterFailedLaunchRef.current =
+  useEffect(() => {
+    consumeClaimedCommentResolutionAfterDeliveryRef.current =
+      consumeClaimedCommentResolutionAfterDelivery
+    claimPendingCommentResolutionForLaunchRef.current = claimPendingCommentResolutionForLaunch
+    releaseClaimedCommentResolutionAfterFailedLaunchRef.current =
+      releaseClaimedCommentResolutionAfterFailedLaunch
+  }, [
+    consumeClaimedCommentResolutionAfterDelivery,
+    claimPendingCommentResolutionForLaunch,
     releaseClaimedCommentResolutionAfterFailedLaunch
+  ])
   const handleLaunchAccepted = useCallback((): void => {
     claimPendingCommentResolutionForLaunchRef.current()
   }, [])
