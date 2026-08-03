@@ -173,7 +173,9 @@ export function useAutomationDispatchEvents(): void {
                   initiator: 'auto'
                 })
                 if (connected?.status !== 'connected') {
-                  throw new Error('SSH target is unavailable.')
+                  // Why prefer the state's error: a paused auto-reconnect budget explains that the
+                  // run needs a manual Connect, which the generic message hides.
+                  throw new Error(connected?.error || 'SSH target is unavailable.')
                 }
               } catch (error) {
                 await markDispatchResult({

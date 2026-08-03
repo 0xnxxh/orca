@@ -1178,6 +1178,22 @@ export function registerSshHandlers(
       await abandonFailedSshSession(targetId, session)
       clearRelayLostBackoff(targetId)
       clearRelayStateOverride(targetId)
+      // Why: connect()'s retry loop gives up early once the budget runs out mid-loop, so report the
+      // pause instead of the last dial's error — otherwise the "use Connect" reason never surfaces.
+      if (
+        status !== 'auth-failed' &&
+        initiator === 'auto' &&
+        sshAutoReconnectBudget.isExhausted(targetId, Date.now())
+      ) {
+        publishRelayOverride(
+          getCurrentMainWindow,
+          targetId,
+          'reconnection-failed',
+          AUTO_RECONNECT_PAUSED_MESSAGE,
+          0
+        )
+        throw err
+      }
       broadcastSshState(getCurrentMainWindow, targetId, {
         targetId,
         status,

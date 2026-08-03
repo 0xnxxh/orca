@@ -637,6 +637,69 @@ describe('SSH IPC handlers', () => {
     })
   })
 
+  it('ssh:connect reports the pause when the budget runs out during an automatic dial', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getState.mockReturnValue(null)
+    mockConnectionManager.connect.mockImplementation(async () => {
+      // Stands in for wall-clock elapsing mid-dial: connect()'s own guard cuts the retry loop short
+      // and rethrows the last dial error, so this catch is the only place the reason can surface.
+      sshAutoReconnectBudget.reset('ssh-1')
+      sshAutoReconnectBudget.deadlineFor('ssh-1', Date.now() - AUTO_RECONNECT_BUDGET_MS)
+      throw new Error('connect ETIMEDOUT')
+    })
+
+    await expect(
+      handlers.get('ssh:connect')!(null, { targetId: 'ssh-1', initiator: 'auto' })
+    ).rejects.toThrow('ETIMEDOUT')
+
+    // Why not the raw dial error: the retries stopped by policy, and only the pause tells the user
+    // that Connect is what restarts them.
+    expect(handlers.get('ssh:getState')!(null, { targetId: 'ssh-1' })).toMatchObject({
+      status: 'reconnection-failed',
+      error: AUTO_RECONNECT_PAUSED_MESSAGE
+    })
+  })
+
+  it('ssh:connect still reports an auth failure when the budget is spent', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getState.mockReturnValue(null)
+    mockConnectionManager.connect.mockImplementation(async () => {
+      sshAutoReconnectBudget.reset('ssh-1')
+      sshAutoReconnectBudget.deadlineFor('ssh-1', Date.now() - AUTO_RECONNECT_BUDGET_MS)
+      throw new Error('All configured authentication methods failed')
+    })
+
+    await expect(
+      handlers.get('ssh:connect')!(null, { targetId: 'ssh-1', initiator: 'auto' })
+    ).rejects.toThrow('All configured authentication methods failed')
+
+    // Bad credentials are not a retry-budget problem — masking them with the pause hides the fix.
+    expect(handlers.get('ssh:getState')!(null, { targetId: 'ssh-1' })).toBeUndefined()
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith(
+      'ssh:state-changed',
+      expect.objectContaining({
+        state: expect.objectContaining({
+          status: 'auth-failed',
+          error: 'All configured authentication methods failed'
+        })
+      })
+    )
+  })
+
   it('ssh:connect does not park an automatic connect while the target is still connected', async () => {
     const target: SshTarget = {
       id: 'ssh-1',
