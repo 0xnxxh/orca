@@ -283,7 +283,7 @@ describe('RelayPtySourcePublication', () => {
     ).toHaveLength(2)
   })
 
-  it('detaches only a saturated subscriber while the V1 owner stays live', async () => {
+  it('backpressures instead of detaching a saturated subscriber while the V1 owner stays live', async () => {
     const harness = await createHarness(8)
     const detached: number[] = []
     const saturatedWrites: Buffer[] = []
@@ -324,15 +324,17 @@ describe('RelayPtySourcePublication', () => {
 
     expect(admitted).toBeGreaterThan(0)
     expect(admitted).toBeLessThan(20)
-    expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(true)
+    // False tells pty-handler to pause the PTY and republish the span once the sink drains.
+    expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(false)
 
-    expect(detached).toEqual([saturatedId])
+    expect(detached).toEqual([])
     expect(detached).not.toContain(healthyId)
     expect(saturatedWrites).toHaveLength(1)
     expect(heldSettlements).toHaveLength(1)
     expect(
       healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
-    ).toHaveLength(1)
+    ).toHaveLength(0)
+    // The span is already appended to the source ledger, so the credited owner still drains it.
     expect(
       harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
     ).toHaveLength(1)

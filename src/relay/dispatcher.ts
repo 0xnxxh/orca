@@ -530,9 +530,11 @@ export class RelayDispatcher {
           continue
         }
         if (method === 'pty.replay') {
-          // Why: replay is never re-sent, so it takes the control lane where overflow is fatal — the
-          // writer closes the client and reconnect reloads history rather than stranding a short buffer.
-          this.enqueueFrame(client, msg, 'control', undefined, frameBytes)
+          // Why: reattach regenerates replay, so killing the link over it just re-kills the reconnect;
+          // drop the pane's scrollback instead and let live output repaint it.
+          if (!this.enqueueFrame(client, msg, 'control', undefined, frameBytes, 'reject')) {
+            this.logDroppedProducerNotification(client, method, frameBytes)
+          }
           continue
         }
         // Why: closing can never make an oversized frame sendable — the producer regenerates it after
@@ -1088,13 +1090,15 @@ export class RelayDispatcher {
   private tryPublishToClients(
     clients: readonly RelayClient[],
     msg: JsonRpcNotification,
-    lane: 'interactive' | 'ordinary' | 'bulk'
+    lane: 'interactive' | 'ordinary' | 'bulk',
+    // Why: projection already sized the frame to pick shed targets; avoid a redundant encode.
+    estimatedBytes?: number
   ): boolean {
     return this.runPublicationTransaction(() => {
       if (clients.length === 0) {
         return true
       }
-      const bytes = this.estimateFrameBytes(msg)
+      const bytes = estimatedBytes ?? this.estimateFrameBytes(msg)
       if (clients.some((client) => !client.writer.canEnqueueProducer(bytes))) {
         return false
       }
@@ -1124,19 +1128,21 @@ export class RelayDispatcher {
     msg: JsonRpcNotification,
     lane: 'interactive' | 'ordinary'
   ): boolean {
-    return this.runPublicationTransaction(() => {
-      for (const client of clients) {
-        if (client.closed || this.publishToClient(client, msg, lane)) {
-          continue
-        }
-        this.closeClient(
-          client,
-          new Error('Relay PTY subscriber projection capacity exceeded'),
-          client !== this.primaryClient
-        )
+    const bytes = this.estimateFrameBytes(msg)
+    // Why: closing over a transiently full queue just makes the producer regenerate the same span for a
+    // fresh sink of identical capacity, so back-pressure instead; only a frame that can never be admitted
+    // is shed, because retrying it forever would wedge the PTY.
+    const deliverable = clients.filter((client) => {
+      if (client.closed) {
+        return false
       }
-      return !this.disposed
+      if (bytes <= client.writer.producerFrameCapacity) {
+        return true
+      }
+      this.logDroppedProducerNotification(client, msg.method, bytes)
+      return false
     })
+    return this.tryPublishToClients(deliverable, msg, lane, bytes)
   }
 
   private publishToClient(

@@ -676,16 +676,61 @@ describe('PtyHandler negotiated source publication', () => {
     ])
   })
 
-  it('keeps the native PTY and V1 owner live when one subscriber saturates', async () => {
+  it('does not emit pty.exit ahead of output a failed projection re-queued', async () => {
+    await spawn({})
+    const projectSpy = vi
+      .spyOn(dispatcher, 'projectPtyDataToMatchingClients')
+      .mockImplementationOnce(() => {
+        // Why: capacity fans out from a bare socket callback mid-drain, when the captured queue has
+        // already been removed from pendingOutputByPty and the exit guard would read it as empty.
+        exitCallback!({ exitCode: 0 })
+        handler.handleSourcePublicationCapacity('pty-1')
+        return false
+      })
+
+    dataCallback!('abcd')
+    await vi.advanceTimersByTimeAsync(8)
+
+    expect(projectSpy).toHaveBeenCalledTimes(1)
+    expect(exitFrames()).toHaveLength(0)
+
+    projectSpy.mockRestore()
+    handler.handleSourcePublicationCapacity('pty-1')
+    await vi.advanceTimersByTimeAsync(8)
+
+    const ordered = writes
+      .map(notification)
+      .filter(
+        (frame): frame is Notification =>
+          frame?.method === 'pty.data' || frame?.method === 'pty.exit'
+      )
+      .map((frame) => frame.method)
+    expect(ordered.indexOf('pty.data')).toBeGreaterThanOrEqual(0)
+    expect(ordered.indexOf('pty.data')).toBeLessThan(ordered.lastIndexOf('pty.exit'))
+  })
+
+  it('pauses the PTY instead of detaching a subscriber that saturates, and resumes on drain', async () => {
     await spawn({})
     const detached: number[] = []
     const healthyWrites: Buffer[] = []
+    const saturatedSettlements: ((result: SinkWriteSettlement) => void)[] = []
+    const saturatedDrainWaiters: (() => void)[] = []
+    let saturatedStalled = true
     dispatcher.onClientDetached((clientId) => detached.push(clientId))
-    const saturatedId = dispatcher.attachClient(() => false, {
-      supportsWriteCallback: true,
-      writableLength: () => 16 * 1024,
-      writableHighWaterMark: () => 4 * 1024 * 1024
-    })
+    const saturatedId = dispatcher.attachClient(
+      (_data, settle) => {
+        saturatedSettlements.push(settle)
+        return !saturatedStalled
+      },
+      {
+        supportsWriteCallback: true,
+        writableLength: () => (saturatedStalled ? 16 * 1024 : 0),
+        writableHighWaterMark: () => 4 * 1024 * 1024,
+        waitWriteDrain: (callback: () => void) => {
+          saturatedDrainWaiters.push(callback)
+        }
+      }
+    )
     const healthyId = dispatcher.attachClient(
       (data, settle) => {
         healthyWrites.push(Buffer.from(data))
@@ -694,6 +739,8 @@ describe('PtyHandler negotiated source publication', () => {
       },
       { supportsWriteCallback: true }
     )
+    const healthyPtyData = (): unknown[] =>
+      healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
     const payload = 's'.repeat(16 * 1024)
     let admitted = 0
     while (
@@ -707,13 +754,26 @@ describe('PtyHandler negotiated source publication', () => {
 
     expect(admitted).toBeGreaterThan(100)
     expect(admitted).toBeLessThan(140)
-    expect(detached).toEqual([saturatedId])
+    expect(detached).toEqual([])
     expect(detached).not.toContain(healthyId)
-    expect(
-      healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
-    ).toHaveLength(1)
+    // All-or-nothing: the healthy mirror waits rather than taking a copy the retry would duplicate.
+    expect(healthyPtyData()).toHaveLength(0)
+    expect(pausePty).toHaveBeenCalled()
+    // The span is already in the source ledger, so the credited owner keeps draining it.
     expect(sourceDataFrames()).toHaveLength(1)
     expect(publication.getDebugSnapshot()).toMatchObject({ sendCommitted: 1 })
-    expect(pausePty).not.toHaveBeenCalled()
+
+    saturatedStalled = false
+    for (const waiter of saturatedDrainWaiters.splice(0)) {
+      waiter()
+    }
+    while (saturatedSettlements.length > 0) {
+      saturatedSettlements.shift()!({ ok: true })
+    }
+    await vi.advanceTimersByTimeAsync(8)
+
+    expect(healthyPtyData()).toHaveLength(1)
+    expect(sourceDataFrames()).toHaveLength(1)
+    expect(detached).toEqual([])
   })
 })

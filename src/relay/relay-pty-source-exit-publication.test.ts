@@ -312,6 +312,23 @@ describe('RelayPtySourceLegacyExitIndex', () => {
     ).toBe(true)
   })
 
+  it('keeps the exit pending when the subscriber projection is refused', () => {
+    const record = deliveryRecord({ sealed: true })
+    const scenario = createScenario(closedSnapshot({ state: 'sealed-unsettled' }), record)
+    scenario.dispatcher.projectPtyExitToMatchingClients.mockReturnValueOnce(false)
+
+    expect(scenario.run()).toBe(false)
+    expect(record.legacyExitAccepted).toBe(false)
+    expect(record.sourceExitState).toBe('idle')
+    expect(scenario.dispatcher.tryNotifyPtyExitToClient).not.toHaveBeenCalled()
+
+    // The handler's retry after drain lands the exit once, with no duplicate legacy projection.
+    expect(scenario.run()).toBe(true)
+    expect(record.legacyExitAccepted).toBe(true)
+    expect(scenario.dispatcher.projectPtyExitToMatchingClients).toHaveBeenCalledTimes(2)
+    expect(scenario.dispatcher.tryNotifyPtyExitToClient).toHaveBeenCalledOnce()
+  })
+
   it('remembers a subscriber projection when the owner publication throws', () => {
     const record = deliveryRecord({ sealed: true })
     const scenario = createScenario(closedSnapshot({ state: 'sealed-unsettled' }), record)
