@@ -14,6 +14,7 @@ import { agentHookInstallStatusSnapshots } from './install-status-snapshot-store
 import {
   MANAGED_AGENT_HOOK_INSTALLERS,
   MANAGED_AGENT_HOOK_REMOVERS,
+  MANAGED_AGENT_HOOK_STATUS_READERS,
   type ManagedAgentHookInstaller
 } from './managed-agent-hook-registry'
 
@@ -171,8 +172,18 @@ export function getManagedAgentHookStatusSnapshots(): AgentHookInstallStatusSnap
   return MANAGED_AGENT_HOOK_INSTALLERS.map(([agent]) => agentHookInstallStatusSnapshots.read(agent))
 }
 
+/**
+ * CLI-only. The standalone `orca` process never publishes snapshots, so status must come
+ * from disk there; the desktop main process serves its IPC from the snapshots above.
+ */
 export function getManagedAgentHookStatuses(): AgentHookInstallStatus[] {
-  return getManagedAgentHookStatusSnapshots().map((snapshot) => snapshot.value ?? snapshot)
+  return MANAGED_AGENT_HOOK_STATUS_READERS.map(([agent, read]) => {
+    try {
+      return read()
+    } catch (error) {
+      return errorStatus(agent, error)
+    }
+  })
 }
 
 export async function applyAgentStatusHooksEnabled(

@@ -170,6 +170,65 @@ describe('FilesystemHostSupervisor', () => {
           invoke: async () => {
             throw new FilesystemHostProcessError('deadline', 'timed out')
           },
+          retire: async () => true
+        }
+      }
+      return {
+        invoke: async (operation: FilesystemHostOperation) => canonical(operation.path),
+        retire: async () => true
+      }
+    })
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 3,
+      breakerRecoveryDelayMs: 1_000,
+      now: () => now,
+      startProcess
+    })
+    supervisor.publishFailureDomain({ executionHost: 'native', prefix: '/a', mountId: 'a' })
+    supervisor.publishFailureDomain({ executionHost: 'native', prefix: '/b', mountId: 'b' })
+
+    await expect(
+      supervisor.dispatch(dispatch('/a/repo', 'timeout', 'foreground'))
+    ).rejects.toMatchObject({ code: 'deadline' })
+    await vi.waitFor(() => expect(supervisor.health().abandonedChildren).toBe(1))
+    expect(supervisor.health()).toMatchObject({
+      physicalChildren: 1,
+      didNotExitDomains: 0,
+      breakers: { 'native:a': 'open' }
+    })
+    await expect(
+      supervisor.dispatch(dispatch('/a/repo', 'open', 'foreground'))
+    ).rejects.toMatchObject({ code: 'breaker-open' })
+
+    now = 1_100
+    await expect(supervisor.dispatch(dispatch('/a/repo', 'canary', 'foreground'))).resolves.toEqual(
+      canonical('/a/repo')
+    )
+    expect(supervisor.health().breakers['native:a']).toBe('closed')
+    await expect(
+      supervisor.dispatch(dispatch('/b/repo', 'background', 'background'))
+    ).rejects.toMatchObject({ code: 'capacity' })
+    await expect(
+      supervisor.dispatch(dispatch('/b/repo', 'foreground', 'foreground'))
+    ).resolves.toEqual(canonical('/b/repo'))
+    expect(supervisor.health().physicalChildren).toBe(3)
+    exits.forEach((exit) => exit())
+  })
+
+  it('refuses to re-fork a domain holding an unreaped child until it physically exits', async () => {
+    let now = 100
+    let launches = 0
+    const exits: (() => void)[] = []
+    const startProcess = vi.fn(async (options: { onPhysicalExit?: () => void }) => {
+      launches++
+      exits.push(() => options.onPhysicalExit?.())
+      if (launches === 1) {
+        return {
+          invoke: async () => {
+            throw new FilesystemHostProcessError('deadline', 'timed out')
+          },
+          // A child wedged in an uninterruptible syscall ignores SIGKILL.
           retire: async () => false
         }
       }
@@ -192,28 +251,28 @@ describe('FilesystemHostSupervisor', () => {
       supervisor.dispatch(dispatch('/a/repo', 'timeout', 'foreground'))
     ).rejects.toMatchObject({ code: 'deadline' })
     await vi.waitFor(() => expect(supervisor.health().didNotExitDomains).toBe(1))
-    expect(supervisor.health()).toMatchObject({
-      physicalChildren: 1,
-      abandonedChildren: 1,
-      breakers: { 'native:a': 'open' }
-    })
-    await expect(
-      supervisor.dispatch(dispatch('/a/repo', 'open', 'foreground'))
-    ).rejects.toMatchObject({ code: 'breaker-open' })
 
-    now = 1_100
-    await expect(supervisor.dispatch(dispatch('/a/repo', 'canary', 'foreground'))).resolves.toEqual(
-      canonical('/a/repo')
-    )
-    expect(supervisor.health().breakers['native:a']).toBe('closed')
+    // Each breaker probe would otherwise fork another child that also never exits.
+    for (const probeAt of [1_100, 2_200, 3_300]) {
+      now = probeAt
+      await expect(
+        supervisor.dispatch(dispatch('/a/repo', `probe-${probeAt}`, 'foreground'))
+      ).rejects.toMatchObject({ code: 'capacity' })
+    }
+    expect(startProcess).toHaveBeenCalledTimes(1)
+    expect(supervisor.health().physicalChildren).toBe(1)
+
+    // A healthy mount keeps its share of the budget.
     await expect(
-      supervisor.dispatch(dispatch('/b/repo', 'background', 'background'))
-    ).rejects.toMatchObject({ code: 'capacity' })
-    await expect(
-      supervisor.dispatch(dispatch('/b/repo', 'foreground', 'foreground'))
+      supervisor.dispatch(dispatch('/b/repo', 'healthy', 'foreground'))
     ).resolves.toEqual(canonical('/b/repo'))
-    expect(supervisor.health().physicalChildren).toBe(3)
-    exits.forEach((exit) => exit())
+
+    exits[0]()
+    now = 10_000
+    await expect(
+      supervisor.dispatch(dispatch('/a/repo', 'recovered', 'foreground'))
+    ).resolves.toEqual(canonical('/a/repo'))
+    expect(supervisor.health().didNotExitDomains).toBe(0)
   })
 
   it('keeps domain errors on the healthy child and emits path-free telemetry', async () => {

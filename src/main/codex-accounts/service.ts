@@ -286,6 +286,9 @@ export class CodexAccountService {
 
   listAccounts(): CodexRateLimitAccountsState {
     this.normalizeActiveSelection()
+    // Why: keeps push-based consumers (mobile) converging on an out-of-band `codex login`;
+    // single-flight, so repeated reads coalesce into one bounded host dispatch.
+    void this.hydrateSystemDefaultIdentity()
     return this.getSnapshot()
   }
 

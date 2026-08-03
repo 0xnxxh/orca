@@ -1763,6 +1763,16 @@ export class RateLimitService {
     if (signal.aborted) {
       return
     }
+    // Why: status IPC is served from memory, but a fetch must still see credentials the
+    // CLI rotated out-of-band. Bounded by the filesystem host, so it can't stall the cycle.
+    try {
+      await this.hydrateSnapshots()
+    } catch {
+      // Why: a failed hydration leaves the prior snapshot stale, which every reader below handles.
+    }
+    if (signal.aborted) {
+      return
+    }
     const claudeTarget = this.claudeFetchTarget
     const claudeGeneration = this.claudeFetchGeneration
     const claudeAuthSnapshot = this.getClaudeAuthSnapshotStore(claudeTarget).get()

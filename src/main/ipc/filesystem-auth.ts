@@ -38,10 +38,15 @@ function rememberAuthorizedExternalPath(path: string): void {
 
 export async function authorizeExternalPath(targetPath: string): Promise<void> {
   const resolvedTarget = resolve(targetPath)
-  const canonicalTarget = resolve(await canonicalizePathThroughFilesystemHost(resolvedTarget))
   rememberAuthorizedExternalPath(resolvedTarget)
-  // Why: macOS canonicalizes /tmp to /private/tmp during read authorization.
-  rememberAuthorizedExternalPath(canonicalTarget)
+  try {
+    // Why: macOS canonicalizes /tmp to /private/tmp during read authorization.
+    rememberAuthorizedExternalPath(
+      resolve(await canonicalizePathThroughFilesystemHost(resolvedTarget))
+    )
+  } catch {
+    // Why: a stalled or missing canonical path must not revoke the grant or abort a batch drop.
+  }
 }
 
 export function invalidateAuthorizedRootsCache(): void {

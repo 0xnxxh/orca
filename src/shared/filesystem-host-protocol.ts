@@ -60,8 +60,14 @@ export const filesystemHostParentMessageSchema = filesystemHostReadParentMessage
 const filesystemHostResultSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('canonicalize-path'), canonicalPath: filesystemPathSchema }),
   z.object({ kind: z.literal('classify-path'), deviceId: z.string().min(1).max(256) }),
-  z.object({ kind: z.literal('read-orca-yaml'), contents: z.string() }),
-  z.object({ kind: z.literal('read-keybindings'), contents: z.string() }),
+  z.object({
+    kind: z.literal('read-orca-yaml'),
+    contents: z.string().max(FILESYSTEM_HOST_MAX_TEXT_BYTES)
+  }),
+  z.object({
+    kind: z.literal('read-keybindings'),
+    contents: z.string().max(FILESYSTEM_HOST_MAX_TEXT_BYTES)
+  }),
   z.object({
     kind: z.literal('read-snapshot-file'),
     contentsBase64: z.string().max(FILESYSTEM_HOST_MAX_BASE64_BYTES)

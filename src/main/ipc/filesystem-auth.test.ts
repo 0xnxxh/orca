@@ -212,7 +212,7 @@ describe('filesystem auth worktree roots', () => {
 })
 
 describe('filesystem-auth path containment', () => {
-  it('fails closed on canonicalization timeout without publishing a textual grant', async () => {
+  it('keeps the textual grant when canonicalization times out', async () => {
     const timedOut = resolve('/host-timeout/untrusted')
     setFilesystemHostReadClientForTests({
       canonicalizePath: async () => {
@@ -228,8 +228,13 @@ describe('filesystem-auth path containment', () => {
       prepareRateLimitPtyCwd: async (path) => path
     })
 
-    await expect(authorizeExternalPath(timedOut)).rejects.toMatchObject({ code: 'ETIMEDOUT' })
-    expect(isPathAllowed(timedOut, makeStore([]))).toBe(false)
+    // A stalled host must not revoke the drop grant or abort the rest of a batch;
+    // resolveAuthorizedPath still canonicalizes and re-checks before any operation.
+    await expect(authorizeExternalPath(timedOut)).resolves.toBeUndefined()
+    expect(isPathAllowed(timedOut, makeStore([]))).toBe(true)
+    await expect(resolveAuthorizedPath(timedOut, makeStore([]))).rejects.toMatchObject({
+      code: 'ETIMEDOUT'
+    })
   })
 
   it('authorizes missing nested descendants under an allowed repo', async () => {

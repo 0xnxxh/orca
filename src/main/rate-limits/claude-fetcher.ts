@@ -706,8 +706,38 @@ async function attemptCliRepairThenRetryOAuth(input: {
     warnClaudeUsageFetchFailure(input.options?.authPreparation, input.oauthCredentials, err)
   }
 
+  // Why: bail before credential I/O if the fetch cycle was stopped mid-CLI-repair.
   if (input.options?.signal?.aborted) {
     return abortedClaudeRateLimitResult()
+  }
+
+  // Why: CLI repair rewrites the credentials file, so the retry must read it again
+  // rather than reuse the snapshot that just failed. Bounded by the filesystem host.
+  const refreshedCredentials = await hydrateClaudeOAuthCredentialSnapshot(
+    input.options?.authPreparation
+  )
+  if (input.options?.signal?.aborted) {
+    return abortedClaudeRateLimitResult()
+  }
+  if (refreshedCredentials.token && refreshedCredentials.token !== input.oauthCredentials.token) {
+    recordAttempt(input.attempts, 'oauth')
+    try {
+      const oauthRetry = await fetchViaOAuth(refreshedCredentials.token, input.options?.signal)
+      if (input.options?.signal?.aborted) {
+        return abortedClaudeRateLimitResult()
+      }
+      return withClaudeUsageMetadata(
+        mergeClaudeUsageWindows(oauthRetry, cliResult),
+        metadataForAttempt({
+          attemptedSources: input.attempts.attemptedSources,
+          oauthCredentials: refreshedCredentials,
+          authPreparation: input.options?.authPreparation,
+          source: 'oauth'
+        })
+      )
+    } catch (err) {
+      warnClaudeUsageFetchFailure(input.options?.authPreparation, refreshedCredentials, err)
+    }
   }
   return cliResult
 }

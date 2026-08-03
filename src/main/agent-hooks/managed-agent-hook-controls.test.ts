@@ -32,6 +32,7 @@ vi.mock('./managed-agent-hook-registry', () => ({
 import {
   applyAgentStatusHooksEnabled,
   getManagedAgentHookStatuses,
+  getManagedAgentHookStatusSnapshots,
   installManagedAgentHooks
 } from './managed-agent-hook-controls'
 import { agentHookInstallStatusSnapshots } from './install-status-snapshot-store'
@@ -103,15 +104,37 @@ describe('managed agent hook controls', () => {
     ])
   })
 
-  it('serves status inspection from snapshots without invoking filesystem readers', () => {
+  it('serves the desktop status snapshots from memory without invoking filesystem readers', () => {
     agentHookInstallStatusSnapshots.publish(status('claude', 'installed'))
 
-    expect(getManagedAgentHookStatuses()).toEqual([
-      expect.objectContaining({ agent: 'claude', state: 'installed' }),
+    expect(getManagedAgentHookStatusSnapshots()).toEqual([
+      expect.objectContaining({ agent: 'claude', state: 'installed', stale: false }),
       expect.objectContaining({ agent: 'codex', state: 'error' })
     ])
     expect(mocks.statusClaude).not.toHaveBeenCalled()
     expect(mocks.statusCodex).not.toHaveBeenCalled()
+  })
+
+  it('reads status from disk for the CLI, where nothing has published a snapshot', () => {
+    mocks.statusClaude.mockReturnValue(status('claude', 'installed'))
+    mocks.statusCodex.mockReturnValue(status('codex', 'not_installed'))
+
+    expect(getManagedAgentHookStatuses()).toEqual([
+      expect.objectContaining({ agent: 'claude', state: 'installed' }),
+      expect.objectContaining({ agent: 'codex', state: 'not_installed' })
+    ])
+  })
+
+  it('reports a per-agent error when a disk status read throws', () => {
+    mocks.statusClaude.mockImplementation(() => {
+      throw new Error('config unreadable')
+    })
+    mocks.statusCodex.mockReturnValue(status('codex', 'installed'))
+
+    expect(getManagedAgentHookStatuses()).toEqual([
+      expect.objectContaining({ agent: 'claude', state: 'error' }),
+      expect.objectContaining({ agent: 'codex', state: 'installed' })
+    ])
   })
 
   it('removes disabled agents without probing or reinstalling them', async () => {

@@ -51,6 +51,7 @@ export class FilesystemHostSupervisor {
   private readonly abandoned = new Set<FilesystemHostProcessHandle>()
   private readonly didNotExitDomainByChild = new Map<FilesystemHostProcessHandle, string>()
   private readonly maximumPendingPerLane: number
+  private readonly foregroundPendingReserve: number
   private readonly breakerRecoveryDelayMs: number
   private readonly now: () => number
   private readonly startProcess: ProcessFactory
@@ -63,6 +64,7 @@ export class FilesystemHostSupervisor {
         ? new FilesystemHostCapacity(options.maximumChildren)
         : processWideFilesystemHostCapacity)
     this.maximumPendingPerLane = options.maximumPendingPerLane ?? 64
+    this.foregroundPendingReserve = Math.max(1, Math.floor(this.maximumPendingPerLane / 4))
     this.breakerRecoveryDelayMs = options.breakerRecoveryDelayMs ?? 30_000
     this.now = options.now ?? Date.now
     this.startProcess = options.startProcess ?? ((input) => FilesystemHostProcess.start(input))
@@ -110,7 +112,13 @@ export class FilesystemHostSupervisor {
       normalizedInput.operation.path
     )
     const lane = this.getLane(laneKey)
-    if (lane.pending >= this.maximumPendingPerLane) {
+    // Why: mirrors the physical-slot reservation — a background burst (startup repo
+    // reconcile) must not fill the queue and strand the fs IPC gate every handler awaits.
+    const laneLimit =
+      normalizedInput.admission === 'foreground'
+        ? this.maximumPendingPerLane
+        : Math.max(1, this.maximumPendingPerLane - this.foregroundPendingReserve)
+    if (lane.pending >= laneLimit) {
       return Promise.reject(
         new FilesystemHostSupervisorError('queue-full', 'Filesystem failure-domain queue is full')
       )
@@ -205,10 +213,28 @@ export class FilesystemHostSupervisor {
       })
   }
 
+  private hasUnreapedChild(laneKey: string): boolean {
+    for (const domain of this.didNotExitDomainByChild.values()) {
+      if (domain === laneKey) {
+        return true
+      }
+    }
+    return false
+  }
+
   private async launch(
     lane: FilesystemHostLane,
     admission: FilesystemHostAdmissionClass
   ): Promise<FilesystemHostProcessHandle> {
+    // Why: a child wedged in an uninterruptible syscall ignores SIGKILL and never
+    // releases its slot, so one dead mount would drain the process-wide budget a
+    // child per breaker probe. Its physical exit clears this and reopens the lane.
+    if (this.hasUnreapedChild(lane.key)) {
+      throw new FilesystemHostSupervisorError(
+        'capacity',
+        'Filesystem failure domain still holds an unreaped child'
+      )
+    }
     const release = this.capacity.reserve(admission)
     if (!release) {
       throw new FilesystemHostSupervisorError(

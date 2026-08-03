@@ -278,7 +278,7 @@ describe('RateLimitService', () => {
     service.getState()
   })
 
-  it('uses only hydrated memory snapshots during an automated full cycle', async () => {
+  it('re-hydrates through the bounded host before an automated full cycle', async () => {
     const service = new RateLimitService()
     const codexResolver = vi.fn(() => '/managed/codex')
     const codexCommandResolver = vi.fn(() => '/managed/bin/codex')
@@ -311,17 +311,31 @@ describe('RateLimitService', () => {
       service as unknown as { fetchAll(options?: { force?: boolean }): Promise<void> }
     ).fetchAll()
 
-    expect(codexResolver).not.toHaveBeenCalled()
-    expect(codexCommandResolver).not.toHaveBeenCalled()
-    expect(claudeResolver).not.toHaveBeenCalled()
-    expect(hydrateHiddenRateLimitPtyCwd).not.toHaveBeenCalled()
-    expect(hydrateCodexCredentialSnapshot).not.toHaveBeenCalled()
-    expect(hydrateClaudeOAuthCredentialSnapshot).not.toHaveBeenCalled()
-    expect(hydrateClaudeLegacyOAuthCredentialSnapshot).not.toHaveBeenCalled()
-    expect(hydrateGeminiOAuthPreparationSnapshot).not.toHaveBeenCalled()
-    expect(refreshKimiCredentialSnapshot).not.toHaveBeenCalled()
-    expect(refreshGrokAuthSnapshot).not.toHaveBeenCalled()
-    expect(hydrateMiniMaxSessionCookie).not.toHaveBeenCalled()
+    // Why: status IPC stays memory-only, but a fetch must see credentials an external
+    // CLI rotated since launch — otherwise a rotated token strands usage on 401 all session.
+    expect(codexResolver).toHaveBeenCalled()
+    expect(claudeResolver).toHaveBeenCalled()
+    expect(hydrateHiddenRateLimitPtyCwd).toHaveBeenCalled()
+    expect(hydrateCodexCredentialSnapshot).toHaveBeenCalled()
+    expect(hydrateClaudeOAuthCredentialSnapshot).toHaveBeenCalled()
+    expect(hydrateGeminiOAuthPreparationSnapshot).toHaveBeenCalled()
+    expect(refreshKimiCredentialSnapshot).toHaveBeenCalled()
+    expect(refreshGrokAuthSnapshot).toHaveBeenCalled()
+    expect(hydrateMiniMaxSessionCookie).toHaveBeenCalled()
+  })
+
+  it('keeps serving status from memory when cycle re-hydration fails', async () => {
+    const service = new RateLimitService()
+    vi.mocked(fetchClaudeRateLimits).mockResolvedValue(okProvider('claude', 10))
+    vi.mocked(fetchCodexRateLimits).mockResolvedValue(okProvider('codex', 10))
+
+    await service.hydrateSnapshots()
+    vi.mocked(hydrateMiniMaxSessionCookie).mockRejectedValueOnce(new Error('host unavailable'))
+
+    await expect(
+      (service as unknown as { fetchAll(): Promise<void> }).fetchAll()
+    ).resolves.toBeUndefined()
+    expect(fetchClaudeRateLimits).toHaveBeenCalled()
   })
 
   it('refreshes Grok without refreshing other providers', async () => {
@@ -459,11 +473,11 @@ describe('RateLimitService', () => {
     expect(fetchCodexRateLimits).not.toHaveBeenCalled()
 
     window.emit('focus')
-    await Promise.resolve()
-    await Promise.resolve()
 
-    expect(fetchClaudeRateLimits).toHaveBeenCalledTimes(1)
-    expect(fetchCodexRateLimits).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(fetchClaudeRateLimits).toHaveBeenCalledTimes(1)
+      expect(fetchCodexRateLimits).toHaveBeenCalledTimes(1)
+    })
 
     service.stop()
   })

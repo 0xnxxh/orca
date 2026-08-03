@@ -996,7 +996,7 @@ describe('fetchClaudeRateLimits', () => {
     )
   })
 
-  it('does not re-read credentials after CLI repair during polling', async () => {
+  it('re-reads credentials and retries OAuth once after CLI repair', async () => {
     const configDir = '/Users/test/.claude'
     const authPreparation: ClaudeRuntimeAuthPreparation = {
       configDir,
@@ -1017,24 +1017,44 @@ describe('fetchClaudeRateLimits', () => {
       // Legacy item absent — the stale-scoped legacy fallback must not preempt
       // CLI repair in this scenario.
       .mockResolvedValueOnce(null)
-    netFetchMock.mockResolvedValueOnce(
-      new Response(
+      .mockResolvedValueOnce(
         JSON.stringify({
-          error: {
-            type: 'authentication_error',
-            message: 'Invalid OAuth token.'
+          claudeAiOauth: {
+            accessToken: 'repaired-oauth-token',
+            refreshToken: 'refresh-token-2',
+            expiresAt: Date.now() + 60_000
           }
-        }),
-        { status: 401 }
+        })
       )
-    )
+    netFetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              type: 'authentication_error',
+              message: 'Invalid OAuth token.'
+            }
+          }),
+          { status: 401 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            five_hour: { utilization: 14 },
+            seven_day: { utilization: 27 }
+          }),
+          { status: 200 }
+        )
+      )
 
     await expect(fetchClaudeRateLimits({ authPreparation })).resolves.toMatchObject({
       provider: 'claude',
       status: 'ok',
-      session: { usedPercent: 56 },
+      session: { usedPercent: 14 },
+      weekly: { usedPercent: 27 },
       usageMetadata: {
-        source: 'cli',
+        source: 'oauth',
         attemptedSources: ['oauth', 'cli'],
         credentialSource: 'scoped-keychain'
       }
@@ -1043,8 +1063,15 @@ describe('fetchClaudeRateLimits', () => {
     expect(fetchViaPty).toHaveBeenCalledWith(
       expect.objectContaining({ authPreparation: expect.objectContaining(authPreparation) })
     )
-    expect(netFetchMock).toHaveBeenCalledTimes(1)
-    expect(readActiveClaudeKeychainCredentialsStrict).toHaveBeenCalledTimes(2)
+    expect(netFetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.anthropic.com/api/oauth/usage',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer repaired-oauth-token'
+        })
+      })
+    )
   })
 
   it('explains auth failures when a live Claude terminal owns managed refresh', async () => {
