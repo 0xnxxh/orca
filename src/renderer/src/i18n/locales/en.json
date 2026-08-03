@@ -28,6 +28,10 @@
       "certificateChallengeChanged": "The certificate request changed. Retry the page and review the new warning.",
       "certificateChallengeUnavailable": "This certificate request is no longer available. Retry the page to request a new one.",
       "certificateProceedFailed": "Orca could not approve this certificate request. Retry the page and try again."
+    },
+    "guestRecovery": {
+      "title": "Browser page stopped",
+      "failed": "The browser page stopped unexpectedly. Retry to restore it."
     }
   },
   "settings": {
@@ -2532,7 +2536,9 @@
             "selectedForDeletionCount": "Selected for deletion: {{value0}}",
             "deleteButtonCount": "Delete {{value0}}",
             "archivedStatus": "Archived",
-            "readyStatus": "Ready"
+            "readyStatus": "Ready",
+            "f637f63882": "Resource Manager counts {{value0}}; this list found {{value1}}. That counter reads Orca's activity record alone, while this scan also checks each workspace's git history and skips disconnected remotes.",
+            "74f6c16279": "Back"
           },
           "backgroundRemoval": {
             "removed": "Removed workspaces: {{value0}}",
@@ -2579,6 +2585,16 @@
             "dirtyFilesBlocker": "Changed files",
             "unknownBaseBlocker": "Could not verify unpushed commits",
             "dismissedBlocker": "Ignored"
+          },
+          "workspace": {
+            "cleanup": {
+              "candidate": {
+                "row": {
+                  "b5d2b33e47": "Deleting…",
+                  "e1135728e3": "Queued for deletion"
+                }
+              }
+            }
           }
         }
       },
@@ -4752,7 +4768,8 @@
               "905fc8efac": "Git already removed this workspace. Use Force Delete to clear it from Orca.",
               "0899ebdb28": "Git already forgot this workspace, but its directory is still on disk. Use Force Delete to remove the orphaned directory.",
               "locked": "This workspace is locked by Git. Run git worktree unlock <worktree-path> from its repository, then retry deletion.",
-              "lockedReason": "This workspace is locked by Git. Git reported: {{value0}}. Run git worktree unlock <worktree-path> from its repository, then retry deletion."
+              "lockedReason": "This workspace is locked by Git. Git reported: {{value0}}. Run git worktree unlock <worktree-path> from its repository, then retry deletion.",
+              "unstoppedPty": "Orca could not confirm every terminal in this workspace has exited, so it stopped before deleting any files. Use Force Delete to remove it anyway."
             }
           }
         },
@@ -7179,7 +7196,12 @@
           "4a342f44c1": "Advanced Connection",
           "e9609ddca6": "Proxy, jump host, and connection reuse",
           "8c922dffba": "Reuse SSH connection for faster setup",
-          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions."
+          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions.",
+          "editTitle": "Edit SSH host",
+          "addTitle": "Add SSH host",
+          "editDescription": "Update connection details for this machine. Changes apply on next connect.",
+          "addDescription": "Add a persistent machine you can log into over SSH.",
+          "editingPrefix": "Editing"
         },
         "TasksPane": {
           "f71d8a9dd3": "Task Providers",
@@ -11319,9 +11341,14 @@
             "jumpToOriginalPane": "Jump to Original Pane",
             "worktree": "Worktree",
             "jumpToWorktree": "Jump to Worktree",
+            "prompt": "Prompt",
             "firstPrompt": "First prompt",
+            "recentPrompt": "Recent prompt",
             "firstPromptCopied": "First prompt copied",
+            "recentPromptCopied": "Recent prompt copied",
             "copyFirstPrompt": "Copy first prompt",
+            "copyRecentPrompt": "Copy recent prompt",
+            "copyPrompt": "Copy prompt",
             "copied": "Copied",
             "copy": "Copy",
             "noFirstPromptAvailable": "No first prompt available",
@@ -14448,6 +14475,18 @@
         "title": "Workspace created from a local base",
         "description": "The remote-tracking ref \"{{value0}}\" was unavailable, so Orca used local \"{{value1}}\" instead. This workspace may not include the latest remote changes.",
         "dismiss": "Got it"
+      },
+      "LinuxPackageInstallRecoveryCard": {
+        "e3de29c86a": "Show Package",
+        "3da99454c6": "Try Automatic Install Again",
+        "55c86654b7": "Copy Install Command",
+        "53e1559f99": "Automatic Install Failed",
+        "a7ac6ec78b": "Orca downloaded the update but could not install the system package automatically.",
+        "82c6dbea00": "Copy the command and run it in a system terminal on the computer where Orca is installed. After it finishes, quit and reopen Orca to run the new version.",
+        "53c4b8e148": "No usable authentication agent answered the privileged install request.",
+        "c732bcbf8f": "Checking package...",
+        "aa57fa4f80": "Command copied. Run it in a system terminal to install {{value0}}, then quit and reopen Orca.",
+        "b7e7c5bc95": "Orca checks the downloaded file against the release metadata at the moment it builds this command. The system package itself is not signature-checked, and Orca cannot vouch for the file after that point."
       },
       "pr-check-counts": {
         "passingChip": "{{value0}} passing",

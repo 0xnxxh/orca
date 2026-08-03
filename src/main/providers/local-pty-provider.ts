@@ -69,6 +69,10 @@ import {
   createPtySlaveEchoProbe,
   readPtySlavePath
 } from '../../shared/pty-slave-line-discipline-echo'
+import {
+  expandWindowsEnvironmentVariables,
+  expandWindowsPathEnvironmentVariables
+} from '../../shared/windows-environment-expansion'
 
 const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_PANE_KEY',
@@ -162,12 +166,17 @@ function promoteAgentTeamsShimPath(
   if (!env.ORCA_AGENT_TEAMS_TEAM_ID || !requestedPath) {
     return
   }
-  const shimDir = requestedPath.split(delimiter)[0]
+  const normalizedRequestedPath =
+    process.platform === 'win32'
+      ? expandWindowsEnvironmentVariables(requestedPath, env)
+      : requestedPath
+  const pathDelimiter = process.platform === 'win32' ? ';' : delimiter
+  const shimDir = normalizedRequestedPath.split(pathDelimiter)[0]
   if (!shimDir) {
     return
   }
-  const currentParts = env.PATH?.split(delimiter).filter(Boolean) ?? []
-  env.PATH = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(delimiter)
+  const currentParts = env.PATH?.split(pathDelimiter).filter(Boolean) ?? []
+  env.PATH = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(pathDelimiter)
 }
 
 /**
@@ -364,9 +373,12 @@ function cancelAllPendingLocalPtySpawns(): void {
 /**
  * Normalizes renderer session ids that should be reused for local PTY reattach.
  */
-function normalizeLocalCallerSessionId(sessionId: string | undefined): string | null {
+function normalizeLocalCallerSessionId(
+  sessionId: string | undefined,
+  allowNumeric = false
+): string | null {
   const requested = sessionId?.trim()
-  if (!requested || /^\d+$/.test(requested)) {
+  if (!requested || (!allowNumeric && /^\d+$/.test(requested))) {
     return null
   }
   return requested
@@ -520,7 +532,7 @@ export class LocalPtyProvider implements IPtyProvider {
    * Windows launches can pre-deliver startup commands in argv, so the stdin fallback only runs when needed.
    */
   async spawn(args: PtySpawnOptions): Promise<PtySpawnResult> {
-    const reattachId = normalizeLocalCallerSessionId(args.sessionId)
+    const reattachId = normalizeLocalCallerSessionId(args.sessionId, args.attachOnly === true)
     if (reattachId) {
       const pendingShutdown = ptyShutdownOperations.get(reattachId)
       if (pendingShutdown) {
@@ -530,6 +542,9 @@ export class LocalPtyProvider implements IPtyProvider {
       if (existing) {
         return existing
       }
+    }
+    if (args.attachOnly) {
+      throw new Error(`Session not found: ${args.sessionId ?? ''}`)
     }
     const id = allocatePtyId(reattachId ?? undefined)
     const incarnationId = randomUUID()
@@ -793,6 +808,7 @@ export class LocalPtyProvider implements IPtyProvider {
         shellReadyLaunch = args.command ? shellLaunch : null
       }
     }
+    expandWindowsPathEnvironmentVariables(finalEnv)
     promoteAgentTeamsShimPath(finalEnv, args.env?.PATH)
 
     // Why: worktree-scoped HISTFILE — without it worktrees share one global history (terminal-history-scope-design §7–§10).
