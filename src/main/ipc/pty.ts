@@ -5699,7 +5699,7 @@ export function registerPtyHandlers(
       if (pendingRuntimeCreate) {
         await pendingRuntimeCreate.promise
       }
-      const earlyProvider = getProvider(args.connectionId)
+      const provider = getProvider(args.connectionId)
       const earlyExecutionRuntime = getPaneSpawnExecutionRuntimeId({
         connectionId: args.connectionId,
         cwd
@@ -5707,7 +5707,7 @@ export function registerPtyHandlers(
       const earlyPathFlavor = resolvePaneSpawnReservationPathFlavor({
         connectionId: args.connectionId,
         executionRuntime: earlyExecutionRuntime,
-        remotePathFlavor: earlyProvider.getExecutionHostPathFlavor?.()
+        remotePathFlavor: provider.getExecutionHostPathFlavor?.()
       })
       const earlyStablePaneOwner =
         earlyPaneKey && args.worktreeId
@@ -5736,7 +5736,6 @@ export function registerPtyHandlers(
         if (!earlyStablePaneOwner) {
           await assertFolderWorkspacePtyPathUsable(args.worktreeId)
         }
-        const provider = earlyProvider
         const preAdoptedStablePane =
           earlyStablePaneOwner && earlyWorktreeId
             ? await adoptStablePane({
