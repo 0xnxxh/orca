@@ -58,6 +58,27 @@ describe('useMobileLocaleReload', () => {
     expect(reloadAppAsync).toHaveBeenCalledTimes(2)
   })
 
+  it('bounds retries when the native reload keeps rejecting', async () => {
+    reloadAppAsync.mockRejectedValue(new Error('reload unavailable'))
+    await act(async () => {
+      renderer = create(createElement(Harness))
+    })
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+    }
+
+    expect(reloadAppAsync).toHaveBeenCalledTimes(3)
+
+    localeState.current = [{ languageTag: 'ja-JP' }]
+    await act(async () => {
+      renderer?.update(createElement(Harness))
+    })
+    expect(reloadAppAsync).toHaveBeenCalledTimes(4)
+  })
+
   it('retries a rejected request after locale preferences change while it is pending', async () => {
     let rejectReload!: (error: Error) => void
     reloadAppAsync.mockImplementationOnce(
