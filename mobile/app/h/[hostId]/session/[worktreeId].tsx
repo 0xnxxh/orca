@@ -115,6 +115,7 @@ import {
   loadTerminalAccessoryLayout
 } from '../../../../src/terminal/terminal-accessory-layout'
 import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/terminal-live-accessory-input'
+import { TerminalLiveInputField } from '../../../../src/terminal/terminal-live-input-field'
 import { sendTerminalLiveAccessoryRawBytes } from '../../../../src/terminal/terminal-live-accessory-raw-send'
 import {
   clearTerminalLiveInputFocusTimer,
@@ -5006,11 +5007,11 @@ export default function SessionScreen() {
                       onDictationPressOut={handleDictationPressOut}
                       onDictationCancel={cancelDictation}
                     />
-                    <TextInput
+                    <TerminalLiveInputField
                       ref={liveInputRef}
                       style={styles.liveInputCapture}
                       value={liveInputCapture}
-                      onChangeText={handleLiveInputChange}
+                      onChange={handleLiveInputChange}
                       onKeyPress={handleLiveInputKeyPress}
                       onSubmitEditing={handleLiveInputSubmit}
                       placeholder=""
