@@ -387,12 +387,22 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     params: SendParams,
     handler: async (
       params,
-      { runtime, orchestrationCapability, legacyCoordinatorRunId, revalidateLegacyCoordinator }
+      {
+        runtime,
+        orchestrationCapability,
+        legacyCoordinatorRunId,
+        revalidateLegacyCoordinator,
+        orchestrationCompatibilityCallerAuthority
+      }
     ) => {
       const db = runtime.getOrchestrationDb()
       const from = params.from ?? 'unknown'
-      // Why: caller-supplied pane fields are only compatibility metadata; lifecycle authority uses the runtime-observed pane plus capability.
-      const senderPaneKey = runtime.getTerminalPaneKey(from) ?? undefined
+      const attestedCaller =
+        orchestrationCompatibilityCallerAuthority?.terminalHandle === from
+          ? orchestrationCompatibilityCallerAuthority
+          : undefined
+      // Why: attested hook identity survives graph remount; caller params never supply lifecycle authority.
+      const senderPaneKey = attestedCaller?.paneKey ?? runtime.getTerminalPaneKey(from) ?? undefined
       const remoteAttachment = senderPaneKey
         ? db.findActiveRemoteAttachmentForPane(senderPaneKey)
         : undefined
@@ -582,7 +592,10 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
             dispatchId: dispatch.id,
             capability: orchestrationCapability,
             paneKey: senderPaneKey,
-            processIncarnation: runtime.getTerminalProcessIncarnation(from) ?? undefined
+            processIncarnation:
+              attestedCaller?.processIncarnation ??
+              runtime.getTerminalProcessIncarnation(from) ??
+              undefined
           })
           if (!authority.valid) {
             const rejection =
