@@ -154,7 +154,13 @@ export async function runSourceControlAgentActionStart({
     })
   )
   if (saveTarget && onSaveAgentDefault && !launchRecipeAlreadySaved) {
-    await onSaveAgentDefault(saveTarget, actionId, launchRecipe)
+    try {
+      await onSaveAgentDefault(saveTarget, actionId, launchRecipe)
+    } catch (error) {
+      // Why: the prompt already reached the agent; a failed recipe save must not strand the
+      // caller's accepted-launch bookkeeping (neither onLaunched nor onLaunchAborted would fire).
+      console.error('onSaveAgentDefault failed', error)
+    }
   }
   onLaunched?.()
   onClose()

@@ -1,4 +1,5 @@
-import type { PRComment } from '../../../../shared/types'
+import type { PRComment, PRInfo } from '../../../../shared/types'
+import type { HostedReviewInfo } from '../../../../shared/hosted-review'
 import { getPRCommentGroupRoot, type PRCommentGroup } from '@/lib/pr-comment-groups'
 import { isResolvablePRCommentGroup } from '../pr-comments-resolution-prompt'
 import {
@@ -102,13 +103,17 @@ export function resolvePRReviewReplyThreadId(args: {
   if (!args.parent.path) {
     return undefined
   }
-  const sibling = args.existingComments.find(
-    (comment) =>
-      Boolean(comment.threadId) &&
+  const siblingThreadIds = new Set(
+    args.existingComments.flatMap((comment) =>
+      comment.threadId &&
       comment.path === args.parent.path &&
       (args.parent.line == null || comment.line === args.parent.line)
+        ? [comment.threadId]
+        : []
+    )
   )
-  return sibling?.threadId
+  // Why: several threads on one file give no reliable parent; a wrong threadId misfiles the reply.
+  return siblingThreadIds.size === 1 ? [...siblingThreadIds][0] : undefined
 }
 
 /**
@@ -290,17 +295,47 @@ async function postInThreadFixingReply(
   return replyOk
 }
 
-/** Durable pending ack payload so dialog close / re-renders cannot drop it before launch. */
-let pendingAiCommentAck: unknown = null
+/** Snapshotted at queue time so the post-launch ack does not depend on live React state. */
+export type PendingPRCommentAiAckGithubTarget = {
+  repoPath: string
+  repoId: string
+  prNumber: number
+  prRepo: NonNullable<PRInfo['prRepo']>
+}
 
-export function setPendingPRCommentAiAck<T>(payload: T): void {
+/** What a queued comment-resolution launch must still ack once its prompt is delivered. */
+export type PendingPRCommentAiAck = {
+  reviewContextKey: string
+  provider: HostedReviewInfo['provider']
+  selectedThreadIds: string[]
+  selectedGroups: PRCommentGroup[]
+  githubTarget?: PendingPRCommentAiAckGithubTarget
+}
+
+/** Durable pending ack payload so dialog close / re-renders cannot drop it before launch. */
+let pendingAiCommentAck: PendingPRCommentAiAck | null = null
+
+/**
+ * The slot only ever holds an *unclaimed* queue: an accepted launch takes ownership via
+ * takePendingPRCommentAiAck and parks the payload itself. Replacing an unclaimed payload is
+ * how a re-opened composer re-queues, so log it — a clobbered accepted launch would be a bug.
+ */
+export function setPendingPRCommentAiAck(payload: PendingPRCommentAiAck): void {
+  if (pendingAiCommentAck && pendingAiCommentAck !== payload) {
+    console.warn(
+      'Replacing an unclaimed PR comment ack payload',
+      pendingAiCommentAck.reviewContextKey,
+      '->',
+      payload.reviewContextKey
+    )
+  }
   pendingAiCommentAck = payload
 }
 
-export function takePendingPRCommentAiAck<T>(): T | null {
+export function takePendingPRCommentAiAck(): PendingPRCommentAiAck | null {
   const payload = pendingAiCommentAck
   pendingAiCommentAck = null
-  return (payload as T | null) ?? null
+  return payload
 }
 
 export function clearPendingPRCommentAiAck(): void {

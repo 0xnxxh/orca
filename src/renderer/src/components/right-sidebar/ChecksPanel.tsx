@@ -90,6 +90,10 @@ import {
   setPendingPRCommentAiAck,
   takePendingPRCommentAiAck
 } from './pr-comments-ai-launch-ack'
+import type {
+  PendingPRCommentAiAck,
+  PendingPRCommentAiAckGithubTarget
+} from './pr-comments-ai-launch-ack'
 import { parseGitHubIssueOrPRLink } from '../../../../shared/github-links'
 import { startFixChecksAgent } from '@/lib/fix-checks-agent-launch'
 import type {
@@ -250,27 +254,13 @@ function buildChecksPanelEligibilityGitFingerprint(input: {
   })
 }
 
-type ChecksCommentResolutionGithubTarget = {
-  repoPath: string
-  repoId: string
-  prNumber: number
-  prRepo: NonNullable<PRInfo['prRepo']>
-}
-
 type ChecksAgentComposerState = {
   actionId: SourceControlLaunchActionId
   title: string
   description: string
   prompt: string
   launchSource: 'conflict_resolution' | 'task_page'
-  commentResolution?: {
-    reviewContextKey: string
-    provider: ChecksPanelReview['provider']
-    selectedThreadIds: string[]
-    selectedGroups: PRCommentGroup[]
-    /** Snapshotted at queue time so post-launch reply does not depend on live React state. */
-    githubTarget?: ChecksCommentResolutionGithubTarget
-  }
+  commentResolution?: PendingPRCommentAiAck
 }
 type ChecksPanelReviewHeaderProps = {
   review: ChecksPanelReview
@@ -713,11 +703,13 @@ export default function ChecksPanel(): React.JSX.Element {
     setCreatePrError(null)
     setIsPublishingBranch(false)
     setAgentComposerState(null)
-    pendingCommentResolutionRef.current = null
-    claimedCommentResolutionRef.current = null
-    commentResolutionLaunchAcceptedRef.current = false
-    setCommentResolutionAckBusyNow(false)
-    clearPendingPRCommentAiAck()
+    // Why: an accepted launch owns its snapshotted payload; only unaccepted queues drop here.
+    if (!commentResolutionLaunchAcceptedRef.current) {
+      pendingCommentResolutionRef.current = null
+      claimedCommentResolutionRef.current = null
+      setCommentResolutionAckBusyNow(false)
+      clearPendingPRCommentAiAck()
+    }
     setHostedReviewCreationSnapshot(null)
     setHardRefreshError(null)
     setGitStatusSnapshot(null)
@@ -3058,7 +3050,7 @@ export default function ChecksPanel(): React.JSX.Element {
               prRepo: pr.prRepo
             }
           : undefined
-      const githubTargetFromUrl = ((): ChecksCommentResolutionGithubTarget | undefined => {
+      const githubTargetFromUrl = ((): PendingPRCommentAiAckGithubTarget | undefined => {
         if (activeReview.provider !== 'github' || githubTargetFromPr) {
           return undefined
         }
@@ -3101,7 +3093,7 @@ export default function ChecksPanel(): React.JSX.Element {
           githubTarget && activeReview.provider === 'github'
             ? translate(
                 'auto.components.right.sidebar.ChecksPanel.ed3f79c031',
-                'Review the prompt before starting an agent. After launch, Orca replies to the selected comments and resolves host threads when possible.'
+                'Review the prompt before starting an agent. After the prompt is delivered, Orca replies to the selected comments and resolves host threads when possible.'
               )
             : translate(
                 'auto.components.right.sidebar.ChecksPanel.abf59262fb',
@@ -3319,9 +3311,7 @@ export default function ChecksPanel(): React.JSX.Element {
    * Posts nothing — fixing replies and resolves are irreversible and wait for delivery.
    */
   const claimPendingCommentResolutionForLaunch = useCallback((): void => {
-    const pendingResolution =
-      takePendingPRCommentAiAck<NonNullable<ChecksAgentComposerState['commentResolution']>>() ??
-      pendingCommentResolutionRef.current
+    const pendingResolution = takePendingPRCommentAiAck() ?? pendingCommentResolutionRef.current
     pendingCommentResolutionRef.current = null
     if (!pendingResolution) {
       return
@@ -3347,7 +3337,7 @@ export default function ChecksPanel(): React.JSX.Element {
   const consumeClaimedCommentResolutionAfterDelivery = useCallback((): void => {
     const resolution =
       claimedCommentResolutionRef.current ??
-      takePendingPRCommentAiAck<NonNullable<ChecksAgentComposerState['commentResolution']>>() ??
+      takePendingPRCommentAiAck() ??
       pendingCommentResolutionRef.current
     claimedCommentResolutionRef.current = null
     pendingCommentResolutionRef.current = null

@@ -2018,13 +2018,14 @@ function PRCommentGroupView({
 }): React.JSX.Element {
   // Reply targets a specific comment id so any comment in a thread — root or
   // nested reply — can be replied to, not just the thread root.
-  const renderReplyComposer = (comment: PRComment): React.ReactNode =>
+  const renderReplyComposer = (comment: PRComment, nested = false): React.ReactNode =>
     replyingCommentId === comment.id && onReply ? (
       <div
         className={cn(
           'px-3 pb-2',
-          // Why: nest the composer under the parent the same way GitHub nests thread replies.
-          group.kind === 'thread' && 'ml-3 border-l-2 border-border/50 pl-3'
+          // Why: nest the composer under the parent the same way GitHub nests thread replies —
+          // the replies container already draws that rail, so only the root composer adds one.
+          group.kind === 'thread' && !nested && 'ml-3 border-l-2 border-border/50 pl-3'
         )}
       >
         <RightPanelCommentComposer
@@ -2101,7 +2102,7 @@ function PRCommentGroupView({
                   isQueued={false}
                   onReply={startReply}
                 />
-                {renderReplyComposer(reply)}
+                {renderReplyComposer(reply, true)}
               </React.Fragment>
             ))}
           </div>

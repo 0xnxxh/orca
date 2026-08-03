@@ -284,4 +284,77 @@ describe('runSourceControlAgentActionStart', () => {
     expect(mocks.onLaunched).toHaveBeenCalledTimes(1)
     expect(mocks.onClose).toHaveBeenCalledTimes(1)
   })
+
+  // Why: the onStart branch never awaits a delivery result, so acceptance is terminal there.
+  it('accepts an onStart launch and never aborts it', async () => {
+    const onLaunchAccepted = vi.fn()
+    const onLaunchAborted = vi.fn()
+    const onStart = vi.fn().mockResolvedValue(true)
+
+    await expect(
+      runSourceControlAgentActionStart(
+        buildArgs({
+          onStart,
+          worktreeId: undefined,
+          groupId: undefined,
+          onLaunchAccepted,
+          onLaunchAborted
+        })
+      )
+    ).resolves.toBe(true)
+
+    expect(onLaunchAccepted).toHaveBeenCalledTimes(1)
+    expect(onLaunchAborted).not.toHaveBeenCalled()
+    expect(mocks.onLaunched).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports neither callback when onStart declines the launch', async () => {
+    const onLaunchAccepted = vi.fn()
+    const onLaunchAborted = vi.fn()
+    const onStart = vi.fn().mockResolvedValue(false)
+
+    await expect(
+      runSourceControlAgentActionStart(
+        buildArgs({
+          onStart,
+          worktreeId: undefined,
+          groupId: undefined,
+          onLaunchAccepted,
+          onLaunchAborted
+        })
+      )
+    ).resolves.toBe(false)
+
+    expect(onLaunchAccepted).not.toHaveBeenCalled()
+    expect(onLaunchAborted).not.toHaveBeenCalled()
+  })
+
+  // Why: a rejected recipe save after acceptance would otherwise strand the caller with
+  // neither onLaunched nor onLaunchAborted, permanently disabling the action.
+  it('completes the launch when saving the agent default rejects', async () => {
+    const onLaunchAborted = vi.fn()
+    const originalConsole = console
+    const consoleError = vi.fn()
+    vi.stubGlobal('console', { ...originalConsole, error: consoleError })
+    mocks.onSaveAgentDefault.mockRejectedValue(new Error('settings not loaded'))
+    mocks.launchAgentInNewTab.mockReturnValue({
+      tabId: 'tab-1',
+      startupPlan: {} as never,
+      pasteDraftAfterLaunch: true,
+      promptDeliveryResult: Promise.resolve({ delivered: true, failureNotified: false })
+    })
+
+    try {
+      await expect(
+        runSourceControlAgentActionStart(buildArgs({ saveTargetValue: 'global', onLaunchAborted }))
+      ).resolves.toBe(true)
+
+      expect(mocks.onSaveAgentDefault).toHaveBeenCalledTimes(1)
+      expect(mocks.onLaunched).toHaveBeenCalledTimes(1)
+      expect(mocks.onClose).toHaveBeenCalledTimes(1)
+      expect(onLaunchAborted).not.toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('console', originalConsole)
+    }
+  })
 })

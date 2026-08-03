@@ -13,6 +13,7 @@ import {
   setPendingPRCommentAiAck,
   takePendingPRCommentAiAck
 } from './pr-comments-ai-launch-ack'
+import type { PendingPRCommentAiAck } from './pr-comments-ai-launch-ack'
 import {
   buildPRCommentBatchConversationReplyBody,
   buildPRCommentConversationReplyBody,
@@ -253,6 +254,26 @@ describe('resolvePRReviewReplyThreadId', () => {
         existingComments: existing
       })
     ).toBe('T_path')
+  })
+
+  it('refuses a path-only match when the file holds several threads', () => {
+    const existing = [
+      comment({ id: 1, threadId: 'T_one', path: 'src/a.ts', line: 3 }),
+      comment({ id: 2, threadId: 'T_two', path: 'src/a.ts', line: 40 })
+    ]
+    expect(
+      resolvePRReviewReplyThreadId({
+        parent: comment({ id: 50, path: 'src/a.ts', line: undefined }),
+        existingComments: existing
+      })
+    ).toBeUndefined()
+    // A line-scoped parent still matches its own thread.
+    expect(
+      resolvePRReviewReplyThreadId({
+        parent: comment({ id: 50, path: 'src/a.ts', line: 40 }),
+        existingComments: existing
+      })
+    ).toBe('T_two')
   })
 })
 
@@ -536,9 +557,15 @@ describe('acknowledgePRCommentsAfterAiLaunch', () => {
   })
 
   it('keeps a durable pending payload across take', () => {
+    const payload: PendingPRCommentAiAck = {
+      reviewContextKey: 'repo::main::owner/repo::12::abc',
+      provider: 'github',
+      selectedThreadIds: ['T1'],
+      selectedGroups: [openThread('T1')]
+    }
     clearPendingPRCommentAiAck()
-    setPendingPRCommentAiAck({ groups: 2 })
-    expect(takePendingPRCommentAiAck<{ groups: number }>()).toEqual({ groups: 2 })
+    setPendingPRCommentAiAck(payload)
+    expect(takePendingPRCommentAiAck()).toBe(payload)
     expect(takePendingPRCommentAiAck()).toBeNull()
   })
 
