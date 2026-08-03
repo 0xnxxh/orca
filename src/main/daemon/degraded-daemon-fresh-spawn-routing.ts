@@ -69,7 +69,9 @@ export class DegradedDaemonFreshSpawnRouter {
     const mapped = opts.sessionId ? this.sessionProviders.get(opts.sessionId) : undefined
     const target = mapped ?? this.target
     const result = await target.spawn(opts)
-    this.sessionProviders.set(result.id, target)
+    if (!result.exitedBeforeSpawnReply) {
+      this.sessionProviders.set(result.id, target)
+    }
     return result
   }
 }

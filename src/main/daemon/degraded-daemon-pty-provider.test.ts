@@ -292,6 +292,28 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(probeCurrentDaemonSpawn).toHaveBeenCalledOnce()
   })
 
+  it('does not retain recovered daemon ownership after exit beats the spawn reply', async () => {
+    const current = createDaemonAdapter('daemon')
+    const provider = new DegradedDaemonPtyProvider({
+      current,
+      legacy: [],
+      fallback: createProvider('fallback'),
+      probeCurrentDaemonSpawn: vi.fn(async () => true)
+    })
+    vi.mocked(current.spawn).mockImplementation(async () => {
+      current.emitExit('daemon-fast-exit', 0)
+      return { id: 'daemon-fast-exit', exitedBeforeSpawnReply: true }
+    })
+
+    await provider.recoverFreshSpawnRouting()
+    await expect(provider.spawn({ cols: 80, rows: 24 })).resolves.toMatchObject({
+      id: 'daemon-fast-exit',
+      exitedBeforeSpawnReply: true
+    })
+
+    expect(provider.getCurrentDaemonSessionIds()).toEqual([])
+  })
+
   it('routes a previously daemon-backed id to fallback after daemon exit removes the mapping', async () => {
     const current = createDaemonAdapter('daemon', ['daemon-session'])
     const fallback = createProvider('fallback')
