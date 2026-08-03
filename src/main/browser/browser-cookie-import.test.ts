@@ -234,7 +234,7 @@ describe('importCookiesFromFile', () => {
         httpOnly: true,
         sameSite: 'lax'
       },
-      { domain: '.github.com', name: '_gh_sess', value: 'abc', path: '/', secure: true }
+      { domain: '.github.com', name: '_gh_sess', value: 'abc', path: '/settings', secure: true }
     ])
 
     const result = await importCookiesFromFile(filePath, 'persist:test')
@@ -249,6 +249,7 @@ describe('importCookiesFromFile', () => {
 
     const normalCall = cookiesSetMock.mock.calls.map((c) => c[0]).find((c) => c.name === '_gh_sess')
     expect(normalCall.domain).toBe('.github.com')
+    expect(normalCall.path).toBe('/settings')
   })
 
   it('rejects non-JSON files', async () => {
