@@ -204,6 +204,21 @@ describe('AgentKanbanBoard', () => {
     expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
   })
 
+  it('closes the adjacent terminal instead of turning it into a board dialog', async () => {
+    const agent = card({ paneKey: 'map-agent', conversationName: 'Map agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }))
+    expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+
+    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('terminal-dialog')).toHaveAttribute('data-open', 'false')
+  })
+
   it('focuses search with Ctrl+K without taking focus from response fields', () => {
     renderBoard([])
     const search = screen.getByLabelText('Search agents')

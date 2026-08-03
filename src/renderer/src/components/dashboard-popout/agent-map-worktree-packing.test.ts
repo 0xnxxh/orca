@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_MAP_WORKTREE_GAP, packAgentMapWorktrees } from './agent-map-worktree-packing'
 
-function circles(): { id: string; x: number; y: number; radius: number }[] {
-  return Array.from({ length: 80 }, (_, index) => ({
+function circles(count = 80): { id: string; x: number; y: number; radius: number }[] {
+  return Array.from({ length: count }, (_, index) => ({
     id: `worktree-${index.toString().padStart(2, '0')}`,
     x: 0,
     y: 0,
@@ -10,12 +10,12 @@ function circles(): { id: string; x: number; y: number; radius: number }[] {
   }))
 }
 
-function measuredCircles(): {
+function measuredCircles(count = 80): {
   worktrees: ReturnType<typeof circles>
   coordinateReads: () => number
 } {
   let reads = 0
-  const worktrees = circles().map(({ id, radius }) => {
+  const worktrees = circles(count).map(({ id, radius }) => {
     let x = 0
     let y = 0
     return {
@@ -75,11 +75,31 @@ describe('packAgentMapWorktrees', () => {
     }
   })
 
+  it('keeps capped large-map packing deterministic and compact', () => {
+    const first = packAgentMapWorktrees(circles(300))
+    const second = packAgentMapWorktrees(circles(300))
+
+    expect(second).toEqual(first)
+    expect(
+      Math.max(...first.map((worktree) => Math.hypot(worktree.x, worktree.y) + worktree.radius))
+    ).toBeLessThan(1_500)
+    let minimumGap = Number.POSITIVE_INFINITY
+    for (const [index, worktree] of first.entries()) {
+      for (const other of first.slice(index + 1)) {
+        minimumGap = Math.min(
+          minimumGap,
+          Math.hypot(worktree.x - other.x, worktree.y - other.y) - worktree.radius - other.radius
+        )
+      }
+    }
+    expect(minimumGap).toBeGreaterThanOrEqual(AGENT_MAP_WORKTREE_GAP - 0.001)
+  })
+
   it('bounds deterministic coordinate checks for larger maps', () => {
-    const { worktrees, coordinateReads } = measuredCircles()
+    const { worktrees, coordinateReads } = measuredCircles(300)
 
     packAgentMapWorktrees(worktrees)
 
-    expect(coordinateReads()).toBeLessThan(1_500_000)
+    expect(coordinateReads()).toBeLessThan(14_500_000)
   })
 })

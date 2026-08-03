@@ -239,6 +239,16 @@ export function AgentKanbanBoard({
       setOpenedCard(null)
     }
   }, [])
+  const handleViewChange = useCallback(
+    (nextView: AgentDashboardView) => {
+      if (nextView === view) {
+        return
+      }
+      setOpenedCard(null)
+      setView(nextView)
+    },
+    [view]
+  )
 
   // Seen-state is the app-wide ack map (same signal as the sidebar's bold/mute
   // rows): opening a dialog acks the agent, and the next snapshot comes back
@@ -293,7 +303,7 @@ export function AgentKanbanBoard({
               size="xs"
               aria-pressed={view === 'board'}
               className={cn('h-6 gap-1 px-2', view === 'board' && 'bg-accent')}
-              onClick={() => setView('board')}
+              onClick={() => handleViewChange('board')}
             >
               <Columns3 className="size-3" />
               {translate('dashboardPopout.view.board', 'Dashboard')}
@@ -304,7 +314,7 @@ export function AgentKanbanBoard({
               size="xs"
               aria-pressed={view === 'map'}
               className={cn('h-6 gap-1 px-2', view === 'map' && 'bg-accent')}
-              onClick={() => setView('map')}
+              onClick={() => handleViewChange('map')}
             >
               <Orbit className="size-3" />
               {translate('dashboardPopout.view.map', 'Agent Map')}

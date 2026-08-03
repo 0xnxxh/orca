@@ -1,6 +1,7 @@
 export const AGENT_MAP_WORKTREE_GAP = 10
 
 const PACKING_ANGLE_STEPS = 72
+const MAX_PACKING_CANDIDATE_ANCHORS = 128
 const PACKING_GRID_SIZE = 128
 const SCORE_TOLERANCE = 0.001
 const CENTER_DIRECTIONS = [
@@ -122,6 +123,20 @@ function comparePackingScores(
     : 0
 }
 
+function candidateAnchors(placed: PackableWorktree[]): PackableWorktree[] {
+  if (placed.length <= MAX_PACKING_CANDIDATE_ANCHORS) {
+    return placed
+  }
+  // Boundary rings supply viable contacts; cap them so fleet maps avoid quadratic scans.
+  return [...placed]
+    .sort(
+      (a, b) =>
+        Math.hypot(b.x, b.y) + b.radius - (Math.hypot(a.x, a.y) + a.radius) ||
+        compareStable(a.id, b.id)
+    )
+    .slice(0, MAX_PACKING_CANDIDATE_ANCHORS)
+}
+
 function placePackedWorktree(
   worktree: PackableWorktree,
   placed: PackableWorktree[],
@@ -133,7 +148,7 @@ function placePackedWorktree(
   )
   let best: PackingCandidate | undefined
 
-  for (const anchor of placed) {
+  for (const anchor of candidateAnchors(placed)) {
     const orbit = anchor.radius + worktree.radius + AGENT_MAP_WORKTREE_GAP
     const angleOffset = hashFraction(`${worktree.id}:${anchor.id}`) * Math.PI * 2
     for (let step = 0; step < PACKING_ANGLE_STEPS; step += 1) {
