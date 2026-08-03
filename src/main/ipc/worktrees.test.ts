@@ -9840,9 +9840,28 @@ describe('registerWorktreeHandlers', () => {
     expect(callOrder).toEqual(['preflight', 'kill', 'git'])
   })
 
-  // Why (#11960): --force previously stopped at the same PTY gate as a normal
-  // delete, leaving a workspace with an unprovable PTY unremovable forever.
-  it('forwards force to the PTY gate so a forced delete has an escape hatch', async () => {
+  // Why (#11960): the PTY gate previously had no escape hatch at all, so a
+  // workspace with an unprovable PTY was unremovable forever.
+  it('forwards an explicit Force Delete to the PTY gate', async () => {
+    mockKnownFeatureWorktree()
+    getEffectiveHooksMock.mockReturnValue(null)
+
+    await handlers['worktrees:remove'](null, {
+      worktreeId: 'repo-1::/workspace/feature-wt',
+      force: true,
+      allowUnverifiedPtyStop: true
+    })
+
+    expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(
+      'repo-1::/workspace/feature-wt',
+      expect.objectContaining({ requirePhysicalStop: true, allowUnverifiedStop: true })
+    )
+  })
+
+  // Why (#11960): the ordinary Delete confirmation already sets force:true to skip
+  // the dirty-file prompt. Waiving PTY-stop proof off that signal would silently
+  // disable the gate on the primary delete path.
+  it('keeps the PTY gate strict for a confirmed delete that only sets force', async () => {
     mockKnownFeatureWorktree()
     getEffectiveHooksMock.mockReturnValue(null)
 
@@ -9853,11 +9872,11 @@ describe('registerWorktreeHandlers', () => {
 
     expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(
       'repo-1::/workspace/feature-wt',
-      expect.objectContaining({ requirePhysicalStop: true, allowUnverifiedStop: true })
+      expect.not.objectContaining({ allowUnverifiedStop: true })
     )
   })
 
-  it('keeps the PTY gate strict for a non-forced delete', async () => {
+  it('keeps the PTY gate strict for a plain delete', async () => {
     mockKnownFeatureWorktree()
     getEffectiveHooksMock.mockReturnValue(null)
 

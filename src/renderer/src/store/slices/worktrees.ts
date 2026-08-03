@@ -4017,7 +4017,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? window.api.worktrees.forgetLocal({ worktreeId, hostId })
           : target.kind === 'local'
             ? (removalGenerationGuard?.assertCurrent(),
-              window.api.worktrees.remove({ worktreeId, hostId, force, skipArchive }))
+              window.api.worktrees.remove({
+                worktreeId,
+                hostId,
+                force,
+                allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
+                skipArchive
+              }))
             : (removalGenerationGuard?.assertCurrent(),
               callRuntimeRpc<RemoveWorktreeResult>(
                 target,
@@ -4025,6 +4031,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 {
                   worktree: toRuntimeWorktreeSelector(worktreeId),
                   force,
+                  allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
                   runHooks: !skipArchive
                 },
                 { timeoutMs: 60_000 }

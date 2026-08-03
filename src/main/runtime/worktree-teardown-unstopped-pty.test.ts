@@ -67,9 +67,10 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
   // the sweep budget. Verification must still get far enough to prove absence.
   it('removes the reported wedged automation workspace without --force', async () => {
     const worktreeId = 'repo-1::C:/Users/admin/orca/workspaces/repo/auto-review-run-28'
-    // Slow enough to consume nearly the whole sweep budget, derived so lowering
-    // the default timeout can't silently turn this into an unrelated failure.
-    const listDelayMs = WORKTREE_PROCESS_SWEEP_TIMEOUT_MS - 100
+    // Slow enough that a fixed 2s grace could not absorb it, but far enough from
+    // the budget that the list-completion and timeout timers can't land in the
+    // same tick — a 100ms margin here raced under parallel load.
+    const listDelayMs = WORKTREE_PROCESS_SWEEP_TIMEOUT_MS / 2
     vi.useFakeTimers()
     try {
       const localProvider = createProviderStub(
@@ -109,7 +110,51 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
 
     await expect(
       killAllProcessesForWorktree('w1', { localProvider, requirePhysicalStop: true })
-    ).rejects.toThrow(/w1@@live-1[\s\S]*--force/)
+    ).rejects.toThrow(/still live: w1@@live-1[\s\S]*--force/)
+  })
+
+  // Why: the memory/registry rows this drops are the reason clearStoppedPtyState
+  // exists; commit 3 moved that loop, so pin it before it can silently vanish.
+  it('clears PTY state once a failed stop is proven to have exited', async () => {
+    const localProvider = createProviderStub(async () => [])
+    ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Session not found: stale-1')
+    )
+    listRegisteredPtysMock.mockReturnValue([
+      { ptyId: 'stale-1', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 100 }
+    ])
+    const onPtyStopped = vi.fn()
+
+    await expect(
+      killAllProcessesForWorktree('w1', {
+        localProvider,
+        onPtyStopped,
+        requirePhysicalStop: true
+      })
+    ).resolves.toBeDefined()
+    expect(onPtyStopped).toHaveBeenCalledWith('stale-1')
+  })
+
+  it('names only the PTYs that are actually live, not every failed stop', async () => {
+    const localProvider = createProviderStub(async () => [
+      { id: 'w1@@live-1', cwd: '/tmp/w1', title: 'shell' }
+    ])
+    ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('kill failed')
+    )
+    listRegisteredPtysMock.mockReturnValue([
+      { ptyId: 'w1@@gone-2', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 101 }
+    ])
+
+    const error = await killAllProcessesForWorktree('w1', {
+      localProvider,
+      requirePhysicalStop: true
+    }).then(
+      () => new Error('expected a rejection'),
+      (rejection: Error) => rejection
+    )
+    expect(error.message).toContain('w1@@live-1')
+    expect(error.message).not.toContain('w1@@gone-2')
   })
 
   it('reports unverifiable separately from live when the process list fails', async () => {
