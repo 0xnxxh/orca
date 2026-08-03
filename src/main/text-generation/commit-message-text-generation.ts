@@ -126,6 +126,11 @@ type InternalTextGenerationResult =
       failureOutput?: AgentGenerationFailureOutput
     }
 
+type LocalProcessExecution<T> = {
+  result: Promise<T>
+  processClosed: Promise<void>
+}
+
 export type CommitMessageModelDiscoveryLocalOptions = {
   cwd?: string
   wslDistro?: string
@@ -316,13 +321,18 @@ export async function discoverCommitMessageModelsLocal(
     return toModelDiscoveryCapability(spec)
   }
 
-  const runDiscovery = (): Promise<DiscoverCommitMessageModelsResult> =>
-    new Promise((resolve) => {
+  const startDiscovery = (): LocalProcessExecution<DiscoverCommitMessageModelsResult> => {
+    let markProcessClosed!: () => void
+    const processClosed = new Promise<void>((resolve) => {
+      markProcessClosed = resolve
+    })
+    const result = new Promise<DiscoverCommitMessageModelsResult>((resolve) => {
       let child: ChildProcess
       const spawnEnv = env ?? process.env
       try {
         const planned = planModelDiscovery(spec, agentCommandOverride)
         if (!planned.ok) {
+          markProcessClosed()
           resolve({ success: false, error: planned.error })
           return
         }
@@ -350,6 +360,7 @@ export async function discoverCommitMessageModelsLocal(
           })
         }
       } catch (error) {
+        markProcessClosed()
         console.error('[commit-message] Failed to spawn model discovery:', error)
         resolve({
           success: false,
@@ -374,6 +385,9 @@ export async function discoverCommitMessageModelsLocal(
           timer = null
         }
         detachChildListeners()
+        if (agentId !== 'codex') {
+          markProcessClosed()
+        }
         resolve(result)
       }
       timer = setTimeout(() => {
@@ -397,6 +411,9 @@ export async function discoverCommitMessageModelsLocal(
       const onStdoutData = (chunk: Buffer): void => onData(chunk, (text) => (stdout += text))
       const onStderrData = (chunk: Buffer): void => onData(chunk, (text) => (stderr += text))
       const onError = (error: Error): void => {
+        if (!child.pid) {
+          markProcessClosed()
+        }
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           finish({
             success: false,
@@ -410,6 +427,7 @@ export async function discoverCommitMessageModelsLocal(
         })
       }
       const onClose = (code: number | null): void => {
+        markProcessClosed()
         if (outputLimitExceeded) {
           finish({ success: false, error: `${spec.label} returned too much model data.` })
           return
@@ -423,6 +441,11 @@ export async function discoverCommitMessageModelsLocal(
 
       child.stdout?.on('data', onStdoutData)
       child.stderr?.on('data', onStderrData)
+      if (agentId === 'codex') {
+        // Result publication stays prompt while the home lock follows the
+        // process lifetime after asynchronous timeout/output-limit kills.
+        child.once('close', markProcessClosed)
+      }
       child.on('error', onError)
       child.on('close', onClose)
       detachChildListeners = () => {
@@ -432,16 +455,18 @@ export async function discoverCommitMessageModelsLocal(
         child.off?.('close', onClose)
       }
     })
+    return { result, processClosed }
+  }
 
   if (agentId === 'codex') {
     // Why: discovery spawns a real codex process in the selected home; keep it
     // off an auth.json a quota probe may be refreshing at the same time.
-    return withCodexHomeProcessLock(
+    return runCodexProcessWithHomeLock(
       resolveCodexHomeProcessLockKeyForSpawnEnv(env, options.wslDistro),
-      runDiscovery
+      startDiscovery
     )
   }
-  return runDiscovery()
+  return startDiscovery().result
 }
 
 export async function discoverCommitMessageModelsRemote(
@@ -566,16 +591,21 @@ function buildWslLauncherEnv(explicitEnv: NodeJS.ProcessEnv | undefined): NodeJS
   return env
 }
 
-async function runLocalPlan(
+function runLocalPlan(
   plan: CommitMessagePlan,
   cwd: string,
   env: NodeJS.ProcessEnv | undefined,
   emptyResultName = 'message',
   operation: TextGenerationOperation = 'commit-message',
-  wslDistro?: string
-): Promise<InternalTextGenerationResult> {
+  wslDistro?: string,
+  holdHomeLockUntilClose = false
+): LocalProcessExecution<InternalTextGenerationResult> {
   const { binary, args, stdinPayload, label } = plan
-  return new Promise((resolve) => {
+  let markProcessClosed!: () => void
+  const processClosed = new Promise<void>((resolve) => {
+    markProcessClosed = resolve
+  })
+  const result = new Promise<InternalTextGenerationResult>((resolve) => {
     let child: ChildProcess
     try {
       const spawnEnv = env ?? process.env
@@ -602,6 +632,7 @@ async function runLocalPlan(
         })
       }
     } catch (error) {
+      markProcessClosed()
       if (error instanceof UnsafeWindowsBatchArgumentsError) {
         resolve({
           success: false,
@@ -640,6 +671,9 @@ async function runLocalPlan(
       detachChildListeners()
       if (cancelToken && cancelTokensByLane.get(laneKey) === cancelToken) {
         cancelTokensByLane.delete(laneKey)
+      }
+      if (!holdHomeLockUntilClose) {
+        markProcessClosed()
       }
       resolve(result)
     }
@@ -680,6 +714,9 @@ async function runLocalPlan(
       stderr += chunk.toString('utf-8')
     }
     const onError = (error: Error): void => {
+      if (!child.pid) {
+        markProcessClosed()
+      }
       const code = (error as NodeJS.ErrnoException).code
       if (code === 'ENOENT') {
         finalize({
@@ -695,6 +732,7 @@ async function runLocalPlan(
       })
     }
     const onClose = (code: number | null): void => {
+      markProcessClosed()
       if (canceledByUser) {
         finalize({ success: false, error: 'Generation canceled.', canceled: true })
         return
@@ -718,6 +756,9 @@ async function runLocalPlan(
     }
     child.stdout?.on('data', onStdoutData)
     child.stderr?.on('data', onStderrData)
+    if (holdHomeLockUntilClose) {
+      child.once('close', markProcessClosed)
+    }
     child.on('error', onError)
     child.on('close', onClose)
     detachChildListeners = () => {
@@ -727,8 +768,14 @@ async function runLocalPlan(
       child.off?.('close', onClose)
     }
 
-    child.stdin?.end(stdinPayload ?? undefined)
+    try {
+      child.stdin?.end(stdinPayload ?? undefined)
+    } catch (error) {
+      killProcessTree(child)
+      onError(error instanceof Error ? error : new Error(String(error)))
+    }
   })
+  return { result, processClosed }
 }
 
 type LocalGenerationTarget = Extract<CommitMessageGenerationTarget, { kind: 'local' }>
@@ -740,45 +787,101 @@ function runLocalPlanForAgent(
   emptyResultName: string,
   operation: TextGenerationOperation
 ): Promise<InternalTextGenerationResult> {
-  const run = (): Promise<InternalTextGenerationResult> =>
-    runLocalPlan(plan, target.cwd, target.env, emptyResultName, operation, target.wslDistro)
+  const start = (
+    holdHomeLockUntilClose = false
+  ): LocalProcessExecution<InternalTextGenerationResult> =>
+    runLocalPlan(
+      plan,
+      target.cwd,
+      target.env,
+      emptyResultName,
+      operation,
+      target.wslDistro,
+      holdHomeLockUntilClose
+    )
   if (agentId !== 'codex') {
     // Why: no extra promise hops here — cancellation timing for non-codex
     // agents must stay byte-identical to a direct runLocalPlan call.
-    return run()
+    return start().result
   }
-  return runCodexLocalPlanUnderHomeLock(run, target, operation)
+  return runCodexLocalPlanUnderHomeLock(() => start(true), target, operation)
 }
 
 // Why: codex rewrites rotating OAuth tokens in its home's auth.json; the
 // per-home lock keeps this run from racing Orca's own quota probes there.
-async function runCodexLocalPlanUnderHomeLock(
-  run: () => Promise<InternalTextGenerationResult>,
+function runCodexLocalPlanUnderHomeLock(
+  start: () => LocalProcessExecution<InternalTextGenerationResult>,
   target: LocalGenerationTarget,
   operation: TextGenerationOperation
 ): Promise<InternalTextGenerationResult> {
   const laneKey = localLaneKey(operation, target.cwd)
   let canceledWhileQueued = false
+  let publishResult!: (result: InternalTextGenerationResult) => void
+  let rejectResult!: (error: unknown) => void
+  let resultPublished = false
+  const result = new Promise<InternalTextGenerationResult>((resolve, reject) => {
+    publishResult = (value) => {
+      if (!resultPublished) {
+        resultPublished = true
+        resolve(value)
+      }
+    }
+    rejectResult = reject
+  })
   const queuedCancelToken = (): void => {
     canceledWhileQueued = true
+    publishResult({ success: false, error: 'Generation canceled.', canceled: true })
   }
   // Why: Stop must work while this run waits behind a probe holding the lock.
   cancelTokensByLane.set(laneKey, queuedCancelToken)
-  try {
-    return await withCodexHomeProcessLock(
-      resolveCodexHomeProcessLockKeyForSpawnEnv(target.env, target.wslDistro),
-      async () => {
-        if (canceledWhileQueued) {
-          return { success: false, error: 'Generation canceled.', canceled: true }
-        }
-        return run()
+  void withCodexHomeProcessLock(
+    resolveCodexHomeProcessLockKeyForSpawnEnv(target.env, target.wslDistro),
+    async () => {
+      if (canceledWhileQueued) {
+        publishResult({ success: false, error: 'Generation canceled.', canceled: true })
+        return
       }
-    )
-  } finally {
-    if (cancelTokensByLane.get(laneKey) === queuedCancelToken) {
-      cancelTokensByLane.delete(laneKey)
+      const execution = start()
+      try {
+        publishResult(await execution.result)
+      } catch (error) {
+        if (!resultPublished) {
+          rejectResult(error)
+        }
+      } finally {
+        await execution.processClosed
+      }
     }
-  }
+  )
+    .catch((error: unknown) => {
+      if (!resultPublished) {
+        rejectResult(error)
+      }
+    })
+    .finally(() => {
+      if (cancelTokensByLane.get(laneKey) === queuedCancelToken) {
+        cancelTokensByLane.delete(laneKey)
+      }
+    })
+  return result
+}
+
+function runCodexProcessWithHomeLock<T>(
+  lockKey: string,
+  start: () => LocalProcessExecution<T>
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    void withCodexHomeProcessLock(lockKey, async () => {
+      const execution = start()
+      try {
+        resolve(await execution.result)
+      } catch (error) {
+        reject(error)
+      } finally {
+        await execution.processClosed
+      }
+    }).catch(reject)
+  })
 }
 
 function finalizeFromAgentOutput(args: {

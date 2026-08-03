@@ -219,4 +219,50 @@ describe('fetchCodexRateLimits probe shutdown', () => {
     await expect(second).resolves.toMatchObject({ status: 'ok' })
     await first
   })
+
+  it('keeps the home lock through child errors until the failed probe exits', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const firstChild = makeRpcChild()
+    firstChild.stdin.end = vi.fn()
+    firstChild.kill = vi.fn((signal?: string) => {
+      if (signal === 'SIGKILL') {
+        firstChild.exitCode = 1
+        firstChild.emit('exit', 1, 'SIGKILL')
+      }
+      return true
+    })
+    const secondChild = makeRpcChild()
+    childSpawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild)
+    respondToRpcRateLimitRead(secondChild, {
+      primary: { usedPercent: 3 },
+      secondary: { usedPercent: 4 }
+    })
+
+    try {
+      const first = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: '/managed/home-error'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      firstChild.emit('error', new Error('stdio failed'))
+      const second = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: '/managed/home-error'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(firstChild.kill).toHaveBeenCalledWith('SIGTERM')
+      expect(childSpawnMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(firstChild.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(childSpawnMock).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(first).resolves.toMatchObject({ status: 'error', error: 'stdio failed' })
+      await expect(second).resolves.toMatchObject({ status: 'ok' })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
 })

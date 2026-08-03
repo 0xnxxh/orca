@@ -85,6 +85,25 @@ describe('withCodexHomeProcessLock', () => {
     }
   })
 
+  it('keys a stripped child env to the real default home, not ambient CODEX_HOME', () => {
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = '/nested-orca/managed-home'
+    try {
+      expect(resolveCodexHomeProcessLockKeyForSpawnEnv({ PATH: process.env.PATH })).toBe(
+        resolveCodexHomeProcessLockKey(join(homedir(), '.codex'))
+      )
+      expect(resolveCodexHomeProcessLockKeyForSpawnEnv(undefined)).toBe(
+        resolveCodexHomeProcessLockKey('/nested-orca/managed-home')
+      )
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME
+      } else {
+        process.env.CODEX_HOME = previousCodexHome
+      }
+    }
+  })
+
   it('keys a WSL UNC probe home and a WSL spawn env to the same lock', () => {
     const probeKey = resolveCodexHomeProcessLockKey('\\\\wsl$\\Ubuntu\\home\\user\\.codex')
     const spawnKey = resolveCodexHomeProcessLockKeyForSpawnEnv(
@@ -92,5 +111,24 @@ describe('withCodexHomeProcessLock', () => {
       'Ubuntu'
     )
     expect(spawnKey).toBe(probeKey)
+  })
+
+  it('uses the WSL default sentinel when launcher filtering strips an ambient home', () => {
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = '/host-only/codex-home'
+    try {
+      const inheritedKey = resolveCodexHomeProcessLockKeyForSpawnEnv(
+        { CODEX_HOME: '/host-only/codex-home' },
+        'Ubuntu'
+      )
+      const strippedKey = resolveCodexHomeProcessLockKeyForSpawnEnv({}, 'Ubuntu')
+      expect(inheritedKey).toBe(strippedKey)
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME
+      } else {
+        process.env.CODEX_HOME = previousCodexHome
+      }
+    }
   })
 })

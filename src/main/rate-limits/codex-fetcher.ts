@@ -818,18 +818,21 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
     function onError(err: Error): void {
       const isEnoent = (err as NodeJS.ErrnoException).code === 'ENOENT'
       const isBareCommand = codexCommand === 'codex'
-      settle({
-        provider: 'codex',
-        session: null,
-        weekly: null,
-        updatedAt: Date.now(),
-        error: isEnoent
-          ? isBareCommand
-            ? 'Codex CLI not found'
-            : 'Codex CLI found but could not run — Node.js may not be in your PATH'
-          : withMacTailscaleDnsHint(err.message, stderr),
-        status: isEnoent && isBareCommand ? 'unavailable' : 'error'
-      })
+      settle(
+        {
+          provider: 'codex',
+          session: null,
+          weekly: null,
+          updatedAt: Date.now(),
+          error: isEnoent
+            ? isBareCommand
+              ? 'Codex CLI not found'
+              : 'Codex CLI found but could not run — Node.js may not be in your PATH'
+            : withMacTailscaleDnsHint(err.message, stderr),
+          status: isEnoent && isBareCommand ? 'unavailable' : 'error'
+        },
+        { kill: true }
+      )
     }
 
     function onClose(): void {

@@ -10,6 +10,7 @@ export type TerminatableProbeChild = {
   exitCode: number | null
   signalCode?: NodeJS.Signals | null
   kill: (signal?: NodeJS.Signals) => boolean
+  on: (event: 'error', listener: () => void) => unknown
   once: (event: 'exit' | 'close' | 'error', listener: () => void) => unknown
   off: (event: 'exit' | 'close' | 'error', listener: () => void) => unknown
   stdin?: { end: () => void } | null
@@ -39,14 +40,18 @@ function waitForExit(child: TerminatableProbeChild, timeoutMs: number): Promise<
       }
       child.off('exit', onGone)
       child.off('close', onGone)
-      child.off('error', onGone)
+      child.off('error', onError)
       resolve(exited)
     }
     const onGone = (): void => settle(true)
-    // Why: 'error' covers children that never spawned and so never emit 'exit'.
+    const onError = (): void => {
+      // Keep ChildProcess errors observed, but only exit/close proves it is gone.
+    }
+    // Node emits 'close' after both exit and spawn failure. A later 'error'
+    // alone does not prove a successfully spawned child released auth.json.
     child.once('exit', onGone)
     child.once('close', onGone)
-    child.once('error', onGone)
+    child.on('error', onError)
     timer = setTimeout(() => settle(false), timeoutMs)
   })
 }

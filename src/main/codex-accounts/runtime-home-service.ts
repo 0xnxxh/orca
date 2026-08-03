@@ -739,8 +739,8 @@ export class CodexRuntimeHomeService {
 
     const activeAuthPath = join(activeAccount.managedHomePath, 'auth.json')
     const authAbsence = this.credentialAbsenceGrace.assess(activeAuthPath)
-    if (authAbsence.state === 'missing' || authAbsence.state === 'unreadable') {
-      if (authAbsence.state === 'unreadable' || !authAbsence.durable) {
+    if (authAbsence.state !== 'present') {
+      if (!authAbsence.durable) {
         // Why: mid-rotation reads look missing/unreadable for a moment; skip
         // this sync without deselecting and let a settled read decide later.
         console.warn(
@@ -749,9 +749,11 @@ export class CodexRuntimeHomeService {
         return
       }
       console.warn(
-        '[codex-runtime-home] Active managed account is missing auth.json, restoring system default'
+        '[codex-runtime-home] Active managed account credential is unavailable, restoring system default'
       )
-      if (this.lastSyncedAccountId === activeAccount.id) {
+      // Why: valid credential-free JSON is an explicit logout; never revive it
+      // from stale shared-home bytes while clearing the selection.
+      if (authAbsence.state !== 'no-credential' && this.lastSyncedAccountId === activeAccount.id) {
         outgoingReadBackResult = this.recoverRefreshForMissingActiveAccount(activeAccount)
       }
       this.store.updateSettings({

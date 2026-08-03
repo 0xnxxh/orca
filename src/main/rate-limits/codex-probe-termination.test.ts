@@ -9,11 +9,15 @@ function makeFakeChild() {
     signalCode: null as NodeJS.Signals | null,
     stdin: { end: vi.fn() },
     kill: vi.fn((_signal?: NodeJS.Signals) => true),
+    on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
     off: emitter.off.bind(emitter),
     exit(code = 0) {
       child.exitCode = code
       emitter.emit('exit')
+    },
+    error() {
+      emitter.emit('error', new Error('signal delivery failed'))
     }
   }
   return child
@@ -63,6 +67,22 @@ describe('terminateCodexProbeChild', () => {
     })
 
     await vi.advanceTimersByTimeAsync(CODEX_PROBE_SHUTDOWN_DRAIN_MS + 1_000)
+    await done
+    expect(settled).toBe(true)
+  })
+
+  it('does not treat a child error as proof that the process exited', async () => {
+    const child = makeFakeChild()
+    let settled = false
+    const done = terminateCodexProbeChild(child, { platform: 'linux' }).then(() => {
+      settled = true
+    })
+
+    child.error()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    child.exit()
     await done
     expect(settled).toBe(true)
   })

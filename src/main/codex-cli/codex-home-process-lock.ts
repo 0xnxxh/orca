@@ -19,8 +19,10 @@ export function resolveCodexHomeProcessLockKeyForSpawnEnv(
   env: NodeJS.ProcessEnv | undefined,
   wslDistro?: string | null
 ): string {
-  const codexHome = env?.CODEX_HOME ?? null
   if (wslDistro) {
+    // buildWslLauncherEnv forwards only explicit values that differ from the
+    // host process; all other cases use the distro user's default home.
+    const codexHome = env?.CODEX_HOME !== process.env.CODEX_HOME ? (env?.CODEX_HOME ?? null) : null
     // Why: WSL spawns carry a Linux CODEX_HOME; key it through the same UNC
     // normalization the probe's \\wsl$ home path uses so both lanes collide.
     // Without an explicit home the distro default is unknowable from the host;
@@ -29,7 +31,10 @@ export function resolveCodexHomeProcessLockKeyForSpawnEnv(
       `//wsl$/${wslDistro}${codexHome ?? '/.orca-default-codex-home'}`
     )
   }
-  return resolveCodexHomeProcessLockKey(codexHome)
+  // An explicit env is the child's complete environment. If CODEX_HOME was
+  // deliberately stripped, the child uses ~/.codex regardless of our ambient env.
+  const codexHome = env === undefined ? process.env.CODEX_HOME : env.CODEX_HOME
+  return normalizeRuntimePathForComparison(codexHome ?? join(homedir(), '.codex'))
 }
 
 export function withCodexHomeProcessLock<T>(lockKey: string, fn: () => Promise<T>): Promise<T> {
