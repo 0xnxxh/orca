@@ -29,12 +29,10 @@ vi.mock('../pty-descendant-termination', () => ({
   killWithDescendantSweep: killWithDescendantSweepMock
 }))
 
-// Verbatim from renderer layout-serialization.ts (a main-process test can't
-// import renderer code — keep in sync). This is the variant
-// `reattachReplayResetSequence` picks when the pane still looks like a live
-// agent, which is exactly the stale state a SIGKILLed agent leaves behind: it
+// The variant `reattachReplayResetSequence` picks when the pane still looks like a
+// live agent, which is exactly the stale state a SIGKILLed agent leaves behind: it
 // deliberately OMITS RESET_MOUSE_REPORTING to keep real TUI scroll gestures alive.
-const POST_REPLAY_LIVE_AGENT_REATTACH_RESET = '\x1b[0 q\x1b[<99u\x1b[=0u\x1b[?25h'
+import { POST_REPLAY_LIVE_AGENT_REATTACH_RESET } from '../../shared/terminal-mode-reset-profiles'
 
 const ANY_MOTION_TRACKING_ON = '\x1b[?1003h'
 const SGR_ENCODING_ON = '\x1b[?1006h'
@@ -208,8 +206,11 @@ describe('#12101 mouse tracking survives the death of the process that armed it'
     })
     const revived = shell.getSnapshot()!
 
-    // Reattach paint into a REAL renderer xterm. The pane still carries the dead
-    // agent's status/title, so the renderer picks the live-agent reset variant.
+    // Reattach paint into a REAL renderer xterm, using the weakest profile in the
+    // family — the one a stale agent title used to select here. The renderer now
+    // forces the fresh-shell reset on a cold restore, so this pins the independent
+    // half: the seed alone must leave the revived session unarmed, because the
+    // daemon emulator's own state is what mobile and every other consumer read.
     const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
     try {
       await new Promise<void>((resolve) => term.write('\x1b[2J\x1b[3J\x1b[H', resolve))

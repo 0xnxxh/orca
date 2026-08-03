@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { HeadlessEmulator } from './headless-emulator'
 import { buildRehydrateSequences } from './terminal-mode-rehydrate-sequences'
 import { getRecoveredHistorySeedSegments } from './terminal-history-seed-segments'
+import { COLD_RESTORE_SEED_MODE_RESET } from '../../shared/terminal-mode-reset-profiles'
 import type { ColdRestoreInfo } from './terminal-history-cold-restore-info'
 import type { TerminalModes } from './types'
 
@@ -14,7 +15,9 @@ const ARMED_MODES: TerminalModes = {
   alternateScreen: false
 }
 
-const MOUSE_OFF = '\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l'
+// Why import rather than restate: the exact bytes are pinned in
+// terminal-mode-reset-profiles.test.ts; this suite pins placement within the seed.
+const MOUSE_OFF = COLD_RESTORE_SEED_MODE_RESET
 
 function restoreInfo(overrides: Partial<ColdRestoreInfo> = {}): ColdRestoreInfo {
   return {
