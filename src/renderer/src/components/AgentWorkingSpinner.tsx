@@ -6,7 +6,7 @@ const SPINNER_ANIMATION_NAME = 'agent-spinner-rotate'
 // Why: CSS assigns per-element start times after refs run; anchoring the Web
 // Animation timeline gives late mounts exact phase sync without recurring JS.
 function syncSpinnerPhase(el: HTMLSpanElement | null): void {
-  if (el === null) {
+  if (el === null || typeof el.getAnimations !== 'function') {
     return
   }
 

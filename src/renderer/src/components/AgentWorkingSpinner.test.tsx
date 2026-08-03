@@ -21,6 +21,35 @@ describe('AgentWorkingSpinner', () => {
     expect(markup).toContain('motion-reduce:border-t-yellow-500')
   })
 
+  it('renders when the Web Animations API is unavailable', async () => {
+    const originalGetAnimations = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getAnimations'
+    )
+    Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+      configurable: true,
+      value: undefined
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(<AgentWorkingSpinner />)
+      })
+      expect(container.querySelector('[data-agent-spinner]')).not.toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+      if (originalGetAnimations === undefined) {
+        Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations')
+      } else {
+        Object.defineProperty(HTMLElement.prototype, 'getAnimations', originalGetAnimations)
+      }
+    }
+  })
+
   it('anchors mount and restart animations to the shared document epoch', async () => {
     const animation = {
       animationName: 'agent-spinner-rotate',
