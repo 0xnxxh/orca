@@ -95,9 +95,7 @@ export function recordKeyboardCreatedTerminalPaneSplit(
   return recordCreatedTerminalPaneSplit(createdPane, args)
 }
 
-// Why: bounds the per-code press evidence below so a keydown whose keyup never
-// arrives cannot grow the list without end. Real typing never stacks this many
-// Enter presses before a release.
+// Bounds evidence when Chromium drops a matching keyup.
 const MAX_OBSERVED_ENTER_KEYDOWNS_PER_CODE = 8
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -305,15 +303,7 @@ export function useTerminalKeyboardShortcuts({
         }
       }
     }
-    // Why: the Enter-keyup synthesis below must only service presses whose
-    // keydown the IME swallowed entirely. When a keydown for the same physical
-    // key was observed, release-time modifier state is rollover noise, not a
-    // chord: a plain committing Enter followed by a rolled-over Shift for the
-    // next doubled consonant must not become Shift+Enter. One entry is kept per
-    // press so a rapid second press cannot be left unguarded by the first
-    // release, and each entry keeps its keydown timeStamp so a balancing keyup
-    // (copied from the same native event) does not consume it ahead of the
-    // physical release.
+    // Press evidence distinguishes swallowed keydowns from modifier rollover on keyup.
     const observedEnterKeydownTimeStamps = new Map<string, number[]>()
     const getHeldImeEnterModifier = () =>
       heldImeEnterModifiers.size === 1
@@ -469,9 +459,7 @@ export function useTerminalKeyboardShortcuts({
       // Why: replace stale state only for this physical key so rollover cannot
       // disarm a still-held native-only chord before its Kitty keyup arrives.
       nativeOnlyShortcutTracker.prepareKeyDown(e)
-      // Why: recorded ahead of every early return so any observed Enter
-      // keydown (editable targets and re-dispatches included) disqualifies
-      // its keyup from the swallowed-keydown synthesis below.
+      // Record before early returns so every observed Enter disqualifies keyup synthesis.
       if (
         isWindows &&
         ((e.key === 'Enter' && e.keyCode === 13) ||
@@ -481,9 +469,7 @@ export function useTerminalKeyboardShortcuts({
         if (!observed) {
           observedEnterKeydownTimeStamps.set(e.code, [e.timeStamp])
         } else if (!e.repeat && observed.length < MAX_OBSERVED_ENTER_KEYDOWNS_PER_CODE) {
-          // Why: auto-repeat re-fires keydown with no keyup in between and the
-          // whole run ends in a single release, so a repeat must not stack an
-          // entry that release cannot drain.
+          // Auto-repeat shares one physical release.
           observed.push(e.timeStamp)
         }
       }
@@ -822,9 +808,7 @@ export function useTerminalKeyboardShortcuts({
       const observedEnterKeydowns = observedEnterKeydownTimeStamps.get(e.code)
       const enterKeydownWasObserved = observedEnterKeydowns !== undefined
       if (enterKeydownWasObserved && !observedEnterKeydowns.includes(e.timeStamp)) {
-        // Why: a balancing keyup copies the keydown's native timeStamp; only a
-        // physical release (a different timeStamp) consumes one press worth of
-        // evidence, so a second press stays guarded until its own release.
+        // A balancing keyup copies its keydown timestamp; only the physical release drains it.
         observedEnterKeydowns.shift()
         if (observedEnterKeydowns.length === 0) {
           observedEnterKeydownTimeStamps.delete(e.code)
@@ -844,10 +828,7 @@ export function useTerminalKeyboardShortcuts({
         const manager = managerRef.current
         const keyboardScope = keyboardScopeRef.current
         if (
-          // Why: synthesize only when the IME swallowed the keydown entirely.
-          // An observed keydown already chose its own path (plain commit,
-          // chord defer, or direct send); a modifier flag on this keyup is
-          // then rollover state from the next keystroke, not a chord.
+          // An observed keydown makes this modifier state rollover, not a swallowed chord.
           !enterKeydownWasObserved &&
           manager &&
           !isEditableTarget(e.target) &&
