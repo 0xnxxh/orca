@@ -274,4 +274,39 @@ describe('Windows IME keyboard ownership', () => {
     hook.unmount()
     harness.dispose()
   })
+
+  it('clears held Shift when an IME-consumed keyup reports Process', () => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Shift',
+        code: 'ShiftLeft',
+        keyCode: 16,
+        timeStamp: 1,
+        shiftKey: true
+      })
+    )
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keyup', {
+        key: 'Process',
+        code: 'ShiftLeft',
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true
+      })
+    )
+    const enter = keyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      timeStamp: 20
+    })
+
+    harness.terminalInput.dispatchEvent(enter)
+
+    expect(enter.defaultPrevented).toBe(false)
+    hook.unmount()
+    harness.dispose()
+  })
 })
