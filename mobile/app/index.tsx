@@ -88,6 +88,8 @@ type HostWorktreeInfo = {
   totalWorktrees: number
   activeCount: number
   lastActiveWorktree: WorktreeSummary | null
+  // Why (STA-3123): a failed worktree.ps with no cached counts must not render as "0 worktrees".
+  catalogUnavailable?: boolean
 }
 
 type HomeTaskSettings = {
@@ -173,7 +175,8 @@ function fetchWorktreeInfo(
           hostId,
           totalWorktrees: 0,
           activeCount: 0,
-          lastActiveWorktree: null
+          lastActiveWorktree: null,
+          catalogUnavailable: true
         }
       }
     })
@@ -789,8 +792,11 @@ export default function HomeScreen() {
                 verdict={verdict}
                 path={hostPaths[item.id] ?? 'lan'}
                 worktreeCounts={
-                  info ? { total: info.totalWorktrees, active: info.activeCount } : undefined
+                  info && !info.catalogUnavailable
+                    ? { total: info.totalWorktrees, active: info.activeCount }
+                    : undefined
                 }
+                worktreeCountsUnavailable={info?.catalogUnavailable === true}
                 onPress={() => router.push(`/h/${item.id}`)}
                 onLongPress={() => {
                   triggerMediumImpact()
