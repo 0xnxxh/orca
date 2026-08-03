@@ -104,6 +104,20 @@ describe('daemon audit eligibility telemetry', () => {
     }
   })
 
+  it('does not mislabel a future protocol generation as legacy', () => {
+    const trackEligibility = createDaemonAuditEligibilityTracker()
+
+    expect(() =>
+      trackEligibility(
+        recordAuthenticatedInventory(
+          { ...context, protocolGeneration: PROTOCOL_VERSION + 1 },
+          exactIncarnation
+        )
+      )
+    ).not.toThrow()
+    expect(trackMock).not.toHaveBeenCalled()
+  })
+
   it('cannot affect callers when telemetry throws', () => {
     trackMock.mockImplementation(() => {
       throw new Error('transport failed')

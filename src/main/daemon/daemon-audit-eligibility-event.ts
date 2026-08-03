@@ -58,8 +58,7 @@ function auditEligibilityProperties(
   observation: DaemonAuditObservation,
   correlateLaunchNonce: (launchNonce: string) => string
 ): EventProps<'daemon_audit_eligibility'> {
-  const generationRole: 'current' | 'legacy' =
-    observation.context.protocolGeneration === PROTOCOL_VERSION ? 'current' : 'legacy'
+  const generationRole = generationRoleForProtocol(observation.context.protocolGeneration)
   const commonProperties: AuditEligibilityCommonProperties = {
     state: observation.state,
     reason: observation.reason,
@@ -86,6 +85,16 @@ function auditEligibilityProperties(
       observation.exactIncarnation.identity.launchNonce
     )
   }
+}
+
+function generationRoleForProtocol(protocolGeneration: number): 'current' | 'legacy' {
+  if (protocolGeneration === PROTOCOL_VERSION) {
+    return 'current'
+  }
+  if (protocolGeneration > 0 && protocolGeneration < PROTOCOL_VERSION) {
+    return 'legacy'
+  }
+  throw new Error('unsupported_daemon_audit_protocol_generation')
 }
 
 function exactIncarnationKind(
