@@ -17,22 +17,35 @@ export function getRecentlyClosedTabPosition(
   worktreeId: string,
   entityId: string
 ): RecentlyClosedTabPosition | undefined {
-  const tabBarIndex = state.tabBarOrderByWorktree?.[worktreeId]?.indexOf(entityId) ?? -1
-  const unifiedTab = (state.unifiedTabsByWorktree?.[worktreeId] ?? []).find(
-    (tab) => tab.entityId === entityId
-  )
+  const tabBarOrder = state.tabBarOrderByWorktree?.[worktreeId]
+  const unifiedTabs = state.unifiedTabsByWorktree?.[worktreeId] ?? []
+  const tabBarIndex = tabBarOrder?.indexOf(entityId) ?? -1
+  const unifiedTab = unifiedTabs.find((tab) => tab.entityId === entityId)
   const group = unifiedTab
     ? (state.groupsByWorktree?.[worktreeId] ?? []).find(
         (candidate) => candidate.id === unifiedTab.groupId
       )
     : undefined
   const groupIndex = group?.tabOrder.indexOf(unifiedTab?.id ?? '') ?? -1
+  const groupTabEntityIds = group
+    ? group.tabOrder.map((tabId) => unifiedTabs.find((tab) => tab.id === tabId)?.entityId)
+    : []
+  const tabBarGroupEntityIds = group
+    ? (tabBarOrder ?? [])
+        .map((tabId) => unifiedTabs.find((tab) => tab.entityId === tabId))
+        .filter((tab) => tab?.groupId === group.id)
+        .map((tab) => tab?.entityId)
+    : []
+  const groupOrderMatchesTabBar =
+    !group ||
+    (groupTabEntityIds.length === tabBarGroupEntityIds.length &&
+      groupTabEntityIds.every((entityId, index) => entityId === tabBarGroupEntityIds[index]))
   if (tabBarIndex < 0 && (!group || groupIndex < 0)) {
     return undefined
   }
 
   return {
-    ...(tabBarIndex >= 0 ? { tabBarIndex } : {}),
+    ...(tabBarIndex >= 0 && groupOrderMatchesTabBar ? { tabBarIndex } : {}),
     ...(group && groupIndex >= 0 ? { groupId: group.id, groupIndex } : {})
   }
 }
@@ -77,7 +90,9 @@ export function restoreRecentlyClosedTabPosition(
     return
   }
   const unifiedTab = (getState().unifiedTabsByWorktree?.[worktreeId] ?? []).find(
-    (candidate) => candidate.entityId === entityId
+    (candidate) =>
+      candidate.entityId === entityId &&
+      (position.groupId === undefined || candidate.groupId === position.groupId)
   )
   if (!unifiedTab) {
     return

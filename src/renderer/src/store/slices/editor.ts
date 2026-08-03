@@ -281,12 +281,13 @@ export type MarkdownViewMode = 'source' | 'rich' | 'preview'
 // Why: orthogonal to MarkdownViewMode; 'changes' renders diff-vs-HEAD in place of the editor without a separate tab. See reviews/changes-view-mode-plan.md.
 export type EditorViewMode = 'edit' | 'changes'
 
-/** Enough state to restore a tab via `openFile` after `closeFile` (id is always filePath). */
+/** Enough state to restore a tab via `openFile` after `closeFile`. */
 // Why: omit mirroredFromRuntimeSession so a user-reopened tab isn't treated as host-owned and culled by the next web session sync.
 export type ClosedEditorTabSnapshot = Omit<
   OpenFile,
   'id' | 'isDirty' | 'mirroredFromRuntimeSession'
 > & {
+  reopenId?: string
   position?: RecentlyClosedTabPosition
 }
 
@@ -471,8 +472,9 @@ export type EditorSlice = {
       suppressActiveRuntimeFallback?: boolean
       forceContentReload?: boolean
       focusEditor?: boolean
+      reopenId?: string
     }
-  ) => void
+  ) => string
   openNewMarkdownInActiveWorkspace: (groupId: string) => Promise<void>
   // Why: sequences openFile/setMarkdownViewMode/reveal around an async Monaco remount. See docs/markdown-internal-link-opening-design.md.
   activateMarkdownLink: (
@@ -1675,13 +1677,16 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           matchesEditorMode(f, reusableOpenFileModes) &&
           isSameEditorOwner(f, worktreeId, runtimeEnvironmentId)
       )
-      const id = resolveEditorFileIdForOwner(
-        s,
-        file.filePath,
-        worktreeId,
-        runtimeEnvironmentId,
-        reusableOpenFileModes
-      )
+      const id =
+        options?.reopenId && !s.openFiles.some((candidate) => candidate.id === options.reopenId)
+          ? options.reopenId
+          : resolveEditorFileIdForOwner(
+              s,
+              file.filePath,
+              worktreeId,
+              runtimeEnvironmentId,
+              reusableOpenFileModes
+            )
       editorItemFileId = id
       const isPreview = options?.preview ?? false
       const recordReplacedPreview = options?.recordReplacedPreview ?? false
@@ -1810,7 +1815,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
             nextRecentlyClosed = {
               ...s.recentlyClosedEditorTabsByWorktree,
               [worktreeId]: [
-                { ...(snap as ClosedEditorTabSnapshot), ...(position ? { position } : {}) },
+                {
+                  ...(snap as ClosedEditorTabSnapshot),
+                  reopenId: replacedPreview.id,
+                  ...(position ? { position } : {})
+                },
                 ...stack
               ].slice(0, MAX_RECENT_CLOSED_EDITOR_TABS)
             }
@@ -1894,6 +1903,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         }
       })
     }
+    return editorItemFileId
   },
 
   openNewMarkdownInActiveWorkspace: async (groupId) => {
@@ -2200,7 +2210,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         nextRecentlyClosed = {
           ...s.recentlyClosedEditorTabsByWorktree,
           [wtRecent]: [
-            { ...(snap as ClosedEditorTabSnapshot), ...(position ? { position } : {}) },
+            {
+              ...(snap as ClosedEditorTabSnapshot),
+              reopenId: fileId,
+              ...(position ? { position } : {})
+            },
             ...stack
           ].slice(0, MAX_RECENT_CLOSED_EDITOR_TABS)
         }
@@ -2273,14 +2287,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         [worktreeId]: (s.recentlyClosedEditorTabsByWorktree[worktreeId] ?? []).slice(1)
       }
     }))
-    const { position, ...file } = next
-    get().openFile(file, { targetGroupId: position?.groupId })
-    const restored = get().openFiles.find(
-      (candidate) => candidate.filePath === file.filePath && candidate.worktreeId === worktreeId
-    )
-    if (restored) {
-      restoreRecentlyClosedTabPosition(get, worktreeId, restored.id, position)
-    }
+    const { position, reopenId, ...file } = next
+    const restoredFileId = get().openFile(file, {
+      targetGroupId: position?.groupId,
+      reopenId
+    })
+    restoreRecentlyClosedTabPosition(get, worktreeId, restoredFileId, position)
     return true
   },
 
@@ -2391,10 +2403,15 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           continue
         }
         const { id: _id, isDirty: _dirty, mirroredFromRuntimeSession: _mirrored, ...snap } = f
-        nextRecentClosed = [snap as ClosedEditorTabSnapshot, ...nextRecentClosed].slice(
-          0,
-          MAX_RECENT_CLOSED_EDITOR_TABS
-        )
+        const position = getRecentlyClosedTabPosition(s, activeWorktreeId, f.id)
+        nextRecentClosed = [
+          {
+            ...(snap as ClosedEditorTabSnapshot),
+            reopenId: f.id,
+            ...(position ? { position } : {})
+          },
+          ...nextRecentClosed
+        ].slice(0, MAX_RECENT_CLOSED_EDITOR_TABS)
         capturedCloseCount += 1
       }
 
