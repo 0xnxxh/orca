@@ -1,4 +1,5 @@
 import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl-diagnostics'
+import { registerRendererMemoryProfileContributor } from '../renderer-memory-profile'
 import type { PaneRenderingDiagnostics } from './pane-manager-types'
 
 type RegisteredPaneManager = {
@@ -157,3 +158,46 @@ export function refitAndRefreshAllTerminalPanes(): void {
     }
   }
 }
+
+// Rough xterm BufferLine cost (3 uint32 per cell + object overhead); ranking
+// matters, not accuracy.
+const BYTES_PER_TERMINAL_CELL = 16
+const BYTES_PER_KILOBYTE = 1024
+
+type BufferedTerminal = {
+  cols?: number
+  buffer?: { active?: { length?: number } }
+}
+
+/**
+ * Memory-profile census over live pane managers. Mounted panes are the
+ * dominant highwater cost the store census can't see (97b9e86d: heap ~1.3GB
+ * while all store slices summed to ~15MB) — eviction-exempt panes accumulate
+ * mounted forever, each retaining rows x cols of scrollback.
+ */
+export function getLivePaneMemoryProfileCounts(): Record<string, number> {
+  let panes = 0
+  let bufferKB = 0
+  for (const manager of liveManagers) {
+    let managerPanes: { id: number; terminal: unknown }[] = []
+    try {
+      managerPanes = manager.getPanes?.() ?? []
+    } catch {
+      continue
+    }
+    panes += managerPanes.length
+    for (const pane of managerPanes) {
+      const terminal = pane.terminal as BufferedTerminal | null | undefined
+      const rows = terminal?.buffer?.active?.length
+      const cols = terminal?.cols
+      if (typeof rows === 'number' && typeof cols === 'number') {
+        bufferKB += Math.round((rows * cols * BYTES_PER_TERMINAL_CELL) / BYTES_PER_KILOBYTE)
+      }
+    }
+  }
+  return { managers: liveManagers.size, panes, estBufferKB: bufferKB }
+}
+
+// Why here: contributors push in (crash-diagnostics stays a leaf); same-name
+// re-registration on dev HMR overwrites, so no disposal hook is needed.
+registerRendererMemoryProfileContributor('terminals', getLivePaneMemoryProfileCounts)

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { collectRendererMemoryProfileCounts } from '../renderer-memory-profile'
 import {
   forEachLivePaneForDesyncSentinel,
   getLivePaneCensus,
+  getLivePaneMemoryProfileCounts,
   refitAndRefreshAllTerminalPanes,
   registerLivePaneManager,
   resetAndRefreshAllTerminalWebglAtlases,
@@ -263,5 +265,38 @@ describe('pane manager registry', () => {
     registeredManagers.push(healthy)
 
     expect(getLivePaneCensus()).toEqual({ managers: 2, panes: 1 })
+  })
+
+  it('estimates scrollback bytes from pane buffers, skipping non-buffer terminals', () => {
+    // 5000 rows x 200 cols x 16B/cell = 15.6MB -> 15625KB.
+    const buffered = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPanes: () => [
+        { id: 1, terminal: { cols: 200, buffer: { active: { length: 5000 } } } },
+        { id: 2, terminal: {} }
+      ]
+    }
+    registerLivePaneManager(buffered)
+    registeredManagers.push(buffered)
+
+    expect(getLivePaneMemoryProfileCounts()).toEqual({
+      managers: 1,
+      panes: 2,
+      estBufferKB: 15_625
+    })
+  })
+
+  it('contributes the pane census to renderer memory profile counts', () => {
+    const manager = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPanes: () => [{ id: 1, terminal: { cols: 100, buffer: { active: { length: 64 } } } }]
+    }
+    registerLivePaneManager(manager)
+    registeredManagers.push(manager)
+
+    const counts = collectRendererMemoryProfileCounts()
+    expect(counts['terminals.managers']).toBe(1)
+    expect(counts['terminals.panes']).toBe(1)
+    expect(counts['terminals.estBufferKB']).toBe(100)
   })
 })
