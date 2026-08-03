@@ -168,7 +168,10 @@ export function useAutomationDispatchEvents(): void {
             const sshState = await window.api.ssh.getState({ targetId: sshTargetId })
             if (sshState?.status !== 'connected') {
               try {
-                const connected = await window.api.ssh.connect({ targetId: sshTargetId })
+                const connected = await window.api.ssh.connect({
+                  targetId: sshTargetId,
+                  initiator: 'auto'
+                })
                 if (connected?.status !== 'connected') {
                   throw new Error('SSH target is unavailable.')
                 }

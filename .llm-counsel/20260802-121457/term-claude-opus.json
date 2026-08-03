@@ -1,0 +1,18 @@
+{
+  "id": "5d877049-4c39-4fe1-b654-4d3e8724b2d9",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_2eaba6da-e77c-49d4-9e47-393e19fa1381",
+      "tabId": "66edb724-33f6-40be-bb2a-7f4ee1b37325",
+      "worktreeId": "48e366bb-2436-46a9-bb37-10ace25ada5f::/Users/jinjingliang/Documents/projects/orca/stop-keep-reconnecting-to-remote",
+      "title": "counsel-claude-opus",
+      "executionHostId": "local",
+      "hostPlatform": "darwin",
+      "surface": "visible"
+    }
+  },
+  "_meta": {
+    "runtimeId": "0ff81073-c9cc-4119-8520-0d78345794e0"
+  }
+}

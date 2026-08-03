@@ -1,0 +1,16 @@
+# Blind peer ratings — rater-3
+
+| report | evidence | regression_catch | false_positive_risk | actionability | best_unique | overreach |
+|---|---|---|---|---|---|---|
+| A=grok | 5 | 4 | 5 | 5 | Post-user-Connect hole: a user connect `reset()`s the window *before* success, so Connect→fail→next `'auto'` remount runs unbounded again with no window open (finding #2 scenario B) | #5 flap-storm framed as a branch failure while conceding the old ladder never stopped flaps either — scope creep, but honestly caveated |
+| B=claude-opus | 5 | 4 | 4 | 5 | L4: the new `SSH_CONNECT_FAILED_STATUSES` gate is asymmetric — a racing relay `'error'` override now aborts a reattach that previously proceeded, while a relay-lost `'reconnecting'` override still reattaches mid-redeploy | M3 claims a stale window can park a *healthy live* session, but its own preconditions (superseded-attempt race) don't support that framing; D/F4 makes the sober version. Its "found clean" preload-contract audit is stated as verified while missing the web adapter |
+| C=codex | 5 | 3 | 5 | 3 | Cites the *existing* flap test (12 post-handshake drops at 45s spacing, expected to keep reconnecting) as proof the budget cannot bound flap storms — plus `web-preload-api.test.ts:3417` pinning the lossy `{ targetId }` RPC payload | Medium on the deadline-clamp boundary attempt; it is one tail attempt (both B and D traced the same clamp and found no loop), so Low is the honest severity |
+| D=claude-fable | 5 | 5 | 5 | 5 | F1's second-order effect: the paired client's storm overwrites the desktop's parked broadcast with `'connecting'`, flipping the desktop UI out of the paused state the branch guarantees. F4 (clean user Disconnect leaves the window armed → false "host is unreachable" hours later, no probe) and F6 (reset-relay doesn't re-arm) are also unique | F5 leans on future callers ("tomorrow it is whatever new internal caller someone adds") rather than a present defect, and largely restates F1/F3 |
+
+Notes:
+1. Consensus majors: (1) web/runtime RPC drops `initiator`, (2) initial-connect never opens a window, (3) 60s ≈ 2 attempts + pause never expires, (4) sleep/wake, (5) flap resets budget, (6) stale window after disconnect. Coverage: D 5/6, A 5/6 (misses sleep/wake), B 4/6 (misses web adapter + flaps), C 3/6.
+2. #1 is the strongest finding in the set — A, C and D independently cite `web-preload-api.ts:3238-3244` with C adding a pinned test. B alone rates it Medium/"latent (mobile caller is user-driven)", which looks like a false negative: the shared renderer already sends `initiator:'auto'` through that same adapter, so it is live, not latent.
+3. D is the most complete and best-calibrated: broadest real coverage, gates actually run (incl. web typecheck), fix direction on every finding, and an accurate "checked and found sound" section.
+4. C is the most rigorous per finding but the narrowest — it never engages the "ZERO functional regressions" half of the mandate (no 60s-shortening, never-expiring-pause, or unattended-automation analysis) and gives no fix directions.
+5. Two disputes worth resolving before synthesis: flaps (A/C say the budget can't bound them; B/D don't raise it) and the deadline-clamp severity (C Medium vs B/D "one tail attempt, no loop").
+# Unblinded by coordinator

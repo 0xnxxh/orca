@@ -49,6 +49,17 @@ async function connectWithFakeTimers(conn: SshConnection): Promise<void> {
   await connected
 }
 
+// Why in steps: one big jump leaves each attempt's async chain unflushed, so the ladder stalls
+// mid-attempt instead of walking. Stops early once the target parks.
+async function advanceInStepsUntilParked(conn: SshConnection, totalMs: number): Promise<void> {
+  for (let elapsed = 0; elapsed < totalMs; elapsed += 1_000) {
+    if (conn.getState().status === 'reconnection-failed') {
+      return
+    }
+    await vi.advanceTimersByTimeAsync(1_000)
+  }
+}
+
 async function advanceToNextSshClient(delayMs: number): Promise<void> {
   const clientCreated = nextSshClientCreation()
   await vi.advanceTimersByTimeAsync(delayMs)
@@ -199,7 +210,18 @@ import {
   writeFileViaSystemSsh
 } from './ssh-system-fallback'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
-import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
+import {
+  CONNECT_TIMEOUT_MS,
+  INITIAL_RETRY_ATTEMPTS,
+  INITIAL_RETRY_DELAY_MS,
+  RECONNECT_BACKOFF_MS
+} from './ssh-connection-utils'
+import {
+  AUTO_RECONNECT_BUDGET_MS,
+  AUTO_RECONNECT_PAUSED_MESSAGE,
+  sshAutoReconnectBudget
+} from './ssh-auto-reconnect-budget'
+import { STABLE_CONNECTION_MS } from './ssh-reconnect-ladder'
 import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS, type SshTarget } from '../../shared/ssh-types'
 import {
   createOpenSshPrivateKeyFixture,
@@ -348,6 +370,9 @@ describe('SshConnection', () => {
     vi.mocked(resolveWithSshG).mockResolvedValue(null)
     findSystemSshMock.mockReset()
     findSystemSshMock.mockReturnValue(null)
+    // Why: the budget is a process-wide singleton keyed by target id, so one test's exhausted
+    // window would otherwise suppress reconnects in every later test using the same target.
+    sshAutoReconnectBudget.clear()
     vi.unstubAllEnvs()
   })
 
@@ -501,6 +526,9 @@ describe('SshConnection', () => {
       await connectWithFakeTimers(conn)
 
       for (let drop = 0; drop < 3; drop++) {
+        // Why: this pins the published counters, not the wall-clock stop — 3 drops span past the
+        // 60s budget, which has its own tests and would otherwise park the target mid-loop.
+        sshAutoReconnectBudget.reset('target-1')
         emitSshEvent('close')
         await advanceToNextSshClient(30_000)
       }
@@ -552,7 +580,7 @@ describe('SshConnection', () => {
     }
   })
 
-  it('reaches reconnection-failed after 9 consecutive handshake failures', async () => {
+  it('stops auto-reconnecting once the wall-clock budget elapses', async () => {
     vi.useFakeTimers()
     try {
       const statuses: string[] = []
@@ -568,14 +596,184 @@ describe('SshConnection', () => {
       connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
       connectErrorCode = 'ETIMEDOUT'
       emitSshEvent('close')
-      for (const delayMs of RECONNECT_BACKOFF_MS) {
-        await advanceToNextSshClient(delayMs)
+      // The delay table sums past the budget, so the budget — not the table length — ends the loop.
+      await advanceInStepsUntilParked(
+        conn,
+        RECONNECT_BACKOFF_MS.reduce((a, b) => a + b, 0)
+      )
+
+      expect(conn.getState().status).toBe('reconnection-failed')
+      expect(conn.getState().error).toBe(AUTO_RECONNECT_PAUSED_MESSAGE)
+      expect(statuses).toContain('reconnection-failed')
+      // Fewer than the full table: the wall-clock stop lands before the 9th handshake failure.
+      expect(connectAttempts).toBeLessThan(1 + RECONNECT_BACKOFF_MS.length)
+
+      // No further attempts once paused — this is the CPU cost the bound exists to remove.
+      const attemptsAtGiveUp = connectAttempts
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(connectAttempts).toBe(attemptsAtGiveUp)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the give-up after the connection object is replaced', async () => {
+    vi.useFakeTimers()
+    try {
+      const target = createTarget()
+      const first = new SshConnection(target, createCallbacks())
+      await connectWithFakeTimers(first)
+
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      emitSshEvent('close')
+      await advanceInStepsUntilParked(
+        first,
+        RECONNECT_BACKOFF_MS.reduce((a, b) => a + b, 0)
+      )
+      expect(first.getState().status).toBe('reconnection-failed')
+
+      // Why: SshConnectionManager.connect() discards a non-connected connection and builds a fresh
+      // one on every SSH pane remount, and reconnect() resets that object's ladder. A give-up held
+      // only on the ladder would be lost here, which is what made the retry loop effectively endless.
+      const attemptsAtGiveUp = connectAttempts
+      const replacement = new SshConnection(target, createCallbacks())
+      const reconnected = replacement.reconnect()
+      // Why advance: if the give-up were lost this would dial, and the dial needs a tick to settle.
+      await vi.advanceTimersByTimeAsync(1)
+      await reconnected
+
+      expect(replacement.getState().status).toBe('reconnection-failed')
+      expect(replacement.getState().error).toBe(AUTO_RECONNECT_PAUSED_MESSAGE)
+      // The fresh ladder buys no new attempts — not even the one dial the old give-up still allowed.
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(connectAttempts).toBe(attemptsAtGiveUp)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not dial when the reconnect timer fires at the exhausted deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      await connectWithFakeTimers(conn)
+
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      emitSshEvent('close')
+      // Why synthesize: the retry delay is clamped to the deadline, so in a real outage the last
+      // timer fires exactly at exhaustion. Re-dating the window reproduces that in one step.
+      sshAutoReconnectBudget.reset('target-1')
+      sshAutoReconnectBudget.deadlineFor('target-1', Date.now() - AUTO_RECONNECT_BUDGET_MS)
+
+      const dialsBeforeTimer = connectAttempts
+      await vi.advanceTimersByTimeAsync(RECONNECT_BACKOFF_MS[0])
+
+      // Without the re-check this timer costs one more full connect timeout against a dead host.
+      expect(connectAttempts).toBe(dialsBeforeTimer)
+      expect(conn.getState().status).toBe('reconnection-failed')
+      expect(conn.getState().error).toBe(AUTO_RECONNECT_PAUSED_MESSAGE)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('parks a host that keeps flapping inside one budget window', async () => {
+    vi.useFakeTimers()
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      await connectWithFakeTimers(conn)
+
+      // Every handshake succeeds and drops again well under STABLE_CONNECTION_MS; resetting the
+      // budget on the bare handshake (as this branch first did) left this storm unbounded.
+      for (let drop = 0; drop < 6; drop++) {
+        if (conn.getState().status === 'reconnection-failed') {
+          break
+        }
+        emitSshEvent('close')
+        await advanceInStepsUntilParked(conn, 20_000)
       }
 
-      expect(statuses).toContain('reconnection-failed')
-      // Pin the budget itself: the initial success plus exactly RECONNECT_BACKOFF_MS.length retries.
-      // Counting a failure twice, or giving up early, would strand a user on a flaky link.
-      expect(connectAttempts).toBe(1 + RECONNECT_BACKOFF_MS.length)
+      expect(conn.getState().status).toBe('reconnection-failed')
+      expect(conn.getState().error).toBe(AUTO_RECONNECT_PAUSED_MESSAGE)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-earns the budget after a connection that held STABLE_CONNECTION_MS', async () => {
+    vi.useFakeTimers()
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      await connectWithFakeTimers(conn)
+
+      emitSshEvent('close')
+      await advanceToNextSshClient(RECONNECT_BACKOFF_MS[0])
+      expect(conn.getState().status).toBe('connected')
+
+      // The recovered connection then holds long enough to count as healthy.
+      await vi.advanceTimersByTimeAsync(STABLE_CONNECTION_MS + 1_000)
+      emitSshEvent('close')
+
+      // The first window has elapsed by now, so only the stability credit keeps this target retrying.
+      expect(conn.getState().status).toBe('reconnecting')
+      await advanceToNextSshClient(RECONNECT_BACKOFF_MS[1])
+      expect(conn.getState().status).toBe('connected')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cuts an automatic initial connect loop short once the budget is spent', async () => {
+    vi.useFakeTimers()
+    try {
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      // A dead host whose window already elapsed — this is the pane-remount storm path.
+      sshAutoReconnectBudget.deadlineFor('target-1', Date.now() - AUTO_RECONNECT_BUDGET_MS)
+      const conn = new SshConnection(createTarget(), createCallbacks())
+
+      const clientCreated = nextSshClientCreation()
+      const connecting = expect(conn.connect({ initiator: 'auto' })).rejects.toThrow('ETIMEDOUT')
+      await clientCreated
+      await vi.advanceTimersByTimeAsync(INITIAL_RETRY_ATTEMPTS * (INITIAL_RETRY_DELAY_MS + 1))
+      await connecting
+
+      // One dial instead of five: the loop alone is ~160s of SSH work per remount.
+      expect(connectAttempts).toBe(1)
+      expect(conn.getState().status).toBe('reconnection-failed')
+      expect(conn.getState().error).toBe(AUTO_RECONNECT_PAUSED_MESSAGE)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs the whole initial retry loop for a user connect with a spent budget', async () => {
+    vi.useFakeTimers()
+    try {
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      sshAutoReconnectBudget.deadlineFor('target-1', Date.now() - AUTO_RECONNECT_BUDGET_MS)
+      const conn = new SshConnection(createTarget(), createCallbacks())
+
+      const clientCreated = nextSshClientCreation()
+      const connecting = expect(conn.connect()).rejects.toThrow('ETIMEDOUT')
+      await clientCreated
+      await vi.advanceTimersByTimeAsync(1)
+      // Why per attempt: each retry's prelude awaits real I/O, so one big jump outruns the loop.
+      for (let attempt = 1; attempt < INITIAL_RETRY_ATTEMPTS; attempt++) {
+        await advanceToNextSshClient(INITIAL_RETRY_DELAY_MS)
+      }
+      await connecting
+
+      // The pause bounds Orca's own retries; a person asking to connect still gets every attempt.
+      expect(connectAttempts).toBe(INITIAL_RETRY_ATTEMPTS)
+      expect(conn.getState().status).toBe('error')
     } finally {
       vi.useRealTimers()
     }
@@ -590,12 +788,16 @@ describe('SshConnection', () => {
       // Saturate the delay ladder on flaps alone; 45s reconnects each drop while staying under
       // STABLE_CONNECTION_MS, so the ladder never resets to the head.
       for (let drop = 0; drop < 12; drop++) {
+        // Why: this pins the delay ladder against relay grace, not the wall-clock budget — 12 flaps
+        // outlast the 60s window, which is covered by its own tests.
+        sshAutoReconnectBudget.reset('target-1')
         emitSshEvent('close')
         await advanceToNextSshClient(45_000)
       }
       expect(conn.getState().status).toBe('connected')
 
       const before = clientInstances.length
+      sshAutoReconnectBudget.reset('target-1')
       emitSshEvent('close')
       // The retry plus a worst-case handshake must land inside the shortest configurable relay grace,
       // or the remote daemon shuts down and takes every PTY on that host with it.
@@ -616,6 +818,8 @@ describe('SshConnection', () => {
       await connectWithFakeTimers(conn)
 
       for (let drop = 0; drop < 12; drop++) {
+        // Why: the log line under test is the ladder's, so keep the wall-clock budget out of it.
+        sshAutoReconnectBudget.reset('target-1')
         emitSshEvent('close')
         await advanceToNextSshClient(45_000)
       }
@@ -646,12 +850,16 @@ describe('SshConnection', () => {
 
       // 12 flaps saturate the delay ladder without ever touching the failure streak.
       for (let drop = 0; drop < 12; drop++) {
+        // Why: the failure streak is what this test pins; the 60s budget has its own tests.
+        sshAutoReconnectBudget.reset('target-1')
         emitSshEvent('close')
         await advanceToNextSshClient(30_000)
       }
       connectSequence = [new Error('connect ETIMEDOUT 10.0.0.5:22')]
+      sshAutoReconnectBudget.reset('target-1')
       emitSshEvent('close')
       await advanceToNextSshClient(30_000)
+      sshAutoReconnectBudget.reset('target-1')
       await advanceToNextSshClient(30_000)
 
       expect(statuses).not.toContain('reconnection-failed')
@@ -1799,9 +2007,7 @@ describe('SshConnection', () => {
 
       await expect(settled).resolves.toBeUndefined()
       expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(2)
-      expect(removeControlSocketPathMock).toHaveBeenCalledWith(
-        '/tmp/orca-ssh-501/stale-socket'
-      )
+      expect(removeControlSocketPathMock).toHaveBeenCalledWith('/tmp/orca-ssh-501/stale-socket')
       expect(spawnSystemSshCommandMock).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
@@ -1816,10 +2022,7 @@ describe('SshConnection', () => {
   it('skips a second probe for a definite host failure', async () => {
     getOrcaControlSocketPathMock.mockReturnValue('/tmp/orca-ssh-501/stale-socket')
     spawnSystemSshCommandMock.mockImplementation(() =>
-      createFailingSystemCommandChannel(
-        255,
-        'ssh: connect to host box port 22: No route to host'
-      )
+      createFailingSystemCommandChannel(255, 'ssh: connect to host box port 22: No route to host')
     )
     vi.mocked(resolveWithSshG).mockResolvedValue(createResolvedConfig())
     const conn = new SshConnection(createTarget({ configHost: 'fdpass-host' }), createCallbacks())
@@ -1863,9 +2066,7 @@ describe('SshConnection', () => {
 
       await expect(settled).resolves.toBeDefined()
       expect(spawnSystemSshMock).toHaveBeenCalledTimes(2)
-      expect(removeControlSocketPathMock).toHaveBeenCalledWith(
-        '/tmp/orca-ssh-501/stale-socket'
-      )
+      expect(removeControlSocketPathMock).toHaveBeenCalledWith('/tmp/orca-ssh-501/stale-socket')
       expect(spawnSystemSshMock).toHaveBeenNthCalledWith(
         2,
         expect.anything(),

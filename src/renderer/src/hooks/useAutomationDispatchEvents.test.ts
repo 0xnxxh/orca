@@ -383,7 +383,7 @@ describe('useAutomationDispatchEvents setup launch', () => {
     )
 
     expect(state.allWorktrees).not.toHaveBeenCalled()
-    expect(mockSshConnect).toHaveBeenCalledWith({ targetId: 'ssh-folder' })
+    expect(mockSshConnect).toHaveBeenCalledWith({ targetId: 'ssh-folder', initiator: 'auto' })
     expect(mockLaunchAgentBackgroundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         worktreeId: folderWorkspace.id,

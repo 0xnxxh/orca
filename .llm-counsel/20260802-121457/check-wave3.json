@@ -1,0 +1,77 @@
+{
+  "id": "e611f5cb-8940-4f33-b147-855a4c426c4d",
+  "ok": true,
+  "result": {
+    "runId": "run_bd00c31afa11",
+    "deliveryId": "delivery_12ee9e0d2ed9",
+    "messages": [
+      {
+        "id": "msg_c8c0e04e2632",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_8016c85a-9e49-4bf1-aa84-b162016357df",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "alive",
+        "body": "",
+        "type": "heartbeat",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_1c70db5688a7\",\"dispatchId\":\"ctx_52a53956018e\",\"phase\":\"investigating\"}",
+        "read": 0,
+        "sequence": 6774,
+        "created_at": "2026-08-02T19:16:25Z",
+        "delivered_at": null,
+        "sender_pane_key": "02ff22b9-11e8-46c0-8481-ca669d3e74f8:c2add700-f7e0-48a3-beb8-0db87c8e4a08",
+        "delivery_contract": "current_delivery"
+      },
+      {
+        "id": "msg_809457e3f376",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_40bfaceb-179e-440f-8876-f1fbd0b51e9c",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "alive",
+        "body": "",
+        "type": "heartbeat",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_84cc9b5d5f7d\",\"dispatchId\":\"ctx_7a4145086c54\",\"phase\":\"investigating\"}",
+        "read": 0,
+        "sequence": 6776,
+        "created_at": "2026-08-02T19:16:44Z",
+        "delivered_at": null,
+        "sender_pane_key": "d138bfa2-0ca8-4719-a0c6-74ce96436c1d:0f751890-e4e0-4c87-b1b3-20311379a42a",
+        "delivery_contract": "current_delivery"
+      },
+      {
+        "id": "msg_a09626e4945e",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_de79d121-b74d-45e5-be1c-448261d04d6f",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "Review complete: 7 findings, top High",
+        "body": "Reviewed the SSH auto-reconnect budget branch (new budget module + connection/IPC/preload/renderer wiring) for functional and performance regressions. Found 7 proven issues: High—web/RPC always re-arms budget by dropping initiator; High—budget only opens post-drop so cold and post-user-fail auto remounts stay unbounded; High—60s wall-clock with 30s timeouts cuts retries to ~2 vs prior 9/multi-minute ladder. Full report at the path below; no production code edited.",
+        "type": "worker_done",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_2cda5d06c526\",\"dispatchId\":\"ctx_12af4bb5bd4c\",\"outcome\":\"succeeded\",\"reportPath\":\".llm-counsel/20260802-121457/reviews/grok.md\"}",
+        "read": 0,
+        "sequence": 6781,
+        "created_at": "2026-08-02T19:21:32Z",
+        "delivered_at": null,
+        "sender_pane_key": "33259e5a-eaee-48fc-a94f-e5b68a3bbada:5931d416-1958-4ea3-89f2-a84541215773",
+        "delivery_contract": "current_delivery"
+      }
+    ],
+    "count": 3,
+    "replayed": true,
+    "acknowledged": null,
+    "timedOut": false,
+    "cancelled": false,
+    "connectionLost": false,
+    "mutation": {
+      "requestId": "95804d1c-3a6c-46b9-8901-c6b8efeb5da8",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "0ff81073-c9cc-4119-8520-0d78345794e0"
+  }
+}

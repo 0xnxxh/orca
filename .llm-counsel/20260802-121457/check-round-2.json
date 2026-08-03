@@ -1,0 +1,59 @@
+{
+  "id": "d6f5a6bb-8175-4805-a0e7-9595f360e14f",
+  "ok": true,
+  "result": {
+    "runId": "run_bd00c31afa11",
+    "deliveryId": "delivery_b8a730471cbf",
+    "messages": [
+      {
+        "id": "msg_62216dc868a8",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_40bfaceb-179e-440f-8876-f1fbd0b51e9c",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "alive",
+        "body": "",
+        "type": "heartbeat",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_84cc9b5d5f7d\",\"dispatchId\":\"ctx_7a4145086c54\",\"phase\":\"reviewing\"}",
+        "read": 0,
+        "sequence": 6782,
+        "created_at": "2026-08-02T19:21:51Z",
+        "delivered_at": null,
+        "sender_pane_key": "d138bfa2-0ca8-4719-a0c6-74ce96436c1d:0f751890-e4e0-4c87-b1b3-20311379a42a",
+        "delivery_contract": "current_delivery"
+      },
+      {
+        "id": "msg_aa6400472f7b",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_2eaba6da-e77c-49d4-9e47-393e19fa1381",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "alive",
+        "body": "",
+        "type": "heartbeat",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_40172447da9b\",\"dispatchId\":\"ctx_ecd84e7d782e\",\"phase\":\"reviewing\"}",
+        "read": 0,
+        "sequence": 6783,
+        "created_at": "2026-08-02T19:22:23Z",
+        "delivered_at": null,
+        "sender_pane_key": "66edb724-33f6-40be-bb2a-7f4ee1b37325:2a90f35f-9446-4764-8c3a-b199337c77b0",
+        "delivery_contract": "current_delivery"
+      }
+    ],
+    "count": 2,
+    "replayed": true,
+    "acknowledged": null,
+    "timedOut": false,
+    "cancelled": false,
+    "connectionLost": false,
+    "mutation": {
+      "requestId": "348c6040-9ede-44bb-bb5b-9e674cc99eb4",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "0ff81073-c9cc-4119-8520-0d78345794e0"
+  }
+}

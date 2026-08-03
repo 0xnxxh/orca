@@ -1,0 +1,41 @@
+{
+  "id": "5cc0ac13-87f9-4437-8d7b-2f604d895a0f",
+  "ok": true,
+  "result": {
+    "runId": "run_bd00c31afa11",
+    "deliveryId": "delivery_0da2600a4a09",
+    "messages": [
+      {
+        "id": "msg_c0e4691b308a",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_2eaba6da-e77c-49d4-9e47-393e19fa1381",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "12 findings (4 High): branch claim only half delivered",
+        "body": "Reviewed the full branch (0ae9174408..HEAD is empty; all 10 modified + 2 untracked files are uncommitted) and ran the gates read-only: 181 main-process SSH tests, 538 pty-connection tests, and oxfmt --check all pass. Found 12 proven findings (4 High / 4 Medium / 4 Low): the initial-connect path never opens a budget window at all (SshConnection.connect() throws without calling scheduleReconnect, and deadlineFor has exactly one production call site), so the headline 'dead host + pane remounts' case is still an unbounded ~160s-per-call storm; the 60s wall-clock budget only fits TWO attempts against a black-holed host (CONNECT_TIMEOUT_MS=30s) versus nine before, never re-arms itself, and burns while the process is suspended, so any 61s outage — host reboot, VPN reconnect, or a lid-close where the drop was seen before sleep — permanently parks every SSH workspace until a human clicks Connect, with the new powerMonitor guard also skipping the #7773 wake-recovery path. Remaining work is the author's: fix H4 (charge the window on failed auto connects), H3 (reset on resume), H1/H2 (raise or slow-re-arm the budget), and M2b (the overlay drops AUTO_RECONNECT_PAUSED_MESSAGE, so the user is never told Orca stopped trying); full evidence with file:line in the report.",
+        "type": "worker_done",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_40172447da9b\",\"dispatchId\":\"ctx_ecd84e7d782e\",\"outcome\":\"succeeded\",\"reportPath\":\".llm-counsel/20260802-121457/reviews/claude-opus.md\"}",
+        "read": 0,
+        "sequence": 6787,
+        "created_at": "2026-08-02T19:27:07Z",
+        "delivered_at": null,
+        "sender_pane_key": "66edb724-33f6-40be-bb2a-7f4ee1b37325:2a90f35f-9446-4764-8c3a-b199337c77b0",
+        "delivery_contract": "current_delivery"
+      }
+    ],
+    "count": 1,
+    "replayed": false,
+    "acknowledged": null,
+    "timedOut": false,
+    "cancelled": false,
+    "connectionLost": false,
+    "mutation": {
+      "requestId": "ca83659d-b216-48bd-8dfa-bd937c68abc9",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "0ff81073-c9cc-4119-8520-0d78345794e0"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "318b59d9-ce31-4d3a-9cdd-4b8bd00b1183",
+  "ok": true,
+  "result": {
+    "runId": "run_bd00c31afa11",
+    "deliveryId": "delivery_40bf60fb8525",
+    "messages": [
+      {
+        "id": "msg_4cc0d0299fed",
+        "run_id": "run_bd00c31afa11",
+        "from_handle": "term_8016c85a-9e49-4bf1-aa84-b162016357df",
+        "to_handle": "run:run_bd00c31afa11",
+        "subject": "Blind ratings done: B strongest, C weakest coverage",
+        "body": "Read all four anonymized reports (plus the packet) and rated each on evidence, regression catch, false-positive risk, and actionability with a best-unique finding and one overreach per letter. B is the standout (5/5/5/5 — only report covering RPC initiator-drop, cold-path, sleep/wake, never-expiring pause, AND the overlay dropping the paused message, with verified negatives); A and D are close peers at mostly 4-5s with disjoint blind spots (A missed sleep/wake, D missed the flap gap and the overlay message loss), while C is accurate but narrow (missed sleep/wake and the too-short/never-expires family, no fix directions, couldn't run tests). Nothing left — ratings table plus 5 notes written to the ratings-blind file; the four-way consensus findings (RPC drops initiator; initial-connect path never opens a budget window) deserve merge-blocker treatment.",
+        "type": "worker_done",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_930a97650ad0\",\"dispatchId\":\"ctx_746916d6a74b\",\"outcome\":\"succeeded\",\"filesModified\":[\".llm-counsel/20260802-121457/ratings-blind/rater-4.md\"],\"reportPath\":\".llm-counsel/20260802-121457/ratings-blind/rater-4.md\"}",
+        "read": 0,
+        "sequence": 6793,
+        "created_at": "2026-08-02T19:31:00Z",
+        "delivered_at": null,
+        "sender_pane_key": "02ff22b9-11e8-46c0-8481-ca669d3e74f8:c2add700-f7e0-48a3-beb8-0db87c8e4a08",
+        "delivery_contract": "current_delivery"
+      }
+    ],
+    "count": 1,
+    "replayed": false,
+    "acknowledged": null,
+    "timedOut": false,
+    "cancelled": false,
+    "connectionLost": false,
+    "mutation": {
+      "requestId": "83d19dbc-5db7-4cd7-b593-c417005d9ecd",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "0ff81073-c9cc-4119-8520-0d78345794e0"
+  }
+}

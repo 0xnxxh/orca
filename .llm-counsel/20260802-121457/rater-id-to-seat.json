@@ -1,0 +1,6 @@
+{
+  "rater-1": "grok",
+  "rater-2": "codex",
+  "rater-3": "claude-opus",
+  "rater-4": "claude-fable"
+}
