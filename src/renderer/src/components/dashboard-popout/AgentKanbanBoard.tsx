@@ -20,6 +20,7 @@ import {
 } from './agent-board-filtering'
 import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
+import { DashboardOrchestratorChat } from './DashboardOrchestratorChat'
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
  *  ?. shields dialog-opening from dev-HMR preload skew (renderer updates hot,
@@ -276,6 +277,7 @@ export function AgentKanbanBoard({
           onOpenChange={handleDialogOpenChange}
           onReveal={onRevealAgent}
         />
+        <DashboardOrchestratorChat cards={visibleCards} />
       </div>
     </TooltipProvider>
   )

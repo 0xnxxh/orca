@@ -14505,6 +14505,47 @@
     }
   },
   "dashboardPopout": {
+    "orchestrator": {
+      "trigger": "オーケストレーション",
+      "title": "オーケストレーター",
+      "scope": "グローバルフリート · {{count}} エージェント",
+      "ready": "準備完了",
+      "noLiveAgentStatus": "ライブエージェントなし",
+      "commandActive": "グローバルフリートコマンドが有効",
+      "fleetContext": "フリートコンテキスト",
+      "dragHint": "チャットへドラッグ",
+      "filterFleet": "フリートコンテキストを絞り込む",
+      "filterPlaceholder": "検索…",
+      "addAgentContext": "{{agent}} をオーケストレーションコンテキストに追加",
+      "noFleetMatches": "一致なし",
+      "entireFleet": "フリート全体",
+      "dropContext": "ワークスペースまたはエージェントをドロップして対象を絞り込む",
+      "removeContext": "{{context}} をオーケストレーションコンテキストから削除",
+      "hideIntro": "説明を隠す",
+      "coordinating": "調整中…",
+      "globalOrchestration": "グローバルオーケストレーション",
+      "startLiveAgentHint": "オーケストレーションを使うにはライブエージェントを開始してください",
+      "available": "ライブ経路",
+      "unavailable": "ライブ経路なし",
+      "routeThrough": "経由するエージェント",
+      "noLiveAgent": "利用可能なライブエージェントがありません",
+      "globalContext": "1つの会話でフリート全体を把握",
+      "globalContextCopy": "Orca オーケストレーションを使い、プロジェクト、ワークスペース、ホストを横断してエージェントを確認・調整します。",
+      "try": "例",
+      "suggestions": {
+        "attention": "フリート全体で対応が必要なものは？",
+        "summary": "すべてのプロジェクトの進行中作業を要約して。",
+        "stalled": "停止しているか、異常に長く実行中のエージェントを探して。"
+      },
+      "placeholder": "実行中の作業について質問…",
+      "composerLabel": "オーケストレーターにメッセージ",
+      "sendFailed": "送信に失敗しました",
+      "routesTo": "{{agent}} を経由",
+      "startAgentHint": "フリートチャットを使うにはエージェントを開始してください",
+      "openTerminal": "コーディネーターのターミナルを開く",
+      "sending": "送信中…",
+      "send": "送信"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

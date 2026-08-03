@@ -14674,6 +14674,47 @@
     }
   },
   "dashboardPopout": {
+    "orchestrator": {
+      "trigger": "Orchestrate",
+      "title": "Orchestrator",
+      "scope": "Global fleet · {{count}} agents",
+      "ready": "Ready",
+      "noLiveAgentStatus": "No live agent",
+      "commandActive": "Global fleet command active",
+      "fleetContext": "Fleet context",
+      "dragHint": "Drag into chat",
+      "filterFleet": "Filter fleet context",
+      "filterPlaceholder": "Find…",
+      "addAgentContext": "Add {{agent}} to orchestration context",
+      "noFleetMatches": "No matches",
+      "entireFleet": "Entire fleet",
+      "dropContext": "Drop a worktree or agent here to narrow context",
+      "removeContext": "Remove {{context}} from orchestration context",
+      "hideIntro": "Hide introduction",
+      "coordinating": "Coordinating…",
+      "globalOrchestration": "Global orchestration",
+      "startLiveAgentHint": "Start a live agent to enable orchestration",
+      "available": "Live route",
+      "unavailable": "No live route",
+      "routeThrough": "Route through",
+      "noLiveAgent": "No live agent available",
+      "globalContext": "One conversation, fleet-wide context",
+      "globalContextCopy": "Requests use Orca orchestration to inspect and coordinate agents across projects, workspaces, and hosts.",
+      "try": "Try",
+      "suggestions": {
+        "attention": "What needs my attention across the fleet?",
+        "summary": "Summarize active work across every project.",
+        "stalled": "Find agents that may be stalled or running unusually long."
+      },
+      "placeholder": "Ask about anything running…",
+      "composerLabel": "Message the orchestrator",
+      "sendFailed": "Send failed",
+      "routesTo": "Routes through {{agent}}",
+      "startAgentHint": "Start an agent to enable fleet chat",
+      "openTerminal": "Open coordinator terminal",
+      "sending": "Sending…",
+      "send": "Send"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

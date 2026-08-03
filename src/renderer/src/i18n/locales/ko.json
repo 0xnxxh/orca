@@ -14505,6 +14505,47 @@
     }
   },
   "dashboardPopout": {
+    "orchestrator": {
+      "trigger": "오케스트레이션",
+      "title": "오케스트레이터",
+      "scope": "글로벌 플릿 · 에이전트 {{count}}개",
+      "ready": "준비됨",
+      "noLiveAgentStatus": "실행 중인 에이전트 없음",
+      "commandActive": "글로벌 플릿 명령 활성화됨",
+      "fleetContext": "플릿 컨텍스트",
+      "dragHint": "채팅으로 드래그",
+      "filterFleet": "플릿 컨텍스트 필터",
+      "filterPlaceholder": "찾기…",
+      "addAgentContext": "{{agent}}을(를) 오케스트레이션 컨텍스트에 추가",
+      "noFleetMatches": "일치 항목 없음",
+      "entireFleet": "전체 플릿",
+      "dropContext": "워크스페이스나 에이전트를 놓아 컨텍스트 범위를 좁히세요",
+      "removeContext": "오케스트레이션 컨텍스트에서 {{context}} 제거",
+      "hideIntro": "소개 숨기기",
+      "coordinating": "조정 중…",
+      "globalOrchestration": "글로벌 오케스트레이션",
+      "startLiveAgentHint": "오케스트레이션을 사용하려면 라이브 에이전트를 시작하세요",
+      "available": "라이브 경로",
+      "unavailable": "라이브 경로 없음",
+      "routeThrough": "경유할 에이전트",
+      "noLiveAgent": "사용 가능한 라이브 에이전트가 없습니다",
+      "globalContext": "하나의 대화로 플릿 전체 파악",
+      "globalContextCopy": "Orca 오케스트레이션을 사용해 프로젝트, 워크스페이스, 호스트 전반의 에이전트를 확인하고 조정합니다.",
+      "try": "추천",
+      "suggestions": {
+        "attention": "플릿 전체에서 내 확인이 필요한 것은?",
+        "summary": "모든 프로젝트의 진행 중인 작업을 요약해 줘.",
+        "stalled": "멈췄거나 비정상적으로 오래 실행 중인 에이전트를 찾아 줘."
+      },
+      "placeholder": "실행 중인 작업에 대해 질문…",
+      "composerLabel": "오케스트레이터에게 메시지",
+      "sendFailed": "보내지 못했습니다",
+      "routesTo": "{{agent}} 경유",
+      "startAgentHint": "플릿 채팅을 사용하려면 에이전트를 시작하세요",
+      "openTerminal": "코디네이터 터미널 열기",
+      "sending": "보내는 중…",
+      "send": "보내기"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

@@ -14505,6 +14505,47 @@
     }
   },
   "dashboardPopout": {
+    "orchestrator": {
+      "trigger": "Orquestar",
+      "title": "Orquestador",
+      "scope": "Flota global · {{count}} agentes",
+      "ready": "Listo",
+      "noLiveAgentStatus": "No hay agentes activos",
+      "commandActive": "Comando de flota global activo",
+      "fleetContext": "Contexto de la flota",
+      "dragHint": "Arrastra al chat",
+      "filterFleet": "Filtrar contexto de la flota",
+      "filterPlaceholder": "Buscar…",
+      "addAgentContext": "Añadir {{agent}} al contexto de orquestación",
+      "noFleetMatches": "Sin coincidencias",
+      "entireFleet": "Toda la flota",
+      "dropContext": "Suelta aquí un espacio de trabajo o agente para acotar el contexto",
+      "removeContext": "Quitar {{context}} del contexto de orquestación",
+      "hideIntro": "Ocultar introducción",
+      "coordinating": "Coordinando…",
+      "globalOrchestration": "Orquestación global",
+      "startLiveAgentHint": "Inicia un agente activo para habilitar la orquestación",
+      "available": "Ruta activa",
+      "unavailable": "Sin ruta activa",
+      "routeThrough": "Enrutar mediante",
+      "noLiveAgent": "No hay agentes activos disponibles",
+      "globalContext": "Una conversación, contexto de toda la flota",
+      "globalContextCopy": "Las solicitudes usan la orquestación de Orca para inspeccionar y coordinar agentes entre proyectos, espacios de trabajo y hosts.",
+      "try": "Prueba",
+      "suggestions": {
+        "attention": "¿Qué necesita mi atención en toda la flota?",
+        "summary": "Resume el trabajo activo de todos los proyectos.",
+        "stalled": "Busca agentes bloqueados o activos durante demasiado tiempo."
+      },
+      "placeholder": "Pregunta por cualquier tarea en ejecución…",
+      "composerLabel": "Enviar mensaje al orquestador",
+      "sendFailed": "Error al enviar",
+      "routesTo": "Se enruta mediante {{agent}}",
+      "startAgentHint": "Inicia un agente para habilitar el chat de la flota",
+      "openTerminal": "Abrir terminal del coordinador",
+      "sending": "Enviando…",
+      "send": "Enviar"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

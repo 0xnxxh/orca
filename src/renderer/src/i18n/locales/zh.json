@@ -14517,6 +14517,47 @@
     }
   },
   "dashboardPopout": {
+    "orchestrator": {
+      "trigger": "全局编排",
+      "title": "编排器",
+      "scope": "全局舰队 · {{count}} 个智能体",
+      "ready": "已就绪",
+      "noLiveAgentStatus": "没有运行中的智能体",
+      "commandActive": "全局舰队命令已启用",
+      "fleetContext": "舰队上下文",
+      "dragHint": "拖入聊天",
+      "filterFleet": "筛选舰队上下文",
+      "filterPlaceholder": "查找…",
+      "addAgentContext": "将 {{agent}} 添加到编排上下文",
+      "noFleetMatches": "没有匹配项",
+      "entireFleet": "整个舰队",
+      "dropContext": "将工作区或智能体拖到此处以缩小上下文范围",
+      "removeContext": "从编排上下文中移除 {{context}}",
+      "hideIntro": "隐藏介绍",
+      "coordinating": "正在协调…",
+      "globalOrchestration": "全局编排",
+      "startLiveAgentHint": "启动一个运行中的智能体以启用编排",
+      "available": "实时路径",
+      "unavailable": "无实时路径",
+      "routeThrough": "经由智能体",
+      "noLiveAgent": "没有可用的实时智能体",
+      "globalContext": "一次对话，掌握整个舰队",
+      "globalContextCopy": "请求会使用 Orca 编排功能，跨项目、工作区和主机检查并协调智能体。",
+      "try": "试一试",
+      "suggestions": {
+        "attention": "整个舰队中有哪些事项需要我处理？",
+        "summary": "总结所有项目中正在进行的工作。",
+        "stalled": "查找可能停滞或运行时间异常长的智能体。"
+      },
+      "placeholder": "询问任何正在运行的任务…",
+      "composerLabel": "向编排器发送消息",
+      "sendFailed": "发送失败",
+      "routesTo": "经由 {{agent}}",
+      "startAgentHint": "启动智能体以启用舰队聊天",
+      "openTerminal": "打开协调器终端",
+      "sending": "正在发送…",
+      "send": "发送"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."
