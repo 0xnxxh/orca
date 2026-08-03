@@ -83,12 +83,58 @@ export function formatAdhocReleaseName(version, label, commit, date) {
   ].join(' • ')
 }
 
+/**
+ * Prefer main's package version so a feature branch cut before a version bump
+ * still stamps adhoc tags on the current product line. Hourly gets this for free
+ * because it always builds main; adhoc builds arbitrary refs, so it has to ask.
+ *
+ * Order: explicit env (workflow can pin after fetching main) → origin/main →
+ * the checked-out package.json as a last resort.
+ */
+export function resolveAdhocBaseVersion({
+  packageJsonVersion,
+  envBaseVersion = process.env.ORCA_ADHOC_BASE_VERSION,
+  readMainPackageVersion = readMainPackageJsonVersion
+} = {}) {
+  if (typeof packageJsonVersion !== 'string' || packageJsonVersion.length === 0) {
+    throw new Error('Package version is not valid semver: (empty)')
+  }
+  const fromEnv = typeof envBaseVersion === 'string' ? envBaseVersion.trim() : ''
+  if (fromEnv) {
+    return fromEnv
+  }
+  const fromMain = readMainPackageVersion()
+  if (typeof fromMain === 'string' && fromMain.length > 0) {
+    return fromMain
+  }
+  return packageJsonVersion
+}
+
+function readMainPackageJsonVersion() {
+  try {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', 'origin/main'], { stdio: 'ignore' })
+    } catch {
+      // CI checks out only the branch ref; fetch main tip for the product-line version.
+      execFileSync('git', ['fetch', '--depth=1', 'origin', 'main'], { stdio: 'ignore' })
+    }
+    const raw = execFileSync('git', ['show', 'origin/main:package.json'], {
+      encoding: 'utf8'
+    })
+    const version = JSON.parse(raw).version
+    return typeof version === 'string' && version.length > 0 ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function getAdhocBuildIdentity(now = new Date(), label = '') {
   const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
   const commit = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
     encoding: 'utf8'
   }).trim()
-  const version = createAdhocBuildVersion(packageJson.version, now)
+  const baseVersion = resolveAdhocBaseVersion({ packageJsonVersion: packageJson.version })
+  const version = createAdhocBuildVersion(baseVersion, now)
   return {
     commit,
     version,

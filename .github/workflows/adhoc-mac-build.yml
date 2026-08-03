@@ -156,7 +156,30 @@ jobs:
             exit 1
           fi
           echo "head_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
-          ORCA_ADHOC_LABEL="${LABEL:-$REF}" node config/scripts/adhoc-build-version.mjs \
+          # Why main's package.json, not the branch's: feature branches often lag
+          # version bumps (this branch can still say 1.4.165 while main is 1.4.168).
+          # Hourly always builds main so it gets the current prefix for free; adhoc
+          # must ask. Stamp adhoc on the current product line so the picker and
+          # semver order stay aligned with hourly.
+          git fetch --depth=1 origin main
+          base_version="$(
+            git show origin/main:package.json | node -e "
+              let raw = ''
+              process.stdin.on('data', (chunk) => { raw += chunk })
+              process.stdin.on('end', () => {
+                const version = JSON.parse(raw).version
+                if (typeof version !== 'string' || !version) {
+                  console.error('origin/main package.json has no version')
+                  process.exit(1)
+                }
+                process.stdout.write(version)
+              })
+            "
+          )"
+          echo "Using base version from main: $base_version (branch package.json may lag)"
+          ORCA_ADHOC_BASE_VERSION="$base_version" \
+            ORCA_ADHOC_LABEL="${LABEL:-$REF}" \
+            node config/scripts/adhoc-build-version.mjs \
             >"$RUNNER_TEMP/adhoc-identity.txt"
           if ! grep -q '^name=' "$RUNNER_TEMP/adhoc-identity.txt"; then
             echo "::error::adhoc-build-version.mjs emitted no release name; $REF's copy of the script is out of sync with this workflow."
