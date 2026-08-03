@@ -5,6 +5,7 @@ import {
   setFilesystemHostReadClientForTests
 } from './filesystem-host-read-authority'
 import { FilesystemHostSupervisorError } from './filesystem-host-supervisor-error'
+import { resolveCliCommandThroughFilesystemHost } from './filesystem-host-rate-limit-client'
 
 afterEach(() => {
   setFilesystemHostReadClientForTests(null)
@@ -18,6 +19,7 @@ function createSupervisor(dispatch: ReturnType<typeof vi.fn>): TestSupervisor {
   return {
     dispatch: dispatch as TestSupervisor['dispatch'],
     publishFailureDomain: vi.fn(),
+    removeFailureDomain: vi.fn(),
     dispose: vi.fn(async () => {})
   }
 }
@@ -30,6 +32,7 @@ describe('FilesystemHostReadAuthority', () => {
       code: 'EHOSTUNREACH',
       reason: 'unavailable'
     })
+    await expect(resolveCliCommandThroughFilesystemHost('codex')).resolves.toBe('codex')
   })
 
   it('routes WSL and UNC paths to Windows-host lanes', async () => {
@@ -111,9 +114,10 @@ describe('FilesystemHostReadAuthority', () => {
       kind: 'read-keybindings' as const,
       contents: '{"version":1}'
     }))
+    const supervisor = createSupervisor(dispatch)
     const authority = new FilesystemHostReadAuthority({
       entryPath: '/unused',
-      supervisor: createSupervisor(dispatch)
+      supervisor
     })
 
     await expect(authority.readKeybindings('/home/alice/.orca/keybindings.json')).resolves.toBe(
@@ -180,5 +184,155 @@ describe('FilesystemHostReadAuthority', () => {
       prefix: '/repo',
       mountId: 'device-7'
     })
+
+    authority.hydrateFailureDomains(['/repo'])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds hydration without dropping repositories beyond lane capacity', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let active = 0
+    let maximumActive = 0
+    const dispatch = vi.fn(async () => {
+      active++
+      maximumActive = Math.max(maximumActive, active)
+      await gate
+      active--
+      return { kind: 'classify-path' as const, deviceId: 'device-7' }
+    })
+    const publishFailureDomain = vi.fn()
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor: { ...createSupervisor(dispatch), publishFailureDomain }
+    })
+    const paths = Array.from({ length: 100 }, (_, index) => `/repo-${index}`)
+
+    authority.hydrateFailureDomains(paths)
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(4))
+    expect(maximumActive).toBe(4)
+    release()
+
+    await vi.waitFor(() => expect(publishFailureDomain).toHaveBeenCalledTimes(100))
+    expect(dispatch).toHaveBeenCalledTimes(100)
+  })
+
+  it('cancels obsolete queued classifications when the catalog is replaced', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const dispatch = vi.fn(async () => {
+      await gate
+      return { kind: 'classify-path' as const, deviceId: 'device-7' }
+    })
+    const supervisor = createSupervisor(dispatch)
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor
+    })
+    const paths = Array.from({ length: 100 }, (_, index) => `/repo-${index}`)
+
+    authority.reconcileFailureDomains(paths)
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(4))
+    authority.reconcileFailureDomains([])
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(dispatch).toHaveBeenCalledTimes(4)
+    expect(supervisor.publishFailureDomain).not.toHaveBeenCalled()
+  })
+
+  it('classifies orca.yaml once before routing repeated reads', async () => {
+    const dispatch = vi.fn(async (input) =>
+      input.operation.kind === 'classify-path'
+        ? { kind: 'classify-path' as const, deviceId: 'device-7' }
+        : { kind: 'read-orca-yaml' as const, contents: 'scripts: {}\n' }
+    )
+    const supervisor = createSupervisor(dispatch)
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor
+    })
+    authority.reconcileFailureDomains(['/repo'])
+    await vi.waitFor(() => expect(supervisor.publishFailureDomain).toHaveBeenCalledTimes(1))
+
+    await authority.readOrcaYaml('/repo/orca.yaml')
+    await authority.readOrcaYaml('/repo/orca.yaml')
+
+    expect(dispatch.mock.calls.map(([input]) => input.operation.kind)).toEqual([
+      'classify-path',
+      'read-orca-yaml',
+      'read-orca-yaml'
+    ])
+  })
+
+  it('prunes removed catalog classifications and reclassifies re-added paths', async () => {
+    const dispatch = vi.fn(async () => ({
+      kind: 'classify-path' as const,
+      deviceId: 'device-7'
+    }))
+    const supervisor = createSupervisor(dispatch)
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor
+    })
+
+    authority.reconcileFailureDomains(['/repo'])
+    await vi.waitFor(() => expect(supervisor.publishFailureDomain).toHaveBeenCalledTimes(1))
+    authority.reconcileFailureDomains([])
+    expect(supervisor.removeFailureDomain).toHaveBeenCalledWith({
+      executionHost: 'native',
+      prefix: '/repo'
+    })
+
+    authority.reconcileFailureDomains(['/repo'])
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2))
+  })
+
+  it('resolves CLI commands through a typed bounded home operation', async () => {
+    const dispatch = vi.fn(async () => ({
+      kind: 'resolve-cli-command' as const,
+      command: '/managed/bin/codex'
+    }))
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor: createSupervisor(dispatch)
+    })
+
+    await expect(authority.resolveCliCommand('codex')).resolves.toBe('/managed/bin/codex')
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: expect.objectContaining({ kind: 'resolve-cli-command', commandName: 'codex' }),
+        storageClass: 'home',
+        admission: 'background'
+      })
+    )
+  })
+
+  it('writes rate-limit credentials through a typed bounded home operation', async () => {
+    const dispatch = vi.fn(async () => ({
+      kind: 'write-rate-limit-credential' as const
+    }))
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor: createSupervisor(dispatch)
+    })
+
+    await authority.writeRateLimitCredential(
+      '/home/alice/.gemini/oauth_creds.json',
+      'gemini-oauth-credentials',
+      '{"access_token":"access","refresh_token":"refresh","expiry_date":123}'
+    )
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: expect.objectContaining({ kind: 'write-rate-limit-credential' }),
+        storageClass: 'home',
+        admission: 'background'
+      })
+    )
   })
 })

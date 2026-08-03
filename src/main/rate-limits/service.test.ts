@@ -282,7 +282,7 @@ describe('RateLimitService', () => {
   it('re-hydrates through the bounded host before an automated full cycle', async () => {
     const service = new RateLimitService()
     const codexResolver = vi.fn(() => '/managed/codex')
-    const codexCommandResolver = vi.fn(() => '/managed/bin/codex')
+    const codexCommandResolver = vi.fn(async () => '/managed/bin/codex')
     const claudeResolver = vi.fn(async () => ({
       configDir: '/managed/claude',
       envPatch: { CLAUDE_CONFIG_DIR: '/managed/claude' },
@@ -2076,6 +2076,26 @@ describe('RateLimitService', () => {
         updatedAt: expect.any(Number),
         isFetching: false
       }
+    ])
+  })
+
+  it('falls back to the bare Codex command when bounded discovery is unavailable', async () => {
+    const service = new RateLimitService()
+    service.setCodexCommandResolver(async () => {
+      throw new Error('filesystem host unavailable')
+    })
+    service.setInactiveCodexAccountsResolver(() => [
+      { id: 'account-1', managedHomePath: '/tmp/account-1/home' }
+    ])
+    vi.mocked(fetchCodexRateLimits).mockResolvedValueOnce(okProvider('codex', 33, Date.now()))
+
+    await service.fetchInactiveCodexAccountsOnOpen()
+
+    expect(fetchCodexRateLimits).toHaveBeenCalledWith(
+      expect.objectContaining({ codexCommand: 'codex' })
+    )
+    expect(service.getState().inactiveCodexAccounts).toEqual([
+      expect.objectContaining({ accountId: 'account-1', isFetching: false })
     ])
   })
 

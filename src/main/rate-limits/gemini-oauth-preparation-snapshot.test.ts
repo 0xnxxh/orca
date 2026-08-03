@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { extractCredentialsMock, readAuthJsonMock, readGeminiCredentialsMock } = vi.hoisted(() => ({
+const {
+  extractCredentialsMock,
+  readAuthJsonMock,
+  readGeminiCredentialsMock,
+  saveAuthJsonSourceMock,
+  saveGeminiCredentialsMock
+} = vi.hoisted(() => ({
   extractCredentialsMock: vi.fn(),
   readAuthJsonMock: vi.fn(),
-  readGeminiCredentialsMock: vi.fn()
+  readGeminiCredentialsMock: vi.fn(),
+  saveAuthJsonSourceMock: vi.fn(),
+  saveGeminiCredentialsMock: vi.fn()
 }))
 
 vi.mock('./gemini-cli-oauth-extractor', () => ({
@@ -11,14 +19,16 @@ vi.mock('./gemini-cli-oauth-extractor', () => ({
 }))
 
 vi.mock('./gemini-oauth-sources', () => ({
-  readAuthJson: readAuthJsonMock,
-  readGeminiCredentials: readGeminiCredentialsMock
+  readAuthJsonSource: readAuthJsonMock,
+  readGeminiCredentials: readGeminiCredentialsMock,
+  saveAuthJsonSource: saveAuthJsonSourceMock,
+  saveGeminiCredentials: saveGeminiCredentialsMock
 }))
 
 import {
   getGeminiOAuthPreparationSnapshot,
   hydrateGeminiOAuthPreparationSnapshot,
-  publishGeminiOAuthTokenRefresh,
+  commitGeminiOAuthTokenRefresh,
   resetGeminiOAuthPreparationSnapshotForTests
 } from './gemini-oauth-preparation-snapshot'
 
@@ -30,23 +40,34 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
+function authJsonSource(access: string, expires: number, refresh: string) {
+  return {
+    path: '/home/alice/.local/share/opencode/auth.json',
+    value: { google: { type: 'oauth' as const, access, expires, refresh } }
+  }
+}
+
 describe('Gemini OAuth preparation snapshot', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetGeminiOAuthPreparationSnapshotForTests()
     extractCredentialsMock.mockResolvedValue({ clientId: 'client', clientSecret: 'secret' })
     readGeminiCredentialsMock.mockResolvedValue(null)
+    saveAuthJsonSourceMock.mockImplementation(async (source) => {
+      readAuthJsonMock.mockResolvedValue(source)
+    })
+    saveGeminiCredentialsMock.mockImplementation(async (credentials) => {
+      readGeminiCredentialsMock.mockResolvedValue(credentials)
+    })
   })
 
   it('coalesces concurrent hydration into one credential and discovery read', async () => {
-    const read = deferred<{
-      google: { type: 'oauth'; access: string; expires: number; refresh: string }
-    }>()
+    const read = deferred<ReturnType<typeof authJsonSource>>()
     readAuthJsonMock.mockReturnValue(read.promise)
 
     const first = hydrateGeminiOAuthPreparationSnapshot(true)
     const second = hydrateGeminiOAuthPreparationSnapshot(true)
-    read.resolve({ google: { type: 'oauth', access: 'token', expires: 10, refresh: 'refresh' } })
+    read.resolve(authJsonSource('token', 10, 'refresh'))
 
     await Promise.all([first, second])
     expect(readAuthJsonMock).toHaveBeenCalledTimes(1)
@@ -59,14 +80,12 @@ describe('Gemini OAuth preparation snapshot', () => {
   })
 
   it('rejects late hydration publication after opt-out revokes ownership', async () => {
-    const read = deferred<{
-      google: { type: 'oauth'; access: string; expires: number; refresh: string }
-    }>()
+    const read = deferred<ReturnType<typeof authJsonSource>>()
     readAuthJsonMock.mockReturnValue(read.promise)
 
     const hydration = hydrateGeminiOAuthPreparationSnapshot(true)
     await hydrateGeminiOAuthPreparationSnapshot(false)
-    read.resolve({ google: { type: 'oauth', access: 'late', expires: 10, refresh: 'refresh' } })
+    read.resolve(authJsonSource('late', 10, 'refresh'))
     await hydration
 
     expect(getGeminiOAuthPreparationSnapshot()).toMatchObject({
@@ -85,13 +104,11 @@ describe('Gemini OAuth preparation snapshot', () => {
   })
 
   it('publishes refreshed tokens only while the hydrated snapshot still owns the store', async () => {
-    readAuthJsonMock.mockResolvedValue({
-      google: { type: 'oauth', access: 'old', expires: 10, refresh: 'old-refresh|project' }
-    })
+    readAuthJsonMock.mockResolvedValue(authJsonSource('old', 10, 'old-refresh|project'))
     const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
     const preparation = hydrated.value!
 
-    publishGeminiOAuthTokenRefresh(preparation, {
+    await commitGeminiOAuthTokenRefresh(preparation, {
       accessToken: 'new',
       newRefreshToken: 'new-refresh',
       expiresIn: 3600
@@ -99,9 +116,17 @@ describe('Gemini OAuth preparation snapshot', () => {
     expect(getGeminiOAuthPreparationSnapshot().value).toMatchObject({
       auth: { access: 'new', refresh: 'new-refresh|project' }
     })
+    expect(saveAuthJsonSourceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/home/alice/.local/share/opencode/auth.json',
+        value: expect.objectContaining({
+          google: expect.objectContaining({ access: 'new', refresh: 'new-refresh|project' })
+        })
+      })
+    )
 
     await hydrateGeminiOAuthPreparationSnapshot(false)
-    publishGeminiOAuthTokenRefresh(preparation, {
+    await commitGeminiOAuthTokenRefresh(preparation, {
       accessToken: 'late',
       newRefreshToken: null
     })
@@ -122,7 +147,7 @@ describe('Gemini OAuth preparation snapshot', () => {
     const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
     const preparation = hydrated.value!
 
-    publishGeminiOAuthTokenRefresh(preparation, {
+    await commitGeminiOAuthTokenRefresh(preparation, {
       accessToken: 'memory-access',
       newRefreshToken: 'memory-refresh',
       expiresIn: 3600
@@ -135,6 +160,65 @@ describe('Gemini OAuth preparation snapshot', () => {
         refresh_token: 'memory-refresh'
       }
     })
+    expect(saveGeminiCredentialsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        access_token: 'memory-access',
+        refresh_token: 'memory-refresh'
+      })
+    )
+  })
+
+  it('does not publish a credential refresh when persistence fails', async () => {
+    readAuthJsonMock.mockResolvedValue(null)
+    readGeminiCredentialsMock.mockResolvedValue({
+      access_token: 'expired',
+      refresh_token: 'disk-refresh',
+      expiry_date: 10
+    })
+    saveGeminiCredentialsMock.mockRejectedValue(new Error('disk unavailable'))
+    const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
+
+    await expect(
+      commitGeminiOAuthTokenRefresh(hydrated.value!, {
+        accessToken: 'new-access',
+        newRefreshToken: 'new-refresh',
+        expiresIn: 3600
+      })
+    ).rejects.toThrow('disk unavailable')
+    expect(getGeminiOAuthPreparationSnapshot().value).toMatchObject({
+      credentials: { access_token: 'expired', refresh_token: 'disk-refresh' }
+    })
+  })
+
+  it('serializes refresh persistence and discards stale concurrent commits', async () => {
+    readAuthJsonMock.mockResolvedValue(null)
+    readGeminiCredentialsMock.mockResolvedValue({
+      access_token: 'expired',
+      refresh_token: 'disk-refresh',
+      expiry_date: 10
+    })
+    const write = deferred<void>()
+    saveGeminiCredentialsMock.mockReturnValueOnce(write.promise)
+    const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
+
+    const first = commitGeminiOAuthTokenRefresh(hydrated.value!, {
+      accessToken: 'first-access',
+      newRefreshToken: 'first-refresh',
+      expiresIn: 3600
+    })
+    const second = commitGeminiOAuthTokenRefresh(hydrated.value!, {
+      accessToken: 'second-access',
+      newRefreshToken: 'second-refresh',
+      expiresIn: 3600
+    })
+    await vi.waitFor(() => expect(saveGeminiCredentialsMock).toHaveBeenCalledTimes(1))
+    write.resolve()
+    await Promise.all([first, second])
+
+    expect(saveGeminiCredentialsMock).toHaveBeenCalledTimes(1)
+    expect(getGeminiOAuthPreparationSnapshot().value).toMatchObject({
+      credentials: { access_token: 'first-access', refresh_token: 'first-refresh' }
+    })
   })
 
   it('adopts credentials that changed on disk after an in-memory refresh', async () => {
@@ -145,7 +229,7 @@ describe('Gemini OAuth preparation snapshot', () => {
       expiry_date: 10
     })
     const hydrated = await hydrateGeminiOAuthPreparationSnapshot(true)
-    publishGeminiOAuthTokenRefresh(hydrated.value!, {
+    await commitGeminiOAuthTokenRefresh(hydrated.value!, {
       accessToken: 'memory-access',
       newRefreshToken: null,
       expiresIn: 3600

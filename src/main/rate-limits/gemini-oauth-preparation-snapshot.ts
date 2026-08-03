@@ -1,8 +1,11 @@
 import type { MemorySnapshot } from '../../shared/memory-snapshot'
 import { extractOAuthClientCredentials } from './gemini-cli-oauth-extractor'
 import {
-  readAuthJson,
+  readAuthJsonSource,
   readGeminiCredentials,
+  saveAuthJsonSource,
+  saveGeminiCredentials,
+  type AuthJsonSource,
   type GeminiCredentials,
   type GoogleAuthEntry,
   type RefreshTokenResult
@@ -18,6 +21,7 @@ export type GeminiOAuthPreparation =
   | {
       source: 'auth-json'
       auth: GoogleAuthEntry
+      authSource: AuthJsonSource
       clientCredentials: OAuthClientCredentials | null
     }
   | {
@@ -28,6 +32,7 @@ export type GeminiOAuthPreparation =
 
 let preparationStore = new MemorySnapshotStore<GeminiOAuthPreparation>()
 let preparationSourceRevisions = new WeakMap<object, string>()
+let refreshCommitQueue: Promise<void> = Promise.resolve()
 
 function sourceRevision(preparation: GeminiOAuthPreparation): string {
   return JSON.stringify(preparation)
@@ -37,16 +42,17 @@ async function loadPreparation(): Promise<{
   value: GeminiOAuthPreparation | null
   availability: 'ready' | 'missing'
 }> {
-  const authJson = await readAuthJson()
-  const auth = authJson?.google?.type === 'oauth' ? authJson.google : null
+  const authSource = await readAuthJsonSource()
+  const auth = authSource?.value.google?.type === 'oauth' ? authSource.value.google : null
   const credentials = auth ? null : await readGeminiCredentials()
   if (!auth && !credentials) {
     return { value: null, availability: 'missing' }
   }
   const clientCredentials = await extractOAuthClientCredentials()
-  const preparation: GeminiOAuthPreparation = auth
-    ? { source: 'auth-json', auth, clientCredentials }
-    : { source: 'oauth-creds', credentials: credentials!, clientCredentials }
+  const preparation: GeminiOAuthPreparation =
+    auth && authSource
+      ? { source: 'auth-json', auth, authSource, clientCredentials }
+      : { source: 'oauth-creds', credentials: credentials!, clientCredentials }
   const revision = sourceRevision(preparation)
   const current = preparationStore.get()
   if (
@@ -89,14 +95,19 @@ function refreshedAuthValue(
   if (result.newRefreshToken) {
     refreshParts[0] = result.newRefreshToken
   }
+  const refreshedAuth: GoogleAuthEntry = {
+    ...preparation.auth,
+    access: result.accessToken!,
+    expires: refreshedTokenExpiry(result.expiresIn, preparation.auth.expires),
+    refresh: refreshParts.join('|')
+  }
   return {
     ...preparation,
-    auth: {
-      ...preparation.auth,
-      access: result.accessToken!,
-      expires: refreshedTokenExpiry(result.expiresIn, preparation.auth.expires),
-      refresh: refreshParts.join('|')
-    }
+    authSource: {
+      ...preparation.authSource,
+      value: { ...preparation.authSource.value, google: refreshedAuth }
+    },
+    auth: refreshedAuth
   }
 }
 
@@ -115,10 +126,21 @@ function refreshedCredentialsValue(
   }
 }
 
-export function publishGeminiOAuthTokenRefresh(
+export function commitGeminiOAuthTokenRefresh(
   preparation: GeminiOAuthPreparation,
   result: RefreshTokenResult
-): void {
+): Promise<void> {
+  const commit = refreshCommitQueue.then(() =>
+    commitGeminiOAuthTokenRefreshNow(preparation, result)
+  )
+  refreshCommitQueue = commit.catch(() => {})
+  return commit
+}
+
+async function commitGeminiOAuthTokenRefreshNow(
+  preparation: GeminiOAuthPreparation,
+  result: RefreshTokenResult
+): Promise<void> {
   const current = preparationStore.get()
   if (!result.accessToken || current.stale || current.value !== preparation) {
     return
@@ -127,10 +149,14 @@ export function publishGeminiOAuthTokenRefresh(
     preparation.source === 'auth-json'
       ? refreshedAuthValue(preparation, result)
       : refreshedCredentialsValue(preparation, result)
-  const revision = preparationSourceRevisions.get(preparation)
-  if (revision) {
-    preparationSourceRevisions.set(refreshed, revision)
+  await (refreshed.source === 'auth-json'
+    ? saveAuthJsonSource(refreshed.authSource)
+    : saveGeminiCredentials(refreshed.credentials))
+  const latest = preparationStore.get()
+  if (latest.stale || latest.value !== preparation) {
+    return
   }
+  preparationSourceRevisions.set(refreshed, sourceRevision(refreshed))
   preparationStore.publishOwned({
     value: refreshed,
     availability: 'ready'
@@ -140,4 +166,5 @@ export function publishGeminiOAuthTokenRefresh(
 export function resetGeminiOAuthPreparationSnapshotForTests(): void {
   preparationStore = new MemorySnapshotStore<GeminiOAuthPreparation>()
   preparationSourceRevisions = new WeakMap<object, string>()
+  refreshCommitQueue = Promise.resolve()
 }

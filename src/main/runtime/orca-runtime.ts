@@ -834,9 +834,8 @@ import {
   getDefaultTabCommandTrustContent,
   getDefaultTabsLaunch,
   getEffectiveHooks,
+  getEffectiveHooksFromConfig,
   getEffectiveSetupRunPolicy,
-  hasUnrecognizedOrcaYamlKeys,
-  hasHooksFile,
   loadHooks,
   parseOrcaYaml,
   readIssueCommand,
@@ -845,6 +844,10 @@ import {
   shouldRunSetupForCreate,
   writeIssueCommand
 } from '../hooks'
+import {
+  readLocalOrcaYamlSnapshot,
+  reconcileLocalOrcaYamlSnapshots
+} from '../git/orca-yaml-snapshot-store'
 import {
   DEFAULT_REPO_BADGE_COLOR,
   FLOATING_TERMINAL_WORKTREE_ID,
@@ -5062,6 +5065,7 @@ export class OrcaRuntimeService {
   }
 
   private notifyReposChanged(): void {
+    reconcileLocalOrcaYamlSnapshots(this.store?.getRepos() ?? [])
     this.notifier?.reposChanged()
     this.emitClientEvent({ type: 'reposChanged' })
   }
@@ -12554,13 +12558,21 @@ export class OrcaRuntimeService {
   // `rateLimits:update` IPC channel desktop already uses.
   onAccountsChanged(listener: (snapshot: AccountsSnapshot) => void): () => void {
     const services = this.requireAccountServices()
-    return services.rateLimits.onStateChange((rateLimits) => {
+    const emitSnapshot = (rateLimits: RateLimitState = services.rateLimits.getState()): void => {
       listener({
         claude: services.claudeAccounts.listAccounts(),
         codex: services.codexAccounts.listAccounts(),
         rateLimits
       })
-    })
+    }
+    const unsubscribeRateLimits = services.rateLimits.onStateChange(emitSnapshot)
+    const unsubscribeIdentity = services.codexAccounts.onSystemDefaultIdentityChanged(() =>
+      emitSnapshot()
+    )
+    return () => {
+      unsubscribeRateLimits()
+      unsubscribeIdentity()
+    }
   }
 
   // ─── Mobile Fit Override Management ─────────────────────────
@@ -19634,6 +19646,15 @@ export class OrcaRuntimeService {
 
   async getRepoHooks(repoSelector: string) {
     const repo = await this.resolveRepoSelector(repoSelector)
+    if (isFolderRepo(repo)) {
+      const hooks = getEffectiveHooksFromConfig(repo, null)
+      return {
+        hasHooksFile: false,
+        hooks,
+        setupRunPolicy: getEffectiveSetupRunPolicy(repo),
+        source: hooks ? 'legacy' : null
+      }
+    }
     if (repo.connectionId) {
       const fsProvider = getSshFilesystemProvider(repo.connectionId)
       if (!fsProvider) {
@@ -19666,9 +19687,11 @@ export class OrcaRuntimeService {
         }
       }
     }
-    const hasFile = hasHooksFile(repo.path)
-    const hooks = getEffectiveHooks(repo)
-    const sharedHooks = hasFile ? loadHooks(repo.path) : null
+    const snapshot = readLocalOrcaYamlSnapshot(repo.path)
+    const snapshotValue = snapshot.value
+    const hasFile = snapshotValue !== null && snapshotValue.contentState !== 'missing'
+    const sharedHooks = snapshotValue?.hooks ?? null
+    const hooks = getEffectiveHooksFromConfig(repo, sharedHooks)
     const setupRunPolicy = getEffectiveSetupRunPolicy(repo)
     return {
       hasHooksFile: hasFile,
@@ -19678,7 +19701,12 @@ export class OrcaRuntimeService {
       setupTrust: this.getSharedSetupHookTrustPayload(
         repo,
         getDefaultTabCommandTrustContent(sharedHooks)
-      )
+      ),
+      stale: snapshot.stale,
+      age: snapshot.age,
+      availability: snapshot.availability,
+      contentState: snapshotValue?.contentState ?? null,
+      lastError: snapshot.lastError
     }
   }
 
@@ -19704,12 +19732,22 @@ export class OrcaRuntimeService {
       }
     }
 
-    const has = hasHooksFile(repo.path)
-    const hooks = has ? loadHooks(repo.path) : null
+    const snapshot = readLocalOrcaYamlSnapshot(repo.path)
+    const value = snapshot.value
     return {
-      hasHooks: has,
-      hooks,
-      mayNeedUpdate: has && !hooks && hasUnrecognizedOrcaYamlKeys(repo.path)
+      status:
+        value === null &&
+        (snapshot.availability === 'denied' || snapshot.availability === 'unavailable')
+          ? 'error'
+          : 'ok',
+      hasHooks: value !== null && value.contentState !== 'missing',
+      hooks: value?.hooks ?? null,
+      mayNeedUpdate: value?.mayNeedUpdate ?? false,
+      stale: snapshot.stale,
+      age: snapshot.age,
+      availability: snapshot.availability,
+      contentState: value?.contentState ?? null,
+      lastError: snapshot.lastError
     }
   }
 

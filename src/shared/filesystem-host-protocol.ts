@@ -5,6 +5,13 @@ export const FILESYSTEM_HOST_MAX_TEXT_BYTES = 4 * 1024 * 1024
 const FILESYSTEM_HOST_MAX_BASE64_BYTES = Math.ceil((FILESYSTEM_HOST_MAX_TEXT_BYTES * 4) / 3) + 4
 
 const filesystemPathSchema = z.string().min(1).max(32_768)
+const filesystemPathEnvironmentSchema = z.string().max(131_072)
+
+export const filesystemCliCommandNameSchema = z.enum(['claude', 'codex'])
+export const rateLimitCredentialFileKindSchema = z.enum([
+  'gemini-oauth-credentials',
+  'opencode-auth'
+])
 
 export const filesystemSnapshotFileKindSchema = z.enum([
   'claude-credentials',
@@ -44,6 +51,18 @@ export const filesystemHostOperationSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('prepare-rate-limit-pty-cwd'),
     path: filesystemPathSchema
+  }),
+  z.object({
+    kind: z.literal('resolve-cli-command'),
+    path: filesystemPathSchema,
+    commandName: filesystemCliCommandNameSchema,
+    pathEnvironment: filesystemPathEnvironmentSchema
+  }),
+  z.object({
+    kind: z.literal('write-rate-limit-credential'),
+    path: filesystemPathSchema,
+    fileKind: rateLimitCredentialFileKindSchema,
+    contents: z.string().min(1).max(FILESYSTEM_HOST_MAX_TEXT_BYTES)
   })
 ])
 
@@ -73,7 +92,9 @@ const filesystemHostResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('read-snapshot-file'),
     contentsBase64: z.string().max(FILESYSTEM_HOST_MAX_BASE64_BYTES)
   }),
-  z.object({ kind: z.literal('prepare-rate-limit-pty-cwd'), canonicalPath: filesystemPathSchema })
+  z.object({ kind: z.literal('prepare-rate-limit-pty-cwd'), canonicalPath: filesystemPathSchema }),
+  z.object({ kind: z.literal('resolve-cli-command'), command: filesystemPathSchema }),
+  z.object({ kind: z.literal('write-rate-limit-credential') })
 ])
 
 export const filesystemHostErrorCodeSchema = z.enum([
@@ -116,3 +137,5 @@ export type FilesystemHostChildMessage = z.infer<typeof filesystemHostChildMessa
 export type FilesystemHostResult = z.infer<typeof filesystemHostResultSchema>
 export type FilesystemHostErrorCode = z.infer<typeof filesystemHostErrorCodeSchema>
 export type FilesystemSnapshotFileKind = z.infer<typeof filesystemSnapshotFileKindSchema>
+export type FilesystemCliCommandName = z.infer<typeof filesystemCliCommandNameSchema>
+export type RateLimitCredentialFileKind = z.infer<typeof rateLimitCredentialFileKindSchema>

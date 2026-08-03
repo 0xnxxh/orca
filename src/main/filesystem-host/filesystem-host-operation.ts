@@ -9,7 +9,8 @@ import {
   statSync
 } from 'node:fs'
 import { basename } from 'node:path'
-import { hardenExistingSecureFile } from '../../shared/secure-file'
+import { hardenExistingSecureFile, writeSecureFile } from '../../shared/secure-file'
+import { resolveCliCommand } from '../../shared/node-cli-command-resolution'
 import type {
   FilesystemHostErrorCode,
   FilesystemHostOperation,
@@ -172,6 +173,40 @@ function readBoundedSnapshotFile(
   }
 }
 
+function writeRateLimitCredential(
+  operation: Extract<FilesystemHostOperation, { kind: 'write-rate-limit-credential' }>
+): FilesystemHostResult {
+  const expectedBasename =
+    operation.fileKind === 'gemini-oauth-credentials' ? 'oauth_creds.json' : 'auth.json'
+  if (basename(operation.path).toLowerCase() !== expectedBasename) {
+    throw new FilesystemHostOperationError('invalid', `Expected a ${expectedBasename} path`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(operation.contents)
+  } catch {
+    throw new FilesystemHostOperationError('invalid', 'Expected a JSON credential document')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new FilesystemHostOperationError('invalid', 'Expected a JSON credential object')
+  }
+  if (operation.fileKind === 'gemini-oauth-credentials') {
+    const credentials = parsed as Record<string, unknown>
+    if (
+      typeof credentials.access_token !== 'string' ||
+      credentials.access_token.length === 0 ||
+      typeof credentials.refresh_token !== 'string' ||
+      credentials.refresh_token.length === 0 ||
+      typeof credentials.expiry_date !== 'number' ||
+      !Number.isFinite(credentials.expiry_date)
+    ) {
+      throw new FilesystemHostOperationError('invalid', 'Invalid Gemini OAuth credentials')
+    }
+  }
+  writeSecureFile(operation.path, operation.contents)
+  return { kind: 'write-rate-limit-credential' }
+}
+
 export function executeFilesystemHostOperation(
   operation: FilesystemHostOperation
 ): FilesystemHostResult {
@@ -200,6 +235,16 @@ export function executeFilesystemHostOperation(
         return readBoundedSnapshotFile(operation.path, operation.fileKind)
       case 'prepare-rate-limit-pty-cwd':
         return prepareRateLimitPtyCwd(operation.path)
+      case 'resolve-cli-command':
+        return {
+          kind: 'resolve-cli-command',
+          command: resolveCliCommand(operation.commandName, {
+            homePath: operation.path,
+            pathEnv: operation.pathEnvironment
+          })
+        }
+      case 'write-rate-limit-credential':
+        return writeRateLimitCredential(operation)
     }
   } catch (error) {
     if (error instanceof FilesystemHostOperationError) {

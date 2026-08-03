@@ -46,6 +46,13 @@ function dispatch(path: string, operationId: string, admission: 'foreground' | '
   }
 }
 
+function classifyDispatch(path: string, operationId: string) {
+  return {
+    ...dispatch(path, operationId, 'background'),
+    operation: { kind: 'classify-path' as const, path }
+  }
+}
+
 describe('FilesystemHostSupervisor', () => {
   it('serializes one unknown failure-domain lane and reuses its child', async () => {
     const first = deferred<FilesystemHostResult>()
@@ -128,6 +135,77 @@ describe('FilesystemHostSupervisor', () => {
     invocations[1].resolve(canonical('/b/repo'))
 
     await expect(Promise.all([a, b])).resolves.toHaveLength(2)
+  })
+
+  it('isolates unclassified path probes before their mount is known', async () => {
+    const stalled = deferred<FilesystemHostResult>()
+    const startProcess = vi.fn(async () => ({
+      invoke: async (operation: FilesystemHostOperation) =>
+        operation.path === '/stalled'
+          ? stalled.promise
+          : ({ kind: 'classify-path', deviceId: 'healthy-device' } as const),
+      retire: async () => true
+    }))
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 3,
+      startProcess
+    })
+
+    const stalledProbe = supervisor.dispatch(classifyDispatch('/stalled', 'stalled'))
+    await expect(supervisor.dispatch(classifyDispatch('/healthy', 'healthy'))).resolves.toEqual({
+      kind: 'classify-path',
+      deviceId: 'healthy-device'
+    })
+    expect(startProcess).toHaveBeenCalledTimes(2)
+
+    stalled.resolve({ kind: 'classify-path', deviceId: 'stalled-device' })
+    await expect(stalledProbe).resolves.toEqual({
+      kind: 'classify-path',
+      deviceId: 'stalled-device'
+    })
+  })
+
+  it('retires successful classification lanes instead of retaining path-shaped state', async () => {
+    const retire = vi.fn(async () => true)
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 3,
+      startProcess: async () => ({
+        invoke: async () => ({ kind: 'classify-path', deviceId: 'device-a' }),
+        retire
+      })
+    })
+
+    await supervisor.dispatch(classifyDispatch('/repo', 'classify'))
+
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(supervisor.health().physicalChildren).toBe(0))
+    expect(supervisor.health().breakers).toEqual({})
+  })
+
+  it('retires an idle mount lane after its final catalog prefix is removed', async () => {
+    const retire = vi.fn(async () => true)
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 3,
+      startProcess: async () => ({
+        invoke: async (operation: FilesystemHostOperation) => canonical(operation.path),
+        retire
+      })
+    })
+    supervisor.publishFailureDomain({
+      executionHost: 'native',
+      prefix: '/repo',
+      mountId: 'device-a'
+    })
+    await supervisor.dispatch(dispatch('/repo', 'read', 'foreground'))
+
+    supervisor.removeFailureDomain({ executionHost: 'native', prefix: '/repo' })
+
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(supervisor.health().physicalChildren).toBe(0))
+    expect(supervisor.health().breakers).toEqual({})
   })
 
   it('keeps the final physical slot available to foreground work', async () => {

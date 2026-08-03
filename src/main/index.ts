@@ -179,7 +179,6 @@ import { readMiniMaxSessionCookie } from './minimax/minimax-cookie-store'
 import { getInitialClaudeRateLimitTarget } from './rate-limits/claude-rate-limit-target'
 import { getInitialCodexRateLimitTarget } from './rate-limits/codex-rate-limit-target'
 import { createAccountRuntimeTargetSettingsSync } from './rate-limits/account-runtime-target-sync'
-import { resolveCodexCommand } from './codex-cli/command'
 import { hydrateMacTailscaleDnsDiagnostic } from './network/macos-tailscale-dns-diagnostic'
 import {
   attachMainWindowServices,
@@ -267,6 +266,7 @@ import {
   configureFilesystemHostReadAuthority,
   FilesystemHostReadAuthority
 } from './filesystem-host/filesystem-host-read-authority'
+import { resolveCliCommandThroughFilesystemHost } from './filesystem-host/filesystem-host-rate-limit-client'
 import { applyPluginConsent, applyPluginEnablement } from './plugins/plugin-enablement'
 import { setPluginServiceForRpc } from './runtime/rpc/methods/plugins'
 import {
@@ -2214,7 +2214,7 @@ void app.whenReady().then(async () => {
   rateLimits.setCodexHomePathResolver((target) =>
     codexRuntimeHome!.prepareForRateLimitFetch(target)
   )
-  rateLimits.setCodexCommandResolver(() => resolveCodexCommand())
+  rateLimits.setCodexCommandResolver(() => resolveCliCommandThroughFilesystemHost('codex'))
   rateLimits.setCodexFetchTarget(getInitialCodexRateLimitTarget(store.getSettings()))
   rateLimits.setClaudeFetchTarget(getInitialClaudeRateLimitTarget(store.getSettings()))
   const syncAccountRuntimeTargets = createAccountRuntimeTargetSettingsSync(

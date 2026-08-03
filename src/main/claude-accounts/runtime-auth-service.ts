@@ -17,6 +17,7 @@ import { resolveLocalAccountRuntimeTarget } from '../../shared/local-account-run
 import { getDefaultWslDistro, getWslHome, toWindowsWslPath } from '../wsl'
 import { buildEncodedWslBashCommand } from '../wsl-bash-command'
 import { resolveClaudeCommand } from '../codex-cli/command'
+import { resolveCliCommandThroughFilesystemHost } from '../filesystem-host/filesystem-host-rate-limit-client'
 import { hasLiveClaudePtys } from './live-pty-gate'
 import { isOauthTokenExpiring, refreshClaudeOauthCredentials } from './oauth-refresh'
 import { ClaudeRuntimePathResolver } from './runtime-paths'
@@ -135,7 +136,12 @@ export class ClaudeRuntimeAuthService {
   ): Promise<ClaudeRuntimeAuthPreparation> {
     const effectiveTarget = target ?? this.getDefaultAccountSelectionTarget()
     await this.syncForCurrentSelection(effectiveTarget)
-    return this.getPreparation(effectiveTarget)
+    const normalized = normalizeClaudeAccountSelectionTarget(effectiveTarget)
+    const command =
+      normalized.runtime === 'host'
+        ? await resolveCliCommandThroughFilesystemHost('claude')
+        : 'claude'
+    return this.getPreparation(effectiveTarget, command)
   }
 
   async syncForCurrentSelection(target?: ClaudeAccountSelectionTarget): Promise<void> {
@@ -613,7 +619,10 @@ export class ClaudeRuntimeAuthService {
     return candidates
   }
 
-  private getPreparation(target?: ClaudeAccountSelectionTarget): ClaudeRuntimeAuthPreparation {
+  private getPreparation(
+    target?: ClaudeAccountSelectionTarget,
+    preparedHostCommand?: string
+  ): ClaudeRuntimeAuthPreparation {
     const settings = this.store.getSettings()
     const paths = this.pathResolver.getRuntimePaths()
     const normalizedTarget = this.resolveWslDefaultTarget(
@@ -668,7 +677,7 @@ export class ClaudeRuntimeAuthService {
       }
     }
     return {
-      command: resolveClaudeCommand(),
+      command: preparedHostCommand ?? resolveClaudeCommand(),
       configDir: paths.configDir,
       runtime: 'host',
       wslDistro: null,

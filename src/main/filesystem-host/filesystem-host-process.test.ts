@@ -86,4 +86,31 @@ describe('FilesystemHostProcess', () => {
     await expect(retiring).resolves.toBe(true)
     expect(onPhysicalExit).toHaveBeenCalledOnce()
   })
+
+  it('does not reject a failed startup until retirement settles', async () => {
+    const child = new FakeChild()
+    const started = FilesystemHostProcess.start({
+      entryPath: 'unused',
+      readyTimeoutMs: 5,
+      exitDeadlineMs: 100,
+      hardKillDelayMs: 20,
+      spawn: () => child as unknown as ChildProcess
+    })
+    let settled = false
+    void started.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await vi.waitFor(() => expect(child.kill).toHaveBeenCalled())
+    expect(settled).toBe(false)
+    child.emit('exit', null, 'SIGTERM')
+
+    await expect(started).rejects.toMatchObject({ code: 'deadline' })
+    expect(settled).toBe(true)
+  })
 })

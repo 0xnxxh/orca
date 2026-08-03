@@ -7,7 +7,7 @@ const { hydrateFailureDomainsMock, readOrcaYamlMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('../filesystem-host/filesystem-host-read-authority', () => ({
-  hydrateFilesystemHostFailureDomains: hydrateFailureDomainsMock,
+  reconcileFilesystemHostFailureDomains: hydrateFailureDomainsMock,
   readOrcaYamlThroughFilesystemHost: readOrcaYamlMock
 }))
 
@@ -166,9 +166,11 @@ describe('OrcaYamlSnapshotStore', () => {
     await Promise.resolve()
 
     store.remove('/removed')
+    expect(store.retainedRemovalGenerationCountForTests()).toBe(1)
     resolveRead('scripts:\n  setup: late\n')
     await refresh
 
+    expect(store.retainedRemovalGenerationCountForTests()).toBe(0)
     expect(store.read('/removed')).toMatchObject({
       value: null,
       stale: true,

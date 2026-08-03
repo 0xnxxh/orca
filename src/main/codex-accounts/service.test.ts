@@ -3527,6 +3527,32 @@ describe('CodexAccountService config sync', () => {
       })
     })
 
+    it('notifies subscribers when the hydrated system identity changes', async () => {
+      writeFileSync(
+        systemAuthPath(),
+        createCodexAuthJson('first@home.dev', 'acct-first', 'refresh-first'),
+        'utf-8'
+      )
+      const service = await newService()
+      const listener = vi.fn()
+      const unsubscribe = service.onSystemDefaultIdentityChanged(listener)
+
+      await service.hydrateSystemDefaultIdentity()
+      await service.hydrateSystemDefaultIdentity()
+      expect(listener).toHaveBeenCalledTimes(1)
+
+      writeFileSync(
+        systemAuthPath(),
+        createCodexAuthJson('second@home.dev', 'acct-second', 'refresh-second'),
+        'utf-8'
+      )
+      await service.hydrateSystemDefaultIdentity()
+      expect(listener).toHaveBeenCalledTimes(2)
+      expect(service.listAccounts().systemDefault?.email).toBe('second@home.dev')
+
+      unsubscribe()
+    })
+
     it('reports an api-key auth.json as a custom provider with no identity', async () => {
       writeFileSync(systemAuthPath(), JSON.stringify({ OPENAI_API_KEY: 'sk-live-test' }), 'utf-8')
       const service = await newService()

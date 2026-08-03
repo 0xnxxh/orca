@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -129,6 +129,69 @@ describe('executeFilesystemHostOperation', () => {
     // used this exact implementation, and realpathSync.native diverges from it on Windows.
     expect(canonical).toEqual({ kind: 'canonicalize-path', canonicalPath: realpathSync(root) })
     expect(classified).toEqual({ kind: 'classify-path', deviceId: expect.any(String) })
+  })
+
+  it('resolves only declared CLI commands through the supplied search roots', () => {
+    const root = createRoot()
+    const executableName = process.platform === 'win32' ? 'codex.cmd' : 'codex'
+    const executablePath = join(root, executableName)
+    writeFileSync(executablePath, '', { mode: 0o700 })
+
+    expect(
+      executeFilesystemHostOperation({
+        kind: 'resolve-cli-command',
+        path: root,
+        commandName: 'codex',
+        pathEnvironment: root
+      })
+    ).toEqual({ kind: 'resolve-cli-command', command: executablePath })
+  })
+
+  it('writes Gemini OAuth credentials as an owner-only atomic file', () => {
+    const root = createRoot()
+    const path = join(root, 'oauth_creds.json')
+
+    expect(
+      executeFilesystemHostOperation({
+        kind: 'write-rate-limit-credential',
+        path,
+        fileKind: 'gemini-oauth-credentials',
+        contents: JSON.stringify({
+          access_token: 'access',
+          refresh_token: 'refresh',
+          expiry_date: 123
+        })
+      })
+    ).toEqual({ kind: 'write-rate-limit-credential' })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      access_token: 'access',
+      refresh_token: 'refresh',
+      expiry_date: 123
+    })
+    if (process.platform !== 'win32') {
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
+  })
+
+  it('rejects malformed or misrouted rate-limit credential writes', () => {
+    const root = createRoot()
+
+    expect(() =>
+      executeFilesystemHostOperation({
+        kind: 'write-rate-limit-credential',
+        path: join(root, 'oauth_creds.json'),
+        fileKind: 'gemini-oauth-credentials',
+        contents: '{}'
+      })
+    ).toThrowError(expect.objectContaining({ code: 'invalid' }))
+    expect(() =>
+      executeFilesystemHostOperation({
+        kind: 'write-rate-limit-credential',
+        path: join(root, 'unrelated.json'),
+        fileKind: 'opencode-auth',
+        contents: '{}'
+      })
+    ).toThrowError(expect.objectContaining({ code: 'invalid' }))
   })
 
   it('returns stable error classes without raw path disclosure', () => {

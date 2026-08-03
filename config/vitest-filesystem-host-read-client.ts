@@ -11,5 +11,12 @@ setFilesystemHostReadClientForTests({
     const fs = await import('node:fs/promises')
     await fs.mkdir(path, { recursive: true })
     return fs.realpath(path)
+  },
+  resolveCliCommand: async (commandName) => {
+    const { resolveCliCommand } = await import('../src/shared/node-cli-command-resolution')
+    return resolveCliCommand(commandName)
+  },
+  writeRateLimitCredential: async (path, _fileKind, contents) => {
+    await (await import('node:fs/promises')).writeFile(path, contents, 'utf8')
   }
 })

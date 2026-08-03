@@ -36,6 +36,42 @@ describe('filesystem host protocol', () => {
         }
       }).success
     ).toBe(false)
+    expect(
+      filesystemHostParentMessageSchema.safeParse({
+        type: 'request',
+        requestId: 'request-1',
+        operation: {
+          kind: 'resolve-cli-command',
+          path: '/home/alice',
+          commandName: 'arbitrary-command',
+          pathEnvironment: '/usr/bin'
+        }
+      }).success
+    ).toBe(false)
+    expect(
+      filesystemHostParentMessageSchema.safeParse({
+        type: 'request',
+        requestId: 'request-1',
+        operation: {
+          kind: 'resolve-cli-command',
+          path: '/home/alice',
+          commandName: 'codex',
+          pathEnvironment: '/usr/bin'
+        }
+      }).success
+    ).toBe(true)
+    expect(
+      filesystemHostParentMessageSchema.safeParse({
+        type: 'request',
+        requestId: 'request-1',
+        operation: {
+          kind: 'write-rate-limit-credential',
+          path: '/home/alice/.gemini/oauth_creds.json',
+          fileKind: 'arbitrary-credential',
+          contents: '{}'
+        }
+      }).success
+    ).toBe(false)
   })
 
   it('validates child results before main consumes them', () => {

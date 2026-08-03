@@ -5,7 +5,7 @@ import { isFolderRepo } from '../../shared/repo-kind'
 import type { OrcaHooks, Repo } from '../../shared/types'
 import { inspectOrcaYaml } from '../../shared/orca-yaml'
 import {
-  hydrateFilesystemHostFailureDomains,
+  reconcileFilesystemHostFailureDomains,
   readOrcaYamlThroughFilesystemHost
 } from '../filesystem-host/filesystem-host-read-authority'
 
@@ -149,9 +149,24 @@ export class OrcaYamlSnapshotStore {
   }
 
   remove(key: string): void {
-    this.removedGenerations.set(key, this.generation(key) + 1)
+    const removedGeneration = this.generation(key) + 1
+    const inFlight = this.inFlight.get(key)
     this.entries.delete(key)
     this.inFlight.delete(key)
+    if (!inFlight) {
+      this.removedGenerations.delete(key)
+      return
+    }
+    this.removedGenerations.set(key, removedGeneration)
+    void inFlight.promise.finally(() => {
+      if (
+        !this.entries.has(key) &&
+        !this.inFlight.has(key) &&
+        this.removedGenerations.get(key) === removedGeneration
+      ) {
+        this.removedGenerations.delete(key)
+      }
+    })
   }
 
   retain(keys: ReadonlySet<string>): void {
@@ -166,6 +181,10 @@ export class OrcaYamlSnapshotStore {
     this.entries.clear()
     this.inFlight.clear()
     this.removedGenerations.clear()
+  }
+
+  retainedRemovalGenerationCountForTests(): number {
+    return this.removedGenerations.size
   }
 
   private generation(key: string): number {
@@ -233,7 +252,7 @@ function isLocalSnapshotRepo(
 export function reconcileLocalOrcaYamlSnapshots(
   repos: readonly Pick<Repo, 'connectionId' | 'executionHostId' | 'kind' | 'path'>[]
 ): void {
-  hydrateFilesystemHostFailureDomains(
+  reconcileFilesystemHostFailureDomains(
     repos
       .filter((repo) => getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID)
       .map((repo) => repo.path)

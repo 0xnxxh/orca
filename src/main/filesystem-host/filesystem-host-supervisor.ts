@@ -8,12 +8,9 @@ import {
   processWideFilesystemHostCapacity,
   type FilesystemHostAdmissionClass
 } from './filesystem-host-capacity'
-import {
-  FilesystemFailureDomainRegistry,
-  type FilesystemExecutionHost
-} from './filesystem-host-failure-domain'
-import { FilesystemHostProcess, type FilesystemHostProcessOptions } from './filesystem-host-process'
-import type { FilesystemHostTelemetryEvent } from './filesystem-host-telemetry'
+import type { FilesystemExecutionHost } from './filesystem-host-failure-domain'
+import { FilesystemHostFailureDomainCoordinator } from './filesystem-host-failure-domain-coordinator'
+import { FilesystemHostProcess } from './filesystem-host-process'
 import { FilesystemHostSupervisorError } from './filesystem-host-supervisor-error'
 import { executeFilesystemHostDispatch } from './filesystem-host-supervisor-execution'
 import {
@@ -28,35 +25,25 @@ import type {
 import { recordFilesystemHostSupervisorTelemetry } from './filesystem-host-supervisor-telemetry'
 import { reclaimIdleFilesystemHostProcess } from './filesystem-host-idle-process-reclamation'
 import { FilesystemHostProcessRetirement } from './filesystem-host-process-retirement'
+import type {
+  FilesystemHostProcessFactory,
+  FilesystemHostSupervisorOptions
+} from './filesystem-host-supervisor-options'
 
 export type { FilesystemHostDispatch } from './filesystem-host-supervisor-scheduling'
-
-type ProcessFactory = (
-  options: FilesystemHostProcessOptions
-) => Promise<FilesystemHostProcessHandle>
-
-export type FilesystemHostSupervisorOptions = {
-  entryPath: string
-  maximumChildren?: number
-  capacity?: FilesystemHostCapacity
-  maximumPendingPerLane?: number
-  breakerRecoveryDelayMs?: number
-  now?: () => number
-  startProcess?: ProcessFactory
-  onTelemetry?: (event: FilesystemHostTelemetryEvent) => void
-}
+export type { FilesystemHostSupervisorOptions } from './filesystem-host-supervisor-options'
 
 export class FilesystemHostSupervisor {
   private readonly capacity: FilesystemHostCapacity
-  private readonly domains = new FilesystemFailureDomainRegistry()
   private readonly lanes = new Map<string, FilesystemHostLane>()
   private readonly retirement = new FilesystemHostProcessRetirement()
+  private readonly domains = new FilesystemHostFailureDomainCoordinator(this.lanes, this.retirement)
   private readonly launches = new Set<Promise<FilesystemHostProcessHandle>>()
   private readonly maximumPendingPerLane: number
   private readonly foregroundPendingReserve: number
   private readonly breakerRecoveryDelayMs: number
   private readonly now: () => number
-  private readonly startProcess: ProcessFactory
+  private readonly startProcess: FilesystemHostProcessFactory
   private disposed = false
 
   constructor(private readonly options: FilesystemHostSupervisorOptions) {
@@ -78,6 +65,10 @@ export class FilesystemHostSupervisor {
     mountId: string
   }): void {
     this.domains.publish(input)
+  }
+
+  removeFailureDomain(input: { executionHost: FilesystemExecutionHost; prefix: string }): void {
+    this.domains.remove(input)
   }
 
   dispatch(input: FilesystemHostDispatch): Promise<FilesystemHostResult> {
@@ -109,11 +100,14 @@ export class FilesystemHostSupervisor {
       )
     }
     const normalizedInput = { ...input, operation: parsedOperation.data }
-    const laneKey = this.domains.resolve(
-      normalizedInput.executionHost,
-      normalizedInput.operation.path
-    )
-    const lane = this.getLane(laneKey)
+    const retireWhenIdle = normalizedInput.operation.kind === 'classify-path'
+    const laneKey = retireWhenIdle
+      ? this.domains.classificationLane(
+          normalizedInput.executionHost,
+          normalizedInput.operation.path
+        )
+      : this.domains.resolve(normalizedInput.executionHost, normalizedInput.operation.path)
+    const lane = this.getLane(laneKey, retireWhenIdle)
     // Why: mirrors the physical-slot reservation — a background burst (startup repo
     // reconcile) must not fill the queue and strand the fs IPC gate every handler awaits.
     const laneLimit =
@@ -163,11 +157,13 @@ export class FilesystemHostSupervisor {
     })
   }
 
-  private getLane(key: string): FilesystemHostLane {
+  private getLane(key: string, retireWhenIdle = false): FilesystemHostLane {
     let lane = this.lanes.get(key)
     if (!lane) {
       lane = {
         key,
+        retireWhenIdle,
+        retiring: false,
         breaker: new FilesystemHostBreaker(this.breakerRecoveryDelayMs),
         process: null,
         foreground: [],
@@ -215,6 +211,9 @@ export class FilesystemHostSupervisor {
         lane.pending--
         lane.running = false
         this.pump(lane)
+        if (lane.retireWhenIdle && lane.pending === 0) {
+          void this.domains.retireIdleLane(lane)
+        }
       })
   }
 

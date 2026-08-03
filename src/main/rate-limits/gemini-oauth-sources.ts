@@ -1,9 +1,9 @@
-import { writeFile, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { net } from 'electron'
 import { extractOAuthClientCredentials } from './gemini-cli-oauth-extractor'
 import { readSnapshotFileThroughFilesystemHost } from '../filesystem-host/filesystem-host-read-authority'
+import { writeRateLimitCredentialThroughFilesystemHost } from '../filesystem-host/filesystem-host-rate-limit-client'
 
 const API_TIMEOUT_MS = 10_000
 const OAUTH_CREDS_PATH = path.join(homedir(), '.gemini', 'oauth_creds.json')
@@ -28,7 +28,9 @@ export type AuthJson = {
   'opencode-go'?: { type: 'api'; key: string }
 }
 
-export async function readAuthJson(): Promise<AuthJson | null> {
+export type AuthJsonSource = { path: string; value: AuthJson }
+
+export async function readAuthJsonSource(): Promise<AuthJsonSource | null> {
   const candidates = [
     process.env.APPDATA ? path.join(process.env.APPDATA, 'opencode', 'auth.json') : null,
     process.env.XDG_DATA_HOME
@@ -43,7 +45,11 @@ export async function readAuthJson(): Promise<AuthJson | null> {
       const raw = (await readSnapshotFileThroughFilesystemHost(candidate, 'gemini-auth')).toString(
         'utf8'
       )
-      return JSON.parse(raw) as AuthJson
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null
+      }
+      return { path: candidate, value: parsed as AuthJson }
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
         continue
@@ -83,9 +89,19 @@ export async function readGeminiCredentials(): Promise<GeminiCredentials | null>
 }
 
 export async function saveGeminiCredentials(creds: GeminiCredentials): Promise<void> {
-  const tmpPath = `${OAUTH_CREDS_PATH}.${process.pid}.tmp`
-  await writeFile(tmpPath, JSON.stringify(creds, null, 2), 'utf-8')
-  await rename(tmpPath, OAUTH_CREDS_PATH)
+  await writeRateLimitCredentialThroughFilesystemHost(
+    OAUTH_CREDS_PATH,
+    'gemini-oauth-credentials',
+    JSON.stringify(creds, null, 2)
+  )
+}
+
+export async function saveAuthJsonSource(source: AuthJsonSource): Promise<void> {
+  await writeRateLimitCredentialThroughFilesystemHost(
+    source.path,
+    'opencode-auth',
+    JSON.stringify(source.value, null, 2)
+  )
 }
 
 export type RefreshTokenResult = {

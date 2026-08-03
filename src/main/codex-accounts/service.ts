@@ -259,6 +259,8 @@ export class CodexAccountService {
   private resetLedgerLoadError: Error | null = null
   private readonly systemDefaultIdentitySnapshot =
     new MemorySnapshotStore<CodexSystemDefaultIdentity>()
+  private readonly systemDefaultIdentityListeners = new Set<() => void>()
+  private lastNotifiedSystemDefaultIdentityRevision: string | null = null
 
   constructor(
     private readonly store: Store,
@@ -304,12 +306,17 @@ export class CodexAccountService {
     return this.systemDefaultIdentitySnapshot.get()
   }
 
+  onSystemDefaultIdentityChanged(listener: () => void): () => void {
+    this.systemDefaultIdentityListeners.add(listener)
+    return () => this.systemDefaultIdentityListeners.delete(listener)
+  }
+
   invalidateSystemDefaultIdentity(): void {
     this.systemDefaultIdentitySnapshot.invalidate()
   }
 
   async hydrateSystemDefaultIdentity(): Promise<MemorySnapshot<CodexSystemDefaultIdentity>> {
-    return this.systemDefaultIdentitySnapshot.refresh(async () => {
+    const snapshot = await this.systemDefaultIdentitySnapshot.refresh(async () => {
       let contents: string
       try {
         contents = (
@@ -333,6 +340,22 @@ export class CodexAccountService {
         availability: 'ready'
       }
     }, classifyFilesystemSnapshotFailure)
+    const revision = JSON.stringify({
+      value: snapshot.value,
+      stale: snapshot.stale,
+      availability: snapshot.availability
+    })
+    if (revision !== this.lastNotifiedSystemDefaultIdentityRevision) {
+      this.lastNotifiedSystemDefaultIdentityRevision = revision
+      for (const listener of this.systemDefaultIdentityListeners) {
+        try {
+          listener()
+        } catch {
+          // One failed consumer must not prevent other account subscribers from converging.
+        }
+      }
+    }
+    return snapshot
   }
 
   async addAccount(target?: CodexAccountAddTarget): Promise<CodexRateLimitAccountsState> {

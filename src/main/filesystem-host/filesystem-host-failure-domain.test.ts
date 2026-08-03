@@ -26,4 +26,25 @@ describe('FilesystemFailureDomainRegistry', () => {
     )
     expect(registry.resolve('native', '/home/ada/repo')).toBe('native:unknown')
   })
+
+  it('removes an exact normalized prefix without disturbing other mappings', () => {
+    const registry = new FilesystemFailureDomainRegistry()
+    registry.publish({ executionHost: 'native', prefix: '/work/a', mountId: 'device-a' })
+    registry.publish({ executionHost: 'native', prefix: '/work/b', mountId: 'device-b' })
+
+    expect(registry.remove({ executionHost: 'native', prefix: '/work/a' })).toEqual([
+      'native:device-a'
+    ])
+
+    expect(registry.resolve('native', '/work/a/repo')).toBe('native:unknown')
+    expect(registry.resolve('native', '/work/b/repo')).toBe('native:device-b')
+  })
+
+  it('keeps a mount lane while another prefix still references it', () => {
+    const registry = new FilesystemFailureDomainRegistry()
+    registry.publish({ executionHost: 'native', prefix: '/work/a', mountId: 'device-a' })
+    registry.publish({ executionHost: 'native', prefix: '/work/b', mountId: 'device-a' })
+
+    expect(registry.remove({ executionHost: 'native', prefix: '/work/a' })).toEqual([])
+  })
 })

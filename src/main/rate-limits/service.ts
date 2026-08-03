@@ -250,7 +250,7 @@ export class RateLimitService {
   private lastOpencodeConfigHash = ''
   private lastMiniMaxConfigHash = ''
   private codexHomePathResolver: CodexHomePathResolver | null = null
-  private codexCommandResolver: (() => string) | null = null
+  private codexCommandResolver: (() => Promise<string>) | null = null
   private codexHomeSnapshots = new Map<string, MemorySnapshotStore<CodexPreparedTarget>>()
   private codexFetchTarget: NormalizedCodexAccountSelectionTarget = {
     runtime: 'host',
@@ -292,8 +292,16 @@ export class RateLimitService {
     this.codexHomePathResolver = resolver
   }
 
-  setCodexCommandResolver(resolver: () => string): void {
+  setCodexCommandResolver(resolver: () => Promise<string>): void {
     this.codexCommandResolver = resolver
+  }
+
+  private async resolveCodexCommandForFetch(): Promise<string> {
+    try {
+      return this.codexCommandResolver ? await this.codexCommandResolver() : 'codex'
+    } catch {
+      return 'codex'
+    }
   }
 
   setCodexFetchTarget(target?: CodexAccountSelectionTarget): void {
@@ -311,10 +319,12 @@ export class RateLimitService {
         throw new Error('Hidden rate-limit PTY cwd snapshot unavailable')
       }
       const homePath = this.codexHomePathResolver?.(normalized) ?? null
+      const command =
+        normalized.runtime === 'host' ? await this.resolveCodexCommandForFetch() : 'codex'
       return {
         value: {
           homePath,
-          command: this.codexCommandResolver?.() ?? 'codex',
+          command,
           hiddenPtyCwd: cwdSnapshot.value,
           authSnapshot: await hydrateCodexCredentialSnapshot(homePath)
         },
@@ -794,6 +804,9 @@ export class RateLimitService {
 
     let staggerNextProbe = false
     try {
+      const codexCommand = this.codexCommandResolver
+        ? await this.resolveCodexCommandForFetch()
+        : 'codex'
       for (const account of accounts) {
         if (
           signal.aborted ||
@@ -831,7 +844,7 @@ export class RateLimitService {
           // Why: no PTY fallback — the switcher preview shouldn't spawn hidden PTYs per account (can crash ConPTY on Windows); RPC-only is enough.
           const fresh = await fetchCodexRateLimits({
             codexHomePath: account.managedHomePath,
-            codexCommand: this.codexCommandResolver?.() ?? 'codex',
+            codexCommand,
             hiddenPtyCwd: cwdSnapshot.value ?? undefined,
             authSnapshot,
             allowPtyFallback: false,

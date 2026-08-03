@@ -1,16 +1,32 @@
 import { randomUUID } from 'node:crypto'
-import { isWslUncPath } from '../../shared/wsl-paths'
+import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import type {
-  FilesystemHostResult,
-  FilesystemSnapshotFileKind
+  FilesystemCliCommandName,
+  FilesystemSnapshotFileKind,
+  RateLimitCredentialFileKind
 } from '../../shared/filesystem-host-protocol'
+import { FilesystemHostBackgroundQueue } from './filesystem-host-background-queue'
+import { FilesystemHostFailureDomainHydrator } from './filesystem-host-failure-domain-hydrator'
+import { writeFilesystemHostRateLimitCredential } from './filesystem-host-rate-limit-credential-client'
+import { resolveFilesystemHostCliCommand } from './filesystem-host-cli-command-client'
 import { FilesystemHostSupervisor } from './filesystem-host-supervisor'
-import { FilesystemHostSupervisorError } from './filesystem-host-supervisor-error'
+import { routeFilesystemHostPath } from './filesystem-host-path-route'
 import type { FilesystemStorageClass } from './filesystem-host-telemetry'
+import {
+  FilesystemHostReadError,
+  filesystemHostReadFailureReason,
+  requireFilesystemHostResult
+} from './filesystem-host-read-result'
+
+export {
+  FilesystemHostReadError,
+  type FilesystemHostReadFailureReason
+} from './filesystem-host-read-result'
 
 const AUTHORIZATION_DEADLINE_MS = 2_000
 const BACKGROUND_READ_DEADLINE_MS = 5_000
-const UNC_PATH_PREFIX = /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/
+const BACKGROUND_OPERATION_CONCURRENCY = 4
 
 type Dispatch = FilesystemHostSupervisor['dispatch']
 type PublishFailureDomain = FilesystemHostSupervisor['publishFailureDomain']
@@ -21,6 +37,12 @@ export type FilesystemHostReadClient = {
   readKeybindings(path: string): Promise<string>
   readSnapshotFile(path: string, fileKind: FilesystemSnapshotFileKind): Promise<Buffer>
   prepareRateLimitPtyCwd(path: string): Promise<string>
+  resolveCliCommand?(commandName: FilesystemCliCommandName): Promise<string>
+  writeRateLimitCredential?(
+    path: string,
+    fileKind: RateLimitCredentialFileKind,
+    contents: string
+  ): Promise<void>
 }
 
 export type FilesystemHostReadAuthorityOptions = {
@@ -29,116 +51,36 @@ export type FilesystemHostReadAuthorityOptions = {
   supervisor?: {
     dispatch: Dispatch
     publishFailureDomain: PublishFailureDomain
+    removeFailureDomain: FilesystemHostSupervisor['removeFailureDomain']
     dispose(): Promise<void>
   }
-}
-
-export type FilesystemHostReadFailureReason =
-  | 'missing'
-  | 'denied'
-  | 'not-directory'
-  | 'too-large'
-  | 'invalid'
-  | 'deadline'
-  | 'unavailable'
-
-const NODE_ERROR_CODE_BY_REASON: Record<FilesystemHostReadFailureReason, string> = {
-  missing: 'ENOENT',
-  denied: 'EACCES',
-  'not-directory': 'ENOTDIR',
-  'too-large': 'EFBIG',
-  invalid: 'EINVAL',
-  deadline: 'ETIMEDOUT',
-  unavailable: 'EHOSTUNREACH'
-}
-
-export class FilesystemHostReadError extends Error {
-  readonly code: string
-
-  constructor(readonly reason: FilesystemHostReadFailureReason) {
-    super(
-      reason === 'deadline'
-        ? 'Filesystem operation timed out'
-        : reason === 'unavailable'
-          ? 'Filesystem host is unavailable'
-          : `Filesystem read failed (${reason})`
-    )
-    this.name = 'FilesystemHostReadError'
-    this.code = NODE_ERROR_CODE_BY_REASON[reason]
-  }
-}
-
-function routePath(
-  path: string,
-  defaultStorageClass: FilesystemStorageClass,
-  platform: NodeJS.Platform
-): {
-  executionHost: 'native' | 'windows-host'
-  storageClass: FilesystemStorageClass
-} {
-  if (platform === 'win32' && isWslUncPath(path)) {
-    return {
-      executionHost: 'windows-host',
-      storageClass: 'wsl'
-    }
-  }
-  if (platform === 'win32' && UNC_PATH_PREFIX.test(path)) {
-    return {
-      executionHost: 'windows-host',
-      storageClass: 'unc'
-    }
-  }
-  return { executionHost: 'native', storageClass: defaultStorageClass }
-}
-
-function failureReason(error: unknown): FilesystemHostReadFailureReason {
-  if (!(error instanceof FilesystemHostSupervisorError)) {
-    return 'unavailable'
-  }
-  if (error.code === 'deadline') {
-    return 'deadline'
-  }
-  if (error.code !== 'operation') {
-    return 'unavailable'
-  }
-  switch (error.operationCode) {
-    case 'missing':
-    case 'denied':
-    case 'not-directory':
-    case 'too-large':
-    case 'invalid':
-      return error.operationCode
-    case undefined:
-    default:
-      return 'unavailable'
-  }
-}
-
-function requireResult<T extends FilesystemHostResult['kind']>(
-  result: FilesystemHostResult,
-  kind: T
-): Extract<FilesystemHostResult, { kind: T }> {
-  if (result.kind !== kind) {
-    throw new FilesystemHostReadError('unavailable')
-  }
-  return result as Extract<FilesystemHostResult, { kind: T }>
 }
 
 export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   private readonly supervisor: NonNullable<FilesystemHostReadAuthorityOptions['supervisor']>
   private readonly platform: NodeJS.Platform
+  private readonly backgroundQueue = new FilesystemHostBackgroundQueue(
+    BACKGROUND_OPERATION_CONCURRENCY
+  )
+  private readonly failureDomains: FilesystemHostFailureDomainHydrator
 
   constructor(options: FilesystemHostReadAuthorityOptions) {
     this.platform = options.platform ?? process.platform
     this.supervisor =
       options.supervisor ?? new FilesystemHostSupervisor({ entryPath: options.entryPath })
+    this.failureDomains = new FilesystemHostFailureDomainHydrator(
+      this.supervisor,
+      this.backgroundQueue,
+      (path) => routeFilesystemHostPath(path, 'workspace', this.platform),
+      BACKGROUND_READ_DEADLINE_MS
+    )
   }
 
   async canonicalizePath(
     path: string,
     storageClass: FilesystemStorageClass = 'workspace'
   ): Promise<string> {
-    const route = routePath(path, storageClass, this.platform)
+    const route = routeFilesystemHostPath(path, storageClass, this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -147,30 +89,37 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
         admission: 'foreground',
         deadlineMs: AUTHORIZATION_DEADLINE_MS
       })
-      return requireResult(result, 'canonicalize-path').canonicalPath
+      return requireFilesystemHostResult(result, 'canonicalize-path').canonicalPath
     } catch (error) {
-      throw new FilesystemHostReadError(failureReason(error))
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
     }
   }
 
   async readOrcaYaml(path: string): Promise<string> {
-    const route = routePath(path, 'workspace', this.platform)
+    const releaseFailureDomain = await this.failureDomains
+      .acquire(dirname(path))
+      .catch(() => () => {})
+    const route = routeFilesystemHostPath(path, 'workspace', this.platform)
     try {
-      const result = await this.supervisor.dispatch({
-        operationId: randomUUID(),
-        operation: { kind: 'read-orca-yaml', path, maxBytes: 1024 * 1024 },
-        ...route,
-        admission: 'background',
-        deadlineMs: BACKGROUND_READ_DEADLINE_MS
-      })
-      return requireResult(result, 'read-orca-yaml').contents
+      const result = await this.backgroundQueue.run(() =>
+        this.supervisor.dispatch({
+          operationId: randomUUID(),
+          operation: { kind: 'read-orca-yaml', path, maxBytes: 1024 * 1024 },
+          ...route,
+          admission: 'background',
+          deadlineMs: BACKGROUND_READ_DEADLINE_MS
+        })
+      )
+      return requireFilesystemHostResult(result, 'read-orca-yaml').contents
     } catch (error) {
-      throw new FilesystemHostReadError(failureReason(error))
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
+    } finally {
+      releaseFailureDomain()
     }
   }
 
   async readKeybindings(path: string): Promise<string> {
-    const route = routePath(path, 'home', this.platform)
+    const route = routeFilesystemHostPath(path, 'home', this.platform)
     try {
       const result = await this.supervisor.dispatch({
         operationId: randomUUID(),
@@ -179,73 +128,99 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
         admission: 'foreground',
         deadlineMs: BACKGROUND_READ_DEADLINE_MS
       })
-      return requireResult(result, 'read-keybindings').contents
+      return requireFilesystemHostResult(result, 'read-keybindings').contents
     } catch (error) {
-      throw new FilesystemHostReadError(failureReason(error))
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
     }
   }
 
   async readSnapshotFile(path: string, fileKind: FilesystemSnapshotFileKind): Promise<Buffer> {
-    const route = routePath(path, 'home', this.platform)
+    const route = routeFilesystemHostPath(path, 'home', this.platform)
     try {
-      const result = await this.supervisor.dispatch({
-        operationId: randomUUID(),
-        operation: { kind: 'read-snapshot-file', path, fileKind },
-        ...route,
-        admission: 'background',
-        deadlineMs: BACKGROUND_READ_DEADLINE_MS
-      })
-      return Buffer.from(requireResult(result, 'read-snapshot-file').contentsBase64, 'base64')
+      const result = await this.backgroundQueue.run(() =>
+        this.supervisor.dispatch({
+          operationId: randomUUID(),
+          operation: { kind: 'read-snapshot-file', path, fileKind },
+          ...route,
+          admission: 'background',
+          deadlineMs: BACKGROUND_READ_DEADLINE_MS
+        })
+      )
+      return Buffer.from(
+        requireFilesystemHostResult(result, 'read-snapshot-file').contentsBase64,
+        'base64'
+      )
     } catch (error) {
-      throw new FilesystemHostReadError(failureReason(error))
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
     }
   }
 
   async prepareRateLimitPtyCwd(path: string): Promise<string> {
-    const route = routePath(path, 'user-data', this.platform)
+    const route = routeFilesystemHostPath(path, 'user-data', this.platform)
     try {
-      const result = await this.supervisor.dispatch({
-        operationId: randomUUID(),
-        operation: { kind: 'prepare-rate-limit-pty-cwd', path },
-        ...route,
-        admission: 'background',
-        deadlineMs: BACKGROUND_READ_DEADLINE_MS
-      })
-      return requireResult(result, 'prepare-rate-limit-pty-cwd').canonicalPath
+      const result = await this.backgroundQueue.run(() =>
+        this.supervisor.dispatch({
+          operationId: randomUUID(),
+          operation: { kind: 'prepare-rate-limit-pty-cwd', path },
+          ...route,
+          admission: 'background',
+          deadlineMs: BACKGROUND_READ_DEADLINE_MS
+        })
+      )
+      return requireFilesystemHostResult(result, 'prepare-rate-limit-pty-cwd').canonicalPath
     } catch (error) {
-      throw new FilesystemHostReadError(failureReason(error))
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
+    }
+  }
+
+  async resolveCliCommand(commandName: FilesystemCliCommandName): Promise<string> {
+    const path = homedir()
+    try {
+      return await resolveFilesystemHostCliCommand({
+        commandName,
+        homePath: path,
+        pathEnvironment: process.env.PATH ?? process.env.Path ?? '',
+        route: routeFilesystemHostPath(path, 'home', this.platform),
+        deadlineMs: BACKGROUND_READ_DEADLINE_MS,
+        queue: this.backgroundQueue,
+        dispatch: (input) => this.supervisor.dispatch(input)
+      })
+    } catch (error) {
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
+    }
+  }
+
+  async writeRateLimitCredential(
+    path: string,
+    fileKind: RateLimitCredentialFileKind,
+    contents: string
+  ): Promise<void> {
+    try {
+      await writeFilesystemHostRateLimitCredential({
+        path,
+        fileKind,
+        contents,
+        route: routeFilesystemHostPath(path, 'home', this.platform),
+        deadlineMs: BACKGROUND_READ_DEADLINE_MS,
+        queue: this.backgroundQueue,
+        dispatch: (input) => this.supervisor.dispatch(input)
+      })
+    } catch (error) {
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
     }
   }
 
   hydrateFailureDomains(paths: readonly string[]): void {
-    for (const path of new Set(paths)) {
-      void this.classifyAndPublish(path)
-    }
+    this.failureDomains.hydrate(paths)
+  }
+
+  reconcileFailureDomains(paths: readonly string[]): void {
+    this.failureDomains.reconcile(paths)
   }
 
   dispose(): Promise<void> {
+    this.backgroundQueue.dispose()
     return this.supervisor.dispose()
-  }
-
-  private async classifyAndPublish(path: string): Promise<void> {
-    const route = routePath(path, 'workspace', this.platform)
-    try {
-      const result = await this.supervisor.dispatch({
-        operationId: randomUUID(),
-        operation: { kind: 'classify-path', path },
-        ...route,
-        admission: 'background',
-        deadlineMs: BACKGROUND_READ_DEADLINE_MS
-      })
-      const classified = requireResult(result, 'classify-path')
-      this.supervisor.publishFailureDomain({
-        executionHost: route.executionHost,
-        prefix: path,
-        mountId: classified.deviceId
-      })
-    } catch {
-      // The conservative unknown lane remains authoritative until a later probe succeeds.
-    }
   }
 }
 
@@ -282,13 +257,19 @@ export function hydrateFilesystemHostFailureDomains(paths: readonly string[]): v
   getReadAuthorityState().authority?.hydrateFailureDomains(paths)
 }
 
-function requireClient(): FilesystemHostReadClient {
+export function reconcileFilesystemHostFailureDomains(paths: readonly string[]): void {
+  getReadAuthorityState().authority?.reconcileFailureDomains(paths)
+}
+
+export function requireFilesystemHostReadClient(): FilesystemHostReadClient {
   const client = getReadAuthorityState().client
   if (!client) {
     throw new FilesystemHostReadError('unavailable')
   }
   return client
 }
+
+const requireClient = requireFilesystemHostReadClient
 
 export async function canonicalizePathThroughFilesystemHost(
   path: string,

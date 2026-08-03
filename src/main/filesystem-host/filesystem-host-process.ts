@@ -129,8 +129,10 @@ export class FilesystemHostProcess {
         }
         settled = true
         clearTimeout(timer)
-        reject(error)
-        void this.retire()
+        this.child.removeListener('error', onError)
+        this.child.removeListener('exit', onExit)
+        this.child.removeListener('message', onMessage)
+        void this.retire().finally(() => reject(error))
       }
       const timer = setTimeout(
         () =>

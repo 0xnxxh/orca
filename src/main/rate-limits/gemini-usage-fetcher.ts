@@ -5,7 +5,7 @@ import type { MemorySnapshot } from '../../shared/memory-snapshot'
 import {
   getGeminiOAuthPreparationSnapshot,
   hydrateGeminiOAuthPreparationSnapshot,
-  publishGeminiOAuthTokenRefresh,
+  commitGeminiOAuthTokenRefresh,
   type GeminiOAuthPreparation
 } from './gemini-oauth-preparation-snapshot'
 import {
@@ -197,7 +197,7 @@ async function refreshPreparedToken(
     preparation.clientCredentials.clientId,
     preparation.clientCredentials.clientSecret
   )
-  publishGeminiOAuthTokenRefresh(preparation, result)
+  await commitGeminiOAuthTokenRefresh(preparation, result)
   return result
 }
 
