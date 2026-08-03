@@ -1,43 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getDefaultSettings } from '../../shared/constants'
-import type { ClaudeManagedAccount, GlobalSettings } from '../../shared/types'
+import {
+  beginWslAuthSurfaceTest,
+  createCredentialsJson,
+  createSettings,
+  createStore,
+  createWslAccount,
+  createWslDistroHome,
+  createWslManagedAuth,
+  endWslAuthSurfaceTest,
+  listDistroSnapshotFiles,
+  mockWsl,
+  readJson,
+  testState
+} from './wsl-auth-surface.test-fixtures'
 
 // Regression coverage for #11824: a managed WSL account must be an auth-only swap
 // against the distro's own ~/.claude, not a whole-profile CLAUDE_CONFIG_DIR switch.
 
-const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
-const testState = {
-  userDataDir: '',
-  fakeHomeDir: '',
-  wslHomeDirs: new Map<string, string>(),
-  uncBlindPaths: new Set<string>()
-}
-
 vi.mock('electron', () => ({
   app: { getPath: () => testState.userDataDir }
 }))
-
-// Why: Win32 existsSync reports ENOENT for paths that exist on the WSL 9P share (see
-// `wslUncDirectoryExists`); registered paths reproduce that blind spot without a real distro.
-vi.mock('node:fs', async () => {
-  const actual = await vi.importActual<typeof import('node:fs')>('node:fs') // eslint-disable-line @typescript-eslint/consistent-type-imports -- vi.importActual requires inline import()
-  return {
-    ...actual,
-    existsSync: (path: Parameters<typeof actual.existsSync>[0]) =>
-      !testState.uncBlindPaths.has(String(path)) && actual.existsSync(path)
-  }
-})
 
 vi.mock('./oauth-refresh', () => ({
   isOauthTokenExpiring: vi.fn(() => false),
@@ -70,10 +54,7 @@ vi.mock('../../shared/wsl-paths', async () => {
     parseWslUncPath: (path: string) => {
       for (const [distro, homeDir] of testState.wslHomeDirs) {
         if (path === homeDir || path.startsWith(`${homeDir}/`)) {
-          return {
-            distro,
-            linuxPath: `/home/alice${path.slice(homeDir.length)}`
-          }
+          return { distro, linuxPath: `/home/alice${path.slice(homeDir.length)}` }
         }
       }
       return actual.parseWslUncPath(path)
@@ -81,159 +62,9 @@ vi.mock('../../shared/wsl-paths', async () => {
   }
 })
 
-function setPlatform(platform: NodeJS.Platform): void {
-  Object.defineProperty(process, 'platform', {
-    configurable: true,
-    value: platform
-  })
-}
-
-function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
-  return { ...getDefaultSettings(testState.fakeHomeDir), ...overrides }
-}
-
-function createStore(settings: GlobalSettings) {
-  return {
-    getSettings: vi.fn(() => settings),
-    updateSettings: vi.fn((updates: Partial<GlobalSettings>) => {
-      settings = { ...settings, ...updates }
-      return settings
-    })
-  }
-}
-
-function createCredentialsJson(email: string, accessToken: string, expiresAt?: number): string {
-  return `${JSON.stringify({
-    claudeAiOauth: {
-      email,
-      accessToken,
-      refreshToken: `${accessToken}-refresh`,
-      expiresAt: expiresAt ?? Date.now() + 60_000
-    }
-  })}\n`
-}
-
-/** A distro home carrying a realistic profile plus the user's own login. */
-function createWslDistroHome(distro: string, ownerEmail: string): string {
-  const homeDir = mkdtempSync(join(tmpdir(), `orca-wsl-${distro.toLowerCase()}-`))
-  testState.wslHomeDirs.set(distro, homeDir)
-  const profileDir = join(homeDir, '.claude')
-  mkdirSync(join(profileDir, 'plugins'), { recursive: true })
-  writeFileSync(
-    join(profileDir, 'settings.json'),
-    JSON.stringify({
-      statusLine: { type: 'command', command: 'my-statusline' }
-    }),
-    'utf-8'
-  )
-  writeFileSync(join(profileDir, 'CLAUDE.md'), '# my memory\n', 'utf-8')
-  writeFileSync(join(profileDir, 'plugins', 'installed.json'), '{}', 'utf-8')
-  writeFileSync(
-    join(profileDir, '.credentials.json'),
-    createCredentialsJson(ownerEmail, 'own-token'),
-    'utf-8'
-  )
-  writeFileSync(
-    join(homeDir, '.claude.json'),
-    `${JSON.stringify({ oauthAccount: { accountUuid: 'own-account' }, projects: { '/repo': {} } })}\n`,
-    'utf-8'
-  )
-  return homeDir
-}
-
-function createWslManagedAuth(accountId: string, credentialsJson: string): string {
-  const managedAuthPath = join(testState.userDataDir, 'claude-accounts', accountId, 'auth')
-  mkdirSync(managedAuthPath, { recursive: true })
-  writeFileSync(join(managedAuthPath, '.orca-managed-claude-auth'), `${accountId}\n`, 'utf-8')
-  writeFileSync(join(managedAuthPath, '.credentials.json'), credentialsJson, 'utf-8')
-  writeFileSync(
-    join(managedAuthPath, 'oauth-account.json'),
-    `${JSON.stringify({ accountUuid: accountId })}\n`,
-    'utf-8'
-  )
-  return managedAuthPath
-}
-
-function createWslAccount(
-  id: string,
-  distro: string,
-  managedAuthPath: string,
-  email: string
-): ClaudeManagedAccount {
-  return {
-    id,
-    email,
-    managedAuthPath,
-    authMethod: 'subscription-oauth',
-    organizationUuid: null,
-    organizationName: null,
-    createdAt: 1,
-    updatedAt: 1,
-    lastAuthenticatedAt: 1,
-    managedAuthRuntime: 'wsl',
-    wslDistro: distro,
-    wslLinuxAuthPath: `/home/alice/.local/share/orca/claude-accounts/${id}/auth`
-  }
-}
-
-// Why: `wsl.exe -d <distro>` resolves distro names case-insensitively, so the stub does too.
-function lookupWslHome(distro: string): string | null {
-  for (const [name, homeDir] of testState.wslHomeDirs) {
-    if (name.toLowerCase() === distro.toLowerCase()) {
-      return homeDir
-    }
-  }
-  return null
-}
-
-function mockWsl(
-  overrides: {
-    getWslHome?: (distro: string) => string | null
-    wslUncFileExists?: (path: string) => boolean | null
-  } = {}
-): void {
-  vi.doMock('../wsl', () => ({
-    getDefaultWslDistro: () => 'Ubuntu',
-    getWslHome: overrides.getWslHome ?? lookupWslHome,
-    toWindowsWslPath: (value: string) => value,
-    // Default matches a distro Orca cannot reach: inconclusive, never a licence to overwrite.
-    wslUncFileExists: overrides.wslUncFileExists ?? ((): boolean | null => null)
-  }))
-}
-
-function readJson(path: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>
-}
-
-function listDistroSnapshotFiles(): string[] {
-  const metadataDir = join(testState.userDataDir, 'claude-runtime-auth')
-  return existsSync(metadataDir)
-    ? readdirSync(metadataDir).filter((name) => name.startsWith('system-default-auth-wsl-'))
-    : []
-}
-
 describe('Claude runtime auth on WSL distro profiles', () => {
-  beforeEach(() => {
-    setPlatform('win32')
-    vi.resetModules()
-    vi.clearAllMocks()
-    testState.userDataDir = mkdtempSync(join(tmpdir(), 'orca-wsl-auth-data-'))
-    testState.fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-wsl-auth-home-'))
-    testState.wslHomeDirs = new Map()
-    testState.uncBlindPaths = new Set()
-    mkdirSync(join(testState.fakeHomeDir, '.claude'), { recursive: true })
-  })
-
-  afterEach(() => {
-    if (originalPlatform) {
-      Object.defineProperty(process, 'platform', originalPlatform)
-    }
-    rmSync(testState.userDataDir, { recursive: true, force: true })
-    rmSync(testState.fakeHomeDir, { recursive: true, force: true })
-    for (const homeDir of testState.wslHomeDirs.values()) {
-      rmSync(homeDir, { recursive: true, force: true })
-    }
-  })
+  beforeEach(beginWslAuthSurfaceTest)
+  afterEach(endWslAuthSurfaceTest)
 
   it('keeps the distro profile as the config dir and materializes only the credentials', async () => {
     mockWsl()
@@ -394,41 +225,6 @@ describe('Claude runtime auth on WSL distro profiles', () => {
       oauthAccount: { accountUuid: 'own-account' },
       projects: { '/repo': {} }
     })
-  })
-
-  it('leaves the distro profile alone when the 9P share hides an existing .claude.json', async () => {
-    mockWsl({ wslUncFileExists: () => true })
-    const wslHome = createWslDistroHome('Ubuntu', 'owner@example.com')
-    const managedCredentials = createCredentialsJson('second@example.com', 'managed-token')
-    const managedAuthPath = createWslManagedAuth('ubuntu-account', managedCredentials)
-    testState.uncBlindPaths.add(join(wslHome, '.claude.json'))
-    const store = createStore(
-      createSettings({
-        claudeManagedAccounts: [
-          createWslAccount('ubuntu-account', 'Ubuntu', managedAuthPath, 'second@example.com')
-        ],
-        activeClaudeManagedAccountIdsByRuntime: {
-          host: null,
-          wsl: { Ubuntu: 'ubuntu-account' }
-        }
-      })
-    )
-
-    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
-    const service = new ClaudeRuntimeAuthService(store as never)
-    await service.syncForCurrentSelection({
-      runtime: 'wsl',
-      wslDistro: 'Ubuntu'
-    })
-
-    // Settings, plugins and project history must survive a share that lies about the file.
-    expect(readJson(join(wslHome, '.claude.json'))).toEqual({
-      oauthAccount: { accountUuid: 'own-account' },
-      projects: { '/repo': {} }
-    })
-    expect(readFileSync(join(wslHome, '.claude', '.credentials.json'), 'utf-8')).toBe(
-      managedCredentials
-    )
   })
 
   it('writes the distro .claude.json when the distro confirms it is absent', async () => {
