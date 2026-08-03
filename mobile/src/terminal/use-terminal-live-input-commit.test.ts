@@ -295,6 +295,21 @@ describe('terminal live input commit hook', () => {
     expect(harness.captures).toEqual(['かな', '', 'x'])
   })
 
+  it('Given a switch before any old input When late native events arrive Then rejects them', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    const oldHandlers = harness.handlers
+    harness.setActiveHandle('terminal-b')
+    changeLiveInput(harness.handlers, 'x', false)
+
+    changeLiveInput(oldHandlers, 'かな', true)
+    oldHandlers.handleLiveInputKeyPress({ nativeEvent: { key: 'Tab' } })
+    oldHandlers.handleLiveInputSubmit()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(harness.sentByHandle).toEqual([{ bytes: 'x', handle: 'terminal-b' }])
+    expect(harness.captures).toEqual(['x'])
+  })
+
   it('Given reconnect without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
     const harness = createTerminalLiveInputCommitHarness()
     const oldHandlers = harness.handlers
@@ -377,6 +392,66 @@ describe('terminal live input commit hook', () => {
     await expect(flush).resolves.toBe(true)
     expect(harness.sent).toEqual(['仮名', '漢字'])
     expect(harness.captures.at(-1)).toBe('')
+  })
+
+  it('Given flush requests span successive compositions Then resolves them in request order', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    let releaseFirstSend: (sent: boolean) => void = () => undefined
+    const firstSend = new Promise<boolean>((resolve) => {
+      releaseFirstSend = resolve
+    })
+    let sendCount = 0
+    harness.setSendImplementation(async () => {
+      sendCount += 1
+      return sendCount === 1 ? firstSend : true
+    })
+    const settled: string[] = []
+    changeLiveInput(harness.handlers, 'かな', true)
+    const firstFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    void firstFlush.then(() => settled.push('first'))
+    changeLiveInput(harness.handlers, '仮名', false)
+    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
+
+    changeLiveInput(harness.handlers, '仮名か', true)
+    const secondFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    void secondFlush.then(() => settled.push('second'))
+    changeLiveInput(harness.handlers, '仮名漢字', false)
+    releaseFirstSend(true)
+
+    await expect(Promise.all([firstFlush, secondFlush])).resolves.toEqual([true, true])
+    expect(harness.sent).toEqual(['仮名', '漢字'])
+    expect(settled).toEqual(['first', 'second'])
+  })
+
+  it('Given an old flush is invalidated Then it cannot clear new fallback input', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    let releaseOldSend: (sent: boolean) => void = () => undefined
+    const oldSend = new Promise<boolean>((resolve) => {
+      releaseOldSend = resolve
+    })
+    let sendCount = 0
+    harness.setSendImplementation(async () => {
+      sendCount += 1
+      return sendCount === 1 ? oldSend : true
+    })
+    changeLiveInput(harness.handlers, 'かな', true)
+    const oldFlush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    changeLiveInput(harness.handlers, '仮名', false)
+    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
+
+    harness.setActiveHandle('terminal-b')
+    changeLiveInput(harness.handlers, '한')
+    releaseOldSend(true)
+
+    await expect(oldFlush).resolves.toBe(false)
+    expect(harness.captures.at(-1)).toBe('한')
+    await expect(
+      harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-b')
+    ).resolves.toBe(true)
+    expect(harness.sentByHandle).toEqual([
+      { bytes: '仮名', handle: 'terminal-a' },
+      { bytes: '한', handle: 'terminal-b' }
+    ])
   })
 
   it('Given a deferred external send When the terminal switches Then cancels the original target', async () => {
@@ -563,8 +638,8 @@ describe('terminal live input commit hook', () => {
     setActiveSessionTabType('chat')
     handlers.handleLiveInputSubmit()
 
-    // Then: pending was dropped, so submit sends only the carriage return
-    await vi.waitFor(() => expect(sent).toEqual(['\r']))
+    // Then: pending was dropped and the old terminal handler cannot submit from chat.
+    expect(sent).toEqual([])
   })
 
   it('Given bytes lost in a silent stall When the disconnect is detected Then the first post-recovery send carries no stale fragment or phantom erases', async () => {
