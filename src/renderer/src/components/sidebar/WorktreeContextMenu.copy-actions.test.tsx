@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * Repro for #6167: the worktree row context menu exposes only "Copy Path".
- * Requested: a "Copy" parent entry with Copy path / Copy branch name / Copy PR URL.
- * These assertions describe the requested behavior and fail at HEAD.
+ * Regression guard for #6167 (assertions unchanged from the original repro): the worktree
+ * row context menu must group Copy Path / Copy branch name / Copy PR URL, each with its own
+ * clipboard write. Behavioral coverage lives in WorktreeContextMenu.copy-targets.test.tsx.
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'

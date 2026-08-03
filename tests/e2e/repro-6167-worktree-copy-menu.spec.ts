@@ -4,7 +4,9 @@ import { test, expect } from './helpers/orca-app'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import { worktreeRowSurface } from './worktree-row-locators'
 
-// Repro capture for #6167: screenshot + label dump of the worktree row context menu.
+// Repro capture for #6167: the Copy items on the worktree row context menu.
+// Set ORCA_CAPTURE_EVIDENCE=1 to also write a menu screenshot to pr-evidence/
+// (gitignored). Off by default so CI just runs the behavioral assertion.
 test('captures the worktree context menu Copy items (#6167)', async ({ orcaPage }) => {
   await waitForSessionReady(orcaPage)
   const worktreeId = await waitForActiveWorktree(orcaPage)
@@ -17,13 +19,17 @@ test('captures the worktree context menu Copy items (#6167)', async ({ orcaPage 
   await expect(menu).toBeVisible()
 
   const labels = await menu.locator('[role="menuitem"]').allInnerTexts()
-  console.log('MENU_ITEMS=' + JSON.stringify(labels))
   const copyItems = labels.filter((label) => label.toLowerCase().includes('copy'))
-  console.log('COPY_ITEMS=' + JSON.stringify(copyItems))
+  await test.info().attach('menu-items.json', {
+    body: JSON.stringify({ menuItems: labels, copyItems }, null, 2),
+    contentType: 'application/json'
+  })
 
-  const outputDir = resolve('/tmp/vbb/6167/.repro')
-  mkdirSync(outputDir, { recursive: true })
-  await orcaPage.screenshot({ path: resolve(outputDir, 'worktree-context-menu-head.png') })
+  if (process.env.ORCA_CAPTURE_EVIDENCE === '1') {
+    const outputDir = resolve(process.cwd(), 'pr-evidence')
+    mkdirSync(outputDir, { recursive: true })
+    await menu.screenshot({ path: resolve(outputDir, 'worktree-context-menu-head.png') })
+  }
 
   // Requested behavior: Copy path + Copy branch name + Copy PR URL.
   expect(copyItems.length).toBeGreaterThanOrEqual(3)
