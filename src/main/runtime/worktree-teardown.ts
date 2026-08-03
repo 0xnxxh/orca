@@ -192,12 +192,18 @@ export async function killAllProcessesForWorktree(
       // Why (#11960): a sweep that cannot even complete — unresponsive daemon,
       // dropped SSH channel — fails before the unproven-stop gate below could
       // offer its escape hatch, so an explicit Force Delete has to survive it.
-      // Prefer a specific reason: the shared deadline sentinel only says that
-      // *something* timed out, and picking by array order would let it mask the
-      // provider error that actually explains the failure.
-      const reason = reasons.find((candidate) => candidate !== deadlineError) ?? reasons[0]
+      // Report every reason, specific ones first: the shared deadline sentinel
+      // only says that *something* timed out, so leading with it would bury the
+      // provider error that actually explains the failure. This warning is the
+      // only trace of a removal that deleted files without proving a single stop.
+      const detail = [
+        ...reasons.filter((candidate) => candidate !== deadlineError),
+        ...reasons.filter((candidate) => candidate === deadlineError)
+      ]
+        .map(describeError)
+        .join('; ')
       console.warn(
-        `[worktree-teardown] forcing removal after an incomplete PTY sweep for ${worktreeId} — ${describeError(reason)}`
+        `[worktree-teardown] forcing removal after an incomplete PTY sweep for ${worktreeId} — ${detail}`
       )
       // Report what the surviving sweeps actually stopped rather than a flat zero.
       return {

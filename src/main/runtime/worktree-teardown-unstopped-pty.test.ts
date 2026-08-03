@@ -312,8 +312,14 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
       await vi.runAllTimersAsync()
       await teardown
 
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('ssh channel closed'))
-      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Timed out waiting'))
+      const warning = warn.mock.calls.at(-1)?.[0] as string
+      expect(warning).toContain('ssh channel closed')
+      // Both are reported — losing the timeout would trade one blind spot for
+      // another — but the specific cause must lead, not be buried behind it.
+      expect(warning).toContain('Timed out waiting')
+      expect(warning.indexOf('ssh channel closed')).toBeLessThan(
+        warning.indexOf('Timed out waiting')
+      )
     } finally {
       vi.useRealTimers()
       warn.mockRestore()
