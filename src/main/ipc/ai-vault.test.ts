@@ -403,6 +403,28 @@ describe('listAiVaultSessions host routing', () => {
     expect(mocks.scanRemoteAiVaultSessions).toHaveBeenCalledTimes(1)
   })
 
+  it('caches completed SSH scans by host and workspace scope', async () => {
+    await _internals.listAiVaultSessions({
+      executionHostScope: 'ssh:dev-box',
+      scopePaths: ['/home/ada/repo-a', '/home/ada/repo-b']
+    })
+    await _internals.listAiVaultSessions({
+      executionHostScope: 'ssh:dev-box',
+      scopePaths: ['/home/ada/repo-b', '/home/ada/repo-a']
+    })
+
+    expect(mocks.scanRemoteAiVaultSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('serves lower SSH depths from a larger completed scan', async () => {
+    const base = { executionHostScope: 'ssh:dev-box' as const, scopePaths: ['/home/ada/repo'] }
+    await _internals.listAiVaultSessions({ ...base, limit: 1000 })
+    await _internals.listAiVaultSessions({ ...base, limit: 250 })
+    await _internals.listAiVaultSessions({ ...base, limit: 500 })
+
+    expect(mocks.scanRemoteAiVaultSessions).toHaveBeenCalledTimes(1)
+  })
+
   it('threads renderer cancellation into the SSH relay request', async () => {
     let relaySignal: AbortSignal | undefined
     mocks.requestActiveSshAiVaultSessionList.mockImplementation(

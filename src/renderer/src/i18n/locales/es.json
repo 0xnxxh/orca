@@ -11335,6 +11335,14 @@
           },
           "activityBar": {
             "error": "Error"
+          },
+          "AiVaultSessionLimitMenu": {
+            "historyDepth": "Profundidad del historial: {{value0}}",
+            "performanceWarning": "Los historiales más extensos pueden ralentizar toda la aplicación, especialmente en hosts remotos. Sin límite escanea todo el historial disponible.",
+            "recommended": "Recomendado",
+            "mayBeSlower": "Puede ser más lento",
+            "slowest": "Más lento",
+            "unlimited": "Sin límite"
           }
         }
       },

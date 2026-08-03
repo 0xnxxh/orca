@@ -66,6 +66,9 @@ function runtimeScanArgs(
   if (listArgs?.limit !== undefined) {
     scanArgs.limit = listArgs.limit
   }
+  if (listArgs?.unlimited !== undefined) {
+    scanArgs.unlimited = listArgs.unlimited
+  }
   if (listArgs?.force !== undefined) {
     scanArgs.force = listArgs.force
   }

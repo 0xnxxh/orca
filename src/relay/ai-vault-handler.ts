@@ -59,6 +59,7 @@ export class AiVaultHandler {
     const result = await this.scanCoordinator.run({
       key: JSON.stringify({
         limit: params.limit,
+        unlimited: params.unlimited,
         scopePaths: params.scopePaths,
         scopePathsTruncated: params.scopePathsTruncated
       }),
@@ -71,6 +72,7 @@ export class AiVaultHandler {
           remoteHome: this.remoteHome,
           hostPlatform,
           limit: params.limit,
+          unlimited: params.unlimited,
           scopePaths: params.scopePaths,
           signal: scanSignal
         })
@@ -98,8 +100,9 @@ export function normalizeSshAiVaultRelayListParams(
   params: Record<string, unknown>
 ): SshAiVaultRelayListParams {
   const rawLimit = params.limit
+  const unlimited = params.unlimited === true
   const limit =
-    typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
+    !unlimited && typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(Math.floor(rawLimit), SSH_AI_VAULT_LIST_LIMIT_MAX)
       : undefined
   const scopePaths = Array.isArray(params.scopePaths)
@@ -116,6 +119,7 @@ export function normalizeSshAiVaultRelayListParams(
     params.scopePathsTruncated === true ||
     (Array.isArray(params.scopePaths) && params.scopePaths.length > AI_VAULT_SCOPE_PATHS_MAX_COUNT)
   return {
+    ...(unlimited ? { unlimited: true } : {}),
     ...(limit === undefined ? {} : { limit }),
     ...(params.force === true ? { force: true } : {}),
     ...(scopePaths === undefined ? {} : { scopePaths }),

@@ -32,23 +32,26 @@ describe('scanSshAiVaultSessions', () => {
     getSshFilesystemProvider.mockReturnValue({})
   })
 
-  it('bounds the legacy crawl when an older relay has no list method', async () => {
+  it('returns at the deadline when the legacy crawl ignores abort', async () => {
     // Relay without the method resolves null, so the leg falls through to the
     // desktop crawl — which used to run unbounded even under an all-host budget.
+    vi.useFakeTimers()
     requestActiveSshAiVaultSessionList.mockResolvedValue(null)
-    scanRemoteAiVaultSessions.mockImplementation(
-      ({ signal }: { signal?: AbortSignal }) =>
-        new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () => {
-            const error = new Error('Agent Session History scan was cancelled')
-            error.name = 'AbortError'
-            reject(error)
-          })
-        })
-    )
+    let fallbackSignal: AbortSignal | undefined
+    scanRemoteAiVaultSessions.mockImplementation(({ signal }: { signal?: AbortSignal }) => {
+      fallbackSignal = signal
+      return new Promise(() => {})
+    })
 
-    const result = await scanSshAiVaultSessions('dev-box', undefined, { timeoutMs: 20 })
+    const resultPromise = scanSshAiVaultSessions('dev-box', undefined, { timeoutMs: 20 })
+    await vi.advanceTimersByTimeAsync(20)
+    const result = await Promise.race([resultPromise, Promise.resolve('still-pending' as const)])
 
+    expect(result).not.toBe('still-pending')
+    expect(fallbackSignal?.aborted).toBe(true)
+    if (result === 'still-pending') {
+      return
+    }
     expect(result.sessions).toEqual([])
     expect(result.issues).toEqual([
       expect.objectContaining({
@@ -193,16 +196,16 @@ describe('scanSshAiVaultSessions', () => {
   it('still propagates a caller cancellation', async () => {
     const controller = new AbortController()
     requestActiveSshAiVaultSessionList.mockResolvedValue(null)
-    scanRemoteAiVaultSessions.mockImplementation(() => {
-      controller.abort()
-      const error = new Error('Agent Session History scan was cancelled')
-      error.name = 'AbortError'
-      return Promise.reject(error)
-    })
+    scanRemoteAiVaultSessions.mockImplementation(() => new Promise(() => {}))
 
-    await expect(
-      scanSshAiVaultSessions('dev-box', undefined, { signal: controller.signal, timeoutMs: 5_000 })
-    ).rejects.toMatchObject({ name: 'AbortError' })
+    const result = scanSshAiVaultSessions('dev-box', undefined, {
+      signal: controller.signal,
+      timeoutMs: 5_000
+    })
+    await vi.waitFor(() => expect(scanRemoteAiVaultSessions).toHaveBeenCalledTimes(1))
+    controller.abort()
+
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
 

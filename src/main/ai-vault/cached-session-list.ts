@@ -4,6 +4,12 @@ import { getWslHomeAsync, listWslDistrosAsync } from '../wsl'
 import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
 import { LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
 import { AiVaultScanCoordinator } from './ai-vault-scan-coordinator'
+import {
+  aiVaultSessionDepthCovers,
+  requestedAiVaultSessionDepth,
+  truncateAiVaultListResult,
+  type AiVaultSessionDepth
+} from '../../shared/ai-vault-session-depth'
 
 // Why: ONE module owns the scan cache so the desktop IPC handler AND the runtime
 // RPC method share a single cache instance — opening the desktop panel and the
@@ -20,6 +26,7 @@ export type AiVaultSessionSources = {
 
 type CachedAiVaultList = {
   key: string
+  depth: AiVaultSessionDepth
   result: AiVaultListResult
   expiresAt: number
 }
@@ -37,18 +44,22 @@ export async function listAiVaultSessions(
   options: { signal?: AbortSignal } = {}
 ): Promise<AiVaultListResult> {
   // Scope paths change the result set, so they must be part of the cache key.
-  const key = JSON.stringify({
-    limit: args?.limit ?? 'default',
-    scopePaths: args?.scopePaths ?? []
-  })
+  const key = JSON.stringify({ scopePaths: [...new Set(args?.scopePaths ?? [])].sort() })
+  const depth = requestedAiVaultSessionDepth(args)
+  const scanKey = JSON.stringify({ key, depth })
   const now = Date.now()
   // Why: opening this panel repeatedly should not re-parse hundreds of JSONL
   // transcripts; explicit refreshes bypass the cache and preempt stale scans.
-  if (args?.force !== true && cachedList?.key === key && cachedList.expiresAt > now) {
-    return cachedList.result
+  if (
+    args?.force !== true &&
+    cachedList?.key === key &&
+    cachedList.expiresAt > now &&
+    aiVaultSessionDepthCovers(cachedList.depth, depth)
+  ) {
+    return truncateAiVaultListResult(cachedList.result, depth, args?.scopePaths)
   }
   return scanCoordinator.run({
-    key,
+    key: scanKey,
     force: args?.force,
     signal: options.signal,
     start: async (scanSignal) => {
@@ -56,6 +67,7 @@ export async function listAiVaultSessions(
         sources.getAdditionalCodexHomePaths?.().map((homePath) => join(homePath, 'sessions')) ?? []
       const result = await scanAiVaultSessions({
         limit: args?.limit,
+        unlimited: args?.unlimited,
         scopePaths: args?.scopePaths,
         additionalCodexSessionsDirs,
         wslHomeDirs: await getAiVaultWslHomeDirs(),
@@ -67,10 +79,19 @@ export async function listAiVaultSessions(
         executionHostId: LOCAL_EXECUTION_HOST_ID
       })
       if (!scanSignal.aborted) {
-        cachedList = {
-          key,
-          result,
-          expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
+        const current = cachedList
+        if (
+          args?.force === true ||
+          current?.key !== key ||
+          current.expiresAt <= Date.now() ||
+          !aiVaultSessionDepthCovers(current.depth, depth)
+        ) {
+          cachedList = {
+            key,
+            depth,
+            result,
+            expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
+          }
         }
       }
       return result

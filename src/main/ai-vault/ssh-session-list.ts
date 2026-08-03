@@ -11,6 +11,7 @@ import {
 } from '../providers/ssh-filesystem-dispatch'
 import { getActiveSshAiVaultHostInfo, requestActiveSshAiVaultSessionList } from '../ipc/ssh'
 import { isSshMuxRequestTimeoutError } from '../ssh/ssh-channel-multiplexer'
+import { createAiVaultScanCancelledError } from './ai-vault-scan-cancellation'
 import { scanRemoteAiVaultSessions } from './remote-session-scanner'
 import { parseAiVaultListResult } from './session-list-result-validation'
 import { aiVaultScanIssueResult, restampAiVaultListResult } from './session-list-results'
@@ -63,6 +64,7 @@ async function scanOneSshHost(
   try {
     const params = {
       limit: args?.limit,
+      ...(args?.unlimited === true ? { unlimited: true } : {}),
       ...(args?.force === true ? { force: true } : {}),
       scopePaths,
       ...(scopePathsTruncated ? { scopePathsTruncated: true } : {})
@@ -109,6 +111,7 @@ async function scanOneSshHost(
         remoteHome: hostInfo.remoteHome,
         hostPlatform: hostInfo.hostPlatform,
         limit: args?.limit,
+        unlimited: args?.unlimited,
         scopePaths,
         signal
       }),
@@ -156,31 +159,53 @@ async function scanRemoteSessionsWithinBudget(args: {
   signal?: AbortSignal
   remainingMs: number | null
 }): Promise<AiVaultListResult | null> {
-  if (args.remainingMs === null) {
+  const remainingMs = args.remainingMs
+  if (remainingMs === null) {
     return args.scan(args.signal)
   }
-  if (args.remainingMs === 0) {
+  if (args.signal?.aborted) {
+    throw createAiVaultScanCancelledError()
+  }
+  if (remainingMs === 0) {
     return null
   }
   const controller = new AbortController()
-  const forwardAbort = (): void => controller.abort()
-  args.signal?.addEventListener('abort', forwardAbort, { once: true })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, args.remainingMs)
-  try {
-    return await args.scan(controller.signal)
-  } catch (error) {
-    if (timedOut && !args.signal?.aborted) {
-      return null
+  return new Promise<AiVaultListResult | null>((resolve, reject) => {
+    let settled = false
+    const finish = (settle: () => void): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      args.signal?.removeEventListener('abort', onCallerAbort)
+      settle()
     }
-    throw error
-  } finally {
-    clearTimeout(timer)
-    args.signal?.removeEventListener('abort', forwardAbort)
-  }
+    const onCallerAbort = (): void => {
+      controller.abort()
+      finish(() => reject(createAiVaultScanCancelledError()))
+    }
+    const timer = setTimeout(() => {
+      controller.abort()
+      finish(() => resolve(null))
+    }, remainingMs)
+    args.signal?.addEventListener('abort', onCallerAbort, { once: true })
+    if (args.signal?.aborted) {
+      onCallerAbort()
+      return
+    }
+    try {
+      const scan = args.scan(controller.signal)
+      // The SSH provider may ignore abort; observe any eventual rejection after
+      // this caller has already returned its timeout or cancellation result.
+      void scan.then(
+        (result) => finish(() => resolve(result)),
+        (error: unknown) => finish(() => reject(error))
+      )
+    } catch (error) {
+      finish(() => reject(error))
+    }
+  })
 }
 
 // Mirrors the notice the relay leg appends so both legs report the same cap.

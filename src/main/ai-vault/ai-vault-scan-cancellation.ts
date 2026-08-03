@@ -4,7 +4,7 @@ export function throwIfAiVaultScanCancelled(signal?: AbortSignal): void {
   if (!signal?.aborted) {
     return
   }
-  throw aiVaultScanCancelledError()
+  throw createAiVaultScanCancelledError()
 }
 
 // Why: the runtime RPC transport has no abort hook, so cancellation can only
@@ -19,10 +19,10 @@ export function abandonRemoteSessionScanOnCancel<T>(
   }
   return new Promise<T>((resolve, reject) => {
     if (signal.aborted) {
-      reject(aiVaultScanCancelledError())
+      reject(createAiVaultScanCancelledError())
       return
     }
-    const onAbort = (): void => reject(aiVaultScanCancelledError())
+    const onAbort = (): void => reject(createAiVaultScanCancelledError())
     signal.addEventListener('abort', onAbort, { once: true })
     void promise.then(
       (value) => {
@@ -37,7 +37,7 @@ export function abandonRemoteSessionScanOnCancel<T>(
   })
 }
 
-function aiVaultScanCancelledError(): Error {
+export function createAiVaultScanCancelledError(): Error {
   const error = new Error(AI_VAULT_SCAN_CANCELLED_MESSAGE)
   error.name = 'AbortError'
   return error

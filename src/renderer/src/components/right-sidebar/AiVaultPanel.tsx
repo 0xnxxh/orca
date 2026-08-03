@@ -78,9 +78,11 @@ export default function AiVaultPanel(): React.JSX.Element {
     sort,
     group,
     hideEmptySessions,
+    sessionLimit,
     setSort,
     setGroup,
     setHideEmptySessions,
+    setSessionLimit,
     setAgentEnabled,
     setAllAgentsEnabled,
     resetViewOptions
@@ -142,9 +144,10 @@ export default function AiVaultPanel(): React.JSX.Element {
   )
   const { error, loading, refresh, scanResult, sessions } = useAiVaultSessionRefresh(
     scopePaths,
-    executionHostScope
+    executionHostScope,
+    sessionLimit
   )
-  // Deliberately blind to the active repo/worktree: rebuilding these ~500-entry
+  // Deliberately blind to the active repo/worktree: rebuilding these session
   // maps on every worktree switch is what made switching visibly slow (#10841 era).
   const sessionProjectById = useMemo(
     () =>
@@ -181,7 +184,8 @@ export default function AiVaultPanel(): React.JSX.Element {
     agents,
     sort,
     group,
-    hideEmptySessions
+    hideEmptySessions,
+    sessionLimit
   })
 
   // Workspace is the preferred default, but unavailable context still falls back to All.
@@ -317,6 +321,7 @@ export default function AiVaultPanel(): React.JSX.Element {
         sort={sort}
         group={group}
         hideEmptySessions={hideEmptySessions}
+        sessionLimit={sessionLimit}
         adjustmentCount={viewAdjustmentCount}
         onQueryChange={setQuery}
         onScopeChange={handleScopeChange}
@@ -326,6 +331,7 @@ export default function AiVaultPanel(): React.JSX.Element {
         onSortChange={setSort}
         onGroupChange={setGroup}
         onHideEmptySessionsChange={setHideEmptySessions}
+        onSessionLimitChange={setSessionLimit}
         onReset={resetViewOptions}
         onRefresh={() => void refresh({ force: true })}
       />

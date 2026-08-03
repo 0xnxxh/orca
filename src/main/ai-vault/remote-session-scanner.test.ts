@@ -153,7 +153,9 @@ describe('scanRemoteAiVaultSessions', () => {
       provider,
       executionHostId: 'ssh:dev-box',
       remoteHome: '/home/ada',
-      hostPlatform: getRemoteHostPlatform('linux-x64')
+      hostPlatform: getRemoteHostPlatform('linux-x64'),
+      limit: 1,
+      unlimited: true
     })
 
     expect(result.issues).toEqual([])
@@ -706,6 +708,49 @@ describe('scanRemoteAiVaultSessions', () => {
     expect(result.sessions.map((session) => session.sessionId)).toEqual([
       'other-session',
       'scoped-session'
+    ])
+  })
+
+  it('bounds scoped backfill to the newest files within the requested limit', async () => {
+    const provider = new MemoryRemoteProvider()
+    provider.addFile(
+      '/home/ada/.codex/sessions/other.jsonl',
+      codexTranscript({
+        sessionId: 'other-session',
+        title: 'Other workspace',
+        cwd: '/home/ada/other',
+        timestamp: '2026-07-04T05:00:00.000Z'
+      }),
+      50
+    )
+    for (const [sessionId, mtimeMs] of [
+      ['newer-scoped', 30],
+      ['older-scoped', 20]
+    ] as const) {
+      provider.addFile(
+        `/home/ada/.codex/sessions/${sessionId}.jsonl`,
+        codexTranscript({
+          sessionId,
+          title: sessionId,
+          cwd: '/home/ada/repo',
+          timestamp: `2026-07-04T0${mtimeMs / 10}:00:00.000Z`
+        }),
+        mtimeMs
+      )
+    }
+
+    const result = await scanRemoteAiVaultSessions({
+      provider,
+      executionHostId: 'ssh:dev-box',
+      remoteHome: '/home/ada',
+      hostPlatform: getRemoteHostPlatform('linux-x64'),
+      limit: 1,
+      scopePaths: ['/home/ada/repo']
+    })
+
+    expect(result.sessions.map((session) => session.sessionId)).toEqual([
+      'other-session',
+      'newer-scoped'
     ])
   })
 })

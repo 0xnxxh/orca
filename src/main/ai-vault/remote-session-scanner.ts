@@ -26,10 +26,10 @@ import { mapRemoteScanBatches } from './remote-session-scan-batching'
 import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
 import { recordRemoteSessionScanIssue } from './remote-session-scan-issues'
 import { limitRemoteScanFilesystemConcurrency } from './remote-session-scan-concurrency'
+import { DEFAULT_AI_VAULT_SCAN_LIMIT } from '../../shared/ai-vault-session-depth'
 
-const DEFAULT_REMOTE_SCAN_LIMIT = 1000
 const REMOTE_SCAN_CONCURRENCY = 8
-const REMOTE_SCOPE_PARSE_LIMIT = 2000
+const REMOTE_PARSE_CANDIDATE_MULTIPLIER = 2
 
 export async function scanRemoteAiVaultSessions(args: {
   provider: RemoteSessionFilesystemProvider
@@ -37,11 +37,16 @@ export async function scanRemoteAiVaultSessions(args: {
   remoteHome: string
   hostPlatform: RemoteHostPlatform
   limit?: number
+  unlimited?: boolean
   scopePaths?: readonly string[]
   signal?: AbortSignal
 }): Promise<AiVaultListResult> {
   throwIfAiVaultScanCancelled(args.signal)
-  const limit = args.limit && args.limit > 0 ? Math.floor(args.limit) : DEFAULT_REMOTE_SCAN_LIMIT
+  const limit = args.unlimited
+    ? Number.POSITIVE_INFINITY
+    : args.limit && args.limit > 0
+      ? Math.floor(args.limit)
+      : DEFAULT_AI_VAULT_SCAN_LIMIT
   const issues: AiVaultScanIssue[] = []
   // One ceiling for the whole scan: discovery walks, stats and transcript reads
   // all queue behind it instead of multiplying into a nested fan-out.
@@ -85,7 +90,12 @@ export async function scanRemoteAiVaultSessions(args: {
     }
   )
 
-  const parsed = await parseRemoteSessionCandidates({ candidates, context, issues, limit })
+  const parsed = await parseRemoteSessionCandidates({
+    candidates: candidates.slice(0, limit * REMOTE_PARSE_CANDIDATE_MULTIPLIER),
+    context,
+    issues,
+    limit
+  })
   const parsedSessions = dedupeCodexSessionsBySessionId(parsed.sessions)
   const cappedSessions = parsedSessions
     .sort((left, right) => sessionSortTime(right) - sessionSortTime(left))
@@ -99,12 +109,15 @@ export async function scanRemoteAiVaultSessions(args: {
     context,
     issues,
     scopePaths,
+    limit,
     alreadyParsedFilePaths: parsed.parsedFilePaths
   })
   const scopeSessions = dedupeCodexSessionsBySessionId([
     ...parsedScopeSessions,
     ...extraScopeSessions
   ])
+    .sort((left, right) => sessionSortTime(right) - sessionSortTime(left))
+    .slice(0, limit)
 
   return {
     sessions: mergeRemoteSessions(cappedSessions, scopeSessions),
@@ -128,7 +141,10 @@ async function parseRemoteSessionCandidates(args: {
       break
     }
 
-    const batch = args.candidates.slice(index, index + REMOTE_SCAN_CONCURRENCY)
+    const remaining = args.candidates.length - index
+    const needed = Math.max(args.limit - sessions.length, 1)
+    const batchSize = Math.min(REMOTE_SCAN_CONCURRENCY, needed, remaining)
+    const batch = args.candidates.slice(index, index + batchSize)
     for (const candidate of batch) {
       parsedFilePaths.add(candidate.file.path)
     }
@@ -139,7 +155,7 @@ async function parseRemoteSessionCandidates(args: {
     sessions.push(...results.filter(isAiVaultSession))
     const uniqueSessions = dedupeCodexSessionsBySessionId(sessions)
     sessions.splice(0, sessions.length, ...uniqueSessions)
-    index += batch.length
+    index += batchSize
     await yieldToEventLoop()
   }
 
@@ -154,6 +170,7 @@ async function scanRemoteInScopeSessions(args: {
   context: RemoteScannerContext
   issues: AiVaultScanIssue[]
   scopePaths: readonly string[]
+  limit: number
   alreadyParsedFilePaths: ReadonlySet<string>
 }): Promise<AiVaultSession[]> {
   if (args.scopePaths.length === 0) {
@@ -162,7 +179,7 @@ async function scanRemoteInScopeSessions(args: {
 
   const candidates = args.candidates
     .filter((candidate) => !args.alreadyParsedFilePaths.has(candidate.file.path))
-    .slice(0, REMOTE_SCOPE_PARSE_LIMIT)
+    .slice(0, args.limit)
   const results = await mapRemoteScanBatches(
     candidates,
     REMOTE_SCAN_CONCURRENCY,

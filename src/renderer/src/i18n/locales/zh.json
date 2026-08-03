@@ -11347,6 +11347,14 @@
           },
           "activityBar": {
             "error": "错误"
+          },
+          "AiVaultSessionLimitMenu": {
+            "historyDepth": "历史记录数量：{{value0}}",
+            "performanceWarning": "加载更多历史记录可能会拖慢整个应用，尤其是在远程主机上。无限制模式会扫描所有可用历史记录。",
+            "recommended": "推荐",
+            "mayBeSlower": "可能较慢",
+            "slowest": "最慢",
+            "unlimited": "无限制"
           }
         }
       },

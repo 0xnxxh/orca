@@ -1,9 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import type { AiVaultListResult, AiVaultScanIssue } from '../../shared/ai-vault-types'
+import type {
+  AiVaultListResult,
+  AiVaultScanIssue,
+  AiVaultSession
+} from '../../shared/ai-vault-types'
 import { mergeAiVaultListResults } from './session-list-results'
 
 function listResult(issues: AiVaultScanIssue[]): AiVaultListResult {
   return { sessions: [], issues, scannedAt: '2026-08-02T00:00:00.000Z' }
+}
+
+function session(index: number): AiVaultSession {
+  const id = `session-${index}`
+  const timestamp = new Date(Date.UTC(2026, 7, 2, 0, 0, index)).toISOString()
+  return {
+    id,
+    executionHostId: 'local',
+    agent: 'codex',
+    sessionId: id,
+    title: id,
+    cwd: '/repo',
+    branch: null,
+    model: null,
+    filePath: `/sessions/${id}.jsonl`,
+    codexHome: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    modifiedAt: timestamp,
+    messageCount: 1,
+    totalTokens: 0,
+    previewMessages: [],
+    queuedMessageCount: 0,
+    subagentTranscriptCount: 0,
+    resumeCommand: id,
+    subagent: null
+  }
 }
 
 const SCOPE_TRUNCATION: AiVaultScanIssue = {
@@ -15,6 +46,13 @@ const SCOPE_TRUNCATION: AiVaultScanIssue = {
 }
 
 describe('mergeAiVaultListResults', () => {
+  it('does not cap an Unlimited all-host merge', () => {
+    const sessions = Array.from({ length: 1001 }, (_, index) => session(index))
+    const merged = mergeAiVaultListResults([{ ...listResult([]), sessions }], undefined, true)
+
+    expect(merged.sessions).toHaveLength(1001)
+  })
+
   it('keeps a per-host scope truncation notice when merging all-host results', () => {
     const merged = mergeAiVaultListResults(
       [listResult([]), listResult([SCOPE_TRUNCATION])],

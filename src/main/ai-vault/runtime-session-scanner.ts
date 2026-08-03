@@ -52,6 +52,7 @@ export async function scanRuntimeAiVaultSessions(
     'aiVault.listSessions',
     {
       limit: args.limit,
+      unlimited: args.unlimited,
       force: args.force,
       // Why: cap here so the set of scanned paths is explicit on this side —
       // the RPC schema CLAMPS to the same bound anyway (older hosts had no

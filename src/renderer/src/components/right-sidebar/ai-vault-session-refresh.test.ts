@@ -4,13 +4,15 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
-import type { AiVaultListResult } from '../../../../shared/ai-vault-types'
+import type { AiVaultListResult, AiVaultSession } from '../../../../shared/ai-vault-types'
+import type { ExecutionHostScope } from '../../../../shared/execution-host'
 import { useAppStore } from '@/store'
 import {
   isAiVaultScanCancellation,
   resetAiVaultForcedRescanThrottleForTest,
   useAiVaultSessionRefresh
 } from './ai-vault-session-refresh'
+import { DEFAULT_AI_VAULT_SESSION_LIMIT, type AiVaultSessionLimit } from './ai-vault-session-limit'
 
 const EMPTY_RESULT: AiVaultListResult = {
   sessions: [],
@@ -69,35 +71,42 @@ let latest: ReturnType<typeof useAiVaultSessionRefresh> | null = null
 
 function HookProbe(props: {
   scopePaths: readonly string[]
-  executionHostScope?: 'local' | 'all' | `ssh:${string}`
+  executionHostScope?: ExecutionHostScope
+  sessionLimit?: AiVaultSessionLimit
 }): null {
-  latest = useAiVaultSessionRefresh(props.scopePaths, props.executionHostScope ?? 'local')
+  latest = useAiVaultSessionRefresh(
+    props.scopePaths,
+    props.executionHostScope ?? 'local',
+    props.sessionLimit ?? DEFAULT_AI_VAULT_SESSION_LIMIT
+  )
   return null
 }
 
 async function renderHook(
   scopePaths: readonly string[] = [],
-  executionHostScope: 'local' | 'all' | `ssh:${string}` = 'local'
+  executionHostScope: ExecutionHostScope = 'local',
+  sessionLimit: AiVaultSessionLimit = DEFAULT_AI_VAULT_SESSION_LIMIT
 ): Promise<void> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   roots.push(root)
   await act(async () => {
-    root.render(createElement(HookProbe, { scopePaths, executionHostScope }))
+    root.render(createElement(HookProbe, { scopePaths, executionHostScope, sessionLimit }))
   })
 }
 
 async function rerenderHook(
   scopePaths: readonly string[] = [],
-  executionHostScope: 'local' | 'all' | `ssh:${string}` = 'local'
+  executionHostScope: ExecutionHostScope = 'local',
+  sessionLimit: AiVaultSessionLimit = DEFAULT_AI_VAULT_SESSION_LIMIT
 ): Promise<void> {
   const root = roots.at(-1)
   if (!root) {
     throw new Error('renderHook must be called before rerenderHook')
   }
   await act(async () => {
-    root.render(createElement(HookProbe, { scopePaths, executionHostScope }))
+    root.render(createElement(HookProbe, { scopePaths, executionHostScope, sessionLimit }))
   })
 }
 
@@ -132,6 +141,33 @@ function makeAgentEntry(sessionId: string, state = 'working'): AgentStatusEntry 
     stateHistory: [],
     providerSession: { key: 'session_id', id: sessionId }
   } as AgentStatusEntry
+}
+
+function makeVaultSession(index: number): AiVaultSession {
+  const id = `session-${index}`
+  const timestamp = new Date(Date.UTC(2026, 6, 1, 0, 0, index)).toISOString()
+  return {
+    id,
+    executionHostId: 'ssh:dev-box',
+    agent: 'codex',
+    sessionId: id,
+    title: id,
+    cwd: '/repo',
+    branch: null,
+    model: null,
+    filePath: `/sessions/${id}.jsonl`,
+    codexHome: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    modifiedAt: timestamp,
+    messageCount: 1,
+    totalTokens: 0,
+    previewMessages: [],
+    queuedMessageCount: 0,
+    subagentTranscriptCount: 0,
+    resumeCommand: id,
+    subagent: null
+  }
 }
 
 async function setAgentStatuses(entries: Record<string, AgentStatusEntry>): Promise<void> {
@@ -181,6 +217,24 @@ describe('useAiVaultSessionRefresh refocus behavior', () => {
     })
   })
 
+  it.each(['ssh:dev-box', 'runtime:remote-server'] as const)(
+    'uses the cache on %s panel entry',
+    async (executionHostScope) => {
+      await renderHook(['/repo'], executionHostScope)
+      await flushMicrotasks()
+
+      expect(listSessionsMock).toHaveBeenCalledTimes(1)
+      expect(lastCallArgs()).toMatchObject({
+        executionHostScope,
+        scopePaths: ['/repo'],
+        force: false
+      })
+
+      await advance(THROTTLE_MS + 1)
+      expect(listSessionsMock).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('passes the requested execution host scope to the scanner', async () => {
     await renderHook(['/repo'], 'ssh:dev-box')
     await flushMicrotasks()
@@ -190,6 +244,73 @@ describe('useAiVaultSessionRefresh refocus behavior', () => {
       executionHostScope: 'ssh:dev-box',
       scopePaths: ['/repo']
     })
+  })
+
+  it('re-scans with the selected history depth', async () => {
+    await renderHook(['/repo'], 'ssh:dev-box')
+    await flushMicrotasks()
+
+    await rerenderHook(['/repo'], 'ssh:dev-box', 1000)
+    await flushMicrotasks()
+
+    expect(listSessionsMock).toHaveBeenCalledTimes(2)
+    expect(lastCallArgs()).toMatchObject({ limit: 1000, force: false })
+  })
+
+  it('reuses a loaded larger depth when lowering and raising within its coverage', async () => {
+    const loaded = {
+      ...EMPTY_RESULT,
+      sessions: Array.from({ length: 600 }, (_, index) => makeVaultSession(index))
+    }
+    listSessionsMock.mockResolvedValueOnce(loaded)
+    await renderHook([], 'ssh:dev-box', 1000)
+    await flushMicrotasks()
+
+    await rerenderHook([], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+    expect(latest?.sessions).toHaveLength(250)
+
+    await rerenderHook([], 'ssh:dev-box', 500)
+    await flushMicrotasks()
+    expect(latest?.sessions).toHaveLength(500)
+    expect(listSessionsMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses the rendered result after the panel remounts on a tab switch', async () => {
+    const loaded = { ...EMPTY_RESULT, sessions: [makeVaultSession(1)] }
+    listSessionsMock.mockResolvedValueOnce(loaded)
+    await renderHook(['/repo'], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+
+    roots.splice(0).forEach((root) => act(() => root.unmount()))
+    await renderHook(['/repo'], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+
+    expect(listSessionsMock).toHaveBeenCalledTimes(1)
+    expect(latest?.sessions).toEqual(loaded.sessions)
+  })
+
+  it('reuses each workspace result when switching back across tabs', async () => {
+    listSessionsMock
+      .mockResolvedValueOnce({ ...EMPTY_RESULT, sessions: [makeVaultSession(1)] })
+      .mockResolvedValueOnce({ ...EMPTY_RESULT, sessions: [makeVaultSession(2)] })
+    await renderHook(['/repo-a'], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+
+    await rerenderHook(['/repo-b'], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+    await rerenderHook(['/repo-a'], 'ssh:dev-box', 250)
+    await flushMicrotasks()
+
+    expect(listSessionsMock).toHaveBeenCalledTimes(2)
+    expect(latest?.sessions[0]?.id).toBe('session-1')
+  })
+
+  it('requests an uncapped scan for Unlimited', async () => {
+    await renderHook([], 'ssh:dev-box', 'unlimited')
+    await flushMicrotasks()
+
+    expect(lastCallArgs()).toMatchObject({ limit: undefined, unlimited: true, force: false })
   })
 
   it('does not apply stale results after the host scope changes mid-scan', async () => {

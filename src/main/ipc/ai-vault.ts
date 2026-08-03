@@ -18,6 +18,7 @@ import {
 import { scanSshAiVaultSessions } from '../ai-vault/ssh-session-list'
 import { AiVaultScanCoordinator } from '../ai-vault/ai-vault-scan-coordinator'
 import {
+  AI_VAULT_SCOPE_PATHS_MAX_COUNT,
   isAiVaultScanCancelledError,
   type AiVaultFirstUserPromptArgs,
   type AiVaultListArgs,
@@ -43,11 +44,8 @@ import {
   type RuntimeAiVaultHostInfo,
   type RuntimeAiVaultScanner
 } from './ai-vault-runtime-scan'
-import {
-  AI_VAULT_CACHE_TTL_MS,
-  resetAiVaultHostLegCacheForTests,
-  scanHostLegWithCache
-} from './ai-vault-host-leg-cache'
+import { resetAiVaultHostLegCacheForTests, scanHostLegWithCache } from './ai-vault-host-leg-cache'
+import { requestedAiVaultSessionDepth } from '../../shared/ai-vault-session-depth'
 
 const AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS = 3_000
 // Why: a remote home with many agent roots routinely needs seconds to walk,
@@ -64,13 +62,6 @@ type AiVaultHandlerOptions = AiVaultSessionSources &
     scanRuntimeAiVaultSessions?: RuntimeAiVaultScanner
   }
 
-type CachedAiVaultList = {
-  key: string
-  result: AiVaultListResult
-  expiresAt: number
-}
-
-let cachedList: CachedAiVaultList | null = null
 let scanCoordinator = new AiVaultScanCoordinator()
 let handlerOptions: AiVaultHandlerOptions = {}
 const listCancellations = createSenderScopedRequestCancellations()
@@ -83,39 +74,38 @@ async function listAiVaultSessions(
     args?.executionHostScope ?? LOCAL_EXECUTION_HOST_ID
   )
   // Scope paths change the result set, so they must be part of the cache key.
+  // A scanner consumes at most 64 paths, so smaller equivalent workspace sets
+  // can share a snapshot regardless of which worktree was selected first.
+  const scopePaths = args?.scopePaths ?? []
   const key = JSON.stringify({
-    limit: args?.limit ?? 'default',
-    scopePaths: args?.scopePaths ?? [],
+    scopePaths:
+      scopePaths.length <= AI_VAULT_SCOPE_PATHS_MAX_COUNT
+        ? [...new Set(scopePaths)].sort()
+        : scopePaths,
     executionHostScope
   })
-  const now = Date.now()
-  // Why: opening this panel repeatedly should not re-parse hundreds of JSONL
-  // transcripts; explicit refreshes bypass the cache and preempt stale scans.
-  if (args?.force !== true && cachedList?.key === key && cachedList.expiresAt > now) {
-    return cachedList.result
-  }
+  const depth = requestedAiVaultSessionDepth(args)
+  const scanKey = JSON.stringify({ key, depth })
   // Why: every renderer request carries its own cancellation signal, so
   // coalescing has to survive them — the coordinator hands all same-key callers
   // one scan and only aborts it once every one of them has cancelled.
   return scanCoordinator.run({
-    key,
+    key: scanKey,
     force: args?.force,
     signal: options.signal,
-    start: (scanSignal) =>
-      scanAiVaultSessionsByHostScope(args, executionHostScope, scanSignal, key).then((result) => {
-        if (
-          executionHostScope !== LOCAL_EXECUTION_HOST_ID &&
-          !scanSignal.aborted &&
-          !result.issues.some((issue) => issue.kind === 'host')
-        ) {
-          cachedList = {
-            key,
-            result,
-            expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
-          }
-        }
-        return result
+    start: (scanSignal) => {
+      const scan = () => scanAiVaultSessionsByHostScope(args, executionHostScope, scanSignal, key)
+      if (executionHostScope === LOCAL_EXECUTION_HOST_ID) {
+        return scan()
+      }
+      return scanHostLegWithCache({
+        cacheKey: key,
+        depth,
+        scopePaths,
+        force: args?.force === true,
+        scan
       })
+    }
   })
 }
 
@@ -125,6 +115,8 @@ async function scanAiVaultSessionsByHostScope(
   signal?: AbortSignal,
   cacheKey = ''
 ): Promise<AiVaultListResult> {
+  const depth = requestedAiVaultSessionDepth(args)
+  const scopePaths = args?.scopePaths ?? []
   if (executionHostScope === LOCAL_EXECUTION_HOST_ID) {
     return scanLocalAiVaultSessions(args, signal)
   }
@@ -140,6 +132,8 @@ async function scanAiVaultSessionsByHostScope(
       ...sshHosts.hostInfos.map((hostInfo) =>
         scanHostLegWithCache({
           cacheKey: `${cacheKey}|${toSshExecutionHostId(hostInfo.targetId)}`,
+          depth,
+          scopePaths,
           force: args?.force === true,
           scan: () =>
             scanSshAiVaultSessions(hostInfo.targetId, args, {
@@ -152,6 +146,8 @@ async function scanAiVaultSessionsByHostScope(
       ...runtimeHosts.hostInfos.map((hostInfo) =>
         scanHostLegWithCache({
           cacheKey: `${cacheKey}|${hostInfo.executionHostId}`,
+          depth,
+          scopePaths,
           force: args?.force === true,
           scan: () =>
             scanRuntimeAiVaultSessions({
@@ -163,7 +159,11 @@ async function scanAiVaultSessionsByHostScope(
         })
       )
     ])
-    return mergeAiVaultListResults([...scannedResults, ...runtimeResults], args?.limit)
+    return mergeAiVaultListResults(
+      [...scannedResults, ...runtimeResults],
+      args?.limit,
+      args?.unlimited
+    )
   }
 
   const parsed = parseExecutionHostId(executionHostScope)
@@ -234,6 +234,7 @@ async function scanLocalAiVaultSessions(
   return listCachedLocalAiVaultSessions(
     {
       limit: args?.limit,
+      unlimited: args?.unlimited,
       force: args?.force,
       scopePaths: args?.scopePaths
     },
@@ -328,7 +329,6 @@ async function listAiVaultSubagentSessions(
 }
 
 function resetAiVaultCacheForTests(): void {
-  cachedList = null
   resetAiVaultHostLegCacheForTests()
   scanCoordinator = new AiVaultScanCoordinator()
   handlerOptions = {}

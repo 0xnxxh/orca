@@ -11335,6 +11335,14 @@
           },
           "activityBar": {
             "error": "エラー"
+          },
+          "AiVaultSessionLimitMenu": {
+            "historyDepth": "履歴の件数: {{value0}}",
+            "performanceWarning": "履歴を増やすと、特にリモートホストではアプリ全体が遅くなる場合があります。無制限では利用可能な履歴をすべてスキャンします。",
+            "recommended": "推奨",
+            "mayBeSlower": "遅くなる可能性あり",
+            "slowest": "最も低速",
+            "unlimited": "無制限"
           }
         }
       },

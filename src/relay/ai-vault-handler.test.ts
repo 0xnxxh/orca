@@ -104,6 +104,25 @@ describe('AiVaultHandler', () => {
     )
   })
 
+  it('forwards Unlimited without the relay numeric cap', async () => {
+    const scanRemoteSessions = vi.fn().mockResolvedValue(emptyResult())
+    const dispatcher = createMockDispatcher()
+    new AiVaultHandler(dispatcher.value, {
+      remoteHome: '/home/ada',
+      hostPlatform: getRemoteHostPlatform('linux-x64'),
+      scanRemoteSessions
+    })
+
+    await dispatcher.call(SSH_AI_VAULT_LIST_SESSIONS_METHOD, {
+      limit: 50_000,
+      unlimited: true
+    })
+
+    expect(scanRemoteSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: undefined, unlimited: true })
+    )
+  })
+
   it('coalesces identical in-flight scans without coupling caller cancellation', async () => {
     let resolveScan: ((result: AiVaultListResult) => void) | undefined
     let sharedSignal: AbortSignal | undefined

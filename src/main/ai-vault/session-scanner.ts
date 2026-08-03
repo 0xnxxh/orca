@@ -40,13 +40,10 @@ import type {
 } from './session-scanner-types'
 import { clampPositiveInteger, errorMessage } from './session-scanner-values'
 import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
+import { DEFAULT_AI_VAULT_SCAN_LIMIT } from '../../shared/ai-vault-session-depth'
 
-const DEFAULT_LIMIT = 1000
-const DEFAULT_SCAN_LIMIT_PER_AGENT = 1000
 const SESSION_PARSE_CONCURRENCY = 8
-// Upper bound on extra in-scope transcripts discovered and parsed past the
-// recency cap; guards against a pathological scoped history directory.
-const SCOPE_PARSE_LIMIT = 2000
+const SESSION_PARSE_CANDIDATE_MULTIPLIER = 2
 
 /**
  * Scan all supported AI agent session stores and return a unified, sorted,
@@ -64,8 +61,12 @@ export async function scanAiVaultSessions(
   // "one core pegged" reports need to show whether transcript scanning is the
   // subsystem burning CPU, and how much of each scan the cache absorbed.
   return withSpan('aiVault.scan', async (span) => {
-    const limit = clampPositiveInteger(options.limit, DEFAULT_LIMIT)
-    const limitPerAgent = clampPositiveInteger(options.limitPerAgent, DEFAULT_SCAN_LIMIT_PER_AGENT)
+    const limit = options.unlimited
+      ? Number.POSITIVE_INFINITY
+      : clampPositiveInteger(options.limit, DEFAULT_AI_VAULT_SCAN_LIMIT)
+    const limitPerAgent = options.unlimited
+      ? Number.POSITIVE_INFINITY
+      : clampPositiveInteger(options.limitPerAgent, limit * SESSION_PARSE_CANDIDATE_MULTIPLIER)
     const platform = options.platform ?? process.platform
     const executionHostId = options.executionHostId ?? LOCAL_EXECUTION_HOST_ID
     const issues: AiVaultScanIssue[] = []
@@ -109,7 +110,7 @@ export async function scanAiVaultSessions(
     )
 
     const parsedSessions = await parseSessionCandidates({
-      candidates,
+      candidates: candidates.slice(0, limit * SESSION_PARSE_CANDIDATE_MULTIPLIER),
       limit,
       platform,
       executionHostId,
@@ -126,6 +127,7 @@ export async function scanAiVaultSessions(
     const scopeSessions = await scanInScopeSessions({
       discoveries,
       scopePaths: options.scopePaths ?? [],
+      limit,
       alreadyParsedFilePaths: new Set(cappedSessions.map((session) => session.filePath)),
       platform,
       executionHostId,
@@ -174,6 +176,7 @@ function mergeSessions(
 async function scanInScopeSessions(args: {
   discoveries: SessionFileDiscovery[]
   scopePaths: readonly string[]
+  limit: number
   alreadyParsedFilePaths: ReadonlySet<string>
   platform: NodeJS.Platform
   executionHostId: ExecutionHostId
@@ -190,7 +193,7 @@ async function scanInScopeSessions(args: {
   const files = await discoverInScopeClaudeFiles({
     rootDirs: claudeRootDirs,
     scopePaths: args.scopePaths,
-    limit: SCOPE_PARSE_LIMIT,
+    limit: args.limit,
     excludedFilePaths: args.alreadyParsedFilePaths,
     issues: args.issues
   })

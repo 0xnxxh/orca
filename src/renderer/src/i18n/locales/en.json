@@ -11475,6 +11475,14 @@
           },
           "activityBar": {
             "error": "Error"
+          },
+          "AiVaultSessionLimitMenu": {
+            "historyDepth": "History depth: {{value0}}",
+            "performanceWarning": "Larger histories can slow the entire app, especially on remote hosts. Unlimited scans all available history.",
+            "recommended": "Recommended",
+            "mayBeSlower": "May be slower",
+            "slowest": "Slowest",
+            "unlimited": "Unlimited"
           }
         }
       },
