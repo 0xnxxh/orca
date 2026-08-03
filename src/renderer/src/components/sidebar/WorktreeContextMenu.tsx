@@ -1063,16 +1063,21 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         onOpenChange={setCreateGroupDialogOpen}
         onSubmit={handleSubmitNewProjectGroup}
       />
-      <WorktreeParentPickerPopover
-        open={parentPicker !== null}
-        childWorktreeId={parentPicker?.childWorktreeId ?? null}
-        anchorElement={parentPicker?.anchorElement ?? null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setParentPicker(null)
-          }
-        }}
-      />
+      {/* Why: mounted only while open — one instance of this lives behind every
+          worktree card, and each one subscribes to the worktree and lineage
+          maps just to compute parent candidates it will never show. */}
+      {parentPicker ? (
+        <WorktreeParentPickerPopover
+          open
+          childWorktreeId={parentPicker.childWorktreeId}
+          anchorElement={parentPicker.anchorElement}
+          onOpenChange={(open) => {
+            if (!open) {
+              setParentPicker(null)
+            }
+          }}
+        />
+      ) : null}
     </div>
   )
 })

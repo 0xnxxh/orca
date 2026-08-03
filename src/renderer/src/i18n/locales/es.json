@@ -4944,7 +4944,8 @@
           "failedSetParent": "No se pudo establecer el worktree padre",
           "current": "Actual",
           "searchPlaceholder": "Buscar worktrees...",
-          "empty": "No hay worktrees elegibles que coincidan."
+          "empty": "No hay worktrees elegibles que coincidan.",
+          "setParentFor": "Establecer padre para"
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "Rama"

@@ -4956,7 +4956,8 @@
           "failedSetParent": "无法设置父工作树",
           "current": "当前",
           "searchPlaceholder": "搜索工作树...",
-          "empty": "没有匹配的可用工作树。"
+          "empty": "没有匹配的可用工作树。",
+          "setParentFor": "为以下工作树设置父级"
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "分支"

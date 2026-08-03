@@ -4944,7 +4944,8 @@
           "failedSetParent": "親ワークツリーを設定できませんでした",
           "current": "現在",
           "searchPlaceholder": "ワークツリーを検索...",
-          "empty": "一致する対象ワークツリーがありません。"
+          "empty": "一致する対象ワークツリーがありません。",
+          "setParentFor": "次のワークツリーの親を設定"
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "ブランチ"
