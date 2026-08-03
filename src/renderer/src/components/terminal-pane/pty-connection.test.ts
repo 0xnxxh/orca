@@ -9008,6 +9008,52 @@ describe('connectPanePty', () => {
     })
   })
 
+  it('applies the fresh-shell reset when a spawn is answered with a cold-restore reattach', async () => {
+    // Why: main can answer a *spawn* with an adopted session, so the reattach handler
+    // is reachable by a second door that skips the restored-session path entirely. The
+    // cold-restore signal has to survive that door too, or #12101 returns on it.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    let activePtyId = 'tab-pty'
+    transport.getPtyId.mockImplementation(() => activePtyId)
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
+      if (sessionId) {
+        throw new Error('restored session is gone')
+      }
+      // Main answered the spawn by adopting a durable session instead.
+      activePtyId = 'adopted-pty'
+      return {
+        id: 'adopted-pty',
+        isReattach: true,
+        snapshot: '\x1b[?1003h\x1b[?1006h\x1b[?2004huser@host ~ $ ',
+        coldRestore: { scrollback: 'cold-payload', cwd: '/tmp/wt-1' }
+      }
+    })
+    transportFactoryQueue.push(transport)
+    setReattachPaneTitle('Cursor Agent')
+
+    const pane = createPane(1)
+    const textarea = {} as HTMLTextAreaElement
+    configureTerminalFocusMode(pane, textarea)
+    await withMockedDocumentActiveElement(textarea, async () => {
+      const manager = createManager(1)
+      const deps = createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+      })
+
+      connectPanePty(pane as never, manager as never, deps as never)
+      await flushAsyncTicks(30)
+
+      expect(transport.connect).toHaveBeenCalledTimes(2)
+      const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([data]) => data as string
+      )
+      expect(writes).toContain(POST_REPLAY_MODE_RESET)
+      expect(writes).not.toContain(POST_REPLAY_LIVE_AGENT_REATTACH_RESET)
+    })
+  })
+
   it('keeps ?25h in the live agent reattach reset when the snapshot leaves the cursor visible', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
