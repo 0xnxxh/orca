@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   isAiVaultScanCancelledError,
   type AiVaultListResult,
@@ -70,7 +70,10 @@ export function useAiVaultSessionRefresh(
   const executionHostScopeRef = useRef<ExecutionHostScope>(executionHostScope)
   executionHostScopeRef.current = executionHostScope
   const sessionLimitRef = useRef(sessionLimit)
-  sessionLimitRef.current = sessionLimit
+  // Keep render pure for React Doctor; layout effect still lands before refresh effects.
+  useLayoutEffect(() => {
+    sessionLimitRef.current = sessionLimit
+  }, [sessionLimit])
   const currentScanScopeKey = useCallback(
     () =>
       `${aiVaultSessionResultCacheKey(
