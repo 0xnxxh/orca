@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: keeps file/Keychain/snapshot/env-patch auth semantics together so PTY launch and quota-fetch paths can't drift. */
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { ClaudeManagedAccount } from '../../shared/types'
@@ -14,11 +15,22 @@ import {
 } from './managed-auth-path'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { resolveLocalAccountRuntimeTarget } from '../../shared/local-account-runtime'
-import { getDefaultWslDistro, getWslHome, toWindowsWslPath } from '../wsl'
+import { getDefaultWslDistro, toWindowsWslPath } from '../wsl'
 import { buildEncodedWslBashCommand } from '../wsl-bash-command'
 import { hasLiveClaudePtys } from './live-pty-gate'
 import { isOauthTokenExpiring, refreshClaudeOauthCredentials } from './oauth-refresh'
-import { ClaudeRuntimePathResolver } from './runtime-paths'
+import {
+  ClaudeRuntimePathResolver,
+  resolveWslProfilePaths,
+  type ClaudeRuntimePaths
+} from './runtime-paths'
+import {
+  ClaudeAuthSurfaceStates,
+  HOST_AUTH_SURFACE_KEY,
+  authSurfaceSnapshotFileName,
+  wslAuthSurfaceKey,
+  type ClaudeAuthSurfaceState
+} from './auth-surface'
 import {
   deleteActiveClaudeKeychainCredentialsStrict,
   readActiveClaudeKeychainCredentials,
@@ -87,6 +99,18 @@ type ClaudeRuntimeCredentialCandidate = {
   runtimeOauthAccount: unknown
 }
 
+type ClaudeAuthSurface = {
+  key: string
+  state: ClaudeAuthSurfaceState
+  getPaths: () => ClaudeRuntimePaths
+}
+
+type ClaudeWslMaterialization = {
+  accountId: string
+  configDir: string
+  linuxConfigDir: string | null
+}
+
 const RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR = Symbol('runtime-oauth-account-parse-error')
 
 function shellQuote(value: string): string {
@@ -95,18 +119,16 @@ function shellQuote(value: string): string {
 
 export class ClaudeRuntimeAuthService {
   private readonly pathResolver = new ClaudeRuntimePathResolver()
+  private readonly surfaceStates = new ClaudeAuthSurfaceStates()
+  private readonly wslMaterializations = new Map<string, ClaudeWslMaterialization>()
+  // Why: ownership probes shell out to wsl.exe; one answer per account per mutation keeps a sync from spawning 2N processes.
+  private readonly ownedManagedAuthPaths = new Map<string, string | null>()
   private mutationQueue: Promise<unknown> = Promise.resolve()
-  private lastSyncedAccountId: string | null = null
-  // Why: creds Orca last wrote to the shared file; a mismatch on managed→default transition means an external login overwrote it, so adopt it as the new default.
-  private lastWrittenCredentialsJson: string | null = null
-  private hasMaterializedRuntimeAuth = false
-  private hasLastWrittenOauthAccount = false
-  private lastWrittenOauthAccount: unknown = null
-  private skipNextReadBackForAccountId: string | null = null
+  private surface: ClaudeAuthSurface
   private managedRefreshDeferredByLivePtyAccountId: string | null = null
 
   constructor(private readonly store: Store) {
-    this.initializeLastSyncedState()
+    this.surface = this.getHostSurface()
     void this.safeSyncForCurrentSelection()
   }
 
@@ -132,22 +154,34 @@ export class ClaudeRuntimeAuthService {
     )
   }
 
-  async forceMaterializeCurrentSelectionForRollback(): Promise<void> {
+  async forceMaterializeCurrentSelectionForRollback(
+    target?: ClaudeAccountSelectionTarget
+  ): Promise<void> {
     await this.serializeMutation(async () => {
       const settings = this.store.getSettings()
-      if (!settings.activeClaudeManagedAccountId) {
+      const effectiveTarget = this.resolveWslDefaultTarget(
+        target ?? this.getDefaultAccountSelectionTarget(settings)
+      )
+      const normalizedTarget = normalizeClaudeAccountSelectionTarget(effectiveTarget)
+      if (!getSelectedClaudeAccountIdForTarget(settings, normalizedTarget)) {
+        const surface = this.resolveSurfaceForTarget(normalizedTarget)
+        if (!surface) {
+          return
+        }
+        this.surface = surface
         const previousAccount = this.getActiveAccount(
           settings.claudeManagedAccounts,
-          this.lastSyncedAccountId
+          this.surface.state.lastSyncedAccountId
         )
         await this.restoreSystemDefaultSnapshot(
           previousAccount ? await this.readManagedCredentials(previousAccount) : null,
           previousAccount ? this.readManagedOauthAccount(previousAccount) : undefined
         )
-        this.lastSyncedAccountId = null
+        this.surface.state.lastSyncedAccountId = null
+        this.wslMaterializations.delete(this.surface.key)
         return
       }
-      await this.doSyncForCurrentSelection()
+      await this.doSyncForCurrentSelection(effectiveTarget)
     })
   }
 
@@ -155,9 +189,44 @@ export class ClaudeRuntimeAuthService {
     return this.pathResolver.getRuntimePaths().configDir
   }
 
-  private initializeLastSyncedState(): void {
-    const settings = this.store.getSettings()
-    this.lastSyncedAccountId = getSelectedClaudeAccountIdForTarget(settings, { runtime: 'host' })
+  private getHostSurface(): ClaudeAuthSurface {
+    return {
+      key: HOST_AUTH_SURFACE_KEY,
+      state: this.surfaceStates.stateFor(HOST_AUTH_SURFACE_KEY, () =>
+        getSelectedClaudeAccountIdForTarget(this.store.getSettings(), {
+          runtime: 'host'
+        })
+      ),
+      getPaths: () => this.pathResolver.getRuntimePaths()
+    }
+  }
+
+  private getWslSurface(distro: string | null): ClaudeAuthSurface | null {
+    const trimmedDistro = distro?.trim()
+    if (!trimmedDistro) {
+      return null
+    }
+    const paths = resolveWslProfilePaths(trimmedDistro)
+    if (!paths) {
+      return null
+    }
+    return {
+      key: paths.surfaceKey,
+      state: this.surfaceStates.stateFor(paths.surfaceKey, () =>
+        getSelectedClaudeAccountIdForTarget(this.store.getSettings(), {
+          runtime: 'wsl',
+          wslDistro: trimmedDistro
+        })
+      ),
+      getPaths: () => paths
+    }
+  }
+
+  // Why: null for an unreachable distro — nothing was materialized there, so nothing may be restored on its behalf.
+  private resolveSurfaceForTarget(
+    target: ReturnType<typeof normalizeClaudeAccountSelectionTarget>
+  ): ClaudeAuthSurface | null {
+    return target.runtime === 'wsl' ? this.getWslSurface(target.wslDistro) : this.getHostSurface()
   }
 
   private async safeSyncForCurrentSelection(): Promise<void> {
@@ -169,7 +238,11 @@ export class ClaudeRuntimeAuthService {
   }
 
   private serializeMutation<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.mutationQueue.then(fn, fn)
+    const run = (): Promise<T> => {
+      this.ownedManagedAuthPaths.clear()
+      return fn()
+    }
+    const next = this.mutationQueue.then(run, run)
     this.mutationQueue = next.catch(() => {})
     return next
   }
@@ -180,9 +253,13 @@ export class ClaudeRuntimeAuthService {
     const normalizedTarget = normalizeClaudeAccountSelectionTarget(effectiveTarget)
     const activeAccountId = getSelectedClaudeAccountIdForTarget(settings, normalizedTarget)
     const activeAccount = this.getActiveAccount(settings.claudeManagedAccounts, activeAccountId)
+    const wslSurface =
+      normalizedTarget.runtime === 'wsl' ? this.getWslSurface(normalizedTarget.wslDistro) : null
+    this.surface = wslSurface ?? this.getHostSurface()
+    const state = this.surface.state
     const previousAccount = this.getActiveAccount(
       settings.claudeManagedAccounts,
-      this.lastSyncedAccountId
+      state.lastSyncedAccountId
     )
     this.managedRefreshDeferredByLivePtyAccountId = null
     const previousManagedCredentialsJson = previousAccount
@@ -206,12 +283,12 @@ export class ClaudeRuntimeAuthService {
         ) {
           if (
             outgoingReadBackResult.runtimeCredentialsJson &&
-            this.liveRuntimeCredentialsCanUpdateActiveAccount(
+            (await this.liveRuntimeCredentialsCanUpdateActiveAccount(
               outgoingReadBackResult.runtimeCredentialsJson,
               previousAccount,
               previousManagedCredentialsJson,
               previousManagedOauthAccount
-            )
+            ))
           ) {
             // Why: switching away while Claude is live must preserve verified token refreshes before replacing shared runtime credentials.
             await this.writeManagedCredentials(
@@ -241,56 +318,90 @@ export class ClaudeRuntimeAuthService {
         })
       }
       if (normalizedTarget.runtime === 'wsl') {
+        if (wslSurface && state.lastSyncedAccountId !== null) {
+          // Why: deselecting a WSL account must hand the distro back its own login, not leave Orca's credentials pinned.
+          await (previousAccount
+            ? this.restoreSystemDefaultSnapshot(
+                previousManagedCredentialsJson,
+                previousManagedOauthAccount
+              )
+            : this.restoreSystemDefaultSnapshot(state.lastWrittenCredentialsJson, undefined))
+          state.lastSyncedAccountId = null
+        }
+        this.wslMaterializations.delete(this.surface.key)
         return
       }
-      if (this.lastSyncedAccountId !== null) {
+      if (state.lastSyncedAccountId !== null) {
         await (previousAccount
           ? this.restoreSystemDefaultSnapshot(
               previousManagedCredentialsJson,
               previousManagedOauthAccount
             )
-          : this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined))
-        this.lastSyncedAccountId = null
+          : this.restoreSystemDefaultSnapshot(state.lastWrittenCredentialsJson, undefined))
+        state.lastSyncedAccountId = null
       }
       return
     }
 
-    if (activeAccount.managedAuthRuntime === 'wsl') {
+    const wslManagedSurface = activeAccount.managedAuthRuntime === 'wsl' ? wslSurface : null
+    const clearRuntimeScopedSelection = (): void => {
+      this.store.updateSettings({
+        activeClaudeManagedAccountId:
+          normalizedTarget.runtime === 'host' ? null : settings.activeClaudeManagedAccountId,
+        activeClaudeManagedAccountIdsByRuntime: setSelectedClaudeAccountIdForTarget(
+          normalizeClaudeRuntimeSelection(settings),
+          null,
+          normalizedTarget
+        )
+      })
+    }
+    const clearInvalidManagedSelection = (): void => {
+      if (normalizedTarget.runtime === 'wsl') {
+        clearRuntimeScopedSelection()
+        return
+      }
+      this.store.updateSettings({ activeClaudeManagedAccountId: null })
+    }
+    const restoreForInvalidManagedSelection = async (): Promise<void> => {
+      if (state.lastSyncedAccountId === null) {
+        return
+      }
+      if (
+        previousAccount &&
+        (previousAccount.id !== activeAccount.id ||
+          state.hasMaterializedRuntimeAuth ||
+          (await this.runtimeOauthAccountMatches(previousManagedOauthAccount)))
+      ) {
+        await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
+          previousAccount,
+          previousManagedOauthAccount
+        )
+      } else if (!previousAccount && state.hasMaterializedRuntimeAuth) {
+        await this.restoreSystemDefaultSnapshot(state.lastWrittenCredentialsJson, undefined)
+      }
+    }
+
+    if (activeAccount.managedAuthRuntime === 'wsl' && !wslManagedSurface) {
       if (!this.getOwnedManagedAuthPath(activeAccount)) {
         console.warn(
           '[claude-runtime-auth] Active WSL managed account is not owned by Orca, restoring system default'
         )
-        const nextSelection = setSelectedClaudeAccountIdForTarget(
-          normalizeClaudeRuntimeSelection(settings),
-          null,
-          normalizedTarget
-        )
-        this.store.updateSettings({
-          activeClaudeManagedAccountId:
-            normalizedTarget.runtime === 'host' ? null : settings.activeClaudeManagedAccountId,
-          activeClaudeManagedAccountIdsByRuntime: nextSelection
-        })
+        clearRuntimeScopedSelection()
         return
       }
-      const credentialsJson = await this.readManagedCredentials(activeAccount)
-      if (!credentialsJson || !this.isValidCredentialsJsonObject(credentialsJson)) {
+      const slotCredentialsJson = await this.readManagedCredentials(activeAccount)
+      if (!slotCredentialsJson || !this.isValidCredentialsJsonObject(slotCredentialsJson)) {
         console.warn(
           '[claude-runtime-auth] Active WSL managed account is missing or has invalid credentials, restoring system default'
         )
-        const nextSelection = setSelectedClaudeAccountIdForTarget(
-          normalizeClaudeRuntimeSelection(settings),
-          null,
-          normalizedTarget
-        )
-        this.store.updateSettings({
-          activeClaudeManagedAccountId:
-            normalizedTarget.runtime === 'host' ? null : settings.activeClaudeManagedAccountId,
-          activeClaudeManagedAccountIdsByRuntime: nextSelection
-        })
+        clearRuntimeScopedSelection()
         return
       }
-      // Why: WSL managed accounts are isolated by their Linux CLAUDE_CONFIG_DIR; materializing into Windows ~/.claude would mix two auth stores.
+      // Why: the distro is unreachable, so there is no profile to write into; the launch degrades to the isolated slot.
       this.clearLastWrittenRuntimeState()
+      if (activeAccount.wslDistro) {
+        this.wslMaterializations.delete(wslAuthSurfaceKey(activeAccount.wslDistro))
+      }
       return
     }
 
@@ -298,23 +409,10 @@ export class ClaudeRuntimeAuthService {
       console.warn(
         '[claude-runtime-auth] Active managed account is not owned by Orca, restoring system default'
       )
-      if (this.lastSyncedAccountId !== null) {
-        if (
-          previousAccount &&
-          (previousAccount.id !== activeAccount.id ||
-            this.hasMaterializedRuntimeAuth ||
-            this.runtimeOauthAccountMatches(this.readManagedOauthAccount(previousAccount)))
-        ) {
-          await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
-            previousAccount,
-            previousManagedOauthAccount
-          )
-        } else if (!previousAccount && this.hasMaterializedRuntimeAuth) {
-          await this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined)
-        }
-      }
-      this.store.updateSettings({ activeClaudeManagedAccountId: null })
-      this.lastSyncedAccountId = null
+      await restoreForInvalidManagedSelection()
+      clearInvalidManagedSelection()
+      state.lastSyncedAccountId = null
+      this.wslMaterializations.delete(this.surface.key)
       return
     }
 
@@ -323,28 +421,15 @@ export class ClaudeRuntimeAuthService {
       console.warn(
         '[claude-runtime-auth] Active managed account is missing or has invalid credentials, restoring system default'
       )
-      if (this.lastSyncedAccountId !== null) {
-        if (
-          previousAccount &&
-          (previousAccount.id !== activeAccount.id ||
-            this.hasMaterializedRuntimeAuth ||
-            this.runtimeOauthAccountMatches(previousManagedOauthAccount))
-        ) {
-          await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
-            previousAccount,
-            previousManagedOauthAccount
-          )
-        } else if (!previousAccount && this.hasMaterializedRuntimeAuth) {
-          await this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined)
-        }
-      }
-      this.store.updateSettings({ activeClaudeManagedAccountId: null })
-      this.lastSyncedAccountId = null
+      await restoreForInvalidManagedSelection()
+      clearInvalidManagedSelection()
+      state.lastSyncedAccountId = null
+      this.wslMaterializations.delete(this.surface.key)
       return
     }
 
-    if (this.lastSyncedAccountId === null) {
-      const paths = this.pathResolver.getRuntimePaths()
+    if (state.lastSyncedAccountId === null) {
+      const paths = this.surface.getPaths()
       const runtimeCredentialsJson = existsSync(paths.credentialsPath)
         ? readFileSync(paths.credentialsPath, 'utf-8')
         : null
@@ -355,9 +440,9 @@ export class ClaudeRuntimeAuthService {
     }
 
     // Why: the CLI writes refreshed tokens to .credentials.json; if runtime differs from our last write, preserve them to managed storage before overwriting.
-    if (this.lastSyncedAccountId === activeAccount.id) {
-      if (this.skipNextReadBackForAccountId === activeAccount.id) {
-        this.skipNextReadBackForAccountId = null
+    if (state.lastSyncedAccountId === activeAccount.id) {
+      if (state.skipNextReadBackForAccountId === activeAccount.id) {
+        state.skipNextReadBackForAccountId = null
       } else {
         const readBackResult = await this.readBackRefreshedTokens(credentialsJson, {
           updateLastWrittenCredentialsJson: true
@@ -376,12 +461,12 @@ export class ClaudeRuntimeAuthService {
         ) {
           if (
             readBackResult.runtimeCredentialsJson &&
-            this.liveRuntimeCredentialsCanUpdateActiveAccount(
+            (await this.liveRuntimeCredentialsCanUpdateActiveAccount(
               readBackResult.runtimeCredentialsJson,
               activeAccount,
               credentialsJson,
               this.readManagedOauthAccount(activeAccount)
-            )
+            ))
           ) {
             // Why: this Claude launched under the active managed account, but persistence still needs positive account proof.
             await this.writeManagedCredentials(activeAccount, readBackResult.runtimeCredentialsJson)
@@ -391,16 +476,17 @@ export class ClaudeRuntimeAuthService {
             console.warn(
               '[claude-runtime-auth] Preserving changed Claude runtime credentials while live Claude terminals are running'
             )
-            this.lastSyncedAccountId = activeAccount.id
-            this.hasMaterializedRuntimeAuth = true
+            state.lastSyncedAccountId = activeAccount.id
+            state.hasMaterializedRuntimeAuth = true
+            this.recordWslMaterialization(wslManagedSurface, activeAccount.id)
             return
           }
         }
       }
     }
 
-    if (this.lastSyncedAccountId !== activeAccount.id) {
-      this.skipNextReadBackForAccountId = null
+    if (state.lastSyncedAccountId !== activeAccount.id) {
+      state.skipNextReadBackForAccountId = null
     }
 
     // Why: rotate+persist the single-use token to managed storage before materializing (else runtime gets a stale token that fails invalid_grant); skip while a live PTY owns the creds since refreshing would double-rotate it (invalidating one copy) — read-back preserves its refresh instead.
@@ -418,9 +504,9 @@ export class ClaudeRuntimeAuthService {
       }
     }
 
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     this.writeRuntimeCredentials(credentialsJson)
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       // Why: Claude Code 2.1+ reads the scoped service, older builds the legacy unsuffixed one; runtime switching must satisfy both.
       try {
         await writeActiveClaudeKeychainCredentialsForRuntime(credentialsJson, paths.configDir)
@@ -433,25 +519,67 @@ export class ClaudeRuntimeAuthService {
       }
     }
     const managedOauthAccount = this.readManagedOauthAccount(activeAccount)
-    if (this.writeRuntimeOauthAccount(managedOauthAccount)) {
-      this.lastWrittenOauthAccount = managedOauthAccount
-      this.hasLastWrittenOauthAccount = true
-    } else {
-      this.lastWrittenOauthAccount = null
-      this.hasLastWrittenOauthAccount = false
+    // Why: a distro's ~/.claude.json holds full project/MCP history and can be tens of MB; only pay the read-modify-write when the identity actually moves.
+    const oauthAccountAlreadyWritten =
+      this.surface.key !== HOST_AUTH_SURFACE_KEY &&
+      state.lastSyncedAccountId === activeAccount.id &&
+      state.hasLastWrittenOauthAccount &&
+      this.jsonValuesEqual(state.lastWrittenOauthAccount, managedOauthAccount)
+    if (!oauthAccountAlreadyWritten) {
+      if (await this.writeRuntimeOauthAccount(managedOauthAccount)) {
+        state.lastWrittenOauthAccount = managedOauthAccount
+        state.hasLastWrittenOauthAccount = true
+      } else {
+        state.lastWrittenOauthAccount = null
+        state.hasLastWrittenOauthAccount = false
+      }
     }
-    this.lastSyncedAccountId = activeAccount.id
-    this.hasMaterializedRuntimeAuth = true
+    state.lastSyncedAccountId = activeAccount.id
+    state.hasMaterializedRuntimeAuth = true
+    this.recordWslMaterialization(wslManagedSurface, activeAccount.id)
+  }
+
+  private recordWslMaterialization(surface: ClaudeAuthSurface | null, accountId: string): void {
+    if (!surface) {
+      return
+    }
+    const paths = surface.getPaths()
+    this.wslMaterializations.set(surface.key, {
+      accountId,
+      configDir: paths.configDir,
+      linuxConfigDir: paths.linuxConfigDir
+    })
   }
 
   // Why: re-auth/add-account write fresh managed tokens; skip the next read-back so stale runtime tokens can't overwrite them.
   clearLastWrittenCredentialsJson(
     accountId = this.store.getSettings().activeClaudeManagedAccountId
   ): void {
-    if (accountId === this.store.getSettings().activeClaudeManagedAccountId) {
-      this.lastWrittenCredentialsJson = null
+    const settings = this.store.getSettings()
+    const account = this.getActiveAccount(settings.claudeManagedAccounts, accountId)
+    // Why: WSL selections never touch activeClaudeManagedAccountId, so the surface has to come from the account itself.
+    const target = this.getSelectionTargetForAccount(account)
+    const surface = this.resolveSurfaceForTarget(normalizeClaudeAccountSelectionTarget(target))
+    if (!surface) {
+      return
     }
-    this.skipNextReadBackForAccountId = accountId
+    if (accountId === getSelectedClaudeAccountIdForTarget(settings, target)) {
+      surface.state.lastWrittenCredentialsJson = null
+    }
+    surface.state.skipNextReadBackForAccountId = accountId
+  }
+
+  private getSelectionTargetForAccount(
+    account: ClaudeManagedAccount | null
+  ): ClaudeAccountSelectionTarget {
+    return account?.managedAuthRuntime === 'wsl'
+      ? { runtime: 'wsl', wslDistro: account.wslDistro ?? null }
+      : { runtime: 'host' }
+  }
+
+  // Why: the macOS Keychain only backs the host runtime; a WSL distro's auth is purely file-based.
+  private isKeychainSurface(): boolean {
+    return process.platform === 'darwin' && this.surface.key === HOST_AUTH_SURFACE_KEY
   }
 
   private async readBackRefreshedTokens(
@@ -465,10 +593,11 @@ export class ClaudeRuntimeAuthService {
         return { status: 'unchanged' }
       }
       const changedCandidates =
-        this.lastWrittenCredentialsJson === null
+        this.surface.state.lastWrittenCredentialsJson === null
           ? candidates
           : candidates.filter(
-              (candidate) => candidate.credentialsJson !== this.lastWrittenCredentialsJson
+              (candidate) =>
+                candidate.credentialsJson !== this.surface.state.lastWrittenCredentialsJson
             )
       if (changedCandidates.length === 0) {
         return { status: 'unchanged' }
@@ -499,7 +628,7 @@ export class ClaudeRuntimeAuthService {
           continue
         }
         // Why: on cold start we can't tell a fresh CLI refresh from stale runtime creds; adopt only when expiry or a rotated refresh token proves runtime is newer than managed.
-        if (this.lastWrittenCredentialsJson === null) {
+        if (this.surface.state.lastWrittenCredentialsJson === null) {
           const fresher = this.runtimeCredentialsAreFresher(
             runtimeContents.credentialsJson,
             match.managedCredentialsJson
@@ -524,7 +653,10 @@ export class ClaudeRuntimeAuthService {
         ) {
           continue
         }
-        acceptedCandidates.push({ credentialsJson: runtimeContents.credentialsJson, match })
+        acceptedCandidates.push({
+          credentialsJson: runtimeContents.credentialsJson,
+          match
+        })
       }
       if (acceptedCandidates.length === 0) {
         if (sawAmbiguousCandidate) {
@@ -544,9 +676,9 @@ export class ClaudeRuntimeAuthService {
       await this.writeManagedCredentials(match.account, runtimeContents)
       if (options.updateLastWrittenCredentialsJson) {
         this.writeRuntimeCredentials(runtimeContents)
-        this.lastWrittenCredentialsJson = runtimeContents
-        if (process.platform === 'darwin') {
-          const paths = this.pathResolver.getRuntimePaths()
+        this.surface.state.lastWrittenCredentialsJson = runtimeContents
+        if (this.isKeychainSurface()) {
+          const paths = this.surface.getPaths()
           await writeActiveClaudeKeychainCredentialsForRuntime(runtimeContents, paths.configDir)
         }
       }
@@ -567,11 +699,11 @@ export class ClaudeRuntimeAuthService {
   private async readRuntimeCredentialCandidatesForReadBack(
     baselineCredentialsJson: string
   ): Promise<ClaudeRuntimeCredentialCandidate[]> {
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const fileCredentials = existsSync(paths.credentialsPath)
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
-    const runtimeOauthAccount = this.readRuntimeOauthAccount()
+    const runtimeOauthAccount = await this.readRuntimeOauthAccount()
     const candidates: ClaudeRuntimeCredentialCandidate[] = []
     const pushCandidate = (credentialsJson: string | null): void => {
       if (
@@ -581,12 +713,12 @@ export class ClaudeRuntimeAuthService {
         candidates.push({ credentialsJson, runtimeOauthAccount })
       }
     }
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       const scopedKeychainCredentials = await this.readActiveClaudeKeychainCredentialsBestEffort(
         paths.configDir
       )
       const legacyKeychainCredentials = await this.readActiveClaudeKeychainCredentialsBestEffort()
-      if (this.lastWrittenCredentialsJson === null) {
+      if (this.surface.state.lastWrittenCredentialsJson === null) {
         pushCandidate(scopedKeychainCredentials)
         pushCandidate(legacyKeychainCredentials)
         pushCandidate(fileCredentials)
@@ -604,39 +736,43 @@ export class ClaudeRuntimeAuthService {
   private getPreparation(target?: ClaudeAccountSelectionTarget): ClaudeRuntimeAuthPreparation {
     const settings = this.store.getSettings()
     const paths = this.pathResolver.getRuntimePaths()
-    const normalizedTarget = this.resolveWslDefaultTarget(
-      target ?? this.getDefaultAccountSelectionTarget(settings)
+    const normalizedTarget = normalizeClaudeAccountSelectionTarget(
+      this.resolveWslDefaultTarget(target ?? this.getDefaultAccountSelectionTarget(settings))
     )
     const activeAccountId = getSelectedClaudeAccountIdForTarget(settings, normalizedTarget)
     const activeAccount = this.getActiveAccount(settings.claudeManagedAccounts, activeAccountId)
     if (
-      normalizeClaudeAccountSelectionTarget(normalizedTarget).runtime === 'wsl' &&
+      normalizedTarget.runtime === 'wsl' &&
       activeAccount?.managedAuthRuntime === 'wsl' &&
       activeAccount.wslLinuxAuthPath
     ) {
+      const materialized = activeAccount.wslDistro
+        ? this.wslMaterializations.get(wslAuthSurfaceKey(activeAccount.wslDistro))
+        : undefined
+      // Why: the account's auth slot holds credentials only, so it may only stand in for the whole
+      // config dir when the distro's own profile could not be written to.
+      const distroProfile = materialized?.accountId === activeAccount.id ? materialized : null
       return {
-        configDir: activeAccount.managedAuthPath,
+        configDir: distroProfile ? distroProfile.configDir : activeAccount.managedAuthPath,
         runtime: 'wsl',
         wslDistro: activeAccount.wslDistro ?? null,
-        wslLinuxConfigDir: activeAccount.wslLinuxAuthPath,
-        envPatch: { CLAUDE_CONFIG_DIR: activeAccount.wslLinuxAuthPath },
+        wslLinuxConfigDir: distroProfile
+          ? distroProfile.linuxConfigDir
+          : activeAccount.wslLinuxAuthPath,
+        envPatch: distroProfile ? {} : { CLAUDE_CONFIG_DIR: activeAccount.wslLinuxAuthPath },
         stripAuthEnv: true,
         provenance: `managed:${activeAccount.id}:wsl:${activeAccount.wslDistro ?? ''}`
       }
     }
-    if (normalizeClaudeAccountSelectionTarget(normalizedTarget).runtime === 'wsl') {
-      const distro =
-        normalizeClaudeAccountSelectionTarget(normalizedTarget).wslDistro ?? getDefaultWslDistro()
-      const wslHome = distro ? getWslHome(distro) : null
-      const wslHomeInfo = wslHome ? parseWslUncPath(wslHome) : null
-      if (distro && wslHome && wslHomeInfo) {
-        const windowsConfigDir = join(wslHome, '.claude')
-        const linuxConfigDir = `${wslHomeInfo.linuxPath.replace(/\/$/, '')}/.claude`
+    if (normalizedTarget.runtime === 'wsl') {
+      const distro = normalizedTarget.wslDistro ?? getDefaultWslDistro()
+      const wslPaths = distro ? resolveWslProfilePaths(distro) : null
+      if (distro && wslPaths) {
         return {
-          configDir: windowsConfigDir,
+          configDir: wslPaths.configDir,
           runtime: 'wsl',
           wslDistro: distro,
-          wslLinuxConfigDir: linuxConfigDir,
+          wslLinuxConfigDir: wslPaths.linuxConfigDir,
           envPatch: {},
           stripAuthEnv: true,
           provenance: `wsl:${distro}:system`
@@ -645,11 +781,11 @@ export class ClaudeRuntimeAuthService {
       return {
         configDir: paths.configDir,
         runtime: 'wsl',
-        wslDistro: normalizeClaudeAccountSelectionTarget(normalizedTarget).wslDistro,
+        wslDistro: normalizedTarget.wslDistro,
         wslLinuxConfigDir: null,
         envPatch: {},
         stripAuthEnv: true,
-        provenance: `wsl:${normalizeClaudeAccountSelectionTarget(normalizedTarget).wslDistro ?? '__default__'}:system`
+        provenance: `wsl:${normalizedTarget.wslDistro ?? '__default__'}:system`
       }
     }
     return {
@@ -730,7 +866,9 @@ export class ClaudeRuntimeAuthService {
     if (matches.length === 1 && unverifiableCount === 0) {
       return { kind: 'matched', ...matches[0] }
     }
-    return { kind: matches.length === 0 && unverifiableCount === 0 ? 'none' : 'ambiguous' }
+    return {
+      kind: matches.length === 0 && unverifiableCount === 0 ? 'none' : 'ambiguous'
+    }
   }
 
   private runtimeCredentialsMatchAccount(
@@ -816,15 +954,16 @@ export class ClaudeRuntimeAuthService {
     return 'match'
   }
 
-  private liveRuntimeCredentialsCanUpdateActiveAccount(
+  private async liveRuntimeCredentialsCanUpdateActiveAccount(
     runtimeCredentialsJson: string,
     account: ClaudeManagedAccount,
     managedCredentialsJson: string,
     managedOauthAccount: unknown
-  ): boolean {
+  ): Promise<boolean> {
+    const runtimeOauthAccount = await this.readRuntimeOauthAccount()
     const match = this.runtimeCredentialsMatchAccount(
       runtimeCredentialsJson,
-      this.readRuntimeOauthAccount(),
+      runtimeOauthAccount,
       account,
       managedCredentialsJson,
       managedOauthAccount
@@ -835,7 +974,7 @@ export class ClaudeRuntimeAuthService {
     const identity = this.readIdentityFromCredentials(runtimeCredentialsJson)
     const managedIdentity = this.readIdentityFromCredentials(managedCredentialsJson)
     const managedOauthIdentity = this.readIdentityFromOauthAccount(managedOauthAccount)
-    const runtimeOauthIdentity = this.readIdentityFromOauthAccount(this.readRuntimeOauthAccount())
+    const runtimeOauthIdentity = this.readIdentityFromOauthAccount(runtimeOauthAccount)
     const selectedOrganizationUuid = this.normalizeField(
       account.organizationUuid ??
         managedIdentity?.organizationUuid ??
@@ -1075,6 +1214,16 @@ export class ClaudeRuntimeAuthService {
   }
 
   private getOwnedManagedAuthPath(account: ClaudeManagedAccount): string | null {
+    const cached = this.ownedManagedAuthPaths.get(account.id)
+    if (cached !== undefined) {
+      return cached
+    }
+    const resolved = this.resolveOwnedManagedAuthPath(account)
+    this.ownedManagedAuthPaths.set(account.id, resolved)
+    return resolved
+  }
+
+  private resolveOwnedManagedAuthPath(account: ClaudeManagedAccount): string | null {
     const wslInfo = parseWslUncPath(account.managedAuthPath)
     if (wslInfo) {
       if (
@@ -1157,7 +1306,7 @@ export class ClaudeRuntimeAuthService {
       return
     }
 
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const credentialsJson =
       options.credentialsJsonOverride !== undefined
         ? options.credentialsJsonOverride
@@ -1167,14 +1316,12 @@ export class ClaudeRuntimeAuthService {
     const keychainCredentialsJson = await this.readAggregateClaudeKeychainCredentialsBestEffort(
       paths.configDir
     )
-    const scopedKeychainCredentials =
-      process.platform === 'darwin'
-        ? await this.readActiveClaudeKeychainCredentialsForSnapshot(paths.configDir)
-        : ({ status: 'captured', credentialsJson: null } as const)
-    const legacyKeychainCredentialsJson =
-      process.platform === 'darwin'
-        ? await this.readActiveClaudeKeychainCredentialsForSnapshot()
-        : ({ status: 'captured', credentialsJson: null } as const)
+    const scopedKeychainCredentials = this.isKeychainSurface()
+      ? await this.readActiveClaudeKeychainCredentialsForSnapshot(paths.configDir)
+      : ({ status: 'captured', credentialsJson: null } as const)
+    const legacyKeychainCredentialsJson = this.isKeychainSurface()
+      ? await this.readActiveClaudeKeychainCredentialsForSnapshot()
+      : ({ status: 'captured', credentialsJson: null } as const)
     if (
       scopedKeychainCredentials.status === 'failed' ||
       legacyKeychainCredentialsJson.status === 'failed'
@@ -1199,7 +1346,7 @@ export class ClaudeRuntimeAuthService {
             options.managedCredentialsJson
           )
         : undefined
-    const configOauthAccount = this.readRuntimeOauthAccount()
+    const configOauthAccount = await this.readRuntimeOauthAccount()
     const snapshot: ClaudeSystemDefaultSnapshot = {
       credentialsJson,
       configOauthAccount:
@@ -1219,9 +1366,9 @@ export class ClaudeRuntimeAuthService {
     ownedOauthAccount?: unknown
   ): Promise<void> {
     const snapshotPath = this.getSystemDefaultSnapshotPath()
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const previouslyWrittenCredentialsJson =
-      this.lastWrittenCredentialsJson ?? ownedCredentialsJson ?? null
+      this.surface.state.lastWrittenCredentialsJson ?? ownedCredentialsJson ?? null
     const snapshot = this.readSystemDefaultSnapshot(snapshotPath)
 
     const fileCredentialsOwned = this.hasUnchangedRuntimeCredentials(
@@ -1229,12 +1376,12 @@ export class ClaudeRuntimeAuthService {
     )
     let hasCredentialSurfaceOwnership = fileCredentialsOwned
     // Why: prove ownership before mutating anything, and restore OAuth first so a failure leaves the credential proof intact for retry.
-    this.lastWrittenCredentialsJson = previouslyWrittenCredentialsJson
+    this.surface.state.lastWrittenCredentialsJson = previouslyWrittenCredentialsJson
     let scopedSnapshot: ClaudeKeychainSnapshotValue | null = null
     let legacySnapshot: ClaudeKeychainSnapshotValue | null = null
     let scopedKeychainOwned = false
     let legacyKeychainOwned = false
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       scopedSnapshot = this.readKeychainSnapshotValue(snapshot, 'scoped')
       legacySnapshot = this.readKeychainSnapshotValue(snapshot, 'legacy')
       scopedKeychainOwned = await this.hasUnchangedActiveClaudeKeychainCredentials(
@@ -1249,7 +1396,7 @@ export class ClaudeRuntimeAuthService {
       hasCredentialSurfaceOwnership =
         fileCredentialsOwned || scopedKeychainOwned || legacyKeychainOwned
     }
-    this.restoreRuntimeOauthAccountIfOwned(
+    await this.restoreRuntimeOauthAccountIfOwned(
       snapshot?.configOauthAccount ?? null,
       this.getOwnedRuntimeOauthBaseline(ownedOauthAccount, hasCredentialSurfaceOwnership),
       { allowCredentialSurfaceOwnership: hasCredentialSurfaceOwnership }
@@ -1257,7 +1404,7 @@ export class ClaudeRuntimeAuthService {
     if (fileCredentialsOwned) {
       this.restoreRuntimeCredentials(snapshot?.credentialsJson ?? null)
     }
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       if (scopedSnapshot?.status === 'captured' && scopedKeychainOwned) {
         await this.restoreActiveClaudeKeychainCredentials(
           scopedSnapshot.credentialsJson,
@@ -1268,18 +1415,18 @@ export class ClaudeRuntimeAuthService {
         await this.restoreActiveClaudeKeychainCredentials(legacySnapshot.credentialsJson)
       }
     }
-    this.lastWrittenCredentialsJson = null
-    this.lastWrittenOauthAccount = null
-    this.hasLastWrittenOauthAccount = false
-    this.hasMaterializedRuntimeAuth = false
+    this.surface.state.lastWrittenCredentialsJson = null
+    this.surface.state.lastWrittenOauthAccount = null
+    this.surface.state.hasLastWrittenOauthAccount = false
+    this.surface.state.hasMaterializedRuntimeAuth = false
   }
 
   private getOwnedRuntimeOauthBaseline(
     ownedOauthAccount: unknown,
     hasCredentialSurfaceOwnership: boolean
   ): unknown {
-    if (this.hasLastWrittenOauthAccount) {
-      return this.lastWrittenOauthAccount
+    if (this.surface.state.hasLastWrittenOauthAccount) {
+      return this.surface.state.lastWrittenOauthAccount
     }
     // Why: managed metadata hints identity but isn't proof Orca wrote .claude.json; use only after a credential surface proves ownership.
     if (hasCredentialSurfaceOwnership && ownedOauthAccount !== undefined) {
@@ -1309,7 +1456,7 @@ export class ClaudeRuntimeAuthService {
     account: ClaudeManagedAccount,
     managedOauthAccount: unknown
   ): Promise<void> {
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const fileCredentialsOwned = this.runtimeCredentialsBelongToAccount(
       this.readRuntimeCredentialsFile(),
       account,
@@ -1317,7 +1464,7 @@ export class ClaudeRuntimeAuthService {
     )
     let scopedKeychainOwned = false
     let legacyKeychainOwned = false
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       scopedKeychainOwned = await this.hasActiveKeychainCredentialsForAccount(
         account,
         managedOauthAccount,
@@ -1330,7 +1477,7 @@ export class ClaudeRuntimeAuthService {
     }
     const hasCredentialSurfaceOwnership =
       fileCredentialsOwned || scopedKeychainOwned || legacyKeychainOwned
-    this.restoreRuntimeOauthAccountIfOwned(
+    await this.restoreRuntimeOauthAccountIfOwned(
       null,
       this.getOwnedRuntimeOauthBaseline(managedOauthAccount, hasCredentialSurfaceOwnership),
       {
@@ -1340,7 +1487,7 @@ export class ClaudeRuntimeAuthService {
     if (fileCredentialsOwned) {
       rmSync(paths.credentialsPath, { force: true })
     }
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       if (scopedKeychainOwned) {
         await deleteActiveClaudeKeychainCredentialsStrict(paths.configDir)
       }
@@ -1360,7 +1507,7 @@ export class ClaudeRuntimeAuthService {
       this.clearLastWrittenRuntimeState()
       return
     }
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const fileCredentialsOwned = this.runtimeCredentialsBelongToAccount(
       this.readRuntimeCredentialsFile(),
       account,
@@ -1370,7 +1517,7 @@ export class ClaudeRuntimeAuthService {
     let legacySnapshot: ClaudeKeychainSnapshotValue | null = null
     let scopedKeychainOwned = false
     let legacyKeychainOwned = false
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       scopedSnapshot = this.readKeychainSnapshotValue(snapshot, 'scoped')
       legacySnapshot = this.readKeychainSnapshotValue(snapshot, 'legacy')
       scopedKeychainOwned = await this.hasActiveKeychainCredentialsForAccount(
@@ -1385,7 +1532,7 @@ export class ClaudeRuntimeAuthService {
     }
     const hasCredentialSurfaceOwnership =
       fileCredentialsOwned || scopedKeychainOwned || legacyKeychainOwned
-    this.restoreRuntimeOauthAccountIfOwned(
+    await this.restoreRuntimeOauthAccountIfOwned(
       snapshot.configOauthAccount,
       this.getOwnedRuntimeOauthBaseline(managedOauthAccount, hasCredentialSurfaceOwnership),
       {
@@ -1395,7 +1542,7 @@ export class ClaudeRuntimeAuthService {
     if (fileCredentialsOwned) {
       this.restoreRuntimeCredentials(snapshot.credentialsJson)
     }
-    if (process.platform === 'darwin') {
+    if (this.isKeychainSurface()) {
       if (scopedSnapshot?.status === 'captured' && scopedKeychainOwned) {
         await this.restoreActiveClaudeKeychainCredentials(
           scopedSnapshot.credentialsJson,
@@ -1410,7 +1557,7 @@ export class ClaudeRuntimeAuthService {
   }
 
   private readRuntimeCredentialsFile(): string | null {
-    const credentialsPath = this.pathResolver.getRuntimePaths().credentialsPath
+    const credentialsPath = this.surface.getPaths().credentialsPath
     return existsSync(credentialsPath) ? readFileSync(credentialsPath, 'utf-8') : null
   }
 
@@ -1440,17 +1587,17 @@ export class ClaudeRuntimeAuthService {
   }
 
   private clearLastWrittenRuntimeState(): void {
-    this.lastWrittenCredentialsJson = null
-    this.lastWrittenOauthAccount = null
-    this.hasLastWrittenOauthAccount = false
-    this.hasMaterializedRuntimeAuth = false
+    this.surface.state.lastWrittenCredentialsJson = null
+    this.surface.state.lastWrittenOauthAccount = null
+    this.surface.state.hasLastWrittenOauthAccount = false
+    this.surface.state.hasMaterializedRuntimeAuth = false
   }
 
   private hasUnchangedRuntimeCredentials(previouslyWrittenCredentialsJson: string | null): boolean {
     if (previouslyWrittenCredentialsJson === null) {
       return false
     }
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     const currentCredentialsJson = existsSync(paths.credentialsPath)
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
@@ -1458,14 +1605,15 @@ export class ClaudeRuntimeAuthService {
   }
 
   private runtimeCredentialsChangedSinceLastWrite(baselineCredentialsJson: string): boolean {
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     try {
       const currentCredentialsJson = existsSync(paths.credentialsPath)
         ? readFileSync(paths.credentialsPath, 'utf-8')
         : null
       return (
         currentCredentialsJson !== null &&
-        currentCredentialsJson !== (this.lastWrittenCredentialsJson ?? baselineCredentialsJson)
+        currentCredentialsJson !==
+          (this.surface.state.lastWrittenCredentialsJson ?? baselineCredentialsJson)
       )
     } catch {
       return false
@@ -1473,7 +1621,7 @@ export class ClaudeRuntimeAuthService {
   }
 
   private restoreRuntimeCredentials(credentialsJson: string | null): void {
-    const paths = this.pathResolver.getRuntimePaths()
+    const paths = this.surface.getPaths()
     if (credentialsJson !== null) {
       this.writeRuntimeCredentials(credentialsJson)
     } else {
@@ -1481,17 +1629,17 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private restoreRuntimeOauthAccountIfOwned(
+  private async restoreRuntimeOauthAccountIfOwned(
     oauthAccount: unknown,
     ownedOauthAccount: unknown,
     options: { allowCredentialSurfaceOwnership: boolean }
-  ): void {
-    const currentOauthAccount = this.readRuntimeOauthAccount()
+  ): Promise<void> {
+    const currentOauthAccount = await this.readRuntimeOauthAccount()
     if (currentOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR) {
       return
     }
     if (options.allowCredentialSurfaceOwnership) {
-      this.writeRuntimeOauthAccount(oauthAccount)
+      await this.writeRuntimeOauthAccount(oauthAccount)
       return
     }
     if (
@@ -1503,7 +1651,7 @@ export class ClaudeRuntimeAuthService {
     if (!this.jsonValuesEqual(currentOauthAccount, ownedOauthAccount)) {
       return
     }
-    this.writeRuntimeOauthAccount(oauthAccount)
+    await this.writeRuntimeOauthAccount(oauthAccount)
   }
 
   private async hasUnchangedActiveClaudeKeychainCredentials(
@@ -1545,13 +1693,14 @@ export class ClaudeRuntimeAuthService {
     )
   }
 
-  private readRuntimeOauthAccount(): unknown {
-    const configPath = this.pathResolver.getRuntimePaths().configPath
+  // Why: `.claude.json` carries the full project/MCP history and lives over 9P for WSL surfaces, so it is never read on the main thread synchronously.
+  private async readRuntimeOauthAccount(): Promise<unknown> {
+    const configPath = this.surface.getPaths().configPath
     if (!existsSync(configPath)) {
       return null
     }
     try {
-      const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as unknown
+      const parsed = JSON.parse(await readFile(configPath, 'utf-8')) as unknown
       const record = this.asRecord(parsed)
       if (!record) {
         return RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR
@@ -1562,20 +1711,20 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private runtimeOauthAccountMatches(managedOauthAccount: unknown): boolean {
+  private async runtimeOauthAccountMatches(managedOauthAccount: unknown): Promise<boolean> {
     if (managedOauthAccount === null || managedOauthAccount === undefined) {
       return false
     }
-    const currentOauthAccount = this.readRuntimeOauthAccount()
+    const currentOauthAccount = await this.readRuntimeOauthAccount()
     if (currentOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR) {
       return false
     }
     return this.jsonValuesEqual(currentOauthAccount, managedOauthAccount)
   }
 
-  private writeRuntimeOauthAccount(oauthAccount: unknown): boolean {
-    const configPath = this.pathResolver.getRuntimePaths().configPath
-    const existing = this.readJsonObject(configPath)
+  private async writeRuntimeOauthAccount(oauthAccount: unknown): Promise<boolean> {
+    const configPath = this.surface.getPaths().configPath
+    const existing = await this.readJsonObject(configPath)
     if (existing === null) {
       return false
     }
@@ -1690,7 +1839,10 @@ export class ClaudeRuntimeAuthService {
         credentialsJson: snapshot[credentialsKey] ?? null
       }
     }
-    return { status: 'captured', credentialsJson: snapshot.keychainCredentialsJson }
+    return {
+      status: 'captured',
+      credentialsJson: snapshot.keychainCredentialsJson
+    }
   }
 
   private async readAggregateClaudeKeychainCredentialsBestEffort(
@@ -1730,11 +1882,11 @@ export class ClaudeRuntimeAuthService {
   }
 
   private writeRuntimeCredentials(contents: string): void {
-    const credentialsPath = this.pathResolver.getRuntimePaths().credentialsPath
+    const credentialsPath = this.surface.getPaths().credentialsPath
     mkdirSync(dirname(credentialsPath), { recursive: true })
     // Why: skip unchanged rewrites to dodge Windows EPERM contention (#1507); re-verify the file since another Claude may have rewritten it.
     if (
-      this.lastWrittenCredentialsJson === contents &&
+      this.surface.state.lastWrittenCredentialsJson === contents &&
       this.fileContentsEqual(credentialsPath, contents)
     ) {
       this.ensureOwnerOnlyMode(credentialsPath)
@@ -1742,11 +1894,11 @@ export class ClaudeRuntimeAuthService {
     }
     if (this.fileContentsEqual(credentialsPath, contents)) {
       this.ensureOwnerOnlyMode(credentialsPath)
-      this.lastWrittenCredentialsJson = contents
+      this.surface.state.lastWrittenCredentialsJson = contents
       return
     }
     writeFileAtomically(credentialsPath, contents, { mode: 0o600 })
-    this.lastWrittenCredentialsJson = contents
+    this.surface.state.lastWrittenCredentialsJson = contents
   }
 
   private writeJson(targetPath: string, value: unknown): void {
@@ -1778,12 +1930,12 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private readJsonObject(targetPath: string): Record<string, unknown> | null {
+  private async readJsonObject(targetPath: string): Promise<Record<string, unknown> | null> {
     if (!existsSync(targetPath)) {
       return {}
     }
     try {
-      const parsed = JSON.parse(readFileSync(targetPath, 'utf-8')) as unknown
+      const parsed = JSON.parse(await readFile(targetPath, 'utf-8')) as unknown
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>
       }
@@ -1801,6 +1953,6 @@ export class ClaudeRuntimeAuthService {
   }
 
   private getSystemDefaultSnapshotPath(): string {
-    return join(this.getRuntimeMetadataDir(), 'system-default-auth.json')
+    return join(this.getRuntimeMetadataDir(), authSurfaceSnapshotFileName(this.surface.key))
   }
 }

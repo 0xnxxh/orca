@@ -39,6 +39,7 @@ import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
 import { stripInheritedBuildModeEnv } from '../pty/build-mode-env'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
+import { applyWslClaudeConfigDirEnv } from '../pty/claude-config-dir-wsl-env'
 import { addWslEnvKeys } from '../wsl-env'
 import {
   POWERLEVEL10K_WIZARD_DISABLE_ENV,
@@ -728,10 +729,7 @@ export class LocalPtyProvider implements IPtyProvider {
         } else if (finalEnv.CODEX_HOME) {
           addWslEnvKeys(finalEnv, ['CODEX_HOME', 'ORCA_CODEX_HOME'])
         }
-        if (finalEnv.CLAUDE_CONFIG_DIR) {
-          // Why: managed WSL Claude passes a Linux CLAUDE_CONFIG_DIR through wsl.exe; non-default vars need WSLENV import.
-          addWslEnvKeys(finalEnv, ['CLAUDE_CONFIG_DIR'])
-        }
+        applyWslClaudeConfigDirEnv(finalEnv, launchWslDistro)
         if (finalEnv[ORCA_HERMES_STARTUP_QUERY_ENV] !== undefined) {
           // Why: wsl.exe drops custom Windows env vars; the startup wrapper needs this imported inside WSL.
           addWslEnvKeys(finalEnv, [ORCA_HERMES_STARTUP_QUERY_ENV])
