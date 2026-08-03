@@ -432,6 +432,9 @@ describe('mobile relay RPC session', () => {
 
       session.notifyForeground()
       fakes.linkOptions!.onText(response)
+      // Why: the repeated frame buys bounded congestion grace, never satisfaction.
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('connected')
       await vi.advanceTimersByTimeAsync(8_000)
 
       expect(session.getState()).toBe('disconnected')
@@ -460,18 +463,72 @@ describe('mobile relay RPC session', () => {
       )
 
       session.notifyForeground()
+      // Why: continuous terminal traffic in every probe window is the exact
+      // #10385 shape — it may only defer failure through the bounded grace.
+      for (let seq = 1; seq <= 3; seq += 1) {
+        fakes.linkOptions!.onBinary(
+          encodeTerminalStreamFrame({
+            opcode: TerminalStreamOpcode.Output,
+            streamId: 42,
+            seq,
+            payload: new TextEncoder().encode('still alive')
+          })
+        )
+        if (seq < 3) {
+          await vi.advanceTimersByTimeAsync(8_000)
+          expect(session.getState()).toBe('connected')
+        }
+      }
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a congested Relay session when a late control reply lands during the grace window', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.subscribe('terminal.subscribe', { terminal: 'term-1' }, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'terminal.subscribe')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({
+          id: subscribe.id,
+          ok: true,
+          result: { type: 'subscribed', streamId: 42 },
+          _meta: {}
+        })
+      )
+
+      session.notifyForeground()
+      await vi.advanceTimersByTimeAsync(0)
+      const probe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .findLast(({ method }) => method === 'status.get')!
       fakes.linkOptions!.onBinary(
         encodeTerminalStreamFrame({
           opcode: TerminalStreamOpcode.Output,
           streamId: 42,
           seq: 1,
-          payload: new TextEncoder().encode('still alive')
+          payload: new TextEncoder().encode('backlog')
         })
       )
       await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('connected')
 
-      expect(session.getState()).toBe('disconnected')
-      expect(fakes.close).toHaveBeenCalledOnce()
+      // Why: the parked probe reply finally drains behind the terminal backlog —
+      // a real control response ends the grace chain instead of a session failure.
+      fakes.linkOptions!.onText(JSON.stringify({ id: probe.id, ok: true, result: {}, _meta: {} }))
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -607,6 +664,10 @@ describe('mobile relay RPC session', () => {
       fakes.linkOptions!.onText(
         JSON.stringify({ id: probeRequest.id, ok: true, result: {}, _meta: {} })
       )
+      // Why: run out the probe deadline — without the reply above, the probe
+      // would demote the session inside this window, so the advance is what
+      // makes the "proves it live" claim falsifiable.
+      await vi.advanceTimersByTimeAsync(8_000)
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {

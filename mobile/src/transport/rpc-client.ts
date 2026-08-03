@@ -33,7 +33,7 @@ import {
   RpcSynthesizedCloseIndex
 } from './rpc-socket-close-evidence'
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
-import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
+import { createRpcClientActivityProbe } from './rpc-client-activity-probe'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import {
@@ -76,9 +76,6 @@ const HANDSHAKE_TIMEOUT_MS = 5_000
 // Why: RN may not expose WebSocket.readyState constants, but the CONNECTING protocol value (0) is stable across runtimes.
 const WEBSOCKET_CONNECTING_STATE = 0
 
-// Why: RN auto-pongs pings natively, so JS needs an app-level probe to detect half-open sockets.
-const ACTIVITY_PROBE_INTERVAL_MS = 20_000
-
 export function connect(
   endpoint: string,
   deviceToken: string,
@@ -109,11 +106,17 @@ export function connect(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let connectTimer: ReturnType<typeof setTimeout> | null = null
   let handshakeTimer: ReturnType<typeof setTimeout> | null = null
-  let activityProbeTimer: ReturnType<typeof setInterval> | null = null
-  const activityProbeFollowUp = new RpcControlProbeFollowUp<WebSocket>(
-    () => (state === 'connected' ? ws : null),
-    runActivityProbe
-  )
+  const activityProbe = createRpcClientActivityProbe<WebSocket>({
+    getConnectedSocket: () => (state === 'connected' ? ws : null),
+    nextId: () => nextId(),
+    getControlResponseSequence: () => controlResponseSequence,
+    getInboundActivitySequence: () => inboundActivitySequence,
+    rememberTimedOutControlId: (id) => timedOutControlRequestIds.remember(id),
+    registerPendingProbe: (id, entry) => pending.set(id, entry),
+    removePendingProbe: (id) => pending.delete(id),
+    sendProbe: (id) => sendEncrypted({ id, deviceToken, method: 'status.get' }),
+    demote: (socket) => forceSocketReconnect(socket)
+  })
   let intentionallyClosed = false
   // Consecutive auth rejections; tolerate up to AUTH_RETRY_BUDGET (issue #5200) before latching to avoid a needless re-pair.
   let authRejectionCount = 0
@@ -122,6 +125,9 @@ export function connect(
   // Why: cheap diagnostics for RN/OkHttp process-state poisoning (retry cadence, inbound traffic, close timing).
   let lastInboundAt: number | null = null
   let controlResponseSequence = 0
+  // Why: decoded inbound frames prove the link still drains without proving
+  // control health — they may only extend the probe deadline, never satisfy it.
+  let inboundActivitySequence = 0
   let lastWsClosedAt: number | null = null
   let wsConstructionCounter = 0
 
@@ -382,7 +388,7 @@ export function connect(
             openingWsAuthenticated = true
             setState('connected')
             emitLog('success', 'Authenticated', 'Channel ready for RPC')
-            startActivityProbe()
+            activityProbe.start()
             for (const [id, stream] of streamListeners) {
               if (stream.cancelled) {
                 removeStreamListener(id)
@@ -445,12 +451,15 @@ export function connect(
         if (!plaintextBytes) {
           return
         }
-        routeRpcClientStreamFrame(plaintextBytes, {
+        const decoded = routeRpcClientStreamFrame(plaintextBytes, {
           activeBrowserRequestId: activeBrowserScreencastRequestId,
           streams: streamListeners,
           terminalSnapshots,
           terminalListeners: terminalStreamListeners
         })
+        if (decoded) {
+          inboundActivitySequence++
+        }
         return
       }
 
@@ -468,6 +477,9 @@ export function connect(
       if (!isRpcResponse(response)) {
         return
       }
+      // Why: only well-formed frames prove the host pipeline drains — malformed
+      // payloads must neither satisfy nor extend the probe.
+      inboundActivitySequence++
       const request = pending.get(response.id)
       const lateApplicationResponse = applicationResponseTracker.consumeLateResponse(response.id)
       const responseStream = streamListeners.get(response.id)
@@ -633,8 +645,8 @@ export function connect(
       clearTimeout(handshakeTimer)
       handshakeTimer = null
     }
-    stopActivityProbe()
-    activityProbeFollowUp.finish()
+    activityProbe.stop()
+    activityProbe.finishFollowUp()
     if (intentionallyClosed) {
       console.log('[net] handleSocketClosed — intentional close')
       setState('disconnected')
@@ -705,6 +717,10 @@ export function connect(
     intentionallyClosed = true
     ws?.close()
     ws = null
+    // Why: auth-failed never reconnects on its own, so the probe interval would
+    // otherwise tick for the life of the closure.
+    activityProbe.stop()
+    activityProbe.finishFollowUp()
     setState('auth-failed')
     rejectAllPending(reason)
   }
@@ -744,55 +760,6 @@ export function connect(
     }
   }
 
-  // Why: stream frames can flow while control RPC is wedged; only a control response satisfies this probe.
-  function runActivityProbe(expectedWs: WebSocket | null = ws, queueAfterCurrent = false): void {
-    if (state !== 'connected' || !ws || ws !== expectedWs) {
-      return
-    }
-    if (!activityProbeFollowUp.begin(expectedWs, queueAfterCurrent)) {
-      return
-    }
-    const probeWs = ws
-    const id = nextId()
-    const probeControlResponseSequence = controlResponseSequence
-    let timedOut = false
-    const timeout = setTimeout(() => {
-      timedOut = true
-      pending.delete(id)
-      timedOutControlRequestIds.remember(id)
-      const controlResponded = controlResponseSequence > probeControlResponseSequence
-      activityProbeFollowUp.finish(probeWs)
-      if (controlResponded) {
-        return
-      }
-      console.log('[net] activity-probe TIMEOUT — forcing reconnect', {
-        state
-      })
-      forceSocketReconnect(probeWs)
-    }, 8_000)
-    pending.set(id, {
-      resolve: () => {
-        if (timedOut) {
-          return
-        }
-        clearTimeout(timeout)
-        activityProbeFollowUp.finish(probeWs)
-      },
-      reject: () => {
-        if (timedOut) {
-          return
-        }
-        clearTimeout(timeout)
-        activityProbeFollowUp.finish(probeWs)
-      }
-    })
-    if (!sendEncrypted({ id, deviceToken, method: 'status.get' })) {
-      clearTimeout(timeout)
-      pending.delete(id)
-      activityProbeFollowUp.finish(probeWs)
-    }
-  }
-
   function forceSocketReconnect(socket: WebSocket | null): void {
     if (!socket || socket !== ws) {
       return
@@ -804,18 +771,6 @@ export function connect(
     if (socket === ws) {
       synthesizedCloses.remember(socket, authenticationGeneration)
       handleSocketClosed(socket, { timedOut: true })
-    }
-  }
-
-  function startActivityProbe() {
-    stopActivityProbe()
-    activityProbeTimer = setInterval(runActivityProbe, ACTIVITY_PROBE_INTERVAL_MS)
-  }
-
-  function stopActivityProbe() {
-    if (activityProbeTimer) {
-      clearInterval(activityProbeTimer)
-      activityProbeTimer = null
     }
   }
 
@@ -1011,7 +966,7 @@ export function connect(
               return
             }
           }
-          runActivityProbe(requestWs, true)
+          activityProbe.run(requestWs, true)
         }, timeoutMs)
 
         pending.set(id, {
@@ -1147,8 +1102,8 @@ export function connect(
       if (state === 'connected') {
         // Why: OS can kill the TCP path while backgrounded without onclose; probe now to detect the half-open socket in ≤8s (issue #5049).
         console.log('[net] foreground — probing live connection')
-        startActivityProbe()
-        runActivityProbe()
+        activityProbe.start()
+        activityProbe.run()
         return
       }
       if (state === 'reconnecting') {
@@ -1177,8 +1132,8 @@ export function connect(
         clearTimeout(handshakeTimer)
         handshakeTimer = null
       }
-      stopActivityProbe()
-      activityProbeFollowUp.finish()
+      activityProbe.stop()
+      activityProbe.finishFollowUp()
       if (ws) {
         ws.close()
         ws = null

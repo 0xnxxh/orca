@@ -134,13 +134,15 @@ export class MobileRelayRpcStreams {
     return true
   }
 
-  handleBinary(bytes: Uint8Array): void {
+  // Why: the boolean reports protocol-decode success so the session can count
+  // the frame as drain evidence — undecodable bytes must not extend the probe.
+  handleBinary(bytes: Uint8Array): boolean {
     const browserFrame = decodeBrowserScreencastFrame(bytes)
-    if (browserFrame && this.activeBrowserStream?.onBinaryFrame) {
-      this.activeBrowserStream.onBinaryFrame(browserFrame)
-      return
+    if (browserFrame) {
+      this.activeBrowserStream?.onBinaryFrame?.(browserFrame)
+      return true
     }
-    handleTerminalBinaryFrame(bytes, {
+    return handleTerminalBinaryFrame(bytes, {
       terminalSnapshots: this.terminalSnapshots,
       getListener: (streamId) => this.terminalListeners.get(streamId)
     })

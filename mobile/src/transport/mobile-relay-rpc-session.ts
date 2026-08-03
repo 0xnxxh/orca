@@ -6,12 +6,15 @@ import { MobileRelayE2eeLink } from './mobile-relay-e2ee-link'
 import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
 import { waitForMobileRelayRpcConnected } from './mobile-relay-rpc-connect-wait'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
-import { isRpcDeliveryUnknown, markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import {
   rejectMobileRelayPendingRequests,
   type MobileRelayPendingRequest
 } from './mobile-relay-pending-requests'
-import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
+import {
+  CONTROL_PROBE_TIMEOUT_MS,
+  createMobileRelayControlProbe
+} from './mobile-relay-control-probe'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import type { ConnectionState, RpcResponse } from './types'
@@ -22,9 +25,6 @@ import type {
   MobileRelayRpcSessionOptions
 } from './mobile-relay-rpc-session-contract'
 export type { MobileRelayRpcSession } from './mobile-relay-rpc-session-contract'
-
-const CONTROL_PROBE_TIMEOUT_MS = 8_000
-const CONTROL_PROBE_INTERVAL_MS = 20_000
 
 export function connectMobileRelayRpcSession(
   args: MobileRelayRpcSessionOptions
@@ -39,11 +39,14 @@ export function connectMobileRelayRpcSession(
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
   let controlResponseSequence = 0
-  const controlProbeFollowUp = new RpcControlProbeFollowUp<boolean>(
-    () => (!closed && state === 'connected' ? true : null),
-    probeControlPlane
-  )
-  let controlProbeTimer: ReturnType<typeof setInterval> | null = null
+  let inboundActivitySequence = 0
+  const controlProbe = createMobileRelayControlProbe({
+    isActive: () => !closed && state === 'connected',
+    sendProbe: () => sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS, false, false),
+    getControlResponseSequence: () => controlResponseSequence,
+    getInboundActivitySequence: () => inboundActivitySequence,
+    onDemote: (error) => fail(asError(error))
+  })
   let lastConnectedAt: number | null = null
   let leaseExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
@@ -108,15 +111,15 @@ export function connectMobileRelayRpcSession(
       return () => stateListeners.delete(listener)
     },
     notifyForeground() {
-      startControlProbeTimer()
-      probeControlPlane()
+      controlProbe.startTimer()
+      controlProbe.probe()
     },
     close() {
       if (closed) {
         return
       }
       closed = true
-      stopControlProbeTimer()
+      controlProbe.stopTimer()
       timedOutControlRequestIds.clear()
       link.close()
       rejectMobileRelayPendingRequests(pending, new Error('Client closed'))
@@ -147,7 +150,7 @@ export function connectMobileRelayRpcSession(
       resumeConfirmation = result.resumeConfirmation
       lastConnectedAt = Date.now()
       publishState('connected')
-      startControlProbeTimer()
+      controlProbe.startTimer()
     } catch (error) {
       fail(asError(error))
     }
@@ -176,7 +179,7 @@ export function connectMobileRelayRpcSession(
           return
         }
         if (probeAfterTimeout) {
-          probeControlPlane(true)
+          controlProbe.probe(true)
         }
       }, timeoutMs)
       pending.set(id, { resolve, reject, timer, method })
@@ -202,6 +205,9 @@ export function connectMobileRelayRpcSession(
     if (!isRpcResponse(value)) {
       return
     }
+    // Why: only well-formed frames prove the desktop pipeline drains — malformed
+    // payloads must neither satisfy nor extend the probe.
+    inboundActivitySequence += 1
     const request = pending.get(value.id)
     const lateApplicationResponse = applicationResponseTracker.consumeLateResponse(value.id)
     if (!value.ok && value.error.code === 'unauthorized') {
@@ -234,51 +240,9 @@ export function connectMobileRelayRpcSession(
   }
 
   function handleBinary(bytes: Uint8Array): void {
-    streams.handleBinary(bytes)
-  }
-
-  function probeControlPlane(queueAfterCurrent = false): void {
-    if (closed || state !== 'connected') {
-      return
+    if (streams.handleBinary(bytes)) {
+      inboundActivitySequence += 1
     }
-    if (!controlProbeFollowUp.begin(true, queueAfterCurrent)) {
-      return
-    }
-    const probeControlResponseSequence = controlResponseSequence
-    void sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS, false, false).then(
-      () => {
-        finishControlProbe()
-      },
-      (error: unknown) => {
-        const controlResponded = controlResponseSequence > probeControlResponseSequence
-        finishControlProbe()
-        if (closed || state !== 'connected') {
-          return
-        }
-        if (!isRpcDeliveryUnknown(error) || !controlResponded) {
-          fail(asError(error))
-        }
-      }
-    )
-  }
-
-  function startControlProbeTimer(): void {
-    if (closed || state !== 'connected' || controlProbeTimer) {
-      return
-    }
-    controlProbeTimer = setInterval(probeControlPlane, CONTROL_PROBE_INTERVAL_MS)
-  }
-
-  function stopControlProbeTimer(): void {
-    if (controlProbeTimer) {
-      clearInterval(controlProbeTimer)
-      controlProbeTimer = null
-    }
-    controlProbeFollowUp.finish()
-  }
-
-  function finishControlProbe(): void {
-    controlProbeFollowUp.finish(true)
   }
 
   function waitForConnected(timeoutMs = requestTimeoutMs): Promise<void> {
@@ -304,7 +268,7 @@ export function connectMobileRelayRpcSession(
       return
     }
     closed = true
-    stopControlProbeTimer()
+    controlProbe.stopTimer()
     timedOutControlRequestIds.clear()
     failure = error
     link.close()

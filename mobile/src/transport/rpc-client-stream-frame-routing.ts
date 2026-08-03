@@ -26,10 +26,12 @@ type StreamFrameRoutingOptions = {
   terminalListeners: Map<number, RpcStreamingListener>
 }
 
+// Why: the boolean reports protocol-decode success so the caller can count the
+// frame as drain evidence — undecodable bytes must not extend the probe.
 export function routeRpcClientStreamFrame(
   bytes: Uint8Array,
   options: StreamFrameRoutingOptions
-): void {
+): boolean {
   const browserFrame = decodeBrowserScreencastFrame(bytes)
   if (browserFrame) {
     const stream = options.activeBrowserRequestId
@@ -38,9 +40,9 @@ export function routeRpcClientStreamFrame(
     if (stream && !stream.cancelled && stream.method === 'browser.screencast') {
       stream.onBinaryFrame?.(browserFrame)
     }
-    return
+    return true
   }
-  handleTerminalBinaryFrame(bytes, {
+  return handleTerminalBinaryFrame(bytes, {
     terminalSnapshots: options.terminalSnapshots,
     getListener: (streamId) => options.terminalListeners.get(streamId)
   })

@@ -21,11 +21,19 @@ type TerminalBinaryFrameOptions = {
 export function handleTerminalBinaryFrame(
   bytes: Uint8Array,
   options: TerminalBinaryFrameOptions
-): void {
+): boolean {
   const frame = decodeTerminalStreamFrame(bytes)
   if (!frame) {
-    return
+    return false
   }
+  dispatchTerminalStreamFrame(frame, options)
+  return true
+}
+
+function dispatchTerminalStreamFrame(
+  frame: NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>,
+  options: TerminalBinaryFrameOptions
+): void {
   const listener = options.getListener(frame.streamId)
   if (!listener) {
     return
