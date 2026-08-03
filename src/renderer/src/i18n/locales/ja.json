@@ -14505,6 +14505,12 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "ダッシュボード表示",
+      "board": "ダッシュボード",
+      "cells": "セル"
+    },
+    "cells": null,
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

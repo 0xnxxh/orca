@@ -14517,6 +14517,12 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "仪表盘视图",
+      "board": "仪表盘",
+      "cells": "单元格"
+    },
+    "cells": null,
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

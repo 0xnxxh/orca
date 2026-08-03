@@ -1,9 +1,8 @@
-import { AgentKanbanBoard } from './AgentKanbanBoard'
+import { AgentKanbanBoard, type AgentDashboardView } from './AgentKanbanBoard'
 import { useDashboardSnapshot } from './useDashboardSnapshot'
 
 type DashboardPopoutRootProps = {
-  /** The layout requested via popout.html?view=<name>. Only "kanban" exists
-   *  today; unknown views fall back to it. */
+  /** The layout requested via popout.html?view=<name>. */
   view: string | null
 }
 
@@ -13,5 +12,6 @@ type DashboardPopoutRootProps = {
  */
 export function DashboardPopoutRoot(_props: DashboardPopoutRootProps): React.JSX.Element {
   const snapshot = useDashboardSnapshot()
-  return <AgentKanbanBoard snapshot={snapshot} />
+  const initialView: AgentDashboardView = _props.view === 'cells' ? 'cells' : 'board'
+  return <AgentKanbanBoard snapshot={snapshot} initialView={initialView} />
 }

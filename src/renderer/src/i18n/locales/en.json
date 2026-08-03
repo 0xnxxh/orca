@@ -14674,6 +14674,16 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "Dashboard view",
+      "board": "Dashboard",
+      "cells": "Cells"
+    },
+    "cells": {
+      "ask": "Open the question from {{agent}}",
+      "agentCount": "{{count}} agents",
+      "sectionMeta": "{{worktrees}} worktrees · {{agents}} agents"
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."
