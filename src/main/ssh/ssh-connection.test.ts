@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type * as SshTransportSelection from './ssh-transport-selection'
 
 let eventHandlers: Map<string, Set<(...args: unknown[]) => void>>
 let connectBehavior: 'ready' | 'error' = 'ready'
@@ -162,12 +163,16 @@ const {
   findSystemSshMock,
   getOrcaControlSocketPathMock,
   removeControlSocketPathMock,
+  requiresSystemSshForSecurityKeyMock,
   spawnSystemSshCommandMock,
   spawnSystemSshMock
 } = vi.hoisted(() => ({
   findSystemSshMock: vi.fn<() => string | null>(),
   getOrcaControlSocketPathMock: vi.fn(),
   removeControlSocketPathMock: vi.fn(),
+  // Why mock: attemptConnect probes real ~/.ssh defaults; under fake timers that I/O races the
+  // wall-clock budget helper and flakes as status 'connecting' (CI: tests node 24 shard).
+  requiresSystemSshForSecurityKeyMock: vi.fn(async () => false),
   spawnSystemSshMock: vi.fn(),
   spawnSystemSshCommandMock: vi.fn()
 }))
@@ -175,6 +180,30 @@ const {
 // Why: security-key transport selection scans the real ~/.ssh defaults, so a developer's own
 // FIDO2 key would otherwise decide which transport these tests take.
 vi.mock('./system-ssh-binary', () => ({ findSystemSsh: findSystemSshMock }))
+
+// Holds the real probe so security-key tests can opt back in after the default mock.
+const actualRequiresSystemSshForSecurityKey = vi.hoisted(() => ({
+  fn: null as null | typeof SshTransportSelection.requiresSystemSshForSecurityKey
+}))
+
+vi.mock('./ssh-transport-selection', async (importOriginal) => {
+  const actual = await importOriginal<typeof SshTransportSelection>()
+  actualRequiresSystemSshForSecurityKey.fn = actual.requiresSystemSshForSecurityKey
+  return {
+    ...actual,
+    requiresSystemSshForSecurityKey: requiresSystemSshForSecurityKeyMock
+  }
+})
+
+function useRealRequiresSystemSshForSecurityKey(): void {
+  requiresSystemSshForSecurityKeyMock.mockImplementation((target, resolved) => {
+    const impl = actualRequiresSystemSshForSecurityKey.fn
+    if (impl == null) {
+      throw new Error('requiresSystemSshForSecurityKey implementation not loaded')
+    }
+    return impl(target, resolved)
+  })
+}
 
 vi.mock('./ssh-system-fallback', () => ({
   getOrcaControlSocketPath: getOrcaControlSocketPathMock,
@@ -370,6 +399,8 @@ describe('SshConnection', () => {
     vi.mocked(resolveWithSshG).mockResolvedValue(null)
     findSystemSshMock.mockReset()
     findSystemSshMock.mockReturnValue(null)
+    requiresSystemSshForSecurityKeyMock.mockReset()
+    requiresSystemSshForSecurityKeyMock.mockResolvedValue(false)
     // Why: the budget is a process-wide singleton keyed by target id, so one test's exhausted
     // window would otherwise suppress reconnects in every later test using the same target.
     sshAutoReconnectBudget.clear()
@@ -2096,6 +2127,7 @@ describe('SshConnection', () => {
   })
 
   it('uses system SSH before ssh2 parses a security-key private key', async () => {
+    useRealRequiresSystemSshForSecurityKey()
     findSystemSshMock.mockReturnValue('/usr/bin/ssh')
     const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-connect-'))
     const keyPath = join(directory, 'id_ed25519_sk')
@@ -2118,6 +2150,7 @@ describe('SshConnection', () => {
   })
 
   it('uses system SSH for an agent-backed security-key public identity', async () => {
+    useRealRequiresSystemSshForSecurityKey()
     findSystemSshMock.mockReturnValue('/usr/bin/ssh')
     const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-agent-connect-'))
     const identityPath = join(directory, 'id_ed25519_sk')
