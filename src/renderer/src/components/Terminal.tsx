@@ -47,8 +47,14 @@ import { hasFeatureInteraction } from '../../../shared/feature-interactions'
 import BrowserPane from './browser-pane/BrowserPane'
 import { RetainedBrowserPaneOverlayLayer } from './browser-pane/BrowserPaneOverlayLayer'
 import EmulatorPaneOverlayLayer from './emulator-pane/EmulatorPaneOverlayLayer'
-import { useBrowserAutomationVisibilityForAny } from './browser-pane/browser-automation-visibility'
-import { useBrowserMobileDriverForAny } from '@/lib/pane-manager/browser-mobile-driver-state'
+import {
+  isBrowserAutomationVisible,
+  useBrowserAutomationVisibilityForAny
+} from './browser-pane/browser-automation-visibility'
+import {
+  isBrowserPageMobileDriven,
+  useBrowserMobileDriverForAny
+} from '@/lib/pane-manager/browser-mobile-driver-state'
 import TerminalPaneOverlayLayer from './terminal-pane/TerminalPaneOverlayLayer'
 import {
   collectBrowserWebviewIds,
@@ -63,8 +69,6 @@ import {
   worktreeHoldsLiveBrowserGuests
 } from './browser-pane/browser-guest-worktree-retention'
 import { hasLiveBrowserGuest } from './browser-pane/webview-registry'
-import { isBrowserAutomationVisible } from './browser-pane/browser-automation-visibility'
-import { isBrowserPageMobileDriven } from '@/lib/pane-manager/browser-mobile-driver-state'
 import {
   handleSwitchRecentTab,
   handleSwitchTab,
