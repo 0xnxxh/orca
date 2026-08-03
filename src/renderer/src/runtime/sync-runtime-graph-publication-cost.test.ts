@@ -46,11 +46,8 @@ function makeCountingState(worktreeCount: number): {
   }
 }
 
-// Both cases currently fail: the per-worktree cache is consulted *after* the content
-// is built, so it saves the fanout and one allocation but none of the work. Drop the
-// `.fails` when the build loop skips worktrees whose inputs are unchanged.
 describe('mobile session publication cost', () => {
-  it.fails('does not redo per-worktree work when nothing changed', () => {
+  it('does not redo per-worktree work when nothing changed', () => {
     const WORKTREES = 300
     const { state, reads, resetReads } = makeCountingState(WORKTREES)
 
@@ -63,7 +60,7 @@ describe('mobile session publication cost', () => {
     expect(reads()).toBeLessThan(WORKTREES / 10)
   })
 
-  it.fails('rebuilds only the worktrees whose inputs changed', () => {
+  it('rebuilds only the worktrees whose inputs changed', () => {
     const WORKTREES = 300
     const { state, reads, resetReads } = makeCountingState(WORKTREES)
 
