@@ -145,6 +145,21 @@ describe('openHttpLink', () => {
     expect(registerLocalhostLabelMock).not.toHaveBeenCalled()
   })
 
+  // Why: runtimes bind per workspace, so activeRuntimeEnvironmentId is commonly
+  // null while a pane is remote — ownership must come from the click source.
+  it('keeps a runtime-owned link out of Orca when no runtime is globally active', () => {
+    storeState.settings = { openLinksInApp: true, activeRuntimeEnvironmentId: null }
+
+    openHttpLink('https://example.com/', {
+      worktreeId: 'wt-1',
+      sourceOwner: { kind: 'runtime', runtimeEnvironmentId: 'env-1' }
+    })
+
+    expect(openUrlMock).toHaveBeenCalledWith('https://example.com/')
+    expect(createBrowserTabMock).not.toHaveBeenCalled()
+    expect(setActiveWorktreeMock).not.toHaveBeenCalled()
+  })
+
   it('labels explicit local links from the local scan instead of a merged remote port', async () => {
     storeState.settings = {
       openLinksInApp: true,

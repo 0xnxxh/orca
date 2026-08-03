@@ -29,6 +29,7 @@ export function handleTerminalWebLinkClick(
     deps.terminal &&
     openHttpLinkAtTerminalMouseEvent(deps.terminal, event, {
       worktreeId: deps.worktreeId,
+      runtimeEnvironmentId: deps.runtimeEnvironmentId ?? null,
       modifierHeld: Boolean(event.shiftKey),
       requestOpenLinksInAppPreference: deps.requestOpenLinksInAppPreference
     })

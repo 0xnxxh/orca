@@ -81,6 +81,7 @@ export function handleOscLink(
   if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
     openTerminalHttpLink(parsed.toString(), {
       worktreeId: deps.worktreeId,
+      runtimeEnvironmentId: deps.runtimeEnvironmentId ?? null,
       modifierHeld: Boolean(event?.shiftKey),
       requestOpenLinksInAppPreference: deps.requestOpenLinksInAppPreference
     })

@@ -1060,6 +1060,10 @@ export function useTerminalPaneLifecycle({
         fileLinkClickFallbackDisposablesRef.current.set(pane.id, fileLinkClickFallbackDisposable)
         const httpLinkClickFallbackDisposable = installHttpLinkClickFallback(pane.terminal, {
           ...linkDeps,
+          getRuntimeEnvironmentId: () =>
+            linkDeps.getRuntimeEnvironmentIdForPane?.(pane.id) ??
+            linkDeps.runtimeEnvironmentId ??
+            null,
           requestOpenLinksInAppPreference
         })
         httpLinkClickFallbackDisposables.set(pane.id, httpLinkClickFallbackDisposable)
