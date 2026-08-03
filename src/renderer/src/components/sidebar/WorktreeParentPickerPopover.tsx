@@ -232,11 +232,15 @@ export function WorktreeParentPickerPopover({
     // seed the viewport with max-h-72 to avoid a blank first paint.
     initialRect: { width: 0, height: PICKER_LIST_MAX_HEIGHT }
   })
-  // Why: re-ranking on each keystroke makes any prior highlight meaningless.
-  useEffect(() => {
-    setHighlightedIndex(0)
-    virtualizer.scrollToOffset(0)
-  }, [search, virtualizer])
+  const handleSearchChange = useCallback(
+    (nextSearch: string) => {
+      // Why: re-ranking on each keystroke makes any prior highlight meaningless.
+      setSearch(nextSearch)
+      setHighlightedIndex(0)
+      virtualizer.scrollToOffset(0)
+    },
+    [virtualizer]
+  )
 
   const virtualRows = virtualizer.getVirtualItems()
   const statuses = useWorktreeActivityStatuses(
@@ -315,7 +319,7 @@ export function WorktreeParentPickerPopover({
           <CommandInput
             ref={inputRef}
             value={search}
-            onValueChange={setSearch}
+            onValueChange={handleSearchChange}
             onKeyDown={handleKeyDown}
             wrapperClassName="shrink-0"
             placeholder={translate(
