@@ -310,8 +310,11 @@ describe('resolvePathEnvKey', () => {
     expect(resolvePathEnvKey({ PATH: 'C:\\Windows' }, 'win32')).toBe('PATH')
   })
 
-  it('defaults to the OS spelling for a Windows env with no path key', () => {
-    expect(resolvePathEnvKey({}, 'win32')).toBe('Path')
+  it('falls back to the host block spelling for a Windows env with no path key', () => {
+    // Why: a sparse patch that guesses wrong leaves the daemon's own merge holding both keys.
+    expect(resolvePathEnvKey({}, 'win32', { PATH: 'C:\\Windows' })).toBe('PATH')
+    expect(resolvePathEnvKey({}, 'win32', { Path: 'C:\\Windows' })).toBe('Path')
+    expect(resolvePathEnvKey({}, 'win32', {})).toBe('Path')
   })
 
   it('always resolves `PATH` off Windows so a POSIX `Path` variable is untouched', () => {

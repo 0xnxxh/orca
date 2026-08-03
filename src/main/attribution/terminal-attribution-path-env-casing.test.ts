@@ -83,6 +83,41 @@ describe('applyTerminalAttributionEnv PATH key casing', () => {
     expect(baseEnv.Path).toBe('C:\\Windows\\system32')
   })
 
+  // Why: the daemon receives a sparse env patch with no path key and re-merges its own block
+  // underneath it, so guessing the spelling here hands the child both.
+  it.each([
+    { hostKey: 'PATH', otherKey: 'Path' },
+    { hostKey: 'Path', otherKey: 'PATH' }
+  ])('adopts a host block spelt `$hostKey` on a path-less env', ({ hostKey, otherKey }) => {
+    const root = makeTmpRoot()
+    const userDataPath = join(root, 'user-data')
+    const inherited = { PATH: process.env.PATH, Path: process.env.Path }
+    delete process.env.PATH
+    delete process.env.Path
+    process.env[hostKey] = 'C:\\Windows\\system32'
+
+    try {
+      const baseEnv: Record<string, string> = { SystemRoot: 'C:\\Windows' }
+
+      applyTerminalAttributionEnv(baseEnv, {
+        enabled: true,
+        platform: 'win32',
+        shellFamily: 'native-windows',
+        userDataPath
+      })
+
+      expect(pathEnvKeys(baseEnv)).toEqual([hostKey])
+      expect(baseEnv[otherKey]).toBeUndefined()
+    } finally {
+      delete process.env[hostKey]
+      for (const [key, value] of Object.entries(inherited)) {
+        if (value !== undefined) {
+          process.env[key] = value
+        }
+      }
+    }
+  })
+
   it('leaves a case-sensitive POSIX `Path` variable alone', () => {
     const root = makeTmpRoot()
     const baseEnv: Record<string, string> = {

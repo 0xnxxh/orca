@@ -147,9 +147,9 @@ function clearTerminalAttributionEnv(
 /**
  * Drops the non-resolved PATH spelling so a Windows child inherits exactly one.
  *
- * Why: attribution is the last env-key-shaping step before spawn, making it the single
- * choke point where an inherited duplicate (WSL interop, third-party tools) can be
- * collapsed deterministically instead of leaving the OS to pick a winner.
+ * Why: an inherited duplicate (WSL interop, third-party tools) is collapsed here rather than
+ * left for the OS to pick a winner. Providers that re-merge their own block after this point
+ * (the daemon) collapse again on their side, since this cannot see that merge.
  */
 function collapseWindowsPathEnvKey(
   baseEnv: Record<string, string>,

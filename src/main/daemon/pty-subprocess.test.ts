@@ -2113,7 +2113,7 @@ describe('createPtySubprocess', () => {
     expect(lastCall[2].env.ORCA_ATTRIBUTION_SHIM_DIR).toBeUndefined()
   })
 
-  it('promotes the agent-teams shim onto the Windows `Path` spelling', () => {
+  it('collapses its own env merge onto the requested Windows `Path` spelling', () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
@@ -2124,7 +2124,8 @@ describe('createPtySubprocess', () => {
         sessionId: 'test',
         cols: 80,
         rows: 24,
-        // Why: buildPtyHostEnv collapses Windows PATH onto one spelling before the daemon wire.
+        // Why: buildPtyHostEnv collapses Windows PATH onto one spelling before the daemon wire;
+        // the daemon then spreads its own block underneath and can re-mint the other one.
         env: {
           Path: '/tmp/orca-agent-teams-bin:/usr/bin',
           ORCA_AGENT_TEAMS_TEAM_ID: 'team-test'
@@ -2137,7 +2138,25 @@ describe('createPtySubprocess', () => {
     }
 
     const env = spawnMock.mock.calls.at(-1)![2].env
+    expect(Object.keys(env).filter((key) => /^path$/i.test(key))).toEqual(['Path'])
     expect(env.Path.split(':')[0]).toBe('/tmp/orca-agent-teams-bin')
+  })
+
+  it('keeps the daemon `PATH` block when the requested env has no path key', () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      createPtySubprocess({ sessionId: 'test', cols: 80, rows: 24, env: { FOO: 'bar' } })
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+
+    const env = spawnMock.mock.calls.at(-1)![2].env
     expect(env.PATH).toBe(process.env.PATH)
   })
 

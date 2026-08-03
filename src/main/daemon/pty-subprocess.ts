@@ -74,6 +74,7 @@ const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_WORKTREE_ID',
   'ORCA_AGENT_LAUNCH_TOKEN'
 ] as const
+const WINDOWS_PATH_ENV_KEY_RE = /^path$/i
 const FOREGROUND_AGENT_CACHE_TTL_MS = 1000
 const SHELL_FOREGROUND_REFRESH_RETRY_MS = 5_000
 // Why: a Windows refresh forks a heavy powershell.exe CIM scan (~10-40x POSIX `ps`); idle shells retry slower, output re-arms the fast retry.
@@ -157,6 +158,36 @@ function removeUnspecifiedPaneIdentityEnv(
 ): void {
   for (const key of PANE_IDENTITY_ENV_KEYS) {
     if (!explicitEnv || !Object.hasOwn(explicitEnv, key)) {
+      delete env[key]
+    }
+  }
+}
+
+/**
+ * Collapses the duplicate Windows path spelling this daemon's own env merge can mint.
+ *
+ * Why: main sends a sparse env patch, so `{...process.env, ...opts.env}` can pair the daemon
+ * block's spelling with the patch's; a Windows child inheriting both crashes the packaged CLI
+ * launcher with "Item has already been added. Key in dictionary: 'PATH'" (stablyai/orca#12046).
+ */
+function collapseWindowsPathEnvKeys(
+  env: Record<string, string>,
+  requestedEnv: Record<string, string> | undefined
+): void {
+  if (process.platform !== 'win32') {
+    return
+  }
+  const pathKeys = Object.keys(env).filter((key) => WINDOWS_PATH_ENV_KEY_RE.test(key))
+  if (pathKeys.length < 2) {
+    return
+  }
+  // Why: main already shaped the patch's spelling (attribution, CLI shims), so its value wins.
+  const requestedKey = requestedEnv
+    ? Object.keys(requestedEnv).find((key) => WINDOWS_PATH_ENV_KEY_RE.test(key))
+    : undefined
+  const survivingKey = requestedKey && env[requestedKey] !== undefined ? requestedKey : pathKeys[0]
+  for (const key of pathKeys) {
+    if (key !== survivingKey) {
       delete env[key]
     }
   }
@@ -770,8 +801,9 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   ) {
     addWslEnvKeys(env, [POWERLEVEL10K_WIZARD_DISABLE_ENV])
   }
-  // Why: opts.env arrives from buildPtyHostEnv, which collapses Windows PATH onto a single spelling.
   const requestedEnv = opts.env
+  // Why: collapse before promoting so the shim lands on the spelling the child actually inherits.
+  collapseWindowsPathEnvKeys(env, requestedEnv)
   const requestedPath = requestedEnv
     ? requestedEnv[resolvePathEnvKey(requestedEnv, process.platform)]
     : undefined

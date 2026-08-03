@@ -249,12 +249,31 @@ export function __resetPersistedWindowsPathCacheForTests(): void {
  */
 export function resolvePathEnvKey(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  hostEnv: NodeJS.ProcessEnv = process.env
 ): 'PATH' | 'Path' {
   if (platform !== 'win32') {
     return 'PATH'
   }
-  return env.Path !== undefined ? 'Path' : env.PATH !== undefined ? 'PATH' : 'Path'
+  if (env.Path !== undefined) {
+    return 'Path'
+  }
+  if (env.PATH !== undefined) {
+    return 'PATH'
+  }
+  // Why: the daemon receives a sparse env patch and re-merges its own block underneath it;
+  // matching the block's spelling stops that merge from resurrecting the other one.
+  return readHostPathEnvKey(hostEnv)
+}
+
+/**
+ * Reads the path spelling the host's own environment block carries.
+ *
+ * Why: Node's Windows `process.env` lookups are case-insensitive, so only the own keys
+ * reveal which spelling a child process will actually inherit.
+ */
+function readHostPathEnvKey(hostEnv: NodeJS.ProcessEnv): 'PATH' | 'Path' {
+  return Object.keys(hostEnv).includes('PATH') ? 'PATH' : 'Path'
 }
 
 function mergeWindowsPathSegments(
@@ -263,7 +282,7 @@ function mergeWindowsPathSegments(
   platform: NodeJS.Platform,
   sourceEnv: NodeJS.ProcessEnv
 ): void {
-  const pathKey = resolvePathEnvKey(env, platform)
+  const pathKey = resolvePathEnvKey(env, platform, sourceEnv)
   const pathDelimiter = getPathDelimiter(platform)
   const currentPath = env[pathKey] ?? sourceEnv.PATH ?? sourceEnv.Path ?? ''
   const currentSegments = splitPathSegments(currentPath, pathDelimiter)
