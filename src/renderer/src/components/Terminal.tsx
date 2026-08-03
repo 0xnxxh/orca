@@ -68,6 +68,10 @@ import {
   touchBrowserGuestWorktreeRecency,
   worktreeHoldsLiveBrowserGuests
 } from './browser-pane/browser-guest-worktree-retention'
+import {
+  hasActiveBrowserPageDownload,
+  installBrowserPageDownloadActivityTracking
+} from './browser-pane/browser-page-download-activity'
 import { hasLiveBrowserGuest } from './browser-pane/webview-registry'
 import {
   handleSwitchRecentTab,
@@ -327,6 +331,9 @@ function Terminal(): React.JSX.Element | null {
   )
   const terminalRetentionBudgetEnabled = useAppStore(
     (s) => s.settings?.terminalHiddenWorktreeRetentionBudget !== false
+  )
+  const browserGuestRetentionBudgetEnabled = useAppStore(
+    (s) => s.settings?.browserGuestWorktreeRetentionBudget !== false
   )
   const terminalTitleSnapshotAuthorityEnabled = useAppStore((s) =>
     isMainTerminalSideEffectAuthorityForPty({
@@ -1158,6 +1165,9 @@ function Terminal(): React.JSX.Element | null {
     terminalSshParkingEnabled,
     workspaceSurfaces
   ])
+  // Why here: downloads outlive the pane-local state of hidden (unmounted)
+  // BrowserPanes, and the eviction veto below must see them.
+  useEffect(() => installBrowserPageDownloadActivityTracking(), [])
   // Browser-guest retention budget (#12137 follow-up): hidden worktrees keep
   // webview guests alive for instant revisits, but only the most recently
   // activated few. Older ones have every guest FULLY destroyed through the
@@ -1167,7 +1177,7 @@ function Terminal(): React.JSX.Element | null {
   // and terminal panes/watchers/capture contracts are untouched. A revisit
   // rebuilds guests from store state.
   useEffect(() => {
-    if (!renderedActiveWorktreeId) {
+    if (!renderedActiveWorktreeId || !browserGuestRetentionBudgetEnabled) {
       return
     }
     const recency = browserGuestWorktreeRecencyRef.current
@@ -1195,13 +1205,18 @@ function Terminal(): React.JSX.Element | null {
           state.browserPagesByWorkspace,
           hasLiveBrowserGuest
         ),
-      // Why the only veto: automation/mobile keeps a hidden guest painted for a
-      // remote controller mid-drive. Terminal state never vetoes — eviction
-      // only destroys guests and leaves the surface (panes, watchers) alone.
+      // Why these vetoes: automation/mobile keeps a hidden guest painted for a
+      // remote controller mid-drive, and main cancels a page's active downloads
+      // when its guest unregisters (tab-close semantics). Terminal state never
+      // vetoes — eviction only destroys guests and leaves the surface (panes,
+      // watchers) alone.
       isEvictable: (worktreeId) =>
         !(state.browserTabsByWorktree[worktreeId] ?? []).some((tab) =>
           browserTabVisibilityPageIds(tab).some(
-            (pageId) => isBrowserAutomationVisible(pageId) || isBrowserPageMobileDriven(pageId)
+            (pageId) =>
+              isBrowserAutomationVisible(pageId) ||
+              isBrowserPageMobileDriven(pageId) ||
+              hasActiveBrowserPageDownload(pageId)
           )
         )
     })
@@ -1212,7 +1227,7 @@ function Terminal(): React.JSX.Element | null {
         worktreeId
       )
     }
-  }, [renderedActiveWorktreeId, workspaceSurfaces])
+  }, [renderedActiveWorktreeId, workspaceSurfaces, browserGuestRetentionBudgetEnabled])
   // Why: a slow post-reconnect step exposes workspaceSessionReady before hydration can populate snapshot capabilities.
   if (
     renderedActiveWorktreeId &&
