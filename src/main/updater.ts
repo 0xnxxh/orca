@@ -48,6 +48,7 @@ import { listReleaseBuilds, resolveTargetBuild } from './updater-release-builds'
 import {
   hasDedicatedReleaseRepo,
   isChannelSupportedOnPlatform,
+  RELEASE_CHANNEL_LABELS,
   type ReleaseBuild,
   type ReleaseChannel
 } from '../shared/release-channel'
@@ -1534,7 +1535,7 @@ async function checkForPinnedBuild(channel: ReleaseChannel, tag: string): Promis
   if (!isChannelSupportedOnPlatform(channel, process.platform)) {
     sendStatus({
       state: 'error',
-      message: `${channel} builds are produced only for macOS.`,
+      message: `${RELEASE_CHANNEL_LABELS[channel]} builds are produced only for macOS.`,
       userInitiated: true
     })
     return
