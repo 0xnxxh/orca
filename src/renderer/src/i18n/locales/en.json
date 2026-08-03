@@ -14699,6 +14699,7 @@
     "settingsTooltip": "Board settings",
     "card": {
       "you": "You",
+      "spawnedBy": "Spawned by {{name}}",
       "time": {
         "justNow": "just now",
         "minutes": "{{count}}m",

@@ -58,6 +58,8 @@ export type DashboardCard = {
   worktreeId: string
   tabId: string
   leafId: string | null
+  /** Direct orchestration parent when both agents are visible in this workspace. */
+  parentPaneKey?: string
   repoName: string
   worktreeName: string
   workspaceStatusId?: string

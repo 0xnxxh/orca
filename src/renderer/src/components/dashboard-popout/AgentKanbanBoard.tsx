@@ -10,7 +10,8 @@ import type { RepoIcon } from '../../../../shared/repo-icon'
 import { cn } from '@/lib/utils'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
-import { AgentKanbanCard } from './AgentKanbanCard'
+import { AgentKanbanLineage } from './AgentKanbanLineage'
+import { buildAgentKanbanLineage } from './agent-kanban-lineage'
 import { AgentDashboardToolbar } from './AgentDashboardToolbar'
 import { AgentTerminalDialog, type AgentRevealArgs } from './AgentTerminalDialog'
 import {
@@ -69,12 +70,14 @@ function groupByBucket(cards: DashboardCard[]): Record<DashboardBucket, Dashboar
 function KanbanColumn({
   bucket,
   cards,
+  cardsByPaneKey,
   repoIconsByRepoId,
   now,
   onOpenTerminal
 }: {
   bucket: DashboardBucket
   cards: DashboardCard[]
+  cardsByPaneKey: Map<string, DashboardCard>
   repoIconsByRepoId: Record<string, RepoIcon | null> | undefined
   now: number
   onOpenTerminal: (card: DashboardCard) => void
@@ -97,15 +100,13 @@ function KanbanColumn({
             {translate('dashboardPopout.bucket.empty', 'None')}
           </p>
         ) : (
-          cards.map((card) => (
-            <AgentKanbanCard
-              key={card.paneKey}
-              card={card}
-              repoIcon={repoIconsByRepoId?.[card.repoId] ?? null}
-              now={now}
-              onOpenTerminal={onOpenTerminal}
-            />
-          ))
+          <AgentKanbanLineage
+            nodes={buildAgentKanbanLineage(cards)}
+            cardsByPaneKey={cardsByPaneKey}
+            repoIconsByRepoId={repoIconsByRepoId}
+            now={now}
+            onOpenTerminal={onOpenTerminal}
+          />
         )}
       </div>
     </section>
@@ -158,6 +159,10 @@ export function AgentKanbanBoard({
     [filters, query, visibleCards]
   )
   const grouped = useMemo(() => groupByBucket(filteredCards), [filteredCards])
+  const filteredCardsByPaneKey = useMemo(
+    () => new Map(filteredCards.map((card) => [card.paneKey, card])),
+    [filteredCards]
+  )
   const hasRelativeTimestamps = useMemo(
     () => snapshot.cards.some((card) => (card.finishedAt ?? card.startedAt) > 0),
     [snapshot.cards]
@@ -264,6 +269,7 @@ export function AgentKanbanBoard({
                 key={bucket}
                 bucket={bucket}
                 cards={grouped[bucket]}
+                cardsByPaneKey={filteredCardsByPaneKey}
                 repoIconsByRepoId={snapshot.repoIconsByRepoId}
                 now={now}
                 onOpenTerminal={handleOpenTerminal}

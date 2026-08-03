@@ -17,7 +17,7 @@ import {
 import { readDashboardClientHost } from './dashboard-client-host'
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
-import { applyAgentRowLineage } from './agent-row-lineage'
+import { applyAgentRowLineage, dashboardCardParentPaneKey } from './agent-row-lineage'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
 import type { DashboardAgentRow } from './useDashboardData'
 import { buildWorktreeAgentRows } from '../sidebar/worktree-agent-rows'
@@ -300,6 +300,7 @@ export function buildDashboardSnapshot(
         worktreeId,
         tabId,
         leafId,
+        parentPaneKey: dashboardCardParentPaneKey(row),
         repoName: boundedLabel(repo.displayName),
         worktreeName: boundedLabel(worktree.displayName),
         workspaceStatusId: context?.workspaceStatus.id,
