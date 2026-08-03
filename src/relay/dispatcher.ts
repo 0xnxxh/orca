@@ -27,6 +27,7 @@ import {
   LegacyRelayPublicationLedger,
   type LegacyPublicationLease
 } from './legacy-relay-publication-ledger'
+import { ProjectionStallEvictor } from './dispatcher-projection-stall'
 
 export type {
   RelayClientSinkOptions,
@@ -100,6 +101,15 @@ export class RelayDispatcher {
   private notificationHandlers = new Map<string, NotificationHandler>()
   private readonly requestAborts = new ClientRequestAborts()
   private readonly publicationLedger = new LegacyRelayPublicationLedger()
+  private readonly projectionStalls = new ProjectionStallEvictor<RelayClient>(
+    (client) => ({
+      stalled: !client.closed && client.writer.retainedProducerBytes > 0,
+      drainProgressBytes: client.writer.drainProgressBytes
+    }),
+    (client) => {
+      this.closeClient(client, new Error('Relay PTY subscriber stalled without draining'), true)
+    }
+  )
   private pendingRelayRequests = new Map<number, PendingRelayRequest>()
   private clientDetachListeners = new Set<(clientId: number) => void>()
   private disposeListeners = new Set<() => void>()
@@ -758,6 +768,7 @@ export class RelayDispatcher {
       return
     }
     this.disposed = true
+    this.projectionStalls.dispose()
     if (this.keepaliveTimer) {
       clearInterval(this.keepaliveTimer)
       this.keepaliveTimer = null
@@ -1128,6 +1139,11 @@ export class RelayDispatcher {
     msg: JsonRpcNotification,
     lane: 'interactive' | 'ordinary'
   ): boolean {
+    // Why: having no projection target is the norm (a flow-controlled owner is excluded from the legacy
+    // mirror), and that is the PTY hot path — never encode the frame just to discard it.
+    if (clients.length === 0) {
+      return true
+    }
     const bytes = this.estimateFrameBytes(msg)
     // Why: closing over a transiently full queue just makes the producer regenerate the same span for a
     // fresh sink of identical capacity, so back-pressure instead; only a frame that can never be admitted
@@ -1142,7 +1158,15 @@ export class RelayDispatcher {
       this.logDroppedProducerNotification(client, msg.method, bytes)
       return false
     })
-    return this.tryPublishToClients(deliverable, msg, lane, bytes)
+    if (this.tryPublishToClients(deliverable, msg, lane, bytes)) {
+      return true
+    }
+    // Why: the pause this rejection triggers is dispatcher-wide, so a sink that never drains would freeze
+    // every PTY for every viewer; arm the bounded reap that detaches it (it reconnects and replays).
+    this.projectionStalls.noteRefusedProjection(
+      deliverable.filter((client) => client !== this.primaryClient)
+    )
+    return false
   }
 
   private publishToClient(
@@ -1270,6 +1294,7 @@ export class RelayDispatcher {
       return
     }
     client.closed = true
+    this.projectionStalls.forget(client)
     this.requestAborts.abortClient(client.id)
     client.writer.close(error)
     client.generation++

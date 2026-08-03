@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RelayDispatcher, type RelayClientSinkOptions } from './dispatcher'
+import { PROJECTION_STALL_EVICTION_MS } from './dispatcher-projection-stall'
 import { DISPATCHER_CONTROL_QUEUE_MAX_FRAMES } from './dispatcher-writer-admission'
 
 type SlowClient = {
@@ -186,6 +187,31 @@ describe('RelayDispatcher slow-client PTY projection', () => {
     }
   })
 
+  it('never encodes a projection with no subscribers', () => {
+    const primary = makeStallingClient(65536)
+    primary.drain()
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    try {
+      // A flow-controlled owner is excluded from the legacy projection, so "no target" is the hot path.
+      let reads = 0
+      const params = {
+        id: 'pty-1',
+        get data(): string {
+          reads++
+          return 'y'.repeat(40_000)
+        }
+      }
+
+      expect(dispatcher.projectPtyDataToMatchingClients(() => false, params)).toBe(true)
+      expect(reads).toBe(0)
+
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
+      expect(reads).toBeGreaterThan(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
   it('a >1MiB response while the producer queue is full does not close the client', async () => {
     const primary = makeStallingClient(65536)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
@@ -196,6 +222,91 @@ describe('RelayDispatcher slow-client PTY projection', () => {
 
       await new Promise<void>((resolve) => setTimeout(resolve, 50))
       expect(primary.closes).toBe(0)
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+})
+
+describe('RelayDispatcher stalled-subscriber eviction', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('detaches a subscriber that never drains so the paused PTY can resume', () => {
+    vi.useFakeTimers()
+    const primary = makeStallingClient(65536)
+    primary.drain()
+    const stalled = makeStallingClient(65536)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const stalledId = dispatcher.attachClient(stalled.write, stalled.options)
+      fillProducerQueue(dispatcher, stalledId)
+      let capacityNotifications = 0
+      dispatcher.onLegacyPtyCapacity(() => {
+        capacityNotifications++
+      })
+
+      const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
+      expect(stalled.closes).toBe(0)
+
+      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS + 1)
+
+      expect(stalled.closes).toBe(1)
+      // The eviction is only worth anything if it un-wedges the producer it was blocking.
+      expect(capacityNotifications).toBeGreaterThan(0)
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
+      expect(primary.closes).toBe(0)
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('never evicts the primary link, however long it back-pressures', () => {
+    vi.useFakeTimers()
+    const primary = makeStallingClient(65536)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      fillProducerQueue(dispatcher, dispatcher.activeClientIds()[0])
+
+      const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
+
+      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS * 10)
+
+      expect(primary.closes).toBe(0)
+      expect(dispatcher.activeClientIds()).toHaveLength(1)
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('spares a subscriber that drains inside the stall window', () => {
+    vi.useFakeTimers()
+    const primary = makeStallingClient(65536)
+    primary.drain()
+    const slow = makeStallingClient(65536, true)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const slowId = dispatcher.attachClient(slow.write, slow.options)
+      fillProducerQueue(dispatcher, slowId)
+
+      const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
+
+      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS - 1)
+      slow.drain()
+      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS * 4)
+
+      expect(slow.closes).toBe(0)
+      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()

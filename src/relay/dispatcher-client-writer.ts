@@ -33,6 +33,7 @@ export class DispatcherClientWriter {
   private readonly settleOnDrain = new Set<DispatcherWriterEntry>()
   private readonly capacityListeners = new Set<() => void>()
   private readonly idleWaiters = new Set<() => void>()
+  private settledBytes = 0
   private saturated = false
   private drainArmed = false
   private removeDrainListener: (() => void) | null = null
@@ -53,6 +54,14 @@ export class DispatcherClientWriter {
 
   get retainedProducerBytes(): number {
     return this.admission.retainedProducerBytes
+  }
+
+  /**
+   * Monotonic bytes the sink has settled. Only real writes move it — a liveness entry replaced in the
+   * queue never reaches releaseEntry — so a flat counter across a window means the peer moved nothing.
+   */
+  get drainProgressBytes(): number {
+    return this.settledBytes
   }
 
   get producerFrameCapacity(): number {
@@ -286,6 +295,7 @@ export class DispatcherClientWriter {
       return
     }
     entry.settled = true
+    this.settledBytes += entry.estimatedBytes
     this.inFlight.delete(entry)
     this.settleOnDrain.delete(entry)
     this.admission.release(entry)
