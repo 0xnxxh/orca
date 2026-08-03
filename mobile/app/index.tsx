@@ -20,6 +20,11 @@ import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
 import { WORKTREE_PS_FULL_LIMIT } from '../src/worktree/worktree-catalog-snapshot-client'
+import {
+  markHomeWorktreeCatalogUnavailable,
+  type HomeWorktreeSummary,
+  type HostWorktreeInfo
+} from '../src/worktree/home-worktree-info'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
 import {
@@ -68,28 +73,6 @@ type StatsSummary = {
   totalPRsCreated: number
   totalAgentTimeMs: number
   firstEventAt: number | null
-}
-
-type WorktreeSummary = {
-  worktreeId: string
-  repo: string
-  branch: string
-  displayName: string
-  liveTerminalCount: number
-  status?: 'working' | 'active' | 'permission' | 'done' | 'inactive'
-  // The worktree the desktop currently has focused (exactly one is true).
-  isActive?: boolean
-  // Last terminal-output time (ms); breaks ties when nothing is focused.
-  lastOutputAt?: number
-}
-
-type HostWorktreeInfo = {
-  hostId: string
-  totalWorktrees: number
-  activeCount: number
-  lastActiveWorktree: WorktreeSummary | null
-  // Why (STA-3123): a failed worktree.ps with no cached counts must not render as "0 worktrees".
-  catalogUnavailable?: boolean
 }
 
 type HomeTaskSettings = {
@@ -163,22 +146,11 @@ function fetchWorktreeInfo(
   ) => void,
   disposed: () => boolean
 ) {
-  // Why: only seed a zeroed entry when the host has no prior info; keep cached data on transient failure so counts don't flip to 0 during reconnects.
-  const markLoadedIfMissing = () => {
+  const markUnavailable = () => {
     setInfo((prev) => {
-      if (prev[hostId]) {
-        return prev
-      }
-      return {
-        ...prev,
-        [hostId]: {
-          hostId,
-          totalWorktrees: 0,
-          activeCount: 0,
-          lastActiveWorktree: null,
-          catalogUnavailable: true
-        }
-      }
+      const current = prev[hostId]
+      const next = markHomeWorktreeCatalogUnavailable(current, hostId)
+      return next === current ? prev : { ...prev, [hostId]: next }
     })
   }
 
@@ -188,7 +160,7 @@ function fetchWorktreeInfo(
         return
       }
       if (response.ok) {
-        const result = response.result as { worktrees: WorktreeSummary[] }
+        const result = response.result as { worktrees: HomeWorktreeSummary[] }
         const worktrees = result.worktrees ?? []
         setCachedWorktrees(hostId, worktrees)
         const activeStatuses = new Set(['working', 'active', 'permission'])
@@ -205,12 +177,12 @@ function fetchWorktreeInfo(
           }
         }))
       } else {
-        markLoadedIfMissing()
+        markUnavailable()
       }
     })
     .catch(() => {
       if (!disposed()) {
-        markLoadedIfMissing()
+        markUnavailable()
       }
     })
 }
@@ -557,7 +529,7 @@ export default function HomeScreen() {
   const resumeWorktree = useMemo(() => {
     // Why: only surface Resume for connected hosts; a stale worktree taps into a route that can't load.
     if (lastVisited && hostStates[lastVisited.hostId] === 'connected') {
-      const cached = getCachedWorktrees(lastVisited.hostId) as WorktreeSummary[] | null
+      const cached = getCachedWorktrees(lastVisited.hostId) as HomeWorktreeSummary[] | null
       const match = cached?.find((w) => w.worktreeId === lastVisited.worktreeId)
       if (match) {
         return { hostId: lastVisited.hostId, worktree: match }
