@@ -34,6 +34,7 @@ const SNAPSHOT = {
       task: 'Review the dashboard',
       lastUserMessage: 'Please review this',
       lastAgentMessage: 'I need a decision.',
+      lastResponseAt: 1_699_999_600_000,
       repoId: 'repo-1',
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
@@ -100,6 +101,18 @@ describe('dashboard payload validation', () => {
       isDashboardSnapshot({
         ...SNAPSHOT,
         cards: [{ ...SNAPSHOT.cards[0], subagents: [{ id: '', name: 'bad', dotState: 'idle' }] }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], lastResponseAt: Number.NaN }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], parentPaneKey: 'x'.repeat(4_097) }]
       })
     ).toBe(false)
   })

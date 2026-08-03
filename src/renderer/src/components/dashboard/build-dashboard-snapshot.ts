@@ -17,7 +17,7 @@ import {
 import { readDashboardClientHost } from './dashboard-client-host'
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
-import { applyAgentRowLineage } from './agent-row-lineage'
+import { applyAgentRowLineage, dashboardCardParentPaneKey } from './agent-row-lineage'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
 import type { DashboardAgentRow } from './useDashboardData'
 import { buildWorktreeAgentRows } from '../sidebar/worktree-agent-rows'
@@ -288,6 +288,7 @@ export function buildDashboardSnapshot(
           : null
       // Only repos that actually contribute a card ship their icon.
       repoIconsByRepoId[repo.id] = repo.repoIcon ?? null
+      const lastAgentMessage = isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage)
 
       cards.push({
         paneKey: row.paneKey,
@@ -300,6 +301,7 @@ export function buildDashboardSnapshot(
         worktreeId,
         tabId,
         leafId,
+        parentPaneKey: dashboardCardParentPaneKey(row),
         repoName: boundedLabel(repo.displayName),
         worktreeName: boundedLabel(worktree.displayName),
         workspaceStatusId: context?.workspaceStatus.id,
@@ -309,7 +311,8 @@ export function buildDashboardSnapshot(
         review: context?.review,
         subagents: subagentsByParentPaneKey?.get(row.paneKey),
         lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
-        lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
+        lastAgentMessage,
+        ...(lastAgentMessage ? { lastResponseAt: row.entry.updatedAt } : {}),
         startedAt: row.startedAt,
         finishedAt: lastEnteredDoneAt(row),
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,

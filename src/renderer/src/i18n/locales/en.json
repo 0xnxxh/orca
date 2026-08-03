@@ -14674,6 +14674,34 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "Dashboard view",
+      "board": "Dashboard",
+      "lanes": "Activity Lanes"
+    },
+    "lanes": {
+      "responseUnknown": "response time unavailable",
+      "responseNow": "response just now",
+      "responseMinutes": "{{count}}m since response",
+      "responseHours": "{{count}}h since response",
+      "responseDays": "{{count}}d since response",
+      "now": "Now",
+      "child": "child agent",
+      "agentCount": "{{count}} agents",
+      "shown": "{{count}} shown",
+      "olderHidden": "{{count}} older hidden",
+      "status": "Status",
+      "anyStatus": "Any status",
+      "recent": "Recent",
+      "last30Minutes": "Last 30 minutes",
+      "last2Hours": "Last 2 hours",
+      "last24Hours": "Last 24 hours",
+      "hideOlder": "Hide older",
+      "showOlder": "Show older",
+      "axis": "Worktree · session duration",
+      "empty": "No matching agents",
+      "emptyHint": "Broaden a search or filter, or show older completed sessions."
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."

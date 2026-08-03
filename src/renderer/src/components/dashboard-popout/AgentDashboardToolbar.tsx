@@ -25,6 +25,7 @@ import {
   toggleDashboardFilter
 } from './agent-board-filtering'
 import { AgentDashboardFilterChips } from './AgentDashboardFilterChips'
+import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 
 type FilterOption = { id: string; label: string; count: number; color?: string }
 
@@ -36,6 +37,7 @@ type AgentDashboardToolbarProps = {
   onQueryChange: (query: string) => void
   filters: DashboardFilters
   onFiltersChange: (filters: DashboardFilters) => void
+  searchInputRef: React.RefObject<HTMLInputElement | null>
 }
 
 function countBy(
@@ -134,8 +136,10 @@ export function AgentDashboardToolbar({
   query,
   onQueryChange,
   filters,
-  onFiltersChange
+  onFiltersChange,
+  searchInputRef
 }: AgentDashboardToolbarProps): React.JSX.Element {
+  const isMac = navigator.userAgent.includes('Mac')
   const projects = projectOptions(cards, filterOptions?.projects)
   const statuses = workspaceStatusOptions(cards, filterOptions?.workspaceStatuses)
   const reviewCounts = countBy(
@@ -168,6 +172,7 @@ export function AgentDashboardToolbar({
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchInputRef}
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={translate(
@@ -175,7 +180,7 @@ export function AgentDashboardToolbar({
               'Search worktree, project, or agent…'
             )}
             aria-label={translate('dashboardPopout.search.label', 'Search agents')}
-            className="h-7 bg-muted/55 pr-7 pl-7 text-xs"
+            className="h-7 bg-muted/55 pr-16 pl-7 text-xs"
           />
           {query ? (
             <Button
@@ -187,7 +192,14 @@ export function AgentDashboardToolbar({
             >
               <X className="size-3" />
             </Button>
-          ) : null}
+          ) : (
+            <ShortcutKeyCombo
+              keys={[isMac ? '⌘' : 'Ctrl', 'K']}
+              className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2"
+              keyCapClassName="min-w-4 px-1 py-0 text-[9px] shadow-none"
+              separatorClassName="text-[9px] text-muted-foreground"
+            />
+          )}
         </div>
         {query || activeCount > 0 ? (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">

@@ -53,11 +53,15 @@ export type DashboardCard = {
   lastUserMessage?: string
   /** The most recent message the agent sent back. */
   lastAgentMessage?: string
+  /** When lastAgentMessage was reported by the agent hook. */
+  lastResponseAt?: number
   /** Routing target for click-to-focus. leafId is null when unresolved. */
   repoId: string
   worktreeId: string
   tabId: string
   leafId: string | null
+  /** Direct orchestration parent when both agents are visible in this workspace. */
+  parentPaneKey?: string
   repoName: string
   worktreeName: string
   workspaceStatusId?: string

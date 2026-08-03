@@ -141,6 +141,7 @@ describe('buildDashboardSnapshot', () => {
     expect(card.leafId).toBe(LEAF_ID)
     expect(card.lastUserMessage).toBe('do the thing')
     expect(card.lastAgentMessage).toBe('Working on it now')
+    expect(card.lastResponseAt).toBe(NOW)
     // Column ordering key: when the agent entered its current state.
     expect(card.stateChangedAt).toBe(NOW - 5000)
     // No ack yet → unseen, mirroring the sidebar's unvisited signal.
