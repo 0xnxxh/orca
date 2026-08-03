@@ -834,6 +834,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           window.api.pty.adoptSpawnReservation(spawnResult.id, spawnResult.spawnRetirementToken)
         }
 
+        if (spawnResult.isReattach && !admittedSessionId) {
+          storedCallbacks.onReattachDetermined?.()
+        }
         ptyId = spawnResult.id
         connected = true
 

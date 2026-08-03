@@ -52,6 +52,17 @@ function canonicalPaneReservationPath(
   return wslUnc ? `//wsl/${wslUnc[1].toLowerCase()}${wslUnc[2] ?? ''}` : trimmed.toLowerCase()
 }
 
+export function arePaneSpawnReservationPathsEqual(
+  left: string,
+  right: string,
+  pathFlavor: PaneSpawnReservationPathFlavor
+): boolean {
+  return (
+    canonicalPaneReservationPath(left, pathFlavor) ===
+    canonicalPaneReservationPath(right, pathFlavor)
+  )
+}
+
 function canonicalWorkspaceIdentity(
   workspaceId: string,
   pathFlavor: PaneSpawnReservationPathFlavor
