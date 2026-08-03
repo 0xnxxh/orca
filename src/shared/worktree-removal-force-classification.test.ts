@@ -16,8 +16,17 @@ describe('classifyWorktreeForceDeleteReason for unstopped PTYs', () => {
     expect(classifyWorktreeForceDeleteReason(unverifiableError)).toBe('unstopped-pty')
   })
 
-  it('does not re-offer force once the delete already used it', () => {
-    expect(classifyWorktreeForceDeleteReason(liveError, true)).toBeNull()
+  // Why (#11960): the ordinary delete confirmation already passes force:true to skip
+  // the dirty-file prompt. If that suppressed the offer, the most common desktop
+  // delete would hit the gate with no Force Delete button anywhere — the original
+  // dead end, restored.
+  it('still offers force when the failed attempt only set force', () => {
+    expect(classifyWorktreeForceDeleteReason(liveError, true)).toBe('unstopped-pty')
+  })
+
+  it('does not re-offer force once the waiver itself was already used', () => {
+    expect(classifyWorktreeForceDeleteReason(liveError, true, true)).toBeNull()
+    expect(classifyWorktreeForceDeleteReason(liveError, false, true)).toBeNull()
   })
 
   it('leaves unrelated failures unclassified', () => {

@@ -203,9 +203,17 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
   it('lets force through a sweep that never settles before the deadline', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.useFakeTimers()
+    // Why: hand the stub a resolver instead of a permanently dangling promise, so
+    // this test leaves no in-flight continuation to interleave into a later one.
+    let releaseList: (sessions: PtyProcessInfo[]) => void = () => {}
     try {
       listRegisteredPtysMock.mockReturnValue([])
-      const localProvider = createProviderStub(() => new Promise(() => {}))
+      const localProvider = createProviderStub(
+        () =>
+          new Promise<PtyProcessInfo[]>((resolve) => {
+            releaseList = resolve
+          })
+      )
 
       const teardown = killAllProcessesForWorktree('w1', {
         localProvider,
@@ -221,7 +229,43 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         registryStopped: 0
       })
     } finally {
+      releaseList([])
+      await vi.advanceTimersByTimeAsync(0)
       vi.useRealTimers()
+      warn.mockRestore()
+    }
+  })
+
+  // Why: the caller deletes files the moment this resolves. Returning while another
+  // sweep is still inside shutdown() would race the delete against a PTY that was
+  // about to release its handles — EBUSY for a process ~300ms from exiting.
+  it('waits for in-flight sweeps before force returns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const localProvider = createProviderStub(async () => {
+        throw new Error('ssh channel closed')
+      })
+      let shutdownFinished = false
+      ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          shutdownFinished = true
+        }
+      )
+      listRegisteredPtysMock.mockReturnValue([
+        { ptyId: 'reg-1', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 100 }
+      ])
+
+      const result = await killAllProcessesForWorktree('w1', {
+        localProvider,
+        requirePhysicalStop: true,
+        allowUnverifiedStop: true
+      })
+
+      expect(shutdownFinished).toBe(true)
+      // And the surviving sweep's work is reported, not flattened to zero.
+      expect(result.registryStopped).toBe(1)
+    } finally {
       warn.mockRestore()
     }
   })
