@@ -809,8 +809,6 @@ function Terminal(): React.JSX.Element | null {
   >(() => new Set())
   // Why a ref: eviction captures buffers exactly once per force-park episode, before the unmount render.
   const forceParkedCaptureDoneRef = useRef(new Set<string>())
-  // Why state: browser-guest eviction mutates mountedWorktreeIdsRef in an effect; the bump re-renders so evicted surfaces unmount.
-  const [, setBrowserGuestEvictionRevision] = useState(0)
   // Tab restriction for targeted background mounts (wake/resume); a worktree absent from this map mounts all its tabs.
   const backgroundMountTabIdsByWorktreeRef = useRef(new Map<string, ReadonlySet<string>>())
   // Why: only cold-activation deferral (not targeted mounts, which share the map above) creates watcher coverage for every unmounted tab.
@@ -1162,9 +1160,12 @@ function Terminal(): React.JSX.Element | null {
   ])
   // Browser-guest retention budget (#12137 follow-up): hidden worktrees keep
   // webview guests alive for instant revisits, but only the most recently
-  // activated few. Older ones are FULLY destroyed through the sanctioned
-  // cleanup path and their surfaces unmounted — destroyed-then-recreated is
-  // safe; detached-but-alive is the STA-3228 blank-forever state.
+  // activated few. Older ones have every guest FULLY destroyed through the
+  // sanctioned cleanup path while the worktree surface stays mounted: slots
+  // never unmount-detach a live guest (the STA-3228 blank-forever state), the
+  // hidden slot mounts no BrowserPane so nothing resurrects the guest early,
+  // and terminal panes/watchers/capture contracts are untouched. A revisit
+  // rebuilds guests from store state.
   useEffect(() => {
     if (!renderedActiveWorktreeId) {
       return
@@ -1178,7 +1179,6 @@ function Terminal(): React.JSX.Element | null {
       }
     }
     const state = useAppStore.getState()
-    const portalWorktreeIds = new Set(activityTerminalPortals.map((portal) => portal.worktreeId))
     // Why appended: a mounted worktree missing from recency (background mount) ranks oldest.
     const recencyIds = new Set(recency)
     const orderedWorktreeIds = [
@@ -1195,47 +1195,24 @@ function Terminal(): React.JSX.Element | null {
           state.browserPagesByWorkspace,
           hasLiveBrowserGuest
         ),
-      // Why each guard: automation/mobile keeps a hidden guest painted for a
-      // remote controller; measure windows and targeted background mounts need
-      // the surface; Activity portals render panes from it; exempt ptys and
-      // pending spawns would be orphaned or dropped by a surface unmount.
-      isEvictable: (worktreeId) => {
-        const guestPinned = (state.browserTabsByWorktree[worktreeId] ?? []).some((tab) =>
+      // Why the only veto: automation/mobile keeps a hidden guest painted for a
+      // remote controller mid-drive. Terminal state never vetoes — eviction
+      // only destroys guests and leaves the surface (panes, watchers) alone.
+      isEvictable: (worktreeId) =>
+        !(state.browserTabsByWorktree[worktreeId] ?? []).some((tab) =>
           browserTabVisibilityPageIds(tab).some(
             (pageId) => isBrowserAutomationVisible(pageId) || isBrowserPageMobileDriven(pageId)
           )
         )
-        if (
-          guestPinned ||
-          measurableBackgroundWorktreeIdsRef.current.has(worktreeId) ||
-          backgroundMountTabIdsByWorktreeRef.current.has(worktreeId) ||
-          portalWorktreeIds.has(worktreeId)
-        ) {
-          return false
-        }
-        const terminalTabs = state.tabsByWorktree[worktreeId] ?? []
-        return (
-          !terminalTabs.some((tab) =>
-            hasPendingRetentionSpawnWork(tab, state.pendingStartupByTabId)
-          ) && selectEvictionExemptTerminalTabIds(worktreeId, terminalTabs).size === 0
-        )
-      }
     })
-    if (evictedWorktreeIds.length === 0) {
-      return
-    }
     for (const worktreeId of evictedWorktreeIds) {
       destroyWorktreeBrowserGuests(
         state.browserTabsByWorktree,
         state.browserPagesByWorkspace,
         worktreeId
       )
-      mountedWorktreeIdsRef.current.delete(worktreeId)
-      backgroundMountTabIdsByWorktreeRef.current.delete(worktreeId)
-      activationDeferredMountTabIdsByWorktreeRef.current.delete(worktreeId)
     }
-    setBrowserGuestEvictionRevision((revision) => revision + 1)
-  }, [renderedActiveWorktreeId, workspaceSurfaces, activityTerminalPortals])
+  }, [renderedActiveWorktreeId, workspaceSurfaces])
   // Why: a slow post-reconnect step exposes workspaceSessionReady before hydration can populate snapshot capabilities.
   if (
     renderedActiveWorktreeId &&

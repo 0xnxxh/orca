@@ -14,8 +14,8 @@ export const BROWSER_GUEST_HIDDEN_WORKTREE_RETENTION_LIMIT = 4
  * worktree activation order). Only worktrees that actually hold live guests
  * count toward the limit. The active worktree never counts and is never
  * evicted. isEvictable is consulted lazily, only for worktrees beyond the
- * limit — a non-evictable one (visible browser, background measure/mount,
- * activity portal, unreattachable terminal work) stays retained over budget.
+ * limit — a non-evictable one (a guest an automation/mobile controller is
+ * actively driving) stays retained over budget.
  */
 export function selectBrowserGuestEvictionWorktreeIds(args: {
   orderedWorktreeIds: readonly string[]
