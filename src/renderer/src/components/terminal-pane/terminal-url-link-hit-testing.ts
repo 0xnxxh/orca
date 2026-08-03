@@ -15,8 +15,7 @@ export { TERMINAL_HTTP_URL_MAX_LENGTH } from './terminal-http-link-limits'
 
 type UrlLinkHitTestDeps = {
   worktreeId: string
-  /** Host that owns the clicked pane; null/absent means local. */
-  runtimeEnvironmentId?: string | null
+  sourceOwner?: HttpLinkSourceOwner
   modifierHeld?: boolean
   requestOpenLinksInAppPreference?: TerminalLinkRoutingPreferenceRequester
 }
@@ -24,7 +23,7 @@ type UrlLinkHitTestDeps = {
 type UrlLinkClickFallbackDeps = {
   worktreeId: string
   /** Resolved per click: the pane's PTY (and its runtime binding) may not exist at install time. */
-  getRuntimeEnvironmentId?: () => string | null
+  getSourceOwner?: () => HttpLinkSourceOwner
   requestOpenLinksInAppPreference?: TerminalLinkRoutingPreferenceRequester
 }
 
@@ -80,7 +79,7 @@ export function installHttpLinkClickFallback(
     // never established, while defaultPrevented avoids duplicate opens.
     const opened = openHttpLinkAtTerminalMouseEvent(terminal, event, {
       worktreeId: deps.worktreeId,
-      runtimeEnvironmentId: deps.getRuntimeEnvironmentId?.() ?? null,
+      sourceOwner: deps.getSourceOwner?.() ?? { kind: 'local' },
       modifierHeld: event.shiftKey,
       requestOpenLinksInAppPreference: deps.requestOpenLinksInAppPreference
     })
@@ -161,9 +160,7 @@ function rangeContainsBufferPosition(
 export function openTerminalHttpLink(url: string, deps: UrlLinkHitTestDeps): void {
   // Why: Orca browser tabs are local-only, so a link clicked in a runtime-hosted
   // pane must be classified by its pane's host, not the global active runtime.
-  const sourceOwner: HttpLinkSourceOwner = deps.runtimeEnvironmentId
-    ? { kind: 'runtime', runtimeEnvironmentId: deps.runtimeEnvironmentId }
-    : { kind: 'local' }
+  const sourceOwner = deps.sourceOwner ?? { kind: 'local' }
   if (deps.modifierHeld) {
     // Why: the modifier states a destination outright, so it also skips the
     // one-time routing prompt; openHttpLink resolves which destination it means.
