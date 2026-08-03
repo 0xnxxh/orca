@@ -23,12 +23,12 @@ import {
 
 const TWO_SET_KOREAN_ID = 'com.apple.inputmethod.Korean.2SetKorean'
 
-function typeNativeTwoSetKorean(processId: number): void {
+function typeNativeTwoSetKorean(processId: number, keyCodes: readonly number[]): void {
   execFileSync('osascript', [
     '-e',
     `tell application "System Events" to set frontmost of first application process whose unix id is ${processId} to true`,
     '-e',
-    'tell application "System Events" to key code {5, 40, 1, 15, 46, 3, 36}'
+    `tell application "System Events" to key code {${keyCodes.join(', ')}}`
   ])
 }
 
@@ -36,7 +36,9 @@ async function runNativeScenario(
   page: Page,
   testInfo: TestInfo,
   testRepoPath: string,
-  processId: number
+  processId: number,
+  keyCodes: readonly number[],
+  expectedText: string
 ): Promise<void> {
   await waitForSessionReady(page)
   await waitForActiveWorktree(page)
@@ -53,12 +55,12 @@ async function runNativeScenario(
     await startTerminalImeByteReader(page, ptyId, reader)
     await focusActiveTerminalInput(page)
     await installTerminalImeBoundaryProbe(page)
-    typeNativeTwoSetKorean(processId)
+    typeNativeTwoSetKorean(processId, keyCodes)
 
     const receivedBytes = await waitForTerminalImeBytes(page, reader)
-    expect(receivedBytes).toEqual([Buffer.from('한글\n').toString('hex')])
+    expect(receivedBytes).toEqual([Buffer.from(`${expectedText}\n`).toString('hex')])
     const trace = await readTerminalImeBoundaryTrace(page)
-    expect(trace.onData.join('')).toBe('한글\r')
+    expect(trace.onData.join('')).toBe(`${expectedText}\r`)
     completed = true
   } finally {
     await attachTerminalImeBoundaryEvidence(page, testInfo, 'native-macos-2set-boundaries').catch(
@@ -83,6 +85,28 @@ test.describe('Native macOS 2-Set Korean terminal input @headful', () => {
     orcaPage,
     testRepoPath
   }, testInfo) => {
-    await runNativeScenario(orcaPage, testInfo, testRepoPath, electronApp.process().pid!)
+    await runNativeScenario(
+      orcaPage,
+      testInfo,
+      testRepoPath,
+      electronApp.process().pid!,
+      [5, 40, 1, 15, 46, 3, 36],
+      '한글'
+    )
+  })
+
+  test('preserves leading vowels and composes the following syllable', async ({
+    electronApp,
+    orcaPage,
+    testRepoPath
+  }, testInfo) => {
+    await runNativeScenario(
+      orcaPage,
+      testInfo,
+      testRepoPath,
+      electronApp.process().pid!,
+      [31, 40, 0, 16, 36],
+      'ㅐㅏ묘'
+    )
   })
 })
