@@ -23,4 +23,13 @@ describe('Agent Map workspace menu performance boundary', () => {
       /import\s+WorktreeContextMenu\s+from\s+['"]@\/components\/sidebar\/WorktreeContextMenu['"]/
     )
   })
+
+  it('loads store-backed project actions only after a project context request', () => {
+    const loader = source('AgentMapProjectContextMenuLoader.tsx')
+
+    expect(loader).toMatch(/import\('\.\/AgentMapProjectContextMenu'\)/)
+    expect(loader).not.toMatch(
+      /import\s+\{\s*AgentMapProjectContextMenu\s*\}\s+from\s+['"]\.\/AgentMapProjectContextMenu['"]/
+    )
+  })
 })

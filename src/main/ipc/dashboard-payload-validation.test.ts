@@ -39,6 +39,7 @@ const SNAPSHOT = {
       tabId: 'tab-1',
       leafId: 'leaf-1',
       parentPaneKey: 'tab-parent:leaf-parent',
+      parentWorktreeId: 'parent-worktree-1',
       repoName: 'Orca',
       worktreeName: 'Dashboard',
       hostKind: 'ssh',
@@ -122,6 +123,12 @@ describe('dashboard payload validation', () => {
       isDashboardSnapshot({
         ...SNAPSHOT,
         cards: [{ ...SNAPSHOT.cards[0], executionHostId: `ssh:${'x'.repeat(4_097)}` }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], parentWorktreeId: 'x'.repeat(4_097) }]
       })
     ).toBe(false)
     expect(

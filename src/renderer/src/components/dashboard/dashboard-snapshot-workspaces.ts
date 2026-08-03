@@ -16,7 +16,7 @@ export type ActiveDashboardWorkspace = {
   projectName: string
   repo: AppState['repos'][number] | null
   repoIcon: RepoIcon | null
-  worktree: AppState['worktreesByRepo'][string][number]
+  worktree: AppState['worktreesByRepo'][string][number] & { parentWorktreeId?: string | null }
   workspaceKind: DashboardCardWorkspaceKind
   remoteHostKind: Extract<DashboardCardHostKind, 'ssh' | 'remote'> | null
 }

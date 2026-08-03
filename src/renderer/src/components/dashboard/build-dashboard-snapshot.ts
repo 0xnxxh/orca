@@ -184,6 +184,7 @@ export function buildDashboardSnapshot(
   for (const workspace of activeWorktrees) {
     const { repo, worktree } = workspace
     const worktreeId = worktree.id
+    const parentWorktreeId = worktree.parentWorktreeId
     const liveEntries = selectLiveAgentStatusEntriesForWorktree(state, worktreeId)
     const migrationUnsupported = selectMigrationUnsupportedEntriesForWorktree(state, worktreeId)
     const entries =
@@ -309,6 +310,7 @@ export function buildDashboardSnapshot(
         ...(includeCardDetails
           ? {
               parentPaneKey: dashboardCardParentPaneKey(row),
+              ...(parentWorktreeId ? { parentWorktreeId } : {}),
               ...dashboardCardMapWorkspaceMetadata(
                 workspace,
                 ptyId,

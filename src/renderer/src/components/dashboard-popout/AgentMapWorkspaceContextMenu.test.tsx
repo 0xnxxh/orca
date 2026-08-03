@@ -117,4 +117,24 @@ describe('Agent Map workspace context menu', () => {
     expect(screen.getByText('Delete')).toBeInTheDocument()
     expect(useWorktreeById).toHaveBeenCalledWith(worktree.id, EXECUTION_HOST_ID)
   })
+
+  it('opens the existing worktree composer from a project ring', async () => {
+    const { container } = render(
+      <TooltipProvider>
+        <AgentMap cards={[card]} now={NOW} workspaceContextMenusEnabled onOpenTerminal={() => {}} />
+      </TooltipProvider>
+    )
+
+    fireEvent.contextMenu(container.querySelector('[data-agent-map-project]')!, {
+      clientX: 100,
+      clientY: 110
+    })
+    fireEvent.click(await screen.findByText('Create new worktree for Orca', {}, { timeout: 5_000 }))
+
+    expect(useAppStore.getState().activeModal).toBe('new-workspace-composer')
+    expect(useAppStore.getState().modalData).toEqual({
+      initialRepoId: repo.id,
+      telemetrySource: 'sidebar'
+    })
+  })
 })

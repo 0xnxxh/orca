@@ -71,6 +71,8 @@ export type DashboardCard = {
   leafId: string | null
   /** Direct orchestration parent when both agents are visible in this workspace. */
   parentPaneKey?: string
+  /** Direct workspace parent. The map uses it only when both workspace rings are visible. */
+  parentWorktreeId?: string
   repoName: string
   worktreeName: string
   /** Optional for preload compatibility with snapshots produced before Agent Map. */

@@ -268,6 +268,7 @@ function isDashboardCard(value: unknown): boolean {
     isBoundedString(card.tabId, MAX_ID_LENGTH) &&
     (card.leafId === null || isBoundedString(card.leafId, MAX_ID_LENGTH)) &&
     isOptionalBoundedString(card.parentPaneKey, MAX_ID_LENGTH) &&
+    isOptionalBoundedString(card.parentWorktreeId, MAX_ID_LENGTH) &&
     isBoundedString(card.repoName, MAX_LABEL_LENGTH, true) &&
     isBoundedString(card.worktreeName, MAX_LABEL_LENGTH, true) &&
     (card.hostKind === undefined ||

@@ -10,23 +10,15 @@ import {
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
-import type {
-  AgentMapAgentNode,
-  AgentMapProjectRing,
-  AgentMapLayout,
-  AgentMapWorktreeRing
-} from './agent-map-layout'
+import type { AgentMapAgentNode, AgentMapProjectRing, AgentMapLayout } from './agent-map-layout'
 import { AgentMapScene } from './AgentMapScene'
 import { AgentMapViewportControls } from './AgentMapViewportControls'
-import {
-  AgentMapWorkspaceContextMenuLoader,
-  type AgentMapWorkspaceContextMenuRequest
-} from './AgentMapWorkspaceContextMenuLoader'
 import {
   agentMapAgents,
   navigableAgentMapAgents,
   nextDirectionalAgent
 } from './agent-map-navigation'
+import { useAgentMapContextMenus } from './useAgentMapContextMenus'
 
 const MIN_ZOOM = 0.7
 const MAX_ZOOM = 4
@@ -81,15 +73,17 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const pendingViewportRef = useRef<Viewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
     const focusedAgentRef = useRef<{ paneKey: string; x: number; y: number } | null>(null)
-    const contextMenuRequestIdRef = useRef(0)
     const [size, setSize] = useState<ViewportSize>({ width: 800, height: 560 })
     const [viewport, setViewport] = useState<Viewport>({
       center: { x: layout.width / 2, y: layout.height / 2 },
       zoom: 1
     })
-    const [contextMenuRequest, setContextMenuRequest] =
-      useState<AgentMapWorkspaceContextMenuRequest | null>(null)
     const viewportRef = useRef(viewport)
+    const { contextMenus, onOpenProjectContextMenu, onOpenWorkspaceContextMenu } =
+      useAgentMapContextMenus({
+        enabled: workspaceContextMenusEnabled,
+        onOpenChange: onWorkspaceContextMenuOpenChange
+      })
     const { center, zoom } = viewport
     const agents = useMemo(() => agentMapAgents(layout), [layout])
     const navigableAgents = useMemo(
@@ -232,21 +226,6 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       [navigableAgents, onSelectAgent]
     )
 
-    const handleOpenWorkspaceContextMenu = useCallback(
-      (event: React.MouseEvent<SVGCircleElement>, worktree: AgentMapWorktreeRing): void => {
-        contextMenuRequestIdRef.current += 1
-        setContextMenuRequest({
-          id: contextMenuRequestIdRef.current,
-          worktreeId: worktree.worktreeId,
-          executionHostId: worktree.executionHostId,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          altKey: event.altKey
-        })
-      },
-      []
-    )
-
     const zoomAt = useCallback(
       (nextZoom: number, clientX?: number, clientY?: number): void => {
         const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
@@ -311,6 +290,9 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               )
             }}
             onPointerDown={(event) => {
+              if (event.button !== 0) {
+                return
+              }
               if (
                 (event.target as Element).closest(
                   '[data-agent-map-agent], .agent-map-worktree-ring'
@@ -367,9 +349,8 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               allowAggregation={allowAggregation}
               nodeRefs={nodeRefs}
               onSelectAgent={onSelectAgent}
-              onOpenWorkspaceContextMenu={
-                workspaceContextMenusEnabled ? handleOpenWorkspaceContextMenu : undefined
-              }
+              onOpenProjectContextMenu={onOpenProjectContextMenu}
+              onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
               onAgentKeyDown={handleAgentKeyDown}
             />
           </svg>
@@ -381,12 +362,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
           onZoomIn={() => zoomAt(viewportRef.current.zoom * 1.25)}
           onZoomOut={() => zoomAt(viewportRef.current.zoom / 1.25)}
         />
-        {workspaceContextMenusEnabled && contextMenuRequest ? (
-          <AgentMapWorkspaceContextMenuLoader
-            request={contextMenuRequest}
-            onOpenChange={onWorkspaceContextMenuOpenChange}
-          />
-        ) : null}
+        {contextMenus}
       </div>
     )
   }

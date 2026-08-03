@@ -145,6 +145,15 @@
   outline: none;
 }
 
+.agent-map-worktree-lineage-link {
+  fill: none;
+  pointer-events: none;
+  stroke: color-mix(in srgb, var(--muted-foreground) 34%, transparent);
+  stroke-linecap: round;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
 .agent-map-lineage-link {
   fill: none;
   pointer-events: none;

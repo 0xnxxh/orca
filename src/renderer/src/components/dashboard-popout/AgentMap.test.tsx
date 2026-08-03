@@ -176,6 +176,29 @@ describe('AgentMap', () => {
     expect(links[0]).toHaveAttribute('data-child-pane-key', 'child')
   })
 
+  it('connects visible child worktrees beneath their parent ring', () => {
+    const { container } = renderMap([
+      card({ paneKey: 'parent', worktreeId: 'parent-worktree', worktreeName: 'Parent' }),
+      card({
+        paneKey: 'child',
+        worktreeId: 'child-worktree',
+        worktreeName: 'Child',
+        parentWorktreeId: 'parent-worktree'
+      }),
+      card({
+        paneKey: 'orphan',
+        worktreeId: 'orphan-worktree',
+        worktreeName: 'Orphan',
+        parentWorktreeId: 'filtered-parent'
+      })
+    ])
+    const links = container.querySelectorAll('[data-agent-map-worktree-lineage-link]')
+
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('data-parent-worktree-id', 'parent-worktree')
+    expect(links[0]).toHaveAttribute('data-child-worktree-id', 'child-worktree')
+  })
+
   it('opens the shared dashboard terminal dialog when an agent is clicked', () => {
     const onOpenTerminal = vi.fn()
     const agent = card()

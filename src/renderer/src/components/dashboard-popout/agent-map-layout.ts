@@ -3,9 +3,10 @@ import { layoutAgentMapLineage } from './agent-map-lineage-layout'
 import { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
 import {
   agentMapCardTopologyIdentity,
-  agentMapWorktreeIdentity
+  agentMapWorktreeIdentity,
+  agentMapWorktreeIdentityFromParts
 } from './agent-map-workspace-identity'
-import { packAgentMapWorktrees } from './agent-map-worktree-packing'
+import { layoutAgentMapWorktreeLineage } from './agent-map-worktree-lineage-layout'
 
 type DashboardCard = DashboardSnapshotTypes.DashboardCard
 type DashboardCardDotState = DashboardSnapshotTypes.DashboardCardDotState
@@ -34,6 +35,7 @@ export type AgentMapAgentNode = {
 
 export type AgentMapWorktreeRing = {
   id: string
+  parentId?: string
   worktreeId: string
   executionHostId: DashboardCard['executionHostId']
   name: string
@@ -87,10 +89,6 @@ function stableHash(value: string): number {
   return hash >>> 0
 }
 
-function hashFraction(value: string): number {
-  return stableHash(value) / 0xffffffff
-}
-
 export function agentMapTopologyKey(cards: DashboardCard[]): string {
   return cards.map(agentMapCardTopologyIdentity).sort(compareStable).join('|')
 }
@@ -128,7 +126,7 @@ function placeAgents(
   const availableRadius = Math.max(0, radius - AGENT_MAP_AGENT_RADIUS - 10)
   const sorted = [...cards].sort((a, b) => compareStable(a.paneKey, b.paneKey))
   const capacity = Math.ceil(Math.sqrt(Math.max(1, sorted.length))) ** 2
-  const angleOffset = hashFraction(worktreeId) * Math.PI * 2
+  const angleOffset = (stableHash(worktreeId) / 0xffffffff) * Math.PI * 2
 
   return sorted.map((card, index) => {
     const orbit = sorted.length === 1 ? 0 : Math.sqrt((index + 0.5) / capacity) * availableRadius
@@ -153,6 +151,9 @@ function buildLocalWorktree(id: string, cards: DashboardCard[], now: number): Lo
   }
   return {
     id,
+    parentId: cards[0]?.parentWorktreeId
+      ? agentMapWorktreeIdentityFromParts(cards[0].parentWorktreeId, cards[0].executionHostId)
+      : undefined,
     worktreeId: cards[0]?.worktreeId ?? id,
     executionHostId: cards[0]?.executionHostId,
     name: cards[0]?.worktreeName ?? id,
@@ -185,7 +186,7 @@ function buildLocalProject(id: string, cards: DashboardCard[], now: number): Loc
       byWorktree.set(identity, [card])
     }
   }
-  const worktrees = packAgentMapWorktrees(
+  const worktrees = layoutAgentMapWorktreeLineage(
     [...byWorktree.entries()]
       .sort(([a], [b]) => compareStable(a, b))
       .map(([worktreeId, worktreeCards]) => buildLocalWorktree(worktreeId, worktreeCards, now))

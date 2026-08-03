@@ -158,6 +158,69 @@ describe('agent map layout', () => {
     }
   })
 
+  it('places visible child worktrees beneath their direct parent', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({ paneKey: 'parent', worktreeId: 'parent-worktree' }),
+        card({
+          paneKey: 'child-a',
+          worktreeId: 'child-a-worktree',
+          parentWorktreeId: 'parent-worktree'
+        }),
+        card({
+          paneKey: 'child-b',
+          worktreeId: 'child-b-worktree',
+          parentWorktreeId: 'parent-worktree'
+        }),
+        card({
+          paneKey: 'grandchild',
+          worktreeId: 'grandchild-worktree',
+          parentWorktreeId: 'child-a-worktree'
+        })
+      ],
+      NOW
+    )
+    const worktrees = new Map(
+      layout.projects[0].worktrees.map((worktree) => [worktree.worktreeId, worktree])
+    )
+    const parent = worktrees.get('parent-worktree')!
+    const childA = worktrees.get('child-a-worktree')!
+    const childB = worktrees.get('child-b-worktree')!
+    const grandchild = worktrees.get('grandchild-worktree')!
+
+    expect(childA.y).toBeGreaterThan(parent.y)
+    expect(childB.y).toBeGreaterThan(parent.y)
+    expect(grandchild.y).toBeGreaterThan(childA.y)
+    for (const [index, worktree] of layout.projects[0].worktrees.entries()) {
+      for (const other of layout.projects[0].worktrees.slice(index + 1)) {
+        expect(Math.hypot(worktree.x - other.x, worktree.y - other.y)).toBeGreaterThanOrEqual(
+          worktree.radius + other.radius + AGENT_MAP_WORKTREE_GAP - 0.001
+        )
+      }
+    }
+  })
+
+  it('repacks cached geometry when a worktree parent changes', () => {
+    const cards = [
+      card({ paneKey: 'parent-a', worktreeId: 'parent-a' }),
+      card({ paneKey: 'parent-b', worktreeId: 'parent-b' }),
+      card({ paneKey: 'child', worktreeId: 'child', parentWorktreeId: 'parent-a' })
+    ]
+    const initial = updateAgentMapLayout(null, cards, NOW)
+    const updated = updateAgentMapLayout(
+      initial.cache,
+      cards.map((candidate) =>
+        candidate.worktreeId === 'child'
+          ? { ...candidate, parentWorktreeId: 'parent-b' }
+          : candidate
+      ),
+      NOW
+    )
+
+    expect(updated.cache).not.toBe(initial.cache)
+    expect(updated.cache.packingGeneration).toBe(2)
+  })
+
   it('repacks cached geometry when an orchestration parent changes', () => {
     const cards = [
       card({ paneKey: 'parent-a' }),

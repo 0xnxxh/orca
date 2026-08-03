@@ -81,6 +81,9 @@ describe('AgentMapCanvas pointer performance', () => {
     })
     expect(ringRender).toHaveBeenCalledTimes(1)
 
+    fireEvent.pointerDown(svg, { pointerId: 2, button: 2, clientX: 20, clientY: 20 })
+    expect(svg.setPointerCapture).not.toHaveBeenCalled()
+
     fireEvent.pointerDown(svg, { pointerId: 1, clientX: 20, clientY: 20 })
     fireEvent.pointerMove(svg, { pointerId: 1, clientX: 40, clientY: 20 })
     fireEvent.pointerMove(svg, { pointerId: 1, clientX: 60, clientY: 20 })

@@ -501,7 +501,13 @@ describe('buildDashboardSnapshot', () => {
           { id: 'reviewing', label: 'Reviewing', color: 'emerald' }
         ],
         worktreesByRepo: {
-          r1: [{ ...worktree(), workspaceStatus: 'reviewing' }]
+          r1: [
+            {
+              ...worktree(),
+              workspaceStatus: 'reviewing',
+              parentWorktreeId: 'parent-worktree'
+            } as Worktree & { parentWorktreeId: string }
+          ]
         },
         agentStatusByPaneKey: {
           [PANE_KEY]: entry({
@@ -524,6 +530,7 @@ describe('buildDashboardSnapshot', () => {
       workspaceStatusId: 'reviewing',
       workspaceStatusLabel: 'Reviewing',
       workspaceStatusColor: 'emerald',
+      parentWorktreeId: 'parent-worktree',
       subagents: [{ name: 'Review loop', dotState: 'working' }]
     })
   })
@@ -565,6 +572,7 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0].workspaceStatusId).toBeUndefined()
     expect(snapshot.cards[0].subagents).toBeUndefined()
     expect(snapshot.cards[0].parentPaneKey).toBeUndefined()
+    expect(snapshot.cards[0].parentWorktreeId).toBeUndefined()
     expect(snapshot.cards[0].hostKind).toBeUndefined()
     expect(snapshot.cards[0].workspaceKind).toBeUndefined()
     // Why: the card has a live pty, so only the count-path gate keeps the
