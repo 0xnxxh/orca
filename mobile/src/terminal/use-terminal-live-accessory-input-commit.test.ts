@@ -38,7 +38,6 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 }
 
 type AccessoryInputCommitHarnessOptions = {
-  readonly compositionHandle?: string | null
   readonly heldText?: string
   readonly sentText?: string
   readonly pendingHandle?: string | null
@@ -59,7 +58,6 @@ type AccessoryInputCommitHarness = {
 }
 
 function createAccessoryInputCommitHarness({
-  compositionHandle = null,
   heldText = '',
   sentText = '',
   pendingHandle = null,
@@ -72,7 +70,6 @@ function createAccessoryInputCommitHarness({
   const sentLiveInputTextRef: RefObject<string> = { current: sentText }
   const pendingLiveInputHandleRef: RefObject<string | null> = { current: pendingHandle }
   const liveInputRef: RefObject<TextInput | null> = { current: null }
-  const isLiveInputCompositionActive = (handle: string): boolean => handle === compositionHandle
   const liveInputTerminalHandles = new Set([activeHandle])
   const sent: string[] = []
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
@@ -97,7 +94,6 @@ function createAccessoryInputCommitHarness({
       clearPendingLiveInputCommit,
       flushPendingLiveInputText,
       heldLiveInputTextRef,
-      isLiveInputCompositionActive,
       liveInputRef,
       liveInputTerminalHandles,
       pendingLiveInputHandleRef,
@@ -169,16 +165,6 @@ describe('terminal live accessory inactive input commit result', () => {
 })
 
 describe('terminal live accessory input commit hook', () => {
-  it('Given native marked text When an accessory key is pressed Then suppresses raw input', async () => {
-    const harness = createAccessoryInputCommitHarness({ compositionHandle: 'terminal-a' })
-
-    const result = await harness.commit({ bytes: '\x1b' })
-
-    expect(result).toEqual({ kind: 'suppress-raw' })
-    expect(harness.waitForPendingLiveInputFlush).not.toHaveBeenCalled()
-    expect(harness.sent).toEqual([])
-  })
-
   it('Given raw accessory bytes with a held syllable When committed Then flushes held text before sending bytes', async () => {
     // Given
     const harness = createAccessoryInputCommitHarness({

@@ -1,6 +1,5 @@
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
-import type { TerminalLiveExternalInputRunner } from '../terminal/terminal-live-input-sender'
 import type { MobileImageSource } from './mobile-image-source-picker'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import { useMobileImageAttachment } from './use-mobile-image-attachment'
@@ -23,7 +22,7 @@ type Args = {
   readonly nativeChatScopeKey: string | null
   readonly nativeChatInputLeaseReady: boolean
   readonly getActiveWorktreeConnectionId: () => Promise<string | null>
-  readonly runTerminalSend: TerminalLiveExternalInputRunner
+  readonly beforeTerminalSend: (terminal: string) => Promise<boolean>
   /** Outcome-preserving so an ambiguous ('unknown') delivery after an image
    *  paste can mark the terminal input for healing (#10228). Takes the image
    *  send's budget so the paste and this text body share one `sending` window. */
@@ -56,7 +55,7 @@ export function useMobileSessionImageAttachments({
   nativeChatScopeKey,
   nativeChatInputLeaseReady,
   getActiveWorktreeConnectionId,
-  runTerminalSend,
+  beforeTerminalSend,
   nativeChatBaseSend,
   readSeededLaunchDraft,
   showToast,
@@ -74,7 +73,7 @@ export function useMobileSessionImageAttachments({
     canSend,
     connState,
     deviceTokenRef,
-    runTerminalSend,
+    beforeTerminalSend,
     getActiveWorktreeConnectionId,
     showToast,
     onSuccess,

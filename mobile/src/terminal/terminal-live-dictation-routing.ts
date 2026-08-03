@@ -1,5 +1,3 @@
-import type { TerminalLiveExternalInputRunner } from './terminal-live-input-sender'
-
 // Routes a finished dictation transcript to the right surface: live mode inserts
 // it straight into the originating PTY (matching live keystroke semantics, no
 // auto-Return); buffered mode appends to the command field as before.
@@ -24,37 +22,4 @@ export function appendBufferedDictation(current: string, transcript: string): st
     return transcript
   }
   return `${current.trimEnd()} ${transcript}`
-}
-
-type InsertLiveDictationTranscriptOptions = {
-  readonly handle: string
-  readonly onSendError: () => void
-  readonly runTerminalLiveExternalInput: TerminalLiveExternalInputRunner
-  readonly sendInput: (handle: string, text: string) => Promise<boolean>
-  readonly showToast: (message: string, durationMs?: number) => void
-  readonly text: string
-}
-
-export async function insertLiveDictationTranscript({
-  handle,
-  onSendError,
-  runTerminalLiveExternalInput,
-  sendInput,
-  showToast,
-  text
-}: InsertLiveDictationTranscriptOptions): Promise<boolean> {
-  let sendAttempted = false
-  const inserted = await runTerminalLiveExternalInput(handle, async () => {
-    sendAttempted = true
-    return sendInput(handle, text)
-  })
-  if (inserted) {
-    showToast('Dictation inserted')
-    return true
-  }
-  if (sendAttempted) {
-    onSendError()
-  }
-  showToast('Dictation insert canceled', 1500)
-  return false
 }

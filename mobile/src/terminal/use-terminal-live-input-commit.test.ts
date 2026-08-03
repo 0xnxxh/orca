@@ -7,15 +7,11 @@ import { TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS } from './terminal-live-han
 import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
 
 type TerminalLiveInputCommitHarness = {
-  readonly clearLiveInput: () => void
   readonly captures: readonly string[]
   readonly handlers: ReturnType<typeof useTerminalLiveInputCommit<string>>
   readonly sent: readonly string[]
-  readonly sentByHandle: readonly { readonly bytes: string; readonly handle: string }[]
-  readonly setActiveHandle: (next: string) => void
   readonly setActiveSessionTabType: (next: string | undefined) => void
   readonly setConnected: (next: boolean) => void
-  readonly setSendImplementation: (next: TerminalLiveInputSender | null) => void
   readonly setSendResult: (next: boolean) => void
   readonly unmount: () => void
 }
@@ -39,29 +35,24 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 function createTerminalLiveInputCommitHarness({
   sendResult = true
 }: TerminalLiveInputCommitHarnessOptions = {}): TerminalLiveInputCommitHarness {
-  let currentActiveHandle = 'terminal-a'
-  const activeHandleRef: RefObject<string | null> = { current: currentActiveHandle }
+  const activeHandle = 'terminal-a'
+  const activeHandleRef: RefObject<string | null> = { current: activeHandle }
   const activeSessionTabTypeRef: RefObject<string | null> = { current: 'terminal' }
   const captures: string[] = []
   const setLiveInputCapture = (text: string): void => {
     captures.push(text)
   }
   const liveInputRef: RefObject<TextInput | null> = { current: null }
-  const liveInputTerminalHandles = new Set(['terminal-a', 'terminal-b'])
+  const liveInputTerminalHandles = new Set([activeHandle])
   const liveInputTerminalHandlesRef: RefObject<Set<string>> = {
-    current: new Set(liveInputTerminalHandles)
+    current: new Set([activeHandle])
   }
   const sent: string[] = []
-  const sentByHandle: { bytes: string; handle: string }[] = []
   let currentSendResult = sendResult
-  let currentSendImplementation: TerminalLiveInputSender | null = null
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
-    current: async (handle, bytes) => {
+    current: async (_handle, bytes) => {
       sent.push(bytes)
-      sentByHandle.push({ bytes, handle })
-      return currentSendImplementation
-        ? currentSendImplementation(handle, bytes)
-        : currentSendResult
+      return currentSendResult
     }
   }
   // Refs never re-render; only these variables re-run the hook's clear effects.
@@ -72,7 +63,7 @@ function createTerminalLiveInputCommitHarness({
 
   function Harness(): null {
     handlers = useTerminalLiveInputCommit({
-      activeHandle: currentActiveHandle,
+      activeHandle,
       activeHandleRef,
       activeSessionTabType: currentActiveSessionTabType,
       activeSessionTabTypeRef,
@@ -99,9 +90,6 @@ function createTerminalLiveInputCommitHarness({
   }
 
   return {
-    clearLiveInput: (): void => {
-      act(() => handlers?.clearPendingLiveInputCommit())
-    },
     captures,
     get handlers() {
       if (!handlers) {
@@ -110,14 +98,6 @@ function createTerminalLiveInputCommitHarness({
       return handlers
     },
     sent,
-    sentByHandle,
-    setActiveHandle: (next: string): void => {
-      currentActiveHandle = next
-      activeHandleRef.current = next
-      act(() => {
-        renderer?.update(createElement(Harness))
-      })
-    },
     setActiveSessionTabType: (next: string | undefined): void => {
       currentActiveSessionTabType = next
       // Ref and prop derive from the same activeSessionTab in the real route, so
@@ -132,9 +112,6 @@ function createTerminalLiveInputCommitHarness({
       act(() => {
         renderer?.update(createElement(Harness))
       })
-    },
-    setSendImplementation: (next: TerminalLiveInputSender | null): void => {
-      currentSendImplementation = next
     },
     setSendResult: (next: boolean): void => {
       currentSendResult = next
@@ -244,316 +221,83 @@ describe('terminal live input commit hook', () => {
     const { handlers, sent } = createTerminalLiveInputCommitHarness()
 
     // When
-    changeLiveInput(handlers, 'a', false)
-    changeLiveInput(handlers, 'ab', false)
+    changeLiveInput(handlers, 'a')
+    changeLiveInput(handlers, 'ab')
 
     // Then
     await vi.waitFor(() => expect(sent).toEqual(['a', 'b']))
   })
 
-  it('Given provisional marked text When its change arrives Then echoes without sending', () => {
+  it('Given iOS marked text When kana changes Then sends only the committed text', async () => {
+    // Given
     const { captures, handlers, sent } = createTerminalLiveInputCommitHarness()
 
-    changeLiveInput(handlers, 'かな', true)
+    // When
+    changeLiveInput(handlers, 'k', true)
+    changeLiveInput(handlers, 'か', true)
 
-    expect(captures).toEqual(['かな'])
+    // Then
+    expect(captures).toEqual(['k', 'か'])
     expect(sent).toEqual([])
+
+    // When
+    changeLiveInput(handlers, 'か', false)
+
+    // Then
+    await vi.waitFor(() => expect(sent).toEqual(['か']))
   })
 
-  it('Given marked text When composition ends Then sends the committed text exactly once', async () => {
+  it('Given marked text When an external send starts Then waits for the committed text', async () => {
+    // Given
     const { handlers, sent } = createTerminalLiveInputCommitHarness()
-    changeLiveInput(handlers, 'かな', true)
+    changeLiveInput(handlers, 'か', true)
 
-    changeLiveInput(handlers, 'かな', false)
-
-    await vi.waitFor(() => expect(sent).toEqual(['かな']))
-  })
-
-  it('Given marked text When the active terminal switches Then clears it without sending', () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
-
-    harness.setActiveHandle('terminal-b')
-
-    expect(harness.captures).toEqual(['かな', ''])
-    expect(harness.sent).toEqual([])
-  })
-
-  it('Given a switch without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    const oldHandlers = harness.handlers
-    changeLiveInput(oldHandlers, 'かな', true)
-    harness.setActiveHandle('terminal-b')
-
-    changeLiveInput(harness.handlers, 'x', false)
-    changeLiveInput(oldHandlers, '仮', true)
-    changeLiveInput(oldHandlers, '仮名', false)
-
-    await vi.waitFor(() =>
-      expect(harness.sentByHandle).toEqual([{ bytes: 'x', handle: 'terminal-b' }])
-    )
-    expect(harness.captures).toEqual(['かな', '', 'x'])
-  })
-
-  it('Given a switch before any old input When late native events arrive Then rejects them', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    const oldHandlers = harness.handlers
-    harness.setActiveHandle('terminal-b')
-    changeLiveInput(harness.handlers, 'x', false)
-
-    changeLiveInput(oldHandlers, 'かな', true)
-    oldHandlers.handleLiveInputKeyPress({ nativeEvent: { key: 'Tab' } })
-    oldHandlers.handleLiveInputSubmit()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(harness.sentByHandle).toEqual([{ bytes: 'x', handle: 'terminal-b' }])
-    expect(harness.captures).toEqual(['x'])
-  })
-
-  it('Given reconnect without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    const oldHandlers = harness.handlers
-    changeLiveInput(oldHandlers, 'かな', true)
-    harness.setConnected(false)
-    harness.setConnected(true)
-
-    changeLiveInput(harness.handlers, 'x', false)
-    changeLiveInput(oldHandlers, '仮', true)
-    changeLiveInput(oldHandlers, '仮名', false)
-
-    await vi.waitFor(() => expect(harness.sent).toEqual(['x']))
-    expect(harness.captures.slice(-2)).toEqual(['', 'x'])
-  })
-
-  it('Given toggle cleanup without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    const oldHandlers = harness.handlers
-    changeLiveInput(oldHandlers, 'かな', true)
-    harness.clearLiveInput()
-
-    changeLiveInput(harness.handlers, 'x', false)
-    changeLiveInput(oldHandlers, '仮', true)
-    changeLiveInput(oldHandlers, '仮名', false)
-
-    await vi.waitFor(() => expect(harness.sent).toEqual(['x']))
-    expect(harness.captures).toEqual(['かな', '', 'x'])
-  })
-
-  it('Given active marked text When an external send requests a flush Then defers it until commit', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
+    // When
+    const flush = handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
     let settled = false
-
-    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
     void flush.then(() => {
       settled = true
     })
     await Promise.resolve()
+
+    // Then
     expect(settled).toBe(false)
-    expect(harness.sent).toEqual([])
 
-    changeLiveInput(harness.handlers, '仮名', false)
+    // When
+    changeLiveInput(handlers, 'か', false)
 
+    // Then
     await expect(flush).resolves.toBe(true)
-    expect(harness.sent).toEqual(['仮名'])
+    expect(sent).toEqual(['か'])
   })
 
-  it('Given a newer composition starts during an older flush Then preserves and waits for it', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    let releaseFirstSend: (sent: boolean) => void = () => undefined
-    const firstSend = new Promise<boolean>((resolve) => {
-      releaseFirstSend = resolve
-    })
-    let sendCount = 0
-    harness.setSendImplementation(async () => {
-      sendCount += 1
-      return sendCount === 1 ? firstSend : true
-    })
-    changeLiveInput(harness.handlers, 'かな', true)
-    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
-    let flushSettled = false
-    void flush.then(() => {
-      flushSettled = true
-    })
-    changeLiveInput(harness.handlers, '仮名', false)
-    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
-
-    changeLiveInput(harness.handlers, '仮名か', true)
-    releaseFirstSend(true)
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(harness.captures.at(-1)).toBe('仮名か')
-    expect(flushSettled).toBe(false)
-
-    changeLiveInput(harness.handlers, '仮名漢字', false)
-
-    await expect(flush).resolves.toBe(true)
-    expect(harness.sent).toEqual(['仮名', '漢字'])
-    expect(harness.captures.at(-1)).toBe('')
-  })
-
-  it('Given flush requests span successive compositions Then resolves them in request order', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    let releaseFirstSend: (sent: boolean) => void = () => undefined
-    const firstSend = new Promise<boolean>((resolve) => {
-      releaseFirstSend = resolve
-    })
-    let sendCount = 0
-    harness.setSendImplementation(async () => {
-      sendCount += 1
-      return sendCount === 1 ? firstSend : true
-    })
-    const settled: string[] = []
-    changeLiveInput(harness.handlers, 'かな', true)
-    const firstFlush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
-    void firstFlush.then(() => settled.push('first'))
-    changeLiveInput(harness.handlers, '仮名', false)
-    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
-
-    changeLiveInput(harness.handlers, '仮名か', true)
-    const secondFlush = harness.handlers.runTerminalLiveExternalInput(
-      'terminal-a',
-      async () => true
-    )
-    void secondFlush.then(() => settled.push('second'))
-    changeLiveInput(harness.handlers, '仮名漢字', false)
-    releaseFirstSend(true)
-
-    await expect(Promise.all([firstFlush, secondFlush])).resolves.toEqual([true, true])
-    expect(harness.sent).toEqual(['仮名', '漢字'])
-    expect(settled).toEqual(['first', 'second'])
-  })
-
-  it('Given queued external sends When the first operation is pending Then holds the second operation', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    let releaseFirst: (sent: boolean) => void = () => undefined
-    const firstPending = new Promise<boolean>((resolve) => {
-      releaseFirst = resolve
-    })
-    const sends: string[] = []
-
-    const first = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
-      sends.push('first-start')
-      const sent = await firstPending
-      sends.push('first-end')
-      return sent
-    })
-    const second = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
-      sends.push('second')
-      return true
-    })
-
-    await vi.waitFor(() => expect(sends).toEqual(['first-start']))
-    releaseFirst(true)
-
-    await expect(Promise.all([first, second])).resolves.toEqual([true, true])
-    expect(sends).toEqual(['first-start', 'first-end', 'second'])
-  })
-
-  it('Given a queued send predates reconnect When its turn arrives Then cancels the stale operation', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    let releaseFirst: (sent: boolean) => void = () => undefined
-    const firstPending = new Promise<boolean>((resolve) => {
-      releaseFirst = resolve
-    })
-    let firstStarted = false
-    const secondSend = vi.fn(async () => true)
-    const first = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
-      firstStarted = true
-      return firstPending
-    })
-    const second = harness.handlers.runTerminalLiveExternalInput('terminal-a', secondSend)
-    await vi.waitFor(() => expect(firstStarted).toBe(true))
-
-    harness.setConnected(false)
-    harness.setConnected(true)
-    releaseFirst(true)
-
-    await expect(first).resolves.toBe(true)
-    await expect(second).resolves.toBe(false)
-    expect(secondSend).not.toHaveBeenCalled()
-  })
-
-  it('Given an old flush is invalidated Then it cannot clear new fallback input', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    let releaseOldSend: (sent: boolean) => void = () => undefined
-    const oldSend = new Promise<boolean>((resolve) => {
-      releaseOldSend = resolve
-    })
-    let sendCount = 0
-    harness.setSendImplementation(async () => {
-      sendCount += 1
-      return sendCount === 1 ? oldSend : true
-    })
-    changeLiveInput(harness.handlers, 'かな', true)
-    const oldFlush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
-    changeLiveInput(harness.handlers, '仮名', false)
-    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
-
-    harness.setActiveHandle('terminal-b')
-    changeLiveInput(harness.handlers, '한')
-    releaseOldSend(true)
-
-    await expect(oldFlush).resolves.toBe(false)
-    expect(harness.captures.at(-1)).toBe('한')
-    await expect(
-      harness.handlers.runTerminalLiveExternalInput('terminal-b', async () => true)
-    ).resolves.toBe(true)
-    expect(harness.sentByHandle).toEqual([
-      { bytes: '仮名', handle: 'terminal-a' },
-      { bytes: '한', handle: 'terminal-b' }
-    ])
-  })
-
-  it('Given a deferred external send When the terminal switches Then cancels the original target', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
-    const flush = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
-
-    harness.setActiveHandle('terminal-b')
-
-    await expect(flush).resolves.toBe(false)
-    expect(harness.sent).toEqual([])
-  })
-
-  it('Given active marked text When an accessory key is pressed Then suppresses it until commit', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
-
-    await expect(
-      harness.handlers.handleLiveInputAccessoryBytes({ bytes: '\x1b' })
-    ).resolves.toEqual({ kind: 'suppress-raw' })
-
-    changeLiveInput(harness.handlers, '仮名', false)
-    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
-    await expect(
-      harness.handlers.handleLiveInputAccessoryBytes({ bytes: '\x1b' })
-    ).resolves.toEqual({ kind: 'allow-raw' })
-  })
-
-  it('Given a switch clears marked text When controls target the new terminal Then allows them', async () => {
-    const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
-    harness.setActiveHandle('terminal-b')
-
-    await expect(
-      harness.handlers.runTerminalLiveExternalInput('terminal-b', async () => true)
-    ).resolves.toBe(true)
-    await expect(
-      harness.handlers.handleLiveInputAccessoryBytes({ bytes: '\x1b' })
-    ).resolves.toEqual({ kind: 'allow-raw' })
-  })
-
-  it('Given active composition When native control events arrive Then keeps them inside the IME', () => {
+  it('Given marked text When terminal controls are pressed Then suppresses them', async () => {
+    // Given
     const { handlers, sent } = createTerminalLiveInputCommitHarness()
-    changeLiveInput(handlers, 'かな', true)
+    changeLiveInput(handlers, 'か', true)
 
+    // When
     handlers.handleLiveInputKeyPress({ nativeEvent: { key: 'Tab' } })
     handlers.handleLiveInputSubmit()
+    const accessoryResult = await handlers.handleLiveInputAccessoryBytes({ bytes: '\t' })
 
+    // Then
+    expect(accessoryResult).toEqual({ kind: 'suppress-raw' })
     expect(sent).toEqual([])
+  })
+
+  it('Given an external send waiting on marked text When the connection resets Then cancels it', async () => {
+    // Given
+    const harness = createTerminalLiveInputCommitHarness()
+    changeLiveInput(harness.handlers, 'か', true)
+    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+
+    // When
+    harness.setConnected(false)
+
+    // Then
+    await expect(flush).resolves.toBe(false)
+    expect(harness.sent).toEqual([])
   })
 
   it('Given iOS smart-dash text When the change arrives Then the capture echoes the raw field text and the PTY gets normalized bytes', async () => {
@@ -600,7 +344,7 @@ describe('terminal live input commit hook', () => {
     changeLiveInput(handlers, '한')
 
     // When
-    const flushed = await handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
+    const flushed = await handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
 
     // Then
     expect(flushed).toBe(true)
@@ -613,14 +357,14 @@ describe('terminal live input commit hook', () => {
     changeLiveInput(handlers, '한')
 
     // When
-    const flushed = await handlers.runTerminalLiveExternalInput('terminal-a', async () => true)
+    const flushed = await handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
 
     // Then
     expect(flushed).toBe(false)
     expect(sent).toEqual(['한'])
   })
 
-  it('Given a change event without composition state When it arrives Then uses the existing mirror path', async () => {
+  it('Given non-Hangul IME text When changes arrive Then mirrors immediately without a settle window', async () => {
     // Given
     const { handlers, sent } = createTerminalLiveInputCommitHarness()
 
@@ -671,28 +415,28 @@ describe('terminal live input commit hook', () => {
 
   it('Given Hangul pending When the tab type lags to undefined Then keeps the composition state', async () => {
     // Given: '한' held while the active tab is still a terminal
-    const { handlers, sent, setActiveSessionTabType } = createTerminalLiveInputCommitHarness()
-    changeLiveInput(handlers, '한')
+    const harness = createTerminalLiveInputCommitHarness()
+    changeLiveInput(harness.handlers, '한')
 
     // When: the mobile tab list momentarily yields no active tab object
-    setActiveSessionTabType(undefined)
-    handlers.handleLiveInputSubmit()
+    harness.setActiveSessionTabType(undefined)
+    harness.handlers.handleLiveInputSubmit()
 
     // Then: an unknown tab type is not "left the terminal", so pending still flushes
-    await vi.waitFor(() => expect(sent).toEqual(['한', '\r']))
+    await vi.waitFor(() => expect(harness.sent).toEqual(['한', '\r']))
   })
 
   it('Given Hangul pending When the tab genuinely changes to non-terminal Then clears the composition state', async () => {
     // Given: '한' held while the active tab is still a terminal
-    const { handlers, sent, setActiveSessionTabType } = createTerminalLiveInputCommitHarness()
-    changeLiveInput(handlers, '한')
+    const harness = createTerminalLiveInputCommitHarness()
+    changeLiveInput(harness.handlers, '한')
 
     // When: the active tab actually becomes a non-terminal (chat) tab
-    setActiveSessionTabType('chat')
-    handlers.handleLiveInputSubmit()
+    harness.setActiveSessionTabType('chat')
+    harness.handlers.handleLiveInputSubmit()
 
-    // Then: pending was dropped and the old terminal handler cannot submit from chat.
-    expect(sent).toEqual([])
+    // Then: pending was dropped, so submit sends only the carriage return
+    await vi.waitFor(() => expect(harness.sent).toEqual(['\r']))
   })
 
   it('Given bytes lost in a silent stall When the disconnect is detected Then the first post-recovery send carries no stale fragment or phantom erases', async () => {

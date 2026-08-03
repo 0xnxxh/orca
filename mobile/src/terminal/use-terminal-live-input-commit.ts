@@ -3,19 +3,8 @@ import type { TextInput } from 'react-native'
 import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
 import { sendTerminalLiveControlAfterPendingFlush } from './terminal-live-control-send-order'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
-import { flushTerminalLiveExternalInput } from './terminal-live-external-input-flush'
-import type {
-  TerminalLiveExternalInputRunner,
-  TerminalLiveInputSender
-} from './terminal-live-input-sender'
+import type { TerminalLiveInputSender } from './terminal-live-input-sender'
 import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
-import {
-  beginTerminalLiveImeComposition,
-  createTerminalLiveImeState,
-  finishTerminalLiveImeComposition,
-  invalidateTerminalLiveImeComposition,
-  isSameTerminalLiveImeBoundary
-} from './terminal-live-ime-state'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 import {
   useTerminalLiveAccessoryInputCommit,
@@ -35,6 +24,20 @@ type TerminalLiveInputChangeEvent = {
   }
 }
 
+type TerminalLiveComposition = {
+  readonly completion: Promise<boolean>
+  readonly handle: string
+  readonly resolve: (committed: boolean) => void
+}
+
+function createTerminalLiveComposition(handle: string): TerminalLiveComposition {
+  let resolveCompletion: (committed: boolean) => void = () => undefined
+  const completion = new Promise<boolean>((resolve) => {
+    resolveCompletion = resolve
+  })
+  return { completion, handle, resolve: resolveCompletion }
+}
+
 type TerminalLiveInputCommitOptions<TTabType extends string> = {
   readonly activeHandle: string | null
   readonly activeHandleRef: RefObject<string | null>
@@ -50,7 +53,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
 
 type TerminalLiveInputCommitHandlers = {
   readonly clearPendingLiveInputCommit: () => void
-  readonly runTerminalLiveExternalInput: TerminalLiveExternalInputRunner
+  readonly flushPendingLiveInputBeforeExternalSend: (handle: string) => Promise<boolean>
   readonly handleLiveInputAccessoryBytes: (
     input: TerminalLiveAccessoryInput
   ) => Promise<TerminalLiveAccessoryInputCommitResult>
@@ -74,8 +77,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
   const [liveInputGeneration, setLiveInputGeneration] = useState(0)
   const liveInputGenerationRef = useRef(0)
-  const externalFlushTailRef = useRef(Promise.resolve(true))
-  const liveInputImeStateRef = useRef(createTerminalLiveImeState())
+  const liveInputCompositionRef = useRef<TerminalLiveComposition | null>(null)
   const {
     applyLiveInputMirror,
     clearPendingLiveInputCommit: clearPendingLiveInputMirror,
@@ -94,7 +96,9 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   })
 
   const clearPendingLiveInputCommit = useCallback(() => {
-    invalidateTerminalLiveImeComposition(liveInputImeStateRef.current)
+    const composition = liveInputCompositionRef.current
+    liveInputCompositionRef.current = null
+    composition?.resolve(false)
     const nextGeneration = liveInputGenerationRef.current + 1
     liveInputGenerationRef.current = nextGeneration
     setLiveInputGeneration(nextGeneration)
@@ -110,8 +114,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   useLayoutEffect(() => {
     const pendingHandle = pendingLiveInputHandleRef.current
-    const compositionHandle = liveInputImeStateRef.current.owner?.handle ?? null
-    const inputOwnerHandle = compositionHandle ?? pendingHandle
+    const inputOwnerHandle = liveInputCompositionRef.current?.handle ?? pendingHandle
     if (!inputOwnerHandle) {
       return
     }
@@ -128,84 +131,87 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     }
   }, [activeHandle, activeSessionTabType, clearPendingLiveInputCommit, liveInputTerminalHandles])
 
-  const isLiveInputTargetActive = useCallback(
-    (handle: string): boolean =>
-      activeHandleRef.current === handle &&
-      (activeSessionTabTypeRef.current == null || activeSessionTabTypeRef.current === 'terminal') &&
-      liveInputTerminalHandlesRef.current.has(handle),
-    []
-  )
-
-  const runTerminalLiveExternalInput = useCallback<TerminalLiveExternalInputRunner>(
-    (handle, operation) => {
-      const boundary = { generation: liveInputGenerationRef.current, handle }
-      const queuedOperation = externalFlushTailRef.current.then(async () => {
-        const flushed = await flushTerminalLiveExternalInput({
-          boundary,
-          clearPendingInput: clearPendingLiveInputMirror,
-          flushPendingText: flushPendingLiveInputText,
-          generationRef: liveInputGenerationRef,
-          imeState: liveInputImeStateRef.current,
-          isTargetActive: isLiveInputTargetActive,
-          pendingHandleRef: pendingLiveInputHandleRef,
-          waitForPendingFlush: waitForPendingLiveInputFlush
-        })
-        return flushed ? operation() : false
-      })
-      externalFlushTailRef.current = queuedOperation.catch(() => false)
-      return queuedOperation
+  const flushPendingLiveInputBeforeExternalSend = useCallback(
+    async (handle: string): Promise<boolean> => {
+      const generation = liveInputGenerationRef.current
+      while (liveInputCompositionRef.current?.handle === handle) {
+        const composition = liveInputCompositionRef.current
+        if (!(await composition.completion)) {
+          return false
+        }
+      }
+      if (
+        generation !== liveInputGenerationRef.current ||
+        handle !== activeHandleRef.current ||
+        (activeSessionTabTypeRef.current != null &&
+          activeSessionTabTypeRef.current !== 'terminal') ||
+        !liveInputTerminalHandlesRef.current.has(handle)
+      ) {
+        return false
+      }
+      if (liveInputCompositionRef.current) {
+        clearPendingLiveInputCommit()
+        return waitForPendingLiveInputFlush()
+      }
+      const pendingHandle = pendingLiveInputHandleRef.current
+      if (pendingHandle && pendingHandle !== handle) {
+        clearPendingLiveInputCommit()
+        return waitForPendingLiveInputFlush()
+      }
+      // Why: external bytes (dictation/paste) land after the field's echo on the
+      // PTY; the field session must fully end or later diffs would erase them.
+      if (pendingHandle === handle) {
+        return flushPendingLiveInputText(handle)
+      }
+      return waitForPendingLiveInputFlush()
     },
     [
-      clearPendingLiveInputMirror,
+      activeHandleRef,
+      activeSessionTabTypeRef,
+      clearPendingLiveInputCommit,
       flushPendingLiveInputText,
-      isLiveInputTargetActive,
+      liveInputTerminalHandlesRef,
       waitForPendingLiveInputFlush
     ]
   )
 
   const handleLiveInputChange = useCallback(
     ({ nativeEvent: { isComposing, text } }: TerminalLiveInputChangeEvent) => {
-      if (!activeHandle) {
+      if (liveInputGeneration !== liveInputGenerationRef.current) {
         return
       }
-      const boundary = { generation: liveInputGeneration, handle: activeHandle }
-      if (
-        boundary.generation !== liveInputGenerationRef.current ||
-        !isLiveInputTargetActive(boundary.handle)
-      ) {
-        return
-      }
-      if (isComposing === true) {
-        beginTerminalLiveImeComposition(liveInputImeStateRef.current, boundary)
-        setLiveInputCapture(text)
-        return
-      }
-
-      const compositionOwner = liveInputImeStateRef.current.owner
-      if (compositionOwner && !isSameTerminalLiveImeBoundary(compositionOwner, boundary)) {
+      if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
+        clearPendingLiveInputCommit()
         return
       }
       // Why: iOS kills an active dictation/IME session when JS writes a value
       // that differs from the native field text, so the controlled capture must
       // echo the field verbatim; only the PTY mirror sees normalized text.
       setLiveInputCapture(text)
-      applyLiveInputMirror(boundary.handle, normalizeTerminalTextInput(text))
-      if (compositionOwner) {
-        finishTerminalLiveImeComposition(liveInputImeStateRef.current, boundary)
+      if (isComposing === true) {
+        const composition = liveInputCompositionRef.current
+        if (!composition || composition.handle !== activeHandle) {
+          composition?.resolve(false)
+          liveInputCompositionRef.current = createTerminalLiveComposition(activeHandle)
+        }
+        return
       }
+      const composition = liveInputCompositionRef.current
+      if (composition && composition.handle !== activeHandle) {
+        return
+      }
+      applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text))
+      liveInputCompositionRef.current = null
+      composition?.resolve(true)
     },
     [
       activeHandle,
       applyLiveInputMirror,
-      isLiveInputTargetActive,
+      clearPendingLiveInputCommit,
       liveInputGeneration,
+      liveInputTerminalHandles,
       setLiveInputCapture
     ]
-  )
-
-  const isLiveInputCompositionActive = useCallback(
-    (handle: string): boolean => liveInputImeStateRef.current.owner?.handle === handle,
-    []
   )
 
   const handleLiveInputKeyPress = useCallback(
@@ -213,14 +219,14 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       if (
         !activeHandle ||
         liveInputGeneration !== liveInputGenerationRef.current ||
-        !isLiveInputTargetActive(activeHandle) ||
-        isLiveInputCompositionActive(activeHandle)
+        liveInputCompositionRef.current?.handle === activeHandle ||
+        !liveInputTerminalHandles.has(activeHandle)
       ) {
         return
       }
       const ownsPendingState = pendingLiveInputHandleRef.current === activeHandle
       if (pendingLiveInputHandleRef.current && !ownsPendingState) {
-        clearPendingLiveInputMirror()
+        clearPendingLiveInputCommit()
       }
       const decision = getTerminalLiveSpecialKeyDecision({
         key: event.nativeEvent.key,
@@ -248,25 +254,23 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     },
     [
       activeHandle,
-      clearPendingLiveInputMirror,
+      clearPendingLiveInputCommit,
       flushPendingLiveInputText,
-      isLiveInputCompositionActive,
-      isLiveInputTargetActive,
       liveInputGeneration,
+      liveInputTerminalHandles,
       sendLiveTerminalInputRef,
       waitForPendingLiveInputFlush
     ]
   )
 
-  const handleLiveInputAccessoryBytes = useTerminalLiveAccessoryInputCommit({
+  const commitLiveInputAccessoryBytes = useTerminalLiveAccessoryInputCommit({
     activeHandle,
     applyLiveInputMirror,
-    clearPendingLiveInputCommit: clearPendingLiveInputMirror,
+    clearPendingLiveInputCommit,
     flushPendingLiveInputText,
     heldLiveInputTextRef,
     liveInputRef,
     liveInputTerminalHandles,
-    isLiveInputCompositionActive,
     pendingLiveInputHandleRef,
     sentLiveInputTextRef,
     sendLiveTerminalInputRef,
@@ -274,12 +278,22 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     waitForPendingLiveInputFlush
   })
 
+  const handleLiveInputAccessoryBytes = useCallback(
+    async (input: TerminalLiveAccessoryInput): Promise<TerminalLiveAccessoryInputCommitResult> => {
+      if (activeHandle && liveInputCompositionRef.current?.handle === activeHandle) {
+        return { kind: 'suppress-raw' }
+      }
+      return commitLiveInputAccessoryBytes(input)
+    },
+    [activeHandle, commitLiveInputAccessoryBytes]
+  )
+
   const handleLiveInputSubmit = useCallback(() => {
     if (
       !activeHandle ||
       liveInputGeneration !== liveInputGenerationRef.current ||
-      !isLiveInputTargetActive(activeHandle) ||
-      isLiveInputCompositionActive(activeHandle)
+      liveInputCompositionRef.current?.handle === activeHandle ||
+      !liveInputTerminalHandles.has(activeHandle)
     ) {
       return
     }
@@ -290,19 +304,18 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   }, [
     activeHandle,
     flushPendingLiveInputText,
-    isLiveInputCompositionActive,
-    isLiveInputTargetActive,
     liveInputGeneration,
+    liveInputTerminalHandles,
     sendLiveTerminalInputRef
   ])
 
   useEffect(() => {
-    return () => invalidateTerminalLiveImeComposition(liveInputImeStateRef.current)
+    return () => liveInputCompositionRef.current?.resolve(false)
   }, [])
 
   return {
     clearPendingLiveInputCommit,
-    runTerminalLiveExternalInput,
+    flushPendingLiveInputBeforeExternalSend,
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,

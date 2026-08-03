@@ -23,10 +23,7 @@ type TerminalLivePendingInputFlushOptions<TTabType extends string> = {
 type TerminalLivePendingInputFlush = {
   readonly applyLiveInputMirror: (handle: string, fieldText: string) => void
   readonly clearPendingLiveInputCommit: () => void
-  readonly flushPendingLiveInputText: (
-    expectedHandle: string | null,
-    canClearPendingState?: () => boolean
-  ) => Promise<boolean>
+  readonly flushPendingLiveInputText: (expectedHandle: string | null) => Promise<boolean>
   readonly heldLiveInputTextRef: RefObject<string>
   readonly pendingLiveInputHandleRef: RefObject<string | null>
   readonly sentLiveInputTextRef: RefObject<string>
@@ -134,18 +131,13 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   )
 
   const flushPendingLiveInputText = useCallback(
-    async (
-      expectedHandle: string | null,
-      canClearPendingState: () => boolean = () => true
-    ): Promise<boolean> => {
+    async (expectedHandle: string | null): Promise<boolean> => {
       const handle = pendingLiveInputHandleRef.current
       if (!handle) {
         return waitForPendingLiveInputFlush()
       }
       if (expectedHandle !== null && handle !== expectedHandle) {
-        if (canClearPendingState()) {
-          clearPendingLiveInputCommit()
-        }
+        clearPendingLiveInputCommit()
         return waitForPendingLiveInputFlush()
       }
 
@@ -157,9 +149,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
 
       // Why: an explicit flush ends the field's editing session; the echoed PTY
       // text stays, so local mirror state must restart from empty.
-      if (canClearPendingState()) {
-        clearPendingLiveInputCommit()
-      }
+      clearPendingLiveInputCommit()
       return result
     },
     [clearPendingLiveInputCommit, runMirrorStep, waitForPendingLiveInputFlush]

@@ -139,7 +139,6 @@ import {
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import {
   appendBufferedDictation,
-  insertLiveDictationTranscript,
   routeDictationTranscript
 } from '../../../../src/terminal/terminal-live-dictation-routing'
 import { countTerminalGestureInputSequences } from '../../../../src/terminal/terminal-gesture-input'
@@ -1060,12 +1059,12 @@ export default function SessionScreen() {
   const activeSessionTab = sessionTabs.find((tab) => tab.id === activeSessionTabId) ?? null
   const {
     clearPendingLiveInputCommit,
+    flushPendingLiveInputBeforeExternalSend,
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
     handleLiveInputSubmit,
-    liveInputKey,
-    runTerminalLiveExternalInput
+    liveInputKey
   } = useTerminalLiveInputCommit({
     activeHandle,
     activeHandleRef,
@@ -1237,14 +1236,16 @@ export default function SessionScreen() {
         if (!insertHandle) {
           return
         }
-        void insertLiveDictationTranscript({
-          handle: insertHandle,
-          onSendError: triggerError,
-          runTerminalLiveExternalInput,
-          sendInput: sendLiveTerminalInput,
-          showToast,
-          text: route.text
-        })
+        void (async () => {
+          const flushedPendingInput = await flushPendingLiveInputBeforeExternalSend(insertHandle)
+          if (!flushedPendingInput) {
+            return
+          }
+          const sent = await sendLiveTerminalInput(insertHandle, route.text)
+          if (sent) {
+            showToast('Dictation inserted')
+          }
+        })()
         return
       }
       setInput((current) => appendBufferedDictation(current, route.text))
@@ -3647,7 +3648,7 @@ export default function SessionScreen() {
     connStateRef,
     clientRef,
     deviceTokenRef,
-    runTerminalLiveExternalInput,
+    flushPendingLiveInputBeforeExternalSend,
     getActiveWorktreeConnectionId,
     onError: triggerError,
     onSuccess: triggerSelection,
@@ -3656,8 +3657,8 @@ export default function SessionScreen() {
     showToast
   })
 
-  const runTerminalLiveAttachmentSend = useMobileAttachmentInputLeaseGate({
-    runTerminalLiveExternalInput,
+  const flushPendingLiveInputBeforeAttachmentSend = useMobileAttachmentInputLeaseGate({
+    flushPendingLiveInputBeforeExternalSend,
     connStateRef,
     activeHandleRef,
     activeSessionTabTypeRef,
@@ -3677,7 +3678,7 @@ export default function SessionScreen() {
     nativeChatScopeKey,
     nativeChatInputLeaseReady,
     getActiveWorktreeConnectionId,
-    runTerminalSend: runTerminalLiveAttachmentSend,
+    beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,
     nativeChatBaseSend: nativeChatController.handleNativeChatSendWithOutcome,
     readSeededLaunchDraft: nativeChatController.readSeededLaunchDraft,
     showToast,

@@ -25,7 +25,6 @@ type TerminalLiveAccessoryInputCommitOptions = {
   readonly clearPendingLiveInputCommit: () => void
   readonly flushPendingLiveInputText: (expectedHandle: string | null) => Promise<boolean>
   readonly heldLiveInputTextRef: RefObject<string>
-  readonly isLiveInputCompositionActive: (handle: string) => boolean
   readonly liveInputRef: RefObject<TextInput | null>
   readonly liveInputTerminalHandles: ReadonlySet<string>
   readonly pendingLiveInputHandleRef: RefObject<string | null>
@@ -41,7 +40,6 @@ export function useTerminalLiveAccessoryInputCommit({
   clearPendingLiveInputCommit,
   flushPendingLiveInputText,
   heldLiveInputTextRef,
-  isLiveInputCompositionActive,
   liveInputRef,
   liveInputTerminalHandles,
   pendingLiveInputHandleRef,
@@ -59,9 +57,6 @@ export function useTerminalLiveAccessoryInputCommit({
       }
       if (!liveInputTerminalHandles.has(activeHandle)) {
         return getTerminalLiveAccessoryInactiveInputCommitResult(waitForPendingLiveInputFlush)
-      }
-      if (isLiveInputCompositionActive(activeHandle)) {
-        return { kind: 'suppress-raw' }
       }
       const ownsPendingState = pendingLiveInputHandleRef.current === activeHandle
       if (pendingLiveInputHandleRef.current && !ownsPendingState) {
@@ -106,7 +101,6 @@ export function useTerminalLiveAccessoryInputCommit({
       clearPendingLiveInputCommit,
       flushPendingLiveInputText,
       heldLiveInputTextRef,
-      isLiveInputCompositionActive,
       liveInputRef,
       liveInputTerminalHandles,
       pendingLiveInputHandleRef,
