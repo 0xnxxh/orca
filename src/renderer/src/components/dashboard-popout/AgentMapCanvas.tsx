@@ -91,14 +91,13 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const viewportFrameRef = useRef<number | null>(null)
     const pendingViewportRef = useRef<Viewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
-    const focusedPaneKeyRef = useRef<string | null>(null)
+    const focusedAgentRef = useRef<{ paneKey: string; x: number; y: number } | null>(null)
     const [size, setSize] = useState<ViewportSize>({ width: 800, height: 560 })
     const [viewport, setViewport] = useState<Viewport>({
       center: { x: layout.width / 2, y: layout.height / 2 },
       zoom: 1
     })
     const viewportRef = useRef(viewport)
-    viewportRef.current = viewport
     const { center, zoom } = viewport
     const agents = useMemo(() => allAgents(layout), [layout])
     const aspect = size.width / Math.max(1, size.height)
@@ -185,17 +184,23 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
 
     useEffect(() => {
       if (!selectedPaneKey) {
-        focusedPaneKeyRef.current = null
-        return
-      }
-      if (focusedPaneKeyRef.current === selectedPaneKey) {
+        focusedAgentRef.current = null
         return
       }
       const selected = agents.find((agent) => agent.card.paneKey === selectedPaneKey)
       if (!selected) {
+        focusedAgentRef.current = null
         return
       }
-      focusedPaneKeyRef.current = selectedPaneKey
+      const focused = focusedAgentRef.current
+      if (
+        focused?.paneKey === selectedPaneKey &&
+        focused.x === selected.x &&
+        focused.y === selected.y
+      ) {
+        return
+      }
+      focusedAgentRef.current = { paneKey: selectedPaneKey, x: selected.x, y: selected.y }
       applyViewport({
         center: { x: selected.x, y: selected.y },
         zoom: Math.max(1, viewportRef.current.zoom)

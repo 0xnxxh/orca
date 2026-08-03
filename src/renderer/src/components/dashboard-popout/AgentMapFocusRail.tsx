@@ -87,7 +87,7 @@ export function AgentMapFocusRail({
   onStateToggle
 }: AgentMapFocusRailProps): React.JSX.Element {
   return (
-    <aside className="scrollbar-sleek hidden min-h-0 w-56 shrink-0 overflow-y-auto border-r border-border bg-card/35 p-3 lg:flex lg:flex-col">
+    <aside className="scrollbar-sleek hidden min-h-0 w-56 shrink-0 overflow-y-auto border-r border-border bg-card/35 p-3 md:flex md:flex-col">
       <header className="border-b border-border px-1 pb-3">
         <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
           {translate('dashboardPopout.map.focus.title', 'Focus view')}

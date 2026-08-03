@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import {
   deriveAgentMapLayout,
@@ -8,6 +8,19 @@ import {
   agentMapNodeStatus,
   updateAgentMapLayout
 } from './agent-map-layout'
+import type * as WorktreePackingModule from './agent-map-worktree-packing'
+
+const packWorktrees = vi.hoisted(() => vi.fn())
+vi.mock('./agent-map-worktree-packing', async (importOriginal) => {
+  const actual = await importOriginal<typeof WorktreePackingModule>()
+  return {
+    ...actual,
+    packAgentMapWorktrees: (...args: Parameters<typeof actual.packAgentMapWorktrees>) => {
+      packWorktrees()
+      return actual.packAgentMapWorktrees(...args)
+    }
+  }
+})
 
 const NOW = 2_000_000_000
 
@@ -153,6 +166,7 @@ describe('agent map layout', () => {
       card({ paneKey: 'b', worktreeId: 'wt-b' })
     ]
     const initial = updateAgentMapLayout(null, initialCards, NOW)
+    packWorktrees.mockClear()
     const updatedCards = [
       { ...initialCards[0], dotState: 'waiting' as const, worktreeName: 'Renamed' },
       { ...initialCards[1], startedAt: NOW - 60 * 60_000 }
@@ -160,6 +174,8 @@ describe('agent map layout', () => {
     const updated = updateAgentMapLayout(initial.cache, updatedCards, NOW + 60_000)
 
     expect(updated.cache).toBe(initial.cache)
+    expect(packWorktrees).not.toHaveBeenCalled()
+    expect(initial.cache.geometry).toBe(initial.layout)
     expect(updated.cache.packingGeneration).toBe(1)
     expect(updated.layout.projects[0].worktrees[0].name).toBe('Renamed')
     expect(updated.layout.projects[0].worktrees[0].statusCounts.waiting).toBe(1)
@@ -171,6 +187,7 @@ describe('agent map layout', () => {
       NOW
     )
     expect(topologyChanged.cache).not.toBe(updated.cache)
+    expect(packWorktrees).toHaveBeenCalled()
     expect(topologyChanged.cache.packingGeneration).toBe(2)
   })
 

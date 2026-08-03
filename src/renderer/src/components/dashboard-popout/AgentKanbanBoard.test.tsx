@@ -11,6 +11,13 @@ import type {
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { i18n } from '@/i18n/i18n'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
+import type * as AgentMapModule from './AgentMap'
+
+const mapModuleLoad = vi.hoisted(() => vi.fn())
+vi.mock('./AgentMap', async (importOriginal) => {
+  mapModuleLoad()
+  return importOriginal<typeof AgentMapModule>()
+})
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
 // machinery while still exercising the board-owned dialog wiring.
@@ -167,22 +174,34 @@ describe('AgentKanbanBoard', () => {
     expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Done'])
   })
 
-  it('keeps the dashboard and map available as separate views', () => {
+  it('does not load the map module for board snapshots', () => {
+    const view = render(
+      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [card({ paneKey: 'first' })] }} />
+    )
+
+    view.rerender(
+      <AgentKanbanBoard snapshot={{ generatedAt: 2, cards: [card({ paneKey: 'second' })] }} />
+    )
+
+    expect(mapModuleLoad).not.toHaveBeenCalled()
+  })
+
+  it('keeps the dashboard and map available as separate views', async () => {
     renderBoard([])
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    expect(screen.getByText('Live containment map')).toBeInTheDocument()
+    expect(await screen.findByText('Live containment map')).toBeInTheDocument()
     expect(screen.getByText('Focus view')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
     expect(screen.getByText('Needs You')).toBeInTheDocument()
   })
 
-  it('keeps the selected map visible beside its terminal panel', () => {
+  it('keeps the selected map visible beside its terminal panel', async () => {
     const agent = card({ paneKey: 'map-agent', conversationName: 'Map agent' })
     render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Map agent/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }))
 
     expect(screen.getByLabelText('Nested project, workspace, and agent map')).toBeInTheDocument()
     expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
@@ -396,7 +415,7 @@ describe('AgentKanbanBoard', () => {
     expect(ackAgent).toHaveBeenCalledWith('pk-ack')
   })
 
-  it('keeps a newly opened result in Focus until it is explicitly reviewed', () => {
+  it('keeps a newly opened result in Focus until it is explicitly reviewed', async () => {
     const fresh = card({
       paneKey: 'fresh-result',
       bucket: 'done',
@@ -417,7 +436,7 @@ describe('AgentKanbanBoard', () => {
       <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh, old] }} initialView="map" />
     )
 
-    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Old result/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
     expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-reviewed', 'false')

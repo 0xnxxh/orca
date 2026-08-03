@@ -226,6 +226,7 @@ export function AgentTerminalPanel({
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (
         event.key === 'Escape' &&
+        !event.defaultPrevented &&
         !(event.target instanceof HTMLElement && event.target.closest('.xterm'))
       ) {
         onOpenChange(false)

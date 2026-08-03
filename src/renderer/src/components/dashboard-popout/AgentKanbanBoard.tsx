@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Columns3, Orbit, XIcon } from 'lucide-react'
 import {
   DASHBOARD_BUCKET_ORDER,
@@ -25,10 +25,11 @@ import {
 import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
-import { AgentMap } from './AgentMap'
 import { useFleetResultDisposition } from './use-fleet-result-disposition'
 
 export type AgentDashboardView = 'map' | 'board'
+
+const AgentMap = lazy(() => import('./AgentMap').then((module) => ({ default: module.AgentMap })))
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
  *  ?. shields dialog-opening from dev-HMR preload skew (renderer updates hot,
@@ -338,21 +339,23 @@ export function AgentKanbanBoard({
               dialogCard && terminalPanelSide === 'left' && 'flex-row-reverse'
             )}
           >
-            <AgentMap
-              cards={filteredCards}
-              now={now}
-              className={
-                dialogCard
-                  ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
-                  : undefined
-              }
-              compact={dialogCard !== null}
-              selectedPaneKey={dialogCard?.paneKey}
-              pinnedPaneKeys={pinnedPaneKeys}
-              reviewedPaneKeys={reviewedPaneKeys}
-              onMarkReviewed={markReviewed}
-              onOpenTerminal={handleOpenAdjacentTerminal}
-            />
+            <Suspense fallback={null}>
+              <AgentMap
+                cards={filteredCards}
+                now={now}
+                className={
+                  dialogCard
+                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
+                    : undefined
+                }
+                compact={dialogCard !== null}
+                selectedPaneKey={dialogCard?.paneKey}
+                pinnedPaneKeys={pinnedPaneKeys}
+                reviewedPaneKeys={reviewedPaneKeys}
+                onMarkReviewed={markReviewed}
+                onOpenTerminal={handleOpenAdjacentTerminal}
+              />
+            </Suspense>
             {dialogCard ? (
               <AgentTerminalPanel
                 card={dialogCard}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildDashboardSnapshot, type DashboardSnapshotState } from './build-dashboard-snapshot'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
@@ -9,6 +9,37 @@ import { DASHBOARD_MAX_LABEL_LENGTH } from '../../../../shared/dashboard-snapsho
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import type { TerminalTab, Worktree } from '../../../../shared/types'
 import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-orchestration-batch'
+import type * as DashboardSnapshotWorkspacesModule from './dashboard-snapshot-workspaces'
+import type * as AgentRowLineageModule from './agent-row-lineage'
+
+const mapMetadataCalls = vi.hoisted(() => ({
+  hostKind: vi.fn(),
+  parentPaneKey: vi.fn()
+}))
+
+vi.mock('./dashboard-snapshot-workspaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof DashboardSnapshotWorkspacesModule>()
+  return {
+    ...actual,
+    dashboardCardMapWorkspaceMetadata: (
+      ...args: Parameters<typeof actual.dashboardCardMapWorkspaceMetadata>
+    ) => {
+      mapMetadataCalls.hostKind()
+      return actual.dashboardCardMapWorkspaceMetadata(...args)
+    }
+  }
+})
+
+vi.mock('./agent-row-lineage', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentRowLineageModule>()
+  return {
+    ...actual,
+    dashboardCardParentPaneKey: (...args: Parameters<typeof actual.dashboardCardParentPaneKey>) => {
+      mapMetadataCalls.parentPaneKey()
+      return actual.dashboardCardParentPaneKey(...args)
+    }
+  }
+})
 
 const NOW = 1_000_000_000
 const TAB_ID = 'tab1'
@@ -496,7 +527,10 @@ describe('buildDashboardSnapshot', () => {
   })
 
   it('skips card-only context for count snapshots', () => {
+    mapMetadataCalls.hostKind.mockClear()
+    mapMetadataCalls.parentPaneKey.mockClear()
     let linkedReviewReads = 0
+    let hostIdentityReads = 0
     const countWorktree = worktree()
     Object.defineProperty(countWorktree, 'linkedPR', {
       enumerable: true,
@@ -505,8 +539,20 @@ describe('buildDashboardSnapshot', () => {
         return null
       }
     })
+    const countRepo = {
+      id: 'r1',
+      path: '/r1',
+      displayName: 'Repo One',
+      badgeColor: '#000',
+      addedAt: 0,
+      get connectionId() {
+        hostIdentityReads += 1
+        return null
+      }
+    }
     const snapshot = buildDashboardSnapshot(
       baseState({
+        repos: [countRepo],
         worktreesByRepo: { r1: [countWorktree] },
         agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
       }),
@@ -516,11 +562,17 @@ describe('buildDashboardSnapshot', () => {
 
     expect(snapshot.cards[0].workspaceStatusId).toBeUndefined()
     expect(snapshot.cards[0].subagents).toBeUndefined()
+    expect(snapshot.cards[0].parentPaneKey).toBeUndefined()
+    expect(snapshot.cards[0].hostKind).toBeUndefined()
+    expect(snapshot.cards[0].workspaceKind).toBeUndefined()
     // Why: the card has a live pty, so only the count-path gate keeps the
     // host-input resolution off the sidebar's per-status-tick rebuild.
     expect(snapshot.cards[0].ptyId).toBe('pty1')
     expect(snapshot.cards[0].terminalInput).toBeUndefined()
     expect(linkedReviewReads).toBe(0)
+    expect(hostIdentityReads).toBe(0)
+    expect(mapMetadataCalls.hostKind).not.toHaveBeenCalled()
+    expect(mapMetadataCalls.parentPaneKey).not.toHaveBeenCalled()
   })
 
   it("resolves a live pty's host-input profile for card snapshots", () => {

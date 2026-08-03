@@ -199,6 +199,55 @@ describe('AgentMap', () => {
     expect(screen.queryByRole('group', { name: 'Host filter' })).not.toBeInTheDocument()
   })
 
+  it('keeps the selected node centered when topology changes around it', () => {
+    const selected = card()
+    const view = renderMap([selected], { selectedPaneKey: selected.paneKey })
+    const svg = view.container.querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
+    const selectedNode = (): SVGGElement =>
+      view.container.querySelector<SVGGElement>('.agent-map-agent-node.is-selected')!
+    const nodeCenter = (): [number, number] => {
+      const match = selectedNode()
+        .getAttribute('transform')
+        ?.match(/translate\(([^ ]+) ([^)]+)\)/)
+      return [Number(match?.[1]), Number(match?.[2])]
+    }
+    const viewportCenter = (): [number, number] => {
+      const [x, y, width, height] = svg.getAttribute('viewBox')!.split(' ').map(Number)
+      return [x + width / 2, y + height / 2]
+    }
+
+    const originalNodeCenter = nodeCenter()
+    view.rerender(
+      <AgentMap
+        cards={[
+          card({
+            paneKey: 'earlier-project',
+            repoId: 'repo-0',
+            repoName: 'Earlier',
+            worktreeId: 'worktree-0'
+          }),
+          selected
+        ]}
+        now={NOW}
+        reviewedPaneKeys={new Set()}
+        pinnedPaneKeys={new Set()}
+        onMarkReviewed={vi.fn()}
+        onOpenTerminal={vi.fn()}
+        selectedPaneKey={selected.paneKey}
+      />
+    )
+
+    expect(nodeCenter()).not.toEqual(originalNodeCenter)
+    expect(viewportCenter()[0]).toBeCloseTo(nodeCenter()[0])
+    expect(viewportCenter()[1]).toBeCloseTo(nodeCenter()[1])
+  })
+
+  it('shows Focus controls at the pop-out default-width breakpoint', () => {
+    renderMap([card()])
+
+    expect(screen.getByText('Focus view').closest('aside')).toHaveClass('md:flex')
+  })
+
   it('increases map label scale when users zoom out', () => {
     const { container } = renderMap([card()])
     const labelGroup = container.querySelector('.agent-map-worktree-label')?.parentElement

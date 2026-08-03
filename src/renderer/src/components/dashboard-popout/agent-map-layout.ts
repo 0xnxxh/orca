@@ -320,6 +320,5 @@ export function updateAgentMapLayout(
     }
   }
   const layout = refreshAgentMapMetadata(cache.geometry, cards, now)
-  cache.geometry = layout
   return { cache, layout }
 }

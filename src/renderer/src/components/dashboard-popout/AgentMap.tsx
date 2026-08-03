@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -126,11 +126,14 @@ export function AgentMap({
     () => cards.filter((card) => pinnedPaneKeys.has(card.paneKey)).length,
     [cards, pinnedPaneKeys]
   )
-  const layout = useMemo(() => {
-    const next = updateAgentMapLayout(layoutCacheRef.current, visibleCards, now)
-    layoutCacheRef.current = next.cache
-    return next.layout
-  }, [visibleCards, now])
+  const layoutResult = useMemo(
+    () => updateAgentMapLayout(layoutCacheRef.current, visibleCards, now),
+    [visibleCards, now]
+  )
+  useEffect(() => {
+    layoutCacheRef.current = layoutResult.cache
+  }, [layoutResult.cache])
+  const layout = layoutResult.layout
 
   const toggleState = (state: AgentMapFocusState): void => {
     setEnabledStates((current) => {

@@ -139,15 +139,21 @@ describe('useDashboardPopoutBridge', () => {
 
     expect(mocks.onPopoutOpenChanged).toHaveBeenCalledTimes(1)
     expect(mocks.subscribeStore).not.toHaveBeenCalled()
+    expect(mocks.buildDashboardSnapshot).not.toHaveBeenCalled()
 
     await act(async () => mocks.onPopoutOpenChanged.mock.calls[0][0](true))
 
     expect(mocks.subscribeStore).toHaveBeenCalledTimes(1)
+    expect(mocks.buildDashboardSnapshot).toHaveBeenCalledTimes(1)
     const unsubscribe = mocks.subscribeStore.mock.results[0]?.value as () => void
+    const notifyStore = mocks.subscribeStore.mock.calls[0][0]
 
     await act(async () => mocks.onPopoutOpenChanged.mock.calls[0][0](false))
 
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+    const previousState = makeSnapshotWatchState()
+    await act(async () => notifyStore({ ...previousState, agentStatusEpoch: 1 }, previousState))
+    expect(mocks.buildDashboardSnapshot).toHaveBeenCalledTimes(1)
   })
 
   it('ignores unrelated store writes while retaining every snapshot input', () => {

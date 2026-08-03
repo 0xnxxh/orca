@@ -34,7 +34,8 @@ function remoteHostKind(
 }
 
 export function collectActiveDashboardWorkspaces(
-  state: DashboardWorkspaceState
+  state: DashboardWorkspaceState,
+  includeMapMetadata = true
 ): ActiveDashboardWorkspace[] {
   const workspaces: ActiveDashboardWorkspace[] = []
   const seenWorkspaceIds = new Set<string>()
@@ -51,8 +52,10 @@ export function collectActiveDashboardWorkspaces(
         repo,
         repoIcon: repo.repoIcon ?? null,
         worktree,
-        workspaceKind: isFolderRepo(repo) ? 'folder' : 'worktree',
-        remoteHostKind: remoteHostKind(repo.connectionId, worktree.hostId ?? repo.executionHostId)
+        workspaceKind: includeMapMetadata && isFolderRepo(repo) ? 'folder' : 'worktree',
+        remoteHostKind: includeMapMetadata
+          ? remoteHostKind(repo.connectionId, worktree.hostId ?? repo.executionHostId)
+          : null
       })
     }
   }
@@ -73,10 +76,12 @@ export function collectActiveDashboardWorkspaces(
       repoIcon: null,
       worktree,
       workspaceKind: 'folder',
-      remoteHostKind: remoteHostKind(
-        folderWorkspace.connectionId ?? projectGroup?.connectionId,
-        projectGroup?.executionHostId
-      )
+      remoteHostKind: includeMapMetadata
+        ? remoteHostKind(
+            folderWorkspace.connectionId ?? projectGroup?.connectionId,
+            projectGroup?.executionHostId
+          )
+        : null
     })
   }
   return workspaces
@@ -98,4 +103,16 @@ export function dashboardCardHostKind(
     return 'remote'
   }
   return clientPlatform === 'win32' && terminalInput?.hostPlatform === 'linux' ? 'wsl' : 'local'
+}
+
+export function dashboardCardMapWorkspaceMetadata(
+  workspace: ActiveDashboardWorkspace,
+  ptyId: string | null,
+  terminalInput: DashboardCard['terminalInput'],
+  clientPlatform: NodeJS.Platform
+): Pick<DashboardCard, 'hostKind' | 'workspaceKind'> {
+  return {
+    hostKind: dashboardCardHostKind(workspace, ptyId, terminalInput, clientPlatform),
+    workspaceKind: workspace.workspaceKind
+  }
 }

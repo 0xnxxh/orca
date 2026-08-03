@@ -42,8 +42,8 @@ import {
   type DashboardCardContextState
 } from './dashboard-card-context'
 import {
-  collectActiveDashboardWorkspaces,
-  dashboardCardHostKind
+  dashboardCardMapWorkspaceMetadata,
+  collectActiveDashboardWorkspaces
 } from './dashboard-snapshot-workspaces'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
@@ -137,7 +137,8 @@ export function buildDashboardSnapshot(
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
   const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
-  const activeWorktrees = collectActiveDashboardWorkspaces(state)
+  const showIdle = state.settings?.experimentalAgentDashboardShowIdle === true
+  const activeWorktrees = collectActiveDashboardWorkspaces(state, includeCardDetails)
   const filterOptions =
     options.includeFilterOptions === false
       ? undefined
@@ -299,16 +300,19 @@ export function buildDashboardSnapshot(
         worktreeId,
         tabId,
         leafId,
-        parentPaneKey: dashboardCardParentPaneKey(row),
         repoName: boundedLabel(workspace.projectName),
         worktreeName: boundedLabel(worktree.displayName),
-        hostKind: dashboardCardHostKind(
-          workspace,
-          ptyId,
-          terminalInput ?? undefined,
-          clientHost.platform
-        ),
-        workspaceKind: workspace.workspaceKind,
+        ...(includeCardDetails
+          ? {
+              parentPaneKey: dashboardCardParentPaneKey(row),
+              ...dashboardCardMapWorkspaceMetadata(
+                workspace,
+                ptyId,
+                terminalInput ?? undefined,
+                clientHost.platform
+              )
+            }
+          : {}),
         workspaceStatusId: context?.workspaceStatus.id,
         workspaceStatusLabel: context?.workspaceStatus.label,
         workspaceStatusColor: context?.workspaceStatus.color,
@@ -332,11 +336,5 @@ export function buildDashboardSnapshot(
     }
   }
 
-  return {
-    generatedAt: now,
-    cards,
-    showIdle: state.settings?.experimentalAgentDashboardShowIdle === true,
-    filterOptions,
-    repoIconsByRepoId
-  }
+  return { generatedAt: now, cards, showIdle, filterOptions, repoIconsByRepoId }
 }
