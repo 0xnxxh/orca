@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 type TaskCreationDraftRetentionOptions<Draft> = {
   open: boolean
@@ -14,10 +14,15 @@ export function useTaskCreationDraftRetention<Draft>({
   const draftRef = useRef(draft)
   const writeDraftRef = useRef(writeDraft)
   const discardRef = useRef(false)
-  writeDraftRef.current = writeDraft
-  if (open) {
+
+  // Why: every committed open render refreshes refs without letting discarded renders leak into cleanup.
+  useLayoutEffect(() => {
+    if (!open) {
+      return
+    }
     draftRef.current = draft
-  }
+    writeDraftRef.current = writeDraft
+  })
 
   // Why: closing cleanup captures the latest render once without a global store write per keystroke.
   useEffect(() => {
