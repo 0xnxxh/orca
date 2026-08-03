@@ -27,7 +27,6 @@ export function getRecentlyClosedTabPosition(
       )
     : undefined
   const groupIndex = group?.tabOrder.indexOf(unifiedTab?.id ?? '') ?? -1
-
   if (tabBarIndex < 0 && (!group || groupIndex < 0)) {
     return undefined
   }

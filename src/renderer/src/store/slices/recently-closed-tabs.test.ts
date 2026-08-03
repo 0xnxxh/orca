@@ -34,10 +34,18 @@ const mockApi = {
 // @ts-expect-error -- minimal window.api stub for the store under test
 globalThis.window = { api: mockApi }
 
-import { createTestStore, seedStore, makeWorktree, makeOpenFile } from './store-test-helpers'
+import {
+  createTestStore,
+  seedStore,
+  makeWorktree,
+  makeOpenFile,
+  makeTabGroup,
+  makeUnifiedTab
+} from './store-test-helpers'
 import {
   pushRecentlyClosedTabKind,
-  remapClosedTerminalTabSnapshotCwds
+  remapClosedTerminalTabSnapshotCwds,
+  restoreRecentlyClosedTabPosition
 } from './recently-closed-tabs'
 
 const WT = 'repo1::/path/wt1'
@@ -258,6 +266,98 @@ describe('reopenClosedTerminalTab', () => {
 
     expect(store.getState().reopenClosedTerminalTab(WT)).toBe(true)
     expect(store.getState().tabsByWorktree[WT]?.[0]?.startupCwd).toBe('/remote/wt1/packages/app')
+  })
+})
+
+describe('restoreRecentlyClosedTabPosition', () => {
+  it('selects the unified tab in the captured group when an entity is shared', () => {
+    const reordered = vi.fn()
+    const otherTab = makeUnifiedTab({
+      id: 'other-tab',
+      entityId: 'shared-file',
+      groupId: 'other-group',
+      worktreeId: WT,
+      contentType: 'editor'
+    })
+    const capturedTab = makeUnifiedTab({
+      id: 'captured-tab',
+      entityId: 'shared-file',
+      groupId: 'captured-group',
+      worktreeId: WT,
+      contentType: 'editor'
+    })
+    const capturedSibling = makeUnifiedTab({
+      id: 'captured-sibling',
+      entityId: 'sibling-file',
+      groupId: 'captured-group',
+      worktreeId: WT,
+      contentType: 'editor'
+    })
+    const state = {
+      tabBarOrderByWorktree: { [WT]: ['shared-file'] },
+      groupsByWorktree: {
+        [WT]: [
+          makeTabGroup({
+            id: 'other-group',
+            worktreeId: WT,
+            activeTabId: 'other-tab',
+            tabOrder: ['other-tab']
+          }),
+          makeTabGroup({
+            id: 'captured-group',
+            worktreeId: WT,
+            activeTabId: 'captured-sibling',
+            tabOrder: ['captured-sibling', 'captured-tab']
+          })
+        ]
+      },
+      unifiedTabsByWorktree: { [WT]: [otherTab, capturedTab, capturedSibling] }
+    }
+
+    restoreRecentlyClosedTabPosition(
+      () => ({
+        ...state,
+        setTabBarOrder: vi.fn(),
+        reorderUnifiedTabs: reordered
+      }),
+      WT,
+      'shared-file',
+      { groupId: 'captured-group', groupIndex: 0 }
+    )
+
+    expect(reordered).toHaveBeenCalledWith('captured-group', ['captured-tab', 'captured-sibling'], {
+      recordInteraction: false
+    })
+  })
+
+  it('does not reuse a stale flat index after group drag reordering', () => {
+    const store = makeSeededStore()
+    const first = store.getState().createTab(WT)
+    const middle = store.getState().createTab(WT)
+    const last = store.getState().createTab(WT)
+    const groupId = store.getState().groupsByWorktree[WT]?.[0]?.id
+    if (!groupId) {
+      throw new Error('Expected a root tab group')
+    }
+    store.getState().setTabBarOrder(WT, [first.id, middle.id, last.id])
+    store.getState().reorderUnifiedTabs(groupId, [first.id, last.id, middle.id])
+
+    store.getState().closeTab(middle.id)
+    expect(store.getState().recentlyClosedTerminalTabsByWorktree[WT]?.[0]?.position).toEqual({
+      groupId,
+      groupIndex: 2
+    })
+
+    expect(store.getState().reopenClosedTerminalTab(WT)).toBe(true)
+    const restored = store
+      .getState()
+      .tabsByWorktree[WT]?.find((tab) => tab.id !== first.id && tab.id !== last.id)
+    expect(store.getState().tabBarOrderByWorktree[WT]).toEqual([first.id, last.id, restored?.id])
+    expect(store.getState().groupsByWorktree[WT]?.[0]?.tabOrder).toEqual([
+      first.id,
+      last.id,
+      restored?.id
+    ])
   })
 })
 
