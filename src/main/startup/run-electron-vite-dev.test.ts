@@ -283,6 +283,54 @@ describe('run-electron-vite-dev', () => {
     }
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'prepares CLI wrappers in the packaged profile for explicit production-profile dev',
+    async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'orca-dev-production-profile-'))
+      const configRoot = join(tempDir, '.config')
+      const userDataPath =
+        process.platform === 'darwin'
+          ? join(tempDir, 'Library', 'Application Support', 'orca')
+          : join(configRoot, 'orca')
+      const pidFile = join(tempDir, 'grandchild.pid')
+      const envFile = join(tempDir, 'env.json')
+      const wrapperPath = resolve('config/scripts/run-electron-vite-dev.mjs')
+      const fakeCliPath = resolve('src/main/startup/__fixtures__/fake-electron-vite-dev-cli.mjs')
+
+      const wrapper = spawn(process.execPath, [wrapperPath], {
+        cwd: resolve('.'),
+        env: devWrapperTestEnv({
+          HOME: tempDir,
+          XDG_CONFIG_HOME: configRoot,
+          ORCA_DEV_PRODUCTION_PROFILE: '1',
+          ORCA_ELECTRON_VITE_CLI: fakeCliPath,
+          ORCA_SKIP_DEV_ELECTRON_APP_PREPARE: '1',
+          ORCA_SKIP_DEV_WEB_PREPARE: '1',
+          ORCA_DEV_WRAPPER_TEST_PID_FILE: pidFile,
+          ORCA_DEV_WRAPPER_TEST_ENV_FILE: envFile
+        }),
+        stdio: 'ignore'
+      })
+
+      expect(wrapper.pid).toBeTypeOf('number')
+      processesToCleanUp.add(wrapper.pid!)
+
+      await waitFor(() => {
+        try {
+          return readFileSync(envFile, 'utf8').trim().length > 0
+        } catch {
+          return false
+        }
+      })
+
+      const trackedPids = trackPidFile(pidFile)
+      const devWrapper = readFileSync(join(userDataPath, 'cli', 'bin', 'orca-dev'), 'utf8')
+      expect(devWrapper).toContain(userDataPath)
+
+      await stopWrapperAndTrackedPids(wrapper, trackedPids)
+    }
+  )
+
   it('consumes the stable-name flag before forwarding args to electron-vite', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'orca-dev-wrapper-'))
     const pidFile = join(tempDir, 'grandchild.pid')

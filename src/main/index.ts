@@ -114,11 +114,13 @@ import {
   configureElectronNetworkCompatibility,
   configureDevUserDataPath,
   configureOrcaUserDataPathEnv,
+  devParentShutdownOwnsDaemon,
   enableMainProcessGpuFeatures,
   installDevParentDisconnectQuit,
   installDevParentSignalQuit,
   installDevParentWatchdog,
   isDevParentShutdownRequested,
+  isProductionProfileDevMode,
   patchPackagedProcessPath,
   shouldInstallManagedHooks
 } from './startup/configure-process'
@@ -154,7 +156,10 @@ import { maybeRedirectPackagedCliEntryLaunch } from './startup/packaged-cli-entr
 import { startFirstWindowStartupServices } from './startup/first-window-startup-services'
 import { recoverLegacyWorkerTerminalsForRendererStartup } from './startup/legacy-worker-renderer-recovery'
 import { createWslCliReconciliationStartupBarrier } from './startup/wsl-cli-reconciliation-startup-barrier'
-import { getDevInstanceIdentity } from './startup/dev-instance-identity'
+import {
+  getDevInstanceIdentity,
+  resolveDevAgentHookEndpointNamespace
+} from './startup/dev-instance-identity'
 import { hydrateShellPath, mergePathSegments } from './startup/hydrate-shell-path'
 import {
   acquireSingleInstanceLock,
@@ -551,9 +556,13 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
 }
 
 const devInstanceIdentity = getDevInstanceIdentity(is.dev)
-const devAgentHookEndpointNamespace = devInstanceIdentity.isDev
-  ? devInstanceIdentity.appUserModelId
-  : undefined
+const productionProfileDevMode = isProductionProfileDevMode(is.dev)
+// Production-profile dev must not accept mobile clients as the packaged installation.
+const enableMobileTransports = !productionProfileDevMode
+const devAgentHookEndpointNamespace = resolveDevAgentHookEndpointNamespace(
+  devInstanceIdentity,
+  productionProfileDevMode
+)
 
 installUncaughtPipeErrorGuard()
 // Why (issue #9441): without this, one rejected background promise during startup restore kills main silently (exit 1, no crash report).
@@ -2740,7 +2749,7 @@ void app.whenReady().then(async () => {
     runtime,
     // Why: mobile pairing needs the stable pre-setName() path (getCanonicalUserDataPath), not a late app.getPath('userData') that drops paired devices across restarts.
     userDataPath: getCanonicalUserDataPath(),
-    enableWebSocket: true,
+    enableWebSocket: enableMobileTransports,
     ...(isE2E ? { wsPort: e2eWsPort } : {}),
     ...(devWsPort !== undefined ? { wsPort: devWsPort } : {}),
     ...(serveOptions?.wsPort !== undefined
@@ -2871,7 +2880,7 @@ void app.whenReady().then(async () => {
   }
 
   const cloudAuth = getOrcaCloudAuthConfig()
-  if (cloudAuth.configured) {
+  if (cloudAuth.configured && enableMobileTransports) {
     try {
       const relayService = new DesktopRelayService({
         authConfig: cloudAuth.config,
@@ -3020,7 +3029,10 @@ app.on('will-quit', (e) => {
   // Why: allSettled (not all) keeps fail-open — a daemon-disconnect rejection still quits instead of hanging.
   // Why: telemetry flush folds in before app.quit() (bounded 2s); catch defensively so a flush failure can't cancel the quit chain.
   // Why: normal quits keep the detached daemon for warm reattach, but a dead dev parent leaves the temp/dev profile ownerless.
-  const daemonTeardown = isDevParentShutdownRequested() ? shutdownDaemon() : disconnectDaemon()
+  const daemonTeardown =
+    isDevParentShutdownRequested() && devParentShutdownOwnsDaemon(is.dev)
+      ? shutdownDaemon()
+      : disconnectDaemon()
   // Why: a wedged transport (half-open post-sleep socket) can leave one
   // member unsettled forever and block app.quit() until Force Quit (#9447).
   // Why stats/state join here: their writes are durable but not worth hanging the app for.

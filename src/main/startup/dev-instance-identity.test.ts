@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { getDevInstanceIdentity } from './dev-instance-identity'
+import {
+  getDevInstanceIdentity,
+  resolveDevAgentHookEndpointNamespace
+} from './dev-instance-identity'
 
 describe('dev-instance-identity', () => {
   it('keeps packaged identity stable', () => {
@@ -66,5 +69,17 @@ describe('dev-instance-identity', () => {
     expect(identity.devLabel).toBe('manual label')
     expect(identity.name).toBe('Orca: feature/other')
     expect(identity.dockBadgeLabel).toBeNull()
+  })
+
+  it('shares the stable hook endpoint only in explicit production-profile dev mode', () => {
+    const identity = getDevInstanceIdentity(true, {
+      ORCA_DEV_REPO_ROOT: '/repo/worktrees/fleet-dashboard'
+    })
+
+    expect(resolveDevAgentHookEndpointNamespace(identity, false)).toBe(identity.appUserModelId)
+    expect(resolveDevAgentHookEndpointNamespace(identity, true)).toBeUndefined()
+    expect(resolveDevAgentHookEndpointNamespace(getDevInstanceIdentity(false, {}), false)).toBe(
+      undefined
+    )
   })
 })

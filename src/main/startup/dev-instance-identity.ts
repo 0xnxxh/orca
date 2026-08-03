@@ -15,6 +15,13 @@ export type DevInstanceIdentity = AppIdentity & {
   appName: string
 }
 
+export function resolveDevAgentHookEndpointNamespace(
+  identity: DevInstanceIdentity,
+  productionProfileMode: boolean
+): string | undefined {
+  return identity.isDev && !productionProfileMode ? identity.appUserModelId : undefined
+}
+
 function cleanEnvValue(value: string | undefined): string | null {
   const trimmed = value?.replace(/\s+/g, ' ').trim()
   if (!trimmed) {
