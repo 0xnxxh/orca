@@ -138,9 +138,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   const runTerminalLiveExternalInput = useCallback<TerminalLiveExternalInputRunner>(
     (handle, operation) => {
+      const boundary = { generation: liveInputGenerationRef.current, handle }
       const queuedOperation = externalFlushTailRef.current.then(async () => {
         const flushed = await flushTerminalLiveExternalInput({
-          boundary: { generation: liveInputGenerationRef.current, handle },
+          boundary,
           clearPendingInput: clearPendingLiveInputMirror,
           flushPendingText: flushPendingLiveInputText,
           generationRef: liveInputGenerationRef,

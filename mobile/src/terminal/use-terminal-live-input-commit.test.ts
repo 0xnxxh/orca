@@ -452,6 +452,30 @@ describe('terminal live input commit hook', () => {
     expect(sends).toEqual(['first-start', 'first-end', 'second'])
   })
 
+  it('Given a queued send predates reconnect When its turn arrives Then cancels the stale operation', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    let releaseFirst: (sent: boolean) => void = () => undefined
+    const firstPending = new Promise<boolean>((resolve) => {
+      releaseFirst = resolve
+    })
+    let firstStarted = false
+    const secondSend = vi.fn(async () => true)
+    const first = harness.handlers.runTerminalLiveExternalInput('terminal-a', async () => {
+      firstStarted = true
+      return firstPending
+    })
+    const second = harness.handlers.runTerminalLiveExternalInput('terminal-a', secondSend)
+    await vi.waitFor(() => expect(firstStarted).toBe(true))
+
+    harness.setConnected(false)
+    harness.setConnected(true)
+    releaseFirst(true)
+
+    await expect(first).resolves.toBe(true)
+    await expect(second).resolves.toBe(false)
+    expect(secondSend).not.toHaveBeenCalled()
+  })
+
   it('Given an old flush is invalidated Then it cannot clear new fallback input', async () => {
     const harness = createTerminalLiveInputCommitHarness()
     let releaseOldSend: (sent: boolean) => void = () => undefined
