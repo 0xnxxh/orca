@@ -186,6 +186,14 @@ export default function PdfViewer({
     const handlePagesLoaded = (): void => {
       const destination = restored
       restored = null
+      // Why: an editor in a background worktree stays mounted under display:none,
+      // where pdf.js can neither scroll nor recompute its location. Arming there
+      // would let the reader's first zoom persist a page-1 position over the
+      // cached one, so stay disarmed and keep the input watcher until this pane
+      // is actually on screen.
+      if (container.clientHeight === 0) {
+        return
+      }
       detachInputWatcher?.()
       if (!cancelled && destination && !userMoved) {
         viewer.scrollPageIntoView(destination)
