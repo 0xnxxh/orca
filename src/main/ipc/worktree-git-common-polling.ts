@@ -7,11 +7,13 @@ import type {
 } from './worktree-base-directory-poller'
 
 // Shared with the darwin primary-metadata poll so platforms cannot drift.
-// `logs/HEAD` catches head moves; `config.worktree` carries the sparse flag.
+// `logs/HEAD` catches head moves; `config.worktree` carries the sparse flag;
+// `config` gains branch.<name>.remote/merge on an external `git push -u`.
 export const PRIMARY_CHECKOUT_METADATA_FILES = [
   'HEAD',
   'packed-refs',
   'index',
+  'config',
   'config.worktree',
   'logs/HEAD'
 ]

@@ -146,6 +146,23 @@ describe('worktree git-common narrow watch (darwin)', () => {
     expect(received.flat()).toContainEqual({ type: 'create', path: entryPath })
   })
 
+  it('detects a common config write via the primary-metadata poll', async () => {
+    // Why: an external `git push -u` rewrites only the common config (plus
+    // remote-tracking refs) — outside the narrow worktrees/ stream, so the
+    // primary-metadata poll must carry it.
+    installSubscribeMock()
+    const commonDir = await makeCommonDir(true)
+    const configPath = join(commonDir, 'config')
+    await writeFile(configPath, '[core]\n\tbare = false\n')
+    const received: WorktreeBasePollEvent[][] = []
+    await startWatch(commonDir, received)
+
+    await appendFile(configPath, '[branch "main"]\n\tremote = origin\n')
+    await vi.waitFor(() => {
+      expect(received.flat()).toContainEqual({ type: 'update', path: configPath })
+    })
+  })
+
   it('tears down and re-arms when the watched root is deleted', async () => {
     installSubscribeMock()
     const commonDir = await makeCommonDir(true)
@@ -537,6 +554,24 @@ describe('worktree git-common polling gate (non-darwin)', () => {
     await appendFile(headLogPath, 'next\n')
     await vi.waitFor(() => {
       expect(received.flat()).toContainEqual({ type: 'update', path: headLogPath })
+    })
+    expect(fullScans).not.toHaveBeenCalled()
+  })
+
+  it('polls the common config so an external push -u surfaces its new upstream', async () => {
+    // Why: `git push -u` from an external shell rewrites only the common
+    // config (plus remote-tracking refs); the primary-metadata list must
+    // surface it or the upstream stays invisible until a safety poll.
+    const commonDir = await makePollingCommonDir()
+    const configPath = join(commonDir, 'config')
+    await writeFile(configPath, '[core]\n\tbare = false\n')
+    const received: WorktreeBasePollEvent[][] = []
+    const fullScans = vi.fn()
+    await startPollingWatch(commonDir, received, fullScans)
+
+    await appendFile(configPath, '[branch "main"]\n\tremote = origin\n')
+    await vi.waitFor(() => {
+      expect(received.flat()).toContainEqual({ type: 'update', path: configPath })
     })
     expect(fullScans).not.toHaveBeenCalled()
   })
