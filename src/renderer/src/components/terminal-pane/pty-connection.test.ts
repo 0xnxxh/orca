@@ -6603,7 +6603,7 @@ describe('connectPanePty', () => {
     )
   })
 
-  it('does not consume startup draft delivery before deferred connect starts', async () => {
+  it('releases startup draft delivery when disposed before deferred connect starts', async () => {
     const { connectPanePty } = await import('./pty-connection')
     globalThis.requestAnimationFrame = vi.fn(() => 1)
     const transport = createMockTransport('pty-codex')
