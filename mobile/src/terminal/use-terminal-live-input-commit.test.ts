@@ -17,6 +17,7 @@ type TerminalLiveInputCommitHarness = {
 }
 
 type TerminalLiveInputCommitHarnessOptions = {
+  readonly sendImplementation?: TerminalLiveInputSender
   readonly sendResult?: boolean
 }
 
@@ -33,6 +34,7 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 }
 
 function createTerminalLiveInputCommitHarness({
+  sendImplementation,
   sendResult = true
 }: TerminalLiveInputCommitHarnessOptions = {}): TerminalLiveInputCommitHarness {
   const activeHandle = 'terminal-a'
@@ -52,7 +54,7 @@ function createTerminalLiveInputCommitHarness({
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return currentSendResult
+      return sendImplementation ? sendImplementation(activeHandle, bytes) : currentSendResult
     }
   }
   // Refs never re-render; only these variables re-run the hook's clear effects.
@@ -298,6 +300,42 @@ describe('terminal live input commit hook', () => {
     // Then
     await expect(flush).resolves.toBe(false)
     expect(harness.sent).toEqual([])
+  })
+
+  it('Given a second composition starts during a flush When the first send resolves Then preserves and flushes the new Kana first', async () => {
+    // Given
+    let resolveSend: (sent: boolean) => void = () => undefined
+    const pendingSend = new Promise<boolean>((resolve) => {
+      resolveSend = resolve
+    })
+    const harness = createTerminalLiveInputCommitHarness({
+      sendImplementation: async () => pendingSend
+    })
+    changeLiveInput(harness.handlers, 'か', true)
+    changeLiveInput(harness.handlers, 'か', false)
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か']))
+    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+
+    // When
+    changeLiveInput(harness.handlers, 'かに', true)
+    resolveSend(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Then
+    expect(harness.captures.at(-1)).toBe('かに')
+    let flushSettled = false
+    void flush.then(() => {
+      flushSettled = true
+    })
+    await Promise.resolve()
+    expect(flushSettled).toBe(false)
+
+    // When
+    changeLiveInput(harness.handlers, 'かに', false)
+
+    // Then
+    await expect(flush).resolves.toBe(true)
+    expect(harness.sent).toEqual(['か', 'に'])
   })
 
   it('Given iOS smart-dash text When the change arrives Then the capture echoes the raw field text and the PTY gets normalized bytes', async () => {
