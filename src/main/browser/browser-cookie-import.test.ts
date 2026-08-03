@@ -229,7 +229,7 @@ describe('importCookiesFromFile', () => {
         domain: 'github.com',
         name: '__Host-user_session_same_site',
         value: 'sess',
-        path: '/',
+        path: '/account',
         secure: true,
         httpOnly: true,
         sameSite: 'lax'
@@ -244,7 +244,7 @@ describe('importCookiesFromFile', () => {
       .map((c) => c[0])
       .find((c) => c.name === '__Host-user_session_same_site')
     // __Host- prefix requires no Domain attribute and path=/, or Chromium drops it.
-    expect(hostCall.domain).toBeUndefined()
+    expect(hostCall).not.toHaveProperty('domain')
     expect(hostCall.path).toBe('/')
 
     const normalCall = cookiesSetMock.mock.calls.map((c) => c[0]).find((c) => c.name === '_gh_sess')
