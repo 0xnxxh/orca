@@ -81,7 +81,7 @@ describe('useActiveProjectSkillRuntime', () => {
     setGlobalWslDefault('Ubuntu')
     useAppStore.setState({
       settings: {
-        ...useAppStore.getState().settings,
+        ...useAppStore.getState().settings!,
         activeRuntimeEnvironmentId: 'ssh-production'
       },
       runtimeEnvironments: [{ id: 'ssh-production' }] as never
