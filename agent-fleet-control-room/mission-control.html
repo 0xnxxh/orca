@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mission Control — Orca agent fleet</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./mission-control.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <h1 class="brand-title">Mission Control</h1>
+          <nav class="tabs" aria-label="Fleet views">
+            <a class="tab" href="./fleet-map.html">Map</a>
+            <a class="tab" href="./fleet-strips.html">Strips</a>
+            <span class="tab is-active" aria-current="page">Mission Control</span>
+          </nav>
+        </div>
+
+        <div class="dials" id="dials"></div>
+
+        <div class="topbar-end">
+          <span class="accounting" id="accounting"></span>
+          <label class="search">
+            <span class="search-glyph" aria-hidden="true">⌕</span>
+            <input
+              id="search"
+              type="search"
+              placeholder="Search worktrees, agents…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <kbd id="search-kbd"></kbd>
+          </label>
+        </div>
+      </header>
+
+      <main class="board">
+        <section class="map" id="map" aria-label="Containment map">
+          <div class="bands" id="bands"></div>
+          <svg class="lineage" id="lineage" aria-hidden="true"></svg>
+          <p class="map-empty" id="map-empty" hidden></p>
+        </section>
+
+        <aside class="rail" id="rail" aria-label="Intervention rail"></aside>
+      </main>
+
+      <footer class="statusbar">
+        <div class="legend" id="legend-shape"></div>
+        <div class="legend legend-motion">
+          <span><i class="swatch swatch-blink"></i>fast = needs you</span>
+          <span><i class="swatch swatch-pulse"></i>slow = to review</span>
+          <span><i class="swatch swatch-still"></i>still = settled</span>
+        </div>
+        <div class="legend legend-keys" id="legend-keys"></div>
+        <div class="capture" id="capture"></div>
+      </footer>
+    </div>
+
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./mission-control.js"></script>
+  </body>
+</html>

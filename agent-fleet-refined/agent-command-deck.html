@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Agent Command Deck</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./agent-command-deck.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></symbol>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"></path></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 5 5-5 5M12 18h8"></path></symbol>
+      <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="19" r="2"></circle><path d="M6 7v10M8 9c5 0 4-3 8-3"></path></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.9"></path></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h8l-1 8 9-12h-8z"></path></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+    </svg>
+
+    <main class="deck-shell">
+      <header class="topbar">
+        <div class="orca-mark">O</div>
+        <div class="product-title"><strong>Agents</strong><span>Command deck</span></div>
+        <nav class="primary-nav" aria-label="Agent dashboard sections">
+          <button class="is-active">Needs you <b>9</b></button>
+          <button>Fleet <span>168</span></button>
+          <button>Worktrees <span>104</span></button>
+          <button>History</button>
+        </nav>
+        <label class="search">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <input aria-label="Search agents and worktrees" placeholder="Find any agent or worktree…" />
+          <kbd data-mac="⌘ K" data-other="Ctrl+K">⌘ K</kbd>
+        </label>
+        <button class="orchestrator-button">
+          <span class="orch-dot"></span>
+          Ask Orchestrator
+          <kbd data-mac="⌘ ⇧ O" data-other="Ctrl+Shift+O">⌘ ⇧ O</kbd>
+        </button>
+      </header>
+
+      <section class="deck-grid">
+        <aside class="intervention-queue">
+          <header class="queue-header">
+            <div><span class="eyebrow">Intervention queue</span><h1>Four decisions unblock nine agents</h1></div>
+            <button>Oldest first</button>
+          </header>
+          <section class="queue-group">
+            <div class="group-label"><span>Judgment</span><b>4</b></div>
+            <button class="queue-item is-selected">
+              <span class="state-dot attention"></span>
+              <span class="queue-copy"><strong>Runtime cleanup behavior</strong><small>3 agents · 2 worktrees</small></span>
+              <time>now</time>
+            </button>
+            <button class="queue-item">
+              <span class="state-dot attention"></span>
+              <span class="queue-copy"><strong>Duplicate mobile sessions</strong><small>2 agents · mobile-9717</small></span>
+              <time>3m</time>
+            </button>
+            <button class="queue-item">
+              <span class="state-dot"></span>
+              <span class="queue-copy"><strong>Review scope changed</strong><small>1 agent · pr-9190</small></span>
+              <time>8m</time>
+            </button>
+          </section>
+          <section class="queue-group">
+            <div class="group-label"><span>Access</span><b>2</b></div>
+            <button class="queue-item">
+              <span class="state-dot"></span>
+              <span class="queue-copy"><strong>Trust dialog permission</strong><small>1 agent · desktop test</small></span>
+              <time>7m</time>
+            </button>
+          </section>
+          <section class="queue-group quiet">
+            <div class="group-label"><span>Watchlist</span><b>3</b></div>
+            <button class="queue-item">
+              <span class="state-dot watching"></span>
+              <span class="queue-copy"><strong>Resume matrix running long</strong><small>47m · output 2m ago</small></span>
+              <time>watch</time>
+            </button>
+          </section>
+          <footer class="queue-footer">
+            <span><i></i><strong>34</strong> working</span>
+            <span><i></i><strong>71</strong> unread</span>
+            <span><svg class="icon"><use href="#i-terminal"></use></svg><strong>332</strong> terminals</span>
+          </footer>
+        </aside>
+
+        <section class="decision-workspace">
+          <header class="decision-header">
+            <div class="decision-title">
+              <span class="eyebrow">Decision 1 of 4</span>
+              <h2>Runtime cleanup behavior</h2>
+              <p>One response will route to three waiting agents.</p>
+            </div>
+            <div class="decision-meta">
+              <span><svg class="icon"><use href="#i-users"></use></svg>3 agents</span>
+              <span><svg class="icon"><use href="#i-git"></use></svg>2 worktrees</span>
+              <button class="terminal-trigger" data-open-terminal><svg class="icon"><use href="#i-terminal"></use></svg>Inspect terminal</button>
+            </div>
+          </header>
+
+          <div class="decision-scroll">
+            <section class="question-card">
+              <span class="question-mark">?</span>
+              <div>
+                <span class="eyebrow">The decision</span>
+                <h3>Should stale local agent rows survive an Orca restart?</h3>
+                <p>The implementation is complete. Reviewers disagree only on whether historical local rows remain visible after the backing terminal disappears.</p>
+              </div>
+              <span class="waiting-chip">3 waiting</span>
+            </section>
+
+            <div class="context-heading">
+              <span class="eyebrow">Distilled context</span>
+              <span>Generated from 3 agent threads · refreshed 36s ago</span>
+            </div>
+            <section class="context-grid">
+              <article class="context-card">
+                <header><span class="state-icon agreed"><svg class="icon"><use href="#i-check"></use></svg></span><strong>Everyone agrees</strong></header>
+                <p>Remote and WSL history must survive relay reconnects. Active terminal rows must never be duplicated.</p>
+              </article>
+              <article class="context-card">
+                <header><span class="state-icon split">↔</span><strong>The disagreement</strong></header>
+                <p>Keeping local history aids recovery; dropping it avoids presenting terminal state that no longer exists.</p>
+              </article>
+              <article class="context-card evidence-card">
+                <header><span class="state-icon"><svg class="icon"><use href="#i-eye"></use></svg></span><strong>Evidence</strong></header>
+                <p>418 tests pass. One restart fixture changes depending on the retention policy.</p>
+                <button>View affected diff <span>›</span></button>
+              </article>
+            </section>
+
+            <section class="routing-card">
+              <header><span class="eyebrow">Your response goes to</span><button>Edit recipients</button></header>
+              <div class="recipient-list">
+                <div><span class="avatar">R</span><p><strong>Review coordinator</strong><small>review-11464 · waiting</small></p><b>primary</b></div>
+                <div><span class="avatar">S</span><p><strong>Security review</strong><small>pr-8783 · waiting</small></p><b>context</b></div>
+                <div><span class="avatar">X</span><p><strong>Cross-platform pass</strong><small>pr-8783 · waiting</small></p><b>context</b></div>
+              </div>
+            </section>
+          </div>
+
+          <form class="response-composer" id="response-form">
+            <div class="composer-topline">
+              <span><strong>Respond once</strong> · route to 3 agents</span>
+              <div class="response-mode"><button type="button" class="is-active">Direction</button><button type="button">Question</button><button type="button">Note</button></div>
+            </div>
+            <textarea id="response-text" aria-label="Response to waiting agents">Drop stale local rows after restart. Preserve remote and WSL history because reconnect can restore their backing sessions. Add the restart fixture for both paths.</textarea>
+            <div class="composer-footer">
+              <span>Agents receive the decision, distilled context, and original thread links.</span>
+              <button type="button" class="secondary-button" data-open-terminal><svg class="icon"><use href="#i-terminal"></use></svg>Terminal</button>
+              <button class="send-button"><svg class="icon"><use href="#i-send"></use></svg>Send &amp; next <kbd data-mac="⌘ ↵" data-other="Ctrl+Enter">⌘ ↵</kbd></button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="impact-panel">
+          <section class="impact-summary">
+            <span class="eyebrow">Expected impact</span>
+            <strong class="impact-number">3</strong>
+            <p>agents unblocked by this response</p>
+            <div class="impact-bars"><i></i><i></i><i></i></div>
+          </section>
+          <section class="worktree-impact">
+            <span class="eyebrow">Affected worktrees</span>
+            <button><span><strong>review-11464</strong><small>1 waiting · 2 working</small></span><b>Open</b></button>
+            <button><span><strong>pr-8783-internal-review</strong><small>2 waiting · 5 working</small></span><b>Open</b></button>
+          </section>
+          <section class="live-signals">
+            <header><span class="eyebrow">While you decide</span><span class="live-indicator"><i></i>live</span></header>
+            <article><i></i><p><strong>Test verification finished</strong><small>418 passed · review-11464</small></p><time>22s</time></article>
+            <article><i></i><p><strong>Mobile agent resumed</strong><small>mobile-9717-dup-sessions</small></p><time>1m</time></article>
+            <article><i></i><p><strong>Review branch converged</strong><small>pr-9190-internal-review</small></p><time>3m</time></article>
+          </section>
+          <section class="next-up">
+            <span class="eyebrow">Next up</span>
+            <p><strong>Duplicate mobile sessions</strong><span>2 agents · decision</span></p>
+            <span>Estimated context: 45 seconds</span>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <div class="terminal-backdrop" id="terminal-backdrop" aria-hidden="true">
+      <section class="terminal-popover" role="dialog" aria-modal="true" aria-label="Agent terminal">
+        <header>
+          <div><span class="terminal-status"></span><strong>Review coordinator</strong><small>review-11464 · agent terminal</small></div>
+          <button aria-label="Expand terminal"><svg class="icon"><use href="#i-expand"></use></svg></button>
+          <button aria-label="Close terminal" data-close-terminal><svg class="icon"><use href="#i-close"></use></svg></button>
+        </header>
+        <div class="terminal-tabs"><button class="is-active">Agent</button><button>Tests</button><button>Git</button><span>live</span></div>
+        <pre class="terminal-output"><span class="muted">Review complete. One product decision remains.</span>
+
+<span class="prompt">●</span> All reviewers agree remote/WSL history should persist.
+<span class="prompt">●</span> Local terminal <span class="code">term_83ca</span> no longer exists after restart.
+
+The remaining choice is whether to retain its historical agent row.
+Dropping it is consistent with the existing local cleanup contract.
+
+<span class="attention">Waiting for your direction…</span></pre>
+        <footer>
+          <span>Dashboard response is preserved behind this window.</span>
+          <button data-close-terminal>Return to decision <kbd>Esc</kbd></button>
+        </footer>
+      </section>
+    </div>
+
+    <div class="sent-toast" id="sent-toast"><svg class="icon"><use href="#i-check"></use></svg><span><strong>Direction sent to 3 agents</strong>Opening the next decision…</span></div>
+    <script src="./agent-command-deck.js"></script>
+  </body>
+</html>

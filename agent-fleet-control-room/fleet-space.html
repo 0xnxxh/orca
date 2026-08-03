@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet — Space</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-glass.css" />
+    <link rel="stylesheet" href="./fleet-space.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">Fleet</span>
+      <nav class="tabs">
+        <a href="./fleet-glass.html">Glass</a>
+        <a href="./fleet-board.html">Board</a>
+        <a href="./fleet-triage.html">Triage</a>
+        <span class="is-active">Space</span>
+      </nav>
+      <input class="search" id="search" type="text" />
+      <span class="accounting" id="accounting"></span>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="stage" id="stage">
+      <div class="world" id="world"></div>
+    </div>
+
+    <div class="viewtools">
+      <button class="vt" id="fit">Fit</button>
+      <button class="vt" id="reset" disabled>Reset layout</button>
+    </div>
+
+    <aside class="panel" id="panel" hidden></aside>
+    <div class="tooltip" id="tooltip" hidden></div>
+
+    <footer class="whisper" id="whisper"></footer>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-space.js"></script>
+  </body>
+</html>

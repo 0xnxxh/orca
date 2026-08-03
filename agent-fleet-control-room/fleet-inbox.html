@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet — Inbox</title>
+    <link rel="stylesheet" href="./control-room-tokens.css" />
+    <link rel="stylesheet" href="./fleet-inbox.css" />
+  </head>
+  <body>
+    <nav class="whisper-nav">
+      <span class="wordmark">Fleet</span>
+      <span class="nav-links">
+        <a href="./fleet-hexmap.html">Hexmap</a>
+        <a href="./fleet-terminal-wall.html">Wall</a>
+        <a href="./mission-control.html">Mission Control</a>
+      </span>
+    </nav>
+
+    <main class="inbox">
+      <header class="inbox-head">
+        <h1 id="headline"></h1>
+        <p class="sub" id="subline"></p>
+      </header>
+
+      <section id="cards"></section>
+
+      <section class="rest" id="rest"></section>
+
+      <footer class="foot" id="foot"></footer>
+    </main>
+
+    <script src="../agent-viewer-alternatives/actual-agent-activity.js"></script>
+    <script src="./fleet-state-synthesis.js"></script>
+    <script src="./fleet-inbox.js"></script>
+  </body>
+</html>

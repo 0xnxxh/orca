@@ -1,0 +1,776 @@
+/* Fleet · Strips — ATC flight-strip bay wall.
+   Lanes are states, rows are strips, nothing leaves a bay until it is acted on.
+   Chrome is monochrome; only --state-* tokens carry hue, and hue never appears
+   without a glyph shape carrying the same meaning. */
+
+html,
+body {
+  height: 100%;
+}
+body {
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 1280px;
+}
+.spacer {
+  flex: 1 1 auto;
+}
+
+.shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 14px 0;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  height: 54px;
+  border-bottom: 1px solid var(--border);
+}
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.tab {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+.tab:hover {
+  color: var(--foreground);
+}
+.tab.is-active {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.accounting {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.segmented {
+  display: flex;
+  padding: 2px;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+}
+.seg {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg.is-active {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+/* Idle-worker control: count and cycle affordance in one pill. Self-clearing —
+   it counts down as decisions are answered and goes quiet at zero. */
+.needs-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--state-attention);
+  background: color-mix(in srgb, var(--state-attention) 9%, transparent);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.needs-pill .pill-glyph {
+  color: var(--state-attention);
+  font-size: 12px;
+  line-height: 1;
+}
+.needs-pill .pill-sep {
+  color: var(--muted-foreground);
+}
+.needs-pill.is-clear {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.needs-pill.is-clear .pill-glyph {
+  color: var(--state-done);
+}
+
+/* ---------- bay stack ---------- */
+
+.bays {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 6px 0;
+  overflow: hidden;
+}
+
+.bay {
+  display: flex;
+  flex-direction: column;
+  min-height: 82px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+/* NEEDS YOU takes every leftover pixel — its cards, failures, and peek panel are
+   the screen's whole point. Quiet bays hold fixed one/two-strip racks (headers
+   carry the counts) and scroll internally; DONE keeps its fold row pinned. */
+.bay-needsYou {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bay-working,
+.bay-review,
+.bay-done {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.bay-working .bay-body { height: 39px; }
+.bay-review .bay-body { height: 39px; }
+.bay-done .bay-body { height: 30px; }
+/* Overflow fades instead of slicing a strip mid-row. */
+.bay-needsYou .bay-body {
+  mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent);
+}
+
+.bay-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 24px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.bay-name {
+  letter-spacing: 0.08em;
+}
+.bay-needsYou .bay-name {
+  color: var(--state-attention);
+}
+.count-badge {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.bay-affordance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.bay-affordance.is-latched {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 9px 2px;
+}
+.bay-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.bay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+.bay-body::-webkit-scrollbar {
+  width: 8px;
+}
+.bay-body::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 999px;
+  border: 2px solid var(--card);
+}
+
+/* ---------- strip ---------- */
+
+.strip-group {
+  position: relative;
+}
+.strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 12px 0 11px;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+  background: transparent;
+}
+.strip:hover,
+.strip-group.is-hovered > .strip {
+  background: rgb(255 255 255 / 0.025);
+}
+/* Focus rides on an inset ring so it survives alongside the blink overlay. */
+.strip-group.is-focused > .strip {
+  background: rgb(255 255 255 / 0.04);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+/* Motion is a two-value grammar: fast border-blink = unacknowledged needs-you,
+   slow pulse = finished but unreviewed. Everything else is still. */
+.strip-group.is-blinking > .strip::after,
+.strip-group.is-pulsing > .strip::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+.strip-group.is-blinking > .strip::after {
+  animation: blink-border-attention var(--blink-fast) steps(1, end) infinite;
+}
+.strip-group.is-blinking.state-failed > .strip::after {
+  animation-name: blink-border-blocked;
+}
+.strip-group.is-pulsing > .strip::after {
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+
+/* Pinned strips ride cocked out of the rack, ATC-style, and sort to the top. */
+.strip-group.is-pinned > .strip {
+  transform: translateX(10px) rotate(-0.35deg);
+  background: color-mix(in srgb, var(--secondary) 45%, var(--card));
+  box-shadow: var(--shadow-lift);
+  z-index: 1;
+}
+.strip-group.is-pinned > .strip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--strip-state);
+}
+.strip-group.is-pinned.is-focused > .strip {
+  box-shadow: inset 0 0 0 1px var(--ring), var(--shadow-lift);
+}
+.strip-group.is-pinned > .peek {
+  margin-left: 52px;
+}
+
+/* strip cells */
+.cell-name {
+  flex: 0 1 250px;
+  min-width: 90px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-age {
+  flex: 0 0 74px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip-type {
+  flex: 0 0 auto;
+  min-width: 44px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.chip-worktree {
+  flex: 0 0 auto;
+  max-width: 195px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-pr {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  border: 1px solid var(--input);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.chip-note {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  border: 1px dashed var(--input);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.chip-tag {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+
+.pin {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--state-idle);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.pin:hover {
+  color: var(--muted-foreground);
+}
+.pin.is-on {
+  color: var(--foreground);
+}
+
+/* ---------- glyphs: shape carries state, fill carries liveness ---------- */
+
+.glyph {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--strip-state);
+  font-size: 13px;
+  line-height: 1;
+}
+.glyph.g-char {
+  font-weight: 600;
+}
+/* Exited process: hollow and dim. A reply restarts it. */
+.glyph.is-exited {
+  opacity: 0.5;
+}
+.glyph.is-exited.g-char {
+  font-weight: 400;
+}
+.glyph .ring {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  animation: spin 3.4s linear infinite;
+}
+.glyph.is-exited .ring {
+  animation: none;
+  border-color: currentColor;
+  border-style: dotted;
+}
+/* Sleeping loop: a crescent, not a ring — it is not holding a slot. */
+.glyph .crescent {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset -3.5px 0 0 0 currentColor;
+}
+/* Working renders dim so amber and red keep the top of the salience ladder. */
+.glyph.state-working {
+  opacity: 0.65;
+}
+.glyph.state-working.is-exited {
+  opacity: 0.36;
+}
+.glyph.state-done {
+  font-size: 16px;
+}
+
+.strip-group.state-attention,
+.decision-card {
+  --strip-state: var(--state-attention);
+}
+.strip-group.state-permission {
+  --strip-state: var(--state-attention);
+}
+.strip-group.state-failed {
+  --strip-state: var(--state-blocked);
+}
+.strip-group.state-working {
+  --strip-state: var(--state-working);
+}
+.strip-group.state-review {
+  --strip-state: var(--state-done);
+}
+.strip-group.state-done {
+  --strip-state: var(--state-idle);
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  appearance: none;
+  font: inherit;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.btn:hover {
+  color: var(--foreground);
+  border-color: var(--input);
+}
+.btn-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 500;
+}
+.btn-primary:hover {
+  background: var(--foreground);
+  border-color: var(--foreground);
+  color: var(--primary-foreground);
+}
+
+/* ---------- coalesced decision card ---------- */
+
+.decision-card {
+  margin: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--secondary) 38%, var(--card));
+  padding: 6px 11px 7px;
+}
+.decision-card.is-collapsed {
+  padding: 6px 11px;
+}
+.decision-card.is-live {
+  animation: blink-border-attention var(--blink-fast) steps(1, end) infinite;
+}
+.dc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.dc-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dc-title code,
+.dc-cmd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--foreground);
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.dc-detail {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dc-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.dc-controls .eyebrow {
+  margin-right: -2px;
+}
+/* Collapsed card: the whole decision — scope, Allow, Deny — folds into one row. */
+.dc-controls.dc-inline {
+  margin-top: 0;
+}
+.dc-agents {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.dc-agent {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 19px;
+  font-size: 12px;
+}
+.dc-agent .glyph {
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+}
+.dc-agent .dc-agent-name {
+  flex: 0 1 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-agent .cell-age {
+  flex: 0 0 60px;
+}
+.dc-expand {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dc-expand:hover {
+  color: var(--foreground);
+}
+.dc-resolved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.dc-resolved .glyph {
+  color: var(--state-done);
+}
+
+/* ---------- peek: expanded in place, pushes the rack down ---------- */
+
+.peek {
+  margin: 0 12px 6px 42px;
+  padding: 7px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--secondary) 40%, var(--card));
+}
+.peek-question {
+  font-size: 13px;
+  line-height: 1.35;
+  margin: 0 0 6px;
+}
+/* Answer options and the free-text reply share one row: respond in place without
+   the panel pushing the rack below the fold. */
+.peek-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.peek-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.peek-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--input);
+  margin: 0 4px;
+}
+.peek-input {
+  flex: 1 1 220px;
+  min-width: 160px;
+  height: 28px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+}
+.peek-input::placeholder {
+  color: var(--muted-foreground);
+}
+.peek-input:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+.peek-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* ---------- done fold ---------- */
+
+.fold-row {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--secondary) 30%, var(--card));
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.fold-row:hover {
+  color: var(--foreground);
+}
+.fold-count {
+  font-variant-numeric: tabular-nums;
+}
+.fold-rule {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* ---------- footer ---------- */
+
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  height: 32px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.legend-keys {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.legend-keys .sep {
+  opacity: 0.5;
+  padding: 0 3px;
+}
+.legend-motion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.legend-dot {
+  opacity: 0.5;
+}
+.legend-sample {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.sample-blink {
+  animation: blink-border-attention var(--blink-fast) steps(1, end) infinite;
+}
+.sample-pulse {
+  animation: pulse-review var(--pulse-slow) ease-in-out infinite;
+}
+.sample-still {
+  border-color: var(--state-idle);
+}

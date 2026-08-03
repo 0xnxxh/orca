@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Agent Dashboard Concepts</title>
+    <link rel="stylesheet" href="./agent-dashboard-concepts.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>
+      </symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24">
+        <path d="M4 5h16M7 12h10M10 19h4"></path>
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M3 7h6l2 2h10v10H3z"></path>
+      </symbol>
+      <symbol id="i-users" viewBox="0 0 24 24">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.9"></path>
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>
+      </symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24">
+        <circle cx="6" cy="5" r="2"></circle><circle cx="18" cy="6" r="2"></circle>
+        <circle cx="6" cy="19" r="2"></circle><path d="M6 7v10M8 9c5 0 4-3 8-3"></path>
+      </symbol>
+      <symbol id="i-message" viewBox="0 0 24 24">
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path>
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 6 5 5-5 5M12 18h8"></path>
+      </symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 9v12"></path>
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14"></path>
+      </symbol>
+    </svg>
+
+    <main class="prototype-shell">
+      <header class="app-header">
+        <div class="brand-mark" aria-hidden="true">O</div>
+        <div class="title-block">
+          <h1>Agents</h1>
+          <span>12 across 4 projects</span>
+        </div>
+        <nav class="view-tabs" aria-label="Dashboard view">
+          <button class="view-tab is-active" data-view="overview">Overview</button>
+          <button class="view-tab" data-view="map">Map</button>
+          <button class="view-tab" data-view="history">History</button>
+        </nav>
+        <div class="header-actions">
+          <label class="search-box">
+            <svg class="icon"><use href="#i-search"></use></svg>
+            <input aria-label="Search agents" placeholder="Search agents, projects, or work…" />
+            <kbd>⌘ K</kbd>
+          </label>
+          <button class="button button-outline">
+            <svg class="icon"><use href="#i-filter"></use></svg>
+            Filter
+          </button>
+          <button class="icon-button" id="theme-toggle" aria-label="Toggle color theme">
+            <svg class="icon"><use href="#i-sun"></use></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="dashboard-screen is-active" data-screen="overview">
+        <div class="overview-summary">
+          <button class="summary-item attention">
+            <span class="summary-glyph">!</span><strong>2</strong><span>need you</span>
+          </button>
+          <div class="summary-item"><span class="working-spinner"></span><strong>6</strong><span>active</span></div>
+          <div class="summary-item success">
+            <svg class="icon"><use href="#i-check"></use></svg><strong>3</strong><span>completed today</span>
+          </div>
+          <div class="summary-item"><span class="idle-dot"></span><strong>1</strong><span>idle</span></div>
+        </div>
+
+        <div class="overview-layout">
+          <div class="overview-main">
+            <section class="content-section">
+              <div class="section-heading">
+                <div><span class="eyebrow">Needs you</span><span class="count-badge">2</span></div>
+                <button class="text-button">Mark all seen</button>
+              </div>
+              <div class="attention-list">
+                <article class="attention-row">
+                  <div class="state-icon attention"><svg class="icon"><use href="#i-message"></use></svg></div>
+                  <div class="row-copy">
+                    <strong>Choose token refresh behavior</strong>
+                    <span><b>API Integrator</b> · Orca / auth-refresh</span>
+                  </div>
+                  <span class="relative-time">1m</span>
+                  <button class="button button-ghost">Open</button>
+                  <button class="button button-primary">Reply</button>
+                </article>
+                <article class="attention-row">
+                  <div class="state-icon attention">!</div>
+                  <div class="row-copy">
+                    <strong>Rate limit strategy exceeds quota</strong>
+                    <span><b>Backend Agent</b> · Relay / usage-limits</span>
+                  </div>
+                  <span class="relative-time">6m</span>
+                  <button class="button button-ghost">Open</button>
+                  <button class="button button-primary">Reply</button>
+                </article>
+              </div>
+            </section>
+
+            <section class="content-section missions-section">
+              <div class="section-heading">
+                <div><span class="eyebrow">Active missions</span><span class="count-badge">3</span></div>
+                <button class="button button-outline button-small"><svg class="icon"><use href="#i-plus"></use></svg>New agent</button>
+              </div>
+
+              <article class="mission-group">
+                <header class="mission-header">
+                  <svg class="icon"><use href="#i-folder"></use></svg>
+                  <div><strong>Orca / Dashboard revamp</strong><span>albacore · 3 agents</span></div>
+                  <span class="mission-progress"><i style="--progress: 68%"></i></span>
+                  <span class="muted">68%</span>
+                </header>
+                <button class="agent-row is-selected" data-agent="UI Builder" data-action="Refactoring dashboard information hierarchy">
+                  <span class="working-spinner"></span><span class="agent-avatar">C</span>
+                  <span class="agent-name">UI Builder</span>
+                  <span class="agent-action">Refactoring dashboard information hierarchy</span>
+                  <span class="row-meta"><svg class="icon"><use href="#i-clock"></use></svg>28m</span>
+                  <span class="row-meta"><svg class="icon"><use href="#i-users"></use></svg>2 subagents</span>
+                  <span class="chevron">›</span>
+                </button>
+                <button class="agent-row" data-agent="API Integrator" data-action="Wiring metrics endpoints">
+                  <span class="working-spinner"></span><span class="agent-avatar">C</span>
+                  <span class="agent-name">API Integrator</span><span class="agent-action">Wiring metrics endpoints</span>
+                  <span class="row-meta"><svg class="icon"><use href="#i-clock"></use></svg>19m</span>
+                  <span class="row-meta"><svg class="icon"><use href="#i-branch"></use></svg>PR #11342</span>
+                  <span class="chevron">›</span>
+                </button>
+                <button class="agent-row" data-agent="E2E Tester" data-action="Running dashboard interaction flows">
+                  <span class="working-spinner"></span><span class="agent-avatar">C</span>
+                  <span class="agent-name">E2E Tester</span><span class="agent-action">Running dashboard interaction flows</span>
+                  <span class="row-meta"><svg class="icon"><use href="#i-clock"></use></svg>11m</span>
+                  <span class="row-meta">42 / 58 tests</span><span class="chevron">›</span>
+                </button>
+              </article>
+
+              <article class="mission-group collapsed">
+                <header class="mission-header">
+                  <svg class="icon"><use href="#i-folder"></use></svg>
+                  <div><strong>Relay / Connection recovery</strong><span>relay-reconnect · 2 agents</span></div>
+                  <span class="mission-progress"><i style="--progress: 41%"></i></span>
+                  <span class="muted">41%</span><span class="chevron">›</span>
+                </header>
+              </article>
+            </section>
+          </div>
+
+          <aside class="activity-panel">
+            <div class="panel-heading"><strong>Activity</strong><button class="text-button">All activity⌄</button></div>
+            <div class="activity-feed">
+              <article class="activity-item"><span class="activity-icon success"><svg class="icon"><use href="#i-check"></use></svg></span><div><strong>E2E tests passed</strong><span>Dashboard filters · E2E Tester</span></div><time>4m</time></article>
+              <article class="activity-item"><span class="activity-icon"><svg class="icon"><use href="#i-branch"></use></svg></span><div><strong>PR #11342 opened</strong><span>metrics-endpoints · API Integrator</span></div><time>8m</time></article>
+              <article class="activity-item"><span class="activity-icon attention"><svg class="icon"><use href="#i-message"></use></svg></span><div><strong>Needs your reply</strong><span>Token refresh behavior</span></div><time>11m</time></article>
+              <article class="activity-item"><span class="activity-icon"><svg class="icon"><use href="#i-terminal"></use></svg></span><div><strong>Agent started</strong><span>Dashboard interaction flows</span></div><time>16m</time></article>
+              <article class="activity-item"><span class="activity-icon success"><svg class="icon"><use href="#i-check"></use></svg></span><div><strong>Review merged</strong><span>Improve empty states · #11335</span></div><time>1h</time></article>
+            </div>
+            <button class="panel-footer">View full history <span>↗</span></button>
+          </aside>
+        </div>
+      </section>
+
+      <section class="dashboard-screen" data-screen="map">
+        <div class="map-layout">
+          <aside class="attention-rail">
+            <span class="eyebrow">Needs you</span>
+            <button class="rail-alert"><span>!</span><div><strong>Token refresh behavior</strong><small>API Integrator · 1m</small></div></button>
+            <button class="rail-alert"><span>!</span><div><strong>Rate limit strategy</strong><small>Backend Agent · 6m</small></div></button>
+          </aside>
+          <div class="agent-canvas">
+            <div class="canvas-toolbar">
+              <button class="icon-button">⌖</button><button class="icon-button">−</button><span>100%</span><button class="icon-button">+</button>
+              <button class="button button-outline button-small"><svg class="icon"><use href="#i-layout"></use></svg>Auto layout</button>
+            </div>
+            <article class="mission-cluster">
+              <header><svg class="icon"><use href="#i-folder"></use></svg><strong>Orca / Dashboard revamp</strong><span>albacore</span></header>
+              <svg class="connectors" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M50 17V21M50 21H19V26M50 21V26M50 21H81V26"></path>
+                <path d="M19 34V38M19 38H10V45M19 38H29V45M50 34V47"></path>
+              </svg>
+              <button class="map-node mission-node"><span class="node-glyph">◎</span><strong>Dashboard revamp</strong><small>Mission · 3 agents</small></button>
+              <button class="map-node node-ui" data-map-agent="UI Builder"><span class="working-spinner"></span><strong>UI Builder</strong><small>Refactoring layout · 28m</small></button>
+              <button class="map-node node-api is-selected" data-map-agent="API Integrator"><span class="working-spinner"></span><strong>API Integrator</strong><small>Wiring metrics · 19m</small></button>
+              <button class="map-node node-e2e" data-map-agent="E2E Tester"><span class="working-spinner"></span><strong>E2E Tester</strong><small>Running flows · 11m</small></button>
+              <button class="map-node mini-node node-child-a"><strong>Component Author</strong><small>Working</small></button>
+              <button class="map-node mini-node node-child-b"><strong>Design Sync</strong><small>Idle</small></button>
+              <button class="map-node output-node"><svg class="icon"><use href="#i-branch"></use></svg><strong>PR #11342</strong><small>Open</small></button>
+            </article>
+          </div>
+          <aside class="agent-inspector">
+            <div class="inspector-heading"><span class="agent-avatar">C</span><div><strong id="inspector-name">API Integrator</strong><span>Codex · gpt-5.6</span></div><button class="icon-button">×</button></div>
+            <div class="status-pill"><span class="working-spinner"></span>Working</div>
+            <dl class="inspector-facts">
+              <div><dt>Current action</dt><dd id="inspector-action">Wiring metrics endpoints</dd></div>
+              <div><dt>Elapsed</dt><dd>19m</dd></div>
+            </dl>
+            <section class="inspector-section">
+              <span class="eyebrow">Latest activity</span>
+              <div class="mini-timeline"><p><i></i><span>Started working</span><time>19m</time></p><p><i></i><span>Modified routes.ts</span><time>12m</time></p><p><i></i><span>Pushed metrics-endpoints</span><time>8m</time></p><p><i></i><span>Commented on PR #11342</span><time>3m</time></p></div>
+            </section>
+            <section class="inspector-section metadata-list">
+              <p><span>Repo</span><strong>orca/dashboard</strong></p><p><span>Worktree</span><strong>wt/api-integrator</strong></p><p><span>Review</span><strong>PR #11342</strong></p><p><span>Subagents</span><strong>0</strong></p>
+            </section>
+            <div class="inspector-actions"><button class="button button-outline"><svg class="icon"><use href="#i-terminal"></use></svg>Open terminal</button><button class="button button-outline"><svg class="icon"><use href="#i-folder"></use></svg>Open worktree</button></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="dashboard-screen" data-screen="history">
+        <div class="history-header">
+          <div><span class="eyebrow">Agent history</span><h2>What changed across your work</h2><p>Compare outcomes, duration, and review state without reopening every terminal.</p></div>
+          <div class="history-metrics"><span><strong>38</strong> runs this week</span><span><strong>4h 12m</strong> active time</span><span><strong>81%</strong> completed</span></div>
+        </div>
+        <div class="history-toolbar">
+          <div class="period-tabs"><button class="is-active">Today</button><button>7 days</button><button>30 days</button></div>
+          <button class="button button-outline button-small"><svg class="icon"><use href="#i-filter"></use></svg>Project · All</button>
+          <button class="button button-outline button-small">Outcome · All</button>
+        </div>
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead><tr><th>Agent</th><th>Mission</th><th>Project / worktree</th><th>Started</th><th>Duration</th><th>Outcome</th><th>Output</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><span class="agent-avatar">C</span><strong>E2E Tester</strong></td><td>Dashboard interaction flows</td><td><strong>Orca</strong><small>albacore</small></td><td>10:42 AM</td><td>18m</td><td><span class="outcome success"><svg class="icon"><use href="#i-check"></use></svg>Completed</span></td><td>58 tests passed</td><td>›</td></tr>
+              <tr><td><span class="agent-avatar">C</span><strong>API Integrator</strong></td><td>Metrics endpoints</td><td><strong>Orca</strong><small>albacore</small></td><td>10:26 AM</td><td>31m</td><td><span class="outcome success"><svg class="icon"><use href="#i-check"></use></svg>Completed</span></td><td><span class="review-chip"><svg class="icon"><use href="#i-branch"></use></svg>PR #11342</span></td><td>›</td></tr>
+              <tr><td><span class="agent-avatar">C</span><strong>Backend Agent</strong></td><td>Connection recovery</td><td><strong>Relay</strong><small>relay-reconnect</small></td><td>9:51 AM</td><td>42m</td><td><span class="outcome interrupted">Interrupted</span></td><td>3 files changed</td><td>›</td></tr>
+              <tr><td><span class="agent-avatar">C</span><strong>UI Builder</strong></td><td>Empty states</td><td><strong>Orca</strong><small>dashboard-empty</small></td><td>9:18 AM</td><td>24m</td><td><span class="outcome success"><svg class="icon"><use href="#i-check"></use></svg>Completed</span></td><td><span class="review-chip"><svg class="icon"><use href="#i-branch"></use></svg>PR #11335</span></td><td>›</td></tr>
+              <tr><td><span class="agent-avatar">C</span><strong>Docs Agent</strong></td><td>SSH troubleshooting guide</td><td><strong>Docs</strong><small>ssh-guide</small></td><td>Yesterday</td><td>16m</td><td><span class="outcome success"><svg class="icon"><use href="#i-check"></use></svg>Completed</span></td><td>2 docs updated</td><td>›</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="./agent-dashboard-concepts.js"></script>
+  </body>
+</html>

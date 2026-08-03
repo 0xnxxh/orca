@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Agent Fleet Concepts</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./agent-fleet-concepts.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16M7 12h10M10 19h4"></path></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"></path></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.9"></path></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="19" r="2"></circle><path d="M6 7v10M8 9c5 0 4-3 8-3"></path></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 5 5-5 5M12 18h8"></path></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 9v12"></path></symbol>
+      <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"></path></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20zM12 9v5M12 18h.01"></path></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h8l-1 8 9-12h-8z"></path></symbol>
+    </svg>
+
+    <main class="fleet-shell">
+      <header class="fleet-header">
+        <div class="orca-mark">O</div>
+        <div class="fleet-title"><h1>Agents</h1><span>Fleet command</span></div>
+        <div class="total-pill"><strong>168</strong><span>total</span></div>
+        <nav class="concept-tabs" aria-label="Fleet concept">
+          <button class="concept-tab is-active" data-view="constellation">Constellation</button>
+          <button class="concept-tab" data-view="radar">Radar</button>
+          <button class="concept-tab" data-view="matrix">Matrix</button>
+          <button class="concept-tab" data-view="timeline">Timeline</button>
+          <button class="concept-tab" data-view="orchestrator">Orchestrator</button>
+          <button class="concept-tab" data-view="treemap">Treemap</button>
+        </nav>
+        <div class="header-tools">
+          <label class="search-box"><svg class="icon"><use href="#i-search"></use></svg><input aria-label="Search fleet" placeholder="Find any agent…" /><kbd>⌘ K</kbd></label>
+          <button class="icon-button"><svg class="icon"><use href="#i-filter"></use></svg></button>
+        </div>
+      </header>
+
+      <section class="concept-screen is-active" data-screen="constellation">
+        <aside class="attention-dock">
+          <div class="dock-heading"><span class="eyebrow">Needs you</span><strong>9</strong></div>
+          <button class="attention-ticket is-hot"><span class="ticket-dot"></span><div><strong>review-11464</strong><small>Review loop needs decision</small></div><time>now</time></button>
+          <button class="attention-ticket"><span class="ticket-dot"></span><div><strong>mobile-9717</strong><small>Choose duplicate policy</small></div><time>3m</time></button>
+          <button class="attention-ticket"><span class="ticket-dot"></span><div><strong>trust-dialog</strong><small>Permission required</small></div><time>7m</time></button>
+          <button class="attention-ticket"><span class="ticket-dot"></span><div><strong>+ 6 more</strong><small>Open intervention queue</small></div></button>
+          <div class="dock-stats"><p><span>Working</span><strong>34</strong></p><p><span>Unread</span><strong>71</strong></p><p><span>Terminals</span><strong>332</strong></p></div>
+        </aside>
+        <div class="constellation-canvas">
+          <div class="canvas-topline"><span><svg class="icon"><use href="#i-focus"></use></svg>All projects · Live topology</span><div><button>Hosts: 3</button><button>Auto layout</button></div></div>
+          <svg class="fleet-edges" viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M500 350C390 260 330 210 220 180M500 350C600 250 690 220 790 170M500 350C630 370 750 400 840 460M500 350C400 440 340 520 230 555M500 350C540 480 570 540 620 610"></path>
+          </svg>
+          <button class="fleet-core"><span class="core-rings"></span><strong>ORCA FLEET</strong><small>168 agents · 104 live worktrees</small></button>
+          <article class="constellation-cluster cluster-review selected">
+            <header><div><strong>pr-8783-internal-review</strong><span>13 agents · 14 terminals</span></div><b>3!</b></header>
+            <div class="node-cloud" data-dots="13" data-working="5"></div>
+            <footer><span>Review loop</span><span>active now</span></footer>
+          </article>
+          <article class="constellation-cluster cluster-mobile">
+            <header><div><strong>mobile-9717-dup-sessions</strong><span>12 agents · 13 terminals</span></div><b>2!</b></header>
+            <div class="node-cloud" data-dots="12" data-working="3"></div>
+            <footer><span>Mobile</span><span>3m</span></footer>
+          </article>
+          <article class="constellation-cluster cluster-pr">
+            <header><div><strong>pr-9190-internal-review</strong><span>12 agents · 13 terminals</span></div></header>
+            <div class="node-cloud" data-dots="12" data-working="4"></div>
+            <footer><span>Review loop</span><span>6m</span></footer>
+          </article>
+          <article class="constellation-cluster cluster-trust">
+            <header><div><strong>orca-trust-dialog</strong><span>5 agents · 7 terminals</span></div><b>1!</b></header>
+            <div class="node-cloud" data-dots="5" data-working="2"></div>
+            <footer><span>Desktop</span><span>7m</span></footer>
+          </article>
+          <article class="constellation-cluster cluster-resume">
+            <header><div><strong>codex-resume-argv-drop</strong><span>5 agents · 6 terminals</span></div></header>
+            <div class="node-cloud" data-dots="5" data-working="1"></div>
+            <footer><span>Runtime</span><span>12m</span></footer>
+          </article>
+          <div class="canvas-controls"><button>⌖</button><button>−</button><span>42%</span><button>+</button><button><svg class="icon"><use href="#i-layout"></use></svg>Reflow</button></div>
+          <div class="canvas-minimap"><i></i><span></span><b></b></div>
+        </div>
+        <aside class="context-panel">
+          <div class="panel-kicker">Selected constellation</div>
+          <h2>pr-8783-internal-review</h2>
+          <div class="panel-summary"><span><strong>13</strong>agents</span><span><strong>5</strong>working</span><span class="attention-text"><strong>3</strong>need you</span></div>
+          <section><span class="eyebrow">Agent lineage</span><div class="lineage-tree"><p class="root"><i class="working"></i>Review coordinator</p><p class="child"><i class="working"></i>Independent review</p><p class="grandchild"><i></i>Security audit</p><p class="grandchild"><i class="working"></i>Cross-platform pass</p><p class="child"><i></i>Test verification</p><p class="child attention-text"><i></i>Decision required</p></div></section>
+          <section><span class="eyebrow">Latest signal</span><p class="signal-copy">Three review branches converged on the same runtime cleanup risk.</p><time>36 seconds ago</time></section>
+          <div class="panel-actions"><button class="button primary">Open command center</button><button class="button">Open worktree</button></div>
+        </aside>
+      </section>
+
+      <section class="concept-screen" data-screen="radar">
+        <aside class="radar-legend">
+          <span class="eyebrow">Tactical radar</span>
+          <h2>Fleet awareness</h2>
+          <p>Distance from center represents urgency, not hierarchy.</p>
+          <div class="legend-list"><p><i class="urgent"></i>Needs you <strong>9</strong></p><p><i class="active"></i>Working <strong>34</strong></p><p><i></i>Watching <strong>71</strong></p><p><i class="done"></i>Recently done <strong>54</strong></p></div>
+          <div class="radar-filters"><button class="is-active">All hosts</button><button>Local</button><button>SSH</button><button>WSL</button></div>
+          <div class="radar-note"><svg class="icon"><use href="#i-zap"></use></svg><span><strong>Signal detected</strong>3 agents crossed the 30-minute threshold.</span></div>
+        </aside>
+        <div class="radar-stage">
+          <div class="radar-sweep"></div>
+          <div class="radar-ring ring-one"><span>NEEDS YOU</span></div>
+          <div class="radar-ring ring-two"><span>ACTIVE</span></div>
+          <div class="radar-ring ring-three"><span>WATCH</span></div>
+          <div class="radar-ring ring-four"><span>RECENT</span></div>
+          <div class="radar-crosshair horizontal"></div><div class="radar-crosshair vertical"></div>
+          <button class="radar-core"><strong>168</strong><span>agents online</span></button>
+          <div id="radar-blips"></div>
+          <button class="radar-label label-a"><i></i><strong>review-11464</strong><span>decision · now</span></button>
+          <button class="radar-label label-b"><i></i><strong>mobile-9717</strong><span>2 alerts · 3m</span></button>
+          <button class="radar-label label-c"><i></i><strong>pr-8783</strong><span>13 agents</span></button>
+        </div>
+        <aside class="signal-stream">
+          <div class="stream-heading"><span class="eyebrow">Live signals</span><button>Pause</button></div>
+          <article><i class="urgent"></i><div><strong>Question surfaced</strong><span>review-11464 · review coordinator</span></div><time>now</time></article>
+          <article><i class="active"></i><div><strong>Subagent dispatched</strong><span>pr-8783 · security audit</span></div><time>22s</time></article>
+          <article><i class="done"></i><div><strong>Tests completed</strong><span>mobile-6600 · 418 passed</span></div><time>1m</time></article>
+          <article><i class="urgent"></i><div><strong>Long-running</strong><span>codex-resume · 47m active</span></div><time>2m</time></article>
+          <article><i></i><div><strong>Review opened</strong><span>PR #11464 · runtime cleanup</span></div><time>4m</time></article>
+          <article><i class="active"></i><div><strong>Agent resumed</strong><span>native-chat-multiline</span></div><time>6m</time></article>
+        </aside>
+      </section>
+
+      <section class="concept-screen" data-screen="matrix">
+        <div class="matrix-shell">
+          <div class="matrix-toolbar">
+            <div><span class="eyebrow">Fleet matrix</span><h2>104 live worktrees</h2></div>
+            <div class="matrix-metrics"><span><i class="urgent"></i><strong>9</strong>needs you</span><span><i class="active"></i><strong>34</strong>working</span><span><i></i><strong>71</strong>unread</span><span><svg class="icon"><use href="#i-terminal"></use></svg><strong>332</strong>terminals</span></div>
+            <div class="matrix-actions"><button class="button">Group: project</button><button class="button">Density: compact</button></div>
+          </div>
+          <div class="matrix-grid">
+            <div class="matrix-row matrix-head"><span>Worktree</span><span>Agent fabric</span><span>Needs you</span><span>Working</span><span>Done</span><span>Terminals</span><span>Last signal</span></div>
+            <div id="matrix-rows"></div>
+          </div>
+          <div class="matrix-footer"><span>Showing 16 of 104 live worktrees</span><span>Scroll is virtualized · rows stay 38px</span></div>
+        </div>
+      </section>
+
+      <section class="concept-screen" data-screen="timeline">
+        <div class="timeline-shell">
+          <div class="timeline-heading">
+            <div><span class="eyebrow">Temporal command</span><h2>Where time is accumulating</h2></div>
+            <div class="time-window"><button>1h</button><button class="is-active">4h</button><button>12h</button><button>24h</button></div>
+            <div class="timeline-alert"><svg class="icon"><use href="#i-alert"></use></svg><strong>7 agents</strong><span>active longer than expected</span></div>
+          </div>
+          <div class="time-axis"><span>-4h</span><span>-3h</span><span>-2h</span><span>-1h</span><strong>NOW</strong></div>
+          <div class="timeline-grid" id="timeline-grid"></div>
+        </div>
+        <aside class="outlier-panel">
+          <span class="eyebrow">Outlier selected</span><h3>codex-resume-argv-drop</h3>
+          <div class="outlier-agent"><span class="agent-avatar">C</span><div><strong>Resume ordering audit</strong><span>Working · 47m</span></div></div>
+          <dl><div><dt>Expected</dt><dd>18m</dd></div><div><dt>Current</dt><dd class="attention-text">47m</dd></div><div><dt>Last output</dt><dd>2m ago</dd></div></dl>
+          <p>No terminal output stall detected. Agent is running the full resume matrix on three host types.</p>
+          <button class="button primary">Open live terminal</button>
+        </aside>
+      </section>
+
+      <section class="concept-screen" data-screen="orchestrator">
+        <div class="workspace-backdrop">
+          <aside><div class="fake-orca">O</div><span></span><span></span><span></span><span></span><span></span></aside>
+          <div class="fake-editor"><div class="fake-tabs"><b></b><b></b><b></b></div><div class="code-lines"></div></div>
+        </div>
+        <section class="orchestrator-hud">
+          <header><span class="drag-grip">⠿</span><div class="hud-identity"><span class="orch-badge">ORCH</span><strong>Orchestrator</strong><small>global · no worktree</small></div><div class="hud-health"><i></i>Fleet connected</div><button>—</button><button>□</button><button>×</button></header>
+          <div class="hud-body">
+            <div class="hud-command"><span>❯</span><strong>show me what needs intervention across the fleet</strong><kbd>↵</kbd></div>
+            <div class="hud-answer">
+              <div class="answer-heading"><svg class="icon"><use href="#i-zap"></use></svg><div><strong>9 agents need you</strong><span>Grouped into 4 decisions · 2 likely share the same cause</span></div><time>live</time></div>
+              <article class="decision-card urgent"><div class="decision-index">01</div><div><strong>Runtime cleanup behavior</strong><span>review-11464 + pr-8783-internal-review</span><p>Three reviewers agree stale local rows should be dropped, but disagree on restart retention.</p></div><b>3 agents</b><button>Resolve</button></article>
+              <article class="decision-card"><div class="decision-index">02</div><div><strong>Duplicate mobile sessions</strong><span>mobile-9717-dup-sessions</span><p>Choose whether restored sessions replace or merge with live host state.</p></div><b>2 agents</b><button>Open</button></article>
+              <article class="decision-card"><div class="decision-index">03</div><div><strong>Trust dialog permission</strong><span>orca-trust-dialog</span><p>One test agent needs approval to continue accessibility validation.</p></div><b>1 agent</b><button>Approve</button></article>
+            </div>
+            <div class="suggested-commands"><span>Try</span><button>agents older than 30m</button><button>summarize PR reviews</button><button>focus mobile fleet</button><button>show failures</button></div>
+          </div>
+          <footer><span><kbd>⌘ ⇧ O</kbd> summon</span><span><kbd>⌘ J</kbd> next alert</span><span><kbd>Esc</kbd> dismiss</span><i></i><strong>168 agents · 332 terminals · 3 hosts</strong></footer>
+        </section>
+        <div class="back-trail"><button>← Orchestrator</button><span>All agents</span><b>›</b><span>review-11464</span></div>
+      </section>
+
+      <section class="concept-screen" data-screen="treemap">
+        <div class="treemap-shell">
+          <div class="treemap-heading"><div><span class="eyebrow">Mission treemap</span><h2>Space equals agent count · edge glow equals urgency</h2></div><div class="treemap-legend"><span><i class="urgent"></i>Needs you</span><span><i class="active"></i>Working</span><span><i></i>Quiet</span></div><button class="button">Size by: agents</button></div>
+          <div class="treemap">
+            <section class="project-zone zone-orca"><header><div><svg class="icon"><use href="#i-folder"></use></svg><strong>ORCA</strong><span>112 agents</span></div><b>6 need you</b></header>
+              <button class="tree-tile tile-8783 urgent"><strong>pr-8783-internal-review</strong><span>13 agents · 5 working</span><div class="tiny-agents" data-dots="13" data-working="5"></div></button>
+              <button class="tree-tile tile-9190"><strong>pr-9190-internal-review</strong><span>12 agents · 4 working</span><div class="tiny-agents" data-dots="12" data-working="4"></div></button>
+              <button class="tree-tile tile-11464 urgent"><strong>review-11464</strong><span>3 agents · decision</span><div class="tiny-agents" data-dots="3" data-working="3"></div></button>
+              <button class="tree-tile tile-trust"><strong>orca-trust-dialog</strong><span>5 agents</span><div class="tiny-agents" data-dots="5" data-working="2"></div></button>
+              <button class="tree-tile tile-resume"><strong>codex-resume-argv-drop</strong><span>5 agents · 47m</span><div class="tiny-agents" data-dots="5" data-working="1"></div></button>
+              <button class="tree-tile tile-other"><strong>+ 47 worktrees</strong><span>74 agents</span><div class="aggregate-bars"><i></i><i></i><i></i><i></i></div></button>
+            </section>
+            <section class="project-zone zone-mobile"><header><div><svg class="icon"><use href="#i-folder"></use></svg><strong>MOBILE</strong><span>39 agents</span></div><b>2 need you</b></header>
+              <button class="tree-tile tile-mobile-main urgent"><strong>mobile-9717-dup-sessions</strong><span>12 agents · 3 working</span><div class="tiny-agents" data-dots="12" data-working="3"></div></button>
+              <button class="tree-tile tile-mobile-save"><strong>mobile-6600-save-host</strong><span>6 agents · 9 terminals</span><div class="tiny-agents" data-dots="6" data-working="2"></div></button>
+              <button class="tree-tile tile-mobile-ime"><strong>mobile-ime-6995</strong><span>5 agents</span><div class="tiny-agents" data-dots="5" data-working="1"></div></button>
+              <button class="tree-tile tile-mobile-more"><strong>+ 9 worktrees</strong><span>16 agents</span></button>
+            </section>
+            <section class="project-zone zone-relay"><header><div><svg class="icon"><use href="#i-folder"></use></svg><strong>RELAY + OTHER</strong><span>17 agents</span></div><b>1 need you</b></header>
+              <button class="tree-tile tile-relay"><strong>connection recovery</strong><span>8 agents</span><div class="tiny-agents" data-dots="8" data-working="2"></div></button>
+              <button class="tree-tile tile-docs"><strong>docs + tooling</strong><span>9 agents</span><div class="tiny-agents" data-dots="9" data-working="1"></div></button>
+            </section>
+          </div>
+          <div class="treemap-inspector"><span>Hover or click a region to zoom</span><strong>Fleet coverage 100%</strong><button><svg class="icon"><use href="#i-focus"></use></svg>Fit all</button></div>
+        </div>
+      </section>
+    </main>
+    <script src="./agent-fleet-concepts.js"></script>
+  </body>
+</html>

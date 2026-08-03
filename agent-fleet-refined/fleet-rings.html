@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Fleet Rings</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./fleet-rings.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 5 5-5 5M12 18h8"></path></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16M7 12h10M10 19h4"></path></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></symbol>
+      <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol>
+    </svg>
+
+    <main class="rings-shell">
+      <header class="topbar">
+        <div class="orca-mark">O</div>
+        <div class="title"><strong>Agents</strong><span>Fleet rings</span></div>
+        <div class="fleet-total"><strong>168</strong><span>accounted for</span><i></i></div>
+        <nav><button class="is-active">Rings</button><button>Matrix</button><button>Timeline</button><button>History</button></nav>
+        <label class="search"><svg class="icon"><use href="#i-search"></use></svg><input placeholder="Find any agent…" /><kbd data-mac="⌘ K" data-other="Ctrl+K">⌘ K</kbd></label>
+        <button class="orchestrator"><span></span>Ask Orchestrator<kbd data-mac="⌘ ⇧ O" data-other="Ctrl+Shift+O">⌘ ⇧ O</kbd></button>
+      </header>
+
+      <section class="rings-grid">
+        <aside class="layers-panel">
+          <header><span class="eyebrow">Canvas layers</span><h1>Project → worktree → agent</h1><p>Every agent has a stable place in its ownership tree.</p></header>
+          <section class="project-list">
+            <span class="eyebrow">Projects</span>
+            <button class="is-active"><i></i><span><strong>Orca</strong><small>58 worktrees</small></span><b>112</b></button>
+            <button><i></i><span><strong>Mobile</strong><small>13 worktrees</small></span><b>39</b></button>
+            <button><i></i><span><strong>Relay + other</strong><small>7 worktrees</small></span><b>17</b></button>
+          </section>
+          <section class="state-legend">
+            <span class="eyebrow">Agent state</span>
+            <p><i class="needs"></i><span>Needs you</span><b>9</b></p>
+            <p><i class="working"></i><span>Working</span><b>34</b></p>
+            <p><i></i><span>Tracking</span><b>71</b></p>
+            <p><i class="recent"></i><span>Recent</span><b>54</b></p>
+          </section>
+          <section class="size-legend">
+            <span class="eyebrow">Agent size</span>
+            <div><i></i><i></i><i></i><i></i></div>
+            <p><span>Just started</span><span>Working longer</span></p>
+            <small>Logarithmic scale · capped after 60m</small>
+          </section>
+          <section class="canvas-help">
+            <p><strong>Hover</strong><span>Preview live terminal</span></p>
+            <p><strong>Click</strong><span>Pin agent and respond</span></p>
+            <p><strong>Double-click</strong><span>Zoom into worktree</span></p>
+          </section>
+          <footer><button><svg class="icon"><use href="#i-filter"></use></svg>Filters <b>3</b></button><button><svg class="icon"><use href="#i-focus"></use></svg>Fit fleet</button></footer>
+        </aside>
+
+        <section class="canvas-column">
+          <header class="canvas-header">
+            <div><span class="eyebrow">Live containment map</span><strong>Ownership, activity, and time in one canvas</strong></div>
+            <div><button class="is-active">All hosts</button><button>Local</button><button>SSH</button><button>WSL</button></div>
+          </header>
+          <div class="rings-canvas" id="rings-canvas">
+            <svg id="fleet-map" viewBox="0 0 1050 800" preserveAspectRatio="xMidYMid meet" aria-label="Nested project, worktree, and agent map">
+              <g class="project project-orca">
+                <circle class="project-ring" cx="330" cy="385" r="325"></circle>
+                <text class="project-name" x="95" y="105">ORCA</text><text class="project-count" x="95" y="121">112 AGENTS · 58 WORKTREES</text>
+              </g>
+              <g class="project project-mobile">
+                <circle class="project-ring" cx="815" cy="250" r="200"></circle>
+                <text class="project-name" x="690" y="90">MOBILE</text><text class="project-count" x="690" y="106">39 AGENTS · 13 WORKTREES</text>
+              </g>
+              <g class="project project-relay">
+                <circle class="project-ring" cx="820" cy="625" r="150"></circle>
+                <text class="project-name" x="727" y="500">RELAY + OTHER</text><text class="project-count" x="727" y="516">17 AGENTS · 7 WORKTREES</text>
+              </g>
+
+              <g class="worktree" data-name="+ 47 worktrees" data-project="Orca" data-count="74" data-needs="2" data-working="14" data-recent="25" data-cx="315" data-cy="400" data-radius="140">
+                <circle class="worktree-ring" cx="315" cy="400" r="140"></circle><text class="worktree-name" x="315" y="269">+ 47 WORKTREES</text><text class="worktree-count" x="315" y="283">74 AGENTS</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree selected" data-name="pr-8783-internal-review" data-project="Orca" data-count="13" data-needs="3" data-working="5" data-recent="2" data-cx="525" data-cy="245" data-radius="78">
+                <circle class="worktree-ring" cx="525" cy="245" r="78"></circle><text class="worktree-name" x="525" y="178">PR-8783 REVIEW</text><text class="worktree-count" x="525" y="191">13 AGENTS</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="pr-9190-internal-review" data-project="Orca" data-count="12" data-needs="0" data-working="4" data-recent="3" data-cx="535" data-cy="460" data-radius="78">
+                <circle class="worktree-ring" cx="535" cy="460" r="78"></circle><text class="worktree-name" x="535" y="393">PR-9190 REVIEW</text><text class="worktree-count" x="535" y="406">12 AGENTS</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="review-11464" data-project="Orca" data-count="3" data-needs="1" data-working="2" data-recent="0" data-cx="300" data-cy="170" data-radius="42">
+                <circle class="worktree-ring" cx="300" cy="170" r="42"></circle><text class="worktree-name" x="300" y="131">REVIEW-11464</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="orca-trust-dialog" data-project="Orca" data-count="5" data-needs="1" data-working="2" data-recent="1" data-cx="140" data-cy="310" data-radius="50">
+                <circle class="worktree-ring" cx="140" cy="310" r="50"></circle><text class="worktree-name" x="140" y="264">TRUST DIALOG</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="codex-resume-argv-drop" data-project="Orca" data-count="5" data-needs="0" data-working="1" data-recent="2" data-cx="170" data-cy="555" data-radius="52">
+                <circle class="worktree-ring" cx="170" cy="555" r="52"></circle><text class="worktree-name" x="170" y="507">CODEX RESUME</text><g class="agent-layer"></g>
+              </g>
+
+              <g class="worktree" data-name="mobile-9717-dup-sessions" data-project="Mobile" data-count="12" data-needs="1" data-working="3" data-recent="3" data-cx="760" data-cy="220" data-radius="65">
+                <circle class="worktree-ring" cx="760" cy="220" r="65"></circle><text class="worktree-name" x="760" y="162">MOBILE-9717</text><text class="worktree-count" x="760" y="175">12 AGENTS</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="mobile-6600-save-host" data-project="Mobile" data-count="6" data-needs="0" data-working="1" data-recent="2" data-cx="870" data-cy="180" data-radius="50">
+                <circle class="worktree-ring" cx="870" cy="180" r="50"></circle><text class="worktree-name" x="870" y="136">SAVE HOST</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="mobile-ime-6995" data-project="Mobile" data-count="5" data-needs="0" data-working="1" data-recent="2" data-cx="885" data-cy="290" data-radius="45">
+                <circle class="worktree-ring" cx="885" cy="290" r="45"></circle><text class="worktree-name" x="885" y="250">IME-6995</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="+ 9 worktrees" data-project="Mobile" data-count="16" data-needs="0" data-working="1" data-recent="6" data-cx="750" data-cy="360" data-radius="70">
+                <circle class="worktree-ring" cx="750" cy="360" r="70"></circle><text class="worktree-name" x="750" y="297">+ 9 WORKTREES</text><text class="worktree-count" x="750" y="310">16 AGENTS</text><g class="agent-layer"></g>
+              </g>
+
+              <g class="worktree" data-name="connection recovery" data-project="Relay" data-count="8" data-needs="1" data-working="0" data-recent="3" data-cx="755" data-cy="625" data-radius="60">
+                <circle class="worktree-ring" cx="755" cy="625" r="60"></circle><text class="worktree-name" x="755" y="570">CONNECTION</text><g class="agent-layer"></g>
+              </g>
+              <g class="worktree" data-name="docs + tooling" data-project="Other" data-count="9" data-needs="0" data-working="0" data-recent="5" data-cx="885" data-cy="625" data-radius="60">
+                <circle class="worktree-ring" cx="885" cy="625" r="60"></circle><text class="worktree-name" x="885" y="570">DOCS + TOOLING</text><g class="agent-layer"></g>
+              </g>
+            </svg>
+
+            <div class="terminal-preview is-demo" id="terminal-preview">
+              <header><span class="preview-state"></span><div><strong>Cross-platform reviewer</strong><small>pr-8783-internal-review · working 42m</small></div><kbd>hover</kbd></header>
+              <pre><span>›</span> Running the restart matrix across native,
+WSL, and SSH hosts…
+
+<b>418 tests passed</b>
+Waiting on cleanup retention policy.</pre>
+              <footer><span>Click agent to pin terminal</span><strong>live</strong></footer>
+            </div>
+            <div class="canvas-controls"><button>−</button><span>Fleet</span><button>+</button><button><svg class="icon"><use href="#i-focus"></use></svg>Fit</button></div>
+            <div class="minimap"><i></i><span></span><b></b></div>
+          </div>
+        </section>
+
+        <aside class="inspector">
+          <header><span class="eyebrow">Selected worktree</span><h2>pr-8783-internal-review</h2><p>13 agents inside this ring</p></header>
+          <div class="worktree-stats"><span><strong>3</strong>need you</span><span><strong>5</strong>working</span><span><strong>2</strong>recent</span></div>
+          <section class="duration-outlier">
+            <span class="eyebrow">Largest agent</span>
+            <div><i class="agent-sample"></i><p><strong>Cross-platform reviewer</strong><small>Working 42m · output 18s ago</small></p></div>
+            <button data-open-terminal><svg class="icon"><use href="#i-terminal"></use></svg>Open live terminal</button>
+          </section>
+          <section class="decision">
+            <span class="eyebrow">Decision blocking this ring</span>
+            <strong>Should stale local agent rows survive an Orca restart?</strong>
+            <p>Three review agents agree on remote history but need direction for local rows.</p>
+          </section>
+          <form id="rings-response">
+            <div><span><strong>Respond once</strong> · 3 agents</span><button type="button" data-open-terminal><svg class="icon"><use href="#i-terminal"></use></svg>Inspect</button></div>
+            <textarea>Drop stale local rows after restart. Preserve remote and WSL history because reconnect can restore their backing sessions.</textarea>
+            <footer><span>Routes with source context</span><button><svg class="icon"><use href="#i-send"></use></svg>Send &amp; next<kbd data-mac="⌘ ↵" data-other="Ctrl+Enter">⌘ ↵</kbd></button></footer>
+          </form>
+        </aside>
+      </section>
+    </main>
+
+    <div class="terminal-backdrop" id="rings-terminal" aria-hidden="true">
+      <section class="terminal-popover" role="dialog" aria-modal="true" aria-label="Agent terminal">
+        <header><div><i></i><span><strong>Cross-platform reviewer</strong><small>pr-8783-internal-review · working 42m</small></span></div><button><svg class="icon"><use href="#i-expand"></use></svg></button><button data-close-terminal><svg class="icon"><use href="#i-close"></use></svg></button></header>
+        <nav><button class="is-active">Agent</button><button>Tests</button><button>Git</button><span>LIVE</span></nav>
+        <pre><span class="muted">Restart matrix: native · WSL · SSH</span>
+
+<span class="success">●</span> Native cleanup behavior verified
+<span class="success">●</span> WSL reconnect history verified
+<span class="success">●</span> SSH relay history verified
+
+418 tests passed. The implementation is ready.
+
+<span class="waiting">Waiting for local retention policy…</span></pre>
+        <footer><span>Your canvas position and response draft are preserved.</span><button data-close-terminal>Return to fleet rings <kbd>Esc</kbd></button></footer>
+      </section>
+    </div>
+    <div class="sent-toast" id="rings-toast"><svg class="icon"><use href="#i-check"></use></svg><span><strong>Direction sent to 3 agents</strong>The worktree ring is unblocked.</span></div>
+    <script src="./fleet-rings.js"></script>
+  </body>
+</html>

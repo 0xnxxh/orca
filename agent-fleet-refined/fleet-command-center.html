@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orca Fleet Command Center</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./fleet-command-center.css" />
+  </head>
+  <body class="dark">
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 5 5-5 5M12 18h8"></path></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16M7 12h10M10 19h4"></path></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"></path></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h8l-1 8 9-12h-8z"></path></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 9v12"></path></symbol>
+    </svg>
+
+    <main class="command-shell">
+      <header class="topbar">
+        <div class="orca-mark">O</div>
+        <div class="title"><strong>Agents</strong><span>Fleet command</span></div>
+        <div class="fleet-total"><strong>168</strong><span>accounted for</span><i></i></div>
+        <nav>
+          <button class="is-active">Command radar</button>
+          <button>Matrix</button>
+          <button>Timeline</button>
+          <button>History</button>
+        </nav>
+        <label class="search"><svg class="icon"><use href="#i-search"></use></svg><input placeholder="Find any agent…" /><kbd data-mac="⌘ K" data-other="Ctrl+K">⌘ K</kbd></label>
+        <button class="orchestrator"><span></span>Ask Orchestrator<kbd data-mac="⌘ ⇧ O" data-other="Ctrl+Shift+O">⌘ ⇧ O</kbd></button>
+      </header>
+
+      <section class="command-grid">
+        <aside class="attention-rail">
+          <header><div><span class="eyebrow">Needs you</span><strong>9</strong></div><p>Four decisions can unblock the queue.</p></header>
+          <button class="attention-row is-selected">
+            <i></i><span><strong>Runtime cleanup behavior</strong><small>3 agents · 2 worktrees</small></span><time>now</time>
+          </button>
+          <button class="attention-row">
+            <i></i><span><strong>Duplicate mobile sessions</strong><small>2 agents · mobile-9717</small></span><time>3m</time>
+          </button>
+          <button class="attention-row">
+            <i></i><span><strong>Trust dialog permission</strong><small>1 agent · desktop test</small></span><time>7m</time>
+          </button>
+          <button class="attention-row">
+            <i></i><span><strong>Review scope changed</strong><small>1 agent · pr-9190</small></span><time>8m</time>
+          </button>
+          <button class="attention-row more">
+            <span><strong>+ 2 more signals</strong><small>Open full intervention queue</small></span>
+          </button>
+          <section class="rail-watch">
+            <span class="eyebrow">Watchlist</span>
+            <p><i></i><span><strong>7 long-running</strong><small>Longest: 47 minutes</small></span></p>
+            <p><i></i><span><strong>3 quiet terminals</strong><small>No output for 10m+</small></span></p>
+          </section>
+          <footer>
+            <button><svg class="icon"><use href="#i-filter"></use></svg>Filters <b>3</b></button>
+            <button><svg class="icon"><use href="#i-layout"></use></svg>Group by project</button>
+          </footer>
+        </aside>
+
+        <section class="fleet-stage">
+          <header class="stage-header">
+            <div><span class="eyebrow">Live fleet topology</span><strong>Everything running, one field of view</strong></div>
+            <div class="legend">
+              <span><i class="needs"></i>Needs you <b>9</b></span>
+              <span><i class="active"></i>Working <b>34</b></span>
+              <span><i></i>Tracking <b>71</b></span>
+              <span><i class="done"></i>Recent <b>54</b></span>
+            </div>
+          </header>
+          <div class="radar-field">
+            <div class="project-axis axis-a"><span>ORCA · 112</span></div>
+            <div class="project-axis axis-b"><span>MOBILE · 39</span></div>
+            <div class="project-axis axis-c"><span>RELAY + OTHER · 17</span></div>
+            <div class="radar-ring ring-one"><span>INTERVENE</span></div>
+            <div class="radar-ring ring-two"><span>ACTIVE</span></div>
+            <div class="radar-ring ring-three"><span>TRACKING</span></div>
+            <div class="radar-ring ring-four"><span>RECENT</span></div>
+            <div class="crosshair horizontal"></div><div class="crosshair vertical"></div>
+            <div class="radar-sweep"></div>
+            <button class="fleet-core"><strong>168</strong><span>agents accounted for</span><small>104 worktrees · 3 hosts</small></button>
+            <div id="fleet-blips"></div>
+            <button class="cluster-label label-review is-selected"><i></i><strong>review-11464</strong><span>3 agents · decision</span></button>
+            <button class="cluster-label label-pr"><i></i><strong>pr-8783 review</strong><span>13 agents · 5 working</span></button>
+            <button class="cluster-label label-mobile"><i></i><strong>mobile-9717</strong><span>12 agents · 2 waiting</span></button>
+            <button class="cluster-label label-resume"><i></i><strong>codex-resume</strong><span>5 agents · 47m</span></button>
+            <button class="cluster-label label-trust"><i></i><strong>trust-dialog</strong><span>5 agents · permission</span></button>
+            <div class="zoom-controls"><button>−</button><span>Fleet</span><button>+</button><button>Fit all</button></div>
+            <div class="minimap"><span></span><i></i><b></b><em></em></div>
+          </div>
+          <footer class="signal-ticker">
+            <span class="ticker-live"><i></i>LIVE</span>
+            <p><strong>Test verification finished</strong><span>review-11464 · 418 passed</span><time>22s</time></p>
+            <p><strong>Agent resumed</strong><span>mobile-9717</span><time>1m</time></p>
+            <p><strong>Review converged</strong><span>pr-9190</span><time>3m</time></p>
+          </footer>
+        </section>
+
+        <aside class="response-panel">
+          <header>
+            <div><span class="signal-dot"></span><span class="eyebrow">Selected intervention</span></div>
+            <h1>Runtime cleanup behavior</h1>
+            <p>One response routes to three waiting agents.</p>
+            <div class="panel-badges"><span>3 agents</span><span>2 worktrees</span><span>PR #11464</span></div>
+          </header>
+          <section class="decision-card">
+            <span class="eyebrow">Decision</span>
+            <strong>Should stale local agent rows survive an Orca restart?</strong>
+            <p>Reviewers agree on remote and WSL history. They disagree only on local rows whose terminal no longer exists.</p>
+          </section>
+          <section class="evidence">
+            <span class="eyebrow">Distilled evidence</span>
+            <p><svg class="icon success"><use href="#i-check"></use></svg><span><strong>418 tests pass</strong><small>One restart fixture depends on policy.</small></span></p>
+            <p><svg class="icon"><use href="#i-eye"></use></svg><span><strong>Three threads converged</strong><small>No implementation disagreement remains.</small></span></p>
+            <button>Open affected diff <span>›</span></button>
+          </section>
+          <section class="recipients">
+            <span class="eyebrow">Routes to</span>
+            <div><i>R</i><span><strong>Review coordinator</strong><small>review-11464</small></span><b>primary</b></div>
+            <div><i>S</i><span><strong>Security + cross-platform</strong><small>pr-8783</small></span><b>2 agents</b></div>
+          </section>
+          <form class="response-form" id="fleet-response-form">
+            <div><span><strong>Respond once</strong> · 3 agents</span><button type="button" data-open-terminal><svg class="icon"><use href="#i-terminal"></use></svg>Inspect</button></div>
+            <textarea id="fleet-response">Drop stale local rows after restart. Preserve remote and WSL history because reconnect can restore their backing sessions.</textarea>
+            <footer><span>Context and source threads included</span><button><svg class="icon"><use href="#i-send"></use></svg>Send &amp; next<kbd data-mac="⌘ ↵" data-other="Ctrl+Enter">⌘ ↵</kbd></button></footer>
+          </form>
+        </aside>
+      </section>
+    </main>
+
+    <div class="terminal-backdrop" id="fleet-terminal" aria-hidden="true">
+      <section class="terminal-popover" role="dialog" aria-modal="true" aria-label="Agent terminal">
+        <header><div><i></i><span><strong>Review coordinator</strong><small>review-11464 · live terminal</small></span></div><button><svg class="icon"><use href="#i-expand"></use></svg></button><button data-close-terminal><svg class="icon"><use href="#i-close"></use></svg></button></header>
+        <nav><button class="is-active">Agent</button><button>Tests</button><button>Git</button><span>LIVE</span></nav>
+        <pre><span class="muted">Review complete. One product decision remains.</span>
+
+<span class="success">●</span> Remote and WSL history should persist across reconnects.
+<span class="success">●</span> Local terminal <b>term_83ca</b> no longer exists after restart.
+
+The remaining choice is whether to retain its historical agent row.
+Dropping it matches the existing local cleanup contract.
+
+<span class="waiting">Waiting for your direction…</span></pre>
+        <footer><span>Your fleet position and response draft are preserved.</span><button data-close-terminal>Return to command radar <kbd>Esc</kbd></button></footer>
+      </section>
+    </div>
+    <div class="sent-toast" id="fleet-toast"><svg class="icon"><use href="#i-zap"></use></svg><span><strong>Three agents unblocked</strong>Advancing to the next intervention…</span></div>
+    <script src="./fleet-command-center.js"></script>
+  </body>
+</html>

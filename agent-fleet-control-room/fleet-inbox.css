@@ -1,0 +1,302 @@
+/* Fleet · Inbox — the calm view. One column, a few cards, three quiet rows.
+   Hierarchy comes from size and spacing, never from borders, labels, or legends. */
+
+html,
+body {
+  height: 100%;
+}
+body {
+  overflow-y: auto;
+  font-size: 14px;
+}
+
+.whisper-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+.whisper-nav .wordmark {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.whisper-nav a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  margin-left: 14px;
+}
+.whisper-nav a:hover {
+  color: var(--foreground);
+}
+
+.inbox {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 60px 24px 56px;
+}
+
+/* ---------- header ---------- */
+
+.inbox-head {
+  margin-bottom: 22px;
+}
+.inbox-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+.inbox-head .sub {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+}
+
+/* ---------- cards ---------- */
+
+.card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin-bottom: 10px;
+}
+
+.card-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-bottom: 8px;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+.dot-attention { background: var(--state-attention); }
+.dot-blocked { background: var(--state-blocked); }
+.dot-working { background: color-mix(in srgb, var(--state-working) 70%, transparent); }
+.dot-review { background: color-mix(in srgb, var(--state-done) 80%, transparent); }
+.dot-done { background: var(--state-idle); }
+
+.card-title {
+  font-size: 16.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.4;
+  margin: 0;
+}
+.card-title code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--secondary);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.card-sub {
+  margin: 5px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.card-question {
+  margin: 2px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.spacer {
+  flex: 1;
+}
+
+/* Buttons: one filled pill per card at most; everything else is quiet. */
+.btn {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+  color: var(--foreground);
+  background: var(--secondary);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.btn:hover {
+  background: var(--accent);
+}
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+.btn-primary:hover {
+  background: var(--foreground);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.btn-ghost:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+/* Overlapping mini avatars — the "4 agents waiting" at a glance. */
+.avatars {
+  display: flex;
+  margin-left: auto;
+}
+.avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--secondary);
+  border: 2px solid var(--card);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  margin-left: -7px;
+}
+.avatar:first-child {
+  margin-left: 0;
+}
+
+/* Collapsed one-line cards */
+.card.is-compact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 20px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.card.is-compact:hover {
+  background: color-mix(in srgb, var(--secondary) 55%, var(--card));
+}
+.card.is-compact .card-question {
+  flex: 1;
+  margin: 0;
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chevron {
+  color: var(--muted-foreground);
+  font-size: 15px;
+  flex: 0 0 auto;
+}
+
+/* Resolved state: the card settles, it does not vanish. */
+.card.is-resolved {
+  opacity: 0.55;
+}
+.card.is-resolved .card-actions {
+  display: none;
+}
+
+/* ---------- the rest of the fleet: one grouped list ---------- */
+
+.rest {
+  margin-top: 22px;
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.rest-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 20px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.rest-row:hover {
+  background: color-mix(in srgb, var(--secondary) 55%, var(--card));
+}
+.rest-row + .rest-row,
+.rest-sublist + .rest-row {
+  border-top: 1px solid var(--border);
+}
+.rest-label {
+  font-size: 14.5px;
+  font-weight: 500;
+}
+.rest-count {
+  margin-left: auto;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.rest-row .chevron {
+  transition: transform 0.2s ease;
+}
+.rest-row.is-open .chevron {
+  transform: rotate(90deg);
+}
+
+.rest-sublist {
+  display: none;
+}
+.rest-row.is-open + .rest-sublist {
+  display: block;
+}
+.rest-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 20px 0 38px;
+  border-top: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.rest-sub-name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--foreground);
+}
+.rest-sub-meta {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  flex: 0 0 auto;
+}
+.rest-sub-more {
+  color: var(--muted-foreground);
+  justify-content: center;
+  font-size: 12.5px;
+}
+
+/* ---------- footer ---------- */
+
+.foot {
+  margin-top: 28px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
