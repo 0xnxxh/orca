@@ -1,4 +1,8 @@
-import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
+import {
+  isAiVaultScanCancelledError,
+  type AiVaultListArgs,
+  type AiVaultListResult
+} from '../../shared/ai-vault-types'
 import {
   abandonRemoteSessionScanOnCancel,
   throwIfAiVaultScanCancelled
@@ -46,7 +50,8 @@ export async function scanRuntimeAiVaultSessions(args: {
       signal
     )
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
+    // RPC rejections keep the message but lose Error.name, so classify on both.
+    if (isAiVaultScanCancelledError(error)) {
       throw error
     }
     return runtimeScanIssueResult(

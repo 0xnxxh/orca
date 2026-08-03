@@ -135,6 +135,9 @@ export async function scanAiVaultSessions(
       parseStats,
       signal: options.signal
     })
+    // Scope discovery can return without parsing anything, so an abort landing
+    // here would otherwise persist and return a cancelled scan as complete.
+    throwIfAiVaultScanCancelled(options.signal)
 
     span.setAttribute('candidates', candidates.length)
     span.setAttribute('reused', parseStats.reused)

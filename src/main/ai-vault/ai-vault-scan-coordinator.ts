@@ -13,6 +13,8 @@ type ScanEntry = {
   startedAt: number
   promise: Promise<AiVaultListResult>
   waiterCount: number
+  // The last waiter leaving must not abort a scan that already finished.
+  settled: boolean
   // Set when a forced caller replaced this entry, so its waiters re-join the
   // replacement instead of surfacing someone else's refresh as their own cancel.
   preemptedBy: ScanEntry | null
@@ -66,12 +68,14 @@ export class AiVaultScanCoordinator {
         return start(controller.signal)
       }),
       waiterCount: 0,
+      settled: false,
       preemptedBy: null
     }
-    void entry.promise.then(
-      () => this.removeEntry(key, entry),
-      () => this.removeEntry(key, entry)
-    )
+    const onSettled = (): void => {
+      entry.settled = true
+      this.removeEntry(key, entry)
+    }
+    void entry.promise.then(onSettled, onSettled)
     return entry
   }
 
@@ -87,7 +91,7 @@ export class AiVaultScanCoordinator {
         signal?.removeEventListener('abort', onAbort)
         entry.controller.signal.removeEventListener('abort', onAbort)
         entry.waiterCount--
-        if (entry.waiterCount === 0 && !entry.controller.signal.aborted) {
+        if (entry.waiterCount === 0 && !entry.settled && !entry.controller.signal.aborted) {
           this.removeEntry(key, entry)
           entry.controller.abort()
         }

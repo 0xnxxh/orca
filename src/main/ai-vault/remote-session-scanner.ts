@@ -26,10 +26,15 @@ import { mapRemoteScanBatches } from './remote-session-scan-batching'
 import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
 import { recordRemoteSessionScanIssue } from './remote-session-scan-issues'
 import { limitRemoteScanFilesystemConcurrency } from './remote-session-scan-concurrency'
-import { DEFAULT_AI_VAULT_SCAN_LIMIT } from '../../shared/ai-vault-session-depth'
+import { aiVaultScanLimit } from '../../shared/ai-vault-session-depth'
 
 const REMOTE_SCAN_CONCURRENCY = 8
 const REMOTE_PARSE_CANDIDATE_MULTIPLIER = 2
+// Remote scope membership is only known after a transcript is read, so the scope
+// backfill carries its own ceiling on remote reads instead of borrowing the
+// recency cap — under the cap, newer out-of-scope files ate the scope budget and
+// silently dropped older in-scope sessions the scope contract guarantees.
+const REMOTE_SCOPE_PARSE_CANDIDATE_LIMIT = 1000
 
 export async function scanRemoteAiVaultSessions(args: {
   provider: RemoteSessionFilesystemProvider
@@ -42,11 +47,7 @@ export async function scanRemoteAiVaultSessions(args: {
   signal?: AbortSignal
 }): Promise<AiVaultListResult> {
   throwIfAiVaultScanCancelled(args.signal)
-  const limit = args.unlimited
-    ? Number.POSITIVE_INFINITY
-    : args.limit && args.limit > 0
-      ? Math.floor(args.limit)
-      : DEFAULT_AI_VAULT_SCAN_LIMIT
+  const limit = aiVaultScanLimit(args)
   const issues: AiVaultScanIssue[] = []
   // One ceiling for the whole scan: discovery walks, stats and transcript reads
   // all queue behind it instead of multiplying into a nested fan-out.
@@ -177,20 +178,43 @@ async function scanRemoteInScopeSessions(args: {
     return []
   }
 
-  const candidates = args.candidates
-    .filter((candidate) => !args.alreadyParsedFilePaths.has(candidate.file.path))
-    .slice(0, args.limit)
-  const results = await mapRemoteScanBatches(
-    candidates,
-    REMOTE_SCAN_CONCURRENCY,
-    (candidate) => parseRemoteSessionCandidate(candidate, args.context, args.issues),
-    args.context.signal
+  const candidates = args.candidates.filter(
+    (candidate) => !args.alreadyParsedFilePaths.has(candidate.file.path)
   )
+  const bound = Math.min(candidates.length, REMOTE_SCOPE_PARSE_CANDIDATE_LIMIT)
+  const sessions: AiVaultSession[] = []
+  let index = 0
 
-  return results.filter(
-    (session): session is AiVaultSession =>
-      isAiVaultSession(session) && isRemoteSessionInScope(session, args.scopePaths)
-  )
+  // Keep reading newest-first until the scope has its requested number of
+  // sessions; out-of-scope candidates no longer end the search.
+  while (index < bound && sessions.length < args.limit) {
+    const batchEnd = Math.min(index + REMOTE_SCAN_CONCURRENCY, bound)
+    const results = await mapRemoteScanBatches(
+      candidates.slice(index, batchEnd),
+      REMOTE_SCAN_CONCURRENCY,
+      (candidate) => parseRemoteSessionCandidate(candidate, args.context, args.issues),
+      args.context.signal
+    )
+    sessions.push(
+      ...results.filter(
+        (session): session is AiVaultSession =>
+          isAiVaultSession(session) && isRemoteSessionInScope(session, args.scopePaths)
+      )
+    )
+    index = batchEnd
+  }
+
+  if (index < candidates.length && sessions.length < args.limit) {
+    recordRemoteSessionScanIssue(args.issues, {
+      executionHostId: args.context.executionHostId,
+      agent: 'codex',
+      kind: 'scope',
+      path: 'Agent Session History scan',
+      message: `Only the ${REMOTE_SCOPE_PARSE_CANDIDATE_LIMIT} most recent remote transcripts were checked for this workspace; older sessions may be missing.`
+    })
+  }
+
+  return sessions
 }
 
 async function parseRemoteSessionCandidate(

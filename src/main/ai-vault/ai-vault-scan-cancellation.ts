@@ -19,6 +19,9 @@ export function abandonRemoteSessionScanOnCancel<T>(
   }
   return new Promise<T>((resolve, reject) => {
     if (signal.aborted) {
+      // The scanner promise already exists; observe it so its later failure is
+      // not an unhandled rejection after this caller walked away.
+      void promise.catch(() => undefined)
       reject(createAiVaultScanCancelledError())
       return
     }

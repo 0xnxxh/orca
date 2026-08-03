@@ -5,7 +5,7 @@ import type {
 } from '../../shared/ai-vault-types'
 import type { ExecutionHostId } from '../../shared/execution-host'
 import { sessionSortTime } from './session-scanner-accumulator'
-import { DEFAULT_AI_VAULT_SCAN_LIMIT } from '../../shared/ai-vault-session-depth'
+import { aiVaultScanLimit } from '../../shared/ai-vault-session-depth'
 
 export function aiVaultScanIssueResult(args: {
   executionHostId?: ExecutionHostId
@@ -61,11 +61,7 @@ export function mergeAiVaultListResults(
   rawLimit: number | undefined,
   unlimited = false
 ): AiVaultListResult {
-  const limit = unlimited
-    ? Number.POSITIVE_INFINITY
-    : rawLimit && rawLimit > 0
-      ? Math.floor(rawLimit)
-      : DEFAULT_AI_VAULT_SCAN_LIMIT
+  const limit = aiVaultScanLimit({ limit: rawLimit, unlimited })
   const byId = new Map<string, AiVaultSession>()
   const issues: AiVaultScanIssue[] = []
   for (const result of results) {

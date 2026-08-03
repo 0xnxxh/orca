@@ -20,7 +20,8 @@ export function aiVaultSessionResultCacheKey(
   executionHostScope: ExecutionHostScope,
   scopePaths: readonly string[]
 ): string {
-  return `${executionHostScope}\n${[...new Set(scopePaths)].sort().join('\n')}`
+  // JSON keeps the parts unambiguous: a path may legally contain any separator.
+  return JSON.stringify([executionHostScope, ...[...new Set(scopePaths)].sort()])
 }
 
 export function readCachedAiVaultSessionResult(args: {

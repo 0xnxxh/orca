@@ -213,7 +213,7 @@ async function scanLocalAiVaultSessionsForAllScope(
   try {
     return await scanLocalAiVaultSessions(args, signal)
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
+    if (isAiVaultScanCancelledError(error)) {
       throw error
     }
     return aiVaultScanIssueResult({

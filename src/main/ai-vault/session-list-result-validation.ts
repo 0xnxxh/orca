@@ -49,6 +49,8 @@ const aiVaultSessionSchema = z.object({
   messageCount: z.number(),
   totalTokens: z.number(),
   previewMessages: z.array(sessionPreviewMessageSchema),
+  previewMessagesTruncated: z.boolean().optional(),
+  firstUserPrompt: z.string().nullable().optional(),
   lastUserPrompt: z.string().nullable().optional(),
   queuedMessageCount: z.number().default(0),
   subagentTranscriptCount: z.number().default(0),

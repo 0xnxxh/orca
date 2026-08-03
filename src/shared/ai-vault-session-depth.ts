@@ -16,6 +16,13 @@ export function requestedAiVaultSessionDepth(
     : DEFAULT_AI_VAULT_SCAN_LIMIT
 }
 
+// Scanners bound with slice/comparisons, so 'unlimited' resolves to no bound.
+// Single owner of the normalization every scan limit goes through.
+export function aiVaultScanLimit(args?: Pick<AiVaultListArgs, 'limit' | 'unlimited'>): number {
+  const depth = requestedAiVaultSessionDepth(args)
+  return depth === 'unlimited' ? Number.POSITIVE_INFINITY : depth
+}
+
 export function aiVaultSessionDepthCovers(
   cached: AiVaultSessionDepth,
   requested: AiVaultSessionDepth

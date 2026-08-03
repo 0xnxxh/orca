@@ -146,9 +146,8 @@ describe('AiVaultHandler', () => {
       firstController.signal
     )
     const second = dispatcher.call(SSH_AI_VAULT_LIST_SESSIONS_METHOD, { limit: 20 })
-    await Promise.resolve()
+    await vi.waitFor(() => expect(scanRemoteSessions).toHaveBeenCalledTimes(1))
 
-    expect(scanRemoteSessions).toHaveBeenCalledTimes(1)
     firstController.abort()
     await expect(first).rejects.toMatchObject({ name: 'AbortError' })
     expect(sharedSignal?.aborted).toBe(false)

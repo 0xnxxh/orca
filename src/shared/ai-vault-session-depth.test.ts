@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AiVaultListResult, AiVaultSession } from './ai-vault-types'
 import {
+  aiVaultScanLimit,
   aiVaultSessionDepthCovers,
   requestedAiVaultSessionDepth,
   truncateAiVaultListResult
@@ -38,6 +39,7 @@ function result(sessions: AiVaultSession[]): AiVaultListResult {
 
 describe('Agent Session History depth', () => {
   it('recognizes which loaded depths cover a request', () => {
+    expect(aiVaultSessionDepthCovers(250, 250)).toBe(true)
     expect(aiVaultSessionDepthCovers(1000, 250)).toBe(true)
     expect(aiVaultSessionDepthCovers(250, 500)).toBe(false)
     expect(aiVaultSessionDepthCovers(1000, 'unlimited')).toBe(false)
@@ -48,7 +50,18 @@ describe('Agent Session History depth', () => {
   it('normalizes default, finite, and unlimited requests', () => {
     expect(requestedAiVaultSessionDepth()).toBe(1000)
     expect(requestedAiVaultSessionDepth({ limit: 500 })).toBe(500)
+    expect(requestedAiVaultSessionDepth({ limit: 500.75 })).toBe(500)
+    expect(requestedAiVaultSessionDepth({ limit: 0 })).toBe(1000)
+    expect(requestedAiVaultSessionDepth({ limit: -1 })).toBe(1000)
+    expect(requestedAiVaultSessionDepth({ limit: Number.NaN })).toBe(1000)
+    expect(requestedAiVaultSessionDepth({ limit: Number.POSITIVE_INFINITY })).toBe(1000)
     expect(requestedAiVaultSessionDepth({ limit: 500, unlimited: true })).toBe('unlimited')
+  })
+
+  it('resolves scan limits to a numeric bound', () => {
+    expect(aiVaultScanLimit({ limit: 500 })).toBe(500)
+    expect(aiVaultScanLimit({ limit: Number.POSITIVE_INFINITY })).toBe(1000)
+    expect(aiVaultScanLimit({ unlimited: true })).toBe(Number.POSITIVE_INFINITY)
   })
 
   it('keeps the newest global and scoped sessions when truncating', () => {
