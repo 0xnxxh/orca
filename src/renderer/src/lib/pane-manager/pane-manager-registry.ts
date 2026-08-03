@@ -7,7 +7,7 @@ type RegisteredPaneManager = {
   fitAllPanes?: () => void
   refreshAllPanes?: () => void
   getRenderingDiagnostics?: () => PaneRenderingDiagnostics[]
-  getPanes?: () => { id: number; terminal: unknown }[]
+  getPanes?: (limit?: number) => { id: number; terminal: unknown }[]
   getPaneCount?: () => number
   isVisibleForAtlasRecovery?: () => boolean
 }
@@ -163,6 +163,8 @@ export function refitAndRefreshAllTerminalPanes(): void {
 // matters, not accuracy.
 const BYTES_PER_TERMINAL_CELL = 16
 const BYTES_PER_KILOBYTE = 1024
+const MANAGER_SAMPLE_LIMIT = 64
+const PANE_SAMPLE_LIMIT = 256
 
 type BufferedTerminal = {
   cols?: number
@@ -176,26 +178,61 @@ type BufferedTerminal = {
  * mounted forever, each retaining rows x cols of scrollback.
  */
 export function getLivePaneMemoryProfileCounts(): Record<string, number> {
-  let panes = 0
-  let bufferKB = 0
+  let sampledManagers = 0
+  let paneCount = 0
+  let sampledPanes = 0
+  let sampledBufferBytes = 0
   for (const manager of liveManagers) {
+    if (sampledManagers >= MANAGER_SAMPLE_LIMIT) {
+      break
+    }
+    sampledManagers += 1
+    const remainingPaneSamples = Math.max(0, PANE_SAMPLE_LIMIT - sampledPanes)
     let managerPanes: { id: number; terminal: unknown }[] = []
     try {
-      managerPanes = manager.getPanes?.() ?? []
+      if (remainingPaneSamples > 0) {
+        managerPanes = manager.getPanes?.(remainingPaneSamples) ?? []
+      }
     } catch {
-      continue
+      managerPanes = []
     }
-    panes += managerPanes.length
-    for (const pane of managerPanes) {
+    let managerPaneCount: number | undefined
+    try {
+      managerPaneCount = manager.getPaneCount?.()
+    } catch {
+      managerPaneCount = undefined
+    }
+    paneCount +=
+      typeof managerPaneCount === 'number' && Number.isFinite(managerPaneCount)
+        ? Math.max(0, managerPaneCount)
+        : managerPanes.length
+    const panesToInspect = Math.min(managerPanes.length, remainingPaneSamples)
+    for (let index = 0; index < panesToInspect; index += 1) {
+      const pane = managerPanes[index]
       const terminal = pane.terminal as BufferedTerminal | null | undefined
       const rows = terminal?.buffer?.active?.length
       const cols = terminal?.cols
-      if (typeof rows === 'number' && typeof cols === 'number') {
-        bufferKB += Math.round((rows * cols * BYTES_PER_TERMINAL_CELL) / BYTES_PER_KILOBYTE)
+      if (
+        typeof rows === 'number' &&
+        Number.isFinite(rows) &&
+        rows > 0 &&
+        typeof cols === 'number' &&
+        Number.isFinite(cols) &&
+        cols > 0
+      ) {
+        sampledBufferBytes += rows * cols * BYTES_PER_TERMINAL_CELL
       }
     }
+    sampledPanes += panesToInspect
   }
-  return { managers: liveManagers.size, panes, estBufferKB: bufferKB }
+  const managerScale = sampledManagers === 0 ? 0 : liveManagers.size / sampledManagers
+  const estPanes = Math.round(paneCount * managerScale)
+  const paneScale = sampledPanes === 0 ? 0 : estPanes / sampledPanes
+  return {
+    managers: liveManagers.size,
+    estPanes,
+    estBufferKB: Math.round((sampledBufferBytes * paneScale) / BYTES_PER_KILOBYTE)
+  }
 }
 
 // Why here: contributors push in (crash-diagnostics stays a leaf); same-name

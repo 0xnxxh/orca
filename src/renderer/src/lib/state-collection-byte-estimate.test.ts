@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { estimateStateCollectionKB } from './state-collection-byte-estimate'
 
 function kbOf(state: Record<string, unknown>, key: string): number {
@@ -35,6 +35,25 @@ describe('estimateStateCollectionKB', () => {
     const hugeKB = kbOf({ slice: huge }, 'slice')
     expect(hugeKB).toBeGreaterThan(smallKB * 8)
     expect(hugeKB).toBeLessThan(smallKB * 12)
+  })
+
+  it('bounds plain-object key inspection per slice', () => {
+    const slice = Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`k${i}`, i]))
+    const hasOwn = vi.spyOn(Object, 'hasOwn')
+
+    expect(kbOf({ slice }, 'slice')).toBeGreaterThan(0)
+    expect(hasOwn).toHaveBeenCalledTimes(4097)
+    hasOwn.mockRestore()
+  })
+
+  it('reserves bounded descent for fat values after a saturated object scan', () => {
+    const slice = Object.fromEntries(
+      Array.from({ length: 10_000 }, (_, i) => [`k${i}`, { payload: 'x'.repeat(2048) }])
+    )
+
+    const result = estimateStateCollectionKB({ slice }, 4)
+    expect(result.slice).toBeGreaterThan(10_000)
+    expect(result.__budgetHitSlices).toBe(1)
   })
 
   it('extrapolates Map and Set entries by size', () => {

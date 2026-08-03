@@ -8,7 +8,7 @@
  * these estimates name what got FAT.
  *
  * Estimates are heuristic (sampled, extrapolated, shared references counted
- * per slice) — only the relative ranking between slices is meaningful.
+ * per slice). __budgetHitSlices marks totals that saturated the scan budget.
  */
 
 // Why sampling is capped and first-window biased: this runs at >=60% heap
@@ -17,6 +17,8 @@
 const SAMPLE_TARGET = 16
 const SAMPLE_WINDOW = 1024
 const NODE_BUDGET_PER_SLICE = 4096
+const ENTRY_SCAN_BUDGET_PER_SLICE = 4096
+const ENTRY_DESCENT_RESERVE = 1024
 const MAX_DEPTH = 12
 
 // Rough V8 object costs; absolute accuracy doesn't matter, stable ranking does.
@@ -32,6 +34,8 @@ const BYTES_PER_KILOBYTE = 1024
 
 type EstimateContext = {
   nodesLeft: number
+  entriesLeft: number
+  budgetHit: boolean
   seen: WeakSet<object>
 }
 
@@ -40,6 +44,7 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
     return {}
   }
   const sizes: [string, number][] = []
+  let budgetHitSlices = 0
   for (const key in state) {
     if (!Object.hasOwn(state, key)) {
       continue
@@ -48,10 +53,16 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
     // Why: one exotic slice (throwing getter, revoked proxy) must not sink the
     // whole census; the registry only sees the surviving slices.
     try {
-      const bytes = estimateValueBytes((state as Record<string, unknown>)[key], 0, {
+      const ctx: EstimateContext = {
         nodesLeft: NODE_BUDGET_PER_SLICE,
+        entriesLeft: ENTRY_SCAN_BUDGET_PER_SLICE + ENTRY_DESCENT_RESERVE,
+        budgetHit: false,
         seen: new WeakSet()
-      })
+      }
+      const bytes = estimateValueBytes((state as Record<string, unknown>)[key], 0, ctx)
+      if (ctx.budgetHit) {
+        budgetHitSlices += 1
+      }
       kb = Math.round(bytes / BYTES_PER_KILOBYTE)
     } catch {
       continue
@@ -61,19 +72,22 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
     }
   }
   if (sizes.length === 0) {
-    return {}
+    return budgetHitSlices === 0 ? {} : { __budgetHitSlices: budgetHitSlices }
   }
   sizes.sort((a, b) => b[1] - a[1])
   const top = Object.fromEntries(sizes.slice(0, limit))
-  // Why __totalKB: a small total against a huge heap EXONERATES the whole
-  // state object (the 97b9e86d readout: heap 1.3GB, store ~15MB) — that
-  // negative evidence redirects the investigation and needs no local repro.
+  // Why __totalKB: a small unsaturated total can exonerate the whole state
+  // object and redirect investigation without a local repro.
   top.__totalKB = sizes.reduce((sum, [, kb]) => sum + kb, 0)
+  if (budgetHitSlices > 0) {
+    top.__budgetHitSlices = budgetHitSlices
+  }
   return top
 }
 
 function estimateValueBytes(value: unknown, depth: number, ctx: EstimateContext): number {
   if (ctx.nodesLeft <= 0) {
+    ctx.budgetHit = true
     return 0
   }
   ctx.nodesLeft -= 1
@@ -102,6 +116,7 @@ function estimateValueBytes(value: unknown, depth: number, ctx: EstimateContext)
   }
   ctx.seen.add(value)
   if (depth >= MAX_DEPTH) {
+    ctx.budgetHit = true
     return BYTES_OBJECT_BASE
   }
   if (Array.isArray(value)) {
@@ -159,6 +174,11 @@ function estimateIterableEntries(
     if (index >= windowLength) {
       break
     }
+    if (ctx.entriesLeft <= 0) {
+      ctx.budgetHit = true
+      break
+    }
+    ctx.entriesLeft -= 1
     if (index % stride === 0) {
       if (isKeyValuePair) {
         const [entryKey, entryValue] = entry as [unknown, unknown]
@@ -177,38 +197,32 @@ function estimateIterableEntries(
 }
 
 function estimatePlainObjectEntries(value: object, depth: number, ctx: EstimateContext): number {
-  // Why two for..in passes: Object.keys allocates an array proportional to the
-  // (possibly leaking) collection; for..in iterates allocation-free. The count
-  // pass is full so extrapolation covers entries the sample window never sees.
   let ownCount = 0
+  const sampledKeys: string[] = []
+  const entryFloor = depth === 0 ? ENTRY_DESCENT_RESERVE : 0
+  // Why: a leaking record must not turn a near-OOM breadcrumb into a full scan.
   for (const key in value) {
+    if (ctx.entriesLeft <= entryFloor) {
+      ctx.budgetHit = true
+      break
+    }
+    ctx.entriesLeft -= 1
     if (Object.hasOwn(value, key)) {
       ownCount += 1
+      if (sampledKeys.length < SAMPLE_TARGET) {
+        sampledKeys.push(key)
+      }
     }
   }
   if (ownCount === 0) {
     return 0
   }
-  const windowLength = Math.min(ownCount, SAMPLE_WINDOW)
-  const stride = Math.max(1, Math.floor(windowLength / SAMPLE_TARGET))
   let sampledBytes = 0
-  let sampledCount = 0
-  let index = 0
-  for (const key in value) {
-    if (!Object.hasOwn(value, key)) {
-      continue
-    }
-    if (index >= windowLength) {
-      break
-    }
-    if (index % stride === 0) {
-      sampledBytes += BYTES_STRING_BASE + key.length * BYTES_PER_CHAR
-      sampledBytes += estimateValueBytes((value as Record<string, unknown>)[key], depth + 1, ctx)
-      sampledCount += 1
-    }
-    index += 1
+  for (const key of sampledKeys) {
+    sampledBytes += BYTES_STRING_BASE + key.length * BYTES_PER_CHAR
+    sampledBytes += estimateValueBytes((value as Record<string, unknown>)[key], depth + 1, ctx)
   }
-  return sampledCount === 0
+  return sampledKeys.length === 0
     ? 0
-    : Math.round((sampledBytes / sampledCount + BYTES_ENTRY_OVERHEAD) * ownCount)
+    : Math.round((sampledBytes / sampledKeys.length + BYTES_ENTRY_OVERHEAD) * ownCount)
 }
