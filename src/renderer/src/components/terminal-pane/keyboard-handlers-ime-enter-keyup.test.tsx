@@ -1,11 +1,4 @@
 // @vitest-environment happy-dom
-// Windows IME Enter-keyup synthesis must require press-time evidence.
-//
-// The keyup branch exists for presses whose keydown the IME swallowed entirely.
-// When the keydown WAS observed, release-time modifier state is rollover noise:
-// a plain committing Enter followed by a rolled-over Shift for the next doubled
-// consonant (했다 → commit-Enter, then Shift for ㄸ) must not become Shift+Enter,
-// and a directly-sent Shift+Enter must not send a second newline from its keyup.
 import { cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
@@ -136,7 +129,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
     harness.startComposition()
 
-    // Plain committing Enter, consumed by the IME: Process/229, no modifiers.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keydown', {
         key: 'Process',
@@ -146,7 +138,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
         isComposing: true
       })
     )
-    // Rollover: Shift pressed for the next doubled consonant before the Enter keyup.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keydown', {
         key: 'Shift',
@@ -156,8 +147,7 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
         shiftKey: true
       })
     )
-    // The Enter keyup reports release-time shiftKey=true while the session is
-    // still pending (the session-end finalizer is delayed under renderer lag).
+    // Release-time Shift belongs to the next doubled consonant.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
         key: 'Enter',
@@ -188,7 +178,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
         isComposing: true
       })
     )
-    // Balancing keyup copied from the same native event (same timeStamp).
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
         key: 'Enter',
@@ -206,7 +195,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
         shiftKey: true
       })
     )
-    // The physical release arrives later with the rolled-over Shift held.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
         key: 'Enter',
@@ -228,7 +216,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
     harness.startComposition()
 
-    // Two committing Enter presses land before either release is processed.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keydown', {
         key: 'Process',
@@ -279,8 +266,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
     harness.startComposition()
 
-    // Auto-repeat re-fires keydown with no release in between; the whole run
-    // must cost exactly one release to drain.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keydown', {
         key: 'Process',
@@ -312,7 +297,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     vi.runAllTimers()
     expect(harness.sendInput).not.toHaveBeenCalled()
 
-    // Evidence is now drained: a genuinely swallowed keydown still synthesizes.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
         key: 'Enter',
@@ -335,8 +319,7 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
     harness.startComposition()
 
-    // No Enter keydown was ever observed: only the keyup arrives, with the
-    // chord modifier still held. This is the case the keyup path exists for.
+    // No keydown evidence: preserve the swallowed-keydown fallback.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
         key: 'Enter',
@@ -358,7 +341,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     const harness = createHarness()
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
 
-    // No composition yet: Shift+Enter keydown is sent directly.
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keydown', {
         key: 'Enter',
@@ -370,7 +352,6 @@ describe('Windows IME Enter-keyup press-time evidence', () => {
     )
     expect(harness.sendInput).toHaveBeenCalledTimes(1)
 
-    // The user starts the next Hangul syllable before releasing Enter/Shift.
     harness.startComposition()
     harness.terminalInput.dispatchEvent(
       keyboardEvent('keyup', {
