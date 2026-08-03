@@ -283,7 +283,7 @@ describe('RelayPtySourcePublication', () => {
     ).toHaveLength(2)
   })
 
-  it('sheds a saturated subscriber without detaching it or stalling the V1 owner', async () => {
+  it('detaches only a saturated subscriber while the V1 owner stays live', async () => {
     const harness = await createHarness(8)
     const detached: number[] = []
     const saturatedWrites: Buffer[] = []
@@ -324,10 +324,10 @@ describe('RelayPtySourcePublication', () => {
 
     expect(admitted).toBeGreaterThan(0)
     expect(admitted).toBeLessThan(20)
-    // A bystander subscriber is neither closed (#12041) nor allowed to pause the PTY for everyone.
+    // A bystander subscriber is dropped rather than allowed to pause the PTY for every viewer.
     expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(true)
 
-    expect(detached).toEqual([])
+    expect(detached).toEqual([saturatedId])
     expect(detached).not.toContain(healthyId)
     expect(saturatedWrites).toHaveLength(1)
     expect(heldSettlements).toHaveLength(1)

@@ -709,7 +709,7 @@ describe('PtyHandler negotiated source publication', () => {
     expect(ordered.indexOf('pty.data')).toBeLessThan(ordered.lastIndexOf('pty.exit'))
   })
 
-  it('keeps the native PTY, the V1 owner and a saturated subscriber all live', async () => {
+  it('keeps the native PTY and V1 owner live when one subscriber saturates', async () => {
     await spawn({})
     const detached: number[] = []
     const healthyWrites: Buffer[] = []
@@ -741,8 +741,9 @@ describe('PtyHandler negotiated source publication', () => {
 
     expect(admitted).toBeGreaterThan(100)
     expect(admitted).toBeLessThan(140)
-    // Neither closed (that is #12041) nor gating: a bystander subscriber sheds its own copy only.
-    expect(detached).toEqual([])
+    // A bystander subscriber is dropped rather than allowed to pause the PTY for every viewer or to
+    // pin the relay-wide legacy gate open.
+    expect(detached).toEqual([saturatedId])
     expect(detached).not.toContain(healthyId)
     expect(
       healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
@@ -752,7 +753,7 @@ describe('PtyHandler negotiated source publication', () => {
     expect(pausePty).not.toHaveBeenCalled()
     expect(
       stderr.mock.calls.filter((call) => /Dropped pty\.data/.test(String(call[0])))
-    ).toHaveLength(1)
+    ).toHaveLength(0)
     stderr.mockRestore()
   })
 })

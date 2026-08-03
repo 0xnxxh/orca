@@ -57,9 +57,11 @@ export type RelayClientSourceOptions = {
 /**
  * How the legacy PTY projection serves a client whose producer queue is full.
  * - `skip`: not a projection target (a flow-controlled source owner has its own credited lane).
- * - `owner`: the projection is this client's only delivery lane, so a full queue back-pressures the PTY.
- * - `mirror`: a bystander copy that recovers by reopening the pty, so a full queue sheds this one frame for
- *   that client alone — a mirror must never hold the native PTY paused for every other viewer.
+ * - `owner`: the projection is this client's only delivery lane, so a full queue back-pressures the PTY
+ *   until it drains — the #12041 disconnect was closing this client instead.
+ * - `mirror`: a bystander copy that recovers by reconnecting, so a full queue closes just that client.
+ *   Shedding the frame instead would leave its retained bytes gating `legacyRetentionBelowLowWater`
+ *   with nothing left to evict it, wedging every paused PTY on the host forever.
  */
 export type LegacyProjectionRole = 'skip' | 'owner' | 'mirror'
 
@@ -538,7 +540,7 @@ export class RelayDispatcher {
           // Why: reattach regenerates replay, so killing the link over it just re-kills the reconnect;
           // drop the pane's scrollback instead and let live output repaint it.
           if (!this.enqueueFrame(client, msg, 'control', undefined, frameBytes, 'reject')) {
-            this.logDroppedProducerNotification(client, method, frameBytes)
+            this.logDroppedProducerNotification(client, method, frameBytes, 'control')
           }
           continue
         }
@@ -586,10 +588,17 @@ export class RelayDispatcher {
 
   // Why: one line per generation, method and drop reason — a flooding producer retries every batch and would
   // spam stderr, but a transient queue-full drop must not consume the slot a real over-capacity drop needs.
-  private logDroppedProducerNotification(client: RelayClient, method: string, bytes: number): void {
+  private logDroppedProducerNotification(
+    client: RelayClient,
+    method: string,
+    bytes: number,
+    // Why: a control-lane drop has nothing to do with the producer bound; naming that lane sends the
+    // reader to the wrong limit.
+    lane: 'producer' | 'control' = 'producer'
+  ): void {
     const capacity = client.writer.producerFrameCapacity
-    const overCapacity = bytes > capacity
-    const key = `${method}:${overCapacity ? 'over-capacity' : 'queue-full'}`
+    const overCapacity = lane === 'producer' && bytes > capacity
+    const key = `${method}:${lane === 'control' ? 'control-full' : overCapacity ? 'over-capacity' : 'queue-full'}`
     let log = client.droppedNotificationLog
     if (!log || log.generation !== client.generation) {
       log = { generation: client.generation, loggedKeys: new Set() }
@@ -600,9 +609,11 @@ export class RelayDispatcher {
     }
     log.loggedKeys.add(key)
     process.stderr.write(
-      overCapacity
-        ? `[relay] Dropped ${method} (${bytes}B > producer frame capacity ${capacity}B)\n`
-        : `[relay] Dropped ${method} (${bytes}B, producer queue full; frame capacity ${capacity}B)\n`
+      lane === 'control'
+        ? `[relay] Dropped ${method} (${bytes}B, control queue full)\n`
+        : overCapacity
+          ? `[relay] Dropped ${method} (${bytes}B > producer frame capacity ${capacity}B)\n`
+          : `[relay] Dropped ${method} (${bytes}B, producer queue full; frame capacity ${capacity}B)\n`
     )
   }
 
@@ -1166,14 +1177,20 @@ export class RelayDispatcher {
       if (!this.tryPublishToClients(blocking, msg, lane, bytes)) {
         return false
       }
-      // Why: a mirror is a bystander view that recovers on its own (reopening the pty replays it), so it
-      // must never hold the native PTY paused for every other viewer. Publishing only after the owners
-      // committed also keeps a back-pressured span from reaching a mirror twice when it is retried.
+      // Why: a mirror must not hold the native PTY paused for every other viewer, but shedding its frame
+      // would strand its retained bytes above the relay-wide low-water mark with nothing left to release
+      // them, so every paused PTY would stay paused. Closing bounds that, and the client reconnects.
+      // Publishing only after the owners committed also keeps a back-pressured span from reaching a
+      // mirror twice when it is retried.
       for (const client of mirrors) {
         if (client.closed || this.publishToClient(client, msg, lane, undefined, bytes)) {
           continue
         }
-        this.logDroppedProducerNotification(client, msg.method, bytes)
+        this.closeClient(
+          client,
+          new Error('Relay PTY subscriber projection capacity exceeded'),
+          client !== this.primaryClient
+        )
       }
       return !this.disposed
     })

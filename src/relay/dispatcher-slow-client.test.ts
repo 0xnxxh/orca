@@ -82,12 +82,6 @@ function roles(
   return (clientId) => byId[clientId] ?? 'skip'
 }
 
-function queueFullDrops(stderr: { mock: { calls: unknown[][] } }): string[] {
-  return stderr.mock.calls
-    .map((call) => String(call[0]))
-    .filter((line) => /producer queue full/.test(line))
-}
-
 describe('RelayDispatcher slow-client PTY projection', () => {
   it('tryNotifyPtyData applies backpressure without closing the client', () => {
     const primary = makeStallingClient(65536)
@@ -132,7 +126,7 @@ describe('RelayDispatcher slow-client PTY projection', () => {
     }
   })
 
-  it('sheds a saturated mirror instead of pausing the PTY for every other viewer', () => {
+  it('closes a saturated mirror instead of pausing the PTY for every other viewer', () => {
     const owner = makeStallingClient(65536)
     owner.drain()
     const mirror = makeStallingClient(65536)
@@ -143,7 +137,6 @@ describe('RelayDispatcher slow-client PTY projection', () => {
       const mirrorId = dispatcher.attachClient(mirror.write, mirror.options)
       fillProducerQueue(dispatcher, mirrorId)
       const mirrorBefore = ptyDataFrameCount(mirror.frames)
-      stderr.mockClear()
 
       const projected = dispatcher.projectPtyDataToLegacyClients(
         roles({ [ownerId]: 'owner', [mirrorId]: 'mirror' }),
@@ -154,12 +147,35 @@ describe('RelayDispatcher slow-client PTY projection', () => {
       expect(projected).toBe(true)
       expect(ptyDataFrameCount(owner.frames)).toBe(1)
       expect(ptyDataFrameCount(mirror.frames)).toBe(mirrorBefore)
-      expect(mirror.closes).toBe(0)
+      expect(mirror.closes).toBe(1)
       expect(owner.closes).toBe(0)
-      expect(queueFullDrops(stderr)).toHaveLength(1)
-      expect(queueFullDrops(stderr)[0]).toMatch(
-        /^\[relay\] Dropped pty\.data \(\d+B, producer queue full/
-      )
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('releases the relay-wide legacy gate when a mirror can never drain', () => {
+    const owner = makeStallingClient(65536)
+    owner.drain()
+    const mirror = makeStallingClient(65536)
+    const dispatcher = new RelayDispatcher(owner.write, owner.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const ownerId = dispatcher.activeClientIds()[0]
+      const mirrorId = dispatcher.attachClient(mirror.write, mirror.options)
+      fillProducerQueue(dispatcher, mirrorId)
+      // Its retained leases sit above the relay-wide low-water mark, so every paused PTY is gated.
+      expect(dispatcher.legacyRetentionBelowLowWater).toBe(false)
+
+      const roleOf = roles({ [ownerId]: 'owner', [mirrorId]: 'mirror' })
+      dispatcher.projectPtyDataToLegacyClients(roleOf, { id: 'pty-1', data: 'y'.repeat(40_000) })
+
+      // PtyHandler.maybeResumePtyOutput reads this gate; if a shed mirror keeps it false with nothing
+      // left to evict it, every paused PTY on the host stays paused forever.
+      expect(mirror.closes).toBe(1)
+      expect(dispatcher.legacyRetentionBelowLowWater).toBe(true)
+      expect(owner.closes).toBe(0)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()
@@ -295,14 +311,12 @@ describe('RelayDispatcher projection never reaps a client on a timer', () => {
 
   it('never closes a peer that is merely mid-write while another target back-pressures', () => {
     vi.useFakeTimers()
-    const owner = makeStallingClient(65536)
-    const neverDrains = makeStallingClient(65536)
+    const owner = makeStallingClient(65536, true)
     const dispatcher = new RelayDispatcher(owner.write, owner.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     let midWriteCloses = 0
     try {
       const ownerId = dispatcher.activeClientIds()[0]
-      const neverDrainsId = dispatcher.attachClient(neverDrains.write, neverDrains.options)
       const midWriteId = dispatcher.attachClient(
         (_data, settle: (result: SinkWriteSettlement) => void) => {
           // Accepted by the sink but not acknowledged yet: normal for any real socket mid-write.
@@ -319,12 +333,7 @@ describe('RelayDispatcher projection never reaps a client on a timer', () => {
         }
       )
       fillProducerQueue(dispatcher, ownerId)
-      fillProducerQueue(dispatcher, neverDrainsId)
-      const roleOf = roles({
-        [ownerId]: 'owner',
-        [neverDrainsId]: 'mirror',
-        [midWriteId]: 'mirror'
-      })
+      const roleOf = roles({ [ownerId]: 'owner', [midWriteId]: 'mirror' })
       const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
 
       expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(false)
@@ -335,11 +344,15 @@ describe('RelayDispatcher projection never reaps a client on a timer', () => {
       expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(false)
       vi.advanceTimersByTime(10 * 60_000)
 
-      // Reaping a peer on a timer is exactly the disconnect #12041 reported.
+      // A peer with a frame merely in flight still has queue room; reaping it on a timer is exactly
+      // the disconnect #12041 reported.
       expect(midWriteCloses).toBe(0)
-      expect(neverDrains.closes).toBe(0)
       expect(owner.closes).toBe(0)
-      expect(dispatcher.activeClientIds()).toHaveLength(3)
+      expect(dispatcher.activeClientIds()).toHaveLength(2)
+
+      owner.drain()
+      expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(true)
+      expect(midWriteCloses).toBe(0)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()
@@ -378,7 +391,10 @@ describe('RelayDispatcher pty.replay under a full control lane', () => {
       dispatcher.notify('pty.replay', { id: 'pty-1', data: 'x' })
       expect(primary.closes).toBe(0)
       expect(stderr).toHaveBeenCalledTimes(1)
-      expect(String(stderr.mock.calls[0][0])).toMatch(/^\[relay\] Dropped pty\.replay \(/)
+      // The control lane rejected it; naming the producer bound would point at the wrong limit.
+      expect(String(stderr.mock.calls[0][0])).toMatch(
+        /^\[relay\] Dropped pty\.replay \(\d+B, control queue full\)\n$/
+      )
 
       dispatcher.notify('pty.replay', { id: 'pty-2', data: 'x' })
       expect(primary.closes).toBe(0)
