@@ -3,17 +3,22 @@ import { useAppStore } from '@/store'
 import { registerRuntimeTerminalTab } from '@/runtime/sync-runtime-graph'
 import { awaitsCodexRestartAnswer, blocksCodexPaneInput } from '../codex-restart-notice-state'
 import { ptyDataHandlers } from './pty-dispatcher'
+import { sweepUnclaimedCodexPaneRestarts } from './codex-detached-pane-restart'
 import {
   installCodexDetachedPaneRestartExecutor,
-  resetCodexDetachedPaneRestartExecutorForTests,
-  sweepUnclaimedCodexPaneRestarts
-} from './codex-detached-pane-restart'
+  resetCodexDetachedPaneRestartExecutorForTests
+} from './codex-detached-pane-restart-scheduler'
 
 const ACCOUNT_A = 'a@example.com'
 const ACCOUNT_B = 'b@example.com'
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
 const OLD_PTY = 'wt1@@old'
 const NEW_PTY = 'wt1@@new'
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  return { promise: new Promise<T>((done) => (resolve = done)), resolve }
+}
 
 function seedQueuedRestart(
   opts: { leafId?: string | null; layoutRoot?: 'leaf' | 'none' } = {}
@@ -124,22 +129,22 @@ describe('codex detached pane restart executor', () => {
     expect(state.tabsByWorktree.wt1?.[0]?.ptyId).toBe(NEW_PTY)
     expect(state.terminalLayoutsByTabId['tab-1']?.ptyIdsByLeafId).toEqual({ [LEAF_ID]: NEW_PTY })
     expect(state.pendingCodexPaneRestartIds).toEqual({})
+    expect(state.suppressedPtyExitIds[OLD_PTY]).toBeUndefined()
     // The whole point: the restart completed, so nothing may block input anymore.
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[OLD_PTY])).toBe(false)
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[NEW_PTY])).toBe(false)
   })
 
-  it('executes via the store subscription once the claim grace elapses', async () => {
-    vi.useFakeTimers()
+  it('executes via the store subscription without a lifecycle timeout', async () => {
     const uninstall = installCodexDetachedPaneRestartExecutor()
     try {
       seedQueuedRestart()
       expect(window.api.pty.spawn).not.toHaveBeenCalled()
 
-      await vi.advanceTimersByTimeAsync(400)
+      await vi.waitFor(() => expect(window.api.pty.spawn).toHaveBeenCalledTimes(1))
+      await vi.waitFor(() => expect(window.api.pty.kill).toHaveBeenCalledExactlyOnceWith(OLD_PTY))
 
-      expect(window.api.pty.spawn).toHaveBeenCalledTimes(1)
-      expect(window.api.pty.kill).toHaveBeenCalledExactlyOnceWith(OLD_PTY)
+      expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({})
     } finally {
       uninstall()
     }
@@ -251,6 +256,65 @@ describe('codex detached pane restart executor', () => {
     }
   })
 
+  it('reaps a detached spawn and requeues when a pane mounts during the spawn', async () => {
+    seedQueuedRestart()
+    const pendingSpawn = deferred<{ id: string }>()
+    vi.mocked(window.api.pty.spawn).mockReturnValue(pendingSpawn.promise)
+
+    const restart = sweepUnclaimedCodexPaneRestarts()
+    await vi.waitFor(() => expect(window.api.pty.spawn).toHaveBeenCalledTimes(1))
+    const unregister = registerRuntimeTerminalTab({
+      tabId: 'tab-1',
+      worktreeId: 'wt1',
+      getManager: () => null,
+      getContainer: () => null,
+      getPtyIdForPane: () => OLD_PTY
+    })
+    try {
+      pendingSpawn.resolve({ id: NEW_PTY })
+      await restart
+
+      expect(window.api.pty.kill).toHaveBeenCalledExactlyOnceWith(NEW_PTY)
+      expect(useAppStore.getState().ptyIdsByTabId['tab-1']).toEqual([OLD_PTY])
+      expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({ [OLD_PTY]: true })
+    } finally {
+      unregister()
+    }
+  })
+
+  it('rejects a detached spawn after the tab generation and leaf owner change', async () => {
+    seedQueuedRestart()
+    const pendingSpawn = deferred<{ id: string }>()
+    vi.mocked(window.api.pty.spawn).mockReturnValue(pendingSpawn.promise)
+
+    const restart = sweepUnclaimedCodexPaneRestarts()
+    await vi.waitFor(() => expect(window.api.pty.spawn).toHaveBeenCalledTimes(1))
+    const state = useAppStore.getState()
+    const notice = state.codexRestartNoticeByPtyId[OLD_PTY]
+    useAppStore.setState({
+      tabsByWorktree: {
+        wt1: [{ ...state.tabsByWorktree.wt1![0]!, generation: 1, ptyId: 'wt1@@successor' }]
+      },
+      ptyIdsByTabId: { 'tab-1': ['wt1@@successor'] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          ...state.terminalLayoutsByTabId['tab-1']!,
+          ptyIdsByLeafId: { [LEAF_ID]: 'wt1@@successor' }
+        }
+      },
+      codexRestartNoticeByPtyId: { 'wt1@@successor': notice! }
+    })
+
+    pendingSpawn.resolve({ id: NEW_PTY })
+    await restart
+
+    const after = useAppStore.getState()
+    expect(window.api.pty.kill).toHaveBeenCalledExactlyOnceWith(NEW_PTY)
+    expect(after.ptyIdsByTabId['tab-1']).toEqual(['wt1@@successor'])
+    expect(after.terminalLayoutsByTabId['tab-1']?.ptyIdsByLeafId?.[LEAF_ID]).toBe('wt1@@successor')
+    expect(awaitsCodexRestartAnswer(after.codexRestartNoticeByPtyId['wt1@@successor'])).toBe(true)
+  })
+
   it('leaves a sleep-retained pending id alone so wake can migrate it', async () => {
     // Why: hibernation unbinds a pane's PTY but keeps its pending restart, and
     // wake moves that entry onto the respawned PTY. No notice means nothing is
@@ -295,5 +359,22 @@ describe('codex detached pane restart executor', () => {
       })
     )
     expect(blocksCodexPaneInput(state.codexRestartNoticeByPtyId[OLD_PTY])).toBe(false)
+  })
+
+  it('publishes a rootless replacement startup before waiting for old PTY teardown', async () => {
+    seedQueuedRestart({ leafId: null })
+    const pendingKill = deferred<void>()
+    vi.mocked(window.api.pty.kill).mockReturnValue(pendingKill.promise)
+
+    const restart = sweepUnclaimedCodexPaneRestarts()
+    await vi.waitFor(() => expect(window.api.pty.kill).toHaveBeenCalledExactlyOnceWith(OLD_PTY))
+
+    expect(useAppStore.getState().ptyIdsByTabId['tab-1']).toEqual([])
+    expect(useAppStore.getState().pendingStartupByTabId['tab-1']).toMatchObject({
+      command: 'codex',
+      launchAgent: 'codex'
+    })
+    pendingKill.resolve()
+    await restart
   })
 })

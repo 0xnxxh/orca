@@ -27,47 +27,10 @@ import { ptyDataHandlers, unregisterPtyDataHandlers } from './pty-dispatcher'
 import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
 import { disposeParkedTerminalWatchersForPtyIds } from './terminal-parked-watcher-registry'
 
-// Why this long: a mounted pane claims its pending restart from a React effect
-// in the same commit that observed the queue write, so anything still pending
-// after a few frames has no pane coming for it.
-const CLAIM_GRACE_MS = 400
-
-let sweepTimer: ReturnType<typeof setTimeout> | null = null
 const inFlightPtyIds = new Set<string>()
 
-/** Installed once at app startup; returns the uninstaller (tests). */
-export function installCodexDetachedPaneRestartExecutor(): () => void {
-  const unsubscribe = useAppStore.subscribe((state, previousState) => {
-    if (state.pendingCodexPaneRestartIds === previousState.pendingCodexPaneRestartIds) {
-      return
-    }
-    scheduleClaimSweep()
-  })
-  return () => {
-    unsubscribe()
-    if (sweepTimer !== null) {
-      clearTimeout(sweepTimer)
-      sweepTimer = null
-    }
-  }
-}
-
-export function resetCodexDetachedPaneRestartExecutorForTests(): void {
-  if (sweepTimer !== null) {
-    clearTimeout(sweepTimer)
-    sweepTimer = null
-  }
+export function resetDetachedCodexPaneRestartClaimsForTests(): void {
   inFlightPtyIds.clear()
-}
-
-function scheduleClaimSweep(): void {
-  if (sweepTimer !== null) {
-    return
-  }
-  sweepTimer = setTimeout(() => {
-    sweepTimer = null
-    void sweepUnclaimedCodexPaneRestarts()
-  }, CLAIM_GRACE_MS)
 }
 
 export async function sweepUnclaimedCodexPaneRestarts(): Promise<void> {
@@ -112,7 +75,7 @@ export async function sweepUnclaimedCodexPaneRestarts(): Promise<void> {
       console.warn('[codex-restart] detached pane restart failed:', err)
       // Why: the answered-but-unexecuted state is the one this module exists to
       // prevent — put the question back rather than leave a silent input block.
-      useAppStore.getState().reopenCodexRestartPrompt(ptyId)
+      reopenCurrentCodexRestartPrompt(located, ptyId)
     } finally {
       inFlightPtyIds.delete(ptyId)
     }
@@ -123,6 +86,7 @@ type LocatedCodexPane = {
   worktreeId: string
   tab: TerminalTab
   leafId: string | null
+  generation: number
 }
 
 function locateCodexPane(state: AppState, ptyId: string): LocatedCodexPane | null {
@@ -140,7 +104,8 @@ function locateCodexPane(state: AppState, ptyId: string): LocatedCodexPane | nul
       return {
         worktreeId,
         tab,
-        leafId: leafId !== null && isTerminalLeafId(leafId) ? leafId : null
+        leafId: leafId !== null && isTerminalLeafId(leafId) ? leafId : null,
+        generation: tab.generation ?? 0
       }
     }
   }
@@ -191,11 +156,16 @@ async function executeDetachedCodexPaneRestart(
   if (!located.leafId) {
     // Why: without a usable layout leaf the replacement cannot be bound in
     // place, so kill now and let the tab's next mount run the Codex startup.
-    await killReplacedCodexPanePty(ptyId)
+    if (!isLocatedCodexPaneCurrent(state, located, ptyId)) {
+      reopenCurrentCodexRestartPrompt(located, ptyId)
+      return
+    }
+    const killPromise = killReplacedCodexPanePty(ptyId)
     const store = useAppStore.getState()
     store.clearTabPtyId(located.tab.id, ptyId)
     store.queueTabStartupCommand(located.tab.id, { ...CODEX_ACCOUNT_RESTART_STARTUP })
     store.clearCodexRestartNotice(ptyId)
+    await killPromise
     return
   }
   const { worktreeId, tab, leafId } = located
@@ -212,6 +182,16 @@ async function executeDetachedCodexPaneRestart(
     wslAvailable: capabilities?.wslAvailable,
     availableWslDistros: capabilities?.wslDistros ?? null
   })
+
+  const currentState = useAppStore.getState()
+  if (!isLocatedCodexPaneCurrent(currentState, located, ptyId)) {
+    reopenCurrentCodexRestartPrompt(located, ptyId)
+    return
+  }
+  if (hasRegisteredRuntimeTerminalTab(tab.id) || ptyDataHandlers.has(ptyId)) {
+    currentState.queueCodexPaneRestarts([ptyId])
+    return
+  }
 
   const spawned = await window.api.pty.spawn({
     cols: size?.cols ?? 80,
@@ -231,6 +211,16 @@ async function executeDetachedCodexPaneRestart(
   })
 
   const store = useAppStore.getState()
+  if (!isLocatedCodexPaneCurrent(store, located, ptyId)) {
+    await window.api.pty.kill(spawned.id).catch(() => {})
+    reopenCurrentCodexRestartPrompt(located, ptyId)
+    return
+  }
+  if (hasRegisteredRuntimeTerminalTab(tab.id) || ptyDataHandlers.has(ptyId)) {
+    await window.api.pty.kill(spawned.id).catch(() => {})
+    store.queueCodexPaneRestarts([ptyId])
+    return
+  }
   store.updateTabPtyId(tab.id, spawned.id, ptyId)
   if (!useAppStore.getState().ptyIdsByTabId[tab.id]?.includes(spawned.id)) {
     // Why: the tab was retired while the spawn was in flight; without a binding
@@ -246,6 +236,44 @@ async function executeDetachedCodexPaneRestart(
   store.clearCodexRestartNotice(ptyId)
 
   await killReplacedCodexPanePty(ptyId)
+}
+
+function isLocatedCodexPaneCurrent(
+  state: AppState,
+  located: LocatedCodexPane,
+  ptyId: string
+): boolean {
+  const currentTab = state.tabsByWorktree[located.worktreeId]?.find(
+    (candidate) => candidate.id === located.tab.id
+  )
+  if (
+    !currentTab ||
+    currentTab.worktreeId !== located.worktreeId ||
+    (currentTab.generation ?? 0) !== located.generation ||
+    !(state.ptyIdsByTabId[located.tab.id] ?? []).includes(ptyId)
+  ) {
+    return false
+  }
+  return (
+    located.leafId === null ||
+    state.terminalLayoutsByTabId[located.tab.id]?.ptyIdsByLeafId?.[located.leafId] === ptyId
+  )
+}
+
+function reopenCurrentCodexRestartPrompt(located: LocatedCodexPane, replacedPtyId: string): void {
+  const state = useAppStore.getState()
+  const currentTab = state.tabsByWorktree[located.worktreeId]?.find(
+    (candidate) => candidate.id === located.tab.id
+  )
+  const currentPtyId = located.leafId
+    ? state.terminalLayoutsByTabId[located.tab.id]?.ptyIdsByLeafId?.[located.leafId]
+    : currentTab?.ptyId
+  for (const candidate of [currentPtyId, replacedPtyId]) {
+    if (candidate && state.codexRestartNoticeByPtyId[candidate]?.restartRequested) {
+      state.reopenCodexRestartPrompt(candidate)
+      return
+    }
+  }
 }
 
 function layoutRootContainsLeaf(
@@ -294,4 +322,6 @@ async function killReplacedCodexPanePty(ptyId: string): Promise<void> {
     console.warn('[codex-restart] failed to kill replaced Codex pane PTY:', err)
   }
   discardPreHandlerPtyState(ptyId)
+  // No exit consumer remains after the watcher/handler disposal above.
+  useAppStore.getState().consumeSuppressedPtyExit(ptyId)
 }

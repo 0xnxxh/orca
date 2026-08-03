@@ -124,7 +124,7 @@ import {
 } from './lib/workspace-session'
 import { createSessionWriteSubscriber } from './lib/session-write-subscriber'
 import { sweepRestoredCodexPanesForStaleAccounts } from './lib/codex-stale-pane-sweep'
-import { installCodexDetachedPaneRestartExecutor } from '@/components/terminal-pane/codex-detached-pane-restart'
+import { installCodexDetachedPaneRestartExecutor } from '@/components/terminal-pane/codex-detached-pane-restart-scheduler'
 import { buildActiveViewUnloadPatch } from './lib/active-view-persist'
 import {
   buildWorkspaceSessionHostSnapshots,
