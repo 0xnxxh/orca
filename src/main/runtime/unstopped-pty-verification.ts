@@ -1,4 +1,5 @@
 import type { IPtyProvider } from '../providers/types'
+import { UNSTOPPED_PTY_REMOVAL_PREFIX } from '../../shared/worktree-removal'
 import { settleBeforeDeadline } from './settle-before-deadline'
 
 // Floor for the verification window when the sweep ran on a very short budget.
@@ -23,11 +24,10 @@ export type UnstoppedPtyVerdict =
 export async function verifyUnstoppedPtys(
   failedPtyIds: readonly string[],
   provider: IPtyProvider,
-  deadline: number,
   sweepBudgetMs: number
 ): Promise<UnstoppedPtyVerdict> {
   const verifyBudgetMs = Math.max(WORKTREE_TEARDOWN_VERIFY_GRACE_MS, sweepBudgetMs)
-  const verifyDeadline = Math.max(deadline, Date.now() + verifyBudgetMs)
+  const verifyDeadline = Date.now() + verifyBudgetMs
   let listError: unknown
   const sessions = await settleBeforeDeadline(
     async () => {
@@ -62,5 +62,9 @@ export function describeUnstoppedPtys(
     verdict.status === 'live'
       ? `still live: ${verdict.ptyIds.join(', ')}`
       : `could not verify these exited: ${failedPtyIds.join(', ')} (${verdict.reason})`
-  return `Failed to physically stop every PTY for worktree: ${worktreeId} — ${detail}`
+  return `${UNSTOPPED_PTY_REMOVAL_PREFIX} ${worktreeId} — ${detail}`
+}
+
+export function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

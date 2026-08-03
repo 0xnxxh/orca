@@ -4,8 +4,10 @@ import { listRegisteredPtys } from '../memory/pty-registry'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
 import { splitWorktreeId, splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { mapWithConcurrency } from '../../shared/map-with-concurrency'
+import { WORKTREE_TEARDOWN_FORCE_HINT } from '../../shared/worktree-removal'
 import { settleBeforeDeadline } from './settle-before-deadline'
 import {
+  describeError,
   describeUnstoppedPtys,
   verifyUnstoppedPtys,
   type UnstoppedPtyVerdict
@@ -165,11 +167,30 @@ export async function killAllProcessesForWorktree(
           deadline,
           deps.requirePhysicalStop ? deadlineError : undefined
         )
-  const [runtimeResult, providerStopped, registryStopped] = await Promise.all([
-    runtimeSweep,
-    providerSweep,
-    registrySweep
-  ])
+  // Why: Promise.all settles on the first rejection, so the losers need a handler
+  // or a late failure surfaces as an unhandled rejection once force keeps going.
+  for (const sweep of [runtimeSweep, providerSweep, registrySweep]) {
+    void sweep.catch(() => undefined)
+  }
+  const sweepResults = await Promise.all([runtimeSweep, providerSweep, registrySweep]).catch(
+    (error: unknown) => {
+      // Why (#11960): a sweep that cannot even complete — unresponsive daemon,
+      // dropped SSH channel — rejects here, before the unproven-stop gate below
+      // could offer its escape hatch. Force has to survive this one too, or the
+      // workspace stays exactly as unremovable as the bug this fixes.
+      if (!deps.allowUnverifiedStop) {
+        throw error
+      }
+      console.warn(
+        `[worktree-teardown] forcing removal after an incomplete PTY sweep for ${worktreeId} — ${describeError(error)}`
+      )
+      return null
+    }
+  )
+  if (!sweepResults) {
+    return { runtimeStopped: 0, providerStopped: 0, registryStopped: 0 }
+  }
+  const [runtimeResult, providerStopped, registryStopped] = sweepResults
   if (deps.requirePhysicalStop) {
     const stopResults = await Promise.all(
       [...stopAttempts].map(async ([ptyId, stopped]) => [ptyId, await stopped] as const)
@@ -178,18 +199,21 @@ export async function killAllProcessesForWorktree(
     const verdict: UnstoppedPtyVerdict =
       failedPtyIds.length === 0
         ? { status: 'exited' }
-        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, deadline, sweepBudgetMs)
-    if (verdict.status !== 'exited') {
+        : await verifyUnstoppedPtys(failedPtyIds, deps.localProvider, sweepBudgetMs)
+    if (verdict.status === 'exited') {
+      for (const ptyId of failedPtyIds) {
+        clearStoppedPtyState(ptyId, deps.onPtyStopped)
+      }
+    } else {
       const summary = describeUnstoppedPtys(worktreeId, failedPtyIds, verdict)
       if (!deps.allowUnverifiedStop) {
-        throw new Error(`${summary}. Retry with force delete (--force) to remove it anyway.`)
+        throw new Error(`${summary}. ${WORKTREE_TEARDOWN_FORCE_HINT}`)
       }
-      // Why: force is the documented escape hatch, so the removal continues —
-      // but the orphaned PTYs must stay visible instead of vanishing silently.
+      // Why: force is the documented escape hatch, so removal continues — but the
+      // registry rows stay put. Dropping them would unregister a PTY we just saw
+      // alive, so a retry could no longer find it and the user could never see it
+      // (the discoverability half of #11960).
       console.warn(`[worktree-teardown] forcing removal despite unstopped PTYs — ${summary}`)
-    }
-    for (const ptyId of failedPtyIds) {
-      clearStoppedPtyState(ptyId, deps.onPtyStopped)
     }
   }
 

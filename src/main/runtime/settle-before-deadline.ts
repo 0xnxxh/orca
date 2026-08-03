@@ -43,8 +43,12 @@ export async function settleBeforeDeadline<T>(
       remaining
     )
     timer.unref?.()
-    void run().then(finish, (error: unknown) =>
-      failClosedError && failClosedOnRunError(error) ? fail(error) : finish(fallback)
-    )
+    // Why: `.then(run)` rather than `run()` so a synchronous throw is routed
+    // through the same fail-closed filter instead of escaping the executor.
+    void Promise.resolve()
+      .then(run)
+      .then(finish, (error: unknown) =>
+        failClosedError && failClosedOnRunError(error) ? fail(error) : finish(fallback)
+      )
   })
 }

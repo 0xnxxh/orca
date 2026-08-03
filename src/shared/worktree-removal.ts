@@ -2,7 +2,22 @@ import type { GitWorktreeInfo } from './types'
 
 export const LOCKED_WORKTREE_REMOVAL_PREFIX = 'Worktree is locked by Git.'
 
-export type WorktreeForceDeleteReason = 'dirty' | 'orphan-directory' | 'missing-registration'
+export const UNSTOPPED_PTY_REMOVAL_PREFIX = 'Failed to physically stop every PTY for worktree:'
+
+// Why (#11960): the desktop force affordance is driven entirely by the classifier
+// below, so this hint and its matcher must stay in the same file — a message that
+// tells the user to force-delete while the UI hides the button is the same dead end.
+export const WORKTREE_TEARDOWN_FORCE_HINT = 'Retry with force delete (--force) to remove it anyway.'
+
+export type WorktreeForceDeleteReason =
+  | 'dirty'
+  | 'orphan-directory'
+  | 'missing-registration'
+  | 'unstopped-pty'
+
+export function isUnstoppedPtyRemovalError(error: string): boolean {
+  return error.includes(UNSTOPPED_PTY_REMOVAL_PREFIX)
+}
 
 export function createLockedWorktreeRemovalError(lockReason?: string): Error {
   const reason = lockReason?.trim()
@@ -55,6 +70,9 @@ export function classifyWorktreeForceDeleteReason(
   }
   if (force) {
     return null
+  }
+  if (isUnstoppedPtyRemovalError(error)) {
+    return 'unstopped-pty'
   }
   if (error.includes('Worktree is no longer registered with Git but its directory remains')) {
     return 'orphan-directory'

@@ -8,7 +8,7 @@ vi.mock('../memory/pty-registry', () => ({
   listRegisteredPtys: listRegisteredPtysMock
 }))
 
-import { killAllProcessesForWorktree } from './worktree-teardown'
+import { killAllProcessesForWorktree, WORKTREE_PROCESS_SWEEP_TIMEOUT_MS } from './worktree-teardown'
 import { WORKTREE_TEARDOWN_VERIFY_GRACE_MS } from './unstopped-pty-verification'
 import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 
@@ -67,10 +67,13 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
   // the sweep budget. Verification must still get far enough to prove absence.
   it('removes the reported wedged automation workspace without --force', async () => {
     const worktreeId = 'repo-1::C:/Users/admin/orca/workspaces/repo/auto-review-run-28'
+    // Slow enough to consume nearly the whole sweep budget, derived so lowering
+    // the default timeout can't silently turn this into an unrelated failure.
+    const listDelayMs = WORKTREE_PROCESS_SWEEP_TIMEOUT_MS - 100
     vi.useFakeTimers()
     try {
       const localProvider = createProviderStub(
-        () => new Promise((resolve) => setTimeout(() => resolve([]), 9_900))
+        () => new Promise((resolve) => setTimeout(() => resolve([]), listDelayMs))
       )
       ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Session not found: term_abab11ee')
@@ -83,7 +86,7 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         localProvider,
         requirePhysicalStop: true
       })
-      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.advanceTimersByTimeAsync(listDelayMs * 2 + WORKTREE_TEARDOWN_VERIFY_GRACE_MS)
 
       await expect(teardown).resolves.toEqual({
         runtimeStopped: 0,
@@ -129,6 +132,66 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
     ).rejects.toThrow(/could not verify[\s\S]*stale-1[\s\S]*daemon socket closed/)
   })
 
+  // A gate that force cannot cross is the bug, wherever it sits. These two cover
+  // the sweep-level failures that reject before the unproven-stop gate is reached.
+  it('lets force through a provider whose inventory rejects outright', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      listRegisteredPtysMock.mockReturnValue([])
+      const localProvider = createProviderStub(async () => {
+        throw new Error('ssh channel closed')
+      })
+
+      await expect(
+        killAllProcessesForWorktree('w1', {
+          localProvider,
+          requirePhysicalStop: true,
+          allowUnverifiedStop: true
+        })
+      ).resolves.toEqual({ runtimeStopped: 0, providerStopped: 0, registryStopped: 0 })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('ssh channel closed'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('lets force through a sweep that never settles before the deadline', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.useFakeTimers()
+    try {
+      listRegisteredPtysMock.mockReturnValue([])
+      const localProvider = createProviderStub(() => new Promise(() => {}))
+
+      const teardown = killAllProcessesForWorktree('w1', {
+        localProvider,
+        timeoutMs: 100,
+        requirePhysicalStop: true,
+        allowUnverifiedStop: true
+      })
+      await vi.advanceTimersByTimeAsync(200)
+
+      await expect(teardown).resolves.toEqual({
+        runtimeStopped: 0,
+        providerStopped: 0,
+        registryStopped: 0
+      })
+    } finally {
+      vi.useRealTimers()
+      warn.mockRestore()
+    }
+  })
+
+  it('still fails closed on a sweep-level failure without force', async () => {
+    listRegisteredPtysMock.mockReturnValue([])
+    const localProvider = createProviderStub(async () => {
+      throw new Error('ssh channel closed')
+    })
+
+    await expect(
+      killAllProcessesForWorktree('w1', { localProvider, requirePhysicalStop: true })
+    ).rejects.toThrow('ssh channel closed')
+  })
+
   it('lets an explicit force removal proceed past PTYs it could not stop', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
@@ -149,8 +212,10 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
           allowUnverifiedStop: true
         })
       ).resolves.toMatchObject({ providerStopped: 0 })
-      expect(onPtyStopped).toHaveBeenCalledWith('w1@@live-1')
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('w1@@live-1'))
+      // Why: unregistering a PTY we just watched stay alive would hide it from
+      // the next sweep and from the user — the discoverability half of #11960.
+      expect(onPtyStopped).not.toHaveBeenCalled()
     } finally {
       warn.mockRestore()
     }
