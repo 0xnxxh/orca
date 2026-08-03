@@ -361,12 +361,10 @@ export function SshPane({ addTargetIntentSignal }: SshPaneProps): React.JSX.Elem
             <Upload className="size-3" />
             {translate('auto.components.settings.SshPane.51d7dba44d', 'Import')}
           </Button>
-          {!showForm ? (
-            <Button variant="outline" size="xs" onClick={openAddTargetForm} className="gap-1.5">
-              <Plus className="size-3" />
-              {translate('auto.components.settings.SshPane.639ceb3698', 'Add Target')}
-            </Button>
-          ) : null}
+          <Button variant="outline" size="xs" onClick={openAddTargetForm} className="gap-1.5">
+            <Plus className="size-3" />
+            {translate('auto.components.settings.SshPane.639ceb3698', 'Add Target')}
+          </Button>
         </div>
       </div>
 
@@ -379,7 +377,7 @@ export function SshPane({ addTargetIntentSignal }: SshPaneProps): React.JSX.Elem
         {({ busyActionForTarget, requestRemove, requestResetRelay, requestTerminateSessions }) => (
           <>
             {/* Target list */}
-            {targets.length === 0 && !showForm ? (
+            {targets.length === 0 ? (
               <div className="flex items-center justify-center rounded-lg border border-dashed border-border/60 bg-card/30 px-4 py-5 text-sm text-muted-foreground">
                 {translate(
                   'auto.components.settings.SshPane.c0f1c80166',
@@ -410,20 +408,23 @@ export function SshPane({ addTargetIntentSignal }: SshPaneProps): React.JSX.Elem
                 ))}
               </div>
             )}
-
-            {/* Add/Edit form */}
-            {showForm ? (
-              <SshTargetForm
-                editingId={editingId}
-                form={form}
-                onFormChange={setForm}
-                onSave={() => void handleSave()}
-                onCancel={cancelForm}
-              />
-            ) : null}
           </>
         )}
       </SshTargetDestructiveActions>
+
+      {/* Why: modal keeps the form in viewport over long host lists (STA-3067). */}
+      <SshTargetForm
+        open={showForm}
+        editingId={editingId}
+        form={form}
+        onFormChange={setForm}
+        onSave={() => void handleSave()}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            cancelForm()
+          }
+        }}
+      />
 
       {hostRemoveTarget ? (
         <HostRemoveDialog

@@ -4,6 +4,7 @@ import {
   applyParsedSshHostInput,
   getEditingTargetForSshTarget,
   getSshTargetDraftConnectionFields,
+  isSshTargetFormDirty,
   parseRelayGracePeriodSeconds,
   parseSshHostInput
 } from './ssh-target-draft'
@@ -242,5 +243,18 @@ describe('getEditingTargetForSshTarget', () => {
 
     expect(draft.relayKeepAliveUntilReset).toBe(false)
     expect(draft.relayGracePeriodSeconds).toBe('600')
+  })
+})
+
+describe('isSshTargetFormDirty', () => {
+  it('is clean when the draft matches the baseline', () => {
+    expect(isSshTargetFormDirty(EMPTY_FORM, EMPTY_FORM)).toBe(false)
+  })
+
+  it('detects field changes against the open-session baseline', () => {
+    expect(isSshTargetFormDirty({ ...EMPTY_FORM, host: 'box' }, EMPTY_FORM)).toBe(true)
+    expect(
+      isSshTargetFormDirty({ ...EMPTY_FORM, systemSshConnectionReuse: false }, EMPTY_FORM)
+    ).toBe(true)
   })
 })
