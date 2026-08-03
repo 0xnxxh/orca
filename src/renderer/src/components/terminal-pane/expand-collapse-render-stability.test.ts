@@ -5,6 +5,7 @@ import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { useExpandCollapseActions } from './expand-collapse'
 import { useTerminalKeyboardShortcuts } from './keyboard-handlers'
+import { resetKeyboardEffectChurnCanaryForTesting } from './keyboard-effect-churn-canary'
 
 type ExpandCollapseHookState = Parameters<typeof useExpandCollapseActions>[0]
 type KeyboardHandlersDeps = Parameters<typeof useTerminalKeyboardShortcuts>[0]
@@ -58,22 +59,23 @@ describe('useExpandCollapseActions render stability', () => {
   })
 })
 
-describe('terminal keyboard effect registration stability', () => {
-  it('registers window listeners once across rerenders with TerminalPane-shaped wiring', () => {
-    const scope = document.createElement('div')
-    document.body.append(scope)
-    const pane = {
-      id: 1,
-      leafId: '00000000-0000-4000-8000-000000000001',
-      terminal: { element: scope, focus: vi.fn(), getSelection: vi.fn(() => '') }
-    }
-    const manager = {
-      getActivePane: () => pane,
-      getPanes: () => [pane]
-    } as unknown as PaneManager
-    const transport = { getPtyId: () => 'pty-1', sendInput: vi.fn(() => true) }
-    const fields = createStableFields()
-    const stableDeps = {
+function createKeyboardWiring() {
+  const scope = document.createElement('div')
+  document.body.append(scope)
+  const pane = {
+    id: 1,
+    leafId: '00000000-0000-4000-8000-000000000001',
+    terminal: { element: scope, focus: vi.fn(), getSelection: vi.fn(() => '') }
+  }
+  const manager = {
+    getActivePane: () => pane,
+    getPanes: () => [pane]
+  } as unknown as PaneManager
+  const transport = { getPtyId: () => 'pty-1', sendInput: vi.fn(() => true) }
+  return {
+    scope,
+    fields: createStableFields(),
+    stableDeps: {
       tabId: 'tab-1',
       worktreeId: 'worktree-1',
       isActive: true,
@@ -96,6 +98,12 @@ describe('terminal keyboard effect registration stability', () => {
       searchStateRef: { current: { query: '', caseSensitive: false, regex: false } },
       macOptionAsAltRef: { current: 'false' as const }
     }
+  }
+}
+
+describe('terminal keyboard effect registration stability', () => {
+  it('registers window listeners once across rerenders with TerminalPane-shaped wiring', () => {
+    const { scope, fields, stableDeps } = createKeyboardWiring()
 
     const addSpy = vi.spyOn(window, 'addEventListener')
     const countBeforeinputAdds = (): number =>
@@ -122,5 +130,32 @@ describe('terminal keyboard effect registration stability', () => {
     expect(countBeforeinputAdds()).toBe(1)
     hook.unmount()
     scope.remove()
+  })
+
+  it('warns in dev when a dep churns, so a reintroduced regression is not silent', () => {
+    resetKeyboardEffectChurnCanaryForTesting()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { scope, fields, stableDeps } = createKeyboardWiring()
+
+    const hook = renderHook(() => {
+      useTerminalKeyboardShortcuts({
+        ...stableDeps,
+        setExpandedPane: fields.setExpandedPaneId,
+        restoreExpandedLayout: () => {},
+        refreshPaneSizes: () => {},
+        persistLayoutSnapshot: fields.persistLayoutSnapshot,
+        toggleExpandPane: () => {}
+      } as KeyboardHandlersDeps)
+    })
+
+    for (let render = 0; render < 10; render++) {
+      hook.rerender()
+    }
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('tab-1')
+    hook.unmount()
+    scope.remove()
+    resetKeyboardEffectChurnCanaryForTesting()
   })
 })

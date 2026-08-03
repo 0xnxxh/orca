@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: terminal keyboard routing keeps shortcut
  * precedence in one ordered handler so shell input, pane commands, search, and
  * split actions do not race across separate window listeners. */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { IDisposable } from '@xterm/xterm'
 import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
@@ -42,6 +42,10 @@ import { recordCreatedTerminalPaneSplit } from './terminal-pane-split-completion
 import { splitTerminalPaneWithInheritedCwd } from './terminal-pane-split-with-inherited-cwd'
 import { useAppStore } from '@/store'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
+import {
+  createKeyboardEffectInstanceId,
+  recordKeyboardEffectRegistration
+} from './keyboard-effect-churn-canary'
 import { copyTerminalSelection } from './terminal-selection-copy'
 import { isLocalWindowsConptyPaneForCtrlArrow } from './terminal-ctrl-arrow-conpty'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
@@ -260,9 +264,15 @@ export function useTerminalKeyboardShortcuts({
   keybindings,
   terminalShortcutPolicy = 'orca-first'
 }: KeyboardHandlersDeps): void {
+  const churnCanaryInstanceIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (!isActive) {
       return
+    }
+
+    if (import.meta.env.DEV) {
+      churnCanaryInstanceIdRef.current ??= createKeyboardEffectInstanceId()
+      recordKeyboardEffectRegistration(tabId, churnCanaryInstanceIdRef.current)
     }
 
     const isMac = navigator.userAgent.includes('Mac')
