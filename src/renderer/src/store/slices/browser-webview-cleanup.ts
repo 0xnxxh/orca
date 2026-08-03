@@ -31,6 +31,18 @@ export function collectBrowserWebviewIds(
   return ids
 }
 
+// Why: guest-budget eviction destroys every guest a hidden worktree retains
+// while its tabs/pages stay in the store, so a revisit rebuilds from state.
+export function destroyWorktreeBrowserGuests(
+  browserTabsByWorktree: Record<string, BrowserWorkspace[]>,
+  browserPagesByWorkspace: Record<string, BrowserPage[]>,
+  worktreeId: string
+): void {
+  for (const tab of browserTabsByWorktree[worktreeId] ?? []) {
+    destroyWorkspaceWebviews(browserPagesByWorkspace, tab.id)
+  }
+}
+
 export function destroyWorkspaceWebviews(
   browserPagesByWorkspace: Record<string, BrowserPage[]>,
   workspaceId: string
