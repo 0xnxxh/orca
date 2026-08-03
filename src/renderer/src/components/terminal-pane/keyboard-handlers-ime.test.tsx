@@ -313,6 +313,7 @@ describe('Windows IME keyboard ownership', () => {
   })
 
   it.each([
+    { code: 'ShiftLeft', shiftKey: true },
     { code: 'KeyQ', shiftKey: true },
     { code: 'KeyW', ctrlKey: true }
   ])('keeps an IME-consumed $code out of terminal shortcuts', (modifier) => {

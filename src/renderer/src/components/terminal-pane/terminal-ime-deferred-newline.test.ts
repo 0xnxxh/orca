@@ -350,6 +350,7 @@ describe('isTerminalImeProcessEnter', () => {
     { shiftKey: false },
     { ctrlKey: true },
     { altKey: true },
+    { code: 'ShiftLeft' },
     { code: 'KeyQ' },
     { code: 'ArrowLeft' }
   ])('rejects a non-IME or ambiguous Process key', (override) => {
