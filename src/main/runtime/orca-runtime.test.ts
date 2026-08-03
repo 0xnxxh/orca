@@ -12554,6 +12554,253 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  // Why: `cursor` on PATH is the Cursor desktop launcher; only `cursor-agent` is
+  // the CLI Orca can host (issue #11926).
+  it('launches the configured agent CLI for a startupAgent id, not the raw id', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {},
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: { cursor: { CURSOR_PROFILE: 'captured' } }
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      startupAgent: 'cursor',
+      title: 'worker'
+    })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as
+      | { command?: string; launchAgent?: string; env?: Record<string, string> }
+      | undefined
+    expect(spawnCall?.command).toBe("cursor-agent '--force'")
+    expect(spawnCall?.launchAgent).toBe('cursor')
+    expect(spawnCall?.env).toMatchObject({ CURSOR_PROFILE: 'captured' })
+    expect(markCursorWorkspaceTrustedMock).toHaveBeenCalledWith(TEST_WORKTREE_PATH)
+  })
+
+  it('resolves a startupAgent to the CLI binary on Windows, where `cursor` is the IDE', async () => {
+    setPlatform('win32')
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        terminalWindowsShell: 'cmd.exe',
+        agentCmdOverrides: {},
+        // Why: pin the arg here rather than inherit the shared yolo default, so
+        // this test tracks Windows quoting and not an unrelated default's value.
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: {}
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, { startupAgent: 'cursor' })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
+    // Why: assert the cmd.exe double quoting too — a platform-insensitive prefix
+    // match would pass on any OS and prove nothing about the reported platform.
+    expect(spawnCall?.command).toBe('cursor-agent "--force"')
+  })
+
+  // Why: claude-agent-teams is the only agent whose launcher name varies by
+  // platform (launchCmdByPlatform), so it is what proves resolution is
+  // platform-aware rather than a fixed string.
+  it.each([
+    { platform: 'win32' as const, expected: 'orca.cmd claude-teams' },
+    { platform: 'linux' as const, expected: 'orca-ide claude-teams' },
+    { platform: 'darwin' as const, expected: 'orca claude-teams' }
+  ])(
+    'resolves a startupAgent through the $platform launcher name',
+    async ({ platform, expected }) => {
+      setPlatform(platform)
+      const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+      const runtime = new OrcaRuntimeService({
+        ...store,
+        getSettings: () => ({
+          ...store.getSettings(),
+          disabledTuiAgents: [],
+          agentCmdOverrides: {},
+          agentDefaultArgs: { 'claude-agent-teams': '' },
+          agentDefaultEnv: {}
+        })
+      })
+      runtime.setPtyController({
+        spawn,
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+
+      await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        startupAgent: 'claude-agent-teams'
+      })
+
+      const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
+      expect(spawnCall?.command).toBe(expected)
+    }
+  )
+
+  // Why: a user who worked around this bug by pointing the override at their own
+  // cursor-agent path must keep that override once the id resolves properly.
+  it('honors an agentCmdOverrides entry for a startupAgent', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: { cursor: 'cursor-agent --beta' },
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: {}
+      })
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, { startupAgent: 'cursor' })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
+    expect(spawnCall?.command).toBe("cursor-agent --beta '--force'")
+  })
+
+  // Why: with no selector the launch is never resolved, so a dropped startupAgent
+  // would reach the renderer as a bare shell — the failure this option prevents.
+  it('rejects a startupAgent create with no workspace selector', async () => {
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {}
+      })
+    })
+
+    await expect(
+      runtime.createTerminal(undefined, { startupAgent: 'cursor', rendererBacked: true })
+    ).rejects.toThrow(/requires a workspace selector/)
+  })
+
+  // Why: folder workspaces have no repo, so command sniffing skipped them entirely
+  // and spawned the bare string; an explicit agent must still resolve.
+  it('resolves a startupAgent in a repo-less folder workspace', async () => {
+    const folderPath = await mkdtemp(join(tmpdir(), 'orca-runtime-folder-startup-agent-'))
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const folderWorkspace = makeFolderWorkspace({ folderPath })
+    const projectGroup = makeFolderProjectGroup({ parentPath: folderPath })
+    const runtime = new OrcaRuntimeService({
+      ...createFolderWorkspaceRuntimeStore(folderWorkspace, projectGroup),
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {},
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: {}
+      })
+    } as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`id:${TEST_FOLDER_WORKSPACE_KEY}`, { startupAgent: 'cursor' })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as
+      | { command?: string; launchAgent?: string }
+      | undefined
+    expect(spawnCall?.command).toBe("cursor-agent '--force'")
+    expect(spawnCall?.launchAgent).toBe('cursor')
+  })
+
+  // Why: silently returning the caller's opts would spawn a bare shell that can
+  // only time out at agent readiness — the failure startupAgent exists to stop.
+  it('rejects a startupAgent create that also supplies its own launch', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {}
+      })
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    for (const conflicting of [
+      { env: { SOME_VAR: 'set' } },
+      // Why: a raw command would be silently overwritten by the built launch.
+      { command: 'cursor-agent --resume' },
+      // Why: resume identity paired with a freshly built launch is incoherent.
+      { resumeProviderSession: { key: 'session_id', id: 'prior-session' } as never },
+      { launchAgent: 'cursor' as const },
+      { launchConfig: { agentArgs: '', agentEnv: {} } as never },
+      { startupCommandDelivery: 'provider' as never },
+      { claudeAgentTeamsSourceCommand: 'claude' }
+    ]) {
+      await expect(
+        runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+          startupAgent: 'cursor',
+          ...conflicting
+        })
+      ).rejects.toThrow(/cannot combine/)
+    }
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('rejects a startupAgent create for a disabled agent', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: ['cursor' as const],
+        agentCmdOverrides: {}
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await expect(
+      runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, { startupAgent: 'cursor' })
+    ).rejects.toThrow(/disabled/)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('quotes local Windows bare agent command defaults for cmd.exe terminal creates', async () => {
     setPlatform('win32')
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
