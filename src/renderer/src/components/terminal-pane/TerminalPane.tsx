@@ -64,6 +64,7 @@ import type { MacOptionAsAlt } from './terminal-shortcut-policy'
 import { useEffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/use-effective-mac-option-as-alt'
 import { useTerminalFontZoom } from './useTerminalFontZoom'
 import CloseTerminalDialog, { type CloseTerminalDialogCopyKind } from './CloseTerminalDialog'
+import CodexRestartChip from '../CodexRestartChip'
 import { MobileDriverOverlay } from './MobileDriverOverlay'
 import { stripSshReconnectOwnedErrorLines, TerminalErrorToast } from './TerminalErrorToast'
 import { TerminalSessionStateSaveFailureDialog } from './TerminalSessionStateSaveFailureDialog'
@@ -2966,6 +2967,24 @@ function TerminalPane(
           })
         }}
       />
+      {managedPanes.map((pane) => {
+        const ptyId =
+          paneTransportsRef.current.get(pane.id)?.getPtyId() ??
+          savedLayout.ptyIdsByLeafId?.[pane.leafId]
+        if (!ptyId) {
+          return null
+        }
+        return createPortal(
+          <CodexRestartChip
+            key={`codex-restart-${pane.id}-${ptyId}`}
+            isVisible={isVisible}
+            ptyId={ptyId}
+            shouldFocus={isActive && isVisible && activePane?.id === pane.id}
+          />,
+          pane.container,
+          `codex-restart-${pane.id}`
+        )
+      })}
       {/* Why: the reconnect banner already owns SSH recovery UX; the z-50 error
           toast was painting over it (same bottom strip) with the raw ssh:connect failure. */}
       {terminalError && isActive && !showSshReconnectOverlay ? (
