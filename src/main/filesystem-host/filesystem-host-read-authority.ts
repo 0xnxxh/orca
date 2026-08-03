@@ -76,16 +76,16 @@ function routePath(
   executionHost: 'native' | 'windows-host'
   storageClass: FilesystemStorageClass
 } {
-  if (isWslUncPath(path)) {
+  if (platform === 'win32' && isWslUncPath(path)) {
     return {
-      executionHost: platform === 'win32' ? 'windows-host' : 'native',
+      executionHost: 'windows-host',
       storageClass: 'wsl'
     }
   }
-  if (UNC_PATH_PREFIX.test(path)) {
+  if (platform === 'win32' && UNC_PATH_PREFIX.test(path)) {
     return {
-      executionHost: platform === 'win32' ? 'windows-host' : 'native',
-      storageClass: platform === 'win32' || path.startsWith('\\\\') ? 'unc' : defaultStorageClass
+      executionHost: 'windows-host',
+      storageClass: 'unc'
     }
   }
   return { executionHost: 'native', storageClass: defaultStorageClass }

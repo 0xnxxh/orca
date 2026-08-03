@@ -30,10 +30,13 @@ function canonical(operation: FilesystemHostOperation): FilesystemHostResult {
 }
 
 describe('FilesystemHostSupervisor lifecycle', () => {
-  it('releases a reservation when process startup rejects', async () => {
+  it('releases a reservation when process startup rejects before creating a child', async () => {
     const startProcess = vi
       .fn()
-      .mockRejectedValueOnce(new Error('fork failed'))
+      .mockImplementationOnce(async (options) => {
+        options.onPhysicalExit?.()
+        throw new Error('fork failed')
+      })
       .mockResolvedValueOnce({
         invoke: async (operation: FilesystemHostOperation) => canonical(operation),
         retire: async () => true
@@ -53,6 +56,27 @@ describe('FilesystemHostSupervisor lifecycle', () => {
       canonicalPath: '/b/repo'
     })
     expect(supervisor.health().physicalChildren).toBe(1)
+  })
+
+  it('retains a failed startup reservation until its child physically exits', async () => {
+    let onPhysicalExit: (() => void) | undefined
+    const startProcess = vi.fn(async (options) => {
+      onPhysicalExit = options.onPhysicalExit
+      throw new Error('ready timeout')
+    })
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 2,
+      startProcess
+    })
+
+    await expect(supervisor.dispatch(dispatch('/repo'))).rejects.toMatchObject({
+      code: 'unavailable'
+    })
+    expect(supervisor.health().physicalChildren).toBe(1)
+
+    onPhysicalExit?.()
+    expect(supervisor.health().physicalChildren).toBe(0)
   })
 
   it('reclaims an idle healthy lane under capacity pressure', async () => {

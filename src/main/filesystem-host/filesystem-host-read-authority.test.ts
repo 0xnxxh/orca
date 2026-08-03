@@ -58,23 +58,26 @@ describe('FilesystemHostReadAuthority', () => {
     })
   })
 
-  it('keeps POSIX double-slash paths on the native host', async () => {
-    const dispatch = vi.fn(async (input) => ({
-      kind: 'canonicalize-path' as const,
-      canonicalPath: input.operation.path
-    }))
-    const authority = new FilesystemHostReadAuthority({
-      entryPath: '/unused',
-      platform: 'darwin',
-      supervisor: createSupervisor(dispatch)
-    })
+  it.each(['//server/share/repo', '//wsl.localhost/Ubuntu/home/repo'])(
+    'keeps POSIX double-slash path %s on the native host',
+    async (path) => {
+      const dispatch = vi.fn(async (input) => ({
+        kind: 'canonicalize-path' as const,
+        canonicalPath: input.operation.path
+      }))
+      const authority = new FilesystemHostReadAuthority({
+        entryPath: '/unused',
+        platform: 'darwin',
+        supervisor: createSupervisor(dispatch)
+      })
 
-    await authority.canonicalizePath('//server/share/repo')
+      await authority.canonicalizePath(path)
 
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ executionHost: 'native', storageClass: 'workspace' })
-    )
-  })
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ executionHost: 'native', storageClass: 'workspace' })
+      )
+    }
+  )
 
   it('maps domain and deadline failures to compatible Node error codes', async () => {
     const denied = new FilesystemHostReadAuthority({

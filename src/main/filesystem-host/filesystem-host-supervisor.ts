@@ -270,20 +270,15 @@ export class FilesystemHostSupervisor {
       )
     }
     let process: FilesystemHostProcessHandle | null = null
-    try {
-      process = await this.startProcess({
-        entryPath: this.options.entryPath,
-        onPhysicalExit: () => {
-          release()
-          if (process) {
-            this.retirement.physicalExit(lane, process)
-          }
+    process = await this.startProcess({
+      entryPath: this.options.entryPath,
+      onPhysicalExit: () => {
+        release()
+        if (process) {
+          this.retirement.physicalExit(lane, process)
         }
-      })
-    } catch (error) {
-      release()
-      throw error
-    }
+      }
+    })
     this.retirement.track(process, release)
     lane.process = process
     if (this.disposed) {
