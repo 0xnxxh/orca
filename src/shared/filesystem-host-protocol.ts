@@ -13,7 +13,8 @@ export const filesystemSnapshotFileKindSchema = z.enum([
   'gemini-oauth-credentials',
   'grok-auth',
   'kimi-credentials',
-  'minimax-cookie'
+  'minimax-cookie',
+  'openai-speech-key'
 ])
 
 export const filesystemHostOperationSchema = z.discriminatedUnion('kind', [

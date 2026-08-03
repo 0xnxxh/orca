@@ -13,7 +13,9 @@ export async function reclaimIdleFilesystemHostProcess(options: {
     if (!process || lane === options.excludedLane || lane.running || lane.pending > 0) {
       continue
     }
-    return await options.retire(lane, process)
+    if (await options.retire(lane, process)) {
+      return true
+    }
   }
   return false
 }

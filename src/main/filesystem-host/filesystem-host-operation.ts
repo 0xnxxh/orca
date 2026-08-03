@@ -117,7 +117,8 @@ const SNAPSHOT_BASENAME_BY_KIND: Record<FilesystemSnapshotFileKind, string> = {
   'gemini-oauth-credentials': 'oauth_creds.json',
   'grok-auth': 'auth.json',
   'kimi-credentials': 'kimi-code.json',
-  'minimax-cookie': 'minimax-session-cookie.enc'
+  'minimax-cookie': 'minimax-session-cookie.enc',
+  'openai-speech-key': 'openai-speech-token.enc'
 }
 
 function readBoundedSnapshotFile(

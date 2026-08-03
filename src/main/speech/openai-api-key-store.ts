@@ -1,9 +1,9 @@
 import { safeStorage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { access } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { MemorySnapshot, SnapshotAvailability } from '../../shared/memory-snapshot'
+import { readSnapshotFileThroughFilesystemHost } from '../filesystem-host/filesystem-host-read-authority'
 
 type StoredOpenAiKey = {
   encryptedKeyBase64: string
@@ -56,7 +56,7 @@ export function getOpenAiSpeechApiKeySnapshot(): MemorySnapshot<boolean> {
 export async function hydrateOpenAiSpeechApiKeySnapshot(): Promise<MemorySnapshot<boolean>> {
   const generation = apiKeyStatusGeneration
   try {
-    await access(getOpenAiKeyPath())
+    await readSnapshotFileThroughFilesystemHost(getOpenAiKeyPath(), 'openai-speech-key')
     if (generation === apiKeyStatusGeneration) {
       publishApiKeyStatus(true, 'ready')
     }

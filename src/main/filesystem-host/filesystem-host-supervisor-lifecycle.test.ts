@@ -116,6 +116,48 @@ describe('FilesystemHostSupervisor lifecycle', () => {
     expect(supervisor.health().physicalChildren).toBe(2)
   })
 
+  it('continues reclaiming after an idle child does not exit', async () => {
+    const retired: string[] = []
+    const startProcess = vi.fn(async (options) => {
+      const id = String(startProcess.mock.calls.length)
+      return {
+        invoke: async (operation: FilesystemHostOperation) => canonical(operation),
+        retire: async () => {
+          retired.push(id)
+          if (id === '1') {
+            return false
+          }
+          options.onPhysicalExit?.()
+          return true
+        }
+      }
+    })
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: 'unused',
+      maximumChildren: 2,
+      startProcess
+    })
+    for (const domain of ['a', 'b', 'c']) {
+      supervisor.publishFailureDomain({
+        executionHost: 'native',
+        prefix: `/${domain}`,
+        mountId: domain
+      })
+    }
+
+    await supervisor.dispatch(dispatch('/a/repo'))
+    await supervisor.dispatch(dispatch('/b/repo'))
+    await expect(supervisor.dispatch(dispatch('/c/repo'))).resolves.toMatchObject({
+      canonicalPath: '/c/repo'
+    })
+
+    expect(retired).toEqual(['1', '2'])
+    expect(supervisor.health()).toMatchObject({
+      physicalChildren: 2,
+      didNotExitDomains: 1
+    })
+  })
+
   it('retires an in-flight launch before disposal completes', async () => {
     const launch = deferred<FilesystemHostProcessHandle>()
     let onPhysicalExit: (() => void) | undefined

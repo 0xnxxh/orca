@@ -91,6 +91,16 @@ describe('executeFilesystemHostOperation', () => {
         fileKind: 'minimax-cookie'
       })
     ).toThrowError(expect.objectContaining({ code: 'invalid' }))
+
+    const speechPath = join(root, 'openai-speech-token.enc')
+    writeFileSync(speechPath, contents)
+    expect(
+      executeFilesystemHostOperation({
+        kind: 'read-snapshot-file',
+        path: speechPath,
+        fileKind: 'openai-speech-key'
+      })
+    ).toEqual({ kind: 'read-snapshot-file', contentsBase64: contents.toString('base64') })
   })
 
   it('prepares only the typed rate-limit PTY cwd', () => {

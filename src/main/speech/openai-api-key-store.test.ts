@@ -9,6 +9,7 @@ const safeStorageMock = vi.hoisted(() => ({
   encryptString: vi.fn((value: string) => Buffer.from(value)),
   isEncryptionAvailable: vi.fn(() => true)
 }))
+const readSnapshotFileMock = vi.hoisted(() => vi.fn())
 
 let tempHome = ''
 
@@ -21,6 +22,9 @@ async function loadStoreModule() {
     const actual = await vi.importActual<typeof Os>('os')
     return { ...actual, homedir: () => tempHome }
   })
+  vi.doMock('../filesystem-host/filesystem-host-read-authority', () => ({
+    readSnapshotFileThroughFilesystemHost: readSnapshotFileMock
+  }))
   return import('./openai-api-key-store')
 }
 
@@ -30,6 +34,8 @@ beforeEach(() => {
   safeStorageMock.encryptString.mockClear()
   safeStorageMock.isEncryptionAvailable.mockClear()
   safeStorageMock.isEncryptionAvailable.mockReturnValue(true)
+  readSnapshotFileMock.mockReset()
+  readSnapshotFileMock.mockImplementation(async (path) => readFileSync(path))
 })
 
 function mkdtempLike(prefix: string): string {
@@ -51,6 +57,10 @@ describe('OpenAI speech API key store', () => {
     expect(store.getOpenAiSpeechApiKeySnapshot().availability).toBe('unavailable')
     await store.hydrateOpenAiSpeechApiKeySnapshot()
     expect(store.hasOpenAiSpeechApiKey()).toBe(true)
+    expect(readSnapshotFileMock).toHaveBeenCalledWith(
+      join(tempHome, '.orca', 'openai-speech-token.enc'),
+      'openai-speech-key'
+    )
     expect(safeStorageMock.isEncryptionAvailable).not.toHaveBeenCalled()
     expect(safeStorageMock.decryptString).not.toHaveBeenCalled()
   })
