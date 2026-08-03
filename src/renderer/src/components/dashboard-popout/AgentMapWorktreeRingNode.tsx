@@ -269,7 +269,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                     <circle
                       className="agent-map-agent-unread-mark"
                       data-agent-unread-marker=""
-                      cx={-agent.radius + 3}
+                      cx={agent.radius - 3}
                       cy={-agent.radius + 3}
                       r={4.5}
                       aria-hidden="true"

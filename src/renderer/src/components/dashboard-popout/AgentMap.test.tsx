@@ -126,7 +126,7 @@ describe('AgentMap', () => {
     expect(doneNode.querySelector('.agent-map-agent-icon svg')).toBeInTheDocument()
     const unreadMarker = doneNode.querySelector('[data-agent-unread-marker]')
     expect(unreadMarker).toHaveClass('agent-map-agent-unread-mark')
-    expect(unreadMarker).toHaveAttribute('cx', '-17')
+    expect(unreadMarker).toHaveAttribute('cx', '17')
     expect(unreadMarker).toHaveAttribute('cy', '-17')
     expect(unreadMarker).toHaveAttribute('r', '4.5')
     expect(doneNode).toHaveAccessibleName(/unread/)
