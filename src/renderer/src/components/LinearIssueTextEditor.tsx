@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { LinearIssueMarkdownDescriptionEditor } from '@/components/LinearIssueMarkdownDescriptionEditor'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { useAppStore } from '@/store'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { linearUpdateIssue } from '@/runtime/runtime-linear-client'
@@ -153,6 +154,9 @@ export function LinearIssueTextEditor({
 
   const handleDescriptionKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (!isScreenSubmitShortcut(event)) {
         return
       }
@@ -172,6 +176,9 @@ export function LinearIssueTextEditor({
 
   const handleTitleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key === 'Enter') {
         event.preventDefault()
         event.currentTarget.blur()

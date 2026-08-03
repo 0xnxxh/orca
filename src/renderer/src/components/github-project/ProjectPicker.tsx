@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { useAppStore } from '@/store'
 import { useMountedRef } from '@/hooks/useMountedRef'
@@ -621,6 +622,9 @@ export default function ProjectPicker({ activeProject, onSelect }: Props): React
                     )
                   }}
                   onKeyDown={(e) => {
+                    if (isImeCompositionKeyDown(e)) {
+                      return
+                    }
                     if (e.key === 'Enter') {
                       void handlePaste()
                     }

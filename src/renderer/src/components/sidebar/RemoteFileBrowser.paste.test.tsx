@@ -162,4 +162,73 @@ describe('RemoteFileBrowser paste-sized input', () => {
       root.unmount()
     })
   })
+
+  it('withholds marked Escape while preserving ordinary Escape', async () => {
+    const onCancel = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => {
+      root.render(<RemoteFileBrowser targetId="target-1" onSelect={vi.fn()} onCancel={onCancel} />)
+      await flushPromises()
+    })
+    const input = container.querySelector('input')
+    if (!input) {
+      throw new Error('Remote file browser input was not rendered')
+    }
+    browseDir.mockClear()
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          isComposing: true,
+          bubbles: true
+        })
+      )
+      await flushPromises()
+    })
+    expect(onCancel).not.toHaveBeenCalled()
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('withholds marked Enter while preserving ordinary Enter navigation', async () => {
+    const { input, root } = await renderRemoteFileBrowser()
+    await changeInput(input, 'src')
+    browseDir.mockClear()
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          isComposing: true,
+          bubbles: true
+        })
+      )
+      await flushPromises()
+    })
+    expect(browseDir).not.toHaveBeenCalled()
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await flushPromises()
+    })
+    expect(browseDir).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
 })

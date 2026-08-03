@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react'
 import { ChevronDown, FolderPlus } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
 import { translate } from '@/i18n/i18n'
 import {
@@ -110,6 +111,9 @@ export default function ProjectCombobox({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>): void => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         setOpen(true)

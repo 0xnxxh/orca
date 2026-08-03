@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { EventBus } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import { translate } from '@/i18n/i18n'
 import { getFindRequestQuery } from '@/lib/find-query-bounds'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 
 type PdfFindProps = {
   isOpen: boolean
@@ -94,6 +95,9 @@ export default function PdfFind({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       e.stopPropagation()
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       if (e.key === 'Escape') {
         onClose()
       } else if (e.key === 'Enter' && e.shiftKey) {

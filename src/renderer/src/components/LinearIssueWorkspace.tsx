@@ -38,6 +38,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { buildLinearIssueContextSnapshot } from '@/lib/linear-issue-context-snapshot'
 import { buildContainedLinkedContextBlock } from '@/lib/linked-work-item-context'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { useAppStore } from '@/store'
 import {
@@ -289,6 +290,9 @@ function LinearIssueSubIssueButton({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeCompositionKeyDown(event)) {
+                  return
+                }
                 if (event.key === 'Enter') {
                   event.preventDefault()
                   void handleCreate()

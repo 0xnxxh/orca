@@ -18,6 +18,7 @@ import { useAppStore } from '@/store'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { AgentAwakeSetting } from './AgentAwakeSetting'
 import { AgentCacheTimerSection } from './AgentCacheTimerSection'
 import { AgentRuntimeSetting } from './AgentRuntimeSetting'
@@ -302,6 +303,9 @@ function AgentCommandOverrideInput({
           onChange={(e) => setCmdDraft(e.target.value)}
           onBlur={commitCmd}
           onKeyDown={(e) => {
+            if (isImeCompositionKeyDown(e)) {
+              return
+            }
             if (e.key === 'Enter') {
               commitCmd()
               e.currentTarget.blur()
@@ -357,6 +361,9 @@ function AgentDefaultArgsInput({
           onChange={(e) => setArgsDraft(e.target.value)}
           onBlur={commitArgs}
           onKeyDown={(e) => {
+            if (isImeCompositionKeyDown(e)) {
+              return
+            }
             if (e.key === 'Enter') {
               commitArgs()
               e.currentTarget.blur()
@@ -428,6 +435,9 @@ function AgentDefaultEnvInput({
           }}
           onBlur={commitEnv}
           onKeyDown={(e) => {
+            if (isImeCompositionKeyDown(e)) {
+              return
+            }
             if (e.key === 'Enter') {
               commitEnv()
               e.currentTarget.blur()

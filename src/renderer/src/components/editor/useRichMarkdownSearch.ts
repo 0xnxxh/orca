@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Editor } from '@tiptap/react'
 import { TextSelection } from '@tiptap/pm/state'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { useAppStore } from '@/store'
 import {
@@ -301,6 +302,9 @@ export function useRichMarkdownSearch({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       const root = rootRef.current
       if (!root) {
         return

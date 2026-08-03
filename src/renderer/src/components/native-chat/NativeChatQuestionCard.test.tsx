@@ -137,4 +137,33 @@ describe('NativeChatQuestionCard', () => {
 
     expect(onAnswer).toHaveBeenCalledWith([{ indices: [], other: 'four spaces' }])
   })
+
+  it('does not submit a composing free-text answer on Enter', () => {
+    const onAnswer = vi.fn()
+    render(tabsOrSpaces, onAnswer)
+    const input = container.querySelector('input')!
+
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, '네')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          isComposing: true,
+          bubbles: true
+        })
+      )
+    })
+    expect(onAnswer).not.toHaveBeenCalled()
+
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })
+      )
+    })
+    expect(onAnswer).toHaveBeenCalledWith([{ indices: [], other: '네' }])
+  })
 })

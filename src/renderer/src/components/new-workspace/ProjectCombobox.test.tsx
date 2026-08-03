@@ -313,6 +313,36 @@ describe('ProjectCombobox', () => {
     expect(onValueSelected).toHaveBeenCalledWith('github:stablyai/noqa')
   })
 
+  it('leaves candidate navigation to the IME and preserves ordinary Enter', () => {
+    const onValueChange = vi.fn()
+
+    act(() => {
+      root.render(<ProjectCombobox options={projects} value={null} onValueChange={onValueChange} />)
+    })
+    openList()
+    type('noq')
+
+    act(() => {
+      field().dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          isComposing: true,
+          bubbles: true
+        })
+      )
+    })
+    expect(onValueChange).not.toHaveBeenCalled()
+
+    act(() => {
+      field().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })
+      )
+    })
+    expect(onValueChange).toHaveBeenCalledWith('github:stablyai/noqa')
+  })
+
   it('arms "Add a new project" when a query matches nothing, so Enter is never a wrong guess', () => {
     const onAddProject = vi.fn()
     const onValueChange = vi.fn()

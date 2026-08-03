@@ -10,6 +10,7 @@ import type { PrimaryAction } from './source-control-primary-action'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { translate } from '@/i18n/i18n'
 import type { WorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import { HostedReviewHeaderLink, HostedReviewIcon } from './hosted-review-header-chrome'
@@ -248,6 +249,9 @@ export function SourceControlHeaderToolbar({
                 value={filterQuery}
                 onChange={(event) => onFilterQueryChange(event.target.value)}
                 onKeyDown={(event) => {
+                  if (isImeCompositionKeyDown(event)) {
+                    return
+                  }
                   if (event.key === 'Escape') {
                     event.preventDefault()
                     collapseFilter()

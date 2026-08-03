@@ -18,6 +18,34 @@ const copy = {
 }
 
 describe('CustomAddressDialog', () => {
+  it('does not submit a composing address on Enter', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(true)
+
+    render(
+      <CustomAddressDialog
+        open
+        onOpenChange={vi.fn()}
+        validate={(input) => (input ? { ok: true, value: input } : { ok: false })}
+        copy={copy}
+        inputId="custom-address"
+        onConfirm={onConfirm}
+      />
+    )
+
+    const input = screen.getByLabelText('Address')
+    fireEvent.change(input, { target: { value: '서버.example' } })
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      isComposing: true
+    })
+    expect(onConfirm).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 })
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('서버.example'))
+  })
+
   it('keeps a failed asynchronous confirmation open and does not commit it', async () => {
     const onOpenChange = vi.fn()
     const onConfirm = vi.fn().mockResolvedValue(false)

@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2 } from 'lucide-react'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 
 export type CustomAddressValidator = (input: string) => { ok: true; value: string } | { ok: false }
 
@@ -119,6 +120,9 @@ export function CustomAddressDialog({
               setConfirmationFailed(false)
             }}
             onKeyDown={(e) => {
+              if (isImeCompositionKeyDown(e)) {
+                return
+              }
               if (e.key === 'Enter') {
                 e.preventDefault()
                 void submit()

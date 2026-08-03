@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { translate } from '@/i18n/i18n'
 import { useOptionalShortcutLabel } from '@/hooks/useShortcutLabel'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 
 type RichMarkdownSearchBarProps = {
   activeMatchIndex: number
@@ -111,6 +112,9 @@ export function RichMarkdownSearchBar({
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeCompositionKeyDown(event)) {
+                  return
+                }
                 if (event.key === 'Enter' && event.shiftKey) {
                   event.preventDefault()
                   onMoveToMatch(-1)
@@ -247,6 +251,9 @@ export function RichMarkdownSearchBar({
                 value={replaceQuery}
                 onChange={(event) => onReplaceQueryChange(event.target.value)}
                 onKeyDown={(event) => {
+                  if (isImeCompositionKeyDown(event)) {
+                    return
+                  }
                   if (event.key === 'Enter') {
                     event.preventDefault()
                     onReplaceCurrent()

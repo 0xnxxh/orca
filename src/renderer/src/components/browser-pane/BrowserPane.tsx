@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { getConnectionId } from '@/lib/connection-context'
 import { detectLanguage } from '@/lib/language-detect'
@@ -454,6 +455,9 @@ function PendingBrowserAnnotationCard({
           className="h-24 w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           autoFocus
           onKeyDown={(event) => {
+            if (isImeCompositionKeyDown(event)) {
+              return
+            }
             if (event.key === 'Escape') {
               event.preventDefault()
               event.stopPropagation()
@@ -1298,6 +1302,9 @@ function RemoteBrowserPagePane({
       return
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (isImeCompositionKeyDown(event)) {
+        return
+      }
       if (event.key === 'Escape') {
         event.preventDefault()
         setContextMenu(null)
@@ -2234,6 +2241,9 @@ function RemoteBrowserPagePane({
 
   const handleRemoteScreenshotKeyDown = (event: React.KeyboardEvent<HTMLImageElement>): void => {
     if (isEditableKeyboardTarget(event.target)) {
+      return
+    }
+    if (isImeCompositionKeyDown(event)) {
       return
     }
     const target = runtimeTarget()
@@ -3231,6 +3241,9 @@ function BrowserPagePane({
       return
     }
     const handleKeyDown = (e: KeyboardEvent): void => {
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       if (e.key === 'Escape') {
         e.preventDefault()
         setContextMenu(null)

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Folder, ArrowUp, LoaderCircle, Home, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { getFileTypeIcon } from '@/lib/file-type-icons'
 import {
   decideEnterAction,
@@ -478,6 +479,9 @@ export function RemoteFileBrowser({
 
   const handleFilterKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       if (e.key === 'Enter') {
         if (preview) {
           // Path mode Enter.

@@ -23,6 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { VisuallyHidden } from 'radix-ui'
 import CommentMarkdown from '@/components/sidebar/CommentMarkdown'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import {
   getCommentBodySubmitState,
   hasBoundedCommentBodyText
@@ -637,6 +638,9 @@ export function LinearIssueEditSection({
                     value={estimateInput}
                     onChange={(event) => setEstimateInput(event.target.value)}
                     onKeyDown={(event) => {
+                      if (isImeCompositionKeyDown(event)) {
+                        return
+                      }
                       if (event.key === 'Enter') {
                         event.preventDefault()
                         handleEstimateSubmit()
@@ -883,6 +887,9 @@ export function LinearIssueEditSection({
               value={estimateInput}
               onChange={(event) => setEstimateInput(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeCompositionKeyDown(event)) {
+                  return
+                }
                 if (event.key === 'Enter') {
                   event.preventDefault()
                   handleEstimateSubmit()
@@ -1134,6 +1141,9 @@ export function LinearIssueCommentFooter({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       if (isScreenSubmitShortcut(e)) {
         e.preventDefault()
         handleSubmit()

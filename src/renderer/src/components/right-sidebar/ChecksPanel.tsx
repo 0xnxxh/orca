@@ -24,6 +24,7 @@ import { getGitHubPRCacheKey, getGitHubRepoCacheKey } from '@/store/slices/githu
 import { useActiveWorktree, useRepoById } from '@/store/selectors'
 import { useChecksPanelTerminalWorktree } from './use-checks-panel-terminal-worktree'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { openHttpLink } from '@/lib/http-link-routing'
 import { Button } from '@/components/ui/button'
 import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
@@ -2638,6 +2639,9 @@ export default function ChecksPanel(): React.JSX.Element {
 
   const handleTitleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
       if (e.key === 'Enter') {
         e.preventDefault()
         void handleSaveTitle()

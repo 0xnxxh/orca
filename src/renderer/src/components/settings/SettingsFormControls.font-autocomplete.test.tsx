@@ -106,6 +106,58 @@ describe('FontAutocomplete', () => {
     expectOptionsToBePortaled()
   })
 
+  it('leaves marked candidate navigation to the IME', async () => {
+    function Harness(): ReactNode {
+      const [value, setValue] = useState('Geist')
+      return (
+        <FontAutocomplete
+          value={value}
+          suggestions={['Arial', 'Courier New', 'Geist', 'JetBrains Mono', 'SF Mono']}
+          onChange={setValue}
+        />
+      )
+    }
+
+    await act(async () => {
+      root.render(<Harness />)
+    })
+    const input = getInput()
+    await act(async () => input.focus())
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          code: 'ArrowDown',
+          keyCode: 40,
+          isComposing: true,
+          bubbles: true
+        })
+      )
+    })
+    expect(
+      document
+        .querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
+        ?.textContent?.trim()
+    ).toBe('Geist')
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          code: 'ArrowDown',
+          keyCode: 40,
+          bubbles: true
+        })
+      )
+    })
+    expect(
+      document
+        .querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
+        ?.textContent?.trim()
+    ).toBe('JetBrains Mono')
+  })
+
   it('shows the full list on focus when the committed font has multiple matching suggestions', async () => {
     function Harness(): ReactNode {
       const [value, setValue] = useState('Cascadia Mono')

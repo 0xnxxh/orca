@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { SearchState } from '@/components/terminal-pane/keyboard-handlers'
 import { translate } from '@/i18n/i18n'
 import { getFindRequestQuery } from '@/lib/find-query-bounds'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { safeFind } from './terminal-search-safe-find'
 
 type TerminalSearchProps = {
@@ -113,6 +114,9 @@ export default function TerminalSearch({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       e.stopPropagation()
+      if (isImeCompositionKeyDown(e)) {
+        return
+      }
 
       if (e.key === 'Escape') {
         onClose()

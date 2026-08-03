@@ -19,11 +19,11 @@ function createSearchAddon(): SearchAddon {
   } as unknown as SearchAddon
 }
 
-function renderSearch(searchAddon: SearchAddon): ReturnType<typeof render> {
+function renderSearch(searchAddon: SearchAddon, onClose = vi.fn()): ReturnType<typeof render> {
   return render(
     <TerminalSearch
       isOpen
-      onClose={vi.fn()}
+      onClose={onClose}
       searchAddon={searchAddon}
       searchStateRef={{ current: { query: '', caseSensitive: false, regex: false } }}
     />
@@ -82,5 +82,34 @@ describe('TerminalSearch cleanup', () => {
 
     expect(addon.clearDecorations).toHaveBeenCalledTimes(1)
     expect(addon.findNext).toHaveBeenCalledWith('')
+  })
+})
+
+describe('TerminalSearch IME ownership', () => {
+  it('leaves the search open for a marked Escape and closes it for an ordinary Escape', () => {
+    const onClose = vi.fn()
+    const view = renderSearch(createSearchAddon(), onClose)
+    const input = view.getByPlaceholderText('Search...')
+
+    fireEvent.keyDown(input, { key: 'Escape', code: 'Escape', keyCode: 27, isComposing: true })
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Escape', code: 'Escape', keyCode: 27 })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not navigate on a marked Enter and preserves ordinary Enter navigation', async () => {
+    const addon = createSearchAddon()
+    const view = renderSearch(addon)
+    const input = view.getByPlaceholderText('Search...')
+    fireEvent.change(input, { target: { value: 'needle' } })
+    await waitFor(() => expect(addon.findNext).toHaveBeenCalled())
+    vi.mocked(addon.findNext).mockClear()
+
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13, isComposing: true })
+    expect(addon.findNext).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 })
+    expect(addon.findNext).toHaveBeenCalledTimes(1)
   })
 })

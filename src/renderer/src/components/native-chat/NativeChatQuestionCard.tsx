@@ -1,6 +1,7 @@
 import { useState, type RefObject } from 'react'
 import { Check, Pencil, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { translate } from '@/i18n/i18n'
 import type { AskAnswerSelection, AskPrompt } from './native-chat-interactive-prompt'
 
@@ -193,6 +194,9 @@ export function NativeChatQuestionCard({
                 value={otherText[index]}
                 onChange={(e) => setOther(index, e.target.value)}
                 onKeyDown={(e) => {
+                  if (isImeCompositionKeyDown(e)) {
+                    return
+                  }
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     confirm(true)

@@ -18,6 +18,7 @@ import {
   isSettingsFormOptionQueryTooLarge
 } from './settings-form-option-filter'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { translate } from '@/i18n/i18n'
 
 type SettingsSwitchProps = {
@@ -593,6 +594,9 @@ export function NumberField({
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
             onKeyDown={(e) => {
+              if (isImeCompositionKeyDown(e)) {
+                return
+              }
               if (e.key === 'Enter') {
                 commit()
               }
@@ -746,6 +750,9 @@ export function FontAutocomplete({
                 setOpen(true)
               }}
               onKeyDown={(e) => {
+                if (isImeCompositionKeyDown(e)) {
+                  return
+                }
                 if (e.key === 'Escape') {
                   if (open) {
                     e.preventDefault()

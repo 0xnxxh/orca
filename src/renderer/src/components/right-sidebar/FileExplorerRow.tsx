@@ -33,6 +33,7 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { useAppStore } from '@/store'
 import { useShortcutLabel } from '@/hooks/useShortcutLabel'
 import { detectLanguage } from '@/lib/language-detect'
@@ -219,6 +220,9 @@ export function InlineInputRow({
         className="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border border-ring rounded-sm px-1"
         defaultValue={inlineInput.type === 'rename' ? inlineInput.existingName : ''}
         onKeyDown={(e) => {
+          if (isImeCompositionKeyDown(e)) {
+            return
+          }
           if (e.key === 'Enter') {
             e.preventDefault()
             submit(e.currentTarget.value)
