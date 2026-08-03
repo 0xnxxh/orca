@@ -11,10 +11,12 @@ import {
 const LOCALE_RELOAD_RETRY_MS = 1_000
 const LOCALE_RELOAD_MAX_ATTEMPTS = 3
 
+type LocaleReloadRequest = { target: MobileUiLocale }
+
 export function useMobileLocaleReload(): void {
   const locales = useLocales()
-  const reloadRequestedRef = useRef(false)
-  const reloadAttemptsRef = useRef(0)
+  const reloadRequestRef = useRef<LocaleReloadRequest | null>(null)
+  const reloadAttemptsRef = useRef<Partial<Record<MobileUiLocale, number>>>({})
   const reloadTargetRef = useRef<MobileUiLocale | null>(null)
   const mountedRef = useRef(true)
   const [retryPending, setRetryPending] = useState(false)
@@ -24,6 +26,7 @@ export function useMobileLocaleReload(): void {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      reloadRequestRef.current = null
     }
   }, [])
 
@@ -42,22 +45,28 @@ export function useMobileLocaleReload(): void {
     const languageTags = locales.map((locale) => locale.languageTag)
     const reloadTarget = selectPreferredMobileUiLocale(languageTags)
     if (!shouldReloadForMobileLocaleChange(mobileI18n.language as MobileUiLocale, languageTags)) {
-      reloadAttemptsRef.current = 0
       reloadTargetRef.current = null
       return
     }
-    if (reloadTargetRef.current !== reloadTarget) {
-      reloadAttemptsRef.current = 0
-      reloadTargetRef.current = reloadTarget
-    }
-    if (reloadRequestedRef.current || reloadAttemptsRef.current >= LOCALE_RELOAD_MAX_ATTEMPTS) {
+    reloadTargetRef.current = reloadTarget
+    const reloadAttempts = reloadAttemptsRef.current[reloadTarget] ?? 0
+    if (reloadRequestRef.current || reloadAttempts >= LOCALE_RELOAD_MAX_ATTEMPTS) {
       return
     }
-    reloadRequestedRef.current = true
-    reloadAttemptsRef.current += 1
+    const request: LocaleReloadRequest = { target: reloadTarget }
+    reloadRequestRef.current = request
+    reloadAttemptsRef.current[request.target] = reloadAttempts + 1
     void reloadAppAsync('Mobile locale changed').catch(() => {
-      reloadRequestedRef.current = false
-      if (!mountedRef.current || reloadAttemptsRef.current >= LOCALE_RELOAD_MAX_ATTEMPTS) {
+      if (reloadRequestRef.current !== request) {
+        return
+      }
+      reloadRequestRef.current = null
+      const currentTarget = reloadTargetRef.current
+      if (
+        !mountedRef.current ||
+        currentTarget === null ||
+        (reloadAttemptsRef.current[currentTarget] ?? 0) >= LOCALE_RELOAD_MAX_ATTEMPTS
+      ) {
         return
       }
       setRetryPending(true)
