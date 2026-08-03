@@ -78,12 +78,7 @@ export function getLocalProjectExecutionRuntimeContext(
   })
 }
 
-/**
- * Runtime for global surfaces that mount before any project is active — onboarding,
- * the feature wall. Project context always wins; this only fills the gap where there
- * is none, so a Windows user whose default runtime is WSL is not handed a host shell
- * (#12103). Returns undefined whenever a project could answer, or on non-Windows.
- */
+/** Resolves the Windows default only when no project can own the runtime. */
 export function getGlobalWindowsExecutionRuntimeContext(
   state: LocalProjectRuntimeState,
   worktreeId?: string | null,

@@ -4,6 +4,7 @@ import { renderHook } from '@testing-library/react'
 import { getDefaultSettings } from '../../../shared/constants'
 import { useAppStore } from '@/store'
 import {
+  hasLocalSkillRuntimeAuthority,
   shouldUseLocalSkillFreshness,
   useActiveProjectSkillRuntime
 } from './useActiveProjectSkillRuntime'
@@ -33,6 +34,7 @@ describe('useActiveProjectSkillRuntime', () => {
   beforeEach(() => {
     setPlatform('win32')
     setWindowsShell('git-bash')
+    useAppStore.setState({ runtimeEnvironmentCatalogSettled: true, runtimeEnvironments: [] })
   })
 
   afterEach(() => {
@@ -48,8 +50,6 @@ describe('useActiveProjectSkillRuntime', () => {
     expect(result.current.terminalShellOverride).toBe('powershell.exe')
   })
 
-  // Why (#12103): onboarding installs skills before any project exists. Falling through
-  // to the host there ran the install command in PowerShell for users whose runtime is WSL.
   it('adopts the global WSL default when no project is active', () => {
     setGlobalWslDefault('Ubuntu')
     const { result } = renderHook(() => useActiveProjectSkillRuntime())
@@ -77,6 +77,21 @@ describe('useActiveProjectSkillRuntime', () => {
     useAppStore.setState({ activeRepoId: null })
   })
 
+  it('does not inject the local WSL runtime or shell into a remote environment', () => {
+    setGlobalWslDefault('Ubuntu')
+    useAppStore.setState({
+      settings: {
+        ...useAppStore.getState().settings,
+        activeRuntimeEnvironmentId: 'ssh-production'
+      },
+      runtimeEnvironments: [{ id: 'ssh-production' }] as never
+    })
+    const { result } = renderHook(() => useActiveProjectSkillRuntime())
+
+    expect(result.current.agentRuntime).toBeUndefined()
+    expect(result.current.terminalShellOverride).toBeUndefined()
+  })
+
   it('leaves the shell alone on non-Windows hosts', () => {
     setPlatform('darwin')
     const { result } = renderHook(() => useActiveProjectSkillRuntime())
@@ -99,5 +114,13 @@ describe('useActiveProjectSkillRuntime', () => {
       )
     ).toBe(false)
     expect(shouldUseLocalSkillFreshness(null, undefined)).toBe(false)
+  })
+
+  it('limits the no-project Windows fallback to local runtime authority', () => {
+    expect(hasLocalSkillRuntimeAuthority({ kind: 'local' })).toBe(true)
+    expect(
+      hasLocalSkillRuntimeAuthority({ kind: 'environment', environmentId: 'ssh-production' })
+    ).toBe(false)
+    expect(hasLocalSkillRuntimeAuthority(null)).toBe(false)
   })
 })

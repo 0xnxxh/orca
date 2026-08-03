@@ -14,6 +14,7 @@ import { BROWSER_USE_ENABLED_STORAGE_KEY } from '@/lib/browser-use-setup-state'
 import { e2eConfig } from '@/lib/e2e-config'
 import { showOrcaCliRegistrationPromptToast } from '@/lib/agent-skill-cli-prerequisite'
 import type { ProjectAgentSkillRuntime } from '@/lib/project-skill-runtime'
+import type { OnboardingFeatureSetupRuntimeContext } from './onboarding-feature-setup-runtime'
 import {
   buildSkillCommandForRuntime,
   getWslCliDistroRequest
@@ -113,8 +114,7 @@ export function buildOnboardingFeatureSetupClipboardText(
   agentRuntime?: ProjectAgentSkillRuntime
 ): string | null {
   const command = buildOnboardingFeatureSetupSkillCommand(selection)
-  // Why: the copied string has to run in the same runtime the setup terminal uses,
-  // or a WSL user pastes a command their Windows shell cannot run (#12103).
+  // Keep clipboard and terminal commands on the same runtime (#12103).
   return command === null ? null : buildSkillCommandForRuntime(command, agentRuntime)
 }
 
@@ -177,8 +177,7 @@ export function createOnboardingFeatureSetupDeps(
     return e2eDeps
   }
 
-  // Why: registering the host CLI for a WSL runtime leaves `orca` off the PATH the
-  // skill install actually runs on, which is where onboarding failed for WSL users (#12103).
+  // Register `orca` on the same PATH used by the skill install (#12103).
   const wslDistroRequest =
     agentRuntime?.runtime === 'wsl' ? getWslCliDistroRequest(agentRuntime) : undefined
   const isWsl = agentRuntime?.runtime === 'wsl'
@@ -212,8 +211,11 @@ function getE2EOnboardingFeatureSetupDeps(): OnboardingFeatureSetupDeps | null {
 export async function runOnboardingFeatureSetup(
   selection: OnboardingFeatureSetupSelection,
   explicitDeps?: OnboardingFeatureSetupDeps,
-  agentRuntime?: ProjectAgentSkillRuntime
+  runtimeContext?: OnboardingFeatureSetupRuntimeContext
 ): Promise<OnboardingFeatureSetupResult> {
+  const agentRuntime = runtimeContext?.installDisabledReason
+    ? undefined
+    : runtimeContext?.agentRuntime
   const deps = explicitDeps ?? createOnboardingFeatureSetupDeps(agentRuntime)
   const selectedIds = selectedOnboardingFeatureSetupIds(selection)
   const warnings: OnboardingFeatureSetupWarning[] = []

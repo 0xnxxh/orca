@@ -5,6 +5,10 @@ import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRunti
 import { buildSkillCommandForRuntime } from '../settings/CliSkillRuntimeSetup'
 import { OnboardingInlineCommandTerminal } from './OnboardingInlineCommandTerminal'
 import {
+  getOnboardingFeatureSetupAgentRuntime,
+  type OnboardingFeatureSetupRuntimeContext
+} from './onboarding-feature-setup-runtime'
+import {
   onboardingFeatureSetupTelemetrySelection,
   type OnboardingFeatureSetupSelection
 } from './onboarding-feature-setup'
@@ -12,25 +16,22 @@ import { translate } from '@/i18n/i18n'
 
 type FeatureSetupInlineTerminalProps = {
   command: string
+  runtimeContext?: OnboardingFeatureSetupRuntimeContext
   selection: OnboardingFeatureSetupSelection
 }
 
 export function FeatureSetupInlineTerminal({
   command,
+  runtimeContext,
   selection
 }: FeatureSetupInlineTerminalProps): React.JSX.Element {
   const terminalOpenedTrackedRef = useRef(false)
   const terminalInteractedTrackedRef = useRef(false)
-  // Why: every other skill-setup surface routes its command through the resolved
-  // runtime. Onboarding ran the bare command in the host shell, so a Windows user
-  // whose runtime is WSL got the install in PowerShell, where npx is absent (#12103).
   const activeSkillRuntime = useActiveProjectSkillRuntime()
-  const runtimeCommand = useMemo(
-    () =>
-      activeSkillRuntime.installDisabledReason
-        ? command
-        : buildSkillCommandForRuntime(command, activeSkillRuntime.agentRuntime),
-    [activeSkillRuntime.agentRuntime, activeSkillRuntime.installDisabledReason, command]
+  const setupRuntime = runtimeContext ?? activeSkillRuntime
+  const runtimeCommand = buildSkillCommandForRuntime(
+    command,
+    getOnboardingFeatureSetupAgentRuntime(setupRuntime)
   )
 
   const selectionTelemetry = useMemo(
@@ -70,7 +71,7 @@ export function FeatureSetupInlineTerminal({
   return (
     <OnboardingInlineCommandTerminal
       command={runtimeCommand}
-      shellOverride={activeSkillRuntime.terminalShellOverride}
+      shellOverride={setupRuntime.terminalShellOverride}
       title={translate(
         'auto.components.onboarding.FeatureSetupInlineTerminal.c767ab7061',
         'Skill setup'

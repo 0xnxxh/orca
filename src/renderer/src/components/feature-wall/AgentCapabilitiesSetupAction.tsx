@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import { useAppStore } from '@/store'
 import { FeatureSetupInlineTerminal } from '../onboarding/FeatureSetupInlineTerminal'
+import type { OnboardingFeatureSetupRuntimeContext } from '../onboarding/onboarding-feature-setup-runtime'
 import {
   DEFAULT_ONBOARDING_FEATURE_SETUP_SELECTION,
   hasSelectedOnboardingFeatureSetup,
@@ -38,11 +39,11 @@ export function AgentCapabilitiesSetupAction(props: {
   const [featureSetupCommand, setFeatureSetupCommand] = useState<string | null>(null)
   const [featureSetupCommandSelection, setFeatureSetupCommandSelection] =
     useState<OnboardingFeatureSetupSelection | null>(null)
+  const [featureSetupRuntime, setFeatureSetupRuntime] =
+    useState<OnboardingFeatureSetupRuntimeContext | null>(null)
   const [setupBusyLabel, setSetupBusyLabel] = useState<string | null>(null)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
-  // Why: CLI registration and the copied command must target the runtime the setup
-  // terminal runs on, not always the Windows host (#12103).
-  const { agentRuntime } = useActiveProjectSkillRuntime()
+  const activeSkillRuntime = useActiveProjectSkillRuntime()
   useEffect(() => {
     onBrowserUseSkillInstalledChange(readiness.browserUseSkillInstalled)
   }, [onBrowserUseSkillInstalledChange, readiness.browserUseSkillInstalled])
@@ -69,7 +70,7 @@ export function AgentCapabilitiesSetupAction(props: {
     }
     setSetupBusyLabel('Setting up capabilities...')
     try {
-      const result = await runOnboardingFeatureSetup(featureSetup, undefined, agentRuntime)
+      const result = await runOnboardingFeatureSetup(featureSetup, undefined, activeSkillRuntime)
       if (featureSetup.browserUse) {
         recordFeatureInteraction('agent-browser-setup')
       }
@@ -115,12 +116,19 @@ export function AgentCapabilitiesSetupAction(props: {
       }
       if (result.skillInstallCommand) {
         setFeatureSetupCommandSelection(featureSetup)
+        setFeatureSetupRuntime(activeSkillRuntime)
         setFeatureSetupCommand(result.skillInstallCommand)
       }
     } finally {
       setSetupBusyLabel(null)
     }
-  }, [agentRuntime, featureSetup, featureSetupCommand, recordFeatureInteraction, setupBusyLabel])
+  }, [
+    activeSkillRuntime,
+    featureSetup,
+    featureSetupCommand,
+    recordFeatureInteraction,
+    setupBusyLabel
+  ])
 
   return (
     <div className="space-y-5">
@@ -129,6 +137,7 @@ export function AgentCapabilitiesSetupAction(props: {
         onFeatureSetupChange={handleFeatureSetupChange}
         featureSetupCommand={featureSetupCommand}
         featureSetupCommandSelection={featureSetupCommandSelection}
+        featureSetupRuntime={featureSetupRuntime}
         setupBusyLabel={setupBusyLabel}
         onStartFeatureSetup={() => void handleStartFeatureSetup()}
         installStatus={capabilitySetupStatus.installStatus}
@@ -200,6 +209,7 @@ function AgentCapabilitySetupControls(props: {
   onFeatureSetupChange: (value: OnboardingFeatureSetupSelection) => void
   featureSetupCommand: string | null
   featureSetupCommandSelection: OnboardingFeatureSetupSelection | null
+  featureSetupRuntime: OnboardingFeatureSetupRuntimeContext | null
   setupBusyLabel: string | null
   onStartFeatureSetup: () => void
   installStatus: Record<OnboardingFeatureSetupId, AgentCapabilityInstallStatus>
@@ -240,6 +250,7 @@ function AgentCapabilitySetupControls(props: {
       {props.featureSetupCommand ? (
         <FeatureSetupInlineTerminal
           command={props.featureSetupCommand}
+          runtimeContext={props.featureSetupRuntime ?? undefined}
           selection={props.featureSetupCommandSelection ?? props.featureSetup}
         />
       ) : null}

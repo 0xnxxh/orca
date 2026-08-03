@@ -39,6 +39,10 @@ export function shouldUseLocalSkillFreshness(
   return runtimeTarget?.kind === 'local' && agentRuntime?.runtime !== 'wsl'
 }
 
+export function hasLocalSkillRuntimeAuthority(runtimeTarget: RuntimeClientTarget | null): boolean {
+  return runtimeTarget?.kind === 'local'
+}
+
 // Why: on Windows the runtime resolution is rebuilt from scratch on every
 // worktree-store change, so a same-runtime result still arrives with a fresh
 // identity. Downstream skill discovery keys effects off `discoveryTarget`, so
@@ -87,27 +91,27 @@ export function useActiveProjectSkillRuntime(): ActiveProjectSkillRuntime {
         currentPlatform,
         wslContext
       ) ??
-      // Why: onboarding and the feature wall install skills before any project exists;
-      // without this they fall through to the host shell and run the install command on
-      // Windows even when the user's default runtime is WSL (#12103). Only a WSL default
-      // is adopted — a windows-host default already matches the no-project behavior, and
-      // resolving it here would hand skill discovery a target where it had none.
-      wslOnly(
-        getGlobalWindowsExecutionRuntimeContext(
-          runtimeState,
-          undefined,
-          currentPlatform,
-          wslContext
-        )
-      )
+      // Global WSL is the only no-project default that changes the install target (#12103).
+      (hasLocalSkillRuntimeAuthority(runtimeTarget)
+        ? wslOnly(
+            getGlobalWindowsExecutionRuntimeContext(
+              runtimeState,
+              undefined,
+              currentPlatform,
+              wslContext
+            )
+          )
+        : undefined)
     if (!projectRuntime) {
       // Why: buildSkillCommandForRuntime still builds a Windows host command
       // without a project runtime, so the terminal has to match that shell.
-      const terminalShellOverride = getProjectAgentSkillTerminalShellOverride(
-        currentPlatform,
-        runtimeState.settings,
-        undefined
-      )
+      const terminalShellOverride = hasLocalSkillRuntimeAuthority(runtimeTarget)
+        ? getProjectAgentSkillTerminalShellOverride(
+            currentPlatform,
+            runtimeState.settings,
+            undefined
+          )
+        : undefined
       const canUseLocalSkillFreshness = shouldUseLocalSkillFreshness(runtimeTarget)
       if (!terminalShellOverride && !canUseLocalSkillFreshness) {
         return EMPTY_ACTIVE_PROJECT_SKILL_RUNTIME

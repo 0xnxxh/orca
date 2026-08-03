@@ -7,6 +7,7 @@ import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import { useAppStore } from '@/store'
 import { FeatureSetupInlineTerminal } from '../onboarding/FeatureSetupInlineTerminal'
+import type { OnboardingFeatureSetupRuntimeContext } from '../onboarding/onboarding-feature-setup-runtime'
 import {
   runOnboardingFeatureSetup,
   type OnboardingFeatureSetupSelection
@@ -85,10 +86,11 @@ const BROWSER_ONLY_FEATURE_SETUP: OnboardingFeatureSetupSelection = {
 function BrowserSkillInstallButton(): React.JSX.Element {
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
   const [command, setCommand] = useState<string | null>(null)
+  const [runtimeContext, setRuntimeContext] = useState<OnboardingFeatureSetupRuntimeContext | null>(
+    null
+  )
   const [busy, setBusy] = useState(false)
-  // Why: match the setup terminal's runtime so a WSL user's CLI registration and
-  // copied command do not land on the Windows host (#12103).
-  const { agentRuntime } = useActiveProjectSkillRuntime()
+  const activeSkillRuntime = useActiveProjectSkillRuntime()
 
   const handleInstall = useCallback(async () => {
     if (busy || command !== null) {
@@ -99,7 +101,7 @@ function BrowserSkillInstallButton(): React.JSX.Element {
       const result = await runOnboardingFeatureSetup(
         BROWSER_ONLY_FEATURE_SETUP,
         undefined,
-        agentRuntime
+        activeSkillRuntime
       )
       recordFeatureInteraction('agent-browser-setup')
       const firstWarning = result.warnings[0]
@@ -126,6 +128,7 @@ function BrowserSkillInstallButton(): React.JSX.Element {
         )
       }
       if (result.skillInstallCommand) {
+        setRuntimeContext(activeSkillRuntime)
         setCommand(result.skillInstallCommand)
       }
     } catch (error) {
@@ -148,10 +151,16 @@ function BrowserSkillInstallButton(): React.JSX.Element {
     } finally {
       setBusy(false)
     }
-  }, [agentRuntime, busy, command, recordFeatureInteraction])
+  }, [activeSkillRuntime, busy, command, recordFeatureInteraction])
 
   if (command) {
-    return <FeatureSetupInlineTerminal command={command} selection={BROWSER_ONLY_FEATURE_SETUP} />
+    return (
+      <FeatureSetupInlineTerminal
+        command={command}
+        runtimeContext={runtimeContext ?? undefined}
+        selection={BROWSER_ONLY_FEATURE_SETUP}
+      />
+    )
   }
 
   return (
