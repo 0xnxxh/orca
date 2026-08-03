@@ -4944,7 +4944,8 @@
           "failedSetParent": "상위 워크트리를 설정하지 못했습니다",
           "current": "현재",
           "searchPlaceholder": "워크트리 검색...",
-          "empty": "일치하는 적격 워크트리가 없습니다."
+          "empty": "일치하는 적격 워크트리가 없습니다.",
+          "setParentFor": "다음 워크트리의 상위 설정"
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "브랜치"

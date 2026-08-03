@@ -5015,7 +5015,8 @@
           "failedSetParent": "Failed to set parent worktree",
           "current": "Current",
           "searchPlaceholder": "Search worktrees...",
-          "empty": "No matching eligible worktrees."
+          "empty": "No matching eligible worktrees.",
+          "setParentFor": "Set parent for"
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "Branch"
