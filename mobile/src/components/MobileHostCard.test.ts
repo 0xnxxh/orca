@@ -69,8 +69,13 @@ describe('MobileHostCard', () => {
 
     const buttons = renderer.root.findAllByType('Pressable')
     expect(buttons).toHaveLength(2)
+    expect(buttons[0].props.accessibilityRole).toBe('button')
     expect(buttons[0].props.accessibilityLabel).toBe('Open Desk, Disconnected')
+    expect(buttons[1].props.accessibilityRole).toBe('button')
     expect(buttons[1].props.accessibilityLabel).toBe('Actions for Desk')
+    expect(buttons[1].props.hitSlop).toBe(8)
+    expect(buttons[1].props.style({ pressed: false })[0]).toMatchObject({ width: 40, height: 40 })
+    expect(renderer.root.findAllByType('MoreVertical')).toHaveLength(1)
     expect(renderer.root.findAllByType('ChevronRight')).toHaveLength(0)
 
     act(() => buttons[1].props.onPress())
@@ -112,6 +117,42 @@ describe('MobileHostCard', () => {
     expect(navigationButton.props.accessibilityLabel).toBe(
       'Open Desk, Connected, Direct via Tailscale, 3 worktrees, 2 active'
     )
+  })
+
+  it('preserves the connected worktree-catalog failure state', async () => {
+    const consoleError = suppressRendererDeprecation()
+    await act(async () => {
+      renderer = create(
+        createElement(MobileHostCard, {
+          host: {
+            id: 'desk',
+            name: 'Desk',
+            endpoint: 'ws://192.168.1.2:6768',
+            deviceToken: 'token',
+            publicKeyB64: 'key',
+            lastConnected: 1
+          },
+          state: 'connected',
+          verdict: { kind: 'normal', label: 'Connected' },
+          path: 'relay',
+          worktreeCountsUnavailable: true,
+          onPress: vi.fn(),
+          onLongPress: vi.fn(),
+          onOpenActions: vi.fn()
+        })
+      )
+    })
+    consoleError.mockRestore()
+
+    const navigationButton = renderer.root.findAllByType('Pressable')[0]
+    expect(navigationButton.props.accessibilityLabel).toBe(
+      'Open Desk, Connected, Orca Relay, Worktree list unavailable'
+    )
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .some((node) => node.children.includes('Worktree list unavailable'))
+    ).toBe(true)
   })
 
   it('includes visible offline recovery guidance in the navigation label', async () => {

@@ -35,7 +35,10 @@ import {
   type SessionInfo,
   type TakePendingOutputResult
 } from './types'
-import { HISTORY_SEED_TRANSFER_PROTOCOL_VERSION } from './daemon-protocol-version'
+import {
+  HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
+  STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION
+} from './daemon-protocol-version'
 import {
   isAgentSessionClaimedSpawnResult,
   isAgentSessionOwnerBinding,
@@ -77,7 +80,7 @@ import {
   type DaemonAuditTrigger
 } from './daemon-audit-classifier'
 import type { DaemonEvidenceSource, ExactDaemonIncarnation } from './daemon-incarnation-evidence'
-import { trackDaemonAuditEligibility } from './daemon-audit-eligibility-event'
+import { createDaemonAuditEligibilityTracker } from './daemon-audit-eligibility-event'
 
 type PendingDaemonSpawnOperation = {
   exitsBySessionId: Map<string, { incarnationId?: string }[]>
@@ -159,6 +162,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private lastAuthenticatedIdentity: DaemonEndpointIdentity | null = null
   private exactDaemonIncarnation: ExactDaemonIncarnation | null = null
   private lastAuditObservation: DaemonAuditObservation | null = null
+  // Why: every listProcesses call republishes the same observation; unthrottled it drains the shared per-session telemetry ceiling.
+  private readonly trackAuditEligibility = createDaemonAuditEligibilityTracker()
   private auditObservationListeners: ((observation: DaemonAuditObservation) => void)[] = []
   private identityChangeListeners: ((event: DaemonIdentityChangeEvent) => void)[] = []
   private historyManager: HistoryManager | null
@@ -329,6 +334,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
+    if (opts.attachOnly && this.protocolVersion < STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION) {
+      throw new Error('terminal_pane_owner_unknown')
+    }
     const sessionId = opts.sessionId ?? mintPtySessionId(opts.worktreeId)
     const operation = {
       exitsBySessionId: new Map<string, { incarnationId?: string }[]>(),
@@ -447,7 +455,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     // Why probe aliveness first: detectColdRestore replays up to ~5MB on the main process, but a live session's snapshot supersedes disk, so the replay would be wasted.
     let restoreInfo: ColdRestoreInfo | null = null
     let restoreSkippedForLiveSession = false
-    const historyProbe = this.historyReader?.probeRestorableHistory(sessionId)
+    const historyProbe = opts.attachOnly
+      ? undefined
+      : this.historyReader?.probeRestorableHistory(sessionId)
     if (historyProbe && historyProbe.status !== 'none') {
       if ((await this.getAppliedSize(sessionId)) !== null) {
         restoreSkippedForLiveSession = true
@@ -494,6 +504,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         command: opts.command,
         startupCommandDelivery: opts.startupCommandDelivery,
         launchAgent: opts.launchAgent,
+        ...(opts.attachOnly ? { attachOnly: true } : {}),
         // Why: without forwarding the override, the daemon falls back to cmd.exe/PowerShell, ignoring the shell the renderer chose; this matches LocalPtyProvider.
         shellOverride: opts.shellOverride,
         terminalWindowsWslDistro: opts.terminalWindowsWslDistro,
@@ -1723,7 +1734,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private publishAuditObservation(observation: DaemonAuditObservation): void {
     this.lastAuditObservation = observation
-    trackDaemonAuditEligibility(observation)
+    this.trackAuditEligibility(observation)
     notifyAuditListeners(this.auditObservationListeners, observation)
   }
 
