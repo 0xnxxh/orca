@@ -20,6 +20,15 @@ function setWindowsShell(terminalWindowsShell: string): void {
   })
 }
 
+function setGlobalWslDefault(distro: string): void {
+  useAppStore.setState({
+    settings: {
+      ...getDefaultSettings('/tmp'),
+      localWindowsRuntimeDefault: { kind: 'wsl', distro }
+    }
+  })
+}
+
 describe('useActiveProjectSkillRuntime', () => {
   beforeEach(() => {
     setPlatform('win32')
@@ -37,6 +46,35 @@ describe('useActiveProjectSkillRuntime', () => {
 
     expect(result.current.projectRuntime).toBeUndefined()
     expect(result.current.terminalShellOverride).toBe('powershell.exe')
+  })
+
+  // Why (#12103): onboarding installs skills before any project exists. Falling through
+  // to the host there ran the install command in PowerShell for users whose runtime is WSL.
+  it('adopts the global WSL default when no project is active', () => {
+    setGlobalWslDefault('Ubuntu')
+    const { result } = renderHook(() => useActiveProjectSkillRuntime())
+
+    expect(result.current.agentRuntime).toEqual({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu',
+      label: 'WSL Ubuntu'
+    })
+  })
+
+  it('ignores a windows-host global default so skill discovery keeps no target', () => {
+    const { result } = renderHook(() => useActiveProjectSkillRuntime())
+
+    expect(result.current.projectRuntime).toBeUndefined()
+    expect(result.current.discoveryTarget).toBeUndefined()
+  })
+
+  it('does not adopt the global default once a project is active', () => {
+    setGlobalWslDefault('Ubuntu')
+    useAppStore.setState({ activeRepoId: 'repo-1' })
+    const { result } = renderHook(() => useActiveProjectSkillRuntime())
+
+    expect(result.current.agentRuntime).toBeUndefined()
+    useAppStore.setState({ activeRepoId: null })
   })
 
   it('leaves the shell alone on non-Windows hosts', () => {

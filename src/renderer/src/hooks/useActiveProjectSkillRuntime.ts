@@ -4,7 +4,10 @@ import type { ProjectExecutionRuntimeResolution } from '../../../shared/project-
 import type { SkillDiscoveryTarget } from '../../../shared/skills'
 import { useActiveSkillDiscoveryRuntimeTarget } from './use-active-skill-discovery-runtime-target'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
-import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
+import {
+  getGlobalWindowsExecutionRuntimeContext,
+  getLocalProjectExecutionRuntimeContext
+} from '@/lib/local-preflight-context'
 import {
   getProjectAgentSkillRuntime,
   getProjectAgentSkillTerminalShellOverride,
@@ -46,6 +49,17 @@ function activeProjectSkillRuntimeIdentity(runtime: ActiveProjectSkillRuntime): 
   return JSON.stringify(runtime)
 }
 
+/** Keeps only a WSL-targeting resolution; a windows-host one is the same as having none here. */
+function wslOnly(
+  resolution: ProjectExecutionRuntimeResolution | undefined
+): ProjectExecutionRuntimeResolution | undefined {
+  if (!resolution) {
+    return undefined
+  }
+  const targetsWsl = resolution.status === 'repair-required' || resolution.runtime.kind === 'wsl'
+  return targetsWsl ? resolution : undefined
+}
+
 export function useActiveProjectSkillRuntime(): ActiveProjectSkillRuntime {
   const runtimeState = useAppStore(
     useShallow((state) => ({
@@ -62,15 +76,30 @@ export function useActiveProjectSkillRuntime(): ActiveProjectSkillRuntime {
   const runtimeTarget = useActiveSkillDiscoveryRuntimeTarget()
 
   const resolved = useMemo(() => {
-    const projectRuntime = getLocalProjectExecutionRuntimeContext(
-      runtimeState,
-      undefined,
-      currentPlatform,
-      {
-        wslAvailable: windowsCapabilities.isLoading ? undefined : windowsCapabilities.wslAvailable,
-        availableWslDistros: windowsCapabilities.isLoading ? null : windowsCapabilities.wslDistros
-      }
-    )
+    const wslContext = {
+      wslAvailable: windowsCapabilities.isLoading ? undefined : windowsCapabilities.wslAvailable,
+      availableWslDistros: windowsCapabilities.isLoading ? null : windowsCapabilities.wslDistros
+    }
+    const projectRuntime =
+      getLocalProjectExecutionRuntimeContext(
+        runtimeState,
+        undefined,
+        currentPlatform,
+        wslContext
+      ) ??
+      // Why: onboarding and the feature wall install skills before any project exists;
+      // without this they fall through to the host shell and run the install command on
+      // Windows even when the user's default runtime is WSL (#12103). Only a WSL default
+      // is adopted — a windows-host default already matches the no-project behavior, and
+      // resolving it here would hand skill discovery a target where it had none.
+      wslOnly(
+        getGlobalWindowsExecutionRuntimeContext(
+          runtimeState,
+          undefined,
+          currentPlatform,
+          wslContext
+        )
+      )
     if (!projectRuntime) {
       // Why: buildSkillCommandForRuntime still builds a Windows host command
       // without a project runtime, so the terminal has to match that shell.

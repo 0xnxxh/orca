@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import { useAppStore } from '@/store'
 import { FeatureSetupInlineTerminal } from '../onboarding/FeatureSetupInlineTerminal'
 import {
@@ -85,6 +86,9 @@ function BrowserSkillInstallButton(): React.JSX.Element {
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
   const [command, setCommand] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Why: match the setup terminal's runtime so a WSL user's CLI registration and
+  // copied command do not land on the Windows host (#12103).
+  const { agentRuntime } = useActiveProjectSkillRuntime()
 
   const handleInstall = useCallback(async () => {
     if (busy || command !== null) {
@@ -92,7 +96,11 @@ function BrowserSkillInstallButton(): React.JSX.Element {
     }
     setBusy(true)
     try {
-      const result = await runOnboardingFeatureSetup(BROWSER_ONLY_FEATURE_SETUP)
+      const result = await runOnboardingFeatureSetup(
+        BROWSER_ONLY_FEATURE_SETUP,
+        undefined,
+        agentRuntime
+      )
       recordFeatureInteraction('agent-browser-setup')
       const firstWarning = result.warnings[0]
       if (firstWarning) {
@@ -140,7 +148,7 @@ function BrowserSkillInstallButton(): React.JSX.Element {
     } finally {
       setBusy(false)
     }
-  }, [busy, command, recordFeatureInteraction])
+  }, [agentRuntime, busy, command, recordFeatureInteraction])
 
   if (command) {
     return <FeatureSetupInlineTerminal command={command} selection={BROWSER_ONLY_FEATURE_SETUP} />

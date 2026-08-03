@@ -3,6 +3,7 @@ import { Check, Globe2, Loader2, MonitorCog, Terminal, Workflow } from 'lucide-r
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import { useAppStore } from '@/store'
 import { FeatureSetupInlineTerminal } from '../onboarding/FeatureSetupInlineTerminal'
 import {
@@ -39,6 +40,9 @@ export function AgentCapabilitiesSetupAction(props: {
     useState<OnboardingFeatureSetupSelection | null>(null)
   const [setupBusyLabel, setSetupBusyLabel] = useState<string | null>(null)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
+  // Why: CLI registration and the copied command must target the runtime the setup
+  // terminal runs on, not always the Windows host (#12103).
+  const { agentRuntime } = useActiveProjectSkillRuntime()
   useEffect(() => {
     onBrowserUseSkillInstalledChange(readiness.browserUseSkillInstalled)
   }, [onBrowserUseSkillInstalledChange, readiness.browserUseSkillInstalled])
@@ -65,7 +69,7 @@ export function AgentCapabilitiesSetupAction(props: {
     }
     setSetupBusyLabel('Setting up capabilities...')
     try {
-      const result = await runOnboardingFeatureSetup(featureSetup)
+      const result = await runOnboardingFeatureSetup(featureSetup, undefined, agentRuntime)
       if (featureSetup.browserUse) {
         recordFeatureInteraction('agent-browser-setup')
       }
@@ -116,7 +120,7 @@ export function AgentCapabilitiesSetupAction(props: {
     } finally {
       setSetupBusyLabel(null)
     }
-  }, [featureSetup, featureSetupCommand, recordFeatureInteraction, setupBusyLabel])
+  }, [agentRuntime, featureSetup, featureSetupCommand, recordFeatureInteraction, setupBusyLabel])
 
   return (
     <div className="space-y-5">

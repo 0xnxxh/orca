@@ -13,6 +13,11 @@ import {
 import { BROWSER_USE_ENABLED_STORAGE_KEY } from '@/lib/browser-use-setup-state'
 import { e2eConfig } from '@/lib/e2e-config'
 import { showOrcaCliRegistrationPromptToast } from '@/lib/agent-skill-cli-prerequisite'
+import type { ProjectAgentSkillRuntime } from '@/lib/project-skill-runtime'
+import {
+  buildSkillCommandForRuntime,
+  getWslCliDistroRequest
+} from '../settings/CliSkillRuntimeSetup'
 import {
   ORCHESTRATION_ENABLED_STORAGE_KEY,
   ORCHESTRATION_SETUP_DISMISSED_STORAGE_KEY,
@@ -104,9 +109,13 @@ export function selectedOnboardingFeatureSetupIds(
 }
 
 export function buildOnboardingFeatureSetupClipboardText(
-  selection: OnboardingFeatureSetupSelection
+  selection: OnboardingFeatureSetupSelection,
+  agentRuntime?: ProjectAgentSkillRuntime
 ): string | null {
-  return buildOnboardingFeatureSetupSkillCommand(selection)
+  const command = buildOnboardingFeatureSetupSkillCommand(selection)
+  // Why: the copied string has to run in the same runtime the setup terminal uses,
+  // or a WSL user pastes a command their Windows shell cannot run (#12103).
+  return command === null ? null : buildSkillCommandForRuntime(command, agentRuntime)
 }
 
 export function buildOnboardingFeatureSetupSkillCommand(
@@ -160,16 +169,27 @@ export function onboardingFeatureSetupRunTelemetry(
   }
 }
 
-export function createOnboardingFeatureSetupDeps(): OnboardingFeatureSetupDeps {
+export function createOnboardingFeatureSetupDeps(
+  agentRuntime?: ProjectAgentSkillRuntime
+): OnboardingFeatureSetupDeps {
   const e2eDeps = getE2EOnboardingFeatureSetupDeps()
   if (e2eDeps) {
     return e2eDeps
   }
 
+  // Why: registering the host CLI for a WSL runtime leaves `orca` off the PATH the
+  // skill install actually runs on, which is where onboarding failed for WSL users (#12103).
+  const wslDistroRequest =
+    agentRuntime?.runtime === 'wsl' ? getWslCliDistroRequest(agentRuntime) : undefined
+  const isWsl = agentRuntime?.runtime === 'wsl'
   return {
-    getCliStatus: () => window.api.cli.getInstallStatus(),
+    getCliStatus: () =>
+      isWsl
+        ? window.api.cli.getWslInstallStatus(wslDistroRequest)
+        : window.api.cli.getInstallStatus(),
     showCliRegistrationPrompt: showOrcaCliRegistrationPromptToast,
-    installCli: () => window.api.cli.install(),
+    installCli: () =>
+      isWsl ? window.api.cli.installWsl(wslDistroRequest) : window.api.cli.install(),
     writeClipboardText: (text) => window.api.ui.writeClipboardText(text),
     getComputerUsePermissionStatus: () => window.api.computerUsePermissions.getStatus(),
     openComputerUsePermissionSetup: () => window.api.computerUsePermissions.openSetup(),
@@ -191,8 +211,10 @@ function getE2EOnboardingFeatureSetupDeps(): OnboardingFeatureSetupDeps | null {
 
 export async function runOnboardingFeatureSetup(
   selection: OnboardingFeatureSetupSelection,
-  deps: OnboardingFeatureSetupDeps = createOnboardingFeatureSetupDeps()
+  explicitDeps?: OnboardingFeatureSetupDeps,
+  agentRuntime?: ProjectAgentSkillRuntime
 ): Promise<OnboardingFeatureSetupResult> {
+  const deps = explicitDeps ?? createOnboardingFeatureSetupDeps(agentRuntime)
   const selectedIds = selectedOnboardingFeatureSetupIds(selection)
   const warnings: OnboardingFeatureSetupWarning[] = []
   let cliTouched = false
@@ -278,7 +300,7 @@ export async function runOnboardingFeatureSetup(
     }
   }
 
-  skillCommandsCopied = await copySkillCommands(selection, deps, warnings)
+  skillCommandsCopied = await copySkillCommands(selection, deps, warnings, agentRuntime)
 
   return {
     selectedIds,
@@ -297,9 +319,10 @@ function formatFeatureSetupError(error: unknown): string {
 async function copySkillCommands(
   selection: OnboardingFeatureSetupSelection,
   deps: OnboardingFeatureSetupDeps,
-  warnings: OnboardingFeatureSetupWarning[]
+  warnings: OnboardingFeatureSetupWarning[],
+  agentRuntime?: ProjectAgentSkillRuntime
 ): Promise<boolean> {
-  const clipboardText = buildOnboardingFeatureSetupClipboardText(selection)
+  const clipboardText = buildOnboardingFeatureSetupClipboardText(selection, agentRuntime)
   if (!clipboardText) {
     return false
   }

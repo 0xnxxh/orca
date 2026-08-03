@@ -123,6 +123,27 @@ describe('onboarding feature setup runner', () => {
     )
   })
 
+  // Why (#12103): the copied command has to run where the setup terminal runs, or a WSL
+  // user pastes an npx invocation into a Windows shell that has no npx.
+  it('wraps the copied command for a WSL runtime', () => {
+    const text = buildOnboardingFeatureSetupClipboardText(
+      { browserUse: false, computerUse: false, orchestration: true, linearTickets: false },
+      { runtime: 'wsl', wslDistro: 'Ubuntu', label: 'WSL Ubuntu' }
+    )
+
+    expect(text).toContain("wsl.exe -d 'Ubuntu'")
+    expect(text).not.toBe(ORCHESTRATION_ONLY_SKILL_INSTALL_COMMAND)
+  })
+
+  it('leaves the copied command bare for a host runtime', () => {
+    const text = buildOnboardingFeatureSetupClipboardText(
+      { browserUse: false, computerUse: false, orchestration: true, linearTickets: false },
+      { runtime: 'host', label: 'Windows' }
+    )
+
+    expect(text).toBe(ORCHESTRATION_ONLY_SKILL_INSTALL_COMMAND)
+  })
+
   it('builds privacy-safe telemetry payloads for selected feature setup items', () => {
     const selection: OnboardingFeatureSetupSelection = {
       browserUse: true,
