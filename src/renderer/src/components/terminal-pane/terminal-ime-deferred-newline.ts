@@ -107,11 +107,16 @@ export function getTerminalImeModifiedEnterKind(
 }
 
 export function isTerminalImeProcessEnter(
-  event: Pick<KeyboardEvent, 'key' | 'keyCode' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>
+  event: Pick<
+    KeyboardEvent,
+    'key' | 'code' | 'keyCode' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'
+  >
 ): boolean {
+  const { code } = event
   return (
     event.key === 'Process' &&
     event.keyCode === 229 &&
+    (!code || code === 'Unidentified' || code === 'Enter' || code === 'NumpadEnter') &&
     getTerminalImeModifiedEnterKind(event) !== null
   )
 }
