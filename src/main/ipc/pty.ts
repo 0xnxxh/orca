@@ -227,9 +227,6 @@ import type { PtyListedSession } from '../../shared/pty-listed-session'
 // Routes PTY operations by connectionId (null = local provider).
 
 let localProvider: IPtyProvider = new LocalPtyProvider()
-type FreshLocalFallbackProvider = IPtyProvider & {
-  routesFreshSpawnsToLocalProvider?: true
-}
 const sshProviders = new Map<string, IPtyProvider>()
 const sshProvidersByGeneration = new Map<number, IPtyProvider>()
 
@@ -1448,10 +1445,19 @@ function isClaudeLaunchCommand(command: string | undefined): boolean {
   )
 }
 
-function routesFreshSpawnsToLocalProvider(
-  provider: IPtyProvider
-): provider is FreshLocalFallbackProvider {
-  return (provider as FreshLocalFallbackProvider).routesFreshSpawnsToLocalProvider === true
+function routesFreshSpawnsToLocalProvider(provider: IPtyProvider): boolean {
+  return provider.routesFreshSpawnsToLocalProvider === true
+}
+
+function recoverFreshSpawnProviderRouting(
+  provider: IPtyProvider,
+  connectionId: string | null | undefined,
+  sessionId: string | undefined
+): Promise<boolean> | undefined {
+  if (connectionId || sessionId || !routesFreshSpawnsToLocalProvider(provider)) {
+    return
+  }
+  return provider.recoverFreshSpawnRouting?.()
 }
 
 function beginPtySpawnForWorktree(
@@ -3821,6 +3827,14 @@ export function registerPtyHandlers(
       await assertFolderWorkspacePtyPathUsable(args.worktreeId)
       const cwd = resolvePtySpawnStartupCwd(args.worktreeId, args.cwd)
       const provider = getProvider(args.connectionId)
+      const freshSpawnRecovery = recoverFreshSpawnProviderRouting(
+        provider,
+        args.connectionId,
+        args.sessionId
+      )
+      if (freshSpawnRecovery) {
+        await freshSpawnRecovery
+      }
       const isClaudeLaunch = !args.connectionId && isClaudeLaunchCommand(args.command)
       if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
         throw new Error('A Claude account switch is in progress. Try again after it finishes.')
@@ -4950,6 +4964,14 @@ export function registerPtyHandlers(
         didFallbackToWorkspaceRootCwd && cwd ? ({ kind: 'worktree', cwd } as const) : undefined
       spawnTiming.mark('preflight')
       const provider = getProvider(args.connectionId)
+      const freshSpawnRecovery = recoverFreshSpawnProviderRouting(
+        provider,
+        args.connectionId,
+        args.sessionId
+      )
+      if (freshSpawnRecovery) {
+        await freshSpawnRecovery
+      }
       const isClaudeLaunch = !args.connectionId && isClaudeLaunchCommand(args.command)
       if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
         throw new Error('A Claude account switch is in progress. Try again after it finishes.')

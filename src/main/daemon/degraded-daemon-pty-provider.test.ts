@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DegradedDaemonPtyProvider } from './degraded-daemon-pty-provider'
+import { DEGRADED_DAEMON_RECOVERY_RETRY_MS } from './degraded-daemon-fresh-spawn-routing'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import type { PtyProcessInspection } from '../providers/pty-process-inspection'
@@ -226,6 +227,64 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.spawn).toHaveBeenCalledWith({ cols: 80, rows: 24 })
     expect(current.write).toHaveBeenCalledWith('daemon-session', 'old\n')
     expect(fallback.write).toHaveBeenCalledWith(fresh.id, 'new\n')
+  })
+
+  it('routes later fresh PTYs to the daemon after spawn health recovers', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    const probeCurrentDaemonSpawn = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    const provider = new DegradedDaemonPtyProvider({
+      current,
+      legacy: [],
+      fallback,
+      probeCurrentDaemonSpawn
+    })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+
+    try {
+      await expect(provider.recoverFreshSpawnRouting()).resolves.toBe(false)
+      await provider.spawn({ cols: 80, rows: 24 })
+      await expect(provider.recoverFreshSpawnRouting()).resolves.toBe(false)
+      expect(probeCurrentDaemonSpawn).toHaveBeenCalledOnce()
+      now.mockReturnValue(1_000 + DEGRADED_DAEMON_RECOVERY_RETRY_MS)
+      await expect(provider.recoverFreshSpawnRouting()).resolves.toBe(true)
+      const recovered = await provider.spawn({ cols: 80, rows: 24, worktreeId: 'wt-1' })
+
+      expect(provider.routesFreshSpawnsToLocalProvider).toBeUndefined()
+      expect(fallback.spawn).toHaveBeenCalledOnce()
+      expect(current.spawn).toHaveBeenCalledWith({ cols: 80, rows: 24, worktreeId: 'wt-1' })
+      expect(recovered.id).toBe('daemon-new')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('coalesces concurrent fresh-spawn recovery probes', async () => {
+    let resolveProbe: ((healthy: boolean) => void) | undefined
+    const probeCurrentDaemonSpawn = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveProbe = resolve
+        })
+    )
+    const provider = new DegradedDaemonPtyProvider({
+      current: createDaemonAdapter('daemon'),
+      legacy: [],
+      fallback: createProvider('fallback'),
+      probeCurrentDaemonSpawn
+    })
+
+    const first = provider.recoverFreshSpawnRouting()
+    const second = provider.recoverFreshSpawnRouting()
+    expect(probeCurrentDaemonSpawn).toHaveBeenCalledOnce()
+    resolveProbe?.(true)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+    await expect(provider.recoverFreshSpawnRouting()).resolves.toBe(true)
+    expect(probeCurrentDaemonSpawn).toHaveBeenCalledOnce()
   })
 
   it('routes a previously daemon-backed id to fallback after daemon exit removes the mapping', async () => {
