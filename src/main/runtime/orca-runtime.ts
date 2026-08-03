@@ -23876,23 +23876,34 @@ export class OrcaRuntimeService {
   ): Promise<TerminalCreateOptions> {
     // Why: raw shell commands like `codex exec` must remain user-authored shell.
     // Only unmanaged, repo-backed, bare agent launches get Settings defaults.
-    if (
+    const callerSuppliedLaunch =
       opts.env ||
       opts.launchConfig ||
       opts.launchAgent ||
       opts.startupCommandDelivery ||
-      opts.claudeAgentTeamsSourceCommand ||
-      !this.store
-    ) {
-      return opts
-    }
-    // An explicit startupAgent is already the agent's identity, so it needs no
-    // command sniffing and works for repo-less folder workspaces too.
-    if (!opts.startupAgent && (!opts.command || !workspace.repo)) {
+      opts.claudeAgentTeamsSourceCommand
+    const store = this.store
+    if (opts.startupAgent) {
+      // Why: returning opts unresolved here would spawn a bare shell that can only
+      // time out waiting for an agent — the silent failure startupAgent exists to
+      // prevent. An explicit agent needs no command sniffing and no repo, so the
+      // only unresolvable cases are a contradictory caller or a dead runtime.
+      // `command` and `resumeProviderSession` count as contradictions too: the
+      // first would be silently overwritten, the second would pair resume identity
+      // with a freshly built launch.
+      if (callerSuppliedLaunch || opts.command || opts.resumeProviderSession) {
+        throw new Error(
+          `startupAgent ${opts.startupAgent} cannot combine with a caller-supplied launch.`
+        )
+      }
+      if (!store) {
+        throw new Error('runtime_unavailable')
+      }
+    } else if (callerSuppliedLaunch || !store || !opts.command || !workspace.repo) {
       return opts
     }
 
-    const settings = this.store.getSettings()
+    const settings = store.getSettings()
     const platform = this.getAgentLaunchPlatformForWorkspace(workspace)
     const isRemote = workspace.repo ? repoIsRemote(workspace.repo) : Boolean(workspace.connectionId)
     const queuedShell = resolveLocalWindowsAgentStartupShell({

@@ -12614,6 +12614,76 @@ describe('OrcaRuntimeService', () => {
     expect(spawnCall?.command).toMatch(/^cursor-agent(\s|$)/)
   })
 
+  // Why: folder workspaces have no repo, so command sniffing skipped them entirely
+  // and spawned the bare string; an explicit agent must still resolve.
+  it('resolves a startupAgent in a repo-less folder workspace', async () => {
+    const folderPath = await mkdtemp(join(tmpdir(), 'orca-runtime-folder-startup-agent-'))
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const folderWorkspace = makeFolderWorkspace({ folderPath })
+    const projectGroup = makeFolderProjectGroup({ parentPath: folderPath })
+    const runtime = new OrcaRuntimeService({
+      ...createFolderWorkspaceRuntimeStore(folderWorkspace, projectGroup),
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {},
+        agentDefaultArgs: { cursor: '--force' },
+        agentDefaultEnv: {}
+      })
+    } as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`id:${TEST_FOLDER_WORKSPACE_KEY}`, { startupAgent: 'cursor' })
+
+    const spawnCall = spawn.mock.calls[0]?.[0] as
+      | { command?: string; launchAgent?: string }
+      | undefined
+    expect(spawnCall?.command).toBe("cursor-agent '--force'")
+    expect(spawnCall?.launchAgent).toBe('cursor')
+  })
+
+  // Why: silently returning the caller's opts would spawn a bare shell that can
+  // only time out at agent readiness — the failure startupAgent exists to stop.
+  it('rejects a startupAgent create that also supplies its own launch', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        disabledTuiAgents: [],
+        agentCmdOverrides: {}
+      })
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    for (const conflicting of [
+      { env: { SOME_VAR: 'set' } },
+      // Why: a raw command would be silently overwritten by the built launch.
+      { command: 'cursor-agent --resume' },
+      // Why: resume identity paired with a freshly built launch is incoherent.
+      { resumeProviderSession: { key: 'session_id', id: 'prior-session' } as never },
+      { launchAgent: 'cursor' as const }
+    ]) {
+      await expect(
+        runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+          startupAgent: 'cursor',
+          ...conflicting
+        })
+      ).rejects.toThrow(/cannot combine/)
+    }
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('rejects a startupAgent create for a disabled agent', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
     const runtimeStore = {
