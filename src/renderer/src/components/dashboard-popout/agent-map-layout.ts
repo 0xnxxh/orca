@@ -226,8 +226,14 @@ export function deriveAgentMapLayout(cards: DashboardCard[], now: number): Agent
     .sort(([a], [b]) => compareStable(a, b))
     .map(([projectId, projectCards]) => buildLocalProject(projectId, projectCards, now))
   const maxProjectRadius = Math.max(...localProjects.map((project) => project.radius))
-  const centerY = WORLD_MARGIN + maxProjectRadius
-  let cursorX = WORLD_MARGIN
+  const projectSpanWidth = localProjects.reduce((sum, project) => sum + project.radius * 2, 0)
+  const naturalWidth =
+    projectSpanWidth + PROJECT_GAP * (localProjects.length - 1) + WORLD_MARGIN * 2
+  const naturalHeight = maxProjectRadius * 2 + WORLD_MARGIN * 2
+  const width = Math.max(900, naturalWidth)
+  const height = Math.max(560, naturalHeight)
+  const centerY = WORLD_MARGIN + maxProjectRadius + (height - naturalHeight) / 2
+  let cursorX = WORLD_MARGIN + (width - naturalWidth) / 2
   const projects = localProjects.map((project): AgentMapProjectRing => {
     const centerX = cursorX + project.radius
     cursorX += project.radius * 2 + PROJECT_GAP
@@ -247,12 +253,7 @@ export function deriveAgentMapLayout(cards: DashboardCard[], now: number): Agent
       }))
     }
   })
-  return {
-    projects,
-    width: Math.max(900, cursorX - PROJECT_GAP + WORLD_MARGIN),
-    height: Math.max(560, maxProjectRadius * 2 + WORLD_MARGIN * 2),
-    topologyKey
-  }
+  return { projects, width, height, topologyKey }
 }
 
 function refreshAgentMapMetadata(

@@ -83,6 +83,28 @@ describe('agent map layout', () => {
     }
   })
 
+  it.each([
+    ['single', [card()]],
+    [
+      'sparse',
+      [
+        card({ paneKey: 'a', repoId: 'repo-a' }),
+        card({ paneKey: 'b', repoId: 'repo-b', worktreeId: 'worktree-2' })
+      ]
+    ]
+  ])('centers %s project content within the minimum world', (_, cards) => {
+    const layout = deriveAgentMapLayout(cards, NOW)
+    const left = Math.min(...layout.projects.map((project) => project.x - project.radius))
+    const right = Math.max(...layout.projects.map((project) => project.x + project.radius))
+    const top = Math.min(...layout.projects.map((project) => project.y - project.radius))
+    const bottom = Math.max(...layout.projects.map((project) => project.y + project.radius))
+
+    expect(layout.width).toBe(900)
+    expect(layout.height).toBe(560)
+    expect((left + right) / 2).toBeCloseTo(layout.width / 2)
+    expect((top + bottom) / 2).toBeCloseTo(layout.height / 2)
+  })
+
   it('places orchestrated descendants beneath their direct parent inside the workspace', () => {
     const layout = deriveAgentMapLayout(
       [
