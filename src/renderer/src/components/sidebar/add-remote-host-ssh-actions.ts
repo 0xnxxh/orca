@@ -8,7 +8,10 @@ import {
   parseRelayGracePeriodSeconds,
   type EditingTarget
 } from '../settings/ssh-target-draft'
-import { MAX_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../../../../shared/ssh-types'
+import {
+  MAX_SSH_RELAY_GRACE_PERIOD_SECONDS,
+  SSH_CONFIG_HOST_RESULT_LIMIT
+} from '../../../../shared/ssh-types'
 import type {
   SshConfigHostSummary,
   SshConfigHostListArgs,
@@ -237,7 +240,7 @@ export async function loadSshConfigHostsForPicker(
 function normalizeSshConfigHostListResult(value: unknown): SshConfigHostListResult | null {
   // Why: a renderer hot reload can briefly outlive the preload that returned the legacy array.
   if (Array.isArray(value)) {
-    const hosts = value.slice(0, 100) as SshConfigHostSummary[]
+    const hosts = value.slice(0, SSH_CONFIG_HOST_RESULT_LIMIT) as SshConfigHostSummary[]
     return {
       hosts,
       totalHostCount: value.length,

@@ -3,6 +3,7 @@ import {
   NEW_WORKSPACE_PROJECT_OPTION_QUERY_MAX_BYTES,
   buildNewWorkspaceFolderSourceOptions,
   buildNewWorkspaceProjectOptions,
+  findActionableFolderProjectGroup,
   getRepoIdFromNewWorkspaceFolderSourceOptionId,
   isNewWorkspaceProjectOptionQueryTooLarge,
   searchNewWorkspaceProjectOptions,
@@ -484,5 +485,52 @@ describe('buildNewWorkspaceCreateTargetOptions', () => {
       displayName: 'Platform',
       detail: '/tmp/platform'
     })
+  })
+})
+
+describe('findActionableFolderProjectGroup', () => {
+  const folderGroups = [
+    group({ id: 'local-group' }),
+    group({ id: 'ssh-group', connectionId: 'box' }),
+    group({ id: 'repo-group', parentPath: null })
+  ]
+
+  it('finds a folder group whose host is actionable', () => {
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: folderGroups,
+        groupId: 'ssh-group',
+        actionableHostIds: new Set(['ssh:box'])
+      })
+    ).toBe(folderGroups[1])
+  })
+
+  // Regression: the composer's initial-group restoration skipped the actionable-host
+  // check, so a removed host could still back a folder workspace.
+  it('rejects a folder group whose host is unavailable', () => {
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: folderGroups,
+        groupId: 'ssh-group',
+        actionableHostIds: new Set(['local'])
+      })
+    ).toBeNull()
+  })
+
+  it('rejects repo groups and missing ids', () => {
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: folderGroups,
+        groupId: 'repo-group',
+        actionableHostIds: new Set(['local'])
+      })
+    ).toBeNull()
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: folderGroups,
+        groupId: null,
+        actionableHostIds: new Set(['local'])
+      })
+    ).toBeNull()
   })
 })

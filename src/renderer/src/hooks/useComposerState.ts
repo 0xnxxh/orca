@@ -127,7 +127,7 @@ import {
 } from '@/lib/project-host-setup-options'
 import {
   buildNewWorkspaceCreateTargetOptions,
-  getNewWorkspaceProjectGroupHostId,
+  findActionableFolderProjectGroup,
   getProjectGroupIdFromNewWorkspaceOptionId,
   type NewWorkspaceProjectOption
 } from '@/lib/new-workspace-project-options'
@@ -682,12 +682,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
 
   const [internalRepoId, setInternalRepoId] = useState<string>(resolvedInitialRepoId)
   const initialFolderProjectGroupId = initialProjectGroupId ?? draftProjectGroupId
-  const initialFolderProjectGroup = projectGroups.find(
-    (group) =>
-      group.id === initialFolderProjectGroupId &&
-      Boolean(group.parentPath?.trim()) &&
-      actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
-  )
+  const initialFolderProjectGroup = findActionableFolderProjectGroup({
+    projectGroups,
+    groupId: initialFolderProjectGroupId,
+    actionableHostIds
+  })
   const [selectedProjectGroupId, setSelectedProjectGroupId] = useState<string | null>(
     initialFolderProjectGroup?.id ?? null
   )
@@ -696,14 +695,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const repoId = repoIdOverride ?? internalRepoId
   const selectedProjectGroup = useMemo<ProjectGroup | null>(
     () =>
-      selectedProjectGroupId
-        ? (projectGroups.find(
-            (group) =>
-              group.id === selectedProjectGroupId &&
-              Boolean(group.parentPath?.trim()) &&
-              actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
-          ) ?? null)
-        : null,
+      findActionableFolderProjectGroup({
+        projectGroups,
+        groupId: selectedProjectGroupId,
+        actionableHostIds
+      }),
     [actionableHostIds, projectGroups, selectedProjectGroupId]
   )
   useEffect(() => {
@@ -719,12 +715,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     ) {
       return
     }
-    const nextGroup = projectGroups.find(
-      (group) =>
-        group.id === initialFolderProjectGroupId &&
-        Boolean(group.parentPath?.trim()) &&
-        actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
-    )
+    const nextGroup = findActionableFolderProjectGroup({
+      projectGroups,
+      groupId: initialFolderProjectGroupId,
+      actionableHostIds
+    })
     if (nextGroup) {
       initialProjectGroupAppliedRef.current = true
       setSelectedProjectGroupId(nextGroup.id)
@@ -2665,12 +2660,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       initialProjectGroupAppliedRef.current = true
       const projectGroupId = getProjectGroupIdFromNewWorkspaceOptionId(projectId)
       if (projectGroupId) {
-        const nextProjectGroup = projectGroups.find(
-          (group) =>
-            group.id === projectGroupId &&
-            Boolean(group.parentPath?.trim()) &&
-            actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
-        )
+        const nextProjectGroup = findActionableFolderProjectGroup({
+          projectGroups,
+          groupId: projectGroupId,
+          actionableHostIds
+        })
         if (!nextProjectGroup) {
           setSelectedProjectGroupId(null)
           setProjectError(

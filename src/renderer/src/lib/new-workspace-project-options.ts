@@ -178,6 +178,32 @@ export function getNewWorkspaceProjectGroupHostId(group: ProjectGroup): Executio
   return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
 }
 
+/**
+ * A folder workspace can only be backed by a group whose host is still actionable — a removed
+ * or unreachable host must not be selectable, restorable from a draft, or kept once selected.
+ */
+export function findActionableFolderProjectGroup({
+  projectGroups,
+  groupId,
+  actionableHostIds
+}: {
+  projectGroups: readonly ProjectGroup[]
+  groupId: string | null | undefined
+  actionableHostIds: ReadonlySet<ExecutionHostId>
+}): ProjectGroup | null {
+  if (!groupId) {
+    return null
+  }
+  return (
+    projectGroups.find(
+      (group) =>
+        group.id === groupId &&
+        Boolean(group.parentPath?.trim()) &&
+        actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
+    ) ?? null
+  )
+}
+
 export function buildNewWorkspaceFolderSourceOptions(
   repos: readonly Repo[]
 ): NewWorkspaceProjectOption[] {

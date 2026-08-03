@@ -47,9 +47,10 @@ export function AddRemoteHostSshFormPanel({
       />
 
       <DialogFooter className="sm:justify-between">
-        <button
+        <Button
           type="button"
-          className="self-center text-left text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          variant="link"
+          className="h-auto self-center justify-start p-0 text-xs text-muted-foreground hover:text-foreground"
           onClick={onFillFromConfig}
           disabled={disabled}
         >
@@ -57,7 +58,7 @@ export function AddRemoteHostSshFormPanel({
             'auto.components.sidebar.AddRemoteHostDialog.fillFromSshConfig',
             'Fill from ~/.ssh/config…'
           )}
-        </button>
+        </Button>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={onCancel} disabled={disabled}>
             {translate('auto.components.sidebar.AddRemoteHostDialog.cancel', 'Cancel')}

@@ -4,11 +4,10 @@ import type {
   SshConfigHostSummary,
   SshTarget
 } from '../../shared/ssh-types'
+import { SSH_CONFIG_HOST_RESULT_LIMIT } from '../../shared/ssh-types'
 import { normalizeSshConfigAlias } from '../../shared/ssh-config-alias'
 import { loadUserSshConfig, type SshConfigHost } from './ssh-config-parser'
 import { resolveWithSshG, type SshResolvedConfig } from './ssh-g-config-resolution'
-
-export const SSH_CONFIG_HOST_RESULT_LIMIT = 100
 
 // Why: every keystroke in the picker filter re-queries the main process. Parsing (and
 // Include-expanding) ~/.ssh/config per keystroke is the whole cost, and the file cannot

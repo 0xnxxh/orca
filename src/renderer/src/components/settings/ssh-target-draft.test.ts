@@ -320,6 +320,7 @@ describe('isSshTargetFormDirty', () => {
     { port: '2222' },
     { username: 'deploy' },
     { identityFile: '~/.ssh/id_ed25519' },
+    { gssapiAuthentication: true },
     { proxyCommand: 'nc %h %p' },
     { jumpHost: 'bastion' },
     { systemSshConnectionReuse: false },

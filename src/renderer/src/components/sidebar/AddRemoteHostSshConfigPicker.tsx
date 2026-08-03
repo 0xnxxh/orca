@@ -4,7 +4,10 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { translate } from '@/i18n/i18n'
-import type { SshConfigHostSummary } from '../../../../shared/ssh-types'
+import {
+  SSH_CONFIG_HOST_RESULT_LIMIT,
+  type SshConfigHostSummary
+} from '../../../../shared/ssh-types'
 import { cn } from '@/lib/utils'
 
 const EMPTY_CONFIG_HOSTS: SshConfigHostSummary[] = []
@@ -211,7 +214,8 @@ export function AddRemoteHostSshConfigPicker({
         <p className="text-xs text-muted-foreground">
           {translate(
             'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerMoreResults',
-            'Showing the first 100 matches. Narrow your filter to find more.'
+            'Showing the first {{value0}} matches. Narrow your filter to find more.',
+            { value0: SSH_CONFIG_HOST_RESULT_LIMIT }
           )}
         </p>
       ) : null}

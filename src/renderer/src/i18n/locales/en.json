@@ -5099,7 +5099,7 @@
           "sshConfigPickerNoMatch": "No matching hosts",
           "sshConfigPickerEmptyHint": "Add a Host entry there, or go back and type the details manually.",
           "sshConfigPickerNoMatchHint": "Try another filter, or go back and type manually.",
-          "sshConfigPickerMoreResults": "Showing the first 100 matches. Narrow your filter to find more.",
+          "sshConfigPickerMoreResults": "Showing the first {{value0}} matches. Narrow your filter to find more.",
           "sshConfigPickerInOrca": "In Orca",
           "sshConfigPickerBulkHint": "Bulk sync stays in Settings → SSH",
           "sshConfigPickerBack": "Back",

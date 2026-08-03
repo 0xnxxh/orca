@@ -105,6 +105,9 @@ export type SshConfigHostSummary = {
   alreadyInOrca: boolean
 }
 
+/** Max hosts one picker query returns; shared so the renderer's copy cannot drift. */
+export const SSH_CONFIG_HOST_RESULT_LIMIT = 100
+
 export type SshConfigHostListResult = {
   hosts: SshConfigHostSummary[]
   totalHostCount: number
