@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   type Dispatch,
   type MutableRefObject,
@@ -27,7 +28,10 @@ import {
 } from './use-mobile-native-chat-drafts'
 import { useMobileNativeChatFileSearch } from './use-mobile-native-chat-file-search'
 import { useMobileNativeChatMessageSend } from './use-mobile-native-chat-message-send'
+import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
 import { useMobileNativeChatSession } from './use-mobile-native-chat-session'
+import { useMobileNativeChatSessionOptions } from './use-mobile-native-chat-session-options'
+import type { MobileNativeChatSessionOptionPickersProps } from './MobileNativeChatSessionOptionPickers'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
 import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
@@ -76,6 +80,9 @@ export type MobileNativeChatController = {
   /** Launch-context text still parked on the agent's TUI input line, or null.
    *  Image sends read it to size their leading clear (one Ctrl+U per line). */
   readSeededLaunchDraft: () => string | null
+  /** Model/session-option pickers for the composer, or null when the active
+   *  agent has no session-option catalog. */
+  nativeChatSessionOptions: MobileNativeChatSessionOptionPickersProps | null
 }
 
 /** Owns mobile native-chat state and teardown outside the already dense session
@@ -239,15 +246,27 @@ export function useMobileNativeChatController(args: {
     worktreeId
   })
 
+  // Why: the send seam reports outgoing catalog commands to session-option
+  // tracking, but the options hook needs the seam's dispatcher — a ref breaks
+  // the cycle without re-creating the send callbacks per snapshot.
+  const recordSessionOptionCommandRef = useRef<(command: string) => void>(() => {})
+  const handleCommandSend = useCallback(
+    (command: string) => recordSessionOptionCommandRef.current(command),
+    []
+  )
+
   const {
     send: handleNativeChatSend,
     sendWithOutcome: handleNativeChatSendWithOutcome,
-    answerQuestion: handleNativeChatQuestionAnswer
+    answerQuestion: handleNativeChatQuestionAnswer,
+    dispatchCommand: handleNativeChatDispatchCommand
   } = useMobileNativeChatMessageSend({
     client,
     enabled: inputSendable,
     handleRef: activeHandleRef,
     deviceTokenRef,
+    agentRef: activeChatAgentRef,
+    onCommandSend: handleCommandSend,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -256,6 +275,25 @@ export function useMobileNativeChatController(args: {
     holdUnconfirmedSend,
     onSendError
   })
+
+  // A Codex-style model change happens in the agent's own TUI picker — bring
+  // the terminal view forward so the dispatched `/model` selector is visible.
+  const handleAgentPicker = useCallback(() => {
+    if (activeSessionTabId && isTabChatView(activeSessionTabId)) {
+      toggleTabChatView(activeSessionTabId)
+    }
+  }, [activeSessionTabId, isTabChatView, toggleTabChatView])
+
+  const sessionOptions = useMobileNativeChatSessionOptions({
+    agent: activeChatResolution?.agent ?? null,
+    scopeKey: mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId),
+    reportedModel: activeSessionTab?.agentStatus?.model ?? null,
+    dispatchCommand: handleNativeChatDispatchCommand,
+    onAgentPicker: handleAgentPicker
+  })
+  useEffect(() => {
+    recordSessionOptionCommandRef.current = sessionOptions.recordCommand
+  }, [sessionOptions.recordCommand])
   // Card actions retire the route's held failure banner too, not just sends.
   const answerAsk = useNativeChatAcceptedAction(handleNativeChatAnswerAsk, onSendResolved)
   const cancelAsk = useNativeChatAcceptedAction(handleNativeChatCancelAsk, onSendResolved)
@@ -286,6 +324,10 @@ export function useMobileNativeChatController(args: {
     handleNativeChatQuestionAnswer,
     handleNativeChatSend,
     handleNativeChatSendWithOutcome,
-    readSeededLaunchDraft
+    readSeededLaunchDraft,
+    nativeChatSessionOptions:
+      sessionOptions.snapshot.length > 0
+        ? { controller: sessionOptions, isWorking: nativeChatAgentWorking }
+        : null
   }
 }

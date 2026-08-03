@@ -28,9 +28,13 @@ const DRAFT = 'Linked Linear issue: ABC-123\nhttps://linear.app/x/issue/ABC-123'
 describe('useMobileNativeChatMessageSend', () => {
   let renderer: ReactTestRenderer | null = null
   let api: Send | null = null
+  const acceptSend = vi.fn()
+  const holdUnconfirmedSend = vi.fn()
+  const onCommandSend = vi.fn()
 
   const mount = (
-    readSeededLaunchDraftSeed: () => { text: string; createdAt: number | null } | null
+    readSeededLaunchDraftSeed: () => { text: string; createdAt: number | null } | null,
+    agent: string | null = 'claude'
   ): void => {
     function Probe(): null {
       api = useMobileNativeChatMessageSend({
@@ -38,12 +42,14 @@ describe('useMobileNativeChatMessageSend', () => {
         enabled: true,
         handleRef: { current: 'term' },
         deviceTokenRef: { current: 'device' },
+        agentRef: { current: agent },
+        onCommandSend,
         captureSendOrigin: () => ({ draftKey: 'k', pendingKey: 'p' }) as never,
         readSeededLaunchDraftSeed,
         clearDraftForSend: () => {},
         restoreRejectedDraft: () => {},
-        acceptSend: () => {},
-        holdUnconfirmedSend: () => {},
+        acceptSend,
+        holdUnconfirmedSend,
         onSendError: () => {}
       })
       return null
@@ -70,6 +76,9 @@ describe('useMobileNativeChatMessageSend', () => {
     sendWithOutcome.mockResolvedValue('accepted')
     clearInputWrite.mockReset()
     clearInputWrite.mockResolvedValue(true)
+    acceptSend.mockReset()
+    holdUnconfirmedSend.mockReset()
+    onCommandSend.mockReset()
   })
   afterEach(() => {
     act(() => {
@@ -171,6 +180,71 @@ describe('useMobileNativeChatMessageSend', () => {
     await act(async () => {
       await api!.answerQuestion('1')
     })
+    expect(sentArgs().resolvedLaunchDraft).toBeUndefined()
+  })
+
+  it('creates an optimistic echo for an ordinary chat send', async () => {
+    mount(() => null)
+    await act(async () => {
+      await api!.send('hello')
+    })
+    expect(acceptSend).toHaveBeenCalledTimes(1)
+    expect(onCommandSend).not.toHaveBeenCalled()
+  })
+
+  // The STA-3332 "Queued forever" regression: command sends dispatch into the
+  // agent's TUI and never echo as user turns, so they must not create a pending
+  // bubble that no transcript match can ever retire.
+  it('never creates an optimistic echo for a catalog command send', async () => {
+    mount(() => null)
+    await act(async () => {
+      await api!.send('/clear')
+    })
+    expect(acceptSend).not.toHaveBeenCalled()
+    expect(onCommandSend).toHaveBeenCalledWith('/clear')
+  })
+
+  it('never creates an optimistic echo for an unknown slash token', async () => {
+    // `/model` is not in Claude's verified catalog, but it still dispatches to
+    // the TUI — same no-echo rule, without claiming a verified command ran.
+    mount(() => null)
+    await act(async () => {
+      await api!.send('/model sonnet')
+    })
+    expect(acceptSend).not.toHaveBeenCalled()
+    expect(onCommandSend).not.toHaveBeenCalled()
+  })
+
+  it('classifies per agent: /model is a catalog command for Codex', async () => {
+    mount(() => null, 'codex')
+    await act(async () => {
+      await api!.send('/model')
+    })
+    expect(acceptSend).not.toHaveBeenCalled()
+    expect(onCommandSend).toHaveBeenCalledWith('/model')
+  })
+
+  it('holds only chat sends for transcript confirmation on a lost ack', async () => {
+    sendWithOutcome.mockResolvedValue('unknown')
+    mount(() => null)
+    await act(async () => {
+      await api!.send('/clear')
+    })
+    expect(holdUnconfirmedSend).not.toHaveBeenCalled()
+    await act(async () => {
+      await api!.send('hello')
+    })
+    expect(holdUnconfirmedSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatchCommand surfaces the outcome without echo or composer sync', async () => {
+    mount(() => null)
+    let outcome: string | undefined
+    await act(async () => {
+      outcome = await api!.dispatchCommand('/model sonnet')
+    })
+    expect(outcome).toBe('accepted')
+    expect(acceptSend).not.toHaveBeenCalled()
     expect(sentArgs().resolvedLaunchDraft).toBeUndefined()
   })
 })

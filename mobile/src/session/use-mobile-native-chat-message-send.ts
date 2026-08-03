@@ -7,6 +7,7 @@ import {
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
+import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
@@ -25,6 +26,9 @@ export type MobileNativeChatMessageSend = {
   ) => Promise<MobileNativeChatSendOutcome>
   /** Answer to an agent question — never touches the composer draft. */
   answerQuestion: (text: string) => Promise<boolean>
+  /** Session-option command dispatch (e.g. `/model sonnet`) — never touches the
+   *  composer draft; callers need the outcome to track dispatched state. */
+  dispatchCommand: (text: string) => Promise<MobileNativeChatSendOutcome>
 }
 
 /** The native-chat send seam: one write path shared by composer sends, image
@@ -34,6 +38,11 @@ export function useMobileNativeChatMessageSend(args: {
   enabled: boolean
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
+  /** Active tab's agent — classification is per-agent (command catalogs differ). */
+  agentRef: MutableRefObject<string | null>
+  /** Fires after a catalog command send is accepted, so session-option state can
+   *  track typed commands like `/model sonnet` (desktop recordOutgoingCommand parity). */
+  onCommandSend?: (command: string) => void
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
    *  at send time so the pre-clear can be sized to every line it occupies. */
@@ -53,6 +62,8 @@ export function useMobileNativeChatMessageSend(args: {
     enabled,
     handleRef,
     deviceTokenRef,
+    agentRef,
+    onCommandSend,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -161,12 +172,19 @@ export function useMobileNativeChatMessageSend(args: {
           ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
           : {})
       })
+      // Why (desktop parity): a slash/skill send dispatches into the agent's own
+      // TUI, not the conversation — the transcript never echoes it as a user
+      // turn, so an optimistic bubble would sit at "Queued" forever and the
+      // unconfirmed hold could never observe a landing.
+      const classification = classifyMobileNativeChatSend(agentRef.current, text)
       if (outcome === 'unknown') {
-        // Why: an ack-lost send usually WAS delivered (issue seen on cellular
-        // relay) — verify via the transcript echo instead of a false "not sent".
-        holdUnconfirmedSend(origin, text, () =>
-          onSendError('Delivery unconfirmed — check chat before retrying')
-        )
+        if (classification === 'chat') {
+          // Why: an ack-lost send usually WAS delivered (issue seen on cellular
+          // relay) — verify via the transcript echo instead of a false "not sent".
+          holdUnconfirmedSend(origin, text, () =>
+            onSendError('Delivery unconfirmed — check chat before retrying')
+          )
+        }
         return 'unknown'
       }
       if (outcome === 'rejected') {
@@ -176,13 +194,18 @@ export function useMobileNativeChatMessageSend(args: {
         onSendError('Message not sent')
         return 'rejected'
       }
-      // `images` are local preview URIs for the optimistic echo only — the actual
-      // image bytes already rode along as a bracketed paste before this text send.
-      acceptSend(origin, text, images)
+      if (classification === 'chat') {
+        // `images` are local preview URIs for the optimistic echo only — the actual
+        // image bytes already rode along as a bracketed paste before this text send.
+        acceptSend(origin, text, images)
+      } else if (classification === 'command') {
+        onCommandSend?.(text.trim())
+      }
       return 'accepted'
     },
     [
       acceptSend,
+      agentRef,
       captureSendOrigin,
       clearDraftForSend,
       client,
@@ -190,6 +213,7 @@ export function useMobileNativeChatMessageSend(args: {
       enabled,
       handleRef,
       holdUnconfirmedSend,
+      onCommandSend,
       onSendError,
       readSeededLaunchDraftSeed,
       restoreRejectedDraft
@@ -217,5 +241,10 @@ export function useMobileNativeChatMessageSend(args: {
     [sendMessage]
   )
 
-  return { send, sendWithOutcome, answerQuestion }
+  const dispatchCommand = useCallback(
+    (text: string): Promise<MobileNativeChatSendOutcome> => sendMessage(text, undefined, false),
+    [sendMessage]
+  )
+
+  return { send, sendWithOutcome, answerQuestion, dispatchCommand }
 }

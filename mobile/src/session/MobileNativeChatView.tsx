@@ -25,6 +25,7 @@ import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import { MobileNativeChatComposer } from './MobileNativeChatComposer'
+import type { MobileNativeChatSessionOptionPickersProps } from './MobileNativeChatSessionOptionPickers'
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 import { MobileNativeChatAsk } from './MobileNativeChatAsk'
 import type { AskAnswerSelection, AskPrompt } from './mobile-native-chat-ask'
@@ -80,6 +81,8 @@ type Props = {
   onClearSendError?: () => void
   filePaths?: string[]
   onNeedFiles?: (query: string) => void
+  /** Model/session-option pickers for the composer action row (desktop parity). */
+  sessionOptions?: MobileNativeChatSessionOptionPickersProps | null
   /** A pending agent question/permission detected from live status, shown as a
    *  native card above the composer; answering sends text to the agent. */
   /** Structured AskUserQuestion prompt parsed from the transcript (preferred over
@@ -129,6 +132,7 @@ export function MobileNativeChatView({
   onClearSendError,
   filePaths,
   onNeedFiles,
+  sessionOptions,
   ask,
   onAnswerAsk,
   onCancelAsk,
@@ -410,6 +414,8 @@ export function MobileNativeChatView({
         value={composerText}
         onChangeText={onComposerTextChange}
         onSend={handleSend}
+        agent={agent}
+        sessionOptions={sessionOptions}
         onAttachImage={onAttachImage}
         attachments={attachments}
         onRemoveAttachment={onRemoveAttachment}

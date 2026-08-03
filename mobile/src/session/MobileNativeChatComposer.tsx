@@ -5,31 +5,28 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View
 } from 'react-native'
 import { ArrowUp, ImagePlus, Mic, Square, X } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
+import { getVerifiedNativeChatCommands } from '../../../src/shared/native-chat-agent-profiles'
 import {
   applyAutocomplete,
   detectAutocompleteTrigger,
+  rankSlashCommandSuggestions,
   rankSuggestions
 } from './mobile-native-chat-autocomplete'
+import {
+  composerSuggestionInsertText,
+  MobileNativeChatComposerSuggestions,
+  type ComposerSuggestion
+} from './MobileNativeChatComposerSuggestions'
+import {
+  MobileNativeChatSessionOptionPickers,
+  type MobileNativeChatSessionOptionPickersProps
+} from './MobileNativeChatSessionOptionPickers'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
-
-// Common agent slash commands offered as autocomplete; sending them is just text
-// to the agent's terminal, so the set is intentionally provider-agnostic.
-const SLASH_COMMANDS = [
-  '/clear',
-  '/compact',
-  '/review',
-  '/model',
-  '/help',
-  '/init',
-  '/cost',
-  '/diff'
-]
 
 const NO_FILE_PATHS: string[] = []
 const NO_ATTACHMENTS: PendingNativeChatImage[] = []
@@ -39,6 +36,11 @@ type Props = {
   value: string
   onChangeText: (text: string) => void
   onSend: (text: string) => Promise<boolean>
+  /** Active tab's agent — the slash autocomplete serves its command catalog. */
+  agent?: string | null
+  /** Model/session-option pickers shown in the composer action row; null when
+   *  the agent has no session-option catalog. */
+  sessionOptions?: MobileNativeChatSessionOptionPickersProps | null
   onAttachImage?: () => void
   /** Images picked-and-uploaded but not yet sent — shown as removable thumbnails
    *  and ridden along on the next send (desktop native-chat parity). */
@@ -61,6 +63,8 @@ export function MobileNativeChatComposer({
   value,
   onChangeText,
   onSend,
+  agent,
+  sessionOptions,
   onAttachImage,
   attachments = NO_ATTACHMENTS,
   onRemoveAttachment,
@@ -91,15 +95,22 @@ export function MobileNativeChatComposer({
     (trimmed.length > 0 || attachments.length > 0) && !disabled && !sending && !isAttaching
 
   const trigger = useMemo(() => detectAutocompleteTrigger(value, cursor), [value, cursor])
-  const suggestions = useMemo(() => {
+  const suggestions = useMemo<ComposerSuggestion[]>(() => {
     if (!trigger) {
       return []
     }
     if (trigger.kind === 'slash') {
-      return rankSuggestions(SLASH_COMMANDS, trigger.query)
+      const commands = agent ? getVerifiedNativeChatCommands(agent) : []
+      return rankSlashCommandSuggestions(commands, trigger.query).map((command) => ({
+        kind: 'command' as const,
+        command
+      }))
     }
-    return rankSuggestions(filePaths, trigger.query).map((p) => `@${p}`)
-  }, [trigger, filePaths])
+    return rankSuggestions(filePaths, trigger.query).map((path) => ({
+      kind: 'file' as const,
+      path
+    }))
+  }, [trigger, filePaths, agent])
 
   useEffect(() => {
     if (trigger?.kind === 'file') {
@@ -111,11 +122,15 @@ export function MobileNativeChatComposer({
     onChangeText(next)
   }
 
-  const pickSuggestion = (suggestion: string): void => {
+  const pickSuggestion = (suggestion: ComposerSuggestion): void => {
     if (!trigger) {
       return
     }
-    const { text: nextText, cursor: nextCursor } = applyAutocomplete(value, trigger, suggestion)
+    const { text: nextText, cursor: nextCursor } = applyAutocomplete(
+      value,
+      trigger,
+      composerSuggestionInsertText(suggestion)
+    )
     onChangeText(nextText)
     setCursor(nextCursor)
     setPendingSelection({ start: nextCursor, end: nextCursor })
@@ -141,21 +156,7 @@ export function MobileNativeChatComposer({
   return (
     <View>
       {suggestions.length > 0 ? (
-        <View style={styles.suggestions}>
-          <ScrollView keyboardShouldPersistTaps="always" style={styles.suggestionScroll}>
-            {suggestions.map((s) => (
-              <Pressable
-                key={s}
-                style={({ pressed }) => [styles.suggestion, pressed && styles.suggestionPressed]}
-                onPress={() => pickSuggestion(s)}
-              >
-                <Text style={styles.suggestionText} numberOfLines={1}>
-                  {s}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+        <MobileNativeChatComposerSuggestions suggestions={suggestions} onPick={pickSuggestion} />
       ) : null}
       {attachments.length > 0 ? (
         <ScrollView
@@ -186,6 +187,7 @@ export function MobileNativeChatComposer({
           ))}
         </ScrollView>
       ) : null}
+      {sessionOptions ? <MobileNativeChatSessionOptionPickers {...sessionOptions} /> : null}
       <View style={styles.bar}>
         {onAttachImage ? (
           <Pressable
@@ -260,28 +262,6 @@ export function MobileNativeChatComposer({
 }
 
 const styles = StyleSheet.create({
-  suggestions: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderSubtle,
-    backgroundColor: colors.bgPanel
-  },
-  suggestionScroll: {
-    maxHeight: 180
-  },
-  suggestion: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.borderSubtle
-  },
-  suggestionPressed: {
-    backgroundColor: colors.bgRaised
-  },
-  suggestionText: {
-    color: colors.textPrimary,
-    fontFamily: typography.monoFamily,
-    fontSize: typography.metaSize
-  },
   attachmentStrip: {
     maxHeight: 76,
     borderTopWidth: StyleSheet.hairlineWidth,

@@ -1,0 +1,122 @@
+import { createElement } from 'react'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
+import {
+  clearMobileSessionOptionRecordsForTests,
+  useMobileNativeChatSessionOptions,
+  type MobileNativeChatSessionOptionsController
+} from './use-mobile-native-chat-session-options'
+
+type HookArgs = Parameters<typeof useMobileNativeChatSessionOptions>[0]
+
+describe('useMobileNativeChatSessionOptions', () => {
+  let renderer: ReactTestRenderer | null = null
+  let api: MobileNativeChatSessionOptionsController | null = null
+  const dispatchCommand = vi.fn<(command: string) => Promise<MobileNativeChatSendOutcome>>()
+  const onAgentPicker = vi.fn()
+
+  const mount = (overrides: Partial<HookArgs> = {}): void => {
+    function Probe(): null {
+      api = useMobileNativeChatSessionOptions({
+        agent: 'claude',
+        scopeKey: 'host\0worktree\0tab',
+        reportedModel: null,
+        dispatchCommand,
+        onAgentPicker,
+        ...overrides
+      })
+      return null
+    }
+    act(() => {
+      renderer = create(createElement(Probe))
+    })
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    clearMobileSessionOptionRecordsForTests()
+    dispatchCommand.mockReset()
+    dispatchCommand.mockResolvedValue('accepted')
+    onAgentPicker.mockReset()
+  })
+  afterEach(() => {
+    act(() => {
+      renderer?.unmount()
+    })
+    renderer = null
+    api = null
+  })
+
+  it('serves the shared catalog snapshot for the agent', () => {
+    mount()
+    expect(api!.snapshot[0]).toMatchObject({ id: 'model', category: 'model' })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ type: 'select' })
+  })
+
+  it('returns an empty snapshot for agents without a catalog', () => {
+    mount({ agent: 'amp' })
+    expect(api!.snapshot).toEqual([])
+  })
+
+  it('applies a model pick through the catalog modelApply command', async () => {
+    mount()
+    let applied: boolean | undefined
+    await act(async () => {
+      applied = await api!.setOption('model', 'opus')
+    })
+    expect(applied).toBe(true)
+    expect(dispatchCommand).toHaveBeenCalledWith('/model opus')
+    const model = api!.snapshot[0]!
+    expect(model).toMatchObject({ valueSource: 'dispatched' })
+    expect(model.kind).toMatchObject({ currentValue: 'opus' })
+  })
+
+  it('keeps tracked truth when the dispatch is rejected', async () => {
+    dispatchCommand.mockResolvedValue('rejected')
+    mount()
+    let applied: boolean | undefined
+    await act(async () => {
+      applied = await api!.setOption('model', 'opus')
+    })
+    expect(applied).toBe(false)
+    expect(api!.snapshot[0]).toMatchObject({ valueSource: 'unknown' })
+  })
+
+  it('routes Codex model changes through the agent picker action', async () => {
+    mount({ agent: 'codex' })
+    expect(api!.snapshot[0]).toMatchObject({ action: { type: 'agent-picker' } })
+    await act(async () => {
+      await api!.invokeAction('model')
+    })
+    expect(dispatchCommand).toHaveBeenCalledWith('/model')
+    expect(onAgentPicker).toHaveBeenCalledTimes(1)
+  })
+
+  it('seeds the current model from a hook-reported provider model', () => {
+    mount({ reportedModel: 'claude-sonnet-5' })
+    const model = api!.snapshot[0]!
+    expect(model).toMatchObject({ valueSource: 'reported' })
+    expect(model.kind).toMatchObject({ currentValue: 'sonnet' })
+  })
+
+  it('tracks typed commands via recordCommand', () => {
+    mount()
+    act(() => {
+      api!.recordCommand('/model haiku')
+    })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'haiku' })
+    expect(api!.snapshot[0]).toMatchObject({ valueSource: 'dispatched' })
+  })
+
+  it('applies an option under the tracked model and scopes it to that model', async () => {
+    mount({ reportedModel: 'claude-sonnet-5' })
+    await act(async () => {
+      await api!.setOption('effort', 'low')
+    })
+    expect(dispatchCommand).toHaveBeenCalledWith('/effort low')
+    const effort = api!.snapshot.find((descriptor) => descriptor.id === 'effort')
+    expect(effort).toMatchObject({ valueSource: 'dispatched' })
+    expect(effort!.kind).toMatchObject({ currentValue: 'low' })
+  })
+})
