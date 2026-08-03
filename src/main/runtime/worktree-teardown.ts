@@ -205,6 +205,10 @@ export async function killAllProcessesForWorktree(
       console.warn(
         `[worktree-teardown] forcing removal after an incomplete PTY sweep for ${worktreeId} — ${detail}`
       )
+      // Returning here does skip the verdict below, which could still have named
+      // live PTYs when only one sweep failed — accepted for now because this path
+      // is behind an explicit Force Delete, deletes either way, and clears no
+      // registry rows, so the cost is diagnosability rather than safety.
       // Report what the surviving sweeps actually stopped rather than a flat zero.
       return {
         runtimeStopped: runtimeSettled.status === 'fulfilled' ? runtimeSettled.value.stopped : 0,
