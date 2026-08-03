@@ -373,6 +373,65 @@ describe('SshConnectionStore', () => {
       expect(result).toEqual([])
     })
 
+    // SSH matches Host patterns case-insensitively, so `Prod` and `prod` are one host
+    // everywhere else in the picker — import ownership must agree.
+    it('treats a case-only alias variant as owned by the existing manual target', () => {
+      mockStore.addSshTarget({
+        id: 'ssh-m',
+        label: 'Prod',
+        configHost: 'Prod',
+        host: 'manual.example.com',
+        port: 22,
+        username: 'me',
+        source: 'manual'
+      })
+      loadUserSshConfigMock.mockReturnValue([{ host: 'prod' }])
+      sshConfigHostsToTargetsMock.mockReturnValue([candidate({ configHost: 'prod' })])
+
+      const result = sshStore.importFromSshConfig()
+
+      expect(mockStore.addSshTarget).toHaveBeenCalledTimes(1)
+      expect(result).toEqual([])
+    })
+
+    it('keeps a case-only alias variant suppressed after the host was deleted', () => {
+      const added = sshStore.addTarget({
+        label: 'Prod',
+        configHost: 'Prod',
+        host: 'prod.example.com',
+        port: 22,
+        username: 'me'
+      })
+      sshStore.removeTarget(added.id)
+      loadUserSshConfigMock.mockReturnValue([{ host: 'prod' }])
+      sshConfigHostsToTargetsMock.mockReturnValue([candidate({ configHost: 'prod' })])
+
+      const result = sshStore.importFromSshConfig()
+
+      expect(result).toEqual([])
+      expect(mockStore.addSshTarget).toHaveBeenCalledTimes(1)
+    })
+
+    it('lifts a tombstone stored under different casing when the host is re-added', () => {
+      const added = sshStore.addTarget({
+        label: 'Prod',
+        configHost: 'Prod',
+        host: 'prod.example.com',
+        port: 22,
+        username: 'me'
+      })
+      sshStore.removeTarget(added.id)
+      sshStore.addTarget({
+        label: 'prod',
+        configHost: 'prod',
+        host: 'prod.example.com',
+        port: 22,
+        username: 'me'
+      })
+
+      expect(sshStore.listSuppressedSshConfigAliases()).toEqual([])
+    })
+
     it('does not rewrite an unchanged config-sourced target', () => {
       mockStore.addSshTarget({
         id: 'ssh-1',

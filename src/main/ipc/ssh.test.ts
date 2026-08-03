@@ -575,8 +575,19 @@ describe('SSH IPC handlers', () => {
     const result = await handlers.get('ssh:listConfigHosts')!(null, { query: 'oth' })
 
     expect(mockSshStore.listTargets).toHaveBeenCalled()
-    expect(mockListConfigHosts).toHaveBeenCalledWith(mockSshStore.listTargets(), 'oth', [])
+    expect(mockListConfigHosts).toHaveBeenCalledWith(mockSshStore.listTargets(), 'oth', [], {
+      refresh: false
+    })
     expect(result).toMatchObject({ hosts: [], hasMore: false })
+  })
+
+  // Only a picker (re)open re-reads ~/.ssh/config; filter keystrokes reuse the parse.
+  it('ssh:listConfigHosts refreshes the parsed config only when asked', async () => {
+    mockSshStore.listTargets.mockReturnValue([])
+
+    await handlers.get('ssh:listConfigHosts')!(null, { query: '', refresh: true })
+
+    expect(mockListConfigHosts).toHaveBeenCalledWith([], '', [], { refresh: true })
   })
 
   it('ssh:resolveConfigHost resolves only the selected alias', async () => {

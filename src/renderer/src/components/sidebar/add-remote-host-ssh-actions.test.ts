@@ -13,6 +13,7 @@ vi.mock('sonner', () => ({
 }))
 
 import {
+  addAllSshConfigHostsToOrca,
   loadSshConfigHostsForPicker,
   prefillFormFromSshConfigHost,
   saveNewSshHostFromForm
@@ -113,6 +114,58 @@ describe('manual SSH host label fallback', () => {
 
     expect(outcome).toBe('saved')
     expect(savedTarget?.label).toBe('10.0.0.7')
+  })
+})
+
+describe('bulk add of ~/.ssh/config hosts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // The button counts (and promises) only the new hosts the picker listed; re-adopting
+  // would resurrect hosts the user deleted, which those counts deliberately omit.
+  it('imports without re-adopting deleted aliases', async () => {
+    const importConfig = vi.fn().mockResolvedValue({
+      targets: [{ id: 'ssh-1', label: 'prod', host: 'prod', port: 22, username: '' }],
+      repoReadoptions: []
+    })
+    const ssh = {
+      importConfig,
+      listTargets: vi.fn().mockResolvedValue([]),
+      addTarget: vi.fn(),
+      listConfigHosts: vi.fn(),
+      resolveConfigHost: vi.fn()
+    }
+
+    const result = await addAllSshConfigHostsToOrca({
+      ssh,
+      recordSshRepoReadoptions: vi.fn(),
+      setSshTargetsMetadata: vi.fn(),
+      recordFeatureInteraction: vi.fn()
+    })
+
+    expect(result).toEqual({ kind: 'added', count: 1 })
+    expect(importConfig).toHaveBeenCalledTimes(1)
+    expect(importConfig.mock.calls[0][0]).toBeUndefined()
+  })
+
+  it('reports already-synced without clearing tombstones', async () => {
+    const importConfig = vi.fn().mockResolvedValue({ targets: [], repoReadoptions: [] })
+    const result = await addAllSshConfigHostsToOrca({
+      ssh: {
+        importConfig,
+        listTargets: vi.fn().mockResolvedValue([]),
+        addTarget: vi.fn(),
+        listConfigHosts: vi.fn(),
+        resolveConfigHost: vi.fn()
+      },
+      recordSshRepoReadoptions: vi.fn(),
+      setSshTargetsMetadata: vi.fn(),
+      recordFeatureInteraction: vi.fn()
+    })
+
+    expect(result).toEqual({ kind: 'already-synced' })
+    expect(importConfig.mock.calls[0][0]).toBeUndefined()
   })
 })
 

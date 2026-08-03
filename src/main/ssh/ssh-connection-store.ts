@@ -1,6 +1,7 @@
 import type { Store } from '../persistence'
 import type { SshRepoReadoption, SshTarget } from '../../shared/ssh-types'
 import { RUNTIME_OWNED_SSH_TARGET_ID_PREFIX } from '../../shared/execution-host'
+import { normalizeSshConfigAlias } from '../../shared/ssh-config-alias'
 import { loadUserSshConfig, sshConfigHostsToTargets } from './ssh-config-parser'
 import {
   buildRemovedSshTargetTombstone,
@@ -103,8 +104,16 @@ export class SshConnectionStore {
   }
 
   private reclaimAlias(alias: string | undefined): void {
-    if (alias) {
-      this.store.removeDeletedSshConfigAlias(alias)
+    const normalized = normalizeSshConfigAlias(alias)
+    if (!normalized) {
+      return
+    }
+    // Why: tombstones persisted before alias folding (and hosts written with different
+    // casing) must all be lifted, or a re-add stays suppressed for its case variants.
+    for (const stored of this.store.getDeletedSshConfigAliases()) {
+      if (normalizeSshConfigAlias(stored) === normalized) {
+        this.store.removeDeletedSshConfigAlias(stored)
+      }
     }
   }
 
@@ -121,7 +130,11 @@ export class SshConnectionStore {
     if (options?.reAdopt) {
       this.store.clearDeletedSshConfigAliases()
     }
-    const deletedAliases = new Set(this.store.getDeletedSshConfigAliases())
+    // Why: aliases are compared case-insensitively everywhere else (picker, duplicate
+    // check, tombstones); a case-sensitive Set here would double-insert `Prod` vs `prod`.
+    const deletedAliases = new Set(
+      this.store.getDeletedSshConfigAliases().map((alias) => normalizeSshConfigAlias(alias))
+    )
     const configHosts = loadUserSshConfig()
     const existingTargets = this.store.getSshTargets()
     // Map config-managed targets (and legacy targets that strongly look like
@@ -131,7 +144,7 @@ export class SshConnectionStore {
     const syncableByAlias = new Map<string, SshTarget>()
     const manualAliases = new Set<string>()
     for (const existing of existingTargets) {
-      const alias = existing.configHost ?? existing.label
+      const alias = normalizeSshConfigAlias(existing.configHost ?? existing.label)
       if (
         existing.source === 'manual' ||
         (existing.source === undefined && !isLegacyConfigImportTarget(existing))
@@ -155,7 +168,7 @@ export class SshConnectionStore {
     const processedAliases = new Set<string>()
 
     for (const candidate of candidates) {
-      const alias = candidate.configHost ?? candidate.label
+      const alias = normalizeSshConfigAlias(candidate.configHost ?? candidate.label)
       if (manualAliases.has(alias)) {
         // A manual target owns this alias — never clobber it.
         continue

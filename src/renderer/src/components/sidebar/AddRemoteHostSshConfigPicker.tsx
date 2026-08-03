@@ -16,9 +16,11 @@ export function AddRemoteHostSshConfigPicker({
   matchesTruncated = false,
   isLoading,
   isBulkImporting,
+  resolvingAlias = null,
   loadError,
   onSelect,
   onQueryChange,
+  onRetry,
   onBack,
   onAddAllToOrca
 }: {
@@ -28,9 +30,12 @@ export function AddRemoteHostSshConfigPicker({
   matchesTruncated: boolean
   isLoading: boolean
   isBulkImporting: boolean
+  /** Alias whose `ssh -G` resolve is in flight; picking is frozen until it settles. */
+  resolvingAlias: string | null
   loadError: string | null
   onSelect: (host: SshConfigHostSummary) => void
   onQueryChange: (query: string) => void
+  onRetry: () => void
   onBack: () => void
   onAddAllToOrca: () => void
 }): React.JSX.Element {
@@ -44,8 +49,13 @@ export function AddRemoteHostSshConfigPicker({
     },
     []
   )
-  const busy = isLoading || isBulkImporting || loadError != null
-  const canAddAll = !busy && totalHostCount > 0 && newHostCount > 0
+  const isResolving = resolvingAlias != null
+  // Why: filtering re-runs against a cached parse, so keep the field usable while a
+  // refresh (or a failed load the user can retry) is outstanding.
+  const filterDisabled = isBulkImporting || isResolving
+  const picksDisabled = isBulkImporting || isResolving
+  const canAddAll =
+    !isLoading && !isBulkImporting && !isResolving && loadError == null && newHostCount > 0
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -79,7 +89,7 @@ export function AddRemoteHostSshConfigPicker({
           'Filter hosts…'
         )}
         autoFocus
-        disabled={busy}
+        disabled={filterDisabled}
         aria-label={translate(
           'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerFilter',
           'Filter hosts…'
@@ -87,15 +97,30 @@ export function AddRemoteHostSshConfigPicker({
       />
 
       <div className="scrollbar-sleek min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-card">
-        {isLoading ? (
+        {loadError != null ? (
+          <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+            <p>{loadError}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={onRetry}
+              disabled={isLoading || isBulkImporting}
+            >
+              {translate(
+                'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerRetry',
+                'Try again'
+              )}
+            </Button>
+          </div>
+        ) : isLoading && hosts.length === 0 ? (
           <p className="px-3 py-8 text-center text-sm text-muted-foreground">
             {translate(
               'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerLoading',
               'Reading ~/.ssh/config…'
             )}
           </p>
-        ) : loadError != null ? (
-          <p className="px-3 py-8 text-center text-sm text-muted-foreground">{loadError}</p>
         ) : hosts.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-muted-foreground">
             <p className="font-medium text-foreground">
@@ -122,21 +147,21 @@ export function AddRemoteHostSshConfigPicker({
             </p>
           </div>
         ) : (
+          // Why: these rows act on click and there is no selected row to track, so they stay
+          // plain buttons rather than a listbox whose aria-selected would always be a lie.
           <ul
-            role="listbox"
             aria-label={translate(
               'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerHostsLabel',
               'SSH config hosts'
             )}
-            className="divide-y divide-border/70"
+            aria-busy={isLoading || isResolving}
+            className={cn('divide-y divide-border/70', isLoading && 'opacity-60')}
           >
             {hosts.map((host) => (
               <li key={host.alias}>
                 <button
                   type="button"
-                  role="option"
-                  aria-selected={false}
-                  disabled={isBulkImporting || host.alreadyInOrca}
+                  disabled={picksDisabled || host.alreadyInOrca}
                   className={cn(
                     'flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left',
                     'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
@@ -157,7 +182,14 @@ export function AddRemoteHostSshConfigPicker({
                       </div>
                     ) : null}
                   </div>
-                  {host.alreadyInOrca ? (
+                  {resolvingAlias === host.alias ? (
+                    <span className="mt-0.5 shrink-0 text-[10.5px] text-muted-foreground">
+                      {translate(
+                        'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerResolving',
+                        'Reading…'
+                      )}
+                    </span>
+                  ) : host.alreadyInOrca ? (
                     <Badge
                       variant="outline"
                       className="mt-0.5 shrink-0 border-emerald-500/40 text-[10.5px] text-emerald-400"

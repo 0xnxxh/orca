@@ -133,14 +133,10 @@ export function resolveWorkspaceCreationTarget(
       return { status: 'unavailable', reason: 'setup-not-found' }
     }
     if (actionableHostIds && !actionableHostIds.has(setup.hostId)) {
-      const fallbackTarget = findReadySetupTarget(
-        setups,
-        repoById,
-        (entry) => entry.projectId === setup.projectId
-      )
-      return fallbackTarget
-        ? { status: 'ready', target: fallbackTarget }
-        : { status: 'unavailable', reason: 'setup-not-found' }
+      // Why: the caller named this exact setup. Silently creating the workspace on a
+      // sibling host would put files (and any agent run) somewhere the user never chose,
+      // so fail closed and let them re-pick a host.
+      return { status: 'unavailable', reason: 'setup-not-found' }
     }
     if (!isReadySetup(setup)) {
       return { status: 'unavailable', reason: 'setup-not-ready' }

@@ -172,8 +172,10 @@ export async function addAllSshConfigHostsToOrca({
   recordFeatureInteraction: (feature: 'ssh') => void
 }): Promise<{ kind: 'added'; count: number } | { kind: 'already-synced' } | { kind: 'failed' }> {
   try {
-    // Why: explicit bulk add re-adopts deleted config aliases (same as Settings Import).
-    const result = await ssh.importConfig({ reAdopt: true })
+    // Why: no reAdopt — the button counts and promises only the *new* hosts the picker
+    // showed. Re-adopting would resurrect hosts the user deleted, which the count omits.
+    // Settings → Import stays the explicit re-adopt path.
+    const result = await ssh.importConfig()
     recordSshRepoReadoptions(result.repoReadoptions)
     setSshTargetsMetadata(await ssh.listTargets())
     recordFeatureInteraction('ssh')

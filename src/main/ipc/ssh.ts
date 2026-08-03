@@ -16,6 +16,7 @@ import type {
   DetectedPort,
   EnrichedDetectedPort,
   SavedPortForward,
+  SshConfigHostListArgs,
   SshRepoReadoption,
   SshTarget,
   SshConnectionStatus,
@@ -975,11 +976,12 @@ export function registerSshHandlers(
 
   // Why: add-host dialog picks one config entry to prefill the form; does not
   // mutate the target store (bulk sync stays on Settings → Import).
-  ipcMain.handle('ssh:listConfigHosts', (_event, args?: { query?: string }) => {
+  ipcMain.handle('ssh:listConfigHosts', (_event, args?: SshConfigHostListArgs) => {
     return listUserSshConfigHostSummaries(
       sshStore!.listTargets(),
       args?.query,
-      sshStore!.listSuppressedSshConfigAliases()
+      sshStore!.listSuppressedSshConfigAliases(),
+      { refresh: args?.refresh === true }
     )
   })
 

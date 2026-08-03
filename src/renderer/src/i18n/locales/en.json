@@ -5107,7 +5107,10 @@
           "sshConfigPickerAddingAll": "Adding hosts…",
           "sshConfigPickerAddAll": "Add all {{value0}} to Orca",
           "sshConfigPickerAllInOrca": "All hosts already in Orca",
-          "sshConfigPickerAddAllEmpty": "Add all to Orca"
+          "sshConfigPickerAddAllEmpty": "Add all to Orca",
+          "identityFileFromConfigHint": "Left empty on purpose: Orca uses every key ~/.ssh/config resolves for {{value0}}. Type a path to use just that key.",
+          "sshConfigPickerRetry": "Try again",
+          "sshConfigPickerResolving": "Reading…"
         },
         "ForgetSshWorkspaceDialog": {
           "reconnectFailed": "Reconnection failed",

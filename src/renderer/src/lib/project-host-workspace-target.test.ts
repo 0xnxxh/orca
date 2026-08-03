@@ -265,7 +265,7 @@ describe('project-host workspace target resolution', () => {
     ).toEqual({ status: 'unavailable', reason: 'setup-not-found' })
   })
 
-  it('falls back from a removed draft host to an actionable sibling setup', () => {
+  it('does not silently switch an explicit setup id to an actionable sibling host', () => {
     const remoteRepo = makeRepo('remote-repo', { connectionId: 'removed' })
     const localRepo = makeRepo('local-repo')
     const projects = [makeProject('repo:orca', ['remote-repo', 'local-repo'])]
@@ -283,10 +283,7 @@ describe('project-host workspace target resolution', () => {
         projectHostSetupId: 'removed-setup',
         actionableHostIds: new Set(['local'])
       })
-    ).toMatchObject({
-      status: 'ready',
-      target: { hostId: 'local', repoId: 'local-repo' }
-    })
+    ).toEqual({ status: 'unavailable', reason: 'setup-not-found' })
   })
 
   // Regression: selecting a project in the new-workspace dropdown must not be

@@ -48,15 +48,18 @@ export function AddRemoteHostDialog({
   const [newConfigHostCount, setNewConfigHostCount] = useState(0)
   const [configHostMatchesTruncated, setConfigHostMatchesTruncated] = useState(false)
   const [isLoadingConfigHosts, setIsLoadingConfigHosts] = useState(false)
+  const [resolvingConfigAlias, setResolvingConfigAlias] = useState<string | null>(null)
   const [isBulkImporting, setIsBulkImporting] = useState(false)
   const [configHostsError, setConfigHostsError] = useState<string | null>(null)
   const [preferAdvancedOpen, setPreferAdvancedOpen] = useState(false)
+  const [configFilledAlias, setConfigFilledAlias] = useState<string | null>(null)
   const [serverName, setServerName] = useState('')
   const [pairingCode, setPairingCode] = useState('')
   const [allowLoopback, setAllowLoopback] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const configSearchGeneration = useRef(0)
   const configSearchQuery = useRef('')
+  const configResolveGeneration = useRef(0)
   const parsedServerLink = useMemo(() => parseHostAccessLink(pairingCode), [pairingCode])
   const serverFormCanSubmit =
     serverName.trim() !== '' &&
@@ -68,7 +71,13 @@ export function AddRemoteHostDialog({
   const setRuntimeEnvironmentStatus = useAppStore((s) => s.setRuntimeEnvironmentStatus)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
 
-  const busy = isSaving || isBulkImporting
+  const busy = isSaving || isBulkImporting || resolvingConfigAlias !== null
+
+  // Why: a pending resolve must never write into a form the user has moved on from.
+  const invalidatePendingConfigResolve = () => {
+    configResolveGeneration.current += 1
+    setResolvingConfigAlias(null)
+  }
 
   const reset = () => {
     setSshForm(EMPTY_FORM)
@@ -79,7 +88,9 @@ export function AddRemoteHostDialog({
     setConfigHostMatchesTruncated(false)
     setConfigHostsError(null)
     configSearchQuery.current = ''
+    invalidatePendingConfigResolve()
     setPreferAdvancedOpen(false)
+    setConfigFilledAlias(null)
     setIsBulkImporting(false)
     setServerName('')
     setPairingCode('')
@@ -87,7 +98,8 @@ export function AddRemoteHostDialog({
   }
 
   const close = () => {
-    if (busy) {
+    // Why: a stuck resolve must not trap the dialog open — reset() invalidates it instead.
+    if (isSaving || isBulkImporting) {
       return
     }
     reset()
@@ -113,13 +125,16 @@ export function AddRemoteHostDialog({
     }
   }
 
-  const loadSshConfigHosts = async (query = '') => {
+  const loadSshConfigHosts = async (query = '', options?: { refresh?: boolean }) => {
     configSearchQuery.current = query
     const generation = configSearchGeneration.current + 1
     configSearchGeneration.current = generation
     setIsLoadingConfigHosts(true)
     setConfigHostsError(null)
-    const result = await loadSshConfigHostsForPicker(window.api.ssh, { query })
+    const result = await loadSshConfigHostsForPicker(window.api.ssh, {
+      query,
+      ...(options?.refresh ? { refresh: true } : {})
+    })
     if (generation !== configSearchGeneration.current) {
       return
     }
@@ -137,16 +152,29 @@ export function AddRemoteHostDialog({
 
   const openSshConfigPicker = async () => {
     setSshView('config-picker')
-    await loadSshConfigHosts()
+    // Why: re-read ~/.ssh/config on open; the filter keystrokes reuse that parse.
+    await loadSshConfigHosts('', { refresh: true })
+  }
+
+  const leaveSshConfigPicker = () => {
+    invalidatePendingConfigResolve()
+    setSshView('form')
   }
 
   const selectSshConfigHost = async (host: SshConfigHostSummary) => {
-    setIsLoadingConfigHosts(true)
+    const generation = configResolveGeneration.current + 1
+    configResolveGeneration.current = generation
+    setResolvingConfigAlias(host.alias)
+    // Why: a slower earlier pick must not overwrite the host the user settled on.
+    const isStale = () => generation !== configResolveGeneration.current
     let resolved: Awaited<ReturnType<typeof prefillFormFromSshConfigHost>>
     try {
       resolved = await prefillFormFromSshConfigHost(host, window.api.ssh)
     } catch (error) {
-      setIsLoadingConfigHosts(false)
+      if (isStale()) {
+        return
+      }
+      setResolvingConfigAlias(null)
       toast.error(
         error instanceof Error
           ? error.message
@@ -157,7 +185,10 @@ export function AddRemoteHostDialog({
       )
       return
     }
-    setIsLoadingConfigHosts(false)
+    if (isStale()) {
+      return
+    }
+    setResolvingConfigAlias(null)
     if (!resolved) {
       toast.error(
         translate(
@@ -170,6 +201,7 @@ export function AddRemoteHostDialog({
     const { form, preferAdvancedOpen: openAdvanced } = resolved
     setSshForm(form)
     setPreferAdvancedOpen(openAdvanced)
+    setConfigFilledAlias(host.alias)
     setSshView('form')
     recordFeatureInteraction('ssh')
     toast.success(
@@ -301,10 +333,12 @@ export function AddRemoteHostDialog({
               matchesTruncated={configHostMatchesTruncated}
               isLoading={isLoadingConfigHosts}
               isBulkImporting={isBulkImporting}
+              resolvingAlias={resolvingConfigAlias}
               loadError={configHostsError}
               onSelect={(host) => void selectSshConfigHost(host)}
               onQueryChange={(query) => void loadSshConfigHosts(query)}
-              onBack={() => setSshView('form')}
+              onRetry={() => void loadSshConfigHosts(configSearchQuery.current, { refresh: true })}
+              onBack={leaveSshConfigPicker}
               onAddAllToOrca={() => void addAllConfigHostsToOrca()}
             />
           </div>
@@ -313,6 +347,7 @@ export function AddRemoteHostDialog({
             form={sshForm}
             disabled={busy}
             preferAdvancedOpen={preferAdvancedOpen}
+            configIdentityAlias={configFilledAlias}
             onFormChange={setSshForm}
             onSubmit={() => void saveSshHost()}
             onCancel={close}

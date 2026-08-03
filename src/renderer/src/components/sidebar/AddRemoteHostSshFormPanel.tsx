@@ -8,6 +8,7 @@ export function AddRemoteHostSshFormPanel({
   form,
   disabled,
   preferAdvancedOpen,
+  configIdentityAlias,
   onFormChange,
   onSubmit,
   onCancel,
@@ -16,6 +17,7 @@ export function AddRemoteHostSshFormPanel({
   form: EditingTarget
   disabled: boolean
   preferAdvancedOpen: boolean
+  configIdentityAlias: string | null
   onFormChange: (updater: (prev: EditingTarget) => EditingTarget) => void
   onSubmit: () => void
   onCancel: () => void
@@ -39,6 +41,7 @@ export function AddRemoteHostSshFormPanel({
         form={form}
         disabled={disabled}
         preferAdvancedOpen={preferAdvancedOpen}
+        configIdentityAlias={configIdentityAlias}
         onFormChange={onFormChange}
         onSubmit={onSubmit}
       />

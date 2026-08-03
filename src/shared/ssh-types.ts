@@ -113,7 +113,8 @@ export type SshConfigHostListResult = {
   hasMore: boolean
 }
 
-export type SshConfigHostListArgs = { query?: string }
+/** `refresh` re-reads ~/.ssh/config; filter keystrokes reuse the cached parse. */
+export type SshConfigHostListArgs = { query?: string; refresh?: boolean }
 
 /** Effective OpenSSH values used to prefill one manually managed target. */
 export type SshConfigHostResolution = {

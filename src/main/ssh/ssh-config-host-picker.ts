@@ -4,10 +4,27 @@ import type {
   SshConfigHostSummary,
   SshTarget
 } from '../../shared/ssh-types'
+import { normalizeSshConfigAlias } from '../../shared/ssh-config-alias'
 import { loadUserSshConfig, type SshConfigHost } from './ssh-config-parser'
 import { resolveWithSshG, type SshResolvedConfig } from './ssh-g-config-resolution'
 
 export const SSH_CONFIG_HOST_RESULT_LIMIT = 100
+
+// Why: every keystroke in the picker filter re-queries the main process. Parsing (and
+// Include-expanding) ~/.ssh/config per keystroke is the whole cost, and the file cannot
+// change between them, so hold the parse for the picker session and refresh on reopen.
+let cachedConfigHosts: SshConfigHost[] | null = null
+
+export function invalidateUserSshConfigHostCache(): void {
+  cachedConfigHosts = null
+}
+
+function getUserSshConfigHosts(refresh: boolean): SshConfigHost[] {
+  if (refresh || cachedConfigHosts === null) {
+    cachedConfigHosts = loadUserSshConfig()
+  }
+  return cachedConfigHosts
+}
 
 export function searchSshConfigHosts(
   hosts: SshConfigHost[],
@@ -17,13 +34,11 @@ export function searchSshConfigHosts(
 ): SshConfigHostListResult {
   const existingAliases = new Set(
     existingTargets.flatMap((target) =>
-      [target.configHost, target.label]
-        .filter((alias): alias is string => Boolean(alias))
-        .map((alias) => alias.toLowerCase())
+      [target.configHost, target.label].map(normalizeSshConfigAlias).filter(Boolean)
     )
   )
   const normalizedQuery = query.trim().toLowerCase()
-  const suppressedAliasSet = new Set(suppressedAliases.map((alias) => alias.toLowerCase()))
+  const suppressedAliasSet = new Set(suppressedAliases.map(normalizeSshConfigAlias))
   const summaries: SshConfigHostSummary[] = []
   const seenAliases = new Set<string>()
   let totalHostCount = 0
@@ -31,7 +46,7 @@ export function searchSshConfigHosts(
   let matchCount = 0
 
   for (const entry of hosts) {
-    const normalizedAlias = entry.host.toLowerCase()
+    const normalizedAlias = normalizeSshConfigAlias(entry.host)
     if (suppressedAliasSet.has(normalizedAlias)) {
       continue
     }
@@ -63,14 +78,21 @@ export function searchSshConfigHosts(
 export function listUserSshConfigHostSummaries(
   existingTargets: readonly Pick<SshTarget, 'configHost' | 'label'>[],
   query?: string,
-  suppressedAliases?: readonly string[]
+  suppressedAliases?: readonly string[],
+  options?: { refresh?: boolean }
 ): SshConfigHostListResult {
-  return searchSshConfigHosts(loadUserSshConfig(), existingTargets, query, suppressedAliases)
+  return searchSshConfigHosts(
+    getUserSshConfigHosts(options?.refresh === true),
+    existingTargets,
+    query,
+    suppressedAliases
+  )
 }
 
 export async function resolveUserSshConfigHost(
   alias: string,
-  resolver: (host: string) => Promise<SshResolvedConfig | null> = resolveWithSshG
+  resolver: (host: string) => Promise<SshResolvedConfig | null> = resolveWithSshG,
+  loadConfigHosts: () => SshConfigHost[] = () => getUserSshConfigHosts(false)
 ): Promise<SshConfigHostResolution | null> {
   const resolved = await resolver(alias)
   if (!resolved?.hostname) {
@@ -85,11 +107,21 @@ export async function resolveUserSshConfigHost(
     ...(resolved.identityAgent ? { identityAgent: resolved.identityAgent } : {}),
     identitiesOnly: resolved.identitiesOnly,
     forwardAgent: resolved.forwardAgent,
-    gssapiAuthentication: resolved.gssapiAuthentication,
+    // Why: `ssh -G` reports the effective value, which on many distros is the /etc/ssh
+    // default `GSSAPIAuthentication yes`. Stamping that onto a manual target would force
+    // a GSSAPI-first handshake the user never asked for, so honour the Host entry only.
+    gssapiAuthentication: configHostRequestsGssapi(loadConfigHosts(), alias),
     ...(resolved.proxyCommand ? { proxyCommand: resolved.proxyCommand } : {}),
     proxyUseFdpass: resolved.proxyUseFdpass,
     ...(resolved.proxyJump ? { jumpHost: resolved.proxyJump } : {})
   }
+}
+
+function configHostRequestsGssapi(hosts: readonly SshConfigHost[], alias: string): boolean {
+  const normalized = normalizeSshConfigAlias(alias)
+  return hosts.some(
+    (entry) => normalizeSshConfigAlias(entry.host) === normalized && entry.gssapiAuthentication
+  )
 }
 
 function toSummary(entry: SshConfigHost, alreadyInOrca: boolean): SshConfigHostSummary {
