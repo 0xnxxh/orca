@@ -2382,8 +2382,12 @@ export class AgentHookServer {
       const reconciledAt = stateChanged
         ? Math.max(Date.now(), enriched.receivedAt + 1)
         : enriched.receivedAt
+      // Why: a reconciled `done` is process-probe-verified, not hydrated guesswork — carrying
+      // restoredUnconfirmed onto it would make freshness gates suppress a legitimate completion.
+      const { restoredUnconfirmed, ...reconciledBase } = enriched
       const reconciled: EnrichedAgentHookEventPayload = {
-        ...enriched,
+        ...reconciledBase,
+        ...(state !== 'done' && restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
         receivedAt: reconciledAt,
         stateStartedAt: stateChanged ? reconciledAt : enriched.stateStartedAt,
         payload: { ...enriched.payload, state, subagents }
