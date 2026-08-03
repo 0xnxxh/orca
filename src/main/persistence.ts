@@ -6619,6 +6619,8 @@ export class Store {
   }
 
   // Why: sync-flush the pty binding before pty:spawn returns to close the spawn/persist SIGKILL race (Issue #217).
+  // `mayCreate: false` binds only to panes that already exist: reattach may never create UI (STA-3077 I2).
+  // An absence here justifies refusing to create; it never justifies destroying — the caller leaves the lease alone.
   persistPtyBinding(
     args: {
       worktreeId: string
@@ -6628,8 +6630,10 @@ export class Store {
       incarnationId?: string
       startupCwd?: string
     },
-    hostId?: string | null
-  ): void {
+    hostId?: string | null,
+    options?: { mayCreate?: boolean }
+  ): 'bound' | 'refused' {
+    const mayCreate = options?.mayCreate ?? true
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
@@ -6702,6 +6706,12 @@ export class Store {
     }
     if (!isTerminalLeafId(args.leafId)) {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
+      // Legacy ids have no durable leaf-keyed layout to prove pane existence, so a minted tab is the only
+      // creation reachable here — refuse it rather than guess.
+      if (!mayCreate && terminalMembershipChanged) {
+        restoreSession()
+        return 'refused'
+      }
       advanceTopologyAfterMembershipChange()
       try {
         this.flushOrThrow()
@@ -6709,7 +6719,7 @@ export class Store {
         restoreSession()
         throw err
       }
-      return
+      return 'bound'
     }
     const layout = session.terminalLayoutsByTabId?.[args.tabId]
     if (layout) {
@@ -6750,6 +6760,12 @@ export class Store {
         }
       }
     }
+    // Why: the clone at sessionBeforeBinding predates the incarnation write, so refusing also rolls back
+    // terminalPtyIncarnationsByPaneKey and the tombstone clear — we are declining the bind entirely.
+    if (!mayCreate && terminalMembershipChanged) {
+      restoreSession()
+      return 'refused'
+    }
     advanceTopologyAfterMembershipChange()
     try {
       this.flushOrThrow()
@@ -6757,6 +6773,7 @@ export class Store {
       restoreSession()
       throw err
     }
+    return 'bound'
   }
 
   // ── SSH Targets ────────────────────────────────────────────────────
