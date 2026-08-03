@@ -141,8 +141,11 @@ describe('AgentKanbanBoard', () => {
     renderBoard([])
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    expect(await screen.findByText('Live containment map')).toBeInTheDocument()
-    expect(screen.getByText('Map filters')).toBeInTheDocument()
+    expect(await screen.findByText('0 of 0 agents shown')).toBeInTheDocument()
+    expect(screen.getByText('Agent states')).toBeInTheDocument()
+    expect(screen.queryByText('Live containment map')).not.toBeInTheDocument()
+    expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
+    expect(screen.queryByText('Choose what stays visible')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
     expect(screen.getByText('Needs You')).toBeInTheDocument()

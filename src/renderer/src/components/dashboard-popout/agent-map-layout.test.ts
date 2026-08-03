@@ -158,6 +158,39 @@ describe('agent map layout', () => {
     }
   })
 
+  it('packs high-fanout orchestrated children into a compact deterministic cluster', () => {
+    const cards = [
+      card({ paneKey: 'parent' }),
+      ...Array.from({ length: 29 }, (_, index) =>
+        card({
+          paneKey: `child-${index.toString().padStart(2, '0')}`,
+          parentPaneKey: 'parent'
+        })
+      )
+    ]
+    const first = deriveAgentMapLayout(cards, NOW).projects[0].worktrees[0]
+    const second = deriveAgentMapLayout(cards, NOW).projects[0].worktrees[0]
+    const parent = first.agents.find((agent) => agent.card.paneKey === 'parent')!
+    const children = first.agents.filter((agent) => agent.card.parentPaneKey === 'parent')
+
+    expect(new Set(children.map((child) => child.y.toFixed(3))).size).toBeGreaterThan(4)
+    expect(children.every((child) => child.y > parent.y)).toBe(true)
+    expect(
+      Math.max(...children.map((child) => child.x)) - Math.min(...children.map((child) => child.x))
+    ).toBeLessThan(500)
+    expect(first.radius).toBeLessThan(350)
+    for (const [index, child] of children.entries()) {
+      for (const other of children.slice(index + 1)) {
+        expect(Math.hypot(child.x - other.x, child.y - other.y)).toBeGreaterThanOrEqual(
+          AGENT_MAP_AGENT_RADIUS * 2
+        )
+      }
+    }
+    expect(first.agents.map(({ card, x, y }) => ({ paneKey: card.paneKey, x, y }))).toEqual(
+      second.agents.map(({ card, x, y }) => ({ paneKey: card.paneKey, x, y }))
+    )
+  })
+
   it('places visible child worktrees beneath their direct parent', () => {
     const layout = deriveAgentMapLayout(
       [
