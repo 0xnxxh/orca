@@ -4,6 +4,7 @@ import type {
   KeyboardEventHandler,
   RefObject
 } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { Image as ImageIcon, ImageOff, X } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -38,7 +39,6 @@ export type NativeChatComposerFieldProps = {
   onDraftChange: (value: string, element: HTMLTextAreaElement) => void
   onTextareaSelect: (element: HTMLTextAreaElement) => void
   onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>
-  onCompositionStart: CompositionEventHandler<HTMLTextAreaElement>
   onCompositionEnd: CompositionEventHandler<HTMLTextAreaElement>
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>
   pickerListboxId: string
@@ -80,7 +80,6 @@ export function NativeChatComposerField({
   onDraftChange,
   onTextareaSelect,
   onKeyDown,
-  onCompositionStart,
   onCompositionEnd,
   onPaste,
   pickerListboxId,
@@ -97,6 +96,16 @@ export function NativeChatComposerField({
   sessionOptionsSurface,
   sessionOptionsSnapshot
 }: NativeChatComposerFieldProps): React.JSX.Element {
+  const compositionActiveRef = useRef(false)
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea || compositionActiveRef.current || textarea.value === draft) {
+      return
+    }
+    textarea.value = draft
+  }, [draft, textareaRef])
+
   return (
     <div className="shrink-0 bg-background">
       {/* Extra bottom padding keeps the input box off the window rim. */}
@@ -164,13 +173,18 @@ export function NativeChatComposerField({
             ) : null}
             <textarea
               ref={textareaRef}
-              value={draft}
+              defaultValue={draft}
               disabled={disabled}
               rows={2}
               onChange={(e) => onDraftChange(e.target.value, e.currentTarget)}
               onKeyDown={onKeyDown}
-              onCompositionStart={onCompositionStart}
-              onCompositionEnd={onCompositionEnd}
+              onCompositionStart={() => {
+                compositionActiveRef.current = true
+              }}
+              onCompositionEnd={(event) => {
+                compositionActiveRef.current = false
+                onCompositionEnd(event)
+              }}
               onPaste={onPaste}
               onSelect={(e) => onTextareaSelect(e.currentTarget)}
               aria-expanded={autocomplete.mode === 'slash' || autocomplete.mode === 'skill'}

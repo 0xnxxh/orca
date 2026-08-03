@@ -6,6 +6,7 @@ import {
   increaseChatFontScale
 } from './native-chat-font-scale'
 import { isMacPlatform } from './native-chat-shortcut'
+import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
 
 export type ChatFontScaleControls = {
   /** Current chat text scale (1 = default). Apply as a font-size multiplier. */
@@ -35,6 +36,9 @@ export function useNativeChatFontScale(enabled: boolean): ChatFontScaleControls 
     }
     const isMac = isMacPlatform()
     const onKeyDown = (e: KeyboardEvent): void => {
+      if (isImeOwnedKeyboardEvent(e)) {
+        return
+      }
       const action = chatFontScaleActionForEvent(e, isMac)
       if (!action) {
         return

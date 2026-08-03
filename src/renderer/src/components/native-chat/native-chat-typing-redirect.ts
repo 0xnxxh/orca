@@ -1,3 +1,5 @@
+import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
+
 type KeyboardRedirectEvent = {
   key: string
   ctrlKey: boolean
@@ -6,6 +8,7 @@ type KeyboardRedirectEvent = {
   altKey?: boolean
   defaultPrevented: boolean
   isComposing?: boolean
+  keyCode?: number
   target: EventTarget | null
 }
 
@@ -31,7 +34,7 @@ const INTERACTIVE_TARGET_SELECTOR = [
 export function shouldRedirectNativeChatTyping(event: KeyboardRedirectEvent): boolean {
   if (
     event.defaultPrevented ||
-    event.isComposing ||
+    isImeOwnedKeyboardEvent(event) ||
     event.ctrlKey ||
     event.metaKey ||
     event.key.length !== 1
@@ -53,7 +56,7 @@ export function shouldFocusNativeChatPaneFromPointerTarget(target: EventTarget |
 export function shouldFocusNativeChatComposerFromEditingKey(event: KeyboardRedirectEvent): boolean {
   if (
     event.defaultPrevented ||
-    event.isComposing ||
+    isImeOwnedKeyboardEvent(event) ||
     event.ctrlKey ||
     event.metaKey ||
     event.shiftKey ||

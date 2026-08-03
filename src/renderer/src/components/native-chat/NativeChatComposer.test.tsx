@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   fieldProps: null as {
     onSend?: () => void
     onStop?: () => void
-    onCompositionStart?: () => void
     onCompositionEnd?: (event: { currentTarget: HTMLTextAreaElement }) => void
     sessionOptionsSurface?: SessionOptionsSurface | null
     sessionOptionsSnapshot?: SessionOptionDescriptor[]
@@ -267,7 +266,6 @@ describe('NativeChatComposer', () => {
     mocks.setDraft.mockClear()
 
     act(() => {
-      mocks.fieldProps?.onCompositionStart?.()
       mocks.fieldProps?.onCompositionEnd?.({ currentTarget: textarea })
     })
 

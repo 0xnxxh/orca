@@ -1,15 +1,96 @@
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
-import { waitForActivePaneHookDescriptor, waitForActiveTerminalManager } from './helpers/terminal'
+import {
+  waitForActivePaneHookDescriptor,
+  waitForActivePanePtyId,
+  waitForActiveTerminalManager
+} from './helpers/terminal'
+import {
+  createTerminalImeByteReader,
+  removeTerminalImeByteReader,
+  startTerminalImeByteReader,
+  waitForTerminalImeBytes
+} from './terminal-ime-byte-reader'
 import type { GlobalSettings } from '../../src/shared/types'
 
 const LOADING_TITLE = 'Loading conversation…'
 const ERROR_TITLE = 'Could not load conversation'
+const TWO_SET_KOREAN_ID = 'com.apple.inputmethod.Korean.2SetKorean'
+
+function typeNativeKeys(processId: number, keyCodes: readonly number[]): void {
+  execFileSync('osascript', [
+    '-e',
+    `tell application "System Events" to set frontmost of first application process whose unix id is ${processId} to true`,
+    '-e',
+    'tell application "System Events"',
+    '-e',
+    `repeat with currentKeyCode in {${keyCodes.join(', ')}}`,
+    '-e',
+    'key code (currentKeyCode as integer)',
+    '-e',
+    'delay 0.08',
+    '-e',
+    'end repeat',
+    '-e',
+    'end tell'
+  ])
+}
+
+async function installNativeChatImeTrace(page: Page): Promise<void> {
+  await page.locator('[data-native-chat-root="true"] textarea').evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement
+    textarea.dataset.imeTrace = '[]'
+    const record = (event: Event): void => {
+      const trace = JSON.parse(textarea.dataset.imeTrace ?? '[]') as Record<string, unknown>[]
+      const entry: Record<string, unknown> = {
+        type: event.type,
+        value: textarea.value,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd
+      }
+      if (event instanceof KeyboardEvent) {
+        Object.assign(entry, {
+          key: event.key,
+          keyCode: event.keyCode,
+          isComposing: event.isComposing
+        })
+      } else if (event instanceof InputEvent) {
+        Object.assign(entry, {
+          data: event.data,
+          inputType: event.inputType,
+          isComposing: event.isComposing
+        })
+      } else if (event instanceof CompositionEvent) {
+        entry.data = event.data
+      }
+      trace.push(entry)
+      textarea.dataset.imeTrace = JSON.stringify(trace)
+    }
+    for (const type of [
+      'keydown',
+      'beforeinput',
+      'compositionstart',
+      'compositionupdate',
+      'input',
+      'compositionend',
+      'keyup'
+    ]) {
+      textarea.addEventListener(type, record, true)
+    }
+  })
+}
+
+async function readNativeChatImeTrace(page: Page): Promise<Record<string, unknown>[]> {
+  return page
+    .locator('[data-native-chat-root="true"] textarea')
+    .evaluate((element) => JSON.parse((element as HTMLTextAreaElement).dataset.imeTrace ?? '[]'))
+}
 
 async function enableNativeChatSetting(page: Page): Promise<void> {
   await page.evaluate(async () => {
@@ -159,6 +240,99 @@ test.describe('Native chat first-flush transcript race (#8401)', () => {
         path: path.join(screenshotDir, '02-hydrated.png')
       })
     } finally {
+      rmSync(scratchDir, { recursive: true, force: true })
+    }
+  })
+})
+
+test.describe('Native macOS Korean session chat @headful', () => {
+  test.skip(
+    process.platform !== 'darwin' || process.env.ORCA_E2E_NATIVE_MACOS_KOREAN !== '1',
+    'Requires macOS with 2-Set Korean selected and Accessibility access'
+  )
+
+  test('keeps browser composition stable through streaming rerenders and owns only ordinary Enter', async ({
+    electronApp,
+    orcaPage,
+    testRepoPath
+  }, testInfo) => {
+    await waitForSessionReady(orcaPage)
+    await waitForActiveWorktree(orcaPage)
+    await ensureTerminalVisible(orcaPage)
+    await waitForActiveTerminalManager(orcaPage, 30_000)
+    await expect(orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())).resolves.toBe(
+      TWO_SET_KOREAN_ID
+    )
+
+    const descriptor = await waitForActivePaneHookDescriptor(orcaPage)
+    const ptyId = await waitForActivePanePtyId(orcaPage)
+    const byteReader = createTerminalImeByteReader(testRepoPath, 2)
+    const [tabId] = descriptor.paneKey.split(':')
+    const sessionId = `e2e-native-chat-ime-${randomUUID()}`
+    const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-native-chat-ime-'))
+    const transcriptPath = path.join(scratchDir, `${sessionId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      claudeTranscriptLines({
+        sessionId,
+        userText: 'Keep this session streaming',
+        assistantText: 'Streaming response placeholder'
+      })
+    )
+
+    try {
+      await startTerminalImeByteReader(orcaPage, ptyId, byteReader)
+      await enableNativeChatSetting(orcaPage)
+      await seedClaudeProviderSession(orcaPage, {
+        paneKey: descriptor.paneKey,
+        worktreeId: descriptor.worktreeId,
+        sessionId,
+        transcriptPath
+      })
+      await toggleTerminalTabToChatView(orcaPage, { tabId, worktreeId: descriptor.worktreeId })
+
+      const composer = orcaPage.locator('[data-native-chat-root="true"] textarea')
+      await expect(composer).toBeVisible({ timeout: 15_000 })
+      await composer.focus()
+      await installNativeChatImeTrace(orcaPage)
+      typeNativeKeys(electronApp.process().pid!, [7, 35, 17, 46, 7, 46])
+      await expect.poll(() => composer.inputValue()).toBe('테스트')
+
+      await orcaPage.waitForTimeout(1_500)
+      await expect(composer).toHaveValue('테스트')
+      typeNativeKeys(electronApp.process().pid!, [36])
+      await expect(composer).toHaveValue('')
+
+      await composer.fill('ordinary')
+      await composer.press('Enter')
+      const receivedBytes = await waitForTerminalImeBytes(orcaPage, byteReader)
+      expect(receivedBytes).toEqual([
+        Buffer.from('테스트\n').toString('hex'),
+        Buffer.from('ordinary\n').toString('hex')
+      ])
+      const trace = await readNativeChatImeTrace(orcaPage)
+      expect(trace.some((entry) => entry.type === 'compositionstart')).toBe(true)
+      expect(trace.some((entry) => entry.type === 'compositionend')).toBe(true)
+      expect(
+        trace.some(
+          (entry) =>
+            entry.type === 'keydown' &&
+            entry.key === 'Enter' &&
+            entry.keyCode === 229 &&
+            entry.isComposing === true
+        )
+      ).toBe(true)
+      const evidencePath = testInfo.outputPath('native-macos-2set-session-chat.json')
+      writeFileSync(
+        evidencePath,
+        JSON.stringify({ expectedText: '테스트', events: trace }, null, 2)
+      )
+      await testInfo.attach('native-macos-2set-session-chat.json', {
+        path: evidencePath,
+        contentType: 'application/json'
+      })
+    } finally {
+      removeTerminalImeByteReader(byteReader)
       rmSync(scratchDir, { recursive: true, force: true })
     }
   })

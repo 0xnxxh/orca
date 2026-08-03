@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type KeyboardEventHandler, type SetStateAction } from 'react'
+import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
 import {
   recallNext,
   recallPrevious,
@@ -12,7 +13,6 @@ export type UseNativeChatComposerKeyDownArgs = {
   activeSuggestion: number
   draft: string
   history: HistoryState
-  isComposing: () => boolean
   completePickerItem: (item: NativeChatPickerItem) => void
   dispatchPickerCommand: (item: Extract<NativeChatPickerItem, { kind: 'command' }>) => void
   dismissPicker: (triggerKey: string) => void
@@ -29,7 +29,6 @@ export function useNativeChatComposerKeyDown({
   activeSuggestion,
   draft,
   history,
-  isComposing,
   completePickerItem,
   dispatchPickerCommand,
   dismissPicker,
@@ -42,12 +41,7 @@ export function useNativeChatComposerKeyDown({
 }: UseNativeChatComposerKeyDownArgs): KeyboardEventHandler<HTMLTextAreaElement> {
   return useCallback(
     (event) => {
-      if (isComposing() || event.nativeEvent.isComposing || event.keyCode === 229) {
-        // Why: IME Enter confirms composition; allowing it to fall through
-        // would accept a picker row or submit a partial draft.
-        if (event.key === 'Enter') {
-          event.preventDefault()
-        }
+      if (isImeOwnedKeyboardEvent(event)) {
         return
       }
 
@@ -119,7 +113,6 @@ export function useNativeChatComposerKeyDown({
       draft,
       history,
       interrupt,
-      isComposing,
       send,
       setActiveSuggestion,
       setCaret,

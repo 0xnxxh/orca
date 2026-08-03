@@ -102,7 +102,6 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
     const [notice, setNotice] = useState<string | null>(null)
     const [dictationPressed, setDictationPressed] = useState(false)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
-    const isComposingRef = useRef(false)
     const { cancelPendingSends, trackPendingSend } = useNativeChatSendLifecycle(
       terminalTabId,
       targetPtyId,
@@ -363,7 +362,6 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
       activeSuggestion,
       draft,
       history,
-      isComposing: () => isComposingRef.current,
       completePickerItem: completeItem,
       dispatchPickerCommand,
       dismissPicker: dismiss,
@@ -410,11 +408,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
           setActiveSuggestion(0)
         }}
         onKeyDown={handleKeyDown}
-        onCompositionStart={() => {
-          isComposingRef.current = true
-        }}
         onCompositionEnd={(event) => {
-          isComposingRef.current = false
           if (event.currentTarget.value !== draft) {
             handleDraftChange(event.currentTarget.value, event.currentTarget)
           }

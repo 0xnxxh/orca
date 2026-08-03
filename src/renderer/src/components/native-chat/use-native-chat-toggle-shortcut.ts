@@ -11,6 +11,7 @@ import {
   isNativeChatTabWideFallbackSafe,
   resolveNativeChatActiveLayoutLeafId
 } from './native-chat-leaf-routing'
+import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
 
 export function resolveNativeChatToggleShortcutDetectedAgent({
   terminalTabId,
@@ -46,7 +47,7 @@ export function useNativeChatToggleShortcut(worktreeId: string, isWorktreeActive
     }
     const isMac = isMacPlatform()
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.repeat || !matchesNativeChatToggleShortcut(e, isMac)) {
+      if (isImeOwnedKeyboardEvent(e) || e.repeat || !matchesNativeChatToggleShortcut(e, isMac)) {
         return
       }
       const state = useAppStore.getState()

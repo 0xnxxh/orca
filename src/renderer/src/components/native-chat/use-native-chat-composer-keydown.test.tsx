@@ -27,7 +27,7 @@ function picker(items = [COMMAND]): Extract<ComposerAutocomplete, { mode: 'slash
   }
 }
 
-function setup(autocomplete: ComposerAutocomplete = picker(), composing = false) {
+function setup(autocomplete: ComposerAutocomplete = picker()) {
   const callbacks = {
     completePickerItem: vi.fn(),
     dispatchPickerCommand: vi.fn(),
@@ -45,19 +45,21 @@ function setup(autocomplete: ComposerAutocomplete = picker(), composing = false)
       activeSuggestion: 0,
       draft: '/',
       history: EMPTY_HISTORY,
-      isComposing: () => composing,
       ...callbacks
     })
   )
   return { handler: hook.result.current, callbacks }
 }
 
-function keyEvent(key: string, isComposing = false) {
+function keyEvent(
+  key: string,
+  { isComposing = false, keyCode = 0 }: { isComposing?: boolean; keyCode?: number } = {}
+) {
   return {
     key,
     shiftKey: false,
-    keyCode: isComposing ? 229 : 0,
-    nativeEvent: { isComposing },
+    keyCode,
+    nativeEvent: { isComposing, keyCode },
     preventDefault: vi.fn()
   }
 }
@@ -89,11 +91,24 @@ describe('useNativeChatComposerKeyDown', () => {
   })
 
   it('does not accept or submit while IME composition is active', () => {
-    const { handler, callbacks } = setup(picker(), true)
-    const event = keyEvent('Enter', true)
+    const { handler, callbacks } = setup()
+    const event = keyEvent('Enter', { isComposing: true, keyCode: 13 })
     handler(event as never)
-    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.preventDefault).not.toHaveBeenCalled()
     expect(callbacks.dispatchPickerCommand).not.toHaveBeenCalled()
     expect(callbacks.send).not.toHaveBeenCalled()
+  })
+
+  it('ignores the recorded macOS IME Enter before handling its ordinary redispatch', () => {
+    const { handler, callbacks } = setup()
+    const compositionEnter = keyEvent('Enter', { isComposing: true, keyCode: 229 })
+    handler(compositionEnter as never)
+    expect(compositionEnter.preventDefault).not.toHaveBeenCalled()
+    expect(callbacks.dispatchPickerCommand).not.toHaveBeenCalled()
+    expect(callbacks.send).not.toHaveBeenCalled()
+
+    const ordinaryRedispatch = keyEvent('Enter', { keyCode: 13 })
+    handler(ordinaryRedispatch as never)
+    expect(callbacks.dispatchPickerCommand).toHaveBeenCalledOnce()
   })
 })

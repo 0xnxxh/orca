@@ -39,6 +39,7 @@ describe('shouldRedirectNativeChatTyping', () => {
 
   it('does not redirect IME composition or already-handled events', () => {
     expect(shouldRedirectNativeChatTyping(keyEvent({ isComposing: true }))).toBe(false)
+    expect(shouldRedirectNativeChatTyping(keyEvent({ keyCode: 229 }))).toBe(false)
     expect(shouldRedirectNativeChatTyping(keyEvent({ defaultPrevented: true }))).toBe(false)
   })
 
