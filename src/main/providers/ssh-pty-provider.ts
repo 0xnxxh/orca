@@ -71,6 +71,8 @@ export class SshPtyProvider implements IPtyProvider {
   getConnectionId = (): string => this.connectionId
   getExecutionHostPathFlavor = (): RemotePathFlavor | null => this.executionHostPathFlavor
 
+  canProvideAuthoritativeBufferSnapshot = (_id: string): boolean => false
+
   private toRelayPtyId = (id: string): string => toRelaySshPtyId(this.connectionId, id)
 
   private toAppPtyId = (id: string): string => toAppSshPtyId(this.connectionId, id)

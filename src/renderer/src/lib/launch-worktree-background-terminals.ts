@@ -4,14 +4,16 @@ import {
 } from '@/components/terminal-pane/pty-dispatcher'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
+import { spawnBackgroundTerminalPane } from '@/lib/background-terminal-pane-spawn'
 import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
 import { adoptSpawn, retireUnownedTerminal } from '@/lib/retire-unowned-background-terminal'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
-import { isWindowsAbsolutePathLike } from '../../../shared/cross-platform-path'
-import { makePaneKey } from '../../../shared/stable-pane-id'
-import { buildSetupRunnerCommand } from '../../../shared/setup-runner-command'
+import {
+  buildSetupRunnerCommand,
+  getSetupRunnerCommandPlatformForPath
+} from '../../../shared/setup-runner-command'
 import type {
   TerminalLayoutSnapshot,
   Worktree,
@@ -44,20 +46,6 @@ export type LaunchWorktreeBackgroundTerminalsArgs = {
   worktreeId: string
   setup?: WorktreeSetupLaunch
   defaultTabs?: WorktreeDefaultTabsLaunch
-}
-
-function buildPaneEnv(
-  worktreeId: string,
-  tabId: string,
-  leafId: string,
-  env: Record<string, string> | undefined
-): Record<string, string> {
-  return {
-    ...env,
-    ORCA_PANE_KEY: makePaneKey(tabId, leafId),
-    ORCA_TAB_ID: tabId,
-    ORCA_WORKTREE_ID: worktreeId
-  }
 }
 
 function buildSplitLayout(
@@ -120,32 +108,12 @@ function registerBackgroundPaneBuffer(tabId: string, leafId: string, ptyId: stri
 }
 
 function buildSetupCommand(setup: WorktreeSetupLaunch): string {
+  // Why: background setup tabs can launch later, so they must reuse the same shell chosen when the runner was written.
   return buildSetupRunnerCommand(
     setup.runnerScriptPath,
-    isWindowsAbsolutePathLike(setup.runnerScriptPath) ? 'windows' : 'posix'
+    getSetupRunnerCommandPlatformForPath(setup.runnerScriptPath, 'posix'),
+    setup.shell
   )
-}
-
-async function spawnPane(args: {
-  worktree: Worktree
-  connectionId: string | null
-  tabId: string
-  leafId: string
-  command?: string
-  env?: Record<string, string>
-}): Promise<{ id: string; spawnRetirementToken?: string }> {
-  const result = await window.api.pty.spawn({
-    cols: 120,
-    rows: 40,
-    cwd: args.worktree.path,
-    ...(args.command ? { command: args.command } : {}),
-    env: buildPaneEnv(args.worktree.id, args.tabId, args.leafId, args.env),
-    connectionId: args.connectionId,
-    worktreeId: args.worktree.id,
-    tabId: args.tabId,
-    leafId: args.leafId
-  })
-  return { id: result.id, spawnRetirementToken: result.spawnRetirementToken }
 }
 
 async function createBackgroundTab(args: {
@@ -167,9 +135,9 @@ async function createBackgroundTab(args: {
 
   const leafId = createBrowserUuid()
   store.setTabLayout(tab.id, singlePaneLayoutSnapshot(leafId))
-  let spawnResult: Awaited<ReturnType<typeof spawnPane>>
+  let spawnResult: Awaited<ReturnType<typeof spawnBackgroundTerminalPane>>
   try {
-    spawnResult = await spawnPane({
+    spawnResult = await spawnBackgroundTerminalPane({
       worktree: args.worktree,
       connectionId: args.connectionId,
       tabId: tab.id,
@@ -208,7 +176,7 @@ async function addSetupSplit(args: {
 }): Promise<void> {
   const store = useAppStore.getState()
   const setupLeafId = createBrowserUuid()
-  const setupSpawn = await spawnPane({
+  const setupSpawn = await spawnBackgroundTerminalPane({
     worktree: args.worktree,
     connectionId: args.connectionId,
     tabId: args.tab.tabId,
