@@ -114,6 +114,12 @@ describe('estimateStateCollectionKB', () => {
     expect(result.__totalKB).toBeGreaterThan((result.a ?? 0) * 2.5)
   })
 
+  it('includes raw bytes from slices that round below one KB', () => {
+    expect(
+      estimateStateCollectionKB({ a: 'x'.repeat(200), b: 'x'.repeat(200), c: 'x'.repeat(200) }, 4)
+    ).toEqual({ __totalKB: 1 })
+  })
+
   it('skips a slice whose read throws without sinking the census', () => {
     const state = { healthy: 'x'.repeat(10_000) }
     Object.defineProperty(state, 'poisoned', {

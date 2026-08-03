@@ -44,6 +44,8 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
     return {}
   }
   const sizes: [string, number][] = []
+  let totalBytes = 0
+  let successfulSlices = 0
   let budgetHitSlices = 0
   for (const key in state) {
     if (!Object.hasOwn(state, key)) {
@@ -60,6 +62,8 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
         seen: new WeakSet()
       }
       const bytes = estimateValueBytes((state as Record<string, unknown>)[key], 0, ctx)
+      totalBytes += bytes
+      successfulSlices += 1
       if (ctx.budgetHit) {
         budgetHitSlices += 1
       }
@@ -71,14 +75,22 @@ export function estimateStateCollectionKB(state: unknown, limit: number): Record
       sizes.push([key, kb])
     }
   }
+  const totalKB = Math.round(totalBytes / BYTES_PER_KILOBYTE)
   if (sizes.length === 0) {
-    return budgetHitSlices === 0 ? {} : { __budgetHitSlices: budgetHitSlices }
+    const total: Record<string, number> = {}
+    if (successfulSlices > 0) {
+      total.__totalKB = totalKB
+    }
+    if (budgetHitSlices > 0) {
+      total.__budgetHitSlices = budgetHitSlices
+    }
+    return total
   }
   sizes.sort((a, b) => b[1] - a[1])
   const top = Object.fromEntries(sizes.slice(0, limit))
   // Why __totalKB: a small unsaturated total can exonerate the whole state
   // object and redirect investigation without a local repro.
-  top.__totalKB = sizes.reduce((sum, [, kb]) => sum + kb, 0)
+  top.__totalKB = totalKB
   if (budgetHitSlices > 0) {
     top.__budgetHitSlices = budgetHitSlices
   }
