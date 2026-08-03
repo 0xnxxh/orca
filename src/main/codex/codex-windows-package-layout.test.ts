@@ -12,6 +12,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { repairCodexWindowsPackageLayout } from './codex-windows-package-layout'
+import { resolveCodexCommand } from '../codex-cli/command'
+
+// The repair resolves the codex command when none is passed; that resolver can
+// throw on a version-manager readdir race. Mock it so a specific test can force
+// that throw. Every other test passes an explicit path, so the resolver is unused.
+vi.mock('../codex-cli/command', () => ({ resolveCodexCommand: vi.fn(() => '') }))
 
 let root: string
 let homePath: string
@@ -250,6 +256,19 @@ describe('repairCodexWindowsPackageLayout', () => {
 
     vi.advanceTimersByTime(60_001)
     expect(repair(commandPath).status).toBe('restored')
+  })
+
+  it('never throws out of the best-effort repair when command resolution fails', () => {
+    vi.mocked(resolveCodexCommand).mockImplementationOnce(() => {
+      throw new Error('version-manager readdir raced')
+    })
+
+    // No codexCommandPath forces the guarded resolveCodexCommand call, which throws.
+    expect(repairCodexWindowsPackageLayout({ platform: 'win32', homePath, appDataPath })).toEqual({
+      status: 'not-applicable',
+      packageRootPath: null,
+      restoredDirectories: []
+    })
   })
 
   // POSIX-only: forces a real publish failure via a read-only root. On win32 the

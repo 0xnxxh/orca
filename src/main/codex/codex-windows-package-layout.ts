@@ -65,6 +65,18 @@ type RepairOptions = {
 export function repairCodexWindowsPackageLayout(
   options: RepairOptions = {}
 ): CodexWindowsPackageLayoutResult {
+  // Best-effort repair on the launch-critical path (the caller ignores the result).
+  // resolveCodexCommand enumerates version-manager dirs with an unguarded readdir,
+  // so an EPERM/ENOENT race there could throw; swallow it rather than abort launch.
+  try {
+    return runRepair(options)
+  } catch (error) {
+    console.warn('[codex-package-layout] Unexpected error during repair:', error)
+    return notApplicable()
+  }
+}
+
+function runRepair(options: RepairOptions): CodexWindowsPackageLayoutResult {
   const platform = options.platform ?? process.platform
   if (platform !== 'win32') {
     return notApplicable()
