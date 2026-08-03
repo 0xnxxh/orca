@@ -1,9 +1,10 @@
 import type { PRComment } from '../../../../shared/types'
 import { getPRCommentGroupRoot, type PRCommentGroup } from '@/lib/pr-comment-groups'
 import { isResolvablePRCommentGroup } from '../pr-comments-resolution-prompt'
-
-/** Posted when a selected review comment is sent to AI. */
-export const PR_COMMENT_AI_FIXING_REPLY = 'Fixing. Will be in the next commit'
+import {
+  buildPRCommentBatchConversationReplyBody,
+  PR_COMMENT_AI_FIXING_REPLY
+} from './pr-comment-fixing-reply-body'
 
 export type PRCommentAiLaunchAckCounts = {
   resolved: number
@@ -25,27 +26,10 @@ export type PRCommentAiLaunchAckDeps = {
    */
   replyInThread: (comment: PRComment, body: string) => Promise<boolean>
   /**
-   * Top-level PR conversation comment (issues/.../comments), used for review
-   * summaries and other comments that have no nested-reply endpoint (e.g. CodeRabbit).
+   * One top-level PR conversation comment (issues/.../comments) covering every selected
+   * comment with no nested-reply endpoint (review summaries, CodeRabbit, plain comments).
    */
-  replyAsConversation: (comment: PRComment, body: string) => Promise<boolean>
-}
-
-/**
- * GitHub App logins carry a `[bot]` suffix that does not resolve as an @-mention
- * (`@coderabbitai[bot]` renders literally; `@coderabbitai` reaches the bot).
- */
-export function formatPRCommentMentionHandle(author: string | undefined): string {
-  return (author ?? '').replace(/\[bot\]$/i, '').trim()
-}
-
-/** Top-level conversation reply body, addressed to the comment author. */
-export function buildPRCommentConversationReplyBody(
-  author: string | undefined,
-  body: string
-): string {
-  const handle = formatPRCommentMentionHandle(author)
-  return handle ? `@${handle} ${body}` : body
+  replyAsConversation: (body: string) => Promise<boolean>
 }
 
 /**
@@ -72,12 +56,10 @@ export function canPostPRReviewThreadReply(
 }
 
 /**
- * Prefer the latest message in a thread so the fixing reply sits after existing replies.
+ * Reply to the thread root: GitHub's replies endpoint keys off the top-level review
+ * comment id, and a later reply's id can 404 there.
  */
 export function getPRCommentGroupReplyTarget(group: PRCommentGroup): PRComment {
-  if (group.kind === 'thread' && group.replies.length > 0) {
-    return group.replies.at(-1)!
-  }
   return getPRCommentGroupRoot(group)
 }
 
@@ -174,10 +156,22 @@ async function mapWithBoundedConcurrency<T, R>(
   return results
 }
 
+type BatchedConversationReply = {
+  counts: PRCommentAiLaunchAckCounts
+  handled: ReadonlySet<PRCommentGroup>
+  replyOk: boolean
+}
+
+const NO_BATCHED_CONVERSATION_REPLY: BatchedConversationReply = {
+  counts: EMPTY_ACK_COUNTS,
+  handled: new Set(),
+  replyOk: false
+}
+
 /**
  * After launching an agent for selected review feedback:
- * post a fixing reply (nested when possible, else conversation @-reply), then
- * resolve host threads when possible.
+ * post a fixing reply (one nested reply per review thread, one combined conversation
+ * comment for everything that has no nested-reply endpoint), then resolve host threads.
  *
  * Why: replies use a snapshotted GitHub target and must not abort just because
  * the checks-panel async key churned mid-launch. isStillCurrent only gates
@@ -190,13 +184,22 @@ export async function acknowledgePRCommentsAfterAiLaunch(args: {
   groups: readonly PRCommentGroup[]
   deps: PRCommentAiLaunchAckDeps
 }): Promise<PRCommentAiLaunchAckCounts> {
+  // Why: conversation comments have no replies endpoint, so one post per selected item
+  // would spam the PR timeline with near-identical "Fixing." comments.
+  const conversationGroups = args.deps.canReply
+    ? args.groups.filter(
+        (group) => !canPostPRReviewThreadReply(getPRCommentGroupReplyTarget(group))
+      )
+    : []
+  const batch = await postBatchedConversationReply(conversationGroups, args.deps)
+
   const perGroup = await mapWithBoundedConcurrency(
     args.groups,
     PR_COMMENT_ACK_MAX_CONCURRENCY,
-    (group) => acknowledgePRCommentGroup(group, args.deps)
+    (group) => acknowledgePRCommentGroup(group, args.deps, batch)
   )
 
-  return perGroup.reduce<PRCommentAiLaunchAckCounts>(
+  return [batch.counts, ...perGroup].reduce<PRCommentAiLaunchAckCounts>(
     (totals, counts) => ({
       resolved: totals.resolved + counts.resolved,
       replied: totals.replied + counts.replied,
@@ -207,32 +210,48 @@ export async function acknowledgePRCommentsAfterAiLaunch(args: {
   )
 }
 
+async function postBatchedConversationReply(
+  groups: readonly PRCommentGroup[],
+  deps: PRCommentAiLaunchAckDeps
+): Promise<BatchedConversationReply> {
+  if (groups.length === 0) {
+    return NO_BATCHED_CONVERSATION_REPLY
+  }
+  const replyOk = await deps.replyAsConversation(
+    buildPRCommentBatchConversationReplyBody(groups.map(getPRCommentGroupReplyTarget))
+  )
+  return {
+    // Why: one host POST covers the whole set, so the toast must count it once.
+    counts: { ...EMPTY_ACK_COUNTS, replied: replyOk ? 1 : 0, failed: replyOk ? 0 : 1 },
+    handled: new Set(groups),
+    replyOk
+  }
+}
+
 async function acknowledgePRCommentGroup(
   group: PRCommentGroup,
-  deps: PRCommentAiLaunchAckDeps
+  deps: PRCommentAiLaunchAckDeps,
+  batch: BatchedConversationReply
 ): Promise<PRCommentAiLaunchAckCounts> {
   const counts = { ...EMPTY_ACK_COUNTS }
-  const replyTarget = getPRCommentGroupReplyTarget(group)
   const threadId =
     group.kind === 'thread' && isResolvablePRCommentGroup(group) ? group.threadId : null
 
   if (deps.canReply) {
-    // Why: prefer nested review-thread replies; fall back to a top-level conversation
-    // comment for review summaries / issue comments (CodeRabbit, etc.) that have no
-    // replies endpoint.
-    const repliedOk = canPostPRReviewThreadReply(replyTarget)
-      ? await deps.replyInThread(replyTarget, PR_COMMENT_AI_FIXING_REPLY)
-      : await deps.replyAsConversation(replyTarget, PR_COMMENT_AI_FIXING_REPLY)
-    if (repliedOk) {
-      counts.replied += 1
-    } else {
-      counts.failed += 1
+    const replyOk = batch.handled.has(group)
+      ? batch.replyOk
+      : await postInThreadFixingReply(group, deps, counts)
+    // Why: resolving a thread whose fixing reply never landed closes it silently —
+    // the user was promised an ack, so leave it open and let the toast report the failure.
+    if (!replyOk) {
+      return counts
     }
-  } else if (threadId == null || !deps.isThreadStillResolvable(threadId)) {
-    counts.skipped += 1
   }
 
   if (threadId == null || !deps.isThreadStillResolvable(threadId)) {
+    if (!deps.canReply) {
+      counts.skipped += 1
+    }
     return counts
   }
 
@@ -251,6 +270,24 @@ async function acknowledgePRCommentGroup(
     counts.failed += 1
   }
   return counts
+}
+
+/** Mutates counts in place; returns whether the nested reply landed. */
+async function postInThreadFixingReply(
+  group: PRCommentGroup,
+  deps: PRCommentAiLaunchAckDeps,
+  counts: PRCommentAiLaunchAckCounts
+): Promise<boolean> {
+  const replyOk = await deps.replyInThread(
+    getPRCommentGroupReplyTarget(group),
+    PR_COMMENT_AI_FIXING_REPLY
+  )
+  if (replyOk) {
+    counts.replied += 1
+  } else {
+    counts.failed += 1
+  }
+  return replyOk
 }
 
 /** Durable pending ack payload so dialog close / re-renders cannot drop it before launch. */

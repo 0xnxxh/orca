@@ -79,10 +79,10 @@ import {
   buildPRCommentsResolutionPrompt,
   isResolvablePRCommentGroup
 } from '../pr-comments-resolution-prompt'
+import { buildPRCommentConversationReplyBody } from './pr-comment-fixing-reply-body'
 import {
   acknowledgePRCommentsAfterAiLaunch,
   attachPRReviewReplyParent,
-  buildPRCommentConversationReplyBody,
   canPostPRReviewThreadReply,
   checksPanelReviewStableKey,
   clearPendingPRCommentAiAck,
@@ -3095,12 +3095,13 @@ export default function ChecksPanel(): React.JSX.Element {
           { value0: activeReview.provider === 'gitlab' ? 'MR' : 'PR' }
         ),
         // Why: only GitHub with a resolved PR target posts fixing replies; other providers
-        // must not be promised a reply the ack never sends.
+        // must not be promised a reply the ack never sends. Review threads get one reply
+        // each, conversation comments share one — so the copy stays deliberately vague.
         description:
           githubTarget && activeReview.provider === 'github'
             ? translate(
                 'auto.components.right.sidebar.ChecksPanel.ed3f79c031',
-                'Review the prompt before starting an agent. After launch, Orca posts a fixing reply on each selected comment and resolves host threads when possible.'
+                'Review the prompt before starting an agent. After launch, Orca replies to the selected comments and resolves host threads when possible.'
               )
             : translate(
                 'auto.components.right.sidebar.ChecksPanel.abf59262fb',
@@ -3234,8 +3235,9 @@ export default function ChecksPanel(): React.JSX.Element {
               return false
             }
           },
-          // Why: CodeRabbit / review-summary / conversation comments have no nested-reply API.
-          replyAsConversation: async (comment, body) => {
+          // Why: CodeRabbit / review-summary / conversation comments have no nested-reply
+          // API, so the ack sends one combined body for all of them.
+          replyAsConversation: async (body) => {
             if (!githubTarget) {
               return false
             }
@@ -3243,7 +3245,7 @@ export default function ChecksPanel(): React.JSX.Element {
               const result = await addPRConversationComment(
                 githubTarget.repoPath,
                 githubTarget.prNumber,
-                buildPRCommentConversationReplyBody(comment.author, body),
+                body,
                 {
                   repoId: githubTarget.repoId,
                   prRepo: githubTarget.prRepo
