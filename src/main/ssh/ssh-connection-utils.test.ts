@@ -39,13 +39,12 @@ import {
   findDefaultKeyFile,
   buildConnectConfig,
   resolveAgentSocket,
-  resolveEffectiveProxy,
   CONNECT_TIMEOUT_MS,
   INITIAL_RETRY_ATTEMPTS,
   INITIAL_RETRY_DELAY_MS,
-  RECONNECT_BACKOFF_MS,
-  spawnProxyCommand
+  RECONNECT_BACKOFF_MS
 } from './ssh-connection-utils'
+import { resolveEffectiveProxy, spawnProxyCommand } from './ssh-proxy-command'
 import type { SshTarget } from '../../shared/ssh-types'
 import type { SshResolvedConfig } from './ssh-config-parser'
 
