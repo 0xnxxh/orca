@@ -10,9 +10,10 @@ import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixt
 // bar on "connected" with fs/pty/git providers bound to a dead mux and no
 // relay-loss watcher, so nothing ever scheduled a reconnect.
 
-const { muxRequestMock, openConsumerSessionMock } = vi.hoisted(() => ({
+const { muxRequestMock, openConsumerSessionMock, registeredPtyProvider } = vi.hoisted(() => ({
   muxRequestMock: vi.fn(),
-  openConsumerSessionMock: vi.fn()
+  openConsumerSessionMock: vi.fn(),
+  registeredPtyProvider: { dispose: vi.fn(), attachForReconnect: vi.fn() }
 }))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
@@ -108,7 +109,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
 vi.mock('../ipc/pty', () => ({
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
-  getSshPtyProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+  getSshPtyProvider: vi.fn().mockReturnValue(registeredPtyProvider),
   getPtyIdsForConnection: vi.fn().mockReturnValue([]),
   clearPtyOwnershipForConnection: vi.fn(),
   clearProviderPtyState: vi.fn(),
@@ -129,6 +130,7 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 
 const { registerSshFilesystemProvider, unregisterSshFilesystemProvider } =
   await import('../providers/ssh-filesystem-dispatch')
+const { getPtyIdsForConnection } = await import('../ipc/pty')
 
 describe('SshRelaySession relay loss on the final grace-time notify', () => {
   /** Armed by a test so the *next* mux dies inside its grace-time notify. */
@@ -138,6 +140,8 @@ describe('SshRelaySession relay loss on the final grace-time notify', () => {
     vi.clearAllMocks()
     armGraceTimeFailure = false
     muxRequestMock.mockReset()
+    vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+    registeredPtyProvider.attachForReconnect.mockReset().mockResolvedValue({})
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
       mode: 'legacy-fallback',
       clientInstanceId: options.clientInstanceId,
@@ -194,6 +198,31 @@ describe('SshRelaySession relay loss on the final grace-time notify', () => {
     armGraceTimeFailure = true
     await session.reconnect({} as SshConnection)
 
+    expect(session.getState()).not.toBe('ready')
+    expect(onReady).not.toHaveBeenCalled()
+    expect(onRelayLost).toHaveBeenCalledTimes(1)
+    expect(unregisterSshFilesystemProvider).toHaveBeenCalledWith('target-1')
+  })
+
+  // #11953: reattachKnownPtys swallows every per-PTY failure, so a mux killed by the
+  // reattach burst itself never reaches the catch — the post-reattach gate has to notice.
+  it('routes a mux that dies during PTY reattach into relay-loss recovery', async () => {
+    const { session, onRelayLost, onReady } = createSession()
+
+    await session.establish({} as SshConnection)
+    expect(session.getState()).toBe('ready')
+    onReady.mockClear()
+
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-1'])
+    registeredPtyProvider.attachForReconnect.mockImplementation(async () => {
+      const mux = session.getMux() as unknown as { dispose: (reason: string) => void } | null
+      mux?.dispose('connection_lost')
+      throw new Error('SSH connection lost, reconnecting...')
+    })
+
+    await session.reconnect({} as SshConnection)
+
+    expect(registeredPtyProvider.attachForReconnect).toHaveBeenCalled()
     expect(session.getState()).not.toBe('ready')
     expect(onReady).not.toHaveBeenCalled()
     expect(onRelayLost).toHaveBeenCalledTimes(1)

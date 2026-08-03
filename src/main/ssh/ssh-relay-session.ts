@@ -637,6 +637,11 @@ export class SshRelaySession {
       await this.reattachKnownPtys(mux, ownsAttempt)
 
       if (!ownsAttempt()) {
+        // Why: reattach swallows per-PTY errors, so a mux killed mid-reattach must take the failure
+        // path here or the session wedges in 'reconnecting' with no relay-loss watcher (#11953).
+        if (this.mux === mux && mux.isDisposed()) {
+          throw new Error('Relay connection lost during PTY reattach')
+        }
         return
       }
 
