@@ -2,7 +2,7 @@
 name: orca-emulator
 description: >
   Control a mobile (iOS) emulator / simulator stream from inside Orca using the `orca` CLI.
-  Use for taps, gestures, typing, hardware buttons, camera injection, permissions, accessibility tree, and more — all while seeing the live view in Orca's emulator pane.
+  Use for taps, gestures, typing, hardware buttons, camera injection, permissions, accessibility tree, and genuine native Simulator screenshot evidence — all while seeing the live view in Orca's emulator pane.
   Prefer this over raw `npx serve-sim` or direct simctl when running agents inside Orca (the orca surface handles device scoping, helper lifecycle, and worktree context).
   Complements the orca-cli skill for terminals, worktrees, and the built-in browser.
 license: Apache-2.0
@@ -31,6 +31,7 @@ shell-neutral for POSIX shells, PowerShell, and cmd.exe.
 - The user/agent wants to **tap, swipe, drag, pinch, or press hardware buttons** on a running iOS simulator while seeing the live result in Orca.
 - You want **camera injection** (placeholder, webcam, or file loop) for testing camera flows.
 - You need to **grant/revoke app permissions** (camera, photos, notifications, location, etc.) or read the **accessibility tree**.
+- You need a genuine native Simulator screenshot for QA or PR evidence.
 - Rotate the device, simulate memory warnings, toggle CoreAnimation debug overlays, etc.
 - You are inside an Orca worktree/terminal and want the emulator to be **workspace-scoped** (like browser tabs) with explicit targeting when needed.
 - The agent should use Orca's preview pane instead of external Simulator.app or raw serve-sim URLs.
@@ -40,6 +41,7 @@ shell-neutral for POSIX shells, PowerShell, and cmd.exe.
 - Building or installing the app itself → use `xcodebuild`, `xcrun simctl install`, `expo run:ios`, etc. (launch the app, then use `ORCA emulator` to drive it).
 - In-app debugging (state, network, views) → use the app's own tools or the browser pane if it's a webview.
 - Remote/SSH worktrees for emulator control (currently out of scope / unsupported; simulator hardware is local to a Mac).
+- Electron or Expo Web evidence when native Simulator QA is required.
 
 ## Prerequisites (enforced / surfaced by Orca)
 
@@ -132,6 +134,46 @@ Most support `--worktree <selector>` and explicit `--device <udid|name>` or `--e
 - Agents can drive via CLI while the human watches/interacts in the pane.
 - No automatic focus steal on CLI attach (use `--focus` if you really want the UI to switch; matches browser behavior).
 - Multiple devices: list shows them; pane can grid; CLI uses active or explicit selector.
+
+## Native Simulator screenshot evidence
+
+Drive and verify the exact native app state with `ORCA emulator ...` first. Refresh the
+accessibility tree with `ORCA emulator ax --json` and confirm the visible result before
+capturing evidence.
+
+Use Orca Computer Use only to capture the desktop Simulator window; keep Orca emulator as
+the lifecycle, targeting, and interaction control surface:
+
+```text
+ORCA computer capabilities --json
+ORCA computer get-app-state --app com.apple.iphonesimulator --restore-window --json
+```
+
+The JSON response omits screenshot bytes. Read the PNG at `result.screenshot.path`, inspect
+the image visually, and exclude secrets and pairing codes before sharing it.
+
+When multiple Simulator windows exist, list them and pass one explicit selector to the
+capture command. Prefer `--window-id <id>` when available; otherwise use
+`--window-index <n>`.
+
+```text
+ORCA computer list-windows --app com.apple.iphonesimulator --json
+ORCA computer get-app-state --app com.apple.iphonesimulator --window-id <id> --restore-window --json
+```
+
+Attach approved PR evidence without adding the PNG to Git. Try `gh image` first and use
+`gh attach` only as the fallback:
+
+```text
+gh image --repo OWNER/REPO <png-path>
+gh attach --comment <png-path>
+```
+
+Computer Use captures the desktop Simulator window. It never substitutes an Electron or
+Expo Web render, and it never bypasses Orca emulator lifecycle or control. Raw `simctl` and
+`serve-sim` are unnecessary for interaction. If genuine native Simulator QA cannot run or
+produce inspectable evidence, report native QA as blocked instead of replacing it with web
+evidence.
 
 ## Cleanup
 

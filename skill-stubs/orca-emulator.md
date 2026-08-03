@@ -6,10 +6,13 @@ never drift from the binary that will actually run your commands.
 
 Engage Orca whenever you drive a mobile (iOS) emulator / simulator stream from inside the
 Orca app: taps, gestures, typing, hardware buttons, camera injection, runtime permissions,
-the accessibility tree, and more — all while the live view stays in Orca's emulator pane.
-Prefer this over raw `serve-sim` or direct `simctl` when running agents inside Orca, which
-handles device scoping, helper lifecycle, and worktree context for you. It complements the
-orca-cli skill for terminals, worktrees, and the built-in browser.
+the accessibility tree, and genuine native screenshots — all while the live view stays in
+Orca's emulator pane. Keep Orca emulator as the lifecycle and interaction control surface;
+use Orca Computer Use only to capture the desktop Simulator window. Never substitute
+Electron or Expo Web evidence when native QA is required; report native QA as blocked when
+the Simulator cannot run. Raw `serve-sim` and direct `simctl` are unnecessary for
+interaction. This skill complements orca-cli for terminals, worktrees, and the built-in
+browser.
 
 ## Resolve the CLI for this session
 
@@ -38,8 +41,8 @@ ORCA skills get orca-emulator
 
 That prints the complete, version-matched guide for the exact binary that will handle your
 next commands — booting devices, taps and gestures, typing, hardware buttons, camera
-injection, permissions, and the accessibility tree. Read it first, then run the specific
-command you need.
+injection, permissions, the accessibility tree, and native screenshot evidence. Read it
+first, then run the specific command you need.
 
 Don't guess subcommands or flags from memory or from a cached copy of this stub. They
 change between Orca releases, and this file deliberately no longer lists them. Confirm the
