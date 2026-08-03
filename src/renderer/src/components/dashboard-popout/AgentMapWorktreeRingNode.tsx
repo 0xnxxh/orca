@@ -242,7 +242,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   data-agent-provider={agent.card.agentType}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${agentName(agent.card)}, ${agentStateLabel(agent.status)}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
+                  aria-label={`${agentName(agent.card)}, ${agentStateLabel(agent.status)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
                   className={`agent-map-agent-node fleet-status-${agent.status}${selectedPaneKey === agent.card.paneKey ? ' is-selected' : ''}`}
                   transform={`translate(${agent.x} ${agent.y})`}
                   onClick={(event) => onSelectAgent(agent.card, panelSideFor(event.currentTarget))}
@@ -264,13 +264,16 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                       />
                     </div>
                   </foreignObject>
-                  <circle
-                    className="agent-map-agent-state-mark"
-                    data-agent-state-marker=""
-                    cx={-agent.radius + 3}
-                    cy={-agent.radius + 3}
-                    r={4.5}
-                  />
+                  {agent.card.unseen ? (
+                    <circle
+                      className="agent-map-agent-unread-mark"
+                      data-agent-unread-marker=""
+                      cx={-agent.radius + 3}
+                      cy={-agent.radius + 3}
+                      r={4.5}
+                      aria-hidden="true"
+                    />
+                  ) : null}
                 </g>
               )
             })}

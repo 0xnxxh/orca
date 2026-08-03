@@ -106,7 +106,7 @@ describe('AgentMap', () => {
     })
   })
 
-  it('renders separate provider and app-state icons inside status-glow nodes', () => {
+  it('renders the fixed amber marker only for unread agents', () => {
     const finished = card({
       paneKey: 'done',
       conversationName: 'Finished agent',
@@ -122,9 +122,14 @@ describe('AgentMap', () => {
     expect(workingNode).toHaveClass('fleet-status-working')
     expect(doneNode).toHaveClass('fleet-status-done')
     expect(workingNode.querySelector('.agent-map-agent-icon svg')).toBeInTheDocument()
-    expect(workingNode.querySelector('[data-agent-state-marker]')).toBeInTheDocument()
+    expect(workingNode.querySelector('[data-agent-unread-marker]')).not.toBeInTheDocument()
     expect(doneNode.querySelector('.agent-map-agent-icon svg')).toBeInTheDocument()
-    expect(doneNode.querySelector('[data-agent-state-marker]')).toBeInTheDocument()
+    const unreadMarker = doneNode.querySelector('[data-agent-unread-marker]')
+    expect(unreadMarker).toHaveClass('agent-map-agent-unread-mark')
+    expect(unreadMarker).toHaveAttribute('cx', '-17')
+    expect(unreadMarker).toHaveAttribute('cy', '-17')
+    expect(unreadMarker).toHaveAttribute('r', '4.5')
+    expect(doneNode).toHaveAccessibleName(/unread/)
   })
 
   it('shows worktree details and opens a running agent', () => {

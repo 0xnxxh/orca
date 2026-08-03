@@ -222,28 +222,12 @@
   stroke: color-mix(in srgb, var(--color-neutral-500) 55%, transparent);
 }
 
-.agent-map-agent-state-mark {
-  fill: var(--color-neutral-500);
+.agent-map-agent-unread-mark {
+  fill: var(--color-amber-500);
   pointer-events: none;
   stroke: var(--background);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
-}
-
-.fleet-status-working .agent-map-agent-state-mark {
-  fill: var(--color-yellow-500);
-}
-
-.fleet-status-blocked .agent-map-agent-state-mark {
-  fill: var(--color-red-500);
-}
-
-.fleet-status-waiting .agent-map-agent-state-mark {
-  fill: var(--color-amber-500);
-}
-
-.fleet-status-done .agent-map-agent-state-mark {
-  fill: var(--color-emerald-500);
 }
 
 .agent-map-aggregate-node circle {
