@@ -265,12 +265,13 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                       />
                     </div>
                   </foreignObject>
+                  {/* Unread dot sits ON the ring stroke; its halo breaks the ring around it. */}
                   {agent.card.unseen ? (
                     <circle
                       className="agent-map-agent-unread-mark"
                       data-agent-unread-marker=""
-                      cx={agent.radius - 3}
-                      cy={-agent.radius + 3}
+                      cx={-agent.radius * Math.SQRT1_2}
+                      cy={-agent.radius * Math.SQRT1_2}
                       r={4.5}
                       aria-hidden="true"
                     />

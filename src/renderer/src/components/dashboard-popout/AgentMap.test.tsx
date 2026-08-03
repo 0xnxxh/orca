@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentMap } from './AgentMap'
+import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
 
 const NOW = 2_000_000_000
 
@@ -126,8 +127,10 @@ describe('AgentMap', () => {
     expect(doneNode.querySelector('.agent-map-agent-icon svg')).toBeInTheDocument()
     const unreadMarker = doneNode.querySelector('[data-agent-unread-marker]')
     expect(unreadMarker).toHaveClass('agent-map-agent-unread-mark')
-    expect(unreadMarker).toHaveAttribute('cx', '17')
-    expect(unreadMarker).toHaveAttribute('cy', '-17')
+    // On the ring circumference at the top-left diagonal, where the halo breaks the ring.
+    const onRing = String(-AGENT_MAP_AGENT_RADIUS * Math.SQRT1_2)
+    expect(unreadMarker).toHaveAttribute('cx', onRing)
+    expect(unreadMarker).toHaveAttribute('cy', onRing)
     expect(unreadMarker).toHaveAttribute('r', '4.5')
     expect(doneNode).toHaveAccessibleName(/unread/)
   })
