@@ -3391,6 +3391,8 @@ export type PersistedUIState = {
   hideCliCreatedWorkspaces?: boolean
   /** Hide workspaces sitting on a detached HEAD; folder workspaces (no head at all) are unaffected. */
   hideDetachedHeadWorkspaces?: boolean
+  /** Keep each project's main workspace out of the "Hide sleeping" sweep. Absent means on (#8873). */
+  alwaysShowDefaultBranchWorkspace?: boolean
   /** Per-worktree Explorer dotfile visibility. Missing entries inherit the default: show. */
   showDotfilesByWorktree?: Record<string, boolean>
   filterRepoIds: string[]

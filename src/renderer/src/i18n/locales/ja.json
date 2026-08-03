@@ -4208,7 +4208,9 @@
           "ee240a39eb": "フィルターの編集",
           "automationCreated": "自動化で作成されたワークスペースを非表示",
           "cliCreated": "Hide CLI-created",
-          "detachedHead": "分離HEADを非表示"
+          "detachedHead": "分離HEADを非表示",
+          "keepDefaultBranch": "デフォルトのブランチを除く",
+          "keepDefaultBranchAria": "スリープ中のワークスペースを非表示にしてもデフォルトのブランチは表示したままにする"
         },
         "SidebarHeader": {
           "92154beb7e": "新規ワークスペース",
@@ -4273,7 +4275,9 @@
           "82594419ba": "フィルター",
           "automationCreated": "自動化で作成されたワークスペースを非表示",
           "cliCreated": "Hide CLI-created",
-          "detachedHead": "分離HEADを非表示"
+          "detachedHead": "分離HEADを非表示",
+          "keepDefaultBranch": "デフォルトのブランチを除く",
+          "keepDefaultBranchAria": "スリープ中のワークスペースを非表示にしてもデフォルトのブランチは表示したままにする"
         },
         "SidebarWorkspaceOptionsMenu": {
           "95c9754653": "Agent アクティビティのレイアウト",
