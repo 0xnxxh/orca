@@ -358,6 +358,7 @@ export function AgentKanbanBoard({
             <Suspense fallback={null}>
               <AgentMap
                 cards={filteredCards}
+                repoIconsByRepoId={snapshot.repoIconsByRepoId}
                 now={now}
                 className={
                   dialogCard

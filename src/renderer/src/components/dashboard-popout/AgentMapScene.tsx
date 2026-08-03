@@ -1,11 +1,14 @@
 import { memo, type MutableRefObject } from 'react'
+import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import type { AgentMapAgentNode, AgentMapLayout, AgentMapWorktreeRing } from './agent-map-layout'
 import { AgentMapWorktreeRingNode } from './AgentMapWorktreeRingNode'
 
 type AgentMapSceneProps = {
   layout: AgentMapLayout
+  repoIconsByRepoId?: Record<string, RepoIcon | null>
   zoom: number
   labelScale: number
   mapScale: number
@@ -23,6 +26,7 @@ type AgentMapSceneProps = {
 /** Memoization keeps pointer panning to one SVG viewBox write, not a map rerender. */
 export const AgentMapScene = memo(function AgentMapScene({
   layout,
+  repoIconsByRepoId,
   zoom,
   labelScale,
   mapScale,
@@ -46,9 +50,22 @@ export const AgentMapScene = memo(function AgentMapScene({
           <g
             transform={`translate(${project.x} ${project.y - project.radius}) scale(${labelScale})`}
           >
-            <text className="agent-map-project-label" y={18}>
-              {project.name.toUpperCase()}
-            </text>
+            <foreignObject
+              className="agent-map-project-label-frame"
+              x={-project.radius}
+              y={3}
+              width={project.radius * 2}
+              height={18}
+            >
+              <div className="agent-map-project-label">
+                <RepoIconGlyph
+                  repoIcon={repoIconsByRepoId?.[project.id] ?? null}
+                  className="size-3 shrink-0"
+                  iconClassName="size-3"
+                />
+                <span className="shrink-0">{project.name.toUpperCase()}</span>
+              </div>
+            </foreignObject>
             <text className="agent-map-project-count" y={32}>
               {translate(
                 'dashboardPopout.map.projectCount',

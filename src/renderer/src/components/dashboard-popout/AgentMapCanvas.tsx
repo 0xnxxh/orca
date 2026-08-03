@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import type {
   AgentMapAgentNode,
   AgentMapProjectRing,
@@ -41,6 +42,7 @@ export type AgentMapCanvasHandle = {
 
 type AgentMapCanvasProps = {
   layout: AgentMapLayout
+  repoIconsByRepoId?: Record<string, RepoIcon | null>
   selectedPaneKey: string | null
   allowAggregation: boolean
   workspaceContextMenusEnabled?: boolean
@@ -56,6 +58,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
   function AgentMapCanvas(
     {
       layout,
+      repoIconsByRepoId,
       selectedPaneKey,
       allowAggregation,
       workspaceContextMenusEnabled = false,
@@ -293,7 +296,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
         ) : (
           <svg
             ref={svgRef}
-            className="absolute inset-0 size-full touch-none"
+            className="absolute inset-0 size-full cursor-grab touch-none select-none active:cursor-grabbing"
             viewBox={viewBox}
             aria-label={translate(
               'dashboardPopout.map.canvasLabel',
@@ -356,6 +359,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
           >
             <AgentMapScene
               layout={layout}
+              repoIconsByRepoId={repoIconsByRepoId}
               zoom={zoom}
               labelScale={labelScale}
               mapScale={mapScale}

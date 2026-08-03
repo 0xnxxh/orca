@@ -65,6 +65,13 @@ describe('AgentMapCanvas pointer performance', () => {
     vi.unstubAllGlobals()
   })
 
+  it('presents the map as a non-selectable panning surface', () => {
+    const { container } = render(<AgentMap cards={[CARD]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const svg = container.querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
+
+    expect(svg).toHaveClass('cursor-grab', 'touch-none', 'select-none', 'active:cursor-grabbing')
+  })
+
   it('coalesces drag frames without rerendering worktree nodes', () => {
     const { container } = render(<AgentMap cards={[CARD]} now={NOW} onOpenTerminal={vi.fn()} />)
     const svg = container.querySelector<SVGSVGElement>('.agent-map-canvas > svg')!

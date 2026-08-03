@@ -25,7 +25,6 @@
   vector-effect: non-scaling-stroke;
 }
 
-.agent-map-project-label,
 .agent-map-worktree-label {
   fill: var(--foreground);
   font-family: Geist, var(--font-sans);
@@ -38,9 +37,24 @@
   stroke-width: 2px;
 }
 
+.agent-map-project-label-frame {
+  overflow: visible;
+  pointer-events: none;
+}
+
 .agent-map-project-label {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--foreground);
+  font-family: Geist, var(--font-sans);
   font-size: 13px;
-  text-anchor: middle;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .agent-map-project-count,

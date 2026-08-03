@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import type { DashboardCard, DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import { AgentMapCanvas, type AgentMapCanvasHandle } from './AgentMapCanvas'
 import { AgentMapFilterRail } from './AgentMapFilterRail'
 import {
@@ -16,6 +17,7 @@ import './agent-map.css'
 
 type AgentMapProps = {
   cards: DashboardCard[]
+  repoIconsByRepoId?: Record<string, RepoIcon | null>
   now: number
   className?: string
   compact?: boolean
@@ -45,6 +47,7 @@ function hostFilterLabel(filter: AgentMapHostFilter): string {
 
 export function AgentMap({
   cards,
+  repoIconsByRepoId,
   now,
   className,
   compact = false,
@@ -196,6 +199,7 @@ export function AgentMap({
           key={layout.projects.length === 0 ? 'empty' : 'map'}
           ref={canvasRef}
           layout={layout}
+          repoIconsByRepoId={repoIconsByRepoId}
           selectedPaneKey={selectedPaneKey}
           allowAggregation
           workspaceContextMenusEnabled={workspaceContextMenusEnabled}
