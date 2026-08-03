@@ -6597,6 +6597,7 @@ describe('connectPanePty', () => {
     capturedDataCallback.current?.('\x1b[?2004h\x1b[2K› ')
     await flushAsyncTicks()
 
+    expect(transport.sendInputAccepted).toHaveBeenCalledTimes(1)
     expect(transport.sendInputAccepted).toHaveBeenCalledWith(
       '\x1b[200~Linked Linear issue: STA-905\x1b[201~'
     )
