@@ -7,7 +7,7 @@ import {
 } from '../../../../shared/agent-status-types'
 import { DASHBOARD_MAX_LABEL_LENGTH } from '../../../../shared/dashboard-snapshot'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
-import type { TerminalTab, Worktree } from '../../../../shared/types'
+import type { Tab, TerminalTab, Worktree } from '../../../../shared/types'
 import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-orchestration-batch'
 
 const NOW = 1_000_000_000
@@ -41,6 +41,22 @@ function tab(id = TAB_ID, worktreeId = 'w1'): TerminalTab {
     color: null,
     sortOrder: 0,
     createdAt: NOW
+  }
+}
+
+function unifiedTerminalTab(viewMode: Tab['viewMode']): Tab {
+  return {
+    id: 'unified-tab-1',
+    entityId: TAB_ID,
+    groupId: 'group-1',
+    worktreeId: 'w1',
+    contentType: 'terminal',
+    label: 'agent',
+    customLabel: null,
+    color: null,
+    sortOrder: 0,
+    createdAt: NOW,
+    viewMode
   }
 }
 
@@ -145,6 +161,66 @@ describe('buildDashboardSnapshot', () => {
     expect(card.stateChangedAt).toBe(NOW - 5000)
     // No ack yet → unseen, mirroring the sidebar's unvisited signal.
     expect(card.unseen).toBe(true)
+  })
+
+  it('carries native-chat session identity and effective tab mode', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            providerSession: {
+              key: 'session_id',
+              id: 'session-abc',
+              transcriptPath: '/home/dev/.claude/projects/orca/session-abc.jsonl'
+            }
+          })
+        },
+        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
+        settings: { experimentalNativeChat: true }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+
+    expect(snapshot.cards[0]).toMatchObject({
+      hostKind: 'local',
+      viewMode: 'chat',
+      sessionId: 'session-abc',
+      transcriptPath: '/home/dev/.claude/projects/orca/session-abc.jsonl'
+    })
+  })
+
+  it('keeps native chat disabled when the experiment is off', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
+        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
+        settings: { experimentalNativeChat: false }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+
+    expect(snapshot.cards[0].viewMode).toBe('terminal')
+  })
+
+  it('marks SSH transcript paths as remote from the dashboard renderer', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        repos: [
+          {
+            id: 'r1',
+            path: '/r1',
+            displayName: 'Repo One',
+            badgeColor: '#000',
+            addedAt: 0,
+            connectionId: 'staging'
+          }
+        ],
+        agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards[0].hostKind).toBe('ssh')
   })
 
   it('carries the tab conversation name and drops status-only titles', () => {
@@ -386,7 +462,15 @@ describe('buildDashboardSnapshot', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         worktreesByRepo: { r1: [countWorktree] },
-        agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            providerSession: {
+              key: 'session_id',
+              id: 'count-session',
+              transcriptPath: '/tmp/count-session.jsonl'
+            }
+          })
+        }
       }),
       NOW,
       { includeCardDetails: false, includeFilterOptions: false }
@@ -394,6 +478,10 @@ describe('buildDashboardSnapshot', () => {
 
     expect(snapshot.cards[0].workspaceStatusId).toBeUndefined()
     expect(snapshot.cards[0].subagents).toBeUndefined()
+    expect(snapshot.cards[0].hostKind).toBeUndefined()
+    expect(snapshot.cards[0].viewMode).toBeUndefined()
+    expect(snapshot.cards[0].sessionId).toBeUndefined()
+    expect(snapshot.cards[0].transcriptPath).toBeUndefined()
     // Why: the card has a live pty, so only the count-path gate keeps the
     // host-input resolution off the sidebar's per-status-tick rebuild.
     expect(snapshot.cards[0].ptyId).toBe('pty1')

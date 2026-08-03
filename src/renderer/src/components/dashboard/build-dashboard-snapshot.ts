@@ -1,11 +1,10 @@
 import type { AppState } from '@/store/types'
-import {
-  DASHBOARD_MAX_LABEL_LENGTH,
-  type DashboardBucket,
-  type DashboardCard,
-  type DashboardCardDotState,
-  type DashboardCardSubagent,
-  type DashboardSnapshot
+import type {
+  DashboardBucket,
+  DashboardCard,
+  DashboardCardDotState,
+  DashboardCardSubagent,
+  DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { DEFAULT_WORKSPACE_STATUSES } from '../../../../shared/workspace-statuses'
@@ -15,7 +14,6 @@ import {
   type DashboardCardTerminalInputState
 } from './dashboard-card-terminal-input'
 import { readDashboardClientHost } from './dashboard-client-host'
-import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
 import { applyAgentRowLineage } from './agent-row-lineage'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
@@ -41,6 +39,15 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
+import { dashboardCardNativeChatMetadata } from './dashboard-card-native-chat'
+import { dashboardNativeChatTabIds } from './dashboard-native-chat-tab-ids'
+import {
+  boundedDashboardCardLabel,
+  boundedDashboardCardLabelOrUndefined,
+  dashboardCardConversationName,
+  dashboardCardTask,
+  nonEmptyDashboardCardText
+} from './dashboard-card-display-fields'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -60,7 +67,8 @@ export type DashboardSnapshotState = Pick<
   | 'settings'
 > &
   DashboardCardContextState &
-  Partial<DashboardCardTerminalInputState>
+  Partial<DashboardCardTerminalInputState> &
+  Partial<Pick<AppState, 'unifiedTabsByWorktree'>>
 
 function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
   switch (state) {
@@ -75,45 +83,6 @@ function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
     case 'waiting':
       return 'attention'
   }
-}
-
-function rowTask(row: DashboardAgentRow): string {
-  return (row.entry.orchestration?.taskTitle ?? '').trim() || (row.entry.prompt ?? '').trim()
-}
-
-function nonEmpty(value: string | undefined): string | undefined {
-  const trimmed = (value ?? '').trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-/** Why: these labels come from unbounded sources (`terminal rename`, OSC titles,
- *  display names). Over the validator's bound the card would be dropped. */
-function boundedLabel(value: string): string {
-  return value.length > DASHBOARD_MAX_LABEL_LENGTH
-    ? value.slice(0, DASHBOARD_MAX_LABEL_LENGTH)
-    : value
-}
-
-function boundedLabelOrUndefined(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : boundedLabel(value)
-}
-
-/** Mirrors useAgentRowConversationName so the board and the sidebar label the
- *  same agent with the same name. */
-function rowConversationName(
-  row: DashboardAgentRow,
-  generatedTitlesEnabled: boolean
-): string | undefined {
-  const parentPaneKey = row.entry.orchestration?.parentPaneKey
-  // Why: a child row rendered on its parent's tab does not own that tab's name.
-  if (
-    row.lineage?.depth === 1 &&
-    parentPaneKey !== undefined &&
-    parsePaneKey(parentPaneKey)?.tabId === row.tab.id
-  ) {
-    return undefined
-  }
-  return getAgentRowConversationName(row.tab, row.agentType, generatedTitlesEnabled) ?? undefined
 }
 
 /**
@@ -152,7 +121,7 @@ export function buildDashboardSnapshot(
           // Why: filterOptions is snapshot-level, so an over-long project label
           // costs the WHOLE board, not one card. Bound it at the producer.
           projects: [...new Map(activeWorktrees.map(({ repo }) => [repo.id, repo])).values()].map(
-            (repo) => ({ id: repo.id, label: boundedLabel(repo.displayName) })
+            (repo) => ({ id: repo.id, label: boundedDashboardCardLabel(repo.displayName) })
           ),
           workspaceStatuses: (state.workspaceStatuses && state.workspaceStatuses.length > 0
             ? state.workspaceStatuses
@@ -183,6 +152,9 @@ export function buildDashboardSnapshot(
 
   for (const { repo, worktree } of activeWorktrees) {
     const worktreeId = worktree.id
+    const nativeChatTabIds = includeCardDetails
+      ? dashboardNativeChatTabIds(state, worktreeId)
+      : undefined
     const liveEntries = selectLiveAgentStatusEntriesForWorktree(state, worktreeId)
     const migrationUnsupported = selectMigrationUnsupportedEntriesForWorktree(state, worktreeId)
     const entries =
@@ -227,8 +199,8 @@ export function buildDashboardSnapshot(
         const subagent: DashboardCardSubagent = {
           id: row.paneKey,
           name:
-            nonEmpty(row.entry.orchestration?.displayName) ??
-            nonEmpty(row.entry.prompt) ??
+            nonEmptyDashboardCardText(row.entry.orchestration?.displayName) ??
+            nonEmptyDashboardCardText(row.entry.prompt) ??
             row.agentType,
           dotState: row.state
         }
@@ -295,21 +267,34 @@ export function buildDashboardSnapshot(
         agentType: row.agentType,
         bucket,
         dotState,
-        task: isTitleDerived ? '' : rowTask(row),
+        task: isTitleDerived ? '' : dashboardCardTask(row),
         repoId: repo.id,
         worktreeId,
         tabId,
         leafId,
-        repoName: boundedLabel(repo.displayName),
-        worktreeName: boundedLabel(worktree.displayName),
+        repoName: boundedDashboardCardLabel(repo.displayName),
+        worktreeName: boundedDashboardCardLabel(worktree.displayName),
+        ...(includeCardDetails
+          ? dashboardCardNativeChatMetadata({
+              repo,
+              worktree,
+              ptyId,
+              terminalInput: terminalInput ?? undefined,
+              clientPlatform: clientHost.platform,
+              chatMode: nativeChatTabIds?.has(tabId) === true,
+              providerSession: row.entry.providerSession
+            })
+          : {}),
         workspaceStatusId: context?.workspaceStatus.id,
         workspaceStatusLabel: context?.workspaceStatus.label,
         workspaceStatusColor: context?.workspaceStatus.color,
         hasReview: context ? context.hasReview || context.review !== undefined : undefined,
         review: context?.review,
         subagents: subagentsByParentPaneKey?.get(row.paneKey),
-        lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
-        lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
+        lastUserMessage: isTitleDerived ? undefined : nonEmptyDashboardCardText(row.entry.prompt),
+        lastAgentMessage: isTitleDerived
+          ? undefined
+          : nonEmptyDashboardCardText(row.entry.lastAssistantMessage),
         startedAt: row.startedAt,
         finishedAt: lastEnteredDoneAt(row),
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,
@@ -319,7 +304,9 @@ export function buildDashboardSnapshot(
           !isTitleDerived &&
           (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
         askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
-        conversationName: boundedLabelOrUndefined(rowConversationName(row, generatedTitlesEnabled)),
+        conversationName: boundedDashboardCardLabelOrUndefined(
+          dashboardCardConversationName(row, generatedTitlesEnabled)
+        ),
         ...(terminalInput ? { terminalInput } : {})
       })
     }

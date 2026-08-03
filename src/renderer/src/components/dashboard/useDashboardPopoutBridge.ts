@@ -44,6 +44,7 @@ export function dashboardSnapshotInputsChanged(
     state.repos !== previousState.repos ||
     state.worktreesByRepo !== previousState.worktreesByRepo ||
     state.tabsByWorktree !== previousState.tabsByWorktree ||
+    state.unifiedTabsByWorktree !== previousState.unifiedTabsByWorktree ||
     state.agentStatusByPaneKey !== previousState.agentStatusByPaneKey ||
     state.retainedAgentsByPaneKey !== previousState.retainedAgentsByPaneKey ||
     state.migrationUnsupportedByPtyId !== previousState.migrationUnsupportedByPtyId ||
@@ -113,7 +114,7 @@ export function useDashboardPopoutBridge(enabled: boolean): void {
     })
   }, [enabled])
 
-  // Opening a card's terminal dialog in the popout acks the agent here — the
+  // Opening a card's inspector drawer in the popout acks the agent here — the
   // same ack the sidebar's bold/mute treatment reads, keeping both in lockstep.
   // ?. shields App mount from dev-HMR preload skew (preload updates only on
   // app restart).

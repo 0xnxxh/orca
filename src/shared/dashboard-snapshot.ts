@@ -38,6 +38,9 @@ export type DashboardCardSubagent = {
   dotState: DashboardCardDotState
 }
 
+export type DashboardCardHostKind = 'local' | 'ssh' | 'wsl' | 'remote'
+export type DashboardCardViewMode = 'terminal' | 'chat'
+
 export type DashboardCard = {
   /** Stable identity for React keys. */
   paneKey: string
@@ -60,6 +63,10 @@ export type DashboardCard = {
   leafId: string | null
   repoName: string
   worktreeName: string
+  /** Execution host classification used to avoid reading remote transcript paths locally. */
+  hostKind?: DashboardCardHostKind
+  /** Effective renderer mode for this agent's terminal tab. */
+  viewMode?: DashboardCardViewMode
   workspaceStatusId?: string
   workspaceStatusLabel?: string
   workspaceStatusColor?: string
@@ -77,7 +84,7 @@ export type DashboardCard = {
    *  that moved into a bucket most recently sort first). 0 when unknown. */
   stateChangedAt: number
   /** Mirrors the sidebar's unvisited signal: the agent changed state since the
-   *  user last acknowledged it (visited its tab / opened its dashboard dialog).
+   *  user last acknowledged it (visited its tab / opened its dashboard drawer).
    *  Derived from the app-wide ack map so both surfaces mute in lockstep. */
   unseen: boolean
   /** Short summary of the pending question when bucket === 'attention'. */
@@ -90,6 +97,10 @@ export type DashboardCard = {
    *  the main renderer owns the store these derive from, so they ride the
    *  snapshot to reach the pop-out. */
   terminalInput?: DashboardCardTerminalInput
+  /** Provider session identity used by the native dashboard chat. */
+  sessionId?: string
+  /** Authoritative on-disk transcript path for the provider session. */
+  transcriptPath?: string
 }
 
 /**
