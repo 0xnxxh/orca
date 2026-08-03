@@ -151,28 +151,32 @@ export default function PdfViewer({
     const markUserMoved = (): void => {
       userMoved = true
       detachInputWatcher?.()
+      recorder?.arm()
     }
 
     const handlePagesInit = (): void => {
       const cached = scrollCacheKey ? pdfViewPositionCache.get(scrollCacheKey) : undefined
       const clamped = cached ? clampPdfViewPosition(cached, viewer.pagesCount) : null
-      if (clamped) {
-        restored = buildPdfScrollDestination(clamped)
-        viewer.scrollPageIntoView(restored)
+      if (!clamped) {
+        recorder?.arm()
+        return
+      }
+      restored = buildPdfScrollDestination(clamped)
+      viewer.scrollPageIntoView(restored)
+      // Why: stays disarmed until the restore settles (below). pdf.js dispatches
+      // updateviewarea synchronously after this handler, so arming here would
+      // record the restore's own scroll — which on a mixed-page-size document is
+      // the provisional, wrong position, and a tab switch before pagesloaded
+      // would then flush it over the good cached one.
+      for (const type of USER_SCROLL_INPUT_EVENTS) {
+        container.addEventListener(type, markUserMoved, { passive: true })
+      }
+      detachInputWatcher = (): void => {
+        detachInputWatcher = null
         for (const type of USER_SCROLL_INPUT_EVENTS) {
-          container.addEventListener(type, markUserMoved, { passive: true })
-        }
-        detachInputWatcher = (): void => {
-          detachInputWatcher = null
-          for (const type of USER_SCROLL_INPUT_EVENTS) {
-            container.removeEventListener(type, markUserMoved)
-          }
+          container.removeEventListener(type, markUserMoved)
         }
       }
-      // Why: arm after the restore so its own scroll is not recorded as the
-      // reader's position — but on every path, so a PDF with nothing cached
-      // still starts recording.
-      recorder?.arm()
     }
 
     // Why: pagesinit lays every page out with page 1's dimensions, so on a
@@ -186,6 +190,7 @@ export default function PdfViewer({
       if (!cancelled && destination && !userMoved) {
         viewer.scrollPageIntoView(destination)
       }
+      recorder?.arm()
     }
 
     eventBus.on('pagesinit', handlePagesInit)
