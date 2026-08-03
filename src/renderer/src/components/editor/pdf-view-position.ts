@@ -87,20 +87,11 @@ export type PdfViewPositionRecorder = {
  */
 export function createPdfViewPositionRecorder({
   key,
-  write,
-  timers
+  write
 }: {
   key: string
   write: (key: string, position: PdfViewPosition) => void
-  // Why: paired, because a caller-supplied handle must go back to its own
-  // canceller — mixing halves hands a foreign handle to clearTimeout.
-  timers?: {
-    schedule: (fn: () => void, ms: number) => TimerHandle
-    cancel: (h: TimerHandle) => void
-  }
 }): PdfViewPositionRecorder {
-  const schedule = timers?.schedule ?? ((fn, ms) => setTimeout(fn, ms))
-  const cancel = timers?.cancel ?? ((handle) => clearTimeout(handle))
   let armed = false
   let disposed = false
   let pending: PdfViewPosition | null = null
@@ -134,7 +125,7 @@ export function createPdfViewPositionRecorder({
       }
       // Why: the debounced write only refreshes LRU recency — teardown is what
       // actually persists the position — so a pending timer need not restart.
-      timer = schedule(() => {
+      timer = setTimeout(() => {
         timer = null
         flush()
       }, PDF_POSITION_FLUSH_MS)
@@ -146,7 +137,7 @@ export function createPdfViewPositionRecorder({
       }
       disposed = true
       if (timer !== null) {
-        cancel(timer)
+        clearTimeout(timer)
         timer = null
       }
       flush()

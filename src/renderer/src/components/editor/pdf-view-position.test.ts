@@ -164,6 +164,19 @@ describe('createPdfViewPositionRecorder', () => {
     expect(writes).toEqual([['a.pdf:pdf', { pageNumber: 4, top: 400, left: 20 }]])
   })
 
+  // Why: the timer is deliberately trailing-from-first-record, not a restarting
+  // debounce — a restarting one would starve the LRU refresh under continuous
+  // scrolling, which is exactly when the entry most needs to stay warm.
+  it('does not restart the pending timer when a later record arrives', () => {
+    const recorder = makeRecorder()
+    recorder.arm()
+    recorder.record(location(2))
+    vi.advanceTimersByTime(PDF_POSITION_FLUSH_MS - 50)
+    recorder.record(location(3))
+    vi.advanceTimersByTime(50)
+    expect(writes).toEqual([['a.pdf:pdf', { pageNumber: 3, top: 400, left: 20 }]])
+  })
+
   it('ignores a malformed location without clearing the last good position', () => {
     const recorder = makeRecorder()
     recorder.arm()
