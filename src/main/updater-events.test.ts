@@ -68,6 +68,7 @@ function createContext(overrides?: Partial<HandlerContext>): HandlerContext {
     isQuitAndInstallHandoffActive: vi.fn(() => false),
     hasInstallableDownloadedVersion: vi.fn(() => true),
     isLocalBuildCheck: vi.fn(() => false),
+    isPinnedBuildCheck: vi.fn(() => false),
     shouldHandleUpdaterErrorEvent: vi.fn(() => true),
     clearUpdateAvailableEventPending: vi.fn(),
     isActiveUpdateCheckAttempt: vi.fn(() => true),
