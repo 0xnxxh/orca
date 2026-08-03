@@ -121,6 +121,35 @@ describe('browser page guest recovery', () => {
     expect(state.pending()).toBe(false)
   })
 
+  it('surfaces a hung replacement and retries replacement directly', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let replacementAttempt = 0
+    const state = createRecovery({
+      reload: () => {
+        throw new Error('guest destroyed')
+      },
+      replaceGuest: () => {
+        replacementAttempt += 1
+        return replacementAttempt === 1 ? new Promise<void>(() => {}) : Promise.resolve()
+      }
+    })
+
+    state.recovery.recoverRenderer()
+    await vi.advanceTimersByTimeAsync(BROWSER_GUEST_RECOVERY_TIMEOUT_MS)
+
+    expect(state.onRecoveryFailed).toHaveBeenCalledOnce()
+    expect(state.onReplacementReady).not.toHaveBeenCalled()
+    expect(state.pending()).toBe(false)
+
+    state.recovery.retryRecovery()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(state.reload).toHaveBeenCalledOnce()
+    expect(state.replaceGuest).toHaveBeenCalledTimes(2)
+    expect(state.onReplacementReady).toHaveBeenCalledOnce()
+  })
+
   it('recreates an active guest missing from the authoritative registry after resume', async () => {
     const state = createRecovery({ registered: false })
 

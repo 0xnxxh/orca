@@ -33,6 +33,7 @@ export function createBrowserPageGuestRecovery(
   let recoveryTimer: number | null = null
   let disposed = false
   let recoveryStarted = options.isPending()
+  let replacementRequired = false
   let replacementRequested = false
   let validationInFlight = false
   let validationFailureCount = 0
@@ -78,18 +79,34 @@ export function createBrowserPageGuestRecovery(
     clearRecoveryTimer()
     recoveryTimer = window.setTimeout(showRecoveryFailure, BROWSER_GUEST_RECOVERY_TIMEOUT_MS)
   }
+  const replaceGuestWithTimeout = (): Promise<void> => {
+    let timeoutTimer: number | null = null
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeoutTimer = window.setTimeout(() => {
+        reject(new Error('Guest replacement timed out'))
+      }, BROWSER_GUEST_RECOVERY_TIMEOUT_MS)
+    })
+    const replacement = Promise.resolve().then(() => options.replaceGuest())
+    return Promise.race([replacement, deadline]).finally(() => {
+      if (timeoutTimer !== null) {
+        window.clearTimeout(timeoutTimer)
+      }
+    })
+  }
   const replaceGuest = (): void => {
     if (disposed || replacementRequested || !options.browserPageExists()) {
       return
     }
+    replacementRequired = true
     replacementRequested = true
     lifecycleGeneration += 1
     validationFailureCount = 0
     options.setPending(true)
     clearRecoveryTimer()
     clearValidationRetry()
-    void options.replaceGuest().then(
+    void replaceGuestWithTimeout().then(
       () => {
+        replacementRequired = false
         if (disposed || !options.browserPageExists()) {
           options.setPending(false)
           return
@@ -259,6 +276,11 @@ export function createBrowserPageGuestRecovery(
       }
       recoveryStarted = false
       options.setPending(false)
+      if (replacementRequired) {
+        recoveryStarted = true
+        replaceGuest()
+        return
+      }
       recoverRenderer()
     },
     validateAfterResume
