@@ -1457,8 +1457,8 @@ html.native-shell .app-layout {
 
 /* Why: must stay a compositor-driven CSS animation — a JS clock writing
    per-element transforms blocks the renderer input thread (STA-3328: 41
-   spinners ⇒ ~490 style writes/s, keystroke p90 363ms). steps(12) preserves
-   the 30°-per-tick cadence of the retired shared clock. */
+   spinners ⇒ ~490 style writes/s, keystroke p90 363ms). The component anchors
+   each animation's startTime once; steps(12) preserves the retired cadence. */
 @keyframes agent-spinner-rotate {
   to {
     transform: rotate(360deg);

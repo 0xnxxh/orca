@@ -1,16 +1,29 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
 
-// Why: one animation-delay write at mount aligns every ring to a shared 1s
-// epoch — the phase sync the retired JS clock provided, without its per-tick
-// main-thread style writes (STA-3328). No cleanup needed: the value is inert.
+const SPINNER_ANIMATION_NAME = 'agent-spinner-rotate'
+
+// Why: CSS assigns per-element start times after refs run; anchoring the Web
+// Animation timeline gives late mounts exact phase sync without recurring JS.
 function syncSpinnerPhase(el: HTMLSpanElement | null): void {
   if (el === null) {
     return
   }
-  const now = document.timeline?.currentTime
-  if (typeof now === 'number') {
-    el.style.animationDelay = `${-(now % 1000)}ms`
+
+  const animation = el
+    .getAnimations()
+    .find(
+      (candidate) =>
+        'animationName' in candidate && candidate.animationName === SPINNER_ANIMATION_NAME
+    )
+  if (animation !== undefined) {
+    animation.startTime = 0
+  }
+}
+
+function handleSpinnerAnimationStart(event: React.AnimationEvent<HTMLSpanElement>): void {
+  if (event.animationName === SPINNER_ANIMATION_NAME) {
+    syncSpinnerPhase(event.currentTarget)
   }
 }
 
@@ -21,6 +34,7 @@ export function AgentWorkingSpinner({ className }: { className?: string }): Reac
   return (
     <span
       ref={syncSpinnerPhase}
+      onAnimationStart={handleSpinnerAnimationStart}
       data-agent-spinner=""
       className={cn(
         // Why: under reduced motion the animation is disabled, so fill the top
