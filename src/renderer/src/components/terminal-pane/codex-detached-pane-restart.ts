@@ -166,7 +166,7 @@ async function executeDetachedCodexPaneRestart(
     store.consumeSuppressedPtyExit(ptyId)
     store.queueTabStartupCommand(located.tab.id, { ...CODEX_ACCOUNT_RESTART_STARTUP })
     store.clearCodexRestartNotice(ptyId)
-    await killReplacedCodexPanePty(ptyId)
+    killReplacedCodexPanePty(ptyId)
     return
   }
   const { worktreeId, tab, leafId } = located
@@ -214,12 +214,12 @@ async function executeDetachedCodexPaneRestart(
   const store = useAppStore.getState()
   if (!isLocatedCodexPaneCurrent(store, located, ptyId)) {
     reopenCurrentCodexRestartPrompt(located, ptyId)
-    await window.api.pty.kill(spawned.id).catch(() => {})
+    reapUnboundCodexPty(spawned.id, 'stale detached spawn')
     return
   }
   if (hasRegisteredRuntimeTerminalTab(tab.id) || ptyDataHandlers.has(ptyId)) {
     store.queueCodexPaneRestarts([ptyId])
-    await window.api.pty.kill(spawned.id).catch(() => {})
+    reapUnboundCodexPty(spawned.id, 'mounted-owner handoff spawn')
     return
   }
   store.updateTabPtyId(tab.id, spawned.id, ptyId)
@@ -227,7 +227,7 @@ async function executeDetachedCodexPaneRestart(
     // Why: the tab was retired while the spawn was in flight; without a binding
     // the fresh PTY would idle in the daemon forever, so reap it and stand down.
     store.clearCodexRestartNotice(ptyId)
-    await window.api.pty.kill(spawned.id).catch(() => {})
+    reapUnboundCodexPty(spawned.id, 'retired-tab spawn')
     return
   }
   rebindCodexPaneLayoutLeaf(tab.id, leafId, spawned.id)
@@ -236,7 +236,7 @@ async function executeDetachedCodexPaneRestart(
   store.clearCodexRestartNotice(spawned.id)
   store.clearCodexRestartNotice(ptyId)
 
-  await killReplacedCodexPanePty(ptyId)
+  killReplacedCodexPanePty(ptyId)
 }
 
 function isLocatedCodexPaneCurrent(
@@ -307,19 +307,23 @@ function rebindCodexPaneLayoutLeaf(tabId: string, leafId: string, newPtyId: stri
   store.replaceTerminalLayoutPanePtyId(tabId, leafId, newPtyId)
 }
 
-async function killReplacedCodexPanePty(ptyId: string): Promise<void> {
+function reapUnboundCodexPty(ptyId: string, reason: string): void {
+  try {
+    void window.api.pty.kill(ptyId).catch((err) => {
+      console.warn(`[codex-restart] failed to reap ${reason}:`, err)
+    })
+  } catch (err) {
+    console.warn(`[codex-restart] failed to reap ${reason}:`, err)
+  }
+  discardPreHandlerPtyState(ptyId)
+}
+
+function killReplacedCodexPanePty(ptyId: string): void {
   // Why the disposal: a parked tab's exit sidecar treats any exit as the pane
   // dying — it would collapse the just-rebound leaf or close the whole tab.
   disposeParkedTerminalWatchersForPtyIds([ptyId])
   for (const snapshot of unregisterPtyDataHandlers([ptyId])) {
     snapshot.commit()
   }
-  try {
-    await window.api.pty.kill(ptyId)
-  } catch (err) {
-    // Why not rethrow: the stale shell can only be reaped, not re-adopted, so a
-    // failed kill is log-worthy only — the restart itself already happened.
-    console.warn('[codex-restart] failed to kill replaced Codex pane PTY:', err)
-  }
-  discardPreHandlerPtyState(ptyId)
+  reapUnboundCodexPty(ptyId, 'replaced Codex pane PTY')
 }

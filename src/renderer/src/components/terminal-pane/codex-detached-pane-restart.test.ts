@@ -293,8 +293,8 @@ describe('codex detached pane restart executor', () => {
 
       expect(useAppStore.getState().ptyIdsByTabId['tab-1']).toEqual([OLD_PTY])
       expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({ [OLD_PTY]: true })
-      pendingKill.resolve()
       await restart
+      pendingKill.resolve()
     } finally {
       unregister()
     }
@@ -332,8 +332,8 @@ describe('codex detached pane restart executor', () => {
     expect(after.ptyIdsByTabId['tab-1']).toEqual(['wt1@@successor'])
     expect(after.terminalLayoutsByTabId['tab-1']?.ptyIdsByLeafId?.[LEAF_ID]).toBe('wt1@@successor')
     expect(awaitsCodexRestartAnswer(after.codexRestartNoticeByPtyId['wt1@@successor'])).toBe(true)
-    pendingKill.resolve()
     await restart
+    pendingKill.resolve()
   })
 
   it('leaves a sleep-retained pending id alone so wake can migrate it', async () => {
@@ -396,7 +396,7 @@ describe('codex detached pane restart executor', () => {
       launchAgent: 'codex'
     })
     expect(useAppStore.getState().suppressedPtyExitIds[OLD_PTY]).toBeUndefined()
-    pendingKill.resolve()
     await restart
+    pendingKill.resolve()
   })
 })
