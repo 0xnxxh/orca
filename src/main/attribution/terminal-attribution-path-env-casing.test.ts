@@ -48,22 +48,54 @@ describe('applyTerminalAttributionEnv PATH key casing', () => {
     expect(pathEntries).toContain('C:\\Program Files\\Git\\cmd')
   })
 
-  it('collapses a dual-cased Windows env onto the OS-resolved `Path`', () => {
-    const root = makeTmpRoot()
-    const baseEnv: Record<string, string> = {
-      Path: 'C:\\Windows\\system32',
-      PATH: 'C:\\Stale'
+  // Why: Win32 resolves a duplicated variable by taking the first match in the block, so the
+  // shim must land on the first-listed spelling and the shadowed one must keep its value —
+  // dropping it would promote it the moment anything downstream removes the live key.
+  it.each([
+    { first: 'PATH', second: 'Path' },
+    { first: 'Path', second: 'PATH' }
+  ])(
+    'prepends the shim onto the first-listed `$first` and leaves `$second` untouched',
+    ({ first, second }) => {
+      const root = makeTmpRoot()
+      const userDataPath = join(root, 'user-data')
+      const baseEnv: Record<string, string> = {
+        [first]: 'C:\\tools\\bin;C:\\Windows\\system32',
+        [second]: 'C:\\Windows\\system32'
+      }
+
+      applyTerminalAttributionEnv(baseEnv, {
+        enabled: true,
+        platform: 'win32',
+        shellFamily: 'native-windows',
+        userDataPath
+      })
+
+      const win32Dir = join(userDataPath, 'orca-terminal-attribution', 'win32')
+      expect(baseEnv[first].split(';')).toEqual([
+        win32Dir,
+        'C:\\tools\\bin',
+        'C:\\Windows\\system32'
+      ])
+      expect(baseEnv[second]).toBe('C:\\Windows\\system32')
     }
+  )
+
+  it('keeps a shadowed duplicate when the live spelling strips down to nothing', () => {
+    const root = makeTmpRoot()
+    const userDataPath = join(root, 'user-data')
+    const shimDir = join(userDataPath, 'orca-terminal-attribution', 'win32')
+    const baseEnv: Record<string, string> = { Path: shimDir, PATH: 'C:\\Windows\\system32' }
 
     applyTerminalAttributionEnv(baseEnv, {
-      enabled: true,
+      enabled: false,
       platform: 'win32',
       shellFamily: 'native-windows',
-      userDataPath: join(root, 'user-data')
+      userDataPath
     })
 
-    expect(pathEnvKeys(baseEnv)).toEqual(['Path'])
-    expect(baseEnv.Path).toContain('C:\\Windows\\system32')
+    expect(pathEnvKeys(baseEnv)).toEqual(['PATH'])
+    expect(baseEnv.PATH).toBe('C:\\Windows\\system32')
   })
 
   it('strips shim entries from the inherited `Path` when attribution is disabled', () => {

@@ -301,19 +301,27 @@ describe('mergePersistedWindowsPath', () => {
 })
 
 describe('resolvePathEnvKey', () => {
-  it('prefers the Windows `Path` spelling already present on the env', () => {
+  it('uses whichever Windows spelling is present on the env', () => {
     expect(resolvePathEnvKey({ Path: 'C:\\Windows' }, 'win32')).toBe('Path')
-    expect(resolvePathEnvKey({ Path: 'C:\\Windows', PATH: 'C:\\Stale' }, 'win32')).toBe('Path')
+    expect(resolvePathEnvKey({ PATH: 'C:\\Windows' }, 'win32')).toBe('PATH')
   })
 
-  it('keeps `PATH` on Windows when that is the only spelling present', () => {
-    expect(resolvePathEnvKey({ PATH: 'C:\\Windows' }, 'win32')).toBe('PATH')
+  // Why: Win32 returns the first case-insensitive match in the block, so a dual-cased env is
+  // resolved by position; picking by casing would target the spelling the child never sees.
+  it('resolves a dual-cased Windows env by block order, not casing', () => {
+    expect(resolvePathEnvKey({ PATH: 'C:\\Live', Path: 'C:\\Shadowed' }, 'win32')).toBe('PATH')
+    expect(resolvePathEnvKey({ Path: 'C:\\Live', PATH: 'C:\\Shadowed' }, 'win32')).toBe('Path')
+  })
+
+  it('skips a path key explicitly set to undefined', () => {
+    expect(resolvePathEnvKey({ PATH: undefined, Path: 'C:\\Windows' }, 'win32')).toBe('Path')
   })
 
   it('falls back to the host block spelling for a Windows env with no path key', () => {
     // Why: a sparse patch that guesses wrong leaves the daemon's own merge holding both keys.
     expect(resolvePathEnvKey({}, 'win32', { PATH: 'C:\\Windows' })).toBe('PATH')
     expect(resolvePathEnvKey({}, 'win32', { Path: 'C:\\Windows' })).toBe('Path')
+    expect(resolvePathEnvKey({}, 'win32', { Path: 'C:\\Live', PATH: 'C:\\Shadowed' })).toBe('Path')
     expect(resolvePathEnvKey({}, 'win32', {})).toBe('Path')
   })
 

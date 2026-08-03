@@ -255,25 +255,28 @@ export function resolvePathEnvKey(
   if (platform !== 'win32') {
     return 'PATH'
   }
-  if (env.Path !== undefined) {
-    return 'Path'
-  }
-  if (env.PATH !== undefined) {
-    return 'PATH'
-  }
   // Why: the daemon receives a sparse env patch and re-merges its own block underneath it;
   // matching the block's spelling stops that merge from resurrecting the other one.
-  return readHostPathEnvKey(hostEnv)
+  return firstWindowsPathEnvKey(env) ?? firstWindowsPathEnvKey(hostEnv) ?? 'Path'
 }
 
 /**
- * Reads the path spelling the host's own environment block carries.
+ * Reads the path spelling a Windows child would actually resolve out of this block.
  *
- * Why: Node's Windows `process.env` lookups are case-insensitive, so only the own keys
- * reveal which spelling a child process will actually inherit.
+ * Why: `RtlQueryEnvironmentVariable` scans the block linearly and returns the first
+ * case-insensitive match, so position — not casing — decides the winner. Object key order is
+ * that block order: Node enumerates `process.env` in block order and node-pty emits
+ * `Object.keys(env)` verbatim without sorting.
  */
-function readHostPathEnvKey(hostEnv: NodeJS.ProcessEnv): 'PATH' | 'Path' {
-  return Object.keys(hostEnv).includes('PATH') ? 'PATH' : 'Path'
+function firstWindowsPathEnvKey(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+): 'PATH' | 'Path' | undefined {
+  for (const key of Object.keys(env)) {
+    if ((key === 'PATH' || key === 'Path') && env[key] !== undefined) {
+      return key
+    }
+  }
+  return undefined
 }
 
 function mergeWindowsPathSegments(

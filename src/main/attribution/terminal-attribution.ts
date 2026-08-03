@@ -105,7 +105,6 @@ export function applyTerminalAttributionEnv(
   // terminal environment instead of mutating global git/gh config or the
   // user's external shell PATH.
   baseEnv[pathKey] = [...prependDirs, cleanedBasePath].filter(Boolean).join(pathDelimiter)
-  collapseWindowsPathEnvKey(baseEnv, pathKey, platform)
   baseEnv.ORCA_ENABLE_GIT_ATTRIBUTION = '1'
   baseEnv.ORCA_GIT_COMMIT_TRAILER = ORCA_GIT_COMMIT_TRAILER
   baseEnv.ORCA_GH_PR_FOOTER = ORCA_GH_FOOTER
@@ -141,25 +140,6 @@ function clearTerminalAttributionEnv(
   } else {
     delete baseEnv[pathKey]
   }
-  collapseWindowsPathEnvKey(baseEnv, pathKey, platform)
-}
-
-/**
- * Drops the non-resolved PATH spelling so a Windows child inherits exactly one.
- *
- * Why: an inherited duplicate (WSL interop, third-party tools) is collapsed here rather than
- * left for the OS to pick a winner. Providers that re-merge their own block after this point
- * (the daemon) collapse again on their side, since this cannot see that merge.
- */
-function collapseWindowsPathEnvKey(
-  baseEnv: Record<string, string>,
-  pathKey: 'PATH' | 'Path',
-  platform: NodeJS.Platform
-): void {
-  if (platform !== 'win32') {
-    return
-  }
-  delete baseEnv[pathKey === 'Path' ? 'PATH' : 'Path']
 }
 
 function stripAttributionPathEntries(pathValue: string, pathDelimiter: string): string {
