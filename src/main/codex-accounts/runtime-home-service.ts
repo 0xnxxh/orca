@@ -70,6 +70,7 @@ import { getDefaultWslDistro, getWslHome } from '../wsl'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
 import { hasCustomCodexHomeOverrideForLaunch } from '../codex/codex-real-home-path'
 import { invalidateCodexSessionBackfillMarker } from '../codex/codex-session-backfill-marker'
+import { repairCodexWindowsPackageLayout } from '../codex/codex-windows-package-layout'
 import { assertOwnedHostCodexManagedHomePath } from './host-codex-managed-home-ownership'
 import {
   codexAuthIsFresher,
@@ -220,6 +221,10 @@ export class CodexRuntimeHomeService {
       this.startWslSessionBridgeForLaunch(wslTarget, runtimeHomePath)
       return runtimeHomePath
     }
+    // Why: an installer that flattens a standalone Codex release to `bin/` leaves
+    // codex-windows-sandbox-setup.exe unreachable, so every sandboxed tool call
+    // pops an OS "Windows cannot find" dialog. No-op off Windows and once healthy.
+    repairCodexWindowsPackageLayout()
     const selfContainedAccount = this.getSelfContainedManagedHostAccount()
     if (selfContainedAccount) {
       const perAccountHome = this.prepareSelfContainedManagedHomeForLaunch(
