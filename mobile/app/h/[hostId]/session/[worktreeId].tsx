@@ -1063,8 +1063,7 @@ export default function SessionScreen() {
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
-    handleLiveInputSubmit,
-    liveInputKey
+    handleLiveInputSubmit
   } = useTerminalLiveInputCommit({
     activeHandle,
     activeHandleRef,
@@ -5010,7 +5009,6 @@ export default function SessionScreen() {
                       onDictationCancel={cancelDictation}
                     />
                     <TextInput
-                      key={liveInputKey}
                       ref={liveInputRef}
                       style={styles.liveInputCapture}
                       value={liveInputCapture}
