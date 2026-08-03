@@ -1063,7 +1063,8 @@ export default function SessionScreen() {
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
-    handleLiveInputSubmit
+    handleLiveInputSubmit,
+    liveInputKey
   } = useTerminalLiveInputCommit({
     activeHandle,
     activeHandleRef,
@@ -1238,11 +1239,15 @@ export default function SessionScreen() {
         void (async () => {
           const flushedPendingInput = await flushPendingLiveInputBeforeExternalSend(insertHandle)
           if (!flushedPendingInput) {
+            showToast('Dictation insert canceled', 1500)
             return
           }
           const sent = await sendLiveTerminalInput(insertHandle, route.text)
           if (sent) {
             showToast('Dictation inserted')
+          } else {
+            triggerError()
+            showToast('Dictation insert canceled', 1500)
           }
         })()
         return
@@ -5009,6 +5014,7 @@ export default function SessionScreen() {
                       onDictationCancel={cancelDictation}
                     />
                     <TextInput
+                      key={liveInputKey}
                       ref={liveInputRef}
                       style={styles.liveInputCapture}
                       value={liveInputCapture}

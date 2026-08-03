@@ -72,9 +72,7 @@ function createAccessoryInputCommitHarness({
   const sentLiveInputTextRef: RefObject<string> = { current: sentText }
   const pendingLiveInputHandleRef: RefObject<string | null> = { current: pendingHandle }
   const liveInputRef: RefObject<TextInput | null> = { current: null }
-  const liveInputCompositionHandleRef: RefObject<string | null> = {
-    current: compositionHandle
-  }
+  const isLiveInputCompositionActive = (handle: string): boolean => handle === compositionHandle
   const liveInputTerminalHandles = new Set([activeHandle])
   const sent: string[] = []
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
@@ -99,8 +97,8 @@ function createAccessoryInputCommitHarness({
       clearPendingLiveInputCommit,
       flushPendingLiveInputText,
       heldLiveInputTextRef,
+      isLiveInputCompositionActive,
       liveInputRef,
-      liveInputCompositionHandleRef,
       liveInputTerminalHandles,
       pendingLiveInputHandleRef,
       sentLiveInputTextRef,

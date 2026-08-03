@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
 import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
 import { sendTerminalLiveControlAfterPendingFlush } from './terminal-live-control-send-order'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
 import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
+import {
+  beginTerminalLiveImeComposition,
+  createTerminalLiveImeState,
+  finishTerminalLiveImeComposition,
+  invalidateTerminalLiveImeComposition,
+  isSameTerminalLiveImeBoundary,
+  waitForTerminalLiveImeComposition
+} from './terminal-live-ime-state'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 import {
   useTerminalLiveAccessoryInputCommit,
@@ -46,6 +54,7 @@ type TerminalLiveInputCommitHandlers = {
   readonly handleLiveInputChange: (event: TerminalLiveInputChangeEvent) => void
   readonly handleLiveInputKeyPress: (event: TerminalLiveInputKeyPressEvent) => void
   readonly handleLiveInputSubmit: () => void
+  readonly liveInputKey: string
 }
 
 export function useTerminalLiveInputCommit<TTabType extends string>({
@@ -60,8 +69,9 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
-  const liveInputCompositionHandleRef = useRef<string | null>(null)
-  const staleLiveInputCompositionHandleRef = useRef<string | null>(null)
+  const [liveInputGeneration, setLiveInputGeneration] = useState(0)
+  const liveInputGenerationRef = useRef(0)
+  const liveInputImeStateRef = useRef(createTerminalLiveImeState())
   const {
     applyLiveInputMirror,
     clearPendingLiveInputCommit: clearPendingLiveInputMirror,
@@ -80,23 +90,23 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   })
 
   const clearPendingLiveInputCommit = useCallback(() => {
-    if (liveInputCompositionHandleRef.current) {
-      staleLiveInputCompositionHandleRef.current = liveInputCompositionHandleRef.current
-      liveInputCompositionHandleRef.current = null
-    }
+    invalidateTerminalLiveImeComposition(liveInputImeStateRef.current)
+    const nextGeneration = liveInputGenerationRef.current + 1
+    liveInputGenerationRef.current = nextGeneration
+    setLiveInputGeneration(nextGeneration)
     clearPendingLiveInputMirror()
   }, [clearPendingLiveInputMirror])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Why: what reached the PTY is unknowable across an outage — stale mirror state corrupts the first post-reconnect send.
     if (!connected) {
       clearPendingLiveInputCommit()
     }
   }, [connected, clearPendingLiveInputCommit])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pendingHandle = pendingLiveInputHandleRef.current
-    const compositionHandle = liveInputCompositionHandleRef.current
+    const compositionHandle = liveInputImeStateRef.current.owner?.handle ?? null
     const inputOwnerHandle = compositionHandle ?? pendingHandle
     if (!inputOwnerHandle) {
       return
@@ -116,13 +126,17 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   const flushPendingLiveInputBeforeExternalSend = useCallback(
     async (handle: string): Promise<boolean> => {
-      // Marked text belongs to the native IME until its final onChange event.
-      if (liveInputCompositionHandleRef.current === handle) {
+      const boundary = { generation: liveInputGenerationRef.current, handle }
+      const compositionWait = waitForTerminalLiveImeComposition(
+        liveInputImeStateRef.current,
+        boundary
+      )
+      if (compositionWait && !(await compositionWait)) {
         return false
       }
       const pendingHandle = pendingLiveInputHandleRef.current
       if (pendingHandle && pendingHandle !== handle) {
-        clearPendingLiveInputCommit()
+        clearPendingLiveInputMirror()
         return waitForPendingLiveInputFlush()
       }
       // Why: external bytes (dictation/paste) land after the field's echo on the
@@ -132,47 +146,52 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       }
       return waitForPendingLiveInputFlush()
     },
-    [clearPendingLiveInputCommit, flushPendingLiveInputText, waitForPendingLiveInputFlush]
+    [clearPendingLiveInputMirror, flushPendingLiveInputText, waitForPendingLiveInputFlush]
   )
 
   const handleLiveInputChange = useCallback(
     ({ nativeEvent: { isComposing, text } }: TerminalLiveInputChangeEvent) => {
-      if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
-        clearPendingLiveInputCommit()
+      if (!activeHandle) {
+        return
+      }
+      const boundary = { generation: liveInputGeneration, handle: activeHandle }
+      if (
+        boundary.generation !== liveInputGenerationRef.current ||
+        !liveInputTerminalHandles.has(boundary.handle)
+      ) {
         return
       }
       if (isComposing === true) {
-        staleLiveInputCompositionHandleRef.current = null
-        liveInputCompositionHandleRef.current = activeHandle
+        beginTerminalLiveImeComposition(liveInputImeStateRef.current, boundary)
         setLiveInputCapture(text)
         return
       }
 
-      const compositionHandle = liveInputCompositionHandleRef.current
-      if (
-        (compositionHandle && compositionHandle !== activeHandle) ||
-        (!compositionHandle && staleLiveInputCompositionHandleRef.current)
-      ) {
-        liveInputCompositionHandleRef.current = null
-        staleLiveInputCompositionHandleRef.current = null
-        clearPendingLiveInputMirror()
+      const compositionOwner = liveInputImeStateRef.current.owner
+      if (compositionOwner && !isSameTerminalLiveImeBoundary(compositionOwner, boundary)) {
         return
       }
       // Why: iOS kills an active dictation/IME session when JS writes a value
       // that differs from the native field text, so the controlled capture must
       // echo the field verbatim; only the PTY mirror sees normalized text.
-      liveInputCompositionHandleRef.current = null
-      staleLiveInputCompositionHandleRef.current = null
       setLiveInputCapture(text)
-      applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text))
+      applyLiveInputMirror(boundary.handle, normalizeTerminalTextInput(text))
+      if (compositionOwner) {
+        finishTerminalLiveImeComposition(liveInputImeStateRef.current, boundary)
+      }
     },
     [
       activeHandle,
       applyLiveInputMirror,
-      clearPendingLiveInputCommit,
+      liveInputGeneration,
       liveInputTerminalHandles,
       setLiveInputCapture
     ]
+  )
+
+  const isLiveInputCompositionActive = useCallback(
+    (handle: string): boolean => liveInputImeStateRef.current.owner?.handle === handle,
+    []
   )
 
   const handleLiveInputKeyPress = useCallback(
@@ -180,13 +199,13 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       if (
         !activeHandle ||
         !liveInputTerminalHandles.has(activeHandle) ||
-        liveInputCompositionHandleRef.current === activeHandle
+        isLiveInputCompositionActive(activeHandle)
       ) {
         return
       }
       const ownsPendingState = pendingLiveInputHandleRef.current === activeHandle
       if (pendingLiveInputHandleRef.current && !ownsPendingState) {
-        clearPendingLiveInputCommit()
+        clearPendingLiveInputMirror()
       }
       const decision = getTerminalLiveSpecialKeyDecision({
         key: event.nativeEvent.key,
@@ -214,8 +233,9 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     },
     [
       activeHandle,
-      clearPendingLiveInputCommit,
+      clearPendingLiveInputMirror,
       flushPendingLiveInputText,
+      isLiveInputCompositionActive,
       liveInputTerminalHandles,
       sendLiveTerminalInputRef,
       waitForPendingLiveInputFlush
@@ -225,12 +245,12 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   const handleLiveInputAccessoryBytes = useTerminalLiveAccessoryInputCommit({
     activeHandle,
     applyLiveInputMirror,
-    clearPendingLiveInputCommit,
-    liveInputCompositionHandleRef,
+    clearPendingLiveInputCommit: clearPendingLiveInputMirror,
     flushPendingLiveInputText,
     heldLiveInputTextRef,
     liveInputRef,
     liveInputTerminalHandles,
+    isLiveInputCompositionActive,
     pendingLiveInputHandleRef,
     sentLiveInputTextRef,
     sendLiveTerminalInputRef,
@@ -242,7 +262,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     if (
       !activeHandle ||
       !liveInputTerminalHandles.has(activeHandle) ||
-      liveInputCompositionHandleRef.current === activeHandle
+      isLiveInputCompositionActive(activeHandle)
     ) {
       return
     }
@@ -250,7 +270,17 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       () => flushPendingLiveInputText(activeHandle),
       () => sendLiveTerminalInputRef.current(activeHandle, '\r')
     )
-  }, [activeHandle, flushPendingLiveInputText, liveInputTerminalHandles, sendLiveTerminalInputRef])
+  }, [
+    activeHandle,
+    flushPendingLiveInputText,
+    isLiveInputCompositionActive,
+    liveInputTerminalHandles,
+    sendLiveTerminalInputRef
+  ])
+
+  useEffect(() => {
+    return () => invalidateTerminalLiveImeComposition(liveInputImeStateRef.current)
+  }, [])
 
   return {
     clearPendingLiveInputCommit,
@@ -258,6 +288,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
     handleLiveInputKeyPress,
-    handleLiveInputSubmit
+    handleLiveInputSubmit,
+    liveInputKey: `${activeHandle ?? 'none'}:${liveInputGeneration}`
   }
 }

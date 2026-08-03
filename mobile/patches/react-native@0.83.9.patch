@@ -13,34 +13,20 @@ diff --git a/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponen
 diff --git a/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp b/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
 --- a/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
 +++ b/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
-@@ -20,6 +20,10 @@ static jsi::Value textInputMetricsPayload(
-       "text",
+@@ -21,1 +21,5 @@ static jsi::Value textInputMetricsPayload(
        jsi::String::createFromUtf8(runtime, textInputMetrics.text));
- 
 +  if (textInputMetrics.isComposing.has_value()) {
 +    payload.setProperty(runtime, "isComposing", *textInputMetrics.isComposing);
 +  }
 +
-   payload.setProperty(runtime, "target", textInputMetrics.target);
- 
-   payload.setProperty(runtime, "eventCount", textInputMetrics.eventCount);
 diff --git a/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h b/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
 --- a/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
 +++ b/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
-@@ -6,6 +6,8 @@
- 
- #pragma once
- 
+@@ -10,1 +10,3 @@
 +#include <optional>
 +
  #include <react/renderer/attributedstring/AttributedString.h>
- #include <react/renderer/components/view/ViewEventEmitter.h>
- 
-@@ -18,6 +20,7 @@ class TextInputEventEmitter : public ViewEventEmitter {
- 
+@@ -20,2 +22,3 @@ class TextInputEventEmitter : public ViewEventEmitter {
    struct Metrics {
      std::string text;
 +    std::optional<bool> isComposing;
-     AttributedString::Range selectionRange;
-     // ScrollView-like metrics
-     Size contentSize;

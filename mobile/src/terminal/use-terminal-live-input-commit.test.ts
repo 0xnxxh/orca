@@ -7,6 +7,7 @@ import { TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS } from './terminal-live-han
 import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
 
 type TerminalLiveInputCommitHarness = {
+  readonly clearLiveInput: () => void
   readonly captures: readonly string[]
   readonly handlers: ReturnType<typeof useTerminalLiveInputCommit<string>>
   readonly sent: readonly string[]
@@ -94,6 +95,9 @@ function createTerminalLiveInputCommitHarness({
   }
 
   return {
+    clearLiveInput: (): void => {
+      act(() => handlers?.clearPendingLiveInputCommit())
+    },
     captures,
     get handlers() {
       if (!handlers) {
@@ -268,32 +272,79 @@ describe('terminal live input commit hook', () => {
     expect(harness.sent).toEqual([])
   })
 
-  it('Given a switch during marked text When its final event arrives Then rejects it for the new terminal', async () => {
+  it('Given a switch without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
     const harness = createTerminalLiveInputCommitHarness()
-    changeLiveInput(harness.handlers, 'かな', true)
+    const oldHandlers = harness.handlers
+    changeLiveInput(oldHandlers, 'かな', true)
     harness.setActiveHandle('terminal-b')
 
-    changeLiveInput(harness.handlers, '仮名', false)
+    changeLiveInput(harness.handlers, 'x', false)
+    changeLiveInput(oldHandlers, '仮', true)
+    changeLiveInput(oldHandlers, '仮名', false)
 
-    await Promise.resolve()
-    expect(harness.captures.at(-1)).toBe('')
-    expect(harness.sentByHandle).toEqual([])
+    await vi.waitFor(() =>
+      expect(harness.sentByHandle).toEqual([{ bytes: 'x', handle: 'terminal-b' }])
+    )
+    expect(harness.captures).toEqual(['かな', '', 'x'])
   })
 
-  it('Given active marked text When an external send requests a flush Then suppresses it until commit', async () => {
+  it('Given reconnect without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    const oldHandlers = harness.handlers
+    changeLiveInput(oldHandlers, 'かな', true)
+    harness.setConnected(false)
+    harness.setConnected(true)
+
+    changeLiveInput(harness.handlers, 'x', false)
+    changeLiveInput(oldHandlers, '仮', true)
+    changeLiveInput(oldHandlers, '仮名', false)
+
+    await vi.waitFor(() => expect(harness.sent).toEqual(['x']))
+    expect(harness.captures.slice(-2)).toEqual(['', 'x'])
+  })
+
+  it('Given toggle cleanup without a final event When fresh input and late old events arrive Then only sends fresh input', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    const oldHandlers = harness.handlers
+    changeLiveInput(oldHandlers, 'かな', true)
+    harness.clearLiveInput()
+
+    changeLiveInput(harness.handlers, 'x', false)
+    changeLiveInput(oldHandlers, '仮', true)
+    changeLiveInput(oldHandlers, '仮名', false)
+
+    await vi.waitFor(() => expect(harness.sent).toEqual(['x']))
+    expect(harness.captures).toEqual(['かな', '', 'x'])
+  })
+
+  it('Given active marked text When an external send requests a flush Then defers it until commit', async () => {
     const harness = createTerminalLiveInputCommitHarness()
     changeLiveInput(harness.handlers, 'かな', true)
+    let settled = false
 
-    await expect(
-      harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
-    ).resolves.toBe(false)
+    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    void flush.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
     expect(harness.sent).toEqual([])
 
     changeLiveInput(harness.handlers, '仮名', false)
-    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
-    await expect(
-      harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
-    ).resolves.toBe(true)
+
+    await expect(flush).resolves.toBe(true)
+    expect(harness.sent).toEqual(['仮名'])
+  })
+
+  it('Given a deferred external send When the terminal switches Then cancels the original target', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    changeLiveInput(harness.handlers, 'かな', true)
+    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+
+    harness.setActiveHandle('terminal-b')
+
+    await expect(flush).resolves.toBe(false)
+    expect(harness.sent).toEqual([])
   })
 
   it('Given active marked text When an accessory key is pressed Then suppresses it until commit', async () => {
@@ -475,22 +526,23 @@ describe('terminal live input commit hook', () => {
 
   it('Given bytes lost in a silent stall When the disconnect is detected Then the first post-recovery send carries no stale fragment or phantom erases', async () => {
     // Given: a stalled link — the mirror sends but the PTY never accepts (#6713 second defect)
-    const { captures, handlers, sent, setConnected, setSendResult } =
-      createTerminalLiveInputCommitHarness({ sendResult: false })
-    changeLiveInput(handlers, 'XYZZY')
-    await vi.waitFor(() => expect(sent).toEqual(['XYZZY']))
+    const harness = createTerminalLiveInputCommitHarness({ sendResult: false })
+    changeLiveInput(harness.handlers, 'XYZZY')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['XYZZY']))
 
     // When: the outage is finally detected, then the link recovers
-    setConnected(false)
-    setSendResult(true)
-    setConnected(true)
+    harness.setConnected(false)
+    harness.setSendResult(true)
+    harness.setConnected(true)
 
     // Then: the capture was wiped, and fresh typing sends verbatim bytes — not
     // 'XYZZY…' replayed and not DELs erasing PTY chars that never arrived
-    expect(captures.at(-1)).toBe('')
-    const sentBeforeRecovery = sent.length
-    changeLiveInput(handlers, 'echo CLEANLINE')
-    await vi.waitFor(() => expect(sent.slice(sentBeforeRecovery)).toEqual(['echo CLEANLINE']))
+    expect(harness.captures.at(-1)).toBe('')
+    const sentBeforeRecovery = harness.sent.length
+    changeLiveInput(harness.handlers, 'echo CLEANLINE')
+    await vi.waitFor(() =>
+      expect(harness.sent.slice(sentBeforeRecovery)).toEqual(['echo CLEANLINE'])
+    )
   })
 
   it('Given a held syllable during an outage When the disconnect is detected Then the settle timer cannot commit it later', async () => {

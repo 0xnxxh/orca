@@ -32,12 +32,14 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     activeHandle: { current: string | null }
     tabType: { current: string | null }
     leaseReady: { current: boolean }
+    flushPendingInput?: (handle: string) => Promise<boolean>
     showToast: (message: string, durationMs?: number) => void
   }): { gate: () => Gate } {
     let gate: Gate = () => Promise.resolve(false)
     function Probe(): null {
       gate = useMobileAttachmentInputLeaseGate({
-        flushPendingLiveInputBeforeExternalSend: () => Promise.resolve(true),
+        flushPendingLiveInputBeforeExternalSend:
+          args.flushPendingInput ?? (() => Promise.resolve(true)),
         connStateRef: args.connState,
         activeHandleRef: args.activeHandle,
         activeSessionTabTypeRef: args.tabType,
@@ -101,7 +103,20 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     expect(showToast).toHaveBeenCalledWith('Attach failed (reconnecting)', 1500)
   })
 
-  it('drops silently when the target changes while waiting for the lease', async () => {
+  it('surfaces cancellation when marked-text waiting invalidates the original target', async () => {
+    const refs = baseRefs()
+    const showToast = vi.fn()
+    const { gate } = renderGate({
+      ...refs,
+      flushPendingInput: async () => false,
+      showToast
+    })
+
+    await expect(gate()('terminal-1')).resolves.toBe(false)
+    expect(showToast).toHaveBeenCalledWith('Attach canceled before send', 1500)
+  })
+
+  it('surfaces cancellation when the target changes while waiting for the lease', async () => {
     const refs = baseRefs()
     refs.leaseReady.current = false
     const showToast = vi.fn()
@@ -115,10 +130,10 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     refs.leaseReady.current = true
     await vi.advanceTimersByTimeAsync(100)
     await expect(result).resolves.toBe(false)
-    expect(showToast).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Attach canceled before send', 1500)
   })
 
-  it('drops silently when the connection is lost while waiting', async () => {
+  it('surfaces cancellation when the connection is lost while waiting', async () => {
     const refs = baseRefs()
     refs.leaseReady.current = false
     const showToast = vi.fn()
@@ -129,6 +144,6 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     refs.connState.current = 'reconnecting'
     await vi.advanceTimersByTimeAsync(3200)
     await expect(result).resolves.toBe(false)
-    expect(showToast).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Attach canceled before send', 1500)
   })
 })

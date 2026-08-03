@@ -144,6 +144,8 @@ export function useMobileTerminalPaste({
       // Why: paste lives in the accessory row and must not overtake pending IME text.
       const flushedPendingInput = await flushPendingLiveInputBeforeExternalSend(targetHandle)
       if (!flushedPendingInput) {
+        onError()
+        showToast('Paste canceled before send', 1500)
         return
       }
       const currentClient = clientRef.current
@@ -153,6 +155,8 @@ export function useMobileTerminalPaste({
         targetHandle !== activeHandleRef.current ||
         activeSessionTabTypeRef.current !== 'terminal'
       ) {
+        onError()
+        showToast('Paste canceled before send', 1500)
         return
       }
       await currentClient.sendRequest('terminal.send', {
