@@ -25,6 +25,7 @@ export type LinuxPackageRecoveryUnavailableReason =
   | 'hash-mismatch'
   | 'no-sudo'
   | 'no-package-manager'
+  | 'invalid-package-path'
   | 'read-failed'
 
 export type LinuxPackageInstructionsResult =
@@ -198,6 +199,8 @@ function decodeExpectedDigest(sha512: string): Buffer | null {
     return null
   }
   // Why: Buffer.from silently drops invalid base64 characters; round-tripping rejects malformed input.
+  // The round-trip emits standard base64, so a URL-safe digest would be rejected — electron-updater's
+  // latest-linux.yml is standard base64, and failing closed on an unrecognized encoding is correct.
   return decoded.toString('base64') === trimmed ? decoded : null
 }
 

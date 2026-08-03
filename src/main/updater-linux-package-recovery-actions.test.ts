@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UpdateStatus } from '../shared/types'
 import type * as UpdaterModule from './updater'
 
@@ -93,6 +93,10 @@ const ARTIFACT = {
 }
 
 describe('linux package recovery actions', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   beforeEach(() => {
     vi.resetModules()
     vi.useFakeTimers()

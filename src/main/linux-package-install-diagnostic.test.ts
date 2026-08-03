@@ -130,6 +130,17 @@ describe('redactLinuxPackageInstallText', () => {
     expect(diagnostic.redactLinuxPackageInstallText(circular, null)).toBeNull()
   })
 
+  it('strips an OSC hyperlink along with its URL payload', () => {
+    const BEL = String.fromCharCode(7)
+    const text = `${ESC}]8;;https://tracker.invalid/report${BEL}dpkg: error${ESC}]8;;${BEL} processing`
+    expect(diagnostic.redactLinuxPackageInstallText(text, null)).toBe('dpkg: error processing')
+  })
+
+  it('strips a string-terminated DCS sequence and a two-byte escape', () => {
+    const text = `${ESC}P1;2|payload${ESC}\\dpkg${ESC}c: error`
+    expect(diagnostic.redactLinuxPackageInstallText(text, null)).toBe('dpkg: error')
+  })
+
   it('ignores an empty package path', () => {
     expect(diagnostic.redactLinuxPackageInstallText('plain output', '')).toBe('plain output')
   })
@@ -221,6 +232,29 @@ describe('createUpdaterDiagnosticLogger', () => {
       message:
         'Error executing command as another user: No authentication <user>nt found for <user>.',
       reason: 'authentication-agent-unavailable'
+    })
+  })
+
+  it('keeps a specific verdict when a generic line follows it', () => {
+    // electron-updater logs the polkit output first, then "Command failed, exited with code 126".
+    const logger = diagnostic.createUpdaterDiagnosticLogger()
+    diagnostic.beginLinuxPackageInstallDiagnosticCapture(null)
+    logger.error('polkit-agent-helper-1: no authentication agent found')
+    logger.error('Command failed, exited with code 126')
+    expect(diagnostic.getLinuxPackageInstallDiagnostic()).toEqual({
+      message: 'polkit-agent-helper-1: no authentication agent found',
+      reason: 'authentication-agent-unavailable'
+    })
+  })
+
+  it('lets a later specific line replace an earlier one', () => {
+    const logger = diagnostic.createUpdaterDiagnosticLogger()
+    diagnostic.beginLinuxPackageInstallDiagnosticCapture(null)
+    logger.error('no authentication agent')
+    logger.error('request dismissed')
+    expect(diagnostic.getLinuxPackageInstallDiagnostic()).toEqual({
+      message: 'request dismissed',
+      reason: 'authentication-denied'
     })
   })
 

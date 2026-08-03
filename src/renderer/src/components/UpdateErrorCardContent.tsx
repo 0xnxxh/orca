@@ -105,7 +105,7 @@ export function UpdateErrorCardContent({
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 shrink-0 min-w-[44px] min-h-[44px] -m-2"
+          className="shrink-0 min-w-[44px] min-h-[44px] -m-2"
           onClick={onClose}
           aria-label={translate('auto.components.UpdateCard.8acbdd3961', 'Minimize to status bar')}
         >
@@ -165,7 +165,11 @@ export function UpdateErrorCardContent({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void window.api.shell.openUrl(releaseUrl)}
+              onClick={() => {
+                void window.api.shell.openUrl(releaseUrl).catch((error) => {
+                  console.error('[updates] failed to open the release page:', error)
+                })
+              }}
               className="flex-1"
             >
               {manualLabel ??

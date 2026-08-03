@@ -24,7 +24,7 @@ const RPM_PACKAGE_MANAGERS: { name: string; args: string[] }[] = [
 
 export type LinuxPackageInstallCommandResult =
   | { ok: true; command: string }
-  | { ok: false; reason: 'no-sudo' | 'no-package-manager' }
+  | { ok: false; reason: 'no-sudo' | 'no-package-manager' | 'invalid-package-path' }
 
 /** POSIX single-quoting: the only metacharacter left is `'`, closed and re-opened around a literal. */
 export function quoteForPosixShell(value: string): string {
@@ -63,7 +63,7 @@ export function buildLinuxPackageInstallCommand(
   // Why: several package managers accept no `--` terminator, so a relative or dash-leading path would
   // be read as an option. Hold that property here rather than relying on a caller two modules away.
   if (!path.isAbsolute(packagePath)) {
-    return { ok: false, reason: 'no-package-manager' }
+    return { ok: false, reason: 'invalid-package-path' }
   }
   const sudoPath = resolveTrustedExecutable('sudo')
   if (!sudoPath) {

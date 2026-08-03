@@ -8,8 +8,17 @@ export type LinuxPackageInstallDiagnostic = {
 }
 
 const MAX_DIAGNOSTIC_LENGTH = 1_024
-// Built via RegExp so the source carries no raw control bytes.
-const ANSI_ESCAPE = new RegExp(String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]`, 'g')
+// Built via RegExp so the source carries no raw control bytes. Alternatives in order: CSI; then the
+// string sequences (OSC/DCS/PM/APC/SOS), whose payload — an OSC 8 hyperlink URL, say — must be
+// dropped with the introducer rather than left behind; then any remaining two-byte escape.
+const ANSI_ESCAPE = new RegExp(
+  [
+    String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]`,
+    String.raw`\u001b[\]P^_X][^\u0007\u001b]*(?:\u0007|\u001b\\)?`,
+    String.raw`\u001b[@-~]`
+  ].join('|'),
+  'g'
+)
 const CONTROL_CHARACTERS = new RegExp(String.raw`[\u0000-\u001f\u007f]`, 'g')
 
 // Why: pkexec/polkit print these before any package manager runs; matching them keeps the UI from
@@ -134,10 +143,21 @@ function recordLinuxPackageInstallDiagnostic(value: unknown): void {
   }
   const raw = stringifyLoggerValue(value)
   const redacted = redactLinuxPackageInstallText(raw, redactedPackagePath)
-  if (redacted) {
-    retainedDiagnostic = redacted
-    retainedReason = classifyLinuxPackageInstallFailure(raw)
+  if (!redacted) {
+    return
   }
+  const reason = classifyLinuxPackageInstallFailure(raw)
+  // Why: electron-updater logs the polkit output first and a generic "exited with code N" line after,
+  // so a later generic line must not erase the specific verdict the card branches on.
+  if (
+    reason === 'package-install-failed' &&
+    retainedReason !== null &&
+    retainedReason !== 'package-install-failed'
+  ) {
+    return
+  }
+  retainedDiagnostic = redacted
+  retainedReason = reason
 }
 
 /**

@@ -31,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('quoteForPosixShell', () => {
@@ -99,7 +100,6 @@ describe('resolveTrustedExecutable', () => {
     const { resolveTrustedExecutable } = await loadCommandModule()
     expect(resolveTrustedExecutable('sudo')).toBeNull()
     expect(statSyncMock).not.toHaveBeenCalledWith('/home/user/.local/bin/sudo')
-    vi.unstubAllEnvs()
   })
 
   it('rejects a non-executable file', async () => {
@@ -130,7 +130,7 @@ describe('buildLinuxPackageInstallCommand', () => {
     for (const packagePath of ['orca.deb', './orca.deb', '--force-all', '-i']) {
       expect(buildLinuxPackageInstallCommand('deb', packagePath)).toEqual({
         ok: false,
-        reason: 'no-package-manager'
+        reason: 'invalid-package-path'
       })
     }
   })
@@ -236,7 +236,8 @@ describe('buildLinuxPackageInstallCommand', () => {
     install('/usr/bin/apt')
     const { buildLinuxPackageInstallCommand } = await loadCommandModule()
     const result = buildLinuxPackageInstallCommand('deb', '/tmp/orca.deb')
-    expect(result.ok && result.command).not.toMatch(
+    expect(result.ok).toBe(true)
+    expect(result.ok ? result.command : '').not.toMatch(
       /(^|\s)(-y|--yes|--noconfirm|--assumeyes)(\s|$)/
     )
   })

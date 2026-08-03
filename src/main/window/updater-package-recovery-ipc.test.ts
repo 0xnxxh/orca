@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import type { Store } from '../persistence'
 import type * as IpcUiModule from '../ipc/ui'
@@ -133,6 +133,10 @@ describe('updater linux package recovery IPC handlers', () => {
     registerUpdaterHandlers({} as Store)
   })
 
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('removes and re-registers both recovery channels', () => {
     for (const channel of RECOVERY_CHANNELS) {
       expect(removeHandlerMock).toHaveBeenCalledWith(channel)
@@ -174,8 +178,6 @@ describe('updater linux package recovery IPC handlers', () => {
     vi.stubEnv('ELECTRON_RENDERER_URL', 'http://localhost:5173')
 
     expectBothChannelsRejected(webContents({ getURL: () => 'http://evil.invalid/index.html' }))
-
-    vi.unstubAllEnvs()
   })
 
   it('rechecks sender trust on every invocation', () => {

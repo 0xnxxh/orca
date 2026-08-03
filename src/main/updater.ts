@@ -1758,7 +1758,10 @@ const LINUX_PACKAGE_RECOVERY_MESSAGES: Record<LinuxPackageRecoveryUnavailableRea
   'no-sudo':
     'No sudo command was found in the system directories, so Orca cannot build a safe install command. Show the package and install it with your package manager.',
   'no-package-manager':
-    'No supported package manager was found in the system directories, so Orca cannot build a safe install command. Show the package and install it with your package manager.'
+    'No supported package manager was found in the system directories, so Orca cannot build a safe install command. Show the package and install it with your package manager.',
+  // Defensive: capture only ever tracks absolute cache paths, so this reports a bug rather than a machine state.
+  'invalid-package-path':
+    'The downloaded package is not at a usable path, so Orca cannot build a safe install command. Show the package and install it with your package manager.'
 }
 
 // Why: clearing the artifact alone would leave the renderer's actions enabled; the status must lose its recovery too.
