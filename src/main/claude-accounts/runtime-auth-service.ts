@@ -15,7 +15,7 @@ import {
 } from './managed-auth-path'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import { resolveLocalAccountRuntimeTarget } from '../../shared/local-account-runtime'
-import { getDefaultWslDistro, toWindowsWslPath } from '../wsl'
+import { getDefaultWslDistro, toWindowsWslPath, wslUncFileExists } from '../wsl'
 import { buildEncodedWslBashCommand } from '../wsl-bash-command'
 import { hasLiveClaudePtys } from './live-pty-gate'
 import { isOauthTokenExpiring, refreshClaudeOauthCredentials } from './oauth-refresh'
@@ -192,6 +192,8 @@ export class ClaudeRuntimeAuthService {
   private getHostSurface(): ClaudeAuthSurface {
     return {
       key: HOST_AUTH_SURFACE_KEY,
+      // Why: every Orca version has materialized into the host ~/.claude, so a persisted host
+      // selection is itself proof that Orca owns whatever sits there.
       state: this.surfaceStates.stateFor(HOST_AUTH_SURFACE_KEY, () =>
         getSelectedClaudeAccountIdForTarget(this.store.getSettings(), {
           runtime: 'host'
@@ -199,6 +201,22 @@ export class ClaudeRuntimeAuthService {
       ),
       getPaths: () => this.pathResolver.getRuntimePaths()
     }
+  }
+
+  /**
+   * Why: a distro profile was never written before #11824, so unlike the host surface a persisted
+   * WSL selection proves nothing. Only the surface's snapshot does; without one — every WSL surface
+   * on the first launch after upgrading — seeding the selection would skip the snapshot capture and
+   * then "restore" over a login Orca never touched, deleting the user's own distro credentials.
+   */
+  private seedWslLastSyncedAccountId(surfaceKey: string, distro: string): string | null {
+    if (!existsSync(this.getSurfaceSnapshotPath(surfaceKey))) {
+      return null
+    }
+    return getSelectedClaudeAccountIdForTarget(this.store.getSettings(), {
+      runtime: 'wsl',
+      wslDistro: distro
+    })
   }
 
   private getWslSurface(distro: string | null): ClaudeAuthSurface | null {
@@ -213,10 +231,7 @@ export class ClaudeRuntimeAuthService {
     return {
       key: paths.surfaceKey,
       state: this.surfaceStates.stateFor(paths.surfaceKey, () =>
-        getSelectedClaudeAccountIdForTarget(this.store.getSettings(), {
-          runtime: 'wsl',
-          wslDistro: trimmedDistro
-        })
+        this.seedWslLastSyncedAccountId(paths.surfaceKey, trimmedDistro)
       ),
       getPaths: () => paths
     }
@@ -519,20 +534,18 @@ export class ClaudeRuntimeAuthService {
       }
     }
     const managedOauthAccount = this.readManagedOauthAccount(activeAccount)
-    // Why: a distro's ~/.claude.json holds full project/MCP history and can be tens of MB; only pay the read-modify-write when the identity actually moves.
+    // Why: a distro's ~/.claude.json holds full project/MCP history and can be tens of MB; skip the
+    // rewrite only when the file itself still carries this identity — a `/login` inside the distro
+    // rewrites it behind Orca's back, so cached last-write bookkeeping is not proof.
     const oauthAccountAlreadyWritten =
       this.surface.key !== HOST_AUTH_SURFACE_KEY &&
-      state.lastSyncedAccountId === activeAccount.id &&
-      state.hasLastWrittenOauthAccount &&
-      this.jsonValuesEqual(state.lastWrittenOauthAccount, managedOauthAccount)
-    if (!oauthAccountAlreadyWritten) {
-      if (await this.writeRuntimeOauthAccount(managedOauthAccount)) {
-        state.lastWrittenOauthAccount = managedOauthAccount
-        state.hasLastWrittenOauthAccount = true
-      } else {
-        state.lastWrittenOauthAccount = null
-        state.hasLastWrittenOauthAccount = false
-      }
+      (await this.runtimeOauthAccountMatches(managedOauthAccount))
+    if (oauthAccountAlreadyWritten || (await this.writeRuntimeOauthAccount(managedOauthAccount))) {
+      state.lastWrittenOauthAccount = managedOauthAccount
+      state.hasLastWrittenOauthAccount = true
+    } else {
+      state.lastWrittenOauthAccount = null
+      state.hasLastWrittenOauthAccount = false
     }
     state.lastSyncedAccountId = activeAccount.id
     state.hasMaterializedRuntimeAuth = true
@@ -1724,16 +1737,23 @@ export class ClaudeRuntimeAuthService {
 
   private async writeRuntimeOauthAccount(oauthAccount: unknown): Promise<boolean> {
     const configPath = this.surface.getPaths().configPath
-    const existing = await this.readJsonObject(configPath)
+    const existing = await this.readRuntimeConfigJson(configPath)
     if (existing === null) {
       return false
     }
     if (oauthAccount === null || oauthAccount === undefined) {
-      delete existing.oauthAccount
+      delete existing.record.oauthAccount
     } else {
-      existing.oauthAccount = oauthAccount
+      existing.record.oauthAccount = oauthAccount
     }
-    this.writeJson(configPath, existing)
+    const serialized = `${JSON.stringify(existing.record, null, 2)}\n`
+    // Why: the async read above already holds the current bytes; re-reading a multi-MB
+    // ~/.claude.json over 9P just to compare would block the main thread all over again.
+    if (serialized === existing.contents) {
+      return true
+    }
+    mkdirSync(dirname(configPath), { recursive: true })
+    writeFileAtomically(configPath, serialized, { mode: 0o600 })
     return true
   }
 
@@ -1930,14 +1950,22 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private async readJsonObject(targetPath: string): Promise<Record<string, unknown> | null> {
+  private async readRuntimeConfigJson(
+    targetPath: string
+  ): Promise<{ record: Record<string, unknown>; contents: string | null } | null> {
     if (!existsSync(targetPath)) {
-      return {}
+      // Why: Win32 existsSync reports spurious ENOENT over the WSL 9P share (see wslUncDirectoryExists),
+      // and the caller rewrites this file wholesale — only the distro's own answer may be read as "absent".
+      return this.surface.key === HOST_AUTH_SURFACE_KEY || wslUncFileExists(targetPath) === false
+        ? { record: {}, contents: null }
+        : null
     }
     try {
-      const parsed = JSON.parse(await readFile(targetPath, 'utf-8')) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
+      const contents = await readFile(targetPath, 'utf-8')
+      const parsed = JSON.parse(contents) as unknown
+      const record = this.asRecord(parsed)
+      if (record) {
+        return { record, contents }
       }
     } catch {
       // Why: invalid config is unknown external state; return null so we don't erase user or Claude-owned settings.
@@ -1952,7 +1980,11 @@ export class ClaudeRuntimeAuthService {
     return metadataDir
   }
 
+  private getSurfaceSnapshotPath(surfaceKey: string): string {
+    return join(this.getRuntimeMetadataDir(), authSurfaceSnapshotFileName(surfaceKey))
+  }
+
   private getSystemDefaultSnapshotPath(): string {
-    return join(this.getRuntimeMetadataDir(), authSurfaceSnapshotFileName(this.surface.key))
+    return this.getSurfaceSnapshotPath(this.surface.key)
   }
 }

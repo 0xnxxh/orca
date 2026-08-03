@@ -38,7 +38,9 @@ export class ClaudeAuthSurfaceStates {
   /**
    * Why: a surface first seen after an app restart must adopt the persisted
    * selection, otherwise the restore branch never fires and deselecting leaves
-   * Orca's credentials in place instead of the user's own login.
+   * Orca's credentials in place instead of the user's own login. The seed is a
+   * callback because only the caller can prove Orca already materialized here —
+   * claiming an unmaterialized selection would restore over an untouched login.
    */
   stateFor(
     surfaceKey: string,

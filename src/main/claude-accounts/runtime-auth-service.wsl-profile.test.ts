@@ -20,12 +20,24 @@ const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 const testState = {
   userDataDir: '',
   fakeHomeDir: '',
-  wslHomeDirs: new Map<string, string>()
+  wslHomeDirs: new Map<string, string>(),
+  uncBlindPaths: new Set<string>()
 }
 
 vi.mock('electron', () => ({
   app: { getPath: () => testState.userDataDir }
 }))
+
+// Why: Win32 existsSync reports ENOENT for paths that exist on the WSL 9P share (see
+// `wslUncDirectoryExists`); registered paths reproduce that blind spot without a real distro.
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs') // eslint-disable-line @typescript-eslint/consistent-type-imports -- vi.importActual requires inline import()
+  return {
+    ...actual,
+    existsSync: (path: Parameters<typeof actual.existsSync>[0]) =>
+      !testState.uncBlindPaths.has(String(path)) && actual.existsSync(path)
+  }
+})
 
 vi.mock('./oauth-refresh', () => ({
   isOauthTokenExpiring: vi.fn(() => false),
@@ -174,11 +186,18 @@ function lookupWslHome(distro: string): string | null {
   return null
 }
 
-function mockWsl(overrides: { getWslHome?: (distro: string) => string | null } = {}): void {
+function mockWsl(
+  overrides: {
+    getWslHome?: (distro: string) => string | null
+    wslUncFileExists?: (path: string) => boolean | null
+  } = {}
+): void {
   vi.doMock('../wsl', () => ({
     getDefaultWslDistro: () => 'Ubuntu',
     getWslHome: overrides.getWslHome ?? lookupWslHome,
-    toWindowsWslPath: (value: string) => value
+    toWindowsWslPath: (value: string) => value,
+    // Default matches a distro Orca cannot reach: inconclusive, never a licence to overwrite.
+    wslUncFileExists: overrides.wslUncFileExists ?? ((): boolean | null => null)
   }))
 }
 
@@ -201,6 +220,7 @@ describe('Claude runtime auth on WSL distro profiles', () => {
     testState.userDataDir = mkdtempSync(join(tmpdir(), 'orca-wsl-auth-data-'))
     testState.fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-wsl-auth-home-'))
     testState.wslHomeDirs = new Map()
+    testState.uncBlindPaths = new Set()
     mkdirSync(join(testState.fakeHomeDir, '.claude'), { recursive: true })
   })
 
@@ -324,6 +344,165 @@ describe('Claude runtime auth on WSL distro profiles', () => {
       wslDistro: 'Ubuntu'
     })
     expect(preparation.provenance).toBe('wsl:Ubuntu:system')
+  })
+
+  it('keeps the distro login when an already-selected account is first synced after upgrading', async () => {
+    mockWsl()
+    const wslHome = createWslDistroHome('Ubuntu', 'owner@example.com')
+    const ownCredentials = readFileSync(join(wslHome, '.claude', '.credentials.json'), 'utf-8')
+    const managedAuthPath = createWslManagedAuth(
+      'ubuntu-account',
+      createCredentialsJson('second@example.com', 'managed-token')
+    )
+    // Upgrade path: the selection is already persisted and no distro snapshot exists, because
+    // before #11824 the WSL branch never touched the distro profile at all.
+    const store = createStore(
+      createSettings({
+        localAccountRuntime: 'wsl',
+        localAccountWslDistro: 'Ubuntu',
+        claudeManagedAccounts: [
+          createWslAccount('ubuntu-account', 'Ubuntu', managedAuthPath, 'second@example.com')
+        ],
+        activeClaudeManagedAccountIdsByRuntime: {
+          host: null,
+          wsl: { Ubuntu: 'ubuntu-account' }
+        }
+      })
+    )
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+    store.updateSettings({
+      activeClaudeManagedAccountIdsByRuntime: {
+        host: null,
+        wsl: { Ubuntu: null }
+      }
+    })
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+
+    expect(readFileSync(join(wslHome, '.claude', '.credentials.json'), 'utf-8')).toBe(
+      ownCredentials
+    )
+    expect(readJson(join(wslHome, '.claude.json'))).toEqual({
+      oauthAccount: { accountUuid: 'own-account' },
+      projects: { '/repo': {} }
+    })
+  })
+
+  it('leaves the distro profile alone when the 9P share hides an existing .claude.json', async () => {
+    mockWsl({ wslUncFileExists: () => true })
+    const wslHome = createWslDistroHome('Ubuntu', 'owner@example.com')
+    const managedCredentials = createCredentialsJson('second@example.com', 'managed-token')
+    const managedAuthPath = createWslManagedAuth('ubuntu-account', managedCredentials)
+    testState.uncBlindPaths.add(join(wslHome, '.claude.json'))
+    const store = createStore(
+      createSettings({
+        claudeManagedAccounts: [
+          createWslAccount('ubuntu-account', 'Ubuntu', managedAuthPath, 'second@example.com')
+        ],
+        activeClaudeManagedAccountIdsByRuntime: {
+          host: null,
+          wsl: { Ubuntu: 'ubuntu-account' }
+        }
+      })
+    )
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+
+    // Settings, plugins and project history must survive a share that lies about the file.
+    expect(readJson(join(wslHome, '.claude.json'))).toEqual({
+      oauthAccount: { accountUuid: 'own-account' },
+      projects: { '/repo': {} }
+    })
+    expect(readFileSync(join(wslHome, '.claude', '.credentials.json'), 'utf-8')).toBe(
+      managedCredentials
+    )
+  })
+
+  it('writes the distro .claude.json when the distro confirms it is absent', async () => {
+    mockWsl({ wslUncFileExists: () => false })
+    const wslHome = createWslDistroHome('Ubuntu', 'owner@example.com')
+    rmSync(join(wslHome, '.claude.json'), { force: true })
+    const managedAuthPath = createWslManagedAuth(
+      'ubuntu-account',
+      createCredentialsJson('second@example.com', 'managed-token')
+    )
+    const store = createStore(
+      createSettings({
+        claudeManagedAccounts: [
+          createWslAccount('ubuntu-account', 'Ubuntu', managedAuthPath, 'second@example.com')
+        ],
+        activeClaudeManagedAccountIdsByRuntime: {
+          host: null,
+          wsl: { Ubuntu: 'ubuntu-account' }
+        }
+      })
+    )
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+
+    expect(readJson(join(wslHome, '.claude.json'))).toEqual({
+      oauthAccount: { accountUuid: 'ubuntu-account' }
+    })
+  })
+
+  it('rewrites the distro identity after a login inside the distro replaced it', async () => {
+    mockWsl()
+    const wslHome = createWslDistroHome('Ubuntu', 'owner@example.com')
+    const managedAuthPath = createWslManagedAuth(
+      'ubuntu-account',
+      createCredentialsJson('second@example.com', 'managed-token')
+    )
+    const store = createStore(
+      createSettings({
+        claudeManagedAccounts: [
+          createWslAccount('ubuntu-account', 'Ubuntu', managedAuthPath, 'second@example.com')
+        ],
+        activeClaudeManagedAccountIdsByRuntime: {
+          host: null,
+          wsl: { Ubuntu: 'ubuntu-account' }
+        }
+      })
+    )
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+
+    // `claude /login` inside the distro rewrites oauthAccount behind Orca's back.
+    writeFileSync(
+      join(wslHome, '.claude.json'),
+      `${JSON.stringify({ oauthAccount: { accountUuid: 'personal-account' }, projects: { '/repo': {} } })}\n`,
+      'utf-8'
+    )
+    await service.syncForCurrentSelection({
+      runtime: 'wsl',
+      wslDistro: 'Ubuntu'
+    })
+
+    expect(readJson(join(wslHome, '.claude.json')).oauthAccount).toEqual({
+      accountUuid: 'ubuntu-account'
+    })
   })
 
   it('keeps distros isolated and folds distro-name casing onto one surface', async () => {
