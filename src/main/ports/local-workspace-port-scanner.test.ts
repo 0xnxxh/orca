@@ -9,12 +9,27 @@ import {
   resetWorkspacePortScanTimeoutBackoffForTests,
   scanWorkspacePorts
 } from './local-workspace-port-scanner'
+import { PortScanCommandTimeout } from './port-scan-command-client'
 
-const execFileMock = vi.hoisted(() => vi.fn())
+const runPortScanCommandMock = vi.hoisted(() => vi.fn())
 
-vi.mock('child_process', () => ({
-  execFile: execFileMock
+vi.mock('./port-scan-command-worker-spawn', () => ({
+  runPortScanCommand: runPortScanCommandMock
 }))
+
+// Healthy hosts return process creation in single-digit ms; the scanner only
+// reads spawnMs to decide whether to skip optional metadata commands.
+const FAST_SPAWN_MS = 2
+
+function commandOutput(
+  stdout: string,
+  spawnMs = FAST_SPAWN_MS
+): Promise<{
+  stdout: string
+  spawnMs: number
+}> {
+  return Promise.resolve({ stdout, spawnMs })
+}
 
 const worktrees = [
   {
@@ -177,46 +192,34 @@ describe('scanWorkspacePorts attribution work', () => {
   afterEach(() => {
     resetWorkspacePortScanTimeoutBackoffForTests()
     vi.restoreAllMocks()
-    execFileMock.mockReset()
+    runPortScanCommandMock.mockReset()
   })
 
   it('normalizes worktree paths once per scan instead of once per port phase', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     const win32ResolveSpy = vi.spyOn(path.win32, 'resolve')
     const posixResolveSpy = vi.spyOn(path.posix, 'resolve')
-    const invokeCallback = (callback: unknown, stdout: string): void => {
-      if (typeof callback !== 'function') {
-        throw new Error('missing execFile callback')
+    runPortScanCommandMock.mockImplementation((command: string, args: readonly string[]) => {
+      if (command === 'lsof' && args.includes('-iTCP')) {
+        return commandOutput(
+          ['p123', 'cnode', 'n127.0.0.1:3000', 'p124', 'cnode', 'n127.0.0.1:3001'].join('\n')
+        )
       }
-      const execCallback = callback as (error: Error | null, stdout: string) => void
-      execCallback(null, stdout)
-    }
-    execFileMock.mockImplementation(
-      (command: string, args: string[], _options: unknown, callback: unknown) => {
-        if (command === 'lsof' && args.includes('-iTCP')) {
-          invokeCallback(
-            callback,
-            ['p123', 'cnode', 'n127.0.0.1:3000', 'p124', 'cnode', 'n127.0.0.1:3001'].join('\n')
-          )
-        } else if (command === 'lsof') {
-          invokeCallback(
-            callback,
-            ['p123', 'n/repo/service', 'p124', 'n/repo/worktrees/feature/app'].join('\n')
-          )
-        } else if (command === 'ps') {
-          invokeCallback(
-            callback,
-            [
-              '123 node /repo/service/server.js',
-              '124 node /repo/worktrees/feature/app/server.js'
-            ].join('\n')
-          )
-        } else {
-          invokeCallback(callback, '')
-        }
-        return { kill: vi.fn() }
+      if (command === 'lsof') {
+        return commandOutput(
+          ['p123', 'n/repo/service', 'p124', 'n/repo/worktrees/feature/app'].join('\n')
+        )
       }
-    )
+      if (command === 'ps') {
+        return commandOutput(
+          [
+            '123 node /repo/service/server.js',
+            '124 node /repo/worktrees/feature/app/server.js'
+          ].join('\n')
+        )
+      }
+      return commandOutput('')
+    })
 
     const scan = await scanWorkspacePorts(worktrees, {
       lookup: () => undefined,
@@ -240,14 +243,17 @@ describe('scanWorkspacePorts command timeout', () => {
     vi.useRealTimers()
     resetWorkspacePortScanTimeoutBackoffForTests()
     vi.restoreAllMocks()
-    execFileMock.mockReset()
+    runPortScanCommandMock.mockReset()
   })
+
+  // The worker owns the command deadline now, so it is what rejects.
+  const workerTimeout = (): Promise<never> =>
+    Promise.reject(new PortScanCommandTimeout('lsof timed out after 4000ms'))
 
   it('returns an unavailable scan when lsof never reports completion', async () => {
     vi.useFakeTimers()
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
-    const killMock = vi.fn()
-    execFileMock.mockImplementation(() => ({ kill: killMock }))
+    runPortScanCommandMock.mockImplementation(workerTimeout)
 
     let settled = false
     const scanPromise = scanWorkspacePorts([], {
@@ -266,15 +272,13 @@ describe('scanWorkspacePorts command timeout', () => {
       ports: [],
       unavailableReason: 'Port scanning is unavailable on darwin.'
     })
-    expect(killMock).toHaveBeenCalled()
   })
 
   it('backs off after a command timeout instead of launching lsof on every scan tick', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
-    const killMock = vi.fn()
-    execFileMock.mockImplementation(() => ({ kill: killMock }))
+    runPortScanCommandMock.mockImplementation(workerTimeout)
 
     const firstScanPromise = scanWorkspacePorts([], {
       lookup: () => undefined,
@@ -287,7 +291,7 @@ describe('scanWorkspacePorts command timeout', () => {
       ports: [],
       unavailableReason: 'Port scanning is unavailable on darwin.'
     })
-    expect(execFileMock).toHaveBeenCalledTimes(1)
+    expect(runPortScanCommandMock).toHaveBeenCalledTimes(1)
 
     const cooldownScans = await Promise.all(
       Array.from({ length: 10 }, () =>
@@ -306,17 +310,12 @@ describe('scanWorkspacePorts command timeout', () => {
     expect(
       cooldownScans.every((scan) => scan.unavailableReason?.includes('temporarily paused'))
     ).toBe(true)
-    expect(execFileMock).toHaveBeenCalledTimes(1)
+    expect(runPortScanCommandMock).toHaveBeenCalledTimes(1)
 
     vi.setSystemTime(65_001)
     await vi.advanceTimersByTimeAsync(0)
-    execFileMock.mockImplementation(
-      (_command: string, args: string[], _options: unknown, callback: unknown) => {
-        const execCallback = callback as (error: Error | null, stdout: string) => void
-        const output = args.includes('-iTCP') ? 'p123\ncnode\nn127.0.0.1:3000' : ''
-        execCallback(null, output)
-        return { kill: vi.fn() }
-      }
+    runPortScanCommandMock.mockImplementation((_command: string, args: readonly string[]) =>
+      commandOutput(args.includes('-iTCP') ? 'p123\ncnode\nn127.0.0.1:3000' : '')
     )
 
     const recoveredScan = await scanWorkspacePorts([], {
@@ -325,6 +324,54 @@ describe('scanWorkspacePorts command timeout', () => {
     })
 
     expect(recoveredScan.unavailableReason).toBeUndefined()
-    expect(execFileMock).toHaveBeenCalledTimes(4)
+    expect(runPortScanCommandMock).toHaveBeenCalledTimes(4)
+  })
+})
+
+describe('scanWorkspacePorts with delayed process creation', () => {
+  afterEach(() => {
+    resetWorkspacePortScanTimeoutBackoffForTests()
+    vi.restoreAllMocks()
+    runPortScanCommandMock.mockReset()
+  })
+
+  // Regression for #11161: an endpoint-security hook on CreateProcessW delays
+  // the spawn, not the command. That must not read as a command timeout.
+  it('does not report a command timeout when only process creation was delayed', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    runPortScanCommandMock.mockImplementation(() =>
+      commandOutput('p123\ncnode\nn127.0.0.1:3000', 4_200)
+    )
+
+    const scan = await scanWorkspacePorts([], { lookup: () => undefined, reconcileScan: vi.fn() })
+
+    expect(scan.unavailableReason).toBeUndefined()
+    expect(scan.ports).toHaveLength(1)
+  })
+
+  it('skips the optional metadata commands for one cycle after a stalled spawn', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    runPortScanCommandMock.mockImplementation(() =>
+      commandOutput('p123\ncnode\nn127.0.0.1:3000', 4_200)
+    )
+
+    await scanWorkspacePorts([], { lookup: () => undefined, reconcileScan: vi.fn() })
+
+    // Only the primary probe; lsof -d cwd and ps are not issued this cycle.
+    expect(runPortScanCommandMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still collects process metadata when process creation was fast', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    runPortScanCommandMock.mockImplementation((command: string, args: readonly string[]) => {
+      if (command === 'lsof' && args.includes('-iTCP')) {
+        return commandOutput('p123\ncnode\nn127.0.0.1:3000')
+      }
+      return commandOutput('')
+    })
+
+    await scanWorkspacePorts([], { lookup: () => undefined, reconcileScan: vi.fn() })
+
+    expect(runPortScanCommandMock).toHaveBeenCalledTimes(3)
   })
 })

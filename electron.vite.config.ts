@@ -216,6 +216,11 @@ export const electronViteConfig: UserConfig = {
           'session-scanner-opencode-sqlite-worker-entry': resolve(
             'src/main/ai-vault/session-scanner-opencode-sqlite-worker-entry.ts'
           ),
+          // Why: port-scan spawns run on a worker thread so an endpoint-security
+          // hook on CreateProcessW cannot freeze CrBrowserMain (issue #11161).
+          'port-scan-command-worker-entry': resolve(
+            'src/main/ports/port-scan-command-worker-entry.ts'
+          ),
           // Why: forked with ELECTRON_RUN_AS_NODE so @parcel/watcher faults
           // can't take down the main process (issue #7547).
           'parcel-watcher-process-entry': resolve('src/main/ipc/parcel-watcher-process-entry.ts'),

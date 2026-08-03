@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: the platform-specific scan paths share parsing,
 attribution, and normalization rules that must stay in lockstep. */
-import { execFile } from 'node:child_process'
 import { readFile, readdir, readlink } from 'node:fs/promises'
 import path from 'node:path'
 import type {
@@ -11,10 +10,20 @@ import type {
 } from '../../shared/workspace-ports'
 import { getProcessOutputFields } from '../../shared/process-output-field-scanner'
 import { advertisedUrlWatcher, type AdvertisedUrlWatcher } from './advertised-url-watcher'
+import { PortScanCommandTimeout } from './port-scan-command-client'
+import { runPortScanCommand } from './port-scan-command-worker-spawn'
 import { WorkspacePortScanTimeoutBackoff } from './workspace-port-scan-timeout-backoff'
 
-const COMMAND_TIMEOUT_MS = 4_000
+// Why (#11161): this module must never import child_process. Every spawn goes
+// through the worker client so a hooked CreateProcessW stalls that thread
+// instead of the main process' event loop. Enforced by
+// port-scan-command-import-boundary.test.ts.
+
 const MAX_PORTS = 200
+// A primary probe whose process creation blocked this long proves the host
+// intercepts spawns; skip the optional metadata commands for this cycle so one
+// scan costs one stall instead of two.
+const STALLED_SPAWN_MS = 2_000
 const HTTP_PORTS = new Set([80, 3000, 3001, 4200, 5000, 5173, 5174, 8000, 8080, 8888])
 const HTTPS_PORTS = new Set([443, 8443])
 
@@ -208,8 +217,17 @@ async function scanPlatformListeningPorts(): Promise<RawListeningPort[]> {
 }
 
 async function scanDarwinLsofPorts(): Promise<RawListeningPort[]> {
-  const { stdout } = await runCommand('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'])
+  const { stdout, spawnMs } = await runPortScanCommand('lsof', [
+    '-nP',
+    '-iTCP',
+    '-sTCP:LISTEN',
+    '-F',
+    'pcn'
+  ])
   const ports = parseLsofListeningOutput(stdout)
+  if (spawnMs >= STALLED_SPAWN_MS) {
+    return ports
+  }
   const metadata = await loadDarwinProcessMetadata(
     new Set(ports.flatMap((p) => (p.pid ? [p.pid] : [])))
   )
@@ -217,8 +235,11 @@ async function scanDarwinLsofPorts(): Promise<RawListeningPort[]> {
 }
 
 async function scanWindowsNetstatPorts(): Promise<RawListeningPort[]> {
-  const { stdout } = await runCommand('netstat', ['-ano', '-p', 'tcp'])
+  const { stdout, spawnMs } = await runPortScanCommand('netstat', ['-ano', '-p', 'tcp'])
   const ports = parseNetstatListeningOutput(stdout)
+  if (spawnMs >= STALLED_SPAWN_MS) {
+    return ports
+  }
   const metadata = await loadWindowsProcessMetadata(
     new Set(ports.flatMap((p) => (p.pid ? [p.pid] : [])))
   )
@@ -322,8 +343,8 @@ async function loadDarwinProcessMetadata(pids: Set<number>): Promise<Map<number,
   }
 
   const [cwdOutput, commandOutput] = await Promise.all([
-    runCommand('lsof', ['-a', '-p', pidList, '-d', 'cwd', '-Fn']).catch(() => null),
-    runCommand('ps', ['-p', pidList, '-o', 'pid=', '-o', 'command=']).catch(() => null)
+    runPortScanCommand('lsof', ['-a', '-p', pidList, '-d', 'cwd', '-Fn']).catch(() => null),
+    runPortScanCommand('ps', ['-p', pidList, '-o', 'pid=', '-o', 'command=']).catch(() => null)
   ])
 
   let currentPid: number | null = null
@@ -360,7 +381,7 @@ async function loadWindowsProcessMetadata(
       .filter(Number.isFinite)
       .map((pid) => `ProcessId=${pid}`)
       .join(' OR ')
-    const { stdout } = await runCommand('powershell.exe', [
+    const { stdout } = await runPortScanCommand('powershell.exe', [
       '-NoProfile',
       '-Command',
       `Get-CimInstance Win32_Process -Filter "${pidFilter}" | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress`
@@ -382,62 +403,8 @@ async function loadWindowsProcessMetadata(
   return result
 }
 
-async function runCommand(command: string, args: string[]): Promise<{ stdout: string }> {
-  return await new Promise((resolve, reject) => {
-    let settled = false
-    let child: ReturnType<typeof execFile> | undefined
-    const timer = setTimeout(() => {
-      if (settled) {
-        return
-      }
-      settled = true
-      child?.kill()
-      reject(new CommandTimeoutError(command, COMMAND_TIMEOUT_MS))
-    }, COMMAND_TIMEOUT_MS)
-
-    const settle = (callback: () => void): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      callback()
-    }
-
-    // Why: Node's execFile timeout only signals the child; if the callback
-    // never arrives, the workspace port scan would otherwise hang forever.
-    try {
-      child = execFile(
-        command,
-        args,
-        {
-          timeout: COMMAND_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-          windowsHide: true
-        },
-        (error, stdout) => {
-          if (error) {
-            settle(() => reject(error))
-            return
-          }
-          settle(() => resolve({ stdout: String(stdout) }))
-        }
-      )
-    } catch (error) {
-      settle(() => reject(error))
-    }
-  })
-}
-
-class CommandTimeoutError extends Error {
-  constructor(command: string, timeoutMs: number) {
-    super(`${command} timed out after ${timeoutMs}ms`)
-    this.name = 'CommandTimeoutError'
-  }
-}
-
 function isCommandTimeoutError(error: unknown): boolean {
-  return error instanceof CommandTimeoutError
+  return error instanceof PortScanCommandTimeout
 }
 
 async function readTextIfAvailable(filePath: string): Promise<string | undefined> {
