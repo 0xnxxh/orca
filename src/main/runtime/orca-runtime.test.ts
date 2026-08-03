@@ -12596,7 +12596,9 @@ describe('OrcaRuntimeService', () => {
         disabledTuiAgents: [],
         terminalWindowsShell: 'cmd.exe',
         agentCmdOverrides: {},
-        agentDefaultArgs: {},
+        // Why: pin the arg here rather than inherit the shared yolo default, so
+        // this test tracks Windows quoting and not an unrelated default's value.
+        agentDefaultArgs: { cursor: '--force' },
         agentDefaultEnv: {}
       })
     }
@@ -12613,7 +12615,7 @@ describe('OrcaRuntimeService', () => {
     const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
     // Why: assert the cmd.exe double quoting too — a platform-insensitive prefix
     // match would pass on any OS and prove nothing about the reported platform.
-    expect(spawnCall?.command).toBe('cursor-agent "--yolo"')
+    expect(spawnCall?.command).toBe('cursor-agent "--force"')
   })
 
   // Why: claude-agent-teams is the only agent whose launcher name varies by
