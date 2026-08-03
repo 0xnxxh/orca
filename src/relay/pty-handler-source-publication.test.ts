@@ -652,7 +652,7 @@ describe('PtyHandler negotiated source publication', () => {
     await spawn({})
     const appendSpy = vi.spyOn(adapter, 'appendSource')
     const projectSpy = vi
-      .spyOn(dispatcher, 'projectPtyDataToMatchingClients')
+      .spyOn(dispatcher, 'projectPtyDataToLegacyClients')
       .mockReturnValueOnce(false)
     // Why: a larger capacity result on the retry must not move the memoized span boundary.
     const maxCharsSpy = vi.spyOn(dispatcher, 'maxLegacyPtyDataChars')
@@ -679,7 +679,7 @@ describe('PtyHandler negotiated source publication', () => {
   it('does not emit pty.exit ahead of output a failed projection re-queued', async () => {
     await spawn({})
     const projectSpy = vi
-      .spyOn(dispatcher, 'projectPtyDataToMatchingClients')
+      .spyOn(dispatcher, 'projectPtyDataToLegacyClients')
       .mockImplementationOnce(() => {
         // Why: capacity fans out from a bare socket callback mid-drain, when the captured queue has
         // already been removed from pendingOutputByPty and the exit guard would read it as empty.
@@ -709,28 +709,17 @@ describe('PtyHandler negotiated source publication', () => {
     expect(ordered.indexOf('pty.data')).toBeLessThan(ordered.lastIndexOf('pty.exit'))
   })
 
-  it('pauses the PTY instead of detaching a subscriber that saturates, and resumes on drain', async () => {
+  it('keeps the native PTY, the V1 owner and a saturated subscriber all live', async () => {
     await spawn({})
     const detached: number[] = []
     const healthyWrites: Buffer[] = []
-    const saturatedSettlements: ((result: SinkWriteSettlement) => void)[] = []
-    const saturatedDrainWaiters: (() => void)[] = []
-    let saturatedStalled = true
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     dispatcher.onClientDetached((clientId) => detached.push(clientId))
-    const saturatedId = dispatcher.attachClient(
-      (_data, settle) => {
-        saturatedSettlements.push(settle)
-        return !saturatedStalled
-      },
-      {
-        supportsWriteCallback: true,
-        writableLength: () => (saturatedStalled ? 16 * 1024 : 0),
-        writableHighWaterMark: () => 4 * 1024 * 1024,
-        waitWriteDrain: (callback: () => void) => {
-          saturatedDrainWaiters.push(callback)
-        }
-      }
-    )
+    const saturatedId = dispatcher.attachClient(() => false, {
+      supportsWriteCallback: true,
+      writableLength: () => 16 * 1024,
+      writableHighWaterMark: () => 4 * 1024 * 1024
+    })
     const healthyId = dispatcher.attachClient(
       (data, settle) => {
         healthyWrites.push(Buffer.from(data))
@@ -739,8 +728,6 @@ describe('PtyHandler negotiated source publication', () => {
       },
       { supportsWriteCallback: true }
     )
-    const healthyPtyData = (): unknown[] =>
-      healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
     const payload = 's'.repeat(16 * 1024)
     let admitted = 0
     while (
@@ -754,26 +741,18 @@ describe('PtyHandler negotiated source publication', () => {
 
     expect(admitted).toBeGreaterThan(100)
     expect(admitted).toBeLessThan(140)
+    // Neither closed (that is #12041) nor gating: a bystander subscriber sheds its own copy only.
     expect(detached).toEqual([])
     expect(detached).not.toContain(healthyId)
-    // All-or-nothing: the healthy mirror waits rather than taking a copy the retry would duplicate.
-    expect(healthyPtyData()).toHaveLength(0)
-    expect(pausePty).toHaveBeenCalled()
-    // The span is already in the source ledger, so the credited owner keeps draining it.
+    expect(
+      healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
+    ).toHaveLength(1)
     expect(sourceDataFrames()).toHaveLength(1)
     expect(publication.getDebugSnapshot()).toMatchObject({ sendCommitted: 1 })
-
-    saturatedStalled = false
-    for (const waiter of saturatedDrainWaiters.splice(0)) {
-      waiter()
-    }
-    while (saturatedSettlements.length > 0) {
-      saturatedSettlements.shift()!({ ok: true })
-    }
-    await vi.advanceTimersByTimeAsync(8)
-
-    expect(healthyPtyData()).toHaveLength(1)
-    expect(sourceDataFrames()).toHaveLength(1)
-    expect(detached).toEqual([])
+    expect(pausePty).not.toHaveBeenCalled()
+    expect(
+      stderr.mock.calls.filter((call) => /Dropped pty\.data/.test(String(call[0])))
+    ).toHaveLength(1)
+    stderr.mockRestore()
   })
 })

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RelayDispatcher, type RelayClientSinkOptions } from './dispatcher'
-import { PROJECTION_STALL_EVICTION_MS } from './dispatcher-projection-stall'
+import {
+  RelayDispatcher,
+  type LegacyProjectionRole,
+  type RelayClientSinkOptions,
+  type SinkWriteSettlement
+} from './dispatcher'
 import { DISPATCHER_CONTROL_QUEUE_MAX_FRAMES } from './dispatcher-writer-admission'
 
 type SlowClient = {
@@ -72,6 +76,18 @@ function fillProducerQueue(dispatcher: RelayDispatcher, clientId: number): void 
   }
 }
 
+function roles(
+  byId: Record<number, LegacyProjectionRole>
+): (clientId: number) => LegacyProjectionRole {
+  return (clientId) => byId[clientId] ?? 'skip'
+}
+
+function queueFullDrops(stderr: { mock: { calls: unknown[][] } }): string[] {
+  return stderr.mock.calls
+    .map((call) => String(call[0]))
+    .filter((line) => /producer queue full/.test(line))
+}
+
 describe('RelayDispatcher slow-client PTY projection', () => {
   it('tryNotifyPtyData applies backpressure without closing the client', () => {
     const primary = makeStallingClient(65536)
@@ -94,14 +110,15 @@ describe('RelayDispatcher slow-client PTY projection', () => {
     }
   })
 
-  it('rejects a projected pty.data frame instead of closing a subscriber that cannot drain', () => {
+  it('rejects a projected pty.data frame instead of closing an owner that cannot drain', () => {
     const primary = makeStallingClient(65536)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     try {
-      fillProducerQueue(dispatcher, dispatcher.activeClientIds()[0])
+      const primaryId = dispatcher.activeClientIds()[0]
+      fillProducerQueue(dispatcher, primaryId)
 
-      const projected = dispatcher.projectPtyDataToMatchingClients(() => true, {
+      const projected = dispatcher.projectPtyDataToLegacyClients(roles({ [primaryId]: 'owner' }), {
         id: 'pty-1',
         data: 'y'.repeat(40_000)
       })
@@ -115,13 +132,48 @@ describe('RelayDispatcher slow-client PTY projection', () => {
     }
   })
 
-  it('sheds a projected frame no sink can ever admit rather than wedging the PTY', () => {
+  it('sheds a saturated mirror instead of pausing the PTY for every other viewer', () => {
+    const owner = makeStallingClient(65536)
+    owner.drain()
+    const mirror = makeStallingClient(65536)
+    const dispatcher = new RelayDispatcher(owner.write, owner.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const ownerId = dispatcher.activeClientIds()[0]
+      const mirrorId = dispatcher.attachClient(mirror.write, mirror.options)
+      fillProducerQueue(dispatcher, mirrorId)
+      const mirrorBefore = ptyDataFrameCount(mirror.frames)
+      stderr.mockClear()
+
+      const projected = dispatcher.projectPtyDataToLegacyClients(
+        roles({ [ownerId]: 'owner', [mirrorId]: 'mirror' }),
+        { id: 'pty-1', data: 'y'.repeat(40_000) }
+      )
+
+      // A bystander mirror (agent hook, orca CLI, second window) must not gate the native PTY.
+      expect(projected).toBe(true)
+      expect(ptyDataFrameCount(owner.frames)).toBe(1)
+      expect(ptyDataFrameCount(mirror.frames)).toBe(mirrorBefore)
+      expect(mirror.closes).toBe(0)
+      expect(owner.closes).toBe(0)
+      expect(queueFullDrops(stderr)).toHaveLength(1)
+      expect(queueFullDrops(stderr)[0]).toMatch(
+        /^\[relay\] Dropped pty\.data \(\d+B, producer queue full/
+      )
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('sheds a projected frame no owner sink can ever admit rather than wedging the PTY', () => {
     const primary = makeStallingClient(65536)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     try {
+      const primaryId = dispatcher.activeClientIds()[0]
       // Larger than producerFrameCapacity (49152B), so retrying it forever would stall the PTY.
-      const projected = dispatcher.projectPtyDataToMatchingClients(() => true, {
+      const projected = dispatcher.projectPtyDataToLegacyClients(roles({ [primaryId]: 'owner' }), {
         id: 'pty-1',
         data: 'y'.repeat(60_000)
       })
@@ -141,53 +193,57 @@ describe('RelayDispatcher slow-client PTY projection', () => {
     }
   })
 
-  it('delivers a rejected projection exactly once to every subscriber after the stalled sink drains', () => {
-    const stalled = makeStallingClient(65536, true)
-    const healthy = makeStallingClient(65536, true)
-    healthy.drain()
-    const dispatcher = new RelayDispatcher(stalled.write, stalled.options)
+  it('delivers a rejected projection exactly once to every mirror after the owner drains', () => {
+    const owner = makeStallingClient(65536, true)
+    const mirror = makeStallingClient(65536, true)
+    mirror.drain()
+    const dispatcher = new RelayDispatcher(owner.write, owner.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     try {
-      dispatcher.attachClient(healthy.write, healthy.options)
-      fillProducerQueue(dispatcher, dispatcher.activeClientIds()[0])
-      const healthyBefore = ptyDataFrameCount(healthy.frames)
+      const ownerId = dispatcher.activeClientIds()[0]
+      const mirrorId = dispatcher.attachClient(mirror.write, mirror.options)
+      fillProducerQueue(dispatcher, ownerId)
+      const mirrorBefore = ptyDataFrameCount(mirror.frames)
+      const roleOf = roles({ [ownerId]: 'owner', [mirrorId]: 'mirror' })
 
       const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
-      // All-or-nothing: the healthy subscriber must not get a copy the retry would duplicate.
-      expect(ptyDataFrameCount(healthy.frames)).toBe(healthyBefore)
+      expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(false)
+      // The mirror must not get a copy the owner's retry would duplicate.
+      expect(ptyDataFrameCount(mirror.frames)).toBe(mirrorBefore)
 
-      stalled.drain()
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
-      expect(ptyDataFrameCount(healthy.frames)).toBe(healthyBefore + 1)
-      expect(stalled.closes).toBe(0)
-      expect(healthy.closes).toBe(0)
+      owner.drain()
+      expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(true)
+      expect(ptyDataFrameCount(mirror.frames)).toBe(mirrorBefore + 1)
+      expect(owner.closes).toBe(0)
+      expect(mirror.closes).toBe(0)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()
     }
   })
 
-  it('holds a projected pty.exit for retry instead of closing a saturated subscriber', () => {
+  it('holds a projected pty.exit for retry instead of closing a saturated owner', () => {
     const primary = makeStallingClient(65536, true)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     try {
-      fillProducerQueue(dispatcher, dispatcher.activeClientIds()[0])
+      const primaryId = dispatcher.activeClientIds()[0]
+      fillProducerQueue(dispatcher, primaryId)
+      const roleOf = roles({ [primaryId]: 'owner' })
 
       const params = { id: 'pty-1', exitCode: 0 }
-      expect(dispatcher.projectPtyExitToMatchingClients(() => true, params)).toBe(false)
+      expect(dispatcher.projectPtyExitToLegacyClients(roleOf, params)).toBe(false)
       expect(primary.closes).toBe(0)
 
       primary.drain()
-      expect(dispatcher.projectPtyExitToMatchingClients(() => true, params)).toBe(true)
+      expect(dispatcher.projectPtyExitToLegacyClients(roleOf, params)).toBe(true)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()
     }
   })
 
-  it('never encodes a projection with no subscribers', () => {
+  it('never encodes a projection with no targets', () => {
     const primary = makeStallingClient(65536)
     primary.drain()
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
@@ -201,11 +257,14 @@ describe('RelayDispatcher slow-client PTY projection', () => {
           return 'y'.repeat(40_000)
         }
       }
+      const primaryId = dispatcher.activeClientIds()[0]
 
-      expect(dispatcher.projectPtyDataToMatchingClients(() => false, params)).toBe(true)
+      expect(dispatcher.projectPtyDataToLegacyClients(roles({}), params)).toBe(true)
       expect(reads).toBe(0)
 
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
+      expect(
+        dispatcher.projectPtyDataToLegacyClients(roles({ [primaryId]: 'owner' }), params)
+      ).toBe(true)
       expect(reads).toBeGreaterThan(0)
     } finally {
       dispatcher.dispose()
@@ -229,84 +288,58 @@ describe('RelayDispatcher slow-client PTY projection', () => {
   })
 })
 
-describe('RelayDispatcher stalled-subscriber eviction', () => {
+describe('RelayDispatcher projection never reaps a client on a timer', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('detaches a subscriber that never drains so the paused PTY can resume', () => {
+  it('never closes a peer that is merely mid-write while another target back-pressures', () => {
     vi.useFakeTimers()
-    const primary = makeStallingClient(65536)
-    primary.drain()
-    const stalled = makeStallingClient(65536)
-    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const owner = makeStallingClient(65536)
+    const neverDrains = makeStallingClient(65536)
+    const dispatcher = new RelayDispatcher(owner.write, owner.options)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    let midWriteCloses = 0
     try {
-      const stalledId = dispatcher.attachClient(stalled.write, stalled.options)
-      fillProducerQueue(dispatcher, stalledId)
-      let capacityNotifications = 0
-      dispatcher.onLegacyPtyCapacity(() => {
-        capacityNotifications++
+      const ownerId = dispatcher.activeClientIds()[0]
+      const neverDrainsId = dispatcher.attachClient(neverDrains.write, neverDrains.options)
+      const midWriteId = dispatcher.attachClient(
+        (_data, settle: (result: SinkWriteSettlement) => void) => {
+          // Accepted by the sink but not acknowledged yet: normal for any real socket mid-write.
+          void settle
+          return true
+        },
+        {
+          supportsWriteCallback: true,
+          writableHighWaterMark: () => 65536,
+          writableLength: () => 0,
+          close: () => {
+            midWriteCloses++
+          }
+        }
+      )
+      fillProducerQueue(dispatcher, ownerId)
+      fillProducerQueue(dispatcher, neverDrainsId)
+      const roleOf = roles({
+        [ownerId]: 'owner',
+        [neverDrainsId]: 'mirror',
+        [midWriteId]: 'mirror'
       })
-
       const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
-      expect(stalled.closes).toBe(0)
 
-      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS + 1)
+      expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(false)
+      // Just inside the 30s window an earlier revision watched, so the peer armed here would be
+      // judged over ~1ms of observation.
+      vi.advanceTimersByTime(29_999)
+      dispatcher.tryNotifyPtyDataToClient(midWriteId, { id: 'pty-1', data: 'z' }, () => {})
+      expect(dispatcher.projectPtyDataToLegacyClients(roleOf, params)).toBe(false)
+      vi.advanceTimersByTime(10 * 60_000)
 
-      expect(stalled.closes).toBe(1)
-      // The eviction is only worth anything if it un-wedges the producer it was blocking.
-      expect(capacityNotifications).toBeGreaterThan(0)
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
-      expect(primary.closes).toBe(0)
-    } finally {
-      stderr.mockRestore()
-      dispatcher.dispose()
-    }
-  })
-
-  it('never evicts the primary link, however long it back-pressures', () => {
-    vi.useFakeTimers()
-    const primary = makeStallingClient(65536)
-    const dispatcher = new RelayDispatcher(primary.write, primary.options)
-    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    try {
-      fillProducerQueue(dispatcher, dispatcher.activeClientIds()[0])
-
-      const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
-
-      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS * 10)
-
-      expect(primary.closes).toBe(0)
-      expect(dispatcher.activeClientIds()).toHaveLength(1)
-    } finally {
-      stderr.mockRestore()
-      dispatcher.dispose()
-    }
-  })
-
-  it('spares a subscriber that drains inside the stall window', () => {
-    vi.useFakeTimers()
-    const primary = makeStallingClient(65536)
-    primary.drain()
-    const slow = makeStallingClient(65536, true)
-    const dispatcher = new RelayDispatcher(primary.write, primary.options)
-    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    try {
-      const slowId = dispatcher.attachClient(slow.write, slow.options)
-      fillProducerQueue(dispatcher, slowId)
-
-      const params = { id: 'pty-1', data: 'y'.repeat(40_000) }
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(false)
-
-      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS - 1)
-      slow.drain()
-      vi.advanceTimersByTime(PROJECTION_STALL_EVICTION_MS * 4)
-
-      expect(slow.closes).toBe(0)
-      expect(dispatcher.projectPtyDataToMatchingClients(() => true, params)).toBe(true)
+      // Reaping a peer on a timer is exactly the disconnect #12041 reported.
+      expect(midWriteCloses).toBe(0)
+      expect(neverDrains.closes).toBe(0)
+      expect(owner.closes).toBe(0)
+      expect(dispatcher.activeClientIds()).toHaveLength(3)
     } finally {
       stderr.mockRestore()
       dispatcher.dispose()

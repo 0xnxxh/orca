@@ -283,7 +283,7 @@ describe('RelayPtySourcePublication', () => {
     ).toHaveLength(2)
   })
 
-  it('backpressures instead of detaching a saturated subscriber while the V1 owner stays live', async () => {
+  it('sheds a saturated subscriber without detaching it or stalling the V1 owner', async () => {
     const harness = await createHarness(8)
     const detached: number[] = []
     const saturatedWrites: Buffer[] = []
@@ -324,8 +324,8 @@ describe('RelayPtySourcePublication', () => {
 
     expect(admitted).toBeGreaterThan(0)
     expect(admitted).toBeLessThan(20)
-    // False tells pty-handler to pause the PTY and republish the span once the sink drains.
-    expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(false)
+    // A bystander subscriber is neither closed (#12041) nor allowed to pause the PTY for everyone.
+    expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(true)
 
     expect(detached).toEqual([])
     expect(detached).not.toContain(healthyId)
@@ -333,8 +333,7 @@ describe('RelayPtySourcePublication', () => {
     expect(heldSettlements).toHaveLength(1)
     expect(
       healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
-    ).toHaveLength(0)
-    // The span is already appended to the source ledger, so the credited owner still drains it.
+    ).toHaveLength(1)
     expect(
       harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
     ).toHaveLength(1)

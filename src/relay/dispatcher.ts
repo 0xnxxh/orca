@@ -27,7 +27,6 @@ import {
   LegacyRelayPublicationLedger,
   type LegacyPublicationLease
 } from './legacy-relay-publication-ledger'
-import { ProjectionStallEvictor } from './dispatcher-projection-stall'
 
 export type {
   RelayClientSinkOptions,
@@ -54,6 +53,15 @@ export type RelayClientSourceOptions = {
   pauseReads?: () => void
   resumeReads?: () => void
 }
+
+/**
+ * How the legacy PTY projection serves a client whose producer queue is full.
+ * - `skip`: not a projection target (a flow-controlled source owner has its own credited lane).
+ * - `owner`: the projection is this client's only delivery lane, so a full queue back-pressures the PTY.
+ * - `mirror`: a bystander copy that recovers by reopening the pty, so a full queue sheds this one frame for
+ *   that client alone — a mirror must never hold the native PTY paused for every other viewer.
+ */
+export type LegacyProjectionRole = 'skip' | 'owner' | 'mirror'
 
 export type MethodHandler = (
   params: Record<string, unknown>,
@@ -101,15 +109,6 @@ export class RelayDispatcher {
   private notificationHandlers = new Map<string, NotificationHandler>()
   private readonly requestAborts = new ClientRequestAborts()
   private readonly publicationLedger = new LegacyRelayPublicationLedger()
-  private readonly projectionStalls = new ProjectionStallEvictor<RelayClient>(
-    (client) => ({
-      stalled: !client.closed && client.writer.retainedProducerBytes > 0,
-      drainProgressBytes: client.writer.drainProgressBytes
-    }),
-    (client) => {
-      this.closeClient(client, new Error('Relay PTY subscriber stalled without draining'), true)
-    }
-  )
   private pendingRelayRequests = new Map<number, PendingRelayRequest>()
   private clientDetachListeners = new Set<(clientId: number) => void>()
   private disposeListeners = new Set<() => void>()
@@ -344,8 +343,8 @@ export class RelayDispatcher {
     )
   }
 
-  projectPtyDataToMatchingClients(
-    matchesClient: (clientId: number) => boolean,
+  projectPtyDataToLegacyClients(
+    roleOf: (clientId: number) => LegacyProjectionRole,
     params: Record<string, unknown>,
     options: { interactive?: boolean } = {}
   ): boolean {
@@ -353,7 +352,7 @@ export class RelayDispatcher {
       return false
     }
     return this.projectToClients(
-      this.activeClients().filter((client) => matchesClient(client.id)),
+      roleOf,
       { jsonrpc: '2.0', method: 'pty.data', params },
       options.interactive ? 'interactive' : 'ordinary'
     )
@@ -410,18 +409,14 @@ export class RelayDispatcher {
     )
   }
 
-  projectPtyExitToMatchingClients(
-    matchesClient: (clientId: number) => boolean,
+  projectPtyExitToLegacyClients(
+    roleOf: (clientId: number) => LegacyProjectionRole,
     params: Record<string, unknown>
   ): boolean {
     if (this.disposed) {
       return false
     }
-    return this.projectToClients(
-      this.activeClients().filter((client) => matchesClient(client.id)),
-      { jsonrpc: '2.0', method: 'pty.exit', params },
-      'ordinary'
-    )
+    return this.projectToClients(roleOf, { jsonrpc: '2.0', method: 'pty.exit', params }, 'ordinary')
   }
 
   tryNotifyPtyExitToClient(
@@ -768,7 +763,6 @@ export class RelayDispatcher {
       return
     }
     this.disposed = true
-    this.projectionStalls.dispose()
     if (this.keepaliveTimer) {
       clearInterval(this.keepaliveTimer)
       this.keepaliveTimer = null
@@ -1135,38 +1129,54 @@ export class RelayDispatcher {
   }
 
   private projectToClients(
-    clients: readonly RelayClient[],
+    roleOf: (clientId: number) => LegacyProjectionRole,
     msg: JsonRpcNotification,
     lane: 'interactive' | 'ordinary'
   ): boolean {
+    const owners: RelayClient[] = []
+    const mirrors: RelayClient[] = []
+    for (const client of this.clients.values()) {
+      if (client.closed) {
+        continue
+      }
+      const role = roleOf(client.id)
+      if (role === 'owner') {
+        owners.push(client)
+      } else if (role === 'mirror') {
+        mirrors.push(client)
+      }
+    }
     // Why: having no projection target is the norm (a flow-controlled owner is excluded from the legacy
     // mirror), and that is the PTY hot path — never encode the frame just to discard it.
-    if (clients.length === 0) {
+    if (owners.length === 0 && mirrors.length === 0) {
       return true
     }
     const bytes = this.estimateFrameBytes(msg)
-    // Why: closing over a transiently full queue just makes the producer regenerate the same span for a
-    // fresh sink of identical capacity, so back-pressure instead; only a frame that can never be admitted
-    // is shed, because retrying it forever would wedge the PTY.
-    const deliverable = clients.filter((client) => {
-      if (client.closed) {
-        return false
-      }
+    // Why: closing over a transiently full queue only makes the producer regenerate the same span for a
+    // fresh sink of identical capacity, so an owner — which has no second delivery lane — back-pressures
+    // instead. A frame past its frame capacity can never be admitted, so shed that one or the retry wedges.
+    const blocking = owners.filter((client) => {
       if (bytes <= client.writer.producerFrameCapacity) {
         return true
       }
       this.logDroppedProducerNotification(client, msg.method, bytes)
       return false
     })
-    if (this.tryPublishToClients(deliverable, msg, lane, bytes)) {
-      return true
-    }
-    // Why: the pause this rejection triggers is dispatcher-wide, so a sink that never drains would freeze
-    // every PTY for every viewer; arm the bounded reap that detaches it (it reconnects and replays).
-    this.projectionStalls.noteRefusedProjection(
-      deliverable.filter((client) => client !== this.primaryClient)
-    )
-    return false
+    return this.runPublicationTransaction(() => {
+      if (!this.tryPublishToClients(blocking, msg, lane, bytes)) {
+        return false
+      }
+      // Why: a mirror is a bystander view that recovers on its own (reopening the pty replays it), so it
+      // must never hold the native PTY paused for every other viewer. Publishing only after the owners
+      // committed also keeps a back-pressured span from reaching a mirror twice when it is retried.
+      for (const client of mirrors) {
+        if (client.closed || this.publishToClient(client, msg, lane, undefined, bytes)) {
+          continue
+        }
+        this.logDroppedProducerNotification(client, msg.method, bytes)
+      }
+      return !this.disposed
+    })
   }
 
   private publishToClient(
@@ -1294,7 +1304,6 @@ export class RelayDispatcher {
       return
     }
     client.closed = true
-    this.projectionStalls.forget(client)
     this.requestAborts.abortClient(client.id)
     client.writer.close(error)
     client.generation++
