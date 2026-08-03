@@ -58,9 +58,12 @@ export function SshTargetForm({
   const [advancedOpen, setAdvancedOpen] = useState(hasAdvancedConnectionFields)
   const baselineRef = useRef(form)
   // Why: the session effect and the outside-dismiss handler need the latest draft
-  // without re-subscribing the effect to every keystroke.
+  // without re-subscribing the effect to every keystroke. Sync in an effect so
+  // render stays pure (React may replay/discard render work).
   const formRef = useRef(form)
-  formRef.current = form
+  useEffect(() => {
+    formRef.current = form
+  })
   const sessionRef = useRef<{ open: boolean; editingId: string | null }>({
     open: false,
     editingId: null
