@@ -150,6 +150,8 @@ type RemoveWorktreeArgs = {
   worktreeId: string
   hostId?: ExecutionHostId
   force?: boolean
+  /** Explicit Force Delete only — `force` alone is set by the ordinary confirmation (#11960). */
+  allowUnverifiedPtyStop?: boolean
   skipArchive?: boolean
 }
 
@@ -158,8 +160,9 @@ type DetectedWorktreeRequestArgs = { repoId: string } | ListDetectedWorktreesArg
 async function stopPtysForDestructiveWorktreeRemoval(
   runtime: OrcaRuntimeService,
   worktreeId: string,
-  connectionId?: string
+  options: { connectionId?: string; allowUnverifiedStop?: boolean } = {}
 ): Promise<void> {
+  const { connectionId, allowUnverifiedStop } = options
   const provider = connectionId ? getSshPtyProvider(connectionId) : getLocalPtyProvider()
   if (!provider) {
     throw new Error(`PTY provider unavailable for worktree deletion: ${worktreeId}`)
@@ -169,6 +172,9 @@ async function stopPtysForDestructiveWorktreeRemoval(
     localProvider: provider,
     onPtyStopped: clearProviderPtyState,
     requirePhysicalStop: true,
+    // Why (#11960): set only by an explicit Force Delete, never by the ordinary
+    // confirmation — otherwise the gate would be off on the primary delete path.
+    ...(allowUnverifiedStop ? { allowUnverifiedStop: true } : {}),
     ...(connectionId ? { includeLocalRegistry: false } : {})
   })
   const total =
@@ -419,10 +425,17 @@ function gitStatusErrorMeansNotRepository(error: unknown): boolean {
   return /not a git repository/i.test(`${message}\n${stderr}`)
 }
 
-function getWorktreeRemovalOptionsKey(args: { force?: boolean; skipArchive?: boolean }): string {
+function getWorktreeRemovalOptionsKey(args: {
+  force?: boolean
+  allowUnverifiedPtyStop?: boolean
+  skipArchive?: boolean
+}): string {
   const forceKey = args.force === true ? 'force' : 'normal'
   const archiveKey = args.skipArchive === true ? 'skip-archive' : 'run-archive'
-  return `${forceKey}:${archiveKey}`
+  // Why: a Force Delete retry must not coalesce onto the in-flight attempt that
+  // just failed the PTY gate — it would inherit that failure instead of retrying.
+  const ptyKey = args.allowUnverifiedPtyStop === true ? 'allow-unverified-pty' : 'require-pty-stop'
+  return `${forceKey}:${archiveKey}:${ptyKey}`
 }
 
 function getWorktreeRemovalInFlightKey(worktreeId: string, hostId?: ExecutionHostId): string {
@@ -2358,11 +2371,10 @@ export function registerWorktreeHandlers(
                 )
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(
-                    runtime,
-                    args.worktreeId,
-                    repo.connectionId
-                  )
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    connectionId: repo.connectionId,
+                    allowUnverifiedStop: args.allowUnverifiedPtyStop
+                  })
                   await fsProvider!.deletePath(worktreePath, true)
                   removalCompleted = true
                 } finally {
@@ -2379,7 +2391,9 @@ export function registerWorktreeHandlers(
                 const removalGate = await runtime.acquireFileWatcherRemoval(worktreePath)
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    allowUnverifiedStop: args.allowUnverifiedPtyStop
+                  })
                   await removeLocalWorktreePath(worktreePath, localWorktreeGitOptions)
                   removalCompleted = true
                 } finally {
@@ -2424,7 +2438,9 @@ export function registerWorktreeHandlers(
                 const removalGate = await runtime.acquireFileWatcherRemoval(worktreePath)
                 let removalCompleted = false
                 try {
-                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+                  await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                    allowUnverifiedStop: args.allowUnverifiedPtyStop
+                  })
                   await removeLocalWorktreePath(worktreePath, localWorktreeGitOptions)
                   removalCompleted = true
                 } finally {
@@ -2582,11 +2598,10 @@ export function registerWorktreeHandlers(
             let removalCompleted = false
             try {
               await withWorktreeRemoveStageSpan('pty_sweep', 'remote', async () => {
-                await stopPtysForDestructiveWorktreeRemoval(
-                  runtime,
-                  args.worktreeId,
-                  remoteConnectionId
-                )
+                await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                  connectionId: remoteConnectionId,
+                  allowUnverifiedStop: args.allowUnverifiedPtyStop
+                })
               })
               rawRemovalResult = await withWorktreeRemoveStageSpan(
                 'git_remove',
@@ -2689,7 +2704,9 @@ export function registerWorktreeHandlers(
             // Why: hold the watcher/terminal gate through Git and any recursive fallback so no late spawn recreates a native handle.
             // Linked-path deletion is destructive too, so PTYs must release every handle before Windows or WSL filesystem cleanup starts.
             await withWorktreeRemoveStageSpan('pty_sweep', 'local', async () => {
-              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId, {
+                allowUnverifiedStop: args.allowUnverifiedPtyStop
+              })
             })
 
             // Why: preflight only ignored these paths, not mutated them; keep watcher installs fenced through Git removal.
