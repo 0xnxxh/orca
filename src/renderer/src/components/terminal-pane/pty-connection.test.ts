@@ -9025,6 +9025,9 @@ describe('connectPanePty', () => {
       return {
         id: 'adopted-pty',
         isReattach: true,
+        // Keep this snapshot free of ?25l: the live agent reset is built from the
+        // payload and only equals the constant negated below when the cursor is left
+        // visible. Ending it hidden would quietly retire that assertion.
         snapshot: '\x1b[?1003h\x1b[?1006h\x1b[?2004huser@host ~ $ ',
         coldRestore: { scrollback: 'cold-payload', cwd: '/tmp/wt-1' }
       }
