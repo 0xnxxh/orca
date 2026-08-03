@@ -12611,8 +12611,48 @@ describe('OrcaRuntimeService', () => {
     await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, { startupAgent: 'cursor' })
 
     const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
-    expect(spawnCall?.command).toMatch(/^cursor-agent(\s|$)/)
+    // Why: assert the cmd.exe double quoting too — a platform-insensitive prefix
+    // match would pass on any OS and prove nothing about the reported platform.
+    expect(spawnCall?.command).toBe('cursor-agent "--yolo"')
   })
+
+  // Why: claude-agent-teams is the only agent whose launcher name varies by
+  // platform (launchCmdByPlatform), so it is what proves resolution is
+  // platform-aware rather than a fixed string.
+  it.each([
+    { platform: 'win32' as const, expected: 'orca.cmd claude-teams' },
+    { platform: 'linux' as const, expected: 'orca-ide claude-teams' },
+    { platform: 'darwin' as const, expected: 'orca claude-teams' }
+  ])(
+    'resolves a startupAgent through the $platform launcher name',
+    async ({ platform, expected }) => {
+      setPlatform(platform)
+      const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
+      const runtime = new OrcaRuntimeService({
+        ...store,
+        getSettings: () => ({
+          ...store.getSettings(),
+          disabledTuiAgents: [],
+          agentCmdOverrides: {},
+          agentDefaultArgs: { 'claude-agent-teams': '' },
+          agentDefaultEnv: {}
+        })
+      })
+      runtime.setPtyController({
+        spawn,
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+
+      await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        startupAgent: 'claude-agent-teams'
+      })
+
+      const spawnCall = spawn.mock.calls[0]?.[0] as { command?: string } | undefined
+      expect(spawnCall?.command).toBe(expected)
+    }
+  )
 
   // Why: folder workspaces have no repo, so command sniffing skipped them entirely
   // and spawned the bare string; an explicit agent must still resolve.
@@ -12672,7 +12712,10 @@ describe('OrcaRuntimeService', () => {
       { command: 'cursor-agent --resume' },
       // Why: resume identity paired with a freshly built launch is incoherent.
       { resumeProviderSession: { key: 'session_id', id: 'prior-session' } as never },
-      { launchAgent: 'cursor' as const }
+      { launchAgent: 'cursor' as const },
+      { launchConfig: { agentArgs: '', agentEnv: {} } as never },
+      { startupCommandDelivery: 'provider' as never },
+      { claudeAgentTeamsSourceCommand: 'claude' }
     ]) {
       await expect(
         runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
