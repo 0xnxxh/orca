@@ -110,7 +110,8 @@ describe('buildDashboardSnapshot folder workspaces', () => {
       worktreeId: WORKSPACE_ID,
       worktreeName: 'Docs workspace',
       workspaceKind: 'folder',
-      hostKind: 'ssh'
+      hostKind: 'ssh',
+      executionHostId: 'ssh:ssh-1'
     })
     expect(snapshot.filterOptions?.projects).toEqual([
       { id: 'folder-workspace:group-1', label: 'Documentation' }
@@ -127,5 +128,6 @@ describe('buildDashboardSnapshot folder workspaces', () => {
     const snapshot = buildDashboardSnapshot(runtimeState, NOW)
 
     expect(snapshot.cards[0].hostKind).toBe('remote')
+    expect(snapshot.cards[0].executionHostId).toBe('runtime:environment-1')
   })
 })

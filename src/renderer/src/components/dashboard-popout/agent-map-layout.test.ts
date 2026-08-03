@@ -62,7 +62,10 @@ describe('agent map layout', () => {
     const layout = deriveAgentMapLayout(cards, NOW)
 
     expect(layout.projects.map((project) => project.id)).toEqual(['repo-a', 'repo-b'])
-    expect(layout.projects[0].worktrees.map((worktree) => worktree.id)).toEqual(['wt-a', 'wt-b'])
+    expect(layout.projects[0].worktrees.map((worktree) => worktree.worktreeId)).toEqual([
+      'wt-a',
+      'wt-b'
+    ])
     expect(
       layout.projects.flatMap((project) =>
         project.worktrees.flatMap((worktree) => worktree.agents.map((agent) => agent.card.paneKey))
@@ -81,6 +84,29 @@ describe('agent map layout', () => {
         }
       }
     }
+  })
+
+  it('keeps exact worktree IDs on different hosts in separate rings', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({ paneKey: 'local', executionHostId: 'local' }),
+        card({ paneKey: 'remote', executionHostId: 'runtime:env-1' })
+      ],
+      NOW
+    )
+
+    expect(layout.projects[0].worktrees).toHaveLength(2)
+    expect(
+      layout.projects[0].worktrees.map(({ worktreeId, executionHostId }) => ({
+        worktreeId,
+        executionHostId
+      }))
+    ).toEqual(
+      expect.arrayContaining([
+        { worktreeId: 'worktree-1', executionHostId: 'local' },
+        { worktreeId: 'worktree-1', executionHostId: 'runtime:env-1' }
+      ])
+    )
   })
 
   it.each([
@@ -261,10 +287,12 @@ describe('agent map layout', () => {
     expect(agentMapDurationMinutes(finished, NOW)).toBe(10)
   })
 
-  it('maps the precise Orca status independently from elapsed time', () => {
-    for (const dotState of ['working', 'blocked', 'waiting', 'done', 'idle'] as const) {
+  it('maps acknowledged completions to idle independently from elapsed time', () => {
+    for (const dotState of ['working', 'blocked', 'waiting', 'idle'] as const) {
       expect(agentMapNodeStatus(card({ dotState }))).toBe(dotState)
     }
+    expect(agentMapNodeStatus(card({ dotState: 'done', unseen: true }))).toBe('done')
+    expect(agentMapNodeStatus(card({ dotState: 'done', unseen: false }))).toBe('idle')
     const shortBlocked = card({ dotState: 'blocked', startedAt: NOW - 60_000 })
     const longBlocked = card({ dotState: 'blocked', startedAt: NOW - 45 * 60_000 })
     expect(agentMapNodeStatus(shortBlocked)).toBe(agentMapNodeStatus(longBlocked))
@@ -278,9 +306,16 @@ describe('agent map layout', () => {
       NOW
     )
     const active = deriveAgentMapLayout([card({ paneKey: 'active', dotState: 'working' })], NOW)
+    const unseenDone = deriveAgentMapLayout(
+      Array.from({ length: 5 }, (_, index) =>
+        card({ paneKey: `done-${index}`, dotState: 'done', unseen: true })
+      ),
+      NOW
+    )
 
     expect(quiet.projects[0].worktrees[0].quiet).toBe(true)
     expect(active.projects[0].worktrees[0].quiet).toBe(false)
+    expect(unseenDone.projects[0].worktrees[0].quiet).toBe(false)
   })
 
   it('places hundreds of agents in one workspace without overlap', () => {

@@ -90,47 +90,31 @@ describe('AgentTerminalDialog', () => {
     expect(screen.getByTestId('preview')).toHaveAttribute('data-terminal-input', 'null')
   })
 
-  it('offers ring result disposition actions without replacing the shared terminal dialog', () => {
-    const result = card({ bucket: 'done', dotState: 'done', finishedAt: 100 })
-    const onOpenChange = vi.fn()
-    const onMarkReviewed = vi.fn()
-    const onTogglePinned = vi.fn()
+  it('labels acknowledged completions idle without review or pin controls', () => {
     render(
       <AgentTerminalDialog
-        card={result}
-        onOpenChange={onOpenChange}
+        card={card({ bucket: 'idle', dotState: 'done', finishedAt: 100, unseen: false })}
+        onOpenChange={() => {}}
         onReveal={() => {}}
-        reviewed={false}
-        pinned={false}
-        onMarkReviewed={onMarkReviewed}
-        onTogglePinned={onTogglePinned}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Keep visible' }))
-    expect(onTogglePinned).toHaveBeenCalledWith(result)
-    fireEvent.click(screen.getByRole('button', { name: 'Mark reviewed' }))
-    expect(onMarkReviewed).toHaveBeenCalledWith(result)
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(screen.getByText(/Claude · Idle/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Keep visible' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Mark reviewed' })).not.toBeInTheDocument()
     expect(screen.getByTestId('preview')).toHaveAttribute('data-pty-id', 'pty-1')
   })
 
-  it('keeps a pinned reviewed result open', () => {
-    const onOpenChange = vi.fn()
+  it('labels unseen completions done', () => {
     render(
       <AgentTerminalDialog
-        card={card({ bucket: 'done', dotState: 'done', finishedAt: 100 })}
-        onOpenChange={onOpenChange}
+        card={card({ bucket: 'done', dotState: 'done', finishedAt: 100, unseen: true })}
+        onOpenChange={() => {}}
         onReveal={() => {}}
-        reviewed={false}
-        pinned
-        onMarkReviewed={() => {}}
-        onTogglePinned={() => {}}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark reviewed' }))
-    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByText(/Claude · Done/)).toBeInTheDocument()
   })
 
   it('reuses the terminal surface as a non-modal adjacent panel', () => {

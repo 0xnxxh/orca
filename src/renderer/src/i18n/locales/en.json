@@ -14687,27 +14687,13 @@
         "wsl": "WSL",
         "remote": "Remote"
       },
-      "focus": {
-        "title": "Focus view",
-        "control": "You decide what stays visible",
-        "reviewCopy": "Opening a result marks it seen. Only Mark reviewed removes it from Focus.",
-        "showStates": "Show agent states",
-        "finished": "Finished",
-        "finishedResults": "Finished results",
-        "toReview": "To review",
-        "lastDay": "Last 24 hours",
-        "lastWeek": "Last 7 days",
-        "allFinished": "All finished",
-        "pinnedVisible": "Pinned results stay visible.",
+      "filters": {
+        "title": "Map filters",
+        "control": "Choose what stays visible",
+        "showStates": "Agent states",
         "hidden": "{{count}} agents hidden",
-        "reviewVisible": "Mark visible results reviewed",
         "showAll": "Show all",
-        "canvasSummary": "Focus · {{shown}} of {{total}} agents",
-        "reviewed": "Reviewed result",
-        "seenPendingReview": "Seen · remains in Focus until reviewed",
-        "pinned": "Pinned",
-        "keepVisible": "Keep visible",
-        "markReviewed": "Mark reviewed"
+        "canvasSummary": "{{shown}} of {{total}} agents shown"
       },
       "liveContainmentMap": "Live containment map",
       "hostFilter": "Host filter",

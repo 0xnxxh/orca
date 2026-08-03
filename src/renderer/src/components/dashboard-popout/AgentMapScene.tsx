@@ -13,11 +13,11 @@ type AgentMapSceneProps = {
   allowAggregation: boolean
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
-  onAgentKeyDown: (
-    event: React.KeyboardEvent<SVGGElement>,
-    agent: AgentMapAgentNode,
+  onOpenWorkspaceContextMenu?: (
+    event: React.MouseEvent<SVGCircleElement>,
     worktree: AgentMapWorktreeRing
   ) => void
+  onAgentKeyDown: (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode) => void
 }
 
 /** Memoization keeps pointer panning to one SVG viewBox write, not a map rerender. */
@@ -30,6 +30,7 @@ export const AgentMapScene = memo(function AgentMapScene({
   allowAggregation,
   nodeRefs,
   onSelectAgent,
+  onOpenWorkspaceContextMenu,
   onAgentKeyDown
 }: AgentMapSceneProps): React.JSX.Element {
   return (
@@ -68,6 +69,7 @@ export const AgentMapScene = memo(function AgentMapScene({
               allowAggregation={allowAggregation}
               nodeRefs={nodeRefs}
               onSelectAgent={onSelectAgent}
+              onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
               onAgentKeyDown={onAgentKeyDown}
             />
           ))}

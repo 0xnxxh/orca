@@ -25,7 +25,6 @@ import {
 import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
-import { useFleetResultDisposition } from './use-fleet-result-disposition'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
 
 export type AgentDashboardView = 'map' | 'board'
@@ -144,6 +143,9 @@ type AgentKanbanBoardProps = {
   /** Header controls rendered before the close button. The in-window host
    *  passes its settings menu; the pop-out renderer has no store to drive it. */
   headerActions?: React.ReactNode
+  /** The shared sidebar workspace menu is available only in the main renderer. */
+  workspaceContextMenusEnabled?: boolean
+  onWorkspaceContextMenuOpenChange?: (open: boolean) => void
 }
 
 /** The agent board: status columns fed by a snapshot. Shared by the pop-out
@@ -156,7 +158,9 @@ export function AgentKanbanBoard({
   onAckAgent = ackAgentViaPopoutRelay,
   onRevealAgent = revealAgentViaPopoutRelay,
   onClose,
-  headerActions
+  headerActions,
+  workspaceContextMenusEnabled = false,
+  onWorkspaceContextMenuOpenChange
 }: AgentKanbanBoardProps): React.JSX.Element {
   const [view, setView] = useState(initialView)
   const visibleBuckets = useMemo(
@@ -168,12 +172,13 @@ export function AgentKanbanBoard({
     () => snapshot.cards.filter((card) => visibleBuckets.includes(card.bucket)),
     [snapshot.cards, visibleBuckets]
   )
+  const availableCards = view === 'map' ? snapshot.cards : visibleCards
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [filters, setFilters] = useState<DashboardFilters>(EMPTY_DASHBOARD_FILTERS)
   const filteredCards = useMemo(
-    () => filterDashboardCards(visibleCards, query, filters),
-    [filters, query, visibleCards]
+    () => filterDashboardCards(availableCards, query, filters),
+    [availableCards, filters, query]
   )
   const grouped = useMemo(() => groupByBucket(filteredCards), [filteredCards])
   const hasRelativeTimestamps = useMemo(
@@ -182,9 +187,6 @@ export function AgentKanbanBoard({
   )
   const [now, setNow] = useState(() => Date.now())
   const [terminalPanelSide, setTerminalPanelSide] = useState<'left' | 'right'>('right')
-  const { reviewedPaneKeys, pinnedPaneKeys, acknowledge, markReviewed, togglePinned } =
-    useFleetResultDisposition(snapshot.cards, onAckAgent)
-
   useEffect(() => {
     if (!hasRelativeTimestamps) {
       return
@@ -255,10 +257,10 @@ export function AgentKanbanBoard({
   // with unseen=false.
   const handleOpenTerminal = useCallback(
     (card: DashboardCard) => {
-      acknowledge(card)
+      onAckAgent(card.paneKey)
       setOpenedCard(card)
     },
-    [acknowledge]
+    [onAckAgent]
   )
   const handleOpenAdjacentTerminal = useCallback(
     (card: DashboardCard, side: 'left' | 'right') => {
@@ -271,9 +273,9 @@ export function AgentKanbanBoard({
   // without this, an agent finishing while you watch would re-flag its card.
   useEffect(() => {
     if (dialogCard?.unseen) {
-      acknowledge(dialogCard)
+      onAckAgent(dialogCard.paneKey)
     }
-  }, [acknowledge, dialogCard])
+  }, [dialogCard?.paneKey, dialogCard?.unseen, onAckAgent])
 
   return (
     // Why: the pop-out is its own React root with no app-level provider, and the
@@ -289,7 +291,7 @@ export function AgentKanbanBoard({
           </h1>
           <span className="text-[11px] text-muted-foreground">
             {translate('dashboardPopout.total', '{{count}} total', {
-              count: visibleCards.length
+              count: availableCards.length
             })}
           </span>
           <div
@@ -364,9 +366,8 @@ export function AgentKanbanBoard({
                 }
                 compact={dialogCard !== null}
                 selectedPaneKey={dialogCard?.paneKey}
-                pinnedPaneKeys={pinnedPaneKeys}
-                reviewedPaneKeys={reviewedPaneKeys}
-                onMarkReviewed={markReviewed}
+                workspaceContextMenusEnabled={workspaceContextMenusEnabled}
+                onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
                 onOpenTerminal={handleOpenAdjacentTerminal}
               />
             </Suspense>
@@ -375,10 +376,6 @@ export function AgentKanbanBoard({
                 card={dialogCard}
                 onOpenChange={handleDialogOpenChange}
                 onReveal={onRevealAgent}
-                reviewed={reviewedPaneKeys.has(dialogCard.paneKey)}
-                pinned={pinnedPaneKeys.has(dialogCard.paneKey)}
-                onMarkReviewed={(card) => markReviewed([card])}
-                onTogglePinned={togglePinned}
                 className={cn(
                   terminalPanelSide === 'right' ? 'ml-0' : 'mr-0',
                   'animate-in fade-in-0 duration-200 motion-reduce:animate-none',

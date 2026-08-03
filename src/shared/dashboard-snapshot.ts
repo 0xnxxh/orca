@@ -1,4 +1,5 @@
 import type { AgentType } from './agent-status-types'
+import type { ExecutionHostId } from './execution-host'
 import type { RepoIcon } from './repo-icon'
 
 /**
@@ -26,6 +27,13 @@ export const DASHBOARD_MAX_LABEL_LENGTH = 1_024
 
 /** Kept distinct from `bucket` so attention cards retain their precise dot state. */
 export type DashboardCardDotState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
+
+/** Completed agents stay green until acknowledged, then settle into gray idle. */
+export function dashboardCardDisplayState(
+  card: Pick<DashboardCard, 'dotState' | 'unseen'>
+): DashboardCardDotState {
+  return card.dotState === 'done' && !card.unseen ? 'idle' : card.dotState
+}
 
 export type DashboardCardReview = {
   number: number
@@ -67,6 +75,8 @@ export type DashboardCard = {
   worktreeName: string
   /** Optional for preload compatibility with snapshots produced before Agent Map. */
   hostKind?: DashboardCardHostKind
+  /** Exact owner used by in-window workspace actions when IDs collide across hosts. */
+  executionHostId?: ExecutionHostId
   /** Folder workspaces share the ring hierarchy without pretending to be git worktrees. */
   workspaceKind?: DashboardCardWorkspaceKind
   workspaceStatusId?: string

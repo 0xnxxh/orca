@@ -6,7 +6,8 @@ import { useAppStore } from '@/store'
 
 const mocks = vi.hoisted(() => ({
   useLiveDashboardSnapshot: vi.fn(() => ({ generatedAt: 1, cards: [] })),
-  blockingOverlay: false
+  blockingOverlay: false,
+  boardProps: null as Record<string, unknown> | null
 }))
 
 vi.mock('./useLiveDashboardSnapshot', () => ({
@@ -14,8 +15,10 @@ vi.mock('./useLiveDashboardSnapshot', () => ({
 }))
 
 vi.mock('../dashboard-popout/AgentKanbanBoard', () => ({
-  AgentKanbanBoard: () =>
-    mocks.blockingOverlay ? <section role="dialog" data-state="open" /> : null
+  AgentKanbanBoard: (props: Record<string, unknown>) => {
+    mocks.boardProps = props
+    return mocks.blockingOverlay ? <section role="dialog" data-state="open" /> : null
+  }
 }))
 
 vi.mock('./AgentDashboardSettingsMenu', () => ({
@@ -42,6 +45,7 @@ beforeEach(() => {
   )
   mocks.useLiveDashboardSnapshot.mockClear()
   mocks.blockingOverlay = false
+  mocks.boardProps = null
 })
 
 afterEach(() => {
@@ -71,5 +75,14 @@ describe('AgentDashboardDrawer', () => {
     view.rerender(<AgentDashboardDrawer statusBarVisible />)
     fireEvent.keyDown(document.body, { key: 'Escape' })
     expect(useAppStore.getState().agentDashboardDrawerOpen).toBe(false)
+  })
+
+  it('enables workspace ring menus only while the in-window dashboard is mounted', () => {
+    render(<AgentDashboardDrawer statusBarVisible />)
+    expect(mocks.boardProps).toBeNull()
+
+    act(() => useAppStore.setState({ agentDashboardDrawerOpen: true }))
+    expect(mocks.boardProps?.workspaceContextMenusEnabled).toBe(true)
+    expect(mocks.boardProps?.onWorkspaceContextMenuOpenChange).toBeTypeOf('function')
   })
 })

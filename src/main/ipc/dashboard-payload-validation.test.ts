@@ -42,6 +42,7 @@ const SNAPSHOT = {
       repoName: 'Orca',
       worktreeName: 'Dashboard',
       hostKind: 'ssh',
+      executionHostId: 'ssh:build-box',
       workspaceKind: 'worktree',
       workspaceStatusId: 'in-review',
       workspaceStatusLabel: 'In review',
@@ -109,6 +110,18 @@ describe('dashboard payload validation', () => {
       isDashboardSnapshot({
         ...SNAPSHOT,
         cards: [{ ...SNAPSHOT.cards[0], hostKind: 'satellite' }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], executionHostId: 'build-box' }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], executionHostId: `ssh:${'x'.repeat(4_097)}` }]
       })
     ).toBe(false)
     expect(

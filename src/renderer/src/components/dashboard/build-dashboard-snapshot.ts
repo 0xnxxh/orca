@@ -1,6 +1,7 @@
 import type { AppState } from '@/store/types'
 import {
   DASHBOARD_MAX_LABEL_LENGTH,
+  dashboardCardDisplayState,
   type DashboardBucket,
   type DashboardCard,
   type DashboardCardDotState,
@@ -66,7 +67,7 @@ export type DashboardSnapshotState = Pick<
   DashboardCardContextState &
   Partial<DashboardCardTerminalInputState>
 
-function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
+function bucketForState(state: DashboardCardDotState): DashboardBucket {
   switch (state) {
     case 'working':
       return 'working'
@@ -268,7 +269,10 @@ export function buildDashboardSnapshot(
           ? layoutPtyId
           : null
       const dotState = row.state as DashboardCardDotState
-      const bucket = bucketForState(row.state)
+      const unseen =
+        !isTitleDerived &&
+        (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt
+      const bucket = bucketForState(dashboardCardDisplayState({ dotState, unseen }))
       // Why: only a live pty can open a preview terminal, and only a
       // card-rendering caller can open one — the sidebar's bucket counts must
       // not pay host resolution on every agent-status tick.
@@ -326,9 +330,7 @@ export function buildDashboardSnapshot(
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,
         // Same derivation as WorktreeCardAgents' unvisitedByPaneKey, so the
         // board and the sidebar bold/mute the same agents at the same time.
-        unseen:
-          !isTitleDerived &&
-          (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
+        unseen,
         askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
         conversationName: boundedLabelOrUndefined(rowConversationName(row, generatedTitlesEnabled)),
         ...(terminalInput ? { terminalInput } : {})

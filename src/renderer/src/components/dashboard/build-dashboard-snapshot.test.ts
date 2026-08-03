@@ -409,16 +409,18 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0].ptyId).toBeNull()
   })
 
-  it('mutes unseen once the agent is acknowledged after its state change', () => {
+  it('moves an acknowledged completion to idle while retaining its raw done state', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
-        agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
+        agentStatusByPaneKey: { [PANE_KEY]: entry({ state: 'done' }) },
         acknowledgedAgentsByPaneKey: { [PANE_KEY]: NOW - 1000 }
       }),
       NOW
     )
     // ack (NOW-1000) is after stateStartedAt (NOW-5000) → seen.
     expect(snapshot.cards[0].unseen).toBe(false)
+    expect(snapshot.cards[0].dotState).toBe('done')
+    expect(snapshot.cards[0].bucket).toBe('idle')
   })
 
   it('does not mark title-derived rows unseen from synthetic timestamps', () => {

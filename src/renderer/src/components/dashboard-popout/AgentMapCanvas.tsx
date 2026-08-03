@@ -15,9 +15,17 @@ import type {
   AgentMapLayout,
   AgentMapWorktreeRing
 } from './agent-map-layout'
-import { shouldAggregateAgentMapWorktree } from './agent-map-layout'
 import { AgentMapScene } from './AgentMapScene'
 import { AgentMapViewportControls } from './AgentMapViewportControls'
+import {
+  AgentMapWorkspaceContextMenuLoader,
+  type AgentMapWorkspaceContextMenuRequest
+} from './AgentMapWorkspaceContextMenuLoader'
+import {
+  agentMapAgents,
+  navigableAgentMapAgents,
+  nextDirectionalAgent
+} from './agent-map-navigation'
 
 const MIN_ZOOM = 0.7
 const MAX_ZOOM = 4
@@ -35,6 +43,8 @@ type AgentMapCanvasProps = {
   layout: AgentMapLayout
   selectedPaneKey: string | null
   allowAggregation: boolean
+  workspaceContextMenusEnabled?: boolean
+  onWorkspaceContextMenuOpenChange?: (open: boolean) => void
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
 }
 
@@ -42,40 +52,16 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
 }
 
-function allAgents(layout: AgentMapLayout): AgentMapAgentNode[] {
-  return layout.projects.flatMap((project) =>
-    project.worktrees.flatMap((worktree) => worktree.agents)
-  )
-}
-
-function nextDirectionalAgent(
-  current: AgentMapAgentNode,
-  agents: AgentMapAgentNode[],
-  direction: Point
-): AgentMapAgentNode | null {
-  let best: { agent: AgentMapAgentNode; score: number } | null = null
-  for (const candidate of agents) {
-    if (candidate.card.paneKey === current.card.paneKey) {
-      continue
-    }
-    const dx = candidate.x - current.x
-    const dy = candidate.y - current.y
-    const forward = dx * direction.x + dy * direction.y
-    if (forward <= 0) {
-      continue
-    }
-    const sideways = Math.abs(dx * direction.y - dy * direction.x)
-    const score = forward + sideways * 2
-    if (!best || score < best.score) {
-      best = { agent: candidate, score }
-    }
-  }
-  return best?.agent ?? null
-}
-
 export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasProps>(
   function AgentMapCanvas(
-    { layout, selectedPaneKey, allowAggregation, onSelectAgent },
+    {
+      layout,
+      selectedPaneKey,
+      allowAggregation,
+      workspaceContextMenusEnabled = false,
+      onWorkspaceContextMenuOpenChange,
+      onSelectAgent
+    },
     forwardedRef
   ): React.JSX.Element {
     const containerRef = useRef<HTMLDivElement>(null)
@@ -92,14 +78,21 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const pendingViewportRef = useRef<Viewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
     const focusedAgentRef = useRef<{ paneKey: string; x: number; y: number } | null>(null)
+    const contextMenuRequestIdRef = useRef(0)
     const [size, setSize] = useState<ViewportSize>({ width: 800, height: 560 })
     const [viewport, setViewport] = useState<Viewport>({
       center: { x: layout.width / 2, y: layout.height / 2 },
       zoom: 1
     })
+    const [contextMenuRequest, setContextMenuRequest] =
+      useState<AgentMapWorkspaceContextMenuRequest | null>(null)
     const viewportRef = useRef(viewport)
     const { center, zoom } = viewport
-    const agents = useMemo(() => allAgents(layout), [layout])
+    const agents = useMemo(() => agentMapAgents(layout), [layout])
+    const navigableAgents = useMemo(
+      () => navigableAgentMapAgents(layout, zoom, allowAggregation, selectedPaneKey),
+      [allowAggregation, layout, selectedPaneKey, zoom]
+    )
     const aspect = size.width / Math.max(1, size.height)
     const baseWidth = Math.max(layout.width, layout.height * aspect)
     const baseHeight = baseWidth / aspect
@@ -208,11 +201,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     }, [agents, applyViewport, selectedPaneKey])
 
     const handleAgentKeyDown = useCallback(
-      (
-        event: React.KeyboardEvent<SVGGElement>,
-        agent: AgentMapAgentNode,
-        worktree: AgentMapWorktreeRing
-      ): void => {
+      (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode): void => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           const bounds = event.currentTarget.getBoundingClientRect()
@@ -234,18 +223,25 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
           return
         }
         event.preventDefault()
-        const visibleAgents = shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
-          ? agents.filter(
-              (candidate) =>
-                !worktree.agents.some(
-                  (worktreeAgent) => worktreeAgent.card.paneKey === candidate.card.paneKey
-                )
-            )
-          : agents
-        const next = nextDirectionalAgent(agent, visibleAgents, direction)
+        const next = nextDirectionalAgent(agent, navigableAgents, direction)
         nodeRefs.current.get(next?.card.paneKey ?? '')?.focus()
       },
-      [agents, allowAggregation, onSelectAgent, zoom]
+      [navigableAgents, onSelectAgent]
+    )
+
+    const handleOpenWorkspaceContextMenu = useCallback(
+      (event: React.MouseEvent<SVGCircleElement>, worktree: AgentMapWorktreeRing): void => {
+        contextMenuRequestIdRef.current += 1
+        setContextMenuRequest({
+          id: contextMenuRequestIdRef.current,
+          worktreeId: worktree.worktreeId,
+          executionHostId: worktree.executionHostId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          altKey: event.altKey
+        })
+      },
+      []
     )
 
     const zoomAt = useCallback(
@@ -367,6 +363,9 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               allowAggregation={allowAggregation}
               nodeRefs={nodeRefs}
               onSelectAgent={onSelectAgent}
+              onOpenWorkspaceContextMenu={
+                workspaceContextMenusEnabled ? handleOpenWorkspaceContextMenu : undefined
+              }
               onAgentKeyDown={handleAgentKeyDown}
             />
           </svg>
@@ -378,6 +377,12 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
           onZoomIn={() => zoomAt(viewportRef.current.zoom * 1.25)}
           onZoomOut={() => zoomAt(viewportRef.current.zoom / 1.25)}
         />
+        {workspaceContextMenusEnabled && contextMenuRequest ? (
+          <AgentMapWorkspaceContextMenuLoader
+            request={contextMenuRequest}
+            onOpenChange={onWorkspaceContextMenuOpenChange}
+          />
+        ) : null}
       </div>
     )
   }

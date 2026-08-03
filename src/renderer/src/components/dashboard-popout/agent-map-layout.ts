@@ -1,8 +1,17 @@
-import type { DashboardCard, DashboardCardDotState } from '../../../../shared/dashboard-snapshot'
+import type * as DashboardSnapshotTypes from '../../../../shared/dashboard-snapshot'
 import { layoutAgentMapLineage } from './agent-map-lineage-layout'
+import { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
+import {
+  agentMapCardTopologyIdentity,
+  agentMapWorktreeIdentity
+} from './agent-map-workspace-identity'
 import { packAgentMapWorktrees } from './agent-map-worktree-packing'
 
+type DashboardCard = DashboardSnapshotTypes.DashboardCard
+type DashboardCardDotState = DashboardSnapshotTypes.DashboardCardDotState
+
 export { AGENT_MAP_WORKTREE_GAP } from './agent-map-worktree-packing'
+export { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
 
 export const AGENT_MAP_AGENT_RADIUS = 20
 export const AGENT_MAP_AGGREGATE_ZOOM = 1.15
@@ -25,6 +34,8 @@ export type AgentMapAgentNode = {
 
 export type AgentMapWorktreeRing = {
   id: string
+  worktreeId: string
+  executionHostId: DashboardCard['executionHostId']
   name: string
   workspaceKind: NonNullable<DashboardCard['workspaceKind']>
   x: number
@@ -80,25 +91,8 @@ function hashFraction(value: string): number {
   return stableHash(value) / 0xffffffff
 }
 
-function topologyIdentity(card: DashboardCard): string {
-  const parentPaneKey = card.parentPaneKey ?? ''
-  return `${card.repoId.length}:${card.repoId}${card.worktreeId.length}:${card.worktreeId}${card.paneKey.length}:${card.paneKey}${parentPaneKey.length}:${parentPaneKey}`
-}
-
 export function agentMapTopologyKey(cards: DashboardCard[]): string {
-  return cards.map(topologyIdentity).sort(compareStable).join('|')
-}
-
-export function agentMapDurationMinutes(card: DashboardCard, now: number): number {
-  if (!Number.isFinite(card.startedAt) || card.startedAt <= 0) {
-    return 0
-  }
-  const end = card.finishedAt && card.finishedAt >= card.startedAt ? card.finishedAt : now
-  return Math.max(0, (end - card.startedAt) / 60_000)
-}
-
-export function agentMapNodeStatus(card: DashboardCard): DashboardCardDotState {
-  return card.dotState
+  return cards.map(agentMapCardTopologyIdentity).sort(compareStable).join('|')
 }
 
 export function shouldAggregateAgentMapWorktree(
@@ -155,10 +149,12 @@ function buildLocalWorktree(id: string, cards: DashboardCard[], now: number): Lo
   const radius = lineageLayout?.radius ?? worktreeRadius(cards.length)
   const statusCounts = emptyStatusCounts()
   for (const card of cards) {
-    statusCounts[card.dotState] += 1
+    statusCounts[agentMapNodeStatus(card)] += 1
   }
   return {
     id,
+    worktreeId: cards[0]?.worktreeId ?? id,
+    executionHostId: cards[0]?.executionHostId,
     name: cards[0]?.worktreeName ?? id,
     workspaceKind: cards[0]?.workspaceKind ?? 'worktree',
     x: 0,
@@ -174,18 +170,19 @@ function buildLocalWorktree(id: string, cards: DashboardCard[], now: number): Lo
         status: agentMapNodeStatus(card)
       })) ?? placeAgents(id, cards, radius, now),
     statusCounts,
-    quiet: statusCounts.working === 0 && statusCounts.blocked === 0 && statusCounts.waiting === 0
+    quiet: statusCounts.idle === cards.length
   }
 }
 
 function buildLocalProject(id: string, cards: DashboardCard[], now: number): LocalProject {
   const byWorktree = new Map<string, DashboardCard[]>()
   for (const card of cards) {
-    const current = byWorktree.get(card.worktreeId)
+    const identity = agentMapWorktreeIdentity(card)
+    const current = byWorktree.get(identity)
     if (current) {
       current.push(card)
     } else {
-      byWorktree.set(card.worktreeId, [card])
+      byWorktree.set(identity, [card])
     }
   }
   const worktrees = packAgentMapWorktrees(
@@ -278,7 +275,7 @@ function refreshAgentMapMetadata(
         worktreeName = card.worktreeName
         workspaceKind = card.workspaceKind ?? 'worktree'
         agentCount += 1
-        statusCounts[card.dotState] += 1
+        statusCounts[agentMapNodeStatus(card)] += 1
         return [
           {
             ...agent,
@@ -294,8 +291,7 @@ function refreshAgentMapMetadata(
         workspaceKind,
         agents,
         statusCounts,
-        quiet:
-          statusCounts.working === 0 && statusCounts.blocked === 0 && statusCounts.waiting === 0
+        quiet: statusCounts.idle === agents.length
       }
     })
     return { ...project, name: projectName, worktrees, agentCount }

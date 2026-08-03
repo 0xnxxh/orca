@@ -22,11 +22,11 @@ type AgentMapWorktreeRingNodeProps = {
   allowAggregation: boolean
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
-  onAgentKeyDown: (
-    event: React.KeyboardEvent<SVGGElement>,
-    agent: AgentMapAgentNode,
+  onOpenWorkspaceContextMenu?: (
+    event: React.MouseEvent<SVGCircleElement>,
     worktree: AgentMapWorktreeRing
   ) => void
+  onAgentKeyDown: (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode) => void
 }
 
 function formatDuration(minutes: number): string {
@@ -133,11 +133,12 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   allowAggregation,
   nodeRefs,
   onSelectAgent,
+  onOpenWorkspaceContextMenu,
   onAgentKeyDown
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const aggregate = shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
+  const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
   const screenRadius = worktree.radius * mapScale
   const showLabel = !worktree.quiet || screenRadius >= 56
@@ -173,6 +174,16 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                 setDetailsOpen(true)
               }
             }}
+            onContextMenu={
+              onOpenWorkspaceContextMenu
+                ? (event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setDetailsOpen(false)
+                    onOpenWorkspaceContextMenu(event, worktree)
+                  }
+                : undefined
+            }
           />
         </PopoverTrigger>
         <g
@@ -235,7 +246,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   className={`agent-map-agent-node fleet-status-${agent.status}${selectedPaneKey === agent.card.paneKey ? ' is-selected' : ''}`}
                   transform={`translate(${agent.x} ${agent.y})`}
                   onClick={(event) => onSelectAgent(agent.card, panelSideFor(event.currentTarget))}
-                  onKeyDown={(event) => onAgentKeyDown(event, agent, worktree)}
+                  onKeyDown={(event) => onAgentKeyDown(event, agent)}
                 >
                   <circle className="agent-map-agent-hit" r={Math.max(10, agent.radius + 3)} />
                   <circle className="agent-map-agent-mark" r={agent.radius} />

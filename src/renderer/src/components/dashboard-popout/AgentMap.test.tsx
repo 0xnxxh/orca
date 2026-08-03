@@ -36,31 +36,25 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
 function renderMap(
   cards: DashboardCard[],
   {
-    reviewedPaneKeys = new Set<string>(),
-    pinnedPaneKeys = new Set<string>(),
-    onMarkReviewed = vi.fn(),
     onOpenTerminal = vi.fn(),
     selectedPaneKey = null,
-    compact = false
+    compact = false,
+    workspaceContextMenusEnabled = false
   }: {
-    reviewedPaneKeys?: ReadonlySet<string>
-    pinnedPaneKeys?: ReadonlySet<string>
-    onMarkReviewed?: (cards: DashboardCard[]) => void
     onOpenTerminal?: (card: DashboardCard, side: 'left' | 'right') => void
     selectedPaneKey?: string | null
     compact?: boolean
+    workspaceContextMenusEnabled?: boolean
   } = {}
 ): ReturnType<typeof render> {
   return render(
     <AgentMap
       cards={cards}
       now={NOW}
-      reviewedPaneKeys={reviewedPaneKeys}
-      pinnedPaneKeys={pinnedPaneKeys}
-      onMarkReviewed={onMarkReviewed}
       onOpenTerminal={onOpenTerminal}
       selectedPaneKey={selectedPaneKey}
       compact={compact}
+      workspaceContextMenusEnabled={workspaceContextMenusEnabled}
     />
   )
 }
@@ -195,7 +189,7 @@ describe('AgentMap', () => {
     renderMap([card()], { selectedPaneKey: 'pane-1', compact: true })
 
     expect(screen.getByRole('button', { name: /Agent alpha/ })).toHaveClass('is-selected')
-    expect(screen.queryByText('Focus view')).not.toBeInTheDocument()
+    expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Host filter' })).not.toBeInTheDocument()
   })
 
@@ -229,9 +223,6 @@ describe('AgentMap', () => {
           selected
         ]}
         now={NOW}
-        reviewedPaneKeys={new Set()}
-        pinnedPaneKeys={new Set()}
-        onMarkReviewed={vi.fn()}
         onOpenTerminal={vi.fn()}
         selectedPaneKey={selected.paneKey}
       />
@@ -242,10 +233,10 @@ describe('AgentMap', () => {
     expect(viewportCenter()[1]).toBeCloseTo(nodeCenter()[1])
   })
 
-  it('shows Focus controls at the pop-out default-width breakpoint', () => {
+  it('shows map filters at the pop-out default-width breakpoint', () => {
     renderMap([card()])
 
-    expect(screen.getByText('Focus view').closest('aside')).toHaveClass('md:flex')
+    expect(screen.getByText('Map filters').closest('aside')).toHaveClass('md:flex')
   })
 
   it('increases map label scale when users zoom out', () => {
@@ -324,7 +315,7 @@ describe('AgentMap', () => {
       bucket: 'done',
       dotState: 'done',
       finishedAt: NOW - 60_000,
-      unseen: true
+      unseen: false
     })
     const { container } = renderMap([card(), quiet])
     const labels = [...container.querySelectorAll('.agent-map-worktree-label')]
@@ -335,13 +326,14 @@ describe('AgentMap', () => {
     expect(quietGroup).not.toHaveClass('is-visible')
   })
 
-  it('defaults to active agents and finished results that still need review', () => {
-    const recentReviewed = card({
-      paneKey: 'reviewed',
-      conversationName: 'Reviewed result',
+  it('shows unseen completions as Done and acknowledged completions as Idle by default', () => {
+    const seenResult = card({
+      paneKey: 'seen',
+      conversationName: 'Seen result',
       bucket: 'done',
       dotState: 'done',
-      finishedAt: NOW - 60_000
+      finishedAt: NOW - 60_000,
+      unseen: false
     })
     const newResult = card({
       paneKey: 'new',
@@ -351,16 +343,13 @@ describe('AgentMap', () => {
       finishedAt: NOW - 2 * 60_000,
       unseen: true
     })
-    renderMap([card(), recentReviewed, newResult], {
-      reviewedPaneKeys: new Set(['reviewed'])
-    })
+    renderMap([card(), seenResult, newResult])
 
     expect(screen.getByRole('button', { name: /Agent alpha/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /New result/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Reviewed result/ })).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: /^Last 24 hours/ }))
-    expect(screen.getByRole('button', { name: /Reviewed result/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /New result/ })).toHaveClass('fleet-status-done')
+    expect(screen.getByRole('button', { name: /Seen result/ })).toHaveClass('fleet-status-idle')
+    expect(screen.getByRole('button', { name: /^Done/ })).toHaveTextContent('1')
+    expect(screen.getByRole('button', { name: /^Idle/ })).toHaveTextContent('1')
   })
 
   it('lets users hide states and projects independently', () => {
@@ -382,23 +371,7 @@ describe('AgentMap', () => {
     expect(screen.queryByRole('button', { name: /Other project/ })).not.toBeInTheDocument()
   })
 
-  it('bulk-reviews only visible unreviewed results', () => {
-    const onMarkReviewed = vi.fn()
-    const result = card({
-      paneKey: 'done',
-      conversationName: 'Finished agent',
-      bucket: 'done',
-      dotState: 'done',
-      finishedAt: NOW - 60_000,
-      unseen: true
-    })
-    renderMap([card(), result], { onMarkReviewed })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Mark visible results reviewed' }))
-    expect(onMarkReviewed).toHaveBeenCalledWith([result])
-  })
-
-  it('keeps exact review nodes visible and aggregates quiet history only in broad scopes', () => {
+  it('aggregates only acknowledged idle results without repacking topology', () => {
     const results = Array.from({ length: 5 }, (_, index) =>
       card({
         paneKey: `done-${index}`,
@@ -409,12 +382,30 @@ describe('AgentMap', () => {
         unseen: true
       })
     )
-    const { container } = renderMap(results)
+    const view = renderMap(results)
+    const { container } = view
 
     expect(container.querySelectorAll('[data-agent-map-agent]')).toHaveLength(5)
     expect(container.querySelectorAll('.agent-map-aggregate-node')).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: /^All finished/ }))
+    view.rerender(
+      <AgentMap
+        cards={results.map((result) => ({ ...result, unseen: false }))}
+        now={NOW}
+        onOpenTerminal={vi.fn()}
+      />
+    )
     expect(container.querySelectorAll('[data-agent-map-agent]')).toHaveLength(0)
     expect(container.querySelectorAll('.agent-map-aggregate-node')).toHaveLength(1)
+
+    view.rerender(
+      <AgentMap
+        cards={results.map((result) => ({ ...result, unseen: false }))}
+        now={NOW}
+        selectedPaneKey="done-0"
+        onOpenTerminal={vi.fn()}
+      />
+    )
+    expect(container.querySelectorAll('[data-agent-map-agent]')).toHaveLength(5)
+    expect(container.querySelectorAll('.agent-map-aggregate-node')).toHaveLength(0)
   })
 })

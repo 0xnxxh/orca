@@ -4,6 +4,7 @@ import {
   type DashboardSnapshot
 } from '../../shared/dashboard-snapshot'
 import { BoundedMap } from '../../shared/bounded-map'
+import { normalizeExecutionHostId } from '../../shared/execution-host'
 import { sanitizeRepoIcon } from '../../shared/repo-icon'
 import {
   AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
@@ -271,6 +272,9 @@ function isDashboardCard(value: unknown): boolean {
     isBoundedString(card.worktreeName, MAX_LABEL_LENGTH, true) &&
     (card.hostKind === undefined ||
       (typeof card.hostKind === 'string' && DASHBOARD_HOST_KINDS.has(card.hostKind))) &&
+    (card.executionHostId === undefined ||
+      (isBoundedString(card.executionHostId, MAX_ID_LENGTH) &&
+        normalizeExecutionHostId(card.executionHostId) !== null)) &&
     (card.workspaceKind === undefined ||
       (typeof card.workspaceKind === 'string' &&
         DASHBOARD_WORKSPACE_KINDS.has(card.workspaceKind))) &&

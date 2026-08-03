@@ -4,14 +4,13 @@ import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import type { DashboardCard, DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
 import { AgentMapCanvas, type AgentMapCanvasHandle } from './AgentMapCanvas'
-import { AgentMapFocusRail } from './AgentMapFocusRail'
+import { AgentMapFilterRail } from './AgentMapFilterRail'
 import {
   countAgentMapCards,
   filterAgentMapCards,
-  type AgentMapFinishedScope,
-  type AgentMapFocusState,
+  type AgentMapState,
   type AgentMapHostFilter
-} from './agent-map-focus-filter'
+} from './agent-map-filter'
 import { updateAgentMapLayout, type AgentMapLayoutCache } from './agent-map-layout'
 import './agent-map.css'
 
@@ -21,14 +20,13 @@ type AgentMapProps = {
   className?: string
   compact?: boolean
   selectedPaneKey?: string | null
-  pinnedPaneKeys: ReadonlySet<string>
-  reviewedPaneKeys: ReadonlySet<string>
-  onMarkReviewed: (cards: DashboardCard[]) => void
+  workspaceContextMenusEnabled?: boolean
+  onWorkspaceContextMenuOpenChange?: (open: boolean) => void
   onOpenTerminal: (card: DashboardCard, side: 'left' | 'right') => void
 }
 
 const HOST_FILTERS: AgentMapHostFilter[] = ['all', 'local', 'ssh', 'wsl', 'remote']
-const DEFAULT_STATES: AgentMapFocusState[] = ['attention', 'working', 'finished']
+const DEFAULT_STATES: AgentMapState[] = ['attention', 'working', 'done', 'idle']
 
 function hostFilterLabel(filter: AgentMapHostFilter): string {
   switch (filter) {
@@ -51,18 +49,16 @@ export function AgentMap({
   className,
   compact = false,
   selectedPaneKey = null,
-  pinnedPaneKeys,
-  reviewedPaneKeys,
-  onMarkReviewed,
+  workspaceContextMenusEnabled = false,
+  onWorkspaceContextMenuOpenChange,
   onOpenTerminal
 }: AgentMapProps): React.JSX.Element {
   const canvasRef = useRef<AgentMapCanvasHandle>(null)
   const layoutCacheRef = useRef<AgentMapLayoutCache | null>(null)
   const [hostFilter, setHostFilter] = useState<AgentMapHostFilter>('all')
-  const [enabledStates, setEnabledStates] = useState<Set<AgentMapFocusState>>(
+  const [enabledStates, setEnabledStates] = useState<Set<AgentMapState>>(
     () => new Set(DEFAULT_STATES)
   )
-  const [finishedScope, setFinishedScope] = useState<AgentMapFinishedScope>('review')
   const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<string>>(() => new Set())
   const hostCounts = useMemo(() => {
     const counts: Record<DashboardCardHostKind, number> = {
@@ -88,43 +84,16 @@ export function AgentMap({
     }
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
   }, [cards])
-  const counts = useMemo(
-    () => countAgentMapCards(cards, now, reviewedPaneKeys),
-    [cards, now, reviewedPaneKeys]
-  )
+  const counts = useMemo(() => countAgentMapCards(cards), [cards])
   const visibleCards = useMemo(
     () =>
       filterAgentMapCards({
         cards,
         enabledStates,
-        finishedScope,
         hostFilter,
-        hiddenProjectIds,
-        pinnedPaneKeys,
-        reviewedPaneKeys,
-        now
+        hiddenProjectIds
       }),
-    [
-      cards,
-      enabledStates,
-      finishedScope,
-      hiddenProjectIds,
-      hostFilter,
-      now,
-      pinnedPaneKeys,
-      reviewedPaneKeys
-    ]
-  )
-  const reviewableVisibleCards = useMemo(
-    () =>
-      visibleCards.filter(
-        (card) => card.dotState === 'done' && !reviewedPaneKeys.has(card.paneKey)
-      ),
-    [reviewedPaneKeys, visibleCards]
-  )
-  const pinnedCount = useMemo(
-    () => cards.filter((card) => pinnedPaneKeys.has(card.paneKey)).length,
-    [cards, pinnedPaneKeys]
+    [cards, enabledStates, hiddenProjectIds, hostFilter]
   )
   const layoutResult = useMemo(
     () => updateAgentMapLayout(layoutCacheRef.current, visibleCards, now),
@@ -135,7 +104,7 @@ export function AgentMap({
   }, [layoutResult.cache])
   const layout = layoutResult.layout
 
-  const toggleState = (state: AgentMapFocusState): void => {
+  const toggleState = (state: AgentMapState): void => {
     setEnabledStates((current) => {
       const next = new Set(current)
       if (next.has(state)) {
@@ -159,7 +128,6 @@ export function AgentMap({
   }
   const showAll = (): void => {
     setEnabledStates(new Set(DEFAULT_STATES))
-    setFinishedScope('all')
     setHiddenProjectIds(new Set())
     setHostFilter('all')
   }
@@ -167,19 +135,14 @@ export function AgentMap({
   return (
     <section className={cn('flex min-h-0 flex-1', className)}>
       {!compact ? (
-        <AgentMapFocusRail
+        <AgentMapFilterRail
           counts={counts}
           enabledStates={enabledStates}
-          finishedScope={finishedScope}
           hiddenProjectIds={hiddenProjectIds}
-          pinnedCount={pinnedCount}
           projects={projects}
-          reviewableVisibleCards={reviewableVisibleCards}
           totalCount={cards.length}
           visibleCount={visibleCards.length}
-          onFinishedScopeChange={setFinishedScope}
           onFit={() => canvasRef.current?.fit()}
-          onMarkReviewed={onMarkReviewed}
           onProjectToggle={toggleProject}
           onShowAll={showAll}
           onStateToggle={toggleState}
@@ -193,8 +156,8 @@ export function AgentMap({
             </span>
             <strong className="block truncate text-xs">
               {translate(
-                'dashboardPopout.map.focus.canvasSummary',
-                'Focus · {{shown}} of {{total}} agents',
+                'dashboardPopout.map.filters.canvasSummary',
+                '{{shown}} of {{total}} agents shown',
                 {
                   shown: visibleCards.length,
                   total: cards.length
@@ -234,7 +197,9 @@ export function AgentMap({
           ref={canvasRef}
           layout={layout}
           selectedPaneKey={selectedPaneKey}
-          allowAggregation={finishedScope !== 'review'}
+          allowAggregation
+          workspaceContextMenusEnabled={workspaceContextMenusEnabled}
+          onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
           onSelectAgent={onOpenTerminal}
         />
       </div>

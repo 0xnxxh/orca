@@ -6,6 +6,7 @@ import type {
   DashboardCardWorkspaceKind
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import { getWorktreeExecutionHostId } from '../../../../shared/execution-host'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
@@ -110,9 +111,10 @@ export function dashboardCardMapWorkspaceMetadata(
   ptyId: string | null,
   terminalInput: DashboardCard['terminalInput'],
   clientPlatform: NodeJS.Platform
-): Pick<DashboardCard, 'hostKind' | 'workspaceKind'> {
+): Pick<DashboardCard, 'hostKind' | 'executionHostId' | 'workspaceKind'> {
   return {
     hostKind: dashboardCardHostKind(workspace, ptyId, terminalInput, clientPlatform),
+    executionHostId: getWorktreeExecutionHostId(workspace.worktree, workspace.repo ?? undefined),
     workspaceKind: workspace.workspaceKind
   }
 }

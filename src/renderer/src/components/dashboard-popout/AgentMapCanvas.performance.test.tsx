@@ -66,16 +66,7 @@ describe('AgentMapCanvas pointer performance', () => {
   })
 
   it('coalesces drag frames without rerendering worktree nodes', () => {
-    const { container } = render(
-      <AgentMap
-        cards={[CARD]}
-        now={NOW}
-        pinnedPaneKeys={new Set()}
-        reviewedPaneKeys={new Set()}
-        onMarkReviewed={vi.fn()}
-        onOpenTerminal={vi.fn()}
-      />
-    )
+    const { container } = render(<AgentMap cards={[CARD]} now={NOW} onOpenTerminal={vi.fn()} />)
     const svg = container.querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
     Object.assign(svg, {
       setPointerCapture: vi.fn(),

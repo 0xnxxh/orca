@@ -43,72 +43,29 @@ vi.mock('./AgentKanbanCard', () => ({
 vi.mock('./AgentTerminalDialog', () => ({
   AgentTerminalDialog: ({
     card,
-    onOpenChange,
-    reviewed,
-    pinned,
-    onMarkReviewed,
-    onTogglePinned
+    onOpenChange
   }: {
     card: DashboardCard | null
     onOpenChange: (open: boolean) => void
-    reviewed?: boolean
-    pinned?: boolean
-    onMarkReviewed?: (card: DashboardCard) => void
-    onTogglePinned?: (card: DashboardCard) => void
   }) => (
     <div
       data-testid="terminal-dialog"
       data-open={card !== null}
       data-bucket={card?.bucket}
       data-pty-id={card?.ptyId ?? undefined}
-      data-reviewed={reviewed}
-      data-pinned={pinned}
     >
       <button data-testid="terminal-dialog-close" onClick={() => onOpenChange(false)} />
-      {card && onMarkReviewed ? (
-        <button data-testid="terminal-dialog-review" onClick={() => onMarkReviewed(card)} />
-      ) : null}
-      {card && onTogglePinned ? (
-        <button data-testid="terminal-dialog-pin" onClick={() => onTogglePinned(card)} />
-      ) : null}
     </div>
   ),
   AgentTerminalPanel: ({
     card,
-    onOpenChange,
-    reviewed,
-    pinned,
-    onMarkReviewed,
-    onTogglePinned
+    onOpenChange
   }: {
     card: DashboardCard | null
     onOpenChange: (open: boolean) => void
-    reviewed?: boolean
-    pinned?: boolean
-    onMarkReviewed?: (card: DashboardCard) => void
-    onTogglePinned?: (card: DashboardCard) => void
   }) => (
-    <div
-      data-testid="terminal-panel"
-      data-pty-id={card?.ptyId ?? undefined}
-      data-reviewed={reviewed}
-      data-pinned={pinned}
-    >
+    <div data-testid="terminal-panel" data-pty-id={card?.ptyId ?? undefined}>
       <button data-testid="terminal-panel-close" onClick={() => onOpenChange(false)} />
-      {card && onMarkReviewed ? (
-        <button
-          data-testid="terminal-panel-review"
-          onClick={() => {
-            onMarkReviewed(card)
-            if (!pinned) {
-              onOpenChange(false)
-            }
-          }}
-        />
-      ) : null}
-      {card && onTogglePinned ? (
-        <button data-testid="terminal-panel-pin" onClick={() => onTogglePinned(card)} />
-      ) : null}
     </div>
   )
 }))
@@ -185,7 +142,7 @@ describe('AgentKanbanBoard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
     expect(await screen.findByText('Live containment map')).toBeInTheDocument()
-    expect(screen.getByText('Focus view')).toBeInTheDocument()
+    expect(screen.getByText('Map filters')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
     expect(screen.getByText('Needs You')).toBeInTheDocument()
@@ -200,7 +157,7 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByLabelText('Nested project, workspace, and agent map')).toBeInTheDocument()
     expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
     expect(screen.getByRole('button', { name: /Map agent/ })).toHaveClass('is-selected')
-    expect(screen.queryByText('Focus view')).not.toBeInTheDocument()
+    expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
     expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
   })
 
@@ -374,7 +331,9 @@ describe('AgentKanbanBoard', () => {
 
   it('keeps the terminal dialog open across bucket moves and card removal', () => {
     const agent = card({ paneKey: 'pk-1', bucket: 'done', worktreeName: 'wt1' })
-    const { rerender } = render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} />)
+    const { rerender } = render(
+      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent], showIdle: true }} />
+    )
     expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('false')
 
     fireEvent.click(screen.getByTestId('card'))
@@ -406,9 +365,16 @@ describe('AgentKanbanBoard', () => {
 
     // The ack round-trips through the main window; the next snapshot mutes it.
     rerender(
-      <AgentKanbanBoard snapshot={{ generatedAt: 2, cards: [{ ...agent, unseen: false }] }} />
+      <AgentKanbanBoard
+        snapshot={{
+          generatedAt: 2,
+          cards: [{ ...agent, bucket: 'idle', unseen: false }],
+          showIdle: true
+        }}
+      />
     )
     expect(screen.getByTestId('card').dataset.unseen).toBe('false')
+    expect(screen.getByTestId('card').dataset.bucket).toBe('idle')
     expect(ackAgent).not.toHaveBeenCalled()
 
     // A state change while the dialog is open re-acks (watching counts as
@@ -417,14 +383,15 @@ describe('AgentKanbanBoard', () => {
       <AgentKanbanBoard
         snapshot={{
           generatedAt: 3,
-          cards: [{ ...agent, bucket: 'working' as const, stateChangedAt: 2000, unseen: true }]
+          cards: [{ ...agent, bucket: 'working' as const, stateChangedAt: 2000, unseen: true }],
+          showIdle: true
         }}
       />
     )
     expect(ackAgent).toHaveBeenCalledWith('pk-ack')
   })
 
-  it('keeps a newly opened result in Focus until it is explicitly reviewed', async () => {
+  it('keeps an acknowledged result visible as Idle in the map without review state', async () => {
     const fresh = card({
       paneKey: 'fresh-result',
       bucket: 'done',
@@ -433,51 +400,36 @@ describe('AgentKanbanBoard', () => {
       finishedAt: 900,
       unseen: true
     })
-    const old = card({
-      paneKey: 'old-result',
-      bucket: 'done',
-      dotState: 'done',
-      conversationName: 'Old result',
-      finishedAt: 800,
-      unseen: false
-    })
     const view = render(
-      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh, old] }} initialView="map" />
+      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh] }} initialView="map" />
     )
 
     expect(await screen.findByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Old result/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
-    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-reviewed', 'false')
+    expect(ackAgent).toHaveBeenCalledWith('fresh-result')
 
     view.rerender(
       <AgentKanbanBoard
-        snapshot={{ generatedAt: 2, cards: [{ ...fresh, unseen: false }, old] }}
+        snapshot={{
+          generatedAt: 2,
+          cards: [{ ...fresh, bucket: 'idle', unseen: false }]
+        }}
         initialView="map"
       />
     )
-    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Fresh result/ })).toHaveClass('fleet-status-idle')
+    expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
 
     view.unmount()
-    const reopened = render(
-      <AgentKanbanBoard
-        snapshot={{ generatedAt: 3, cards: [{ ...fresh, unseen: false }, old] }}
-        initialView="map"
-      />
-    )
-    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
-    fireEvent.click(screen.getByTestId('terminal-panel-review'))
-    expect(screen.queryByRole('button', { name: /Fresh result/ })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument()
-
-    reopened.unmount()
     render(
       <AgentKanbanBoard
-        snapshot={{ generatedAt: 4, cards: [{ ...fresh, unseen: false }, old] }}
+        snapshot={{
+          generatedAt: 3,
+          cards: [{ ...fresh, bucket: 'idle', unseen: false }]
+        }}
         initialView="map"
       />
     )
-    expect(screen.queryByRole('button', { name: /Fresh result/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Fresh result/ })).toHaveClass('fleet-status-idle')
   })
 })

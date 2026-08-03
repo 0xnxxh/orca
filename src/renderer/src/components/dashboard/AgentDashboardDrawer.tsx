@@ -71,6 +71,8 @@ function AgentDashboardDrawerBody({
       onAckAgent={handleAckAgent}
       onRevealAgent={handleRevealAgent}
       onClose={onClose}
+      workspaceContextMenusEnabled
+      onWorkspaceContextMenuOpenChange={onMenuOpenChange}
       headerActions={
         <AgentDashboardSettingsMenu
           onSwitchToPopout={handleSwitchToPopout}

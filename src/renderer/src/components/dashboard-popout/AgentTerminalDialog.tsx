@@ -1,11 +1,14 @@
 import { useEffect, useId } from 'react'
-import { Check, Pin, SquareArrowOutUpRight, XIcon } from 'lucide-react'
+import { SquareArrowOutUpRight, XIcon } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import { agentStateLabel } from '@/components/AgentStateDot'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import {
+  dashboardCardDisplayState,
+  type DashboardCard
+} from '../../../../shared/dashboard-snapshot'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -25,10 +28,6 @@ type AgentTerminalDialogProps = {
   /** Focus the agent's pane. The pop-out relays over IPC; the in-window host
    *  activates the worktree/pane locally. */
   onReveal: (args: AgentRevealArgs) => void
-  reviewed?: boolean
-  pinned?: boolean
-  onMarkReviewed?: (card: DashboardCard) => void
-  onTogglePinned?: (card: DashboardCard) => void
 }
 
 type AgentTerminalFrameProps = Omit<AgentTerminalDialogProps, 'card'> & {
@@ -42,11 +41,7 @@ function AgentTerminalFrame({
   title,
   previewClassName,
   onOpenChange,
-  onReveal,
-  reviewed = false,
-  pinned = false,
-  onMarkReviewed,
-  onTogglePinned
+  onReveal
 }: AgentTerminalFrameProps): React.JSX.Element {
   const reveal = (): void => {
     onReveal({
@@ -66,7 +61,8 @@ function AgentTerminalFrame({
         </span>
         {title}
         <span className="text-[11px] text-muted-foreground">
-          {formatAgentTypeLabel(card.agentType)} · {agentStateLabel(card.dotState)}
+          {formatAgentTypeLabel(card.agentType)} ·{' '}
+          {agentStateLabel(dashboardCardDisplayState(card))}
         </span>
         <Button
           type="button"
@@ -94,46 +90,6 @@ function AgentTerminalFrame({
         </div>
       )}
       <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
-        {card.dotState === 'done' && onMarkReviewed && onTogglePinned ? (
-          <>
-            <span className="mr-1 text-[10px] text-muted-foreground">
-              {reviewed
-                ? translate('dashboardPopout.map.focus.reviewed', 'Reviewed result')
-                : translate(
-                    'dashboardPopout.map.focus.seenPendingReview',
-                    'Seen · remains in Focus until reviewed'
-                  )}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              aria-pressed={pinned}
-              onClick={() => onTogglePinned(card)}
-            >
-              <Pin className="size-3" />
-              {pinned
-                ? translate('dashboardPopout.map.focus.pinned', 'Pinned')
-                : translate('dashboardPopout.map.focus.keepVisible', 'Keep visible')}
-            </Button>
-            {!reviewed ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => {
-                  onMarkReviewed(card)
-                  if (!pinned) {
-                    onOpenChange(false)
-                  }
-                }}
-              >
-                <Check className="size-3" />
-                {translate('dashboardPopout.map.focus.markReviewed', 'Mark reviewed')}
-              </Button>
-            ) : null}
-          </>
-        ) : null}
         <Button type="button" variant="outline" size="xs" className="ml-auto" onClick={reveal}>
           <SquareArrowOutUpRight className="size-3" />
           {translate('dashboardPopout.terminal.focusWorktree', 'Open worktree')}
@@ -153,11 +109,7 @@ function AgentTerminalFrame({
 export function AgentTerminalDialog({
   card,
   onOpenChange,
-  onReveal,
-  reviewed = false,
-  pinned = false,
-  onMarkReviewed,
-  onTogglePinned
+  onReveal
 }: AgentTerminalDialogProps): React.JSX.Element {
   return (
     <Dialog open={card !== null} onOpenChange={onOpenChange}>
@@ -196,10 +148,6 @@ export function AgentTerminalDialog({
             }
             onOpenChange={onOpenChange}
             onReveal={onReveal}
-            reviewed={reviewed}
-            pinned={pinned}
-            onMarkReviewed={onMarkReviewed}
-            onTogglePinned={onTogglePinned}
           />
         </DialogContent>
       ) : null}
@@ -211,10 +159,6 @@ export function AgentTerminalPanel({
   card,
   onOpenChange,
   onReveal,
-  reviewed = false,
-  pinned = false,
-  onMarkReviewed,
-  onTogglePinned,
   className
 }: Omit<AgentTerminalDialogProps, 'card'> & {
   card: DashboardCard
@@ -256,10 +200,6 @@ export function AgentTerminalPanel({
         previewClassName="h-auto min-h-0 flex-1"
         onOpenChange={onOpenChange}
         onReveal={onReveal}
-        reviewed={reviewed}
-        pinned={pinned}
-        onMarkReviewed={onMarkReviewed}
-        onTogglePinned={onTogglePinned}
       />
     </section>
   )
