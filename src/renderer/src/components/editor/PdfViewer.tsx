@@ -179,23 +179,47 @@ export default function PdfViewer({
       }
     }
 
+    let visibilityObserver: ResizeObserver | null = null
+    const disconnectVisibilityObserver = (): void => {
+      visibilityObserver?.disconnect()
+      visibilityObserver = null
+    }
+    // Why: a display:none pane regaining a layout box fires no scroll or resize
+    // event — ResizeObserver's no-box/box transition is the only signal for it.
+    const observeVisibility = (): void => {
+      if (visibilityObserver) {
+        return
+      }
+      visibilityObserver = new ResizeObserver(() => {
+        if (container.clientHeight > 0) {
+          handlePagesLoaded()
+        }
+      })
+      visibilityObserver.observe(container)
+    }
+
     // Why: pagesinit lays every page out with page 1's dimensions, so on a
     // mixed-page-size document the restore above lands short. pagesloaded is the
     // first point with real per-page heights — but it can arrive seconds later,
     // so re-apply only if the reader has not touched the scroller since.
     const handlePagesLoaded = (): void => {
-      const destination = restored
-      restored = null
       // Why: an editor in a background worktree stays mounted under display:none,
       // where pdf.js can neither scroll nor recompute its location. Arming there
       // would let the reader's first zoom persist a page-1 position over the
-      // cached one, so stay disarmed and keep the input watcher until this pane
-      // is actually on screen.
+      // cached one, so stay disarmed — and hold `restored` and the input watcher
+      // — until the observer above sees this pane land on screen.
       if (container.clientHeight === 0) {
+        observeVisibility()
         return
       }
+      disconnectVisibilityObserver()
+      const destination = restored
+      restored = null
       detachInputWatcher?.()
-      if (!cancelled && destination && !userMoved) {
+      if (cancelled) {
+        return
+      }
+      if (destination && !userMoved) {
         viewer.scrollPageIntoView(destination)
         // Why: scrollPageIntoView nulls pdf.js's own `_location` whenever
         // `currentScaleValue` is unset, and it stays unset here because
@@ -247,6 +271,7 @@ export default function PdfViewer({
       // Why: flush before setDocument(null) below, so nothing dispatched during
       // pdf.js teardown can overwrite the position we just persisted.
       detachInputWatcher?.()
+      disconnectVisibilityObserver()
       recorder?.dispose()
       eventBus.off('pagesinit', handlePagesInit)
       eventBus.off('pagesloaded', handlePagesLoaded)
