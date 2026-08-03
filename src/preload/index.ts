@@ -4,7 +4,11 @@ import { electronAPI } from '@electron-toolkit/preload'
 import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
 import type { AppIdentity } from '../shared/app-identity'
-import type { DashboardSnapshot, DashboardRevealAgentArgs } from '../shared/dashboard-snapshot'
+import type {
+  DashboardRevealAgentArgs,
+  DashboardSnapshot,
+  DashboardSpawnAgentArgs
+} from '../shared/dashboard-snapshot'
 import type {
   TerminalPreviewConnectResult,
   TerminalPreviewDataPayload
@@ -2290,6 +2294,12 @@ const api = {
       ipcRenderer.on('ui:ackDashboardAgent', listener)
       return () => ipcRenderer.removeListener('ui:ackDashboardAgent', listener)
     },
+    onSpawnAgent: (callback: (args: DashboardSpawnAgentArgs) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, args: DashboardSpawnAgentArgs): void =>
+        callback(args)
+      ipcRenderer.on('ui:spawnDashboardAgent', listener)
+      return () => ipcRenderer.removeListener('ui:spawnDashboardAgent', listener)
+    },
 
     // ── Consumer side (pop-out window) ───────────────────────────────────
     requestSnapshot: (): Promise<void> => ipcRenderer.invoke('dashboard:requestSnapshot'),
@@ -2302,7 +2312,9 @@ const api = {
     revealAgent: (args: DashboardRevealAgentArgs): Promise<void> =>
       ipcRenderer.invoke('dashboardPopout:revealAgent', args),
     ackAgent: (paneKey: string): Promise<void> =>
-      ipcRenderer.invoke('dashboardPopout:ackAgent', { paneKey })
+      ipcRenderer.invoke('dashboardPopout:ackAgent', { paneKey }),
+    spawnAgent: (args: DashboardSpawnAgentArgs): Promise<void> =>
+      ipcRenderer.invoke('dashboardPopout:spawnAgent', args)
   },
 
   terminalPreview: {

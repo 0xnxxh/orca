@@ -41,6 +41,10 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
+import {
+  buildDashboardWorktreeLaunchOptions,
+  type DashboardLaunchDetectionState
+} from './dashboard-worktree-launch-options'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -60,7 +64,7 @@ export type DashboardSnapshotState = Pick<
   | 'settings'
 > &
   DashboardCardContextState &
-  Partial<DashboardCardTerminalInputState>
+  Partial<DashboardCardTerminalInputState & DashboardLaunchDetectionState>
 
 function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
   switch (state) {
@@ -330,6 +334,7 @@ export function buildDashboardSnapshot(
     cards,
     showIdle: state.settings?.experimentalAgentDashboardShowIdle === true,
     filterOptions,
+    launchableAgentsByWorktreeId: buildDashboardWorktreeLaunchOptions(state, cards),
     repoIconsByRepoId
   }
 }

@@ -14,7 +14,8 @@ import { getTrustedUIRendererWindow, isTrustedUIRenderer, sendToTrustedUIRendere
 import {
   admitDashboardSnapshot,
   isDashboardPaneKey,
-  isDashboardRevealAgentArgs
+  isDashboardRevealAgentArgs,
+  isDashboardSpawnAgentArgs
 } from './dashboard-payload-validation'
 
 // The most recent snapshot the main renderer published, replayed to the popout
@@ -36,6 +37,7 @@ export function registerDashboardPopoutHandlers(
   ipcMain.removeHandler('dashboard:getPopoutOpen')
   ipcMain.removeHandler('dashboardPopout:revealAgent')
   ipcMain.removeHandler('dashboardPopout:ackAgent')
+  ipcMain.removeHandler('dashboardPopout:spawnAgent')
 
   onDashboardPopoutOpenChanged((open) => {
     if (!open) {
@@ -140,5 +142,16 @@ export function registerDashboardPopoutHandlers(
     } catch {
       // Best-effort; the per-window focus above may still bring it forward.
     }
+  })
+
+  ipcMain.handle('dashboardPopout:spawnAgent', (event, args: unknown): void => {
+    if (
+      !isDashboardPopoutRenderer(event.sender) ||
+      !isDashboardEnabled(store) ||
+      !isDashboardSpawnAgentArgs(args)
+    ) {
+      return
+    }
+    sendToTrustedUIRenderer('ui:spawnDashboardAgent', args)
   })
 }

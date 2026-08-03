@@ -19,6 +19,7 @@ vi.mock('../../shared/repo-icon', async (importOriginal) => {
 import {
   admitDashboardSnapshot,
   isDashboardRevealAgentArgs,
+  isDashboardSpawnAgentArgs,
   isDashboardSnapshot
 } from './dashboard-payload-validation'
 
@@ -160,6 +161,26 @@ describe('dashboard payload validation', () => {
         }
       })
     ).toBe(false)
+  })
+
+  it('validates bounded launch choices and spawn requests', () => {
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        launchableAgentsByWorktreeId: { 'worktree-1': ['codex', 'claude'] }
+      })
+    ).toBe(true)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        launchableAgentsByWorktreeId: { 'worktree-1': ['not-an-agent'] }
+      })
+    ).toBe(false)
+    expect(isDashboardSnapshot({ ...SNAPSHOT, launchableAgentsByWorktreeId: [] })).toBe(false)
+
+    expect(isDashboardSpawnAgentArgs({ worktreeId: 'worktree-1', agent: 'codex' })).toBe(true)
+    expect(isDashboardSpawnAgentArgs({ worktreeId: '', agent: 'codex' })).toBe(false)
+    expect(isDashboardSpawnAgentArgs({ worktreeId: 'worktree-1', agent: 'unknown' })).toBe(false)
   })
 
   it('bounds the conversation name', () => {

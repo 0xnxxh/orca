@@ -240,6 +240,19 @@ describe('registerDashboardPopoutHandlers', () => {
     expect(sendToTrustedMock).toHaveBeenCalledWith('ui:ackDashboardAgent', 'tab1:leaf1')
   })
 
+  it('relays only valid agent launches from the popout', () => {
+    const args = { worktreeId: 'worktree-1', agent: 'codex' }
+    handlers.get('dashboardPopout:spawnAgent')!({ sender: untrustedSender } as never, args)
+    handlers.get('dashboardPopout:spawnAgent')!({ sender: popoutSender } as never, {
+      ...args,
+      agent: 'unknown'
+    })
+    expect(sendToTrustedMock).not.toHaveBeenCalled()
+
+    handlers.get('dashboardPopout:spawnAgent')!({ sender: popoutSender } as never, args)
+    expect(sendToTrustedMock).toHaveBeenCalledWith('ui:spawnDashboardAgent', args)
+  })
+
   it('reveals an agent in only the trusted main window', () => {
     const main = makeWindow(mainSender)
     getTrustedWindowMock.mockReturnValue(main)

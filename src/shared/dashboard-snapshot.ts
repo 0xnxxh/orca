@@ -1,5 +1,6 @@
 import type { AgentType } from './agent-status-types'
 import type { RepoIcon } from './repo-icon'
+import type { TuiAgent } from './types'
 
 /**
  * Serializable contract for the pop-out agent dashboard. The main renderer owns
@@ -128,6 +129,8 @@ export type DashboardSnapshot = {
   /** Available filter dimensions are store-derived so zero-card projects and
    *  statuses remain selectable. Optional for preload-version compatibility. */
   filterOptions?: DashboardFilterOptions
+  /** Launch choices resolved on each workspace's execution host. */
+  launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   /** Icons for the repos the cards belong to. Keyed by repoId rather than
    *  carried per card: image icons are data URLs up to 400KB, and the snapshot
    *  is republished several times a second. Optional so a pop-out running
@@ -139,6 +142,7 @@ export const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
   generatedAt: 0,
   cards: [],
   filterOptions: { projects: [], workspaceStatuses: [] },
+  launchableAgentsByWorktreeId: {},
   repoIconsByRepoId: {}
 }
 
@@ -150,4 +154,9 @@ export type DashboardRevealAgentArgs = {
   worktreeId: string
   tabId: string
   leafId: string | null
+}
+
+export type DashboardSpawnAgentArgs = {
+  worktreeId: string
+  agent: TuiAgent
 }

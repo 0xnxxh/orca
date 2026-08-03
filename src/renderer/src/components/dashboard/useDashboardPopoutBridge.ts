@@ -3,6 +3,7 @@ import { useAppStore, type AppState } from '@/store'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { buildDashboardSnapshot, type DashboardSnapshotState } from './build-dashboard-snapshot'
+import { launchDashboardAgent } from './launch-dashboard-agent'
 
 // Why: cap snapshot rebuilds during bursts of agent-status pings. The board is a
 // glanceable surface, so ~4 updates/sec is plenty and keeps the cross-worktree
@@ -57,6 +58,9 @@ export function dashboardSnapshotInputsChanged(
     // Why: settings controls idle visibility and generated conversation names.
     state.settings !== previousState.settings ||
     state.workspaceStatuses !== previousState.workspaceStatuses ||
+    state.detectedAgentIds !== previousState.detectedAgentIds ||
+    state.remoteDetectedAgentIds !== previousState.remoteDetectedAgentIds ||
+    state.runtimeDetectedAgentIds !== previousState.runtimeDetectedAgentIds ||
     // Why: freshness can change a bucket without replacing any backing map.
     state.agentStatusEpoch !== previousState.agentStatusEpoch ||
     // Why: each card carries the host-input profile its preview terminal keys
@@ -103,6 +107,13 @@ function watchSnapshotInputs(onChanged: () => void): () => void {
  *     the agent's worktree and focus its pane in this (main) window.
  */
 export function useDashboardPopoutBridge(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    return window.api.dashboard.onSpawnAgent?.(launchDashboardAgent)
+  }, [enabled])
+
   useEffect(() => {
     if (!enabled) {
       return
