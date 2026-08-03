@@ -739,7 +739,7 @@ export class CodexRuntimeHomeService {
 
     const activeAuthPath = join(activeAccount.managedHomePath, 'auth.json')
     const authAbsence = this.credentialAbsenceGrace.assess(activeAuthPath)
-    if (authAbsence.state !== 'present') {
+    if (authAbsence.state !== 'present' && authAbsence.state !== 'incomplete') {
       if (!authAbsence.durable) {
         // Why: mid-rotation reads look missing/unreadable for a moment; skip
         // this sync without deselecting and let a settled read decide later.

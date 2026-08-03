@@ -26,7 +26,7 @@ export class CodexCredentialAbsenceGrace {
   assess(authPath: string, now = Date.now()): CodexCredentialAbsenceVerdict {
     const state = readStoredCodexCredentialState(authPath)
     const key = normalizeRuntimePathForComparison(authPath)
-    if (state === 'present' || state === 'no-credential') {
+    if (state === 'present' || state === 'incomplete' || state === 'no-credential') {
       this.firstAbsenceAtByPath.delete(key)
       return { state, durable: true }
     }

@@ -85,7 +85,12 @@ function isManagedHostCodexHome(
   )
 }
 
-export type StoredCodexCredentialState = 'present' | 'missing' | 'unreadable' | 'no-credential'
+export type StoredCodexCredentialState =
+  | 'present'
+  | 'incomplete'
+  | 'missing'
+  | 'unreadable'
+  | 'no-credential'
 
 // Why: callers deciding whether to deselect an account must tell a settled
 // logout ('no-credential') apart from a rotation in progress ('unreadable') or
@@ -114,7 +119,10 @@ export function readStoredCodexCredentialState(authPath: string): StoredCodexCre
     auth.auth_mode == null
       ? hasCredentialWithoutDeclaredMode(auth)
       : hasCredentialForDeclaredMode(auth)
-  return hasCredential ? 'present' : 'no-credential'
+  if (hasCredential) {
+    return 'present'
+  }
+  return hasIncompleteCredentialMaterial(auth) ? 'incomplete' : 'no-credential'
 }
 
 export function hasStoredCodexCredential(authPath: string): boolean {
@@ -156,6 +164,10 @@ function hasCredentialWithoutDeclaredMode(auth: StoredCodexAuth): boolean {
   return Object.keys(auth).some((key) => key !== 'auth_mode' && key !== 'last_refresh')
 }
 
+function hasIncompleteCredentialMaterial(auth: StoredCodexAuth): boolean {
+  return hasChatGptTokenMaterial(auth.tokens) || hasAgentIdentityMaterial(auth.agent_identity)
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -185,6 +197,17 @@ function hasAgentIdentityCredential(value: unknown): boolean {
 
 function hasBedrockApiKey(value: unknown): boolean {
   return isRecord(value) && isNonEmptyString(value.api_key)
+}
+
+function hasChatGptTokenMaterial(tokens: unknown): boolean {
+  return (
+    isRecord(tokens) &&
+    [tokens.access_token, tokens.id_token, tokens.refresh_token].some(isNonEmptyString)
+  )
+}
+
+function hasAgentIdentityMaterial(value: unknown): boolean {
+  return isNonEmptyString(value) || (isRecord(value) && Object.values(value).some(isNonEmptyString))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
