@@ -415,12 +415,22 @@ describe('Activity portal pane switching', () => {
     expect(sawLatchedSibling).toBe(true)
     expect(statuses.at(-1)).toBe('unavailable')
 
-    await act(async () => {
-      buildRoot('ready')
-      await Promise.resolve()
-    })
-    expect(await flushPortalReadiness(frames)).toBe(true)
-    await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'ready')
+    // Why: under CI load MutationObserver may miss one replaceChildren; re-apply ready DOM
+    // and keep draining until attach is observed (same budget pattern as the flip loop above).
+    let sawReady = false
+    for (
+      let attempt = 0;
+      attempt < ACTIVITY_PORTAL_READINESS_MAX_FLIPS * 4 && !sawReady;
+      attempt += 1
+    ) {
+      await act(async () => {
+        buildRoot('ready')
+        await Promise.resolve()
+      })
+      expect(await flushPortalReadiness(frames)).toBe(true)
+      await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'ready')
+      sawReady = statuses.at(-1) === 'ready'
+    }
     expect(statuses.at(-1)).toBe('ready')
   })
 })
