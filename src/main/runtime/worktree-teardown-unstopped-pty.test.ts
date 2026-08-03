@@ -9,8 +9,17 @@ vi.mock('../memory/pty-registry', () => ({
 }))
 
 import { killAllProcessesForWorktree, WORKTREE_PROCESS_SWEEP_TIMEOUT_MS } from './worktree-teardown'
-import { WORKTREE_TEARDOWN_VERIFY_GRACE_MS } from './unstopped-pty-verification'
 import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
+
+// Why: these tests advance fake timers *before* awaiting the teardown, so a
+// rejection mid-advance had no handler yet — Node reported it as an unhandled
+// rejection and vitest surfaced it inside whichever test happened to be running.
+// Attaching a no-op handler at creation keeps the original semantics while
+// making failures land as clean assertion failures in their own test.
+function settleTeardown<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => undefined)
+  return promise
+}
 
 function createProviderStub(listProcesses: () => Promise<PtyProcessInfo[]>): IPtyProvider {
   return {
@@ -45,12 +54,14 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         { ptyId: 'stale-1', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 100 }
       ])
 
-      const teardown = killAllProcessesForWorktree('w1', {
-        localProvider,
-        timeoutMs: 100,
-        requirePhysicalStop: true
-      })
-      await vi.advanceTimersByTimeAsync(WORKTREE_TEARDOWN_VERIFY_GRACE_MS + 200)
+      const teardown = settleTeardown(
+        killAllProcessesForWorktree('w1', {
+          localProvider,
+          timeoutMs: 100,
+          requirePhysicalStop: true
+        })
+      )
+      await vi.runAllTimersAsync()
 
       await expect(teardown).resolves.toEqual({
         runtimeStopped: 0,
@@ -83,11 +94,13 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         { ptyId: 'term_abab11ee', worktreeId, sessionId: null, paneKey: null, pid: 4242 }
       ])
 
-      const teardown = killAllProcessesForWorktree(worktreeId, {
-        localProvider,
-        requirePhysicalStop: true
-      })
-      await vi.advanceTimersByTimeAsync(listDelayMs * 2 + WORKTREE_TEARDOWN_VERIFY_GRACE_MS)
+      const teardown = settleTeardown(
+        killAllProcessesForWorktree(worktreeId, {
+          localProvider,
+          requirePhysicalStop: true
+        })
+      )
+      await vi.runAllTimersAsync()
 
       await expect(teardown).resolves.toEqual({
         runtimeStopped: 0,
@@ -215,13 +228,15 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
           })
       )
 
-      const teardown = killAllProcessesForWorktree('w1', {
-        localProvider,
-        timeoutMs: 100,
-        requirePhysicalStop: true,
-        allowUnverifiedStop: true
-      })
-      await vi.advanceTimersByTimeAsync(200)
+      const teardown = settleTeardown(
+        killAllProcessesForWorktree('w1', {
+          localProvider,
+          timeoutMs: 100,
+          requirePhysicalStop: true,
+          allowUnverifiedStop: true
+        })
+      )
+      await vi.runAllTimersAsync()
 
       await expect(teardown).resolves.toEqual({
         runtimeStopped: 0,
@@ -266,6 +281,41 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
       // And the surviving sweep's work is reported, not flattened to zero.
       expect(result.registryStopped).toBe(1)
     } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // Why: the deadline sentinel only says *something* timed out. Picking the
+  // rejection by array position let a hung runtime sweep mask the provider error
+  // that actually explains the failure, in the log the user is left with.
+  it('warns with the specific sweep failure, not the generic deadline', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.useFakeTimers()
+    try {
+      listRegisteredPtysMock.mockReturnValue([])
+      const localProvider = createProviderStub(async () => {
+        throw new Error('ssh channel closed')
+      })
+      const runtime = {
+        stopTerminalsForWorktree: () => new Promise(() => {})
+      } as unknown as Parameters<typeof killAllProcessesForWorktree>[1]['runtime']
+
+      const teardown = settleTeardown(
+        killAllProcessesForWorktree('w1', {
+          runtime,
+          localProvider,
+          timeoutMs: 100,
+          requirePhysicalStop: true,
+          allowUnverifiedStop: true
+        })
+      )
+      await vi.runAllTimersAsync()
+      await teardown
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('ssh channel closed'))
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Timed out waiting'))
+    } finally {
+      vi.useRealTimers()
       warn.mockRestore()
     }
   })
