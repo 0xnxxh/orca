@@ -245,18 +245,6 @@ export function requestGitStreamable(
         handleStreamError(p)
       })
     )
-    unsubscribers.push(
-      mux.onDispose((reason) => {
-        const err = new Error(
-          reason === 'connection_lost'
-            ? 'SSH connection lost, reconnecting...'
-            : 'Multiplexer disposed'
-        ) as Error & { code: string }
-        err.code = reason === 'connection_lost' ? 'CONNECTION_LOST' : 'DISPOSED'
-        fail(err)
-      })
-    )
-
     if (options?.signal) {
       const signal = options.signal
       if (signal.aborted) {
@@ -273,6 +261,20 @@ export function requestGitStreamable(
       signal.addEventListener('abort', onAbort, { once: true })
       unsubscribers.push(() => signal.removeEventListener('abort', onAbort))
     }
+
+    // Why: registered last because an already-disposed mux fails synchronously here,
+    // and that cleanup must be able to drop the abort listener above (#11953).
+    unsubscribers.push(
+      mux.onDispose((reason) => {
+        const err = new Error(
+          reason === 'connection_lost'
+            ? 'SSH connection lost, reconnecting...'
+            : 'Multiplexer disposed'
+        ) as Error & { code: string }
+        err.code = reason === 'connection_lost' ? 'CONNECTION_LOST' : 'DISPOSED'
+        fail(err)
+      })
+    )
 
     // Why: forward only the mux-request options (signal/timeoutMs) and omit them
     // entirely when absent, so callers that previously issued a 2-arg

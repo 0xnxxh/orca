@@ -489,6 +489,10 @@ export class SshRelaySession {
       }
 
       this.configureRelayGraceTime(mux, graceTimeSeconds)
+      // Why: notify can dispose the mux synchronously (writer admission / transport throw), so re-check before latching 'ready' (#11953).
+      if (mux.isDisposed()) {
+        throw new Error('Relay connection lost during establish')
+      }
       this.watchMuxForRelayLoss(mux)
       this._state = 'ready'
       this.startPortScanning()
@@ -637,6 +641,10 @@ export class SshRelaySession {
       }
 
       this.configureRelayGraceTime(mux, graceTimeSeconds)
+      // Why: notify can dispose the mux synchronously (writer admission / transport throw), so re-check before latching 'ready' (#11953).
+      if (mux.isDisposed()) {
+        throw new Error('Relay connection lost during reconnect')
+      }
       this.watchMuxForRelayLoss(mux)
       this._state = 'ready'
       this.startPortScanning()
