@@ -3,19 +3,24 @@ export type TerminalLiveImeBoundary = {
   readonly handle: string
 }
 
+type TerminalLiveImeOwner = TerminalLiveImeBoundary & {
+  readonly epoch: number
+}
+
 type TerminalLiveImeWaiter = {
-  readonly boundary: TerminalLiveImeBoundary
+  readonly owner: TerminalLiveImeOwner
   readonly promise: Promise<boolean>
   readonly resolve: (committed: boolean) => void
 }
 
 export type TerminalLiveImeState = {
-  owner: TerminalLiveImeBoundary | null
+  epoch: number
+  owner: TerminalLiveImeOwner | null
   waiter: TerminalLiveImeWaiter | null
 }
 
 export function createTerminalLiveImeState(): TerminalLiveImeState {
-  return { owner: null, waiter: null }
+  return { epoch: 0, owner: null, waiter: null }
 }
 
 export function isSameTerminalLiveImeBoundary(
@@ -33,7 +38,15 @@ export function beginTerminalLiveImeComposition(
     return
   }
   invalidateTerminalLiveImeComposition(state)
-  state.owner = boundary
+  state.epoch += 1
+  state.owner = { ...boundary, epoch: state.epoch }
+}
+
+function isSameTerminalLiveImeOwner(
+  left: TerminalLiveImeOwner,
+  right: TerminalLiveImeOwner
+): boolean {
+  return left.epoch === right.epoch && isSameTerminalLiveImeBoundary(left, right)
 }
 
 export function waitForTerminalLiveImeComposition(
@@ -43,14 +56,14 @@ export function waitForTerminalLiveImeComposition(
   if (!state.owner || !isSameTerminalLiveImeBoundary(state.owner, boundary)) {
     return null
   }
-  if (state.waiter && isSameTerminalLiveImeBoundary(state.waiter.boundary, boundary)) {
+  if (state.waiter && isSameTerminalLiveImeOwner(state.waiter.owner, state.owner)) {
     return state.waiter.promise
   }
   let resolveWaiter: (committed: boolean) => void = () => undefined
   const promise = new Promise<boolean>((resolve) => {
     resolveWaiter = resolve
   })
-  state.waiter = { boundary, promise, resolve: resolveWaiter }
+  state.waiter = { owner: state.owner, promise, resolve: resolveWaiter }
   return promise
 }
 

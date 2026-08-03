@@ -116,6 +116,26 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     expect(showToast).toHaveBeenCalledWith('Attach canceled before send', 1500)
   })
 
+  it('keeps concurrent attachments behind their pending-input waits', async () => {
+    const refs = baseRefs()
+    const showToast = vi.fn()
+    const releaseWaits: Array<(flushed: boolean) => void> = []
+    const flushPendingInput = vi.fn(
+      async () => new Promise<boolean>((resolve) => releaseWaits.push(resolve))
+    )
+    const { gate } = renderGate({ ...refs, flushPendingInput, showToast })
+
+    const attachments = [gate()('terminal-1'), gate()('terminal-1')]
+    await vi.waitFor(() => expect(flushPendingInput).toHaveBeenCalledTimes(2))
+
+    for (const release of releaseWaits) {
+      release(true)
+    }
+
+    await expect(Promise.all(attachments)).resolves.toEqual([true, true])
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
   it('surfaces cancellation when the target changes while waiting for the lease', async () => {
     const refs = baseRefs()
     refs.leaseReady.current = false

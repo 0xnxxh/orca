@@ -139,6 +139,7 @@ import {
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import {
   appendBufferedDictation,
+  insertLiveDictationTranscript,
   routeDictationTranscript
 } from '../../../../src/terminal/terminal-live-dictation-routing'
 import { countTerminalGestureInputSequences } from '../../../../src/terminal/terminal-gesture-input'
@@ -1236,20 +1237,14 @@ export default function SessionScreen() {
         if (!insertHandle) {
           return
         }
-        void (async () => {
-          const flushedPendingInput = await flushPendingLiveInputBeforeExternalSend(insertHandle)
-          if (!flushedPendingInput) {
-            showToast('Dictation insert canceled', 1500)
-            return
-          }
-          const sent = await sendLiveTerminalInput(insertHandle, route.text)
-          if (sent) {
-            showToast('Dictation inserted')
-          } else {
-            triggerError()
-            showToast('Dictation insert canceled', 1500)
-          }
-        })()
+        void insertLiveDictationTranscript({
+          flushPendingInput: flushPendingLiveInputBeforeExternalSend,
+          handle: insertHandle,
+          onSendError: triggerError,
+          sendInput: sendLiveTerminalInput,
+          showToast,
+          text: route.text
+        })
         return
       }
       setInput((current) => appendBufferedDictation(current, route.text))

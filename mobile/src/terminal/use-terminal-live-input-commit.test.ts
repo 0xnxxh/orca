@@ -15,6 +15,7 @@ type TerminalLiveInputCommitHarness = {
   readonly setActiveHandle: (next: string) => void
   readonly setActiveSessionTabType: (next: string | undefined) => void
   readonly setConnected: (next: boolean) => void
+  readonly setSendImplementation: (next: TerminalLiveInputSender | null) => void
   readonly setSendResult: (next: boolean) => void
   readonly unmount: () => void
 }
@@ -53,11 +54,14 @@ function createTerminalLiveInputCommitHarness({
   const sent: string[] = []
   const sentByHandle: { bytes: string; handle: string }[] = []
   let currentSendResult = sendResult
+  let currentSendImplementation: TerminalLiveInputSender | null = null
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (handle, bytes) => {
       sent.push(bytes)
       sentByHandle.push({ bytes, handle })
-      return currentSendResult
+      return currentSendImplementation
+        ? currentSendImplementation(handle, bytes)
+        : currentSendResult
     }
   }
   // Refs never re-render; only these variables re-run the hook's clear effects.
@@ -128,6 +132,9 @@ function createTerminalLiveInputCommitHarness({
       act(() => {
         renderer?.update(createElement(Harness))
       })
+    },
+    setSendImplementation: (next: TerminalLiveInputSender | null): void => {
+      currentSendImplementation = next
     },
     setSendResult: (next: boolean): void => {
       currentSendResult = next
@@ -334,6 +341,42 @@ describe('terminal live input commit hook', () => {
 
     await expect(flush).resolves.toBe(true)
     expect(harness.sent).toEqual(['仮名'])
+  })
+
+  it('Given a newer composition starts during an older flush Then preserves and waits for it', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    let releaseFirstSend: (sent: boolean) => void = () => undefined
+    const firstSend = new Promise<boolean>((resolve) => {
+      releaseFirstSend = resolve
+    })
+    let sendCount = 0
+    harness.setSendImplementation(async () => {
+      sendCount += 1
+      return sendCount === 1 ? firstSend : true
+    })
+    changeLiveInput(harness.handlers, 'かな', true)
+    const flush = harness.handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+    let flushSettled = false
+    void flush.then(() => {
+      flushSettled = true
+    })
+    changeLiveInput(harness.handlers, '仮名', false)
+    await vi.waitFor(() => expect(harness.sent).toEqual(['仮名']))
+
+    changeLiveInput(harness.handlers, '仮名か', true)
+    releaseFirstSend(true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(harness.captures.at(-1)).toBe('仮名か')
+    expect(flushSettled).toBe(false)
+
+    changeLiveInput(harness.handlers, '仮名漢字', false)
+
+    await expect(flush).resolves.toBe(true)
+    expect(harness.sent).toEqual(['仮名', '漢字'])
+    expect(harness.captures.at(-1)).toBe('')
   })
 
   it('Given a deferred external send When the terminal switches Then cancels the original target', async () => {

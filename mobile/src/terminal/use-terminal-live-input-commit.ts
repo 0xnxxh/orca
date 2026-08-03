@@ -127,24 +127,50 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   const flushPendingLiveInputBeforeExternalSend = useCallback(
     async (handle: string): Promise<boolean> => {
       const boundary = { generation: liveInputGenerationRef.current, handle }
-      const compositionWait = waitForTerminalLiveImeComposition(
-        liveInputImeStateRef.current,
-        boundary
-      )
-      if (compositionWait && !(await compositionWait)) {
-        return false
+      const imeState = liveInputImeStateRef.current
+      while (boundary.generation === liveInputGenerationRef.current) {
+        if (
+          activeHandleRef.current !== handle ||
+          (activeSessionTabTypeRef.current != null &&
+            activeSessionTabTypeRef.current !== 'terminal') ||
+          !liveInputTerminalHandlesRef.current.has(handle)
+        ) {
+          return false
+        }
+        const compositionWait = waitForTerminalLiveImeComposition(imeState, boundary)
+        if (compositionWait && !(await compositionWait)) {
+          return false
+        }
+        if (boundary.generation !== liveInputGenerationRef.current) {
+          return false
+        }
+        const compositionOwner = imeState.owner
+        if (compositionOwner) {
+          if (!isSameTerminalLiveImeBoundary(compositionOwner, boundary)) {
+            return false
+          }
+          continue
+        }
+        const compositionEpoch = imeState.epoch
+        const pendingHandle = pendingLiveInputHandleRef.current
+        if (pendingHandle && pendingHandle !== handle) {
+          clearPendingLiveInputMirror()
+          return waitForPendingLiveInputFlush()
+        }
+        // Why: external bytes land after every composition that began before
+        // the flush settled; older cleanup must not erase a newer composition.
+        const flushed =
+          pendingHandle === handle
+            ? await flushPendingLiveInputText(handle, () => imeState.epoch === compositionEpoch)
+            : await waitForPendingLiveInputFlush()
+        if (!flushed) {
+          return false
+        }
+        if (imeState.epoch === compositionEpoch) {
+          return true
+        }
       }
-      const pendingHandle = pendingLiveInputHandleRef.current
-      if (pendingHandle && pendingHandle !== handle) {
-        clearPendingLiveInputMirror()
-        return waitForPendingLiveInputFlush()
-      }
-      // Why: external bytes (dictation/paste) land after the field's echo on the
-      // PTY; the field session must fully end or later diffs would erase them.
-      if (pendingHandle === handle) {
-        return flushPendingLiveInputText(handle)
-      }
-      return waitForPendingLiveInputFlush()
+      return false
     },
     [clearPendingLiveInputMirror, flushPendingLiveInputText, waitForPendingLiveInputFlush]
   )

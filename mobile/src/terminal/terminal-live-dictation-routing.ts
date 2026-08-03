@@ -23,3 +23,33 @@ export function appendBufferedDictation(current: string, transcript: string): st
   }
   return `${current.trimEnd()} ${transcript}`
 }
+
+type InsertLiveDictationTranscriptOptions = {
+  readonly flushPendingInput: (handle: string) => Promise<boolean>
+  readonly handle: string
+  readonly onSendError: () => void
+  readonly sendInput: (handle: string, text: string) => Promise<boolean>
+  readonly showToast: (message: string, durationMs?: number) => void
+  readonly text: string
+}
+
+export async function insertLiveDictationTranscript({
+  flushPendingInput,
+  handle,
+  onSendError,
+  sendInput,
+  showToast,
+  text
+}: InsertLiveDictationTranscriptOptions): Promise<boolean> {
+  if (!(await flushPendingInput(handle))) {
+    showToast('Dictation insert canceled', 1500)
+    return false
+  }
+  if (await sendInput(handle, text)) {
+    showToast('Dictation inserted')
+    return true
+  }
+  onSendError()
+  showToast('Dictation insert canceled', 1500)
+  return false
+}

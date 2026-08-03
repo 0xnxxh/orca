@@ -80,4 +80,50 @@ describe('useMobileTerminalPaste', () => {
     expect(onError).toHaveBeenCalledOnce()
     expect(showToast).toHaveBeenCalledWith('Paste canceled before send', 1500)
   })
+
+  it('keeps concurrent pastes behind their pending-input waits', async () => {
+    const sendRequest = vi.fn()
+    const client = { sendRequest } as unknown as RpcClient
+    const releaseWaits: Array<(flushed: boolean) => void> = []
+    const flushPendingLiveInputBeforeExternalSend = vi.fn(
+      async () => new Promise<boolean>((resolve) => releaseWaits.push(resolve))
+    )
+    let paste: () => Promise<void> = async () => undefined
+
+    function Probe(): null {
+      paste = useMobileTerminalPaste({
+        activeHandle: 'terminal-a',
+        activeHandleRef: { current: 'terminal-a' },
+        activeSessionTabTypeRef: { current: 'terminal' },
+        canSend: true,
+        client,
+        clientRef: { current: client },
+        connState: 'connected',
+        connStateRef: { current: 'connected' },
+        deviceTokenRef: { current: null },
+        flushPendingLiveInputBeforeExternalSend,
+        getActiveWorktreeConnectionId: async () => null,
+        onError: vi.fn(),
+        onSuccess: vi.fn(),
+        ptyModesRef: { current: new Map() },
+        refreshCanPaste: vi.fn(),
+        showToast: vi.fn()
+      })
+      return null
+    }
+
+    act(() => {
+      renderer = create(createElement(Probe))
+    })
+    const pastes = [paste(), paste()]
+    await vi.waitFor(() => expect(flushPendingLiveInputBeforeExternalSend).toHaveBeenCalledTimes(2))
+    expect(sendRequest).not.toHaveBeenCalled()
+
+    for (const release of releaseWaits) {
+      release(true)
+    }
+    await Promise.all(pastes)
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
 })
