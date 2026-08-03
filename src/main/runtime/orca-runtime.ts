@@ -1963,8 +1963,15 @@ type PreservedBranchCleanupTarget = {
   pushTarget?: GitPushTarget
 }
 
-function getRuntimeWorktreeRemovalOptionsKey(force: boolean, runHooks: boolean): string {
-  return `${force ? 'force' : 'normal'}:${runHooks ? 'run-hooks' : 'skip-hooks'}`
+function getRuntimeWorktreeRemovalOptionsKey(
+  force: boolean,
+  runHooks: boolean,
+  allowUnverifiedPtyStop: boolean
+): string {
+  // Why: a forced retry must not coalesce onto the in-flight attempt that just
+  // failed the PTY gate — it would inherit that failure instead of retrying.
+  const ptyKey = allowUnverifiedPtyStop ? 'allow-unverified-pty' : 'require-pty-stop'
+  return `${force ? 'force' : 'normal'}:${runHooks ? 'run-hooks' : 'skip-hooks'}:${ptyKey}`
 }
 
 function getRuntimeFolderWorkspaceRootId(repo: Repo): string {
@@ -3314,8 +3321,9 @@ export class OrcaRuntimeService {
 
   private async stopPtysForDestructiveWorktreeRemoval(
     worktreeId: string,
-    connectionId?: string
+    options: { connectionId?: string; allowUnverifiedStop?: boolean } = {}
   ): Promise<void> {
+    const { connectionId, allowUnverifiedStop } = options
     const provider = connectionId ? this.getSshProviderFn?.(connectionId) : this.getLocalProvider()
     if (!provider) {
       throw new Error(`PTY provider unavailable for worktree deletion: ${worktreeId}`)
@@ -3325,6 +3333,9 @@ export class OrcaRuntimeService {
       localProvider: provider,
       onPtyStopped: this.onPtyStopped ?? undefined,
       requirePhysicalStop: true,
+      // Why (#11960): set only by an explicit Force Delete, never by the ordinary
+      // confirmation — otherwise the gate would be off on the primary delete path.
+      ...(allowUnverifiedStop ? { allowUnverifiedStop: true } : {}),
       ...(connectionId ? { includeLocalRegistry: false } : {})
     })
     const total =
@@ -23262,14 +23273,17 @@ export class OrcaRuntimeService {
   async removeManagedWorktree(
     worktreeSelector: string,
     force = false,
-    runHooks = false
+    runHooks = false,
+    // Why (#11960): only an explicit Force Delete waives PTY-stop proof; `force`
+    // alone is already set by the ordinary delete confirmation.
+    allowUnverifiedPtyStop = false
   ): Promise<RemoveWorktreeResult & { warning?: string }> {
     if (!this.store) {
       throw new Error('runtime_unavailable')
     }
     const store = this.store
     const removalTarget = await this.resolveWorktreeRemovalTarget(worktreeSelector)
-    const optionsKey = getRuntimeWorktreeRemovalOptionsKey(force, runHooks)
+    const optionsKey = getRuntimeWorktreeRemovalOptionsKey(force, runHooks, allowUnverifiedPtyStop)
     const inFlightRemoval = this.removeManagedWorktreeInFlight.get(removalTarget.id)
     if (inFlightRemoval) {
       if (inFlightRemoval.optionsKey === optionsKey) {
@@ -23428,10 +23442,10 @@ export class OrcaRuntimeService {
               )
               let removalCompleted = false
               try {
-                await this.stopPtysForDestructiveWorktreeRemoval(
-                  removalTarget.id,
-                  repo.connectionId
-                )
+                await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, {
+                  connectionId: repo.connectionId,
+                  allowUnverifiedStop: allowUnverifiedPtyStop
+                })
                 await fsProvider!.deletePath(removalTarget.path, true)
                 removalCompleted = true
               } finally {
@@ -23448,7 +23462,9 @@ export class OrcaRuntimeService {
               const removalGate = await this.acquireFileWatcherRemoval(removalTarget.path)
               let removalCompleted = false
               try {
-                await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id)
+                await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, {
+                  allowUnverifiedStop: allowUnverifiedPtyStop
+                })
                 await removeLocalWorktreePath(removalTarget.path, localWorktreeGitOptions)
                 removalCompleted = true
               } finally {
@@ -23496,7 +23512,9 @@ export class OrcaRuntimeService {
               const removalGate = await this.acquireFileWatcherRemoval(removalTarget.path)
               let removalCompleted = false
               try {
-                await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id)
+                await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, {
+                  allowUnverifiedStop: allowUnverifiedPtyStop
+                })
                 await removeLocalWorktreePath(removalTarget.path, localWorktreeGitOptions)
                 removalCompleted = true
               } finally {
@@ -23615,7 +23633,10 @@ export class OrcaRuntimeService {
           let rawRemovalResult: RemoveWorktreeResult | undefined
           let removalCompleted = false
           try {
-            await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, repo.connectionId)
+            await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, {
+              connectionId: repo.connectionId,
+              allowUnverifiedStop: allowUnverifiedPtyStop
+            })
             rawRemovalResult = await (Object.keys(remoteRemoveOptions).length > 0
               ? provider!.removeWorktree(canonicalWorktreePath, force, remoteRemoveOptions)
               : provider!.removeWorktree(canonicalWorktreePath, force))
@@ -23726,7 +23747,9 @@ export class OrcaRuntimeService {
         try {
           // Why: linked-path deletion is destructive too; PTYs must release every
           // handle before Windows or WSL filesystem cleanup starts.
-          await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id)
+          await this.stopPtysForDestructiveWorktreeRemoval(removalTarget.id, {
+            allowUnverifiedStop: allowUnverifiedPtyStop
+          })
 
           if (linkedPaths.length > 0) {
             await removeWorktreeLinkedPaths(canonicalWorktreePath, linkedPaths)
