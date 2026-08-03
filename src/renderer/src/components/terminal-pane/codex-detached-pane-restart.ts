@@ -212,13 +212,13 @@ async function executeDetachedCodexPaneRestart(
 
   const store = useAppStore.getState()
   if (!isLocatedCodexPaneCurrent(store, located, ptyId)) {
-    await window.api.pty.kill(spawned.id).catch(() => {})
     reopenCurrentCodexRestartPrompt(located, ptyId)
+    await window.api.pty.kill(spawned.id).catch(() => {})
     return
   }
   if (hasRegisteredRuntimeTerminalTab(tab.id) || ptyDataHandlers.has(ptyId)) {
-    await window.api.pty.kill(spawned.id).catch(() => {})
     store.queueCodexPaneRestarts([ptyId])
+    await window.api.pty.kill(spawned.id).catch(() => {})
     return
   }
   store.updateTabPtyId(tab.id, spawned.id, ptyId)

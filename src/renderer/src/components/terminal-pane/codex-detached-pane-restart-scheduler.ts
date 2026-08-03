@@ -10,15 +10,27 @@ let sweepQueued = false
 let sweepRunning = false
 let sweepRequestedAfterRun = false
 
+export function hasAddedPendingCodexPaneRestart(
+  current: Record<string, true>,
+  previous: Record<string, true>
+): boolean {
+  if (current === previous) {
+    return false
+  }
+  return Object.keys(current).some((ptyId) => !previous[ptyId])
+}
+
 /** Installed once at app startup; returns the uninstaller (tests). */
 export function installCodexDetachedPaneRestartExecutor(): () => void {
   executorInstalled = true
   const generation = ++executorGeneration
   const unsubscribe = useAppStore.subscribe((state, previousState) => {
-    const addedPendingId = Object.keys(state.pendingCodexPaneRestartIds).some(
-      (ptyId) => !previousState.pendingCodexPaneRestartIds[ptyId]
-    )
-    if (addedPendingId) {
+    if (
+      hasAddedPendingCodexPaneRestart(
+        state.pendingCodexPaneRestartIds,
+        previousState.pendingCodexPaneRestartIds
+      )
+    ) {
       scheduleClaimSweep()
     }
   })
