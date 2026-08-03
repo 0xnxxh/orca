@@ -5,6 +5,7 @@ instead of scattering generated shell fragments across files. */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, win32 as pathWin32 } from 'node:path'
 import { ORCA_GIT_COMMIT_TRAILER } from '../../shared/orca-attribution'
+import { resolvePathEnvKey } from '../pty/windows-environment-path'
 
 const ATTRIBUTION_ROOT_DIR = 'orca-terminal-attribution'
 const ATTRIBUTION_SHIM_VERSION = '6'
@@ -73,7 +74,8 @@ export function applyTerminalAttributionEnv(
   }
 
   const pathDelimiter = platform === 'win32' ? ';' : ':'
-  const basePath = baseEnv.PATH ?? process.env.PATH ?? ''
+  const pathKey = resolvePathEnvKey(baseEnv, platform)
+  const basePath = baseEnv[pathKey] ?? process.env.PATH ?? ''
   // Why: resolve real Windows commands before prepending shims so cmd wrappers
   // cannot recursively point ORCA_REAL_* at themselves.
   const resolvedGit = platform === 'win32' ? resolveWindowsExecutable('git', basePath) : null
@@ -102,7 +104,8 @@ export function applyTerminalAttributionEnv(
   // shim directory here keeps the attribution behavior scoped to Orca's live
   // terminal environment instead of mutating global git/gh config or the
   // user's external shell PATH.
-  baseEnv.PATH = [...prependDirs, cleanedBasePath].filter(Boolean).join(pathDelimiter)
+  baseEnv[pathKey] = [...prependDirs, cleanedBasePath].filter(Boolean).join(pathDelimiter)
+  collapseWindowsPathEnvKey(baseEnv, pathKey, platform)
   baseEnv.ORCA_ENABLE_GIT_ATTRIBUTION = '1'
   baseEnv.ORCA_GIT_COMMIT_TRAILER = ORCA_GIT_COMMIT_TRAILER
   baseEnv.ORCA_GH_PR_FOOTER = ORCA_GH_FOOTER
@@ -131,12 +134,32 @@ function clearTerminalAttributionEnv(
     delete baseEnv[key]
   }
   const pathDelimiter = platform === 'win32' ? ';' : ':'
-  const cleanedPath = stripAttributionPathEntries(baseEnv.PATH ?? '', pathDelimiter)
+  const pathKey = resolvePathEnvKey(baseEnv, platform)
+  const cleanedPath = stripAttributionPathEntries(baseEnv[pathKey] ?? '', pathDelimiter)
   if (cleanedPath) {
-    baseEnv.PATH = cleanedPath
+    baseEnv[pathKey] = cleanedPath
   } else {
-    delete baseEnv.PATH
+    delete baseEnv[pathKey]
   }
+  collapseWindowsPathEnvKey(baseEnv, pathKey, platform)
+}
+
+/**
+ * Drops the non-resolved PATH spelling so a Windows child inherits exactly one.
+ *
+ * Why: attribution is the last env-key-shaping step before spawn, making it the single
+ * choke point where an inherited duplicate (WSL interop, third-party tools) can be
+ * collapsed deterministically instead of leaving the OS to pick a winner.
+ */
+function collapseWindowsPathEnvKey(
+  baseEnv: Record<string, string>,
+  pathKey: 'PATH' | 'Path',
+  platform: NodeJS.Platform
+): void {
+  if (platform !== 'win32') {
+    return
+  }
+  delete baseEnv[pathKey === 'Path' ? 'PATH' : 'Path']
 }
 
 function stripAttributionPathEntries(pathValue: string, pathDelimiter: string): string {

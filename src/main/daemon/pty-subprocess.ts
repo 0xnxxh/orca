@@ -32,6 +32,7 @@ import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
 import { stripInheritedBuildModeEnv } from '../pty/build-mode-env'
+import { resolvePathEnvKey } from '../pty/windows-environment-path'
 import { parseWslPath } from '../wsl'
 import { addWslEnvKeys } from '../wsl-env'
 import {
@@ -175,8 +176,9 @@ function promoteAgentTeamsShimPath(
   if (!shimDir) {
     return
   }
-  const currentParts = env.PATH?.split(delimiter).filter(Boolean) ?? []
-  env.PATH = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(delimiter)
+  const pathKey = resolvePathEnvKey(env, process.platform)
+  const currentParts = env[pathKey]?.split(delimiter).filter(Boolean) ?? []
+  env[pathKey] = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(delimiter)
 }
 
 /**
@@ -768,7 +770,12 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   ) {
     addWslEnvKeys(env, [POWERLEVEL10K_WIZARD_DISABLE_ENV])
   }
-  promoteAgentTeamsShimPath(env, opts.env?.PATH)
+  // Why: opts.env arrives from buildPtyHostEnv, which collapses Windows PATH onto a single spelling.
+  const requestedEnv = opts.env
+  const requestedPath = requestedEnv
+    ? requestedEnv[resolvePathEnvKey(requestedEnv, process.platform)]
+    : undefined
+  promoteAgentTeamsShimPath(env, requestedPath)
 
   // Why: asar packaging can strip +x from node-pty's spawn-helper; the daemon is a separate forked process from the main-process fix.
   ensureNodePtySpawnHelperExecutable()

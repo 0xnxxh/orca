@@ -240,13 +240,30 @@ export function __resetPersistedWindowsPathCacheForTests(): void {
   pendingPersistedWindowsPathRefresh = undefined
 }
 
+/**
+ * Resolves which PATH spelling an env object should be read from and written to.
+ *
+ * Why: Windows env blocks are case-insensitive but plain JS objects are not, so writing
+ * `PATH` onto an env that inherited `Path` mints a duplicate the .NET CLI launcher rejects
+ * with "Item has already been added. Key in dictionary: 'PATH'" (stablyai/orca#12046).
+ */
+export function resolvePathEnvKey(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  platform: NodeJS.Platform
+): 'PATH' | 'Path' {
+  if (platform !== 'win32') {
+    return 'PATH'
+  }
+  return env.Path !== undefined ? 'Path' : env.PATH !== undefined ? 'PATH' : 'Path'
+}
+
 function mergeWindowsPathSegments(
   env: NodeJS.ProcessEnv,
   persistedSegments: string[],
   platform: NodeJS.Platform,
   sourceEnv: NodeJS.ProcessEnv
 ): void {
-  const pathKey = env.Path !== undefined ? 'Path' : env.PATH !== undefined ? 'PATH' : 'Path'
+  const pathKey = resolvePathEnvKey(env, platform)
   const pathDelimiter = getPathDelimiter(platform)
   const currentPath = env[pathKey] ?? sourceEnv.PATH ?? sourceEnv.Path ?? ''
   const currentSegments = splitPathSegments(currentPath, pathDelimiter)

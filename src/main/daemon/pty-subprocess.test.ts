@@ -2113,6 +2113,34 @@ describe('createPtySubprocess', () => {
     expect(lastCall[2].env.ORCA_ATTRIBUTION_SHIM_DIR).toBeUndefined()
   })
 
+  it('promotes the agent-teams shim onto the Windows `Path` spelling', () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      createPtySubprocess({
+        sessionId: 'test',
+        cols: 80,
+        rows: 24,
+        // Why: buildPtyHostEnv collapses Windows PATH onto one spelling before the daemon wire.
+        env: {
+          Path: '/tmp/orca-agent-teams-bin:/usr/bin',
+          ORCA_AGENT_TEAMS_TEAM_ID: 'team-test'
+        }
+      })
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+
+    const env = spawnMock.mock.calls.at(-1)![2].env
+    expect(env.Path.split(':')[0]).toBe('/tmp/orca-agent-teams-bin')
+    expect(env.PATH).toBe(process.env.PATH)
+  })
+
   it('combines HOMEDRIVE and HOMEPATH for Windows default cwd', () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)

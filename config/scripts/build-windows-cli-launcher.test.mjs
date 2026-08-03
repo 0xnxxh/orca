@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -29,6 +29,20 @@ describe('Windows CLI launcher', () => {
     } finally {
       rmSync(outputRoot, { recursive: true, force: true })
     }
+  })
+
+  itCrossHost('never materializes the child environment block from ProcessStartInfo', () => {
+    // Why: both ProcessStartInfo env properties copy the process block into a case-insensitive
+    // dictionary that throws when the inherited block holds PATH and Path (stablyai/orca#12046).
+    const source = readFileSync(
+      join(projectRoot, 'native', 'windows-cli-launcher', 'OrcaCliLauncher.cs'),
+      'utf8'
+    )
+    const code = source.replace(/^\s*\/\/.*$/gm, '')
+
+    expect(code).not.toContain('EnvironmentVariables')
+    expect(code).not.toContain('startInfo.Environment')
+    expect(code).toContain('Environment.SetEnvironmentVariable')
   })
 
   itWindows('preserves a multiline argument from PowerShell through the native launcher', () => {

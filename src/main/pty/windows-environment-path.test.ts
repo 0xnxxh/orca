@@ -15,7 +15,8 @@ import {
   mergePersistedWindowsPath,
   mergePersistedWindowsPathAsync,
   readPersistedWindowsPathSegments,
-  readPersistedWindowsPathSegmentsAsync
+  readPersistedWindowsPathSegmentsAsync,
+  resolvePathEnvKey
 } from './windows-environment-path'
 
 type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void
@@ -296,5 +297,25 @@ describe('mergePersistedWindowsPath', () => {
     })
 
     expect(env).toEqual({ Path: 'C:\\Inherited;C:\\Machine;C:\\User' })
+  })
+})
+
+describe('resolvePathEnvKey', () => {
+  it('prefers the Windows `Path` spelling already present on the env', () => {
+    expect(resolvePathEnvKey({ Path: 'C:\\Windows' }, 'win32')).toBe('Path')
+    expect(resolvePathEnvKey({ Path: 'C:\\Windows', PATH: 'C:\\Stale' }, 'win32')).toBe('Path')
+  })
+
+  it('keeps `PATH` on Windows when that is the only spelling present', () => {
+    expect(resolvePathEnvKey({ PATH: 'C:\\Windows' }, 'win32')).toBe('PATH')
+  })
+
+  it('defaults to the OS spelling for a Windows env with no path key', () => {
+    expect(resolvePathEnvKey({}, 'win32')).toBe('Path')
+  })
+
+  it('always resolves `PATH` off Windows so a POSIX `Path` variable is untouched', () => {
+    expect(resolvePathEnvKey({ Path: '/decoy' }, 'linux')).toBe('PATH')
+    expect(resolvePathEnvKey({ Path: '/decoy', PATH: '/usr/bin' }, 'darwin')).toBe('PATH')
   })
 })
