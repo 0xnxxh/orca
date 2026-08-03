@@ -43,7 +43,7 @@ function makeRpcChild() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
-    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
+    stdin: EventEmitter & { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
     exitCode: number | null
   }
@@ -55,7 +55,7 @@ function makeRpcChild() {
     child.exitCode = 0
     child.emit('exit', 0, null)
   }
-  child.stdin = { write: vi.fn(), end: vi.fn(exitNow) }
+  child.stdin = Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn(exitNow) })
   child.exitCode = null
   child.kill = vi.fn(() => {
     exitNow()

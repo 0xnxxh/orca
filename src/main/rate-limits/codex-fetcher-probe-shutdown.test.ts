@@ -36,7 +36,7 @@ function makeRpcChild() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
-    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
+    stdin: EventEmitter & { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
     exitCode: number | null
   }
@@ -48,7 +48,7 @@ function makeRpcChild() {
     child.exitCode = 0
     child.emit('exit', 0, null)
   }
-  child.stdin = { write: vi.fn(), end: vi.fn(exitNow) }
+  child.stdin = Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn(exitNow) })
   child.exitCode = null
   child.kill = vi.fn(() => {
     exitNow()
@@ -330,6 +330,51 @@ describe('fetchCodexRateLimits probe shutdown', () => {
         status: 'error',
         error: `${phase} stdin failed`
       })
+      await expect(second).resolves.toMatchObject({ status: 'ok' })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
+  it('observes asynchronous stdin failures and keeps the lock until the probe exits', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const firstChild = makeRpcChild()
+    firstChild.stdin.end = vi.fn()
+    firstChild.kill = vi.fn((signal?: string) => {
+      if (signal === 'SIGKILL') {
+        firstChild.exitCode = 1
+        firstChild.emit('exit', 1, 'SIGKILL')
+      }
+      return true
+    })
+    const secondChild = makeRpcChild()
+    childSpawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild)
+    respondToRpcRateLimitRead(secondChild, {
+      primary: { usedPercent: 3 },
+      secondary: { usedPercent: 4 }
+    })
+
+    try {
+      const first = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: '/managed/home-async-stdin-error'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      firstChild.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+      const second = fetchCodexRateLimits({
+        allowPtyFallback: false,
+        codexHomePath: '/managed/home-async-stdin-error'
+      })
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(childSpawnMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(firstChild.kill).toHaveBeenCalledWith('SIGKILL')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(childSpawnMock).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(first).resolves.toMatchObject({ status: 'error', error: 'write EPIPE' })
       await expect(second).resolves.toMatchObject({ status: 'ok' })
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })

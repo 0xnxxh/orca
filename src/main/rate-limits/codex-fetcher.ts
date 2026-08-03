@@ -719,6 +719,9 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       return id
     }
 
+    // Why: stdin EPIPE is emitted by the stream, including during shutdown.
+    child.stdin.on('error', onStdinError)
+
     // Why: send initialized after initialize or the server rejects methods.
     let rateLimitsId: number | null = null
 
@@ -845,6 +848,10 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
         },
         { kill: true }
       )
+    }
+
+    function onStdinError(err: Error): void {
+      onError(err)
     }
 
     function onClose(): void {

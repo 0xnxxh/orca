@@ -20,7 +20,7 @@ function makeRpcChild(rateLimitResetCredits?: unknown) {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
-    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
+    stdin: EventEmitter & { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
     exitCode: number | null
   }
@@ -37,7 +37,7 @@ function makeRpcChild(rateLimitResetCredits?: unknown) {
     exitNow()
     return true
   })
-  child.stdin = {
+  child.stdin = Object.assign(new EventEmitter(), {
     end: vi.fn(exitNow),
     write: vi.fn((line: string) => {
       const message = JSON.parse(line) as { id?: number; method?: string }
@@ -69,7 +69,7 @@ function makeRpcChild(rateLimitResetCredits?: unknown) {
         }, 0)
       }
     })
-  }
+  })
   return child
 }
 
