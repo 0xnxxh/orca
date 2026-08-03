@@ -207,12 +207,6 @@ describe('electron-builder config', () => {
     )
   })
 
-  it('unpacks the plain-Node filesystem host entry', () => {
-    expect(electronBuilderConfig.asarUnpack).toEqual(
-      expect.arrayContaining(['out/main/filesystem-host-entry.js'])
-    )
-  })
-
   it('keeps the worker-thread hang watchdog inside app.asar', () => {
     expect(electronBuilderConfig.asarUnpack).not.toContain(
       'out/main/main-thread-hang-watchdog-entry.js'

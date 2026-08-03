@@ -1,5 +1,7 @@
 import { setFilesystemHostReadClientForTests } from '../src/main/filesystem-host/filesystem-host-read-authority'
 
+// Why plain realpath, not realpath.native: this must mirror filesystem-host-operation.ts, or
+// every consumer test silently runs different canonicalization semantics than the real child.
 setFilesystemHostReadClientForTests({
   canonicalizePath: async (path) => (await import('node:fs/promises')).realpath(path),
   readOrcaYaml: async (path) => (await import('node:fs/promises')).readFile(path, 'utf8'),

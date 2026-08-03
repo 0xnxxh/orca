@@ -1,13 +1,24 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import verifier from './verify-packaged-filesystem-host-entry.cjs'
 
+const require = createRequire(import.meta.url)
+const electronBuilderConfig = require('../electron-builder.config.cjs')
 const { assertPackagedFilesystemHostEntryExists, verifyPackagedFilesystemHostEntryBoots } = verifier
 
 describe('packaged filesystem host entry verification', () => {
   const roots = []
+
+  // Why here and not in electron-builder-config.test.mjs: fork() cannot execute from inside an
+  // asar, so this unpack rule is the precondition for every boot assertion below.
+  it('unpacks the plain-Node filesystem host entry', () => {
+    expect(electronBuilderConfig.asarUnpack).toEqual(
+      expect.arrayContaining(['out/main/filesystem-host-entry.js'])
+    )
+  })
 
   afterEach(() => {
     for (const root of roots.splice(0)) {

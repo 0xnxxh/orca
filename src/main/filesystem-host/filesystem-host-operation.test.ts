@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -99,7 +99,7 @@ describe('executeFilesystemHostOperation', () => {
 
     expect(executeFilesystemHostOperation({ kind: 'prepare-rate-limit-pty-cwd', path })).toEqual({
       kind: 'prepare-rate-limit-pty-cwd',
-      canonicalPath: expect.any(String)
+      canonicalPath: realpathSync(path)
     })
     expect(() =>
       executeFilesystemHostOperation({
@@ -115,7 +115,9 @@ describe('executeFilesystemHostOperation', () => {
     const canonical = executeFilesystemHostOperation({ kind: 'canonicalize-path', path: root })
     const classified = executeFilesystemHostOperation({ kind: 'classify-path', path: root })
 
-    expect(canonical).toEqual({ kind: 'canonicalize-path', canonicalPath: expect.any(String) })
+    // Why pinned to realpathSync, not expect.any(String): the callers that moved into the host
+    // used this exact implementation, and realpathSync.native diverges from it on Windows.
+    expect(canonical).toEqual({ kind: 'canonicalize-path', canonicalPath: realpathSync(root) })
     expect(classified).toEqual({ kind: 'classify-path', deviceId: expect.any(String) })
   })
 

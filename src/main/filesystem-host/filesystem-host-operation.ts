@@ -34,7 +34,7 @@ function prepareRateLimitPtyCwd(path: string): FilesystemHostResult {
   }
   try {
     mkdirSync(path, { recursive: true })
-    const canonicalPath = realpathSync.native(path)
+    const canonicalPath = realpathSync(path)
     if (!statSync(canonicalPath).isDirectory()) {
       throw new FilesystemHostOperationError('invalid', 'Expected a rate-limit PTY cwd directory')
     }
@@ -177,9 +177,12 @@ export function executeFilesystemHostOperation(
   try {
     switch (operation.kind) {
       case 'canonicalize-path':
+        // Why not realpathSync.native: every caller moved in here compared the result against
+        // textually-recorded roots. `.native` folds Windows casing and rewrites a mapped drive
+        // to UNC, so it would change allow-list and PTY-cwd outcomes this move must not touch.
         return {
           kind: 'canonicalize-path',
-          canonicalPath: realpathSync.native(operation.path)
+          canonicalPath: realpathSync(operation.path)
         }
       case 'classify-path':
         return { kind: 'classify-path', deviceId: String(statSync(operation.path).dev) }
