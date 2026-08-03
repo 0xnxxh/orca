@@ -24,6 +24,10 @@ export function GrokAccountsSection(): React.JSX.Element {
     } catch (error) {
       console.error('Failed to load Grok account status:', error)
       setStatus({
+        value: null,
+        stale: true,
+        age: null,
+        availability: 'unavailable',
         signedIn: false,
         email: null,
         teamId: null,

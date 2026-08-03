@@ -100,6 +100,7 @@ function failureReason(error: unknown): FilesystemHostReadFailureReason {
     case 'too-large':
     case 'invalid':
       return error.operationCode
+    case undefined:
     default:
       return 'unavailable'
   }
