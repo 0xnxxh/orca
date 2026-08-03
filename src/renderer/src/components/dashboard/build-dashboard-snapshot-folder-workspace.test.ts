@@ -116,4 +116,16 @@ describe('buildDashboardSnapshot folder workspaces', () => {
       { id: 'folder-workspace:group-1', label: 'Documentation' }
     ])
   })
+
+  it('classifies a folder workspace from its own runtime host stamp', () => {
+    const runtimeState = state()
+    runtimeState.folderWorkspaces = [
+      { ...folderWorkspace(), connectionId: null, executionHostId: 'runtime:environment-1' }
+    ]
+    runtimeState.projectGroups = [{ ...projectGroup(), connectionId: null }]
+
+    const snapshot = buildDashboardSnapshot(runtimeState, NOW)
+
+    expect(snapshot.cards[0].hostKind).toBe('remote')
+  })
 })

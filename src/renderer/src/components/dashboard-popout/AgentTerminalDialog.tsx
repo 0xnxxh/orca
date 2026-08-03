@@ -238,6 +238,8 @@ export function AgentTerminalPanel({
 
   return (
     <section
+      role="dialog"
+      data-state="open"
       aria-labelledby={titleId}
       className={cn(
         'm-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-[0_10px_24px_rgba(0,0,0,0.18)]',

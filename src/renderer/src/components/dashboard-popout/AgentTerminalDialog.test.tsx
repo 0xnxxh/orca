@@ -136,6 +136,7 @@ describe('AgentTerminalDialog', () => {
   it('reuses the terminal surface as a non-modal adjacent panel', () => {
     render(<AgentTerminalPanel card={card()} onOpenChange={() => {}} onReveal={() => {}} />)
 
+    expect(screen.getByRole('dialog', { name: 'wt' })).toHaveAttribute('data-state', 'open')
     expect(screen.getByTestId('preview')).toHaveClass('min-h-0', 'flex-1')
     expect(document.querySelector('[data-slot="dialog-overlay"]')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'wt' })).toBeInTheDocument()

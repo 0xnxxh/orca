@@ -3,6 +3,8 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type {
   DashboardCard,
   DashboardFilterOptions,
@@ -11,13 +13,6 @@ import type {
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { i18n } from '@/i18n/i18n'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
-import type * as AgentMapModule from './AgentMap'
-
-const mapModuleLoad = vi.hoisted(() => vi.fn())
-vi.mock('./AgentMap', async (importOriginal) => {
-  mapModuleLoad()
-  return importOriginal<typeof AgentMapModule>()
-})
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
 // machinery while still exercising the board-owned dialog wiring.
@@ -174,16 +169,15 @@ describe('AgentKanbanBoard', () => {
     expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Done'])
   })
 
-  it('does not load the map module for board snapshots', () => {
-    const view = render(
-      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [card({ paneKey: 'first' })] }} />
+  it('loads the map as a recoverable dynamic chunk', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/components/dashboard-popout/AgentKanbanBoard.tsx'),
+      'utf8'
     )
 
-    view.rerender(
-      <AgentKanbanBoard snapshot={{ generatedAt: 2, cards: [card({ paneKey: 'second' })] }} />
-    )
-
-    expect(mapModuleLoad).not.toHaveBeenCalled()
+    expect(source).toContain("import { lazyWithRetry } from '@/lib/lazy-with-retry'")
+    expect(source).toMatch(/lazyWithRetry\(\s*\(\) => import\('\.\/AgentMap'\)/)
+    expect(source).not.toMatch(/import\s+(?:\{[^}]*\}|\w+)\s+from\s+['"]\.\/AgentMap['"]/)
   })
 
   it('keeps the dashboard and map available as separate views', async () => {

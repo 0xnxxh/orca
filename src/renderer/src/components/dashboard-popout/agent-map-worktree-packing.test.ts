@@ -55,6 +55,26 @@ describe('packAgentMapWorktrees', () => {
     }
   })
 
+  it('indexes rings that span multiple positive and negative grid cells', () => {
+    const packed = packAgentMapWorktrees(
+      [380, 260, 170, 145, 90].map((radius, index) => ({
+        id: `large-${index}`,
+        x: 0,
+        y: 0,
+        radius
+      }))
+    )
+
+    expect(packed.some((worktree) => worktree.x < 0 || worktree.y < 0)).toBe(true)
+    for (const [index, worktree] of packed.entries()) {
+      for (const other of packed.slice(index + 1)) {
+        expect(Math.hypot(worktree.x - other.x, worktree.y - other.y)).toBeGreaterThanOrEqual(
+          worktree.radius + other.radius + AGENT_MAP_WORKTREE_GAP - 0.001
+        )
+      }
+    }
+  })
+
   it('bounds deterministic coordinate checks for larger maps', () => {
     const { worktrees, coordinateReads } = measuredCircles()
 

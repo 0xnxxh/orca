@@ -79,7 +79,7 @@ export function collectActiveDashboardWorkspaces(
       remoteHostKind: includeMapMetadata
         ? remoteHostKind(
             folderWorkspace.connectionId ?? projectGroup?.connectionId,
-            projectGroup?.executionHostId
+            worktree.hostId ?? projectGroup?.executionHostId
           )
         : null
     })

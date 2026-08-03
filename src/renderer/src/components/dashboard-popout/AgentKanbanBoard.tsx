@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Columns3, Orbit, XIcon } from 'lucide-react'
 import {
   DASHBOARD_BUCKET_ORDER,
@@ -26,10 +26,14 @@ import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { useFleetResultDisposition } from './use-fleet-result-disposition'
+import { lazyWithRetry } from '@/lib/lazy-with-retry'
 
 export type AgentDashboardView = 'map' | 'board'
 
-const AgentMap = lazy(() => import('./AgentMap').then((module) => ({ default: module.AgentMap })))
+const AgentMap = lazyWithRetry(
+  () => import('./AgentMap').then((module) => ({ default: module.AgentMap })),
+  { reloadKey: 'agent-map' }
+)
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
  *  ?. shields dialog-opening from dev-HMR preload skew (renderer updates hot,
