@@ -18,6 +18,7 @@ import {
   findOpenCodeStorageRoot,
   normalizeTitleText,
   timeObjectValue,
+  timestampMs,
   tokenTotal
 } from './session-scanner-values'
 
@@ -39,6 +40,47 @@ export async function parseOpenCodeSessionFile(
   return finalizeSession(accumulator, platform)
 }
 
+// Why: OpenCode stores one file per message and `readdir` order is arbitrary,
+// so the transcript has to be rebuilt by creation time before anything reads
+// "the first user prompt". Undated messages sort last, by file name, so a
+// missing timestamp can never displace a real first turn.
+async function readOpenCodeMessagesInOrder(messageDir: string): Promise<Record<string, unknown>[]> {
+  let entries
+  try {
+    entries = await readdir(messageDir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const messages: { name: string; createdMs: number; message: Record<string, unknown> }[] = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue
+    }
+    let message: Record<string, unknown> | null = null
+    try {
+      message = asRecord(
+        JSON.parse(await readFile(join(messageDir, entry.name), 'utf-8')) as unknown
+      )
+    } catch {
+      // A live OpenCode process can leave a half-written file; skip it rather
+      // than discard the whole session.
+      continue
+    }
+    if (!message) {
+      continue
+    }
+    const createdMs = timestampMs(timeObjectValue(message.time, 'created'))
+    messages.push({
+      name: entry.name,
+      createdMs: Number.isFinite(createdMs) ? createdMs : Number.POSITIVE_INFINITY,
+      message
+    })
+  }
+  return messages
+    .sort((a, b) => a.createdMs - b.createdMs || a.name.localeCompare(b.name))
+    .map((entry) => entry.message)
+}
+
 export async function consumeOpenCodeMessages(
   accumulator: SessionAccumulator,
   storageRoot: string | null,
@@ -47,23 +89,9 @@ export async function consumeOpenCodeMessages(
   if (!storageRoot) {
     return
   }
-  const messageDir = join(storageRoot, 'message', sessionId)
-  let entries
-  try {
-    entries = await readdir(messageDir, { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) {
-      continue
-    }
-    const message = asRecord(
-      JSON.parse(await readFile(join(messageDir, entry.name), 'utf-8')) as unknown
-    )
-    if (!message) {
-      continue
-    }
+  for (const message of await readOpenCodeMessagesInOrder(
+    join(storageRoot, 'message', sessionId)
+  )) {
     const role = extractString(message.role)
     if (role === 'user' || role === 'assistant') {
       accumulator.messageCount++

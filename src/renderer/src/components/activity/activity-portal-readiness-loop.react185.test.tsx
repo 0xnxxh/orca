@@ -20,6 +20,11 @@ import {
   type ActivityPortalReadinessStatus
 } from './activity-portal-readiness-oscillation'
 
+// Why: re-applying ready DOM never consumes the readiness flip budget (a 'ready'
+// status resets the latch), so this retry budget is independent of
+// ACTIVITY_PORTAL_READINESS_MAX_FLIPS and must not be derived from it.
+const PORTAL_READY_REAPPLY_ATTEMPTS = 32
+
 const WORKTREE_ID = 'wt-1'
 const TAB_ID = 'tab-react185'
 const OTHER_TAB_ID = 'tab-react185-other'
@@ -416,13 +421,9 @@ describe('Activity portal pane switching', () => {
     expect(statuses.at(-1)).toBe('unavailable')
 
     // Why: under CI load MutationObserver may miss one replaceChildren; re-apply ready DOM
-    // and keep draining until attach is observed (same budget pattern as the flip loop above).
+    // and keep draining until attach is observed.
     let sawReady = false
-    for (
-      let attempt = 0;
-      attempt < ACTIVITY_PORTAL_READINESS_MAX_FLIPS * 4 && !sawReady;
-      attempt += 1
-    ) {
+    for (let attempt = 0; attempt < PORTAL_READY_REAPPLY_ATTEMPTS && !sawReady; attempt += 1) {
       await act(async () => {
         buildRoot('ready')
         await Promise.resolve()
