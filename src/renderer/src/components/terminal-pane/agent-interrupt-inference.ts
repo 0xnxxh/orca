@@ -207,7 +207,12 @@ export function createAgentInterruptInference({
       if (disposed) {
         return
       }
-      const entry = capturedEntry === undefined ? getStatusEntry() : capturedEntry
+      const currentEntry = getStatusEntry()
+      // Why: an older acknowledged write must not replace a newer turn's pending inference.
+      if (capturedEntry !== undefined && currentEntry && currentEntry !== capturedEntry) {
+        return
+      }
+      const entry = capturedEntry === undefined ? currentEntry : capturedEntry
       if (!entry) {
         clearPending()
         return

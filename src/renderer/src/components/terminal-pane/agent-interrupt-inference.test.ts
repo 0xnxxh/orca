@@ -455,6 +455,36 @@ describe('agent interrupt inference', () => {
     expect(inferInterrupt).not.toHaveBeenCalled()
   })
 
+  it('does not let a delayed acknowledgment cancel a newer turn inference', () => {
+    vi.useFakeTimers()
+    const olderEntry = makeEntry()
+    const newerEntry = makeEntry({
+      prompt: 'newer task',
+      updatedAt: 2_000,
+      stateStartedAt: 1_900
+    })
+    const inferInterrupt = vi.fn()
+    const tracker = createAgentInterruptInference({
+      paneKey: PANE_KEY,
+      getStatusEntry: () => newerEntry,
+      inferInterrupt,
+      now: () => 2_100
+    })
+
+    tracker.observeInputIntent('plain-escape', newerEntry)
+    tracker.observeInputIntent('plain-escape', olderEntry)
+    vi.advanceTimersByTime(500)
+
+    expect(inferInterrupt).toHaveBeenCalledWith({
+      paneKey: PANE_KEY,
+      baselineUpdatedAt: 2_000,
+      baselineStateStartedAt: 1_900,
+      baselinePrompt: 'newer task',
+      baselineAgentType: 'codex',
+      intent: 'plain-escape'
+    })
+  })
+
   it('requires exact plain Escape and Ctrl+C key events', () => {
     expect(isPlainEscapeKeyEvent(keyEvent({ key: 'Escape' }))).toBe(true)
     expect(isCtrlCKeyEvent(keyEvent({ key: 'c', ctrlKey: true }))).toBe(true)
