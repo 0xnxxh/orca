@@ -6236,17 +6236,34 @@ describe('useIpcEvents agent status snapshot integration', () => {
     }
   })
 
-  it('drops queued burst events for a pane its clear removed, preventing resurrection', async () => {
+  it('preserves queued set-clear order for working removal and done retention', async () => {
     vi.useFakeTimers()
-    const setAgentStatus = vi.fn()
-    const removeAgentStatus = vi.fn()
+    let storeState: StoreLike
+    const setAgentStatus = vi.fn(
+      (
+        paneKey: string,
+        payload: { state: string },
+        _title: unknown,
+        timing: { updatedAt: number }
+      ) => {
+        storeState.agentStatusByPaneKey = {
+          ...(storeState.agentStatusByPaneKey as Record<string, unknown>),
+          [paneKey]: { ...payload, updatedAt: timing.updatedAt }
+        }
+      }
+    )
+    const removeAgentStatus = vi.fn((paneKey: string) => {
+      const next = { ...(storeState.agentStatusByPaneKey as Record<string, unknown>) }
+      delete next[paneKey]
+      storeState.agentStatusByPaneKey = next
+    })
     const onSetListenerRef: { current: ((data: AgentStatusSetData) => void) | null } = {
       current: null
     }
     const onClearListenerRef: { current: ((data: { paneKey: string }) => void) | null } = {
       current: null
     }
-    const storeState: StoreLike = buildStoreState({
+    storeState = buildStoreState({
       setAgentStatus,
       removeAgentStatus,
       workspaceSessionReady: true,
@@ -6293,10 +6310,14 @@ describe('useIpcEvents agent status snapshot integration', () => {
       ) {
         throw new Error('Expected agentStatus listeners to be registered')
       }
-      const emit = (receivedAt: number, prompt: string): void => {
+      const emit = (
+        receivedAt: number,
+        prompt: string,
+        state: AgentStatusSetData['state'] = 'working'
+      ): void => {
         onSetListenerRef.current!({
           paneKey: FUTURE_PANE_KEY,
-          state: 'working',
+          state,
           prompt,
           agentType: 'claude',
           receivedAt,
@@ -6308,13 +6329,28 @@ describe('useIpcEvents agent status snapshot integration', () => {
       emit(1_700_000_000_001, 'queued')
       expect(setAgentStatus).toHaveBeenCalledTimes(1)
 
-      // Why: without the purge, the queued 'working' flushes AFTER this clear
-      // and resurrects a status the main process just removed.
       onClearListenerRef.current({ paneKey: FUTURE_PANE_KEY })
       expect(removeAgentStatus).toHaveBeenCalledWith(FUTURE_PANE_KEY)
+      expect(storeState.agentStatusByPaneKey).toEqual({})
 
       vi.advanceTimersByTime(40)
-      expect(setAgentStatus).toHaveBeenCalledTimes(1)
+      expect(setAgentStatus).toHaveBeenCalledTimes(2)
+      expect(storeState.agentStatusByPaneKey).toEqual({})
+
+      emit(1_700_000_000_002, 'task')
+      emit(1_700_000_000_003, 'task', 'done')
+      expect(setAgentStatus).toHaveBeenCalledTimes(3)
+
+      onClearListenerRef.current({ paneKey: FUTURE_PANE_KEY })
+
+      expect(setAgentStatus).toHaveBeenCalledTimes(4)
+      expect(setAgentStatus.mock.calls[3][1]).toEqual(expect.objectContaining({ state: 'done' }))
+      expect(removeAgentStatus).toHaveBeenCalledTimes(1)
+      expect(storeState.agentStatusByPaneKey).toEqual({
+        [FUTURE_PANE_KEY]: expect.objectContaining({ state: 'done' })
+      })
+      vi.advanceTimersByTime(40)
+      expect(setAgentStatus).toHaveBeenCalledTimes(4)
     } finally {
       vi.useRealTimers()
     }

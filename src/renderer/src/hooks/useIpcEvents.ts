@@ -3362,6 +3362,23 @@ export function useIpcEvents(): void {
       }
     }
 
+    function drainQueuedLiveAgentStatusesForPane(paneKey: string): void {
+      const queuedForPane: AgentStatusIpcPayload[] = []
+      const remaining: AgentStatusIpcPayload[] = []
+      for (const queued of liveAgentStatusBurstQueue) {
+        if (queued.paneKey === paneKey) {
+          queuedForPane.push(queued)
+        } else {
+          remaining.push(queued)
+        }
+      }
+      liveAgentStatusBurstQueue.length = 0
+      liveAgentStatusBurstQueue.push(...remaining)
+      for (const queued of queuedForPane) {
+        applyAgentStatus(queued)
+      }
+    }
+
     function enqueueLiveAgentStatus(data: AgentStatusIpcPayload): void {
       const now = Date.now()
       if (
@@ -3432,11 +3449,13 @@ export function useIpcEvents(): void {
         if (!('paneKey' in data) || typeof data.paneKey !== 'string') {
           return
         }
-        // Why: a queued burst event flushing after this clear would resurrect
-        // the removed status — drop the pane's unflushed sets first.
-        for (let index = liveAgentStatusBurstQueue.length - 1; index >= 0; index -= 1) {
-          if (liveAgentStatusBurstQueue[index].paneKey === data.paneKey) {
-            liveAgentStatusBurstQueue.splice(index, 1)
+        // Why: preserve set→clear FIFO so a queued completion still survives pane teardown.
+        if (liveAgentStatusBurstQueue.some((queued) => queued.paneKey === data.paneKey)) {
+          drainQueuedLiveAgentStatusesForPane(data.paneKey)
+        }
+        for (let index = pendingAgentStatusEvents.length - 1; index >= 0; index -= 1) {
+          if (pendingAgentStatusEvents[index].data.paneKey === data.paneKey) {
+            pendingAgentStatusEvents.splice(index, 1)
           }
         }
         const store = useAppStore.getState()
