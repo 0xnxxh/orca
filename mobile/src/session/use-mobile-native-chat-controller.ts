@@ -183,6 +183,13 @@ export function useMobileNativeChatController(args: {
     status: nativeChatStatus,
     messages: nativeChatSession.messages
   })
+  // A view toggle or tab switch re-subscribes the transcript, so `messages` is
+  // empty until the read lands and the transcript-derived prompt reads as null.
+  // Believing that null retires a live dismissal — the same resurfacing bug the
+  // off-chat guard fixes. A detected prompt is observable on its own; a null one
+  // only counts once the read has settled.
+  const nativeChatAskObservable =
+    showNativeChat && (nativeChatDetectedAsk != null || !nativeChatSession.transcriptLoading)
   const {
     askKey: nativeChatAskKey,
     showAsk: showNativeChatAsk,
@@ -191,7 +198,7 @@ export function useMobileNativeChatController(args: {
     ask: nativeChatAskPrompt,
     detectedAsk: nativeChatDetectedAsk,
     scopeKey: activeSessionTabId,
-    observing: showNativeChat
+    observing: nativeChatAskObservable
   })
 
   const handleNativeChatOpenFile = useCallback(

@@ -15,6 +15,12 @@ const holdUnconfirmedSend = vi.fn()
 const viewMode = { isTabChatView: (_tabId: string) => true }
 const sessionState = { messages: [] as unknown[], status: 'ready', transcriptLoading: false }
 const draftsArgs: Record<string, unknown>[] = []
+const promptsState = {
+  permission: null as unknown,
+  question: null as unknown,
+  detectedAsk: null as unknown,
+  ask: null as unknown
+}
 
 // The controller composes many session hooks; each is mocked to a minimal shape
 // so this test isolates the send seam (outcome -> drafts accounting).
@@ -45,12 +51,7 @@ vi.mock('./use-mobile-native-chat-drafts', () => ({
   }
 }))
 vi.mock('./use-mobile-native-chat-prompts', () => ({
-  useMobileNativeChatPrompts: () => ({
-    permission: null,
-    question: null,
-    detectedAsk: null,
-    ask: null
-  })
+  useMobileNativeChatPrompts: () => promptsState
 }))
 vi.mock('./use-mobile-native-chat-answer-send', () => ({
   useMobileNativeChatAnswerSend: () => ({ answerAsk: vi.fn(), cancelPending: vi.fn() })
@@ -424,5 +425,116 @@ describe('useMobileNativeChatController launch-draft wiring', () => {
     render({ ...chatTab, launchDraft: undefined })
 
     expect(draftsArgs.at(-1)).toMatchObject({ launchDraft: null, chatActive: true })
+  })
+})
+
+describe('useMobileNativeChatController ask dismissal across a transcript reload', () => {
+  let renderer: ReactTestRenderer | null = null
+  let controller: MobileNativeChatController | null = null
+  const clientStub = { sendRequest: vi.fn() }
+  const PROMPT = { questions: [{ question: 'Which path?', multiSelect: false, options: [] }] }
+
+  const chatTab = { type: 'terminal', id: 'tab-1', launchAgent: 'claude' }
+
+  function Harness(): null {
+    controller = useMobileNativeChatController({
+      client: clientStub as unknown as RpcClient,
+      connState: 'connected',
+      hostId: 'h',
+      worktreeId: 'w',
+      activeSessionTab: chatTab as never,
+      activeSessionTabId: 'tab-1',
+      activeHandleRef: { current: 'term-1' },
+      deviceTokenRef: { current: null },
+      nativeChatTranscriptIsLocalReadable: true,
+      nativeChatInputLeaseReady: true,
+      onSendError: vi.fn(),
+      onSendResolved: vi.fn()
+    })
+    return null
+  }
+
+  /** Re-render under the current viewMode/prompts/session stand-ins. */
+  function step(): void {
+    act(() => {
+      renderer?.update(createElement(Harness))
+    })
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    viewMode.isTabChatView = () => true
+    sessionState.transcriptLoading = false
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    const original = console.error
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
+      if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...a)
+    })
+    try {
+      act(() => {
+        renderer = create(createElement(Harness))
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    controller = null
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    sessionState.transcriptLoading = false
+    viewMode.isTabChatView = () => true
+  })
+
+  it('keeps the dismissal while the re-subscribed transcript is still empty', () => {
+    // Toggling views re-subscribes the transcript, so a transcript-derived ask
+    // reads as null for a beat with chat already visible. Believing that null
+    // retires the dismissal and the answered card comes back (#12497).
+    expect(controller?.nativeChatAsk).not.toBeNull()
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    // Chat -> terminal.
+    viewMode.isTabChatView = () => false
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    // Terminal -> chat: observable again, but the transcript read is in flight.
+    viewMode.isTabChatView = () => true
+    sessionState.transcriptLoading = true
+    step()
+
+    // The read lands and re-derives the same still-pending ask.
+    sessionState.transcriptLoading = false
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).toBeNull()
+  })
+
+  it('still retires the dismissal once a settled transcript reports no prompt', () => {
+    // The load-window guard must not swallow the genuine reset: a prompt that
+    // clears with the read settled means the agent moved on.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).not.toBeNull()
   })
 })

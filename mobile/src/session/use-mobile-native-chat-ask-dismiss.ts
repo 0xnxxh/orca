@@ -15,9 +15,9 @@ export function useMobileNativeChatAskDismiss(args: {
   /** Dismissals are scoped to the tab that showed the card, so one tab's
    *  dismissal can't hide an identical question on another tab. */
   scopeKey: string | null
-  /** True while the chat surface can actually observe the prompt. A null ask
-   *  while hidden proves nothing (prompts aren't derived off-chat) and must not
-   *  reset the dismissal — that reset is what resurfaced dismissed cards. */
+  /** True while the chat surface can actually observe the prompt. A null ask it
+   *  cannot see — off-chat, or before a re-subscribed transcript lands — proves
+   *  nothing and must not reset the dismissal; that reset resurfaced the card. */
   observing: boolean
 }): {
   askKey: string | null
