@@ -13,6 +13,20 @@ const TERMINAL_VIEWPORT_RESUBSCRIBE_BACKOFF_MS = [0, 750, 3000] as const
 
 export type TerminalViewportDims = { readonly cols: number; readonly rows: number }
 
+function readPositiveDimension(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+export function readTerminalViewportDims(data: Readonly<Record<string, unknown>>): {
+  readonly hostCols: number | null
+  readonly hostRows: number | null
+} {
+  return {
+    hostCols: readPositiveDimension(data.cols),
+    hostRows: readPositiveDimension(data.rows)
+  }
+}
+
 export type TerminalViewportResubscribeDecision =
   | { readonly kind: 'resubscribe'; readonly delayMs: number }
   | { readonly kind: 'converged' }
@@ -73,6 +87,7 @@ export class TerminalViewportResubscribeBudget {
   private readonly attemptsByHandle = new Map<string, number>()
   private readonly absentSinceExhaustion = new Set<string>()
   private readonly announcedExhaustion = new Set<string>()
+  private readonly retryGenerationByHandle = new Map<string, object>()
 
   attempts(handle: string): number {
     return this.attemptsByHandle.get(handle) ?? 0
@@ -80,6 +95,34 @@ export class TerminalViewportResubscribeBudget {
 
   chargeAttempt(handle: string): void {
     this.attemptsByHandle.set(handle, this.attempts(handle) + 1)
+  }
+
+  retryGeneration(handle: string): object {
+    const existing = this.retryGenerationByHandle.get(handle)
+    if (existing) {
+      return existing
+    }
+    const generation = {}
+    this.retryGenerationByHandle.set(handle, generation)
+    return generation
+  }
+
+  isRetryGenerationCurrent(handle: string, generation: object): boolean {
+    return this.retryGenerationByHandle.get(handle) === generation
+  }
+
+  observeResize(
+    handle: string,
+    data: Readonly<Record<string, unknown>>,
+    viewport: TerminalViewportDims | null
+  ): readonly [number, number] {
+    const { hostCols, hostRows } = readTerminalViewportDims(data)
+    const cols = hostCols ?? 80
+    const rows = hostRows ?? 24
+    if (viewport?.cols === cols && viewport.rows === rows) {
+      this.markConverged(handle)
+    }
+    return [cols, rows]
   }
 
   markConverged(handle: string): void {
@@ -107,8 +150,7 @@ export class TerminalViewportResubscribeBudget {
       // Why: only an absence marker buys a refill — the handle's PTY may be live
       // again, so a fresh budget (and a fresh degrade announcement) is warranted.
       if (this.absentSinceExhaustion.delete(handle)) {
-        this.attemptsByHandle.delete(handle)
-        this.announcedExhaustion.delete(handle)
+        this.forget(handle)
       }
     }
   }
@@ -117,12 +159,14 @@ export class TerminalViewportResubscribeBudget {
     this.attemptsByHandle.delete(handle)
     this.absentSinceExhaustion.delete(handle)
     this.announcedExhaustion.delete(handle)
+    this.retryGenerationByHandle.delete(handle)
   }
 
   clear(): void {
     this.attemptsByHandle.clear()
     this.absentSinceExhaustion.clear()
     this.announcedExhaustion.clear()
+    this.retryGenerationByHandle.clear()
   }
 }
 
@@ -160,6 +204,7 @@ export type TerminalViewportFitPassArgs = {
  *  or measure and resubscribe (backing off) so the server can phone-fit. */
 export function runTerminalViewportFitPass(args: TerminalViewportFitPassArgs): void {
   const { handle, seq, hostCols, hostRows, budget, diagnostics } = args
+  const retryGeneration = budget.retryGeneration(handle)
   const decision = resolveTerminalViewportResubscribe({
     hostCols,
     hostRows,
@@ -186,14 +231,20 @@ export function runTerminalViewportFitPass(args: TerminalViewportFitPassArgs): v
   void (async () => {
     // Why: wait for init()'s rAF chain before measuring, else the measure races ahead and returns null (log dump 2026-05-06).
     await args.getTerminalRef(handle)?.awaitReady()
-    if (args.subscribeSeqRef.current.get(handle) !== seq) {
+    if (
+      args.subscribeSeqRef.current.get(handle) !== seq ||
+      !budget.isRetryGenerationCurrent(handle, retryGeneration)
+    ) {
       return
     }
     const dims = await args
       .getTerminalRef(handle)
       ?.measureFitDimensions(args.terminalFrameHeightRef.current || undefined)
     // Why: re-check seq — the awaits may have let a newer subscribe cycle arm; tearing it down would resubscribe a stale generation.
-    if (args.subscribeSeqRef.current.get(handle) !== seq) {
+    if (
+      args.subscribeSeqRef.current.get(handle) !== seq ||
+      !budget.isRetryGenerationCurrent(handle, retryGeneration)
+    ) {
       return
     }
     if (!args.getTerminalRef(handle) || !dims) {
@@ -214,7 +265,10 @@ export function runTerminalViewportFitPass(args: TerminalViewportFitPassArgs): v
       return
     }
     const resubscribe = (): void => {
-      if (args.subscribeSeqRef.current.get(handle) !== seq) {
+      if (
+        args.subscribeSeqRef.current.get(handle) !== seq ||
+        !budget.isRetryGenerationCurrent(handle, retryGeneration)
+      ) {
         return
       }
       if (!args.getTerminalRef(handle)) {

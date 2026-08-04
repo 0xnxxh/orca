@@ -237,6 +237,7 @@ import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-m
 import { subscribeMobileTerminalSafely } from '../../../../src/session/mobile-terminal-stream-subscribe'
 import {
   TerminalViewportResubscribeBudget,
+  readTerminalViewportDims,
   runTerminalViewportFitPass
 } from '../../../../src/session/mobile-terminal-viewport-resubscribe'
 import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
@@ -1512,14 +1513,7 @@ export default function SessionScreen() {
               return
             }
             updateTerminalCwdFromStreamEvent(handle, data, terminalCwdRef.current)
-            const hostCols =
-              typeof data.cols === 'number' && Number.isFinite(data.cols) && data.cols > 0
-                ? data.cols
-                : null
-            const hostRows =
-              typeof data.rows === 'number' && Number.isFinite(data.rows) && data.rows > 0
-                ? data.rows
-                : null
+            const { hostCols, hostRows } = readTerminalViewportDims(data)
             // Why: absent host dims must not be coerced into a comparable size — 80x24
             // never equals a phone viewport and armed a zero-delay resubscribe loop (STA-3337).
             const cols = hostCols ?? viewportRef.current?.cols ?? 80
@@ -1596,8 +1590,12 @@ export default function SessionScreen() {
           } else if (data.type === 'resized') {
             updateTerminalCwdFromStreamEvent(handle, data, terminalCwdRef.current)
             // Server resize: reinit xterm on a full-buffer snapshot (width reflow rewraps scrollback), else just resize geometry.
-            const cols = (data.cols as number) || 80
-            const rows = (data.rows as number) || 24
+            const viewport = viewportMeasuredRef.current ? viewportRef.current : null
+            const [cols, rows] = viewportResubscribeBudgetRef.current.observeResize(
+              handle,
+              data,
+              viewport
+            )
             const serialized = typeof data.serialized === 'string' ? data.serialized : null
             diagnostics.streamResized(handle, seq, eventSeq, data, getTerminalRef(handle) != null)
             const oscLinks = isTerminalOscLinkRanges(data.oscLinks) ? data.oscLinks : undefined

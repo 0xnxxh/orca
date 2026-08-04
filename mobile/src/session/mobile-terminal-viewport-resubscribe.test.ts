@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_TERMINAL_VIEWPORT_RESUBSCRIBE_ATTEMPTS,
   TerminalViewportResubscribeBudget,
+  readTerminalViewportDims,
   resolveTerminalViewportResubscribe,
   runTerminalViewportFitPass,
   shouldResubscribeAfterViewportMeasure,
@@ -9,6 +10,19 @@ import {
 } from './mobile-terminal-viewport-resubscribe'
 
 const PHONE = { cols: 40, rows: 50 }
+
+describe('readTerminalViewportDims', () => {
+  it('accepts only usable numeric host dimensions', () => {
+    expect(readTerminalViewportDims({ cols: 40, rows: 50 })).toEqual({
+      hostCols: 40,
+      hostRows: 50
+    })
+    expect(readTerminalViewportDims({ cols: Number.NaN, rows: 0 })).toEqual({
+      hostCols: null,
+      hostRows: null
+    })
+  })
+})
 
 describe('resolveTerminalViewportResubscribe', () => {
   it('resubscribes immediately on the first pass when the viewport is unmeasured', () => {
@@ -356,6 +370,26 @@ describe('runTerminalViewportFitPass', () => {
     h.scheduled[0].fn()
     expect(h.unsubscribeTerminal).not.toHaveBeenCalled()
     expect(h.budget.attempts(HANDLE)).toBe(1)
+  })
+
+  it('drops a deferred retry after the live stream converges', async () => {
+    const budget = new TerminalViewportResubscribeBudget()
+    budget.chargeAttempt(HANDLE)
+    const h = makeHarness({
+      hostCols: 80,
+      hostRows: 24,
+      viewportMeasured: true,
+      viewport: PHONE,
+      budget
+    })
+    runTerminalViewportFitPass(h.args)
+    await settle()
+    expect(h.scheduled).toHaveLength(1)
+    expect(h.budget.observeResize(HANDLE, PHONE, PHONE)).toEqual([PHONE.cols, PHONE.rows])
+    h.scheduled[0].fn()
+    expect(h.unsubscribeTerminal).not.toHaveBeenCalled()
+    expect(h.subscribeToTerminal).not.toHaveBeenCalled()
+    expect(h.budget.attempts(HANDLE)).toBe(0)
   })
 
   it('announces exhaustion once and stops touching the stream', async () => {
