@@ -55,21 +55,58 @@ const makeStore = () => ({
   })
 })
 
+type PaneLayout =
+  | { type: 'leaf'; leafId: string }
+  | { type: 'split'; direction: 'vertical'; first: PaneLayout; second: PaneLayout }
+
+type GraphTab = {
+  tabId: string
+  worktreeId: string
+  title: string
+  activeLeafId: string
+  layout: PaneLayout
+}
+
+type GraphLeaf = {
+  tabId: string
+  worktreeId: string
+  leafId: string
+  paneRuntimeId: number
+  ptyId: string
+  title: string
+}
+
+type MobileTab = {
+  type: 'terminal'
+  id: string
+  title: string
+  parentTabId: string
+  leafId: string
+  ptyId: string
+  parentLayout: {
+    root: PaneLayout
+    activeLeafId: string
+    expandedLeafId: string | null
+    ptyIdsByLeafId: Record<string, string>
+  }
+  isActive: boolean
+}
+
 function buildLoadedRuntime(): OrcaRuntimeService {
   const runtime = new OrcaRuntimeService(makeStore() as never)
-  const tabs = []
-  const leaves = []
-  const mobileTabs = []
+  const tabs: GraphTab[] = []
+  const leaves: GraphLeaf[] = []
+  const mobileTabs: MobileTab[] = []
 
   for (let tab = 0; tab < TAB_COUNT; tab += 1) {
     const tabId = tabIdFor(tab)
     const first = leafIdFor(tab * PANES_PER_TAB)
     const second = leafIdFor(tab * PANES_PER_TAB + 1)
-    const root = {
-      type: 'split' as const,
-      direction: 'vertical' as const,
-      first: { type: 'leaf' as const, leafId: first },
-      second: { type: 'leaf' as const, leafId: second }
+    const root: PaneLayout = {
+      type: 'split',
+      direction: 'vertical',
+      first: { type: 'leaf', leafId: first },
+      second: { type: 'leaf', leafId: second }
     }
     tabs.push({
       tabId,
@@ -90,7 +127,7 @@ function buildLoadedRuntime(): OrcaRuntimeService {
         title: titleFor(index)
       })
       mobileTabs.push({
-        type: 'terminal' as const,
+        type: 'terminal',
         id: `${tabId}::${leafId}`,
         title: titleFor(index),
         parentTabId: tabId,
