@@ -192,6 +192,29 @@ describe('native chat composer composition ownership', () => {
     expect(onKeyDown).toHaveBeenCalledOnce()
   })
 
+  it('retains the macOS marked Enter/229 gesture through its unmarked redispatch', () => {
+    const onKeyDown = vi.fn()
+    render(composerField('테스트', { onKeyDown }))
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229, isComposing: true })
+    fireEvent.compositionEnd(textarea, { data: '테스트' })
+    fireEvent.keyUp(textarea, { key: 'Enter', keyCode: 13 })
+
+    const redispatchResult = fireEvent.keyDown(textarea, {
+      key: 'Enter',
+      keyCode: 13,
+      isComposing: false
+    })
+
+    expect(redispatchResult).toBe(false)
+    expect(onKeyDown).not.toHaveBeenCalled()
+
+    fireEvent.keyUp(textarea, { key: 'Enter', keyCode: 13 })
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 13, isComposing: false })
+    expect(onKeyDown).toHaveBeenCalledOnce()
+  })
+
   it('passes ordinary English Enter through without an IME gesture', () => {
     const onKeyDown = vi.fn()
     render(composerField('abc', { onKeyDown }))

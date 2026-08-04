@@ -183,7 +183,7 @@ export function NativeChatComposerField({
               onKeyDown={(event) => {
                 const ownsCompositionEnter =
                   event.nativeEvent.isComposing &&
-                  ((event.key === 'Enter' && event.keyCode === 13) ||
+                  ((event.key === 'Enter' && (event.keyCode === 13 || event.keyCode === 229)) ||
                     (event.key === 'Process' && event.keyCode === 229))
                 if (ownsCompositionEnter) {
                   pendingCompositionEnterRef.current = true
@@ -195,16 +195,14 @@ export function NativeChatComposerField({
                   event.keyCode === 13 &&
                   !event.nativeEvent.isComposing
                 ) {
+                  pendingCompositionEnterRef.current = false
                   event.preventDefault()
                   return
                 }
                 onKeyDown(event)
               }}
               onKeyUp={(event) => {
-                if (
-                  (event.key === 'Enter' && event.keyCode === 13) ||
-                  (event.key === 'Process' && event.keyCode === 229)
-                ) {
+                if (event.key === 'Process' && event.keyCode === 229) {
                   pendingCompositionEnterRef.current = false
                 }
               }}
