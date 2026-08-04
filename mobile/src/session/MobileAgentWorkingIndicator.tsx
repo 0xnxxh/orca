@@ -39,7 +39,9 @@ export function MobileAgentWorkingIndicator({
   }, [stale])
 
   return (
-    <View style={[styles.row, stale && styles.rowStale]}>
+    // Not dimmed: the label is the only thing left carrying the state once the
+    // dots go, and fading it under `textMuted` drops it below AA on `bgBase`.
+    <View style={styles.row}>
       <Text style={styles.label}>{stale ? 'Agent status stale' : 'Agent is working'}</Text>
       {stale ? null : (
         <View style={styles.dots}>
@@ -59,9 +61,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
-  },
-  rowStale: {
-    opacity: 0.55
   },
   label: {
     color: colors.textMuted,

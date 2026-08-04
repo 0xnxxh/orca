@@ -258,8 +258,18 @@ export function MobileNativeChatView({
   const lockReason = lockHeld ? rawLockReason : null
   // Everything derived from agent status is pre-disconnect data while the
   // transport is down: mute the working row and disable Stop (a tap could not
-  // reach the PTY anyway). Shares the lock's debounce so blips don't flicker it.
-  const statusStale = lockReason === 'disconnected'
+  // reach the PTY anyway). Needs its own hold rather than reading `lockReason`,
+  // which stays latched across 'waiting' -> 'disconnected' and would strobe the
+  // row on a flapping link. Recovery is immediate, so Stop comes straight back.
+  const [statusStale, setStatusStale] = useState(false)
+  useEffect(() => {
+    if (rawLockReason !== 'disconnected') {
+      setStatusStale(false)
+      return
+    }
+    const timer = setTimeout(() => setStatusStale(true), 600)
+    return () => clearTimeout(timer)
+  }, [rawLockReason])
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>

@@ -180,6 +180,23 @@ describe('MobileNativeChatView', () => {
     })
   }
 
+  async function relock(inputLockReason: Overrides['inputLockReason']): Promise<void> {
+    await act(async () => {
+      renderer?.update(
+        createElement(MobileNativeChatView, {
+          messages: [],
+          status: 'ready',
+          agentWorking: true,
+          inputLockReason,
+          onSend: vi.fn().mockResolvedValue(true),
+          pending: [],
+          composerText: '',
+          onComposerTextChange: vi.fn()
+        })
+      )
+    })
+  }
+
   it('marks the working row stale and blocks Stop once a disconnect settles', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
@@ -201,10 +218,11 @@ describe('MobileNativeChatView', () => {
     await settleLockDebounce()
 
     const stop = stopButton()
+    // `disabled` is the real block — Pressable never claims the responder. The
+    // dimmed style is the matching affordance, not the guard.
     expect(stop.props.disabled).toBe(true)
-    // Pressable swallows the press itself; assert the handler stays unreachable.
     expect(stop.props.style({ pressed: false })).toContainEqual(styles.stopDisabled)
-    expect(onStop).not.toHaveBeenCalled()
+    expect(stop.props.onPress).toBe(onStop)
   })
 
   it('keeps the row live when the agent is merely waiting on a lease', async () => {
@@ -216,26 +234,33 @@ describe('MobileNativeChatView', () => {
     expect(stopButton().props.disabled).toBe(false)
   })
 
+  // The composer lock latches on the first non-null reason and never unlatches
+  // between reasons, so reading it directly would skip the hold on this edge.
+  it('still holds 600ms when a settled lease wait drops to disconnected', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'waiting' })
+    await settleLockDebounce()
+
+    await relock('disconnected')
+
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(false)
+
+    await settleLockDebounce()
+
+    expect(workingIndicator().props.stale).toBe(true)
+    expect(stopButton().props.disabled).toBe(true)
+  })
+
   it('restores a live Stop as soon as the transport reconnects', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
     await settleLockDebounce()
     expect(stopButton().props.disabled).toBe(true)
 
-    await act(async () => {
-      renderer?.update(
-        createElement(MobileNativeChatView, {
-          messages: [],
-          status: 'ready',
-          agentWorking: true,
-          inputLockReason: null,
-          onSend: vi.fn().mockResolvedValue(true),
-          pending: [],
-          composerText: '',
-          onComposerTextChange: vi.fn()
-        })
-      )
-    })
+    // Reconnect always lands on 'waiting' first — the lease drops its ready
+    // handles on disconnect, so it has to be re-acked before the lock clears.
+    await relock('waiting')
 
     // Unlock is immediate (no debounce on the way out), so Stop comes straight back.
     expect(workingIndicator().props.stale).toBe(false)
