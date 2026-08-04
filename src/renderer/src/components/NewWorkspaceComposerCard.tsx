@@ -67,7 +67,7 @@ import type { RuntimeStatus } from '../../../shared/runtime-types'
 import { unwrapRuntimeRpcResult } from '@/runtime/runtime-rpc-client'
 import { translate } from '@/i18n/i18n'
 import { withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
-import { beginSshConnect, endSshConnect, isSshConnectInFlight } from '@/ssh/ssh-connect-in-flight'
+import { isSshConnectInFlight, trackSshConnect } from '@/ssh/ssh-connect-in-flight'
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
 type EphemeralVmRecipeOption = NonNullable<OrcaHooks['environmentRecipes']>[number]
@@ -512,18 +512,15 @@ export default function NewWorkspaceComposerCard({
           if (isSshConnectInFlight(action.targetId)) {
             return
           }
-          // Why: the shared registry, so a connect started here also disables the sidebar card
-          // control and terminal overlay for this host — a second dial on a passphrase-gated
-          // target means a second credential prompt.
-          beginSshConnect(action.targetId)
-          try {
-            // Why: ssh.connect has no built-in timeout; a stalled connect would otherwise leave
-            // the row's spinner/disabled state stuck forever. Bound the UI wait — the backend
-            // keeps connecting and the picker updates from store SSH state if it later succeeds.
-            await withUiConnectTimeout(window.api.ssh.connect({ targetId: action.targetId }))
-          } finally {
-            endSshConnect(action.targetId)
-          }
+          // Why: ssh.connect has no built-in timeout; a stalled connect would otherwise leave
+          // the row's spinner/disabled state stuck forever. Bound the UI wait — the backend
+          // keeps connecting and the picker updates from store SSH state if it later succeeds.
+          // The shared registry tracks that backend request (not this bounded wait), so the
+          // sidebar card control and terminal overlay for this host stay locked until it
+          // settles — a second dial on a passphrase-gated target means a second prompt.
+          await withUiConnectTimeout(
+            trackSshConnect(action.targetId, window.api.ssh.connect({ targetId: action.targetId }))
+          )
           return
         }
 

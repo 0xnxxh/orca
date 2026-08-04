@@ -4,8 +4,14 @@ import {
   endSshConnect,
   isSshConnectInFlight,
   resetSshConnectInFlightForTests,
-  subscribeSshConnectInFlight
+  subscribeSshConnectInFlight,
+  trackSshConnect
 } from './ssh-connect-in-flight'
+import { SSH_RECONNECT_UI_TIMEOUT_MS, withUiConnectTimeout } from './ssh-connect-ui-timeout'
+
+vi.mock('@/i18n/i18n', () => ({
+  translate: (_key: string, fallback: string) => fallback
+}))
 
 describe('ssh connect in-flight registry', () => {
   beforeEach(() => {
@@ -49,8 +55,8 @@ describe('ssh connect in-flight registry', () => {
     expect(isSshConnectInFlight('ssh-a')).toBe(true)
   })
 
-  // Why: handleConnect ends in a finally block that can run for a target it never began
-  // (early return paths), and a spurious notify would re-render every subscribed card.
+  // Why: a connect handler's finally can run for a target it never began (early return
+  // paths), and a spurious notify would re-render every subscribed card.
   it('ignores an end for a target that was never in flight', () => {
     const listener = vi.fn()
     subscribeSshConnectInFlight(listener)
@@ -59,6 +65,53 @@ describe('ssh connect in-flight registry', () => {
 
     expect(listener).not.toHaveBeenCalled()
     expect(isSshConnectInFlight('ssh-a')).toBe(false)
+  })
+
+  describe('trackSshConnect', () => {
+    it('holds the lock while the request is pending and clears it on resolve', async () => {
+      let settle: (value: string) => void = () => {}
+      const request = trackSshConnect(
+        'ssh-a',
+        new Promise<string>((resolve) => {
+          settle = resolve
+        })
+      )
+
+      expect(isSshConnectInFlight('ssh-a')).toBe(true)
+
+      settle('connected')
+      await request
+
+      expect(isSshConnectInFlight('ssh-a')).toBe(false)
+    })
+
+    it('clears the lock when the request rejects', async () => {
+      const request = trackSshConnect('ssh-a', Promise.reject(new Error('Passphrase rejected')))
+
+      await expect(request).rejects.toThrow('Passphrase rejected')
+      await Promise.resolve()
+
+      expect(isSshConnectInFlight('ssh-a')).toBe(false)
+    })
+
+    // The regression this guards: the UI wait is a race that rejects at the timeout while the
+    // backend keeps dialing. Releasing the lock there would let the next click on any surface
+    // for this host fire a second connect — a second credential prompt on a gated target.
+    it('keeps the lock after a UI timeout abandons the wait, so a second dial is suppressed', async () => {
+      vi.useFakeTimers()
+      try {
+        const request = trackSshConnect('ssh-a', new Promise<string>(() => {}))
+        const uiWait = withUiConnectTimeout(request, SSH_RECONNECT_UI_TIMEOUT_MS)
+        const settled = uiWait.catch((error: Error) => error.message)
+
+        await vi.advanceTimersByTimeAsync(SSH_RECONNECT_UI_TIMEOUT_MS)
+
+        expect(await settled).toContain('timed out')
+        expect(isSshConnectInFlight('ssh-a')).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('stops notifying after unsubscribe, so unmounted sidebar rows do not leak', () => {

@@ -39,6 +39,22 @@ export function isSshConnectInFlight(targetId: string): boolean {
   return inFlightTargetIds.has(targetId)
 }
 
+/**
+ * Holds the lock for `request`'s whole life and returns it unchanged.
+ * Why: UI callers race the request against a display timeout, but the backend keeps dialing
+ * past it — releasing when the caller stops waiting would let the next click raise a second
+ * credential prompt. Also survives unmount, unlike a `finally` in a component handler.
+ */
+export function trackSshConnect<T>(targetId: string, request: Promise<T>): Promise<T> {
+  beginSshConnect(targetId)
+  const release = (): void => {
+    endSshConnect(targetId)
+  }
+  // Two-arg then, not finally: a derived rejected promise here would go unhandled.
+  void request.then(release, release)
+  return request
+}
+
 export function useSshConnectInFlight(targetId: string): boolean {
   const getSnapshot = useCallback(() => inFlightTargetIds.has(targetId), [targetId])
   return useSyncExternalStore(subscribeSshConnectInFlight, getSnapshot, getSnapshot)

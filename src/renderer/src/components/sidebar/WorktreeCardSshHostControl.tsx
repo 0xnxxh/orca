@@ -14,9 +14,8 @@ import { canConnectSshStatus, isConnectingSshStatus } from '@/ssh/ssh-connection
 import { sshConnectingLabel, sshConnectVerb } from '@/ssh/ssh-connect-verb'
 import { SSH_RECONNECT_UI_TIMEOUT_MS, withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
 import {
-  beginSshConnect,
-  endSshConnect,
   isSshConnectInFlight,
+  trackSshConnect,
   useSshConnectInFlight
 } from '@/ssh/ssh-connect-in-flight'
 import type { SshConnectionStatus } from '../../../../shared/ssh-types'
@@ -88,14 +87,19 @@ export function WorktreeCardSshHostControl({
     if (isSshConnectInFlight(targetId) || isConnectingSshStatus(status)) {
       return
     }
-    beginSshConnect(targetId)
     try {
       if (sshOwnerEnvironmentId) {
         // Bucket state is written inside the helper, mirroring the local path.
-        await connectRuntimeEnvironmentSshTarget(sshOwnerEnvironmentId, targetId)
+        await trackSshConnect(
+          targetId,
+          connectRuntimeEnvironmentSshTarget(sshOwnerEnvironmentId, targetId)
+        )
       } else {
+        // Why: track the connect request, not this bounded wait — the backend is still
+        // dialing after the UI timeout fires, so releasing here would let the next click
+        // raise a second credential prompt.
         const connectState = await withUiConnectTimeout(
-          window.api.ssh.connect({ targetId }),
+          trackSshConnect(targetId, window.api.ssh.connect({ targetId })),
           SSH_RECONNECT_UI_TIMEOUT_MS
         )
         if (connectState) {
@@ -127,9 +131,6 @@ export function WorktreeCardSshHostControl({
           useAppStore.getState().setRemovedSshTargetLabels(removedLabels)
         })().catch(() => {})
       }
-    } finally {
-      // Registry state outlives this component; sidebar rows unmount under virtualization.
-      endSshConnect(targetId)
     }
   }, [setSshConnectionState, sshOwnerEnvironmentId, status, targetId])
 
