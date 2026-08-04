@@ -436,6 +436,8 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
   const PROMPT = { questions: [{ question: 'Which path?', multiSelect: false, options: [] }] }
 
   const chatTab = { type: 'terminal', id: 'tab-1', launchAgent: 'claude' }
+  /** Mutable so a test can move the user to another tab mid-render. */
+  const activeTab = { id: 'tab-1' }
 
   function Harness(): null {
     controller = useMobileNativeChatController({
@@ -443,8 +445,8 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
       connState: 'connected',
       hostId: 'h',
       worktreeId: 'w',
-      activeSessionTab: chatTab as never,
-      activeSessionTabId: 'tab-1',
+      activeSessionTab: { ...chatTab, id: activeTab.id } as never,
+      activeSessionTabId: activeTab.id,
       activeHandleRef: { current: 'term-1' },
       deviceTokenRef: { current: null },
       nativeChatTranscriptIsLocalReadable: true,
@@ -500,6 +502,36 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     promptsState.detectedAsk = null
     setTranscript('ready')
     viewMode.isTabChatView = () => true
+    activeTab.id = 'tab-1'
+  })
+
+  it('scopes the dismissal to the tab it was taken on', () => {
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    // Another tab's agent is parked on a byte-identical question; it is a
+    // different pending prompt and tab 1's answer must not hide it.
+    activeTab.id = 'tab-2'
+    step()
+
+    expect(controller?.nativeChatAsk).not.toBeNull()
+  })
+
+  it('retires the dismissal only on the ungated prompt, not the gated one', () => {
+    // The paused gate hides the card whenever the agent is not waiting, but a
+    // hidden card is no evidence the sticky status prompt cleared. Feeding the
+    // gated `ask` in as the detected prompt would read that gap as "prompt gone",
+    // retire the dismissal, and bring the answered card back when it reopens.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    promptsState.ask = null
+    step()
+
+    promptsState.ask = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).toBeNull()
   })
 
   it('keeps the dismissal while the re-subscribed transcript is still empty', () => {
