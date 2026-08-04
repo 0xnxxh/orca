@@ -39,20 +39,34 @@ function ResizeHandle({
       if (!container) {
         return
       }
+      const firstPane = handle.previousElementSibling as HTMLElement | null
+      const secondPane = handle.nextElementSibling as HTMLElement | null
+      if (!firstPane || !secondPane) {
+        return
+      }
       activeResizeCleanupRef.current?.()
       onResizeStart()
       setDragging(true)
       handle.setPointerCapture(event.pointerId)
+      // Why: measure once — the container can't resize mid-drag, and per-move
+      // getBoundingClientRect forces a reflow against freshly written styles.
+      const rect = container.getBoundingClientRect()
+      let draggedRatio: number | null = null
 
       const onPointerMove = (moveEvent: PointerEvent): void => {
         if (!handle.hasPointerCapture(event.pointerId)) {
           return
         }
-        const rect = container.getBoundingClientRect()
         const ratio = isHorizontal
           ? (moveEvent.clientX - rect.left) / rect.width
           : (moveEvent.clientY - rect.top) / rect.height
-        onRatioChange(Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio)))
+        const clamped = Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio))
+        draggedRatio = clamped
+        // Why: direct style writes keep the drag off the store — a commit per
+        // pointermove published 60-120 global store updates/s against every
+        // subscriber (STA-3328). React re-applies identical flex on commit.
+        firstPane.style.flex = `${clamped} 1 0%`
+        secondPane.style.flex = `${1 - clamped} 1 0%`
       }
 
       let cleaned = false
@@ -61,6 +75,9 @@ function ResizeHandle({
           return
         }
         cleaned = true
+        if (draggedRatio !== null) {
+          onRatioChange(draggedRatio)
+        }
         if (updateDragging) {
           setDragging(false)
         }

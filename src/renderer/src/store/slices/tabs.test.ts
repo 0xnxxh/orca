@@ -949,6 +949,32 @@ describe('TabsSlice', () => {
       expect(layout.ratio).toBe(0.5)
       expect(layout.second.ratio).toBe(0.7)
     })
+
+    it('keeps state identity when the ratio is unchanged', () => {
+      store.setState({
+        layoutByWorktree: {
+          [WT]: {
+            type: 'split',
+            direction: 'horizontal',
+            ratio: 0.5,
+            first: { type: 'leaf', groupId: 'g-1' },
+            second: { type: 'leaf', groupId: 'g-2' }
+          }
+        }
+      })
+      const before = store.getState().layoutByWorktree
+
+      // Why: an unchanged commit must not mint fresh root state — every store
+      // subscriber wakes on the new reference (STA-3328).
+      store.getState().setTabGroupSplitRatio(WT, '', 0.5)
+      expect(store.getState().layoutByWorktree).toBe(before)
+
+      store.getState().setTabGroupSplitRatio(WT, '', 0.5004)
+      expect(store.getState().layoutByWorktree).toBe(before)
+
+      store.getState().setTabGroupSplitRatio(WT, '', 0.7)
+      expect(store.getState().layoutByWorktree).not.toBe(before)
+    })
   })
 
   describe('move/copy/merge group operations', () => {

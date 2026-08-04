@@ -1792,6 +1792,22 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
       if (!currentLayout) {
         return {}
       }
+      // Why: an unchanged ratio must not mint fresh root state — every store
+      // subscriber wakes on the new reference (STA-3328).
+      let targetNode: TabGroupLayoutNode | undefined = currentLayout
+      for (const segment of nodePath.length > 0 ? nodePath.split('.') : []) {
+        targetNode =
+          targetNode && targetNode.type === 'split' && (segment === 'first' || segment === 'second')
+            ? targetNode[segment]
+            : undefined
+      }
+      if (
+        targetNode &&
+        targetNode.type === 'split' &&
+        Math.abs((targetNode.ratio ?? 0.5) - ratio) < 0.0005
+      ) {
+        return {}
+      }
       return {
         layoutByWorktree: {
           ...state.layoutByWorktree,
