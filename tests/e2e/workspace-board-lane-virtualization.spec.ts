@@ -374,33 +374,43 @@ test.describe('Workspace board lane virtualization', () => {
       `[data-workspace-status="${emptyStatusId}"] [data-workspace-board-lane-scroll]`
     )
     const box = await laneScroll.boundingBox()
-    const emptyBox = await emptyLaneScroll.boundingBox()
-    if (!box || !emptyBox) {
-      throw new Error('Expected the marquee and empty start lanes to have bounding boxes')
+    if (!box) {
+      throw new Error('Expected the marquee lane to have a bounding box')
     }
 
-    // Why: the sidebar seam overlaps the board edge on CI, so start in a dedicated empty lane.
-    const startX = Math.round(emptyBox.x + Math.min(24, emptyBox.width / 4))
-    const startY = Math.round(box.y + 12)
-    const startTarget = await orcaPage.evaluate(
-      ({ x, y }) => {
-        const element = document.elementFromPoint(x, y)
-        return {
-          onSurface: Boolean(element?.closest('[data-workspace-board-selection-surface]')),
-          onIgnoredTarget: Boolean(
-            element?.closest('[data-workspace-board-card-id], a, button, input, [role="button"]')
-          )
+    // Why: CI can overlay individual lane pixels, so choose a live board-owned point.
+    const startPoint = await emptyLaneScroll.evaluate((element) => {
+      const ignored = [
+        '[data-workspace-board-card-id]',
+        'a',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        '[role="button"]',
+        '[role="menu"]',
+        '[role="menuitem"]'
+      ].join(',')
+      const rect = element.getBoundingClientRect()
+      for (let y = Math.ceil(rect.top) + 6; y <= Math.floor(rect.top) + 40; y += 6) {
+        for (let x = Math.ceil(rect.left) + 8; x <= Math.floor(rect.right) - 8; x += 8) {
+          const target = document.elementFromPoint(x, y)
+          if (
+            target?.closest('[data-workspace-board-selection-surface]') &&
+            !target.closest(ignored)
+          ) {
+            return { x, y }
+          }
         }
-      },
-      { x: startX, y: startY }
-    )
-    expect(
-      startTarget,
-      `marquee start point (${startX}, ${startY}) must be empty board space; ` +
-        `emptyLane=${JSON.stringify(emptyBox)}`
-    ).toEqual({ onSurface: true, onIgnoredTarget: false })
+      }
+      return null
+    })
+    expect(startPoint, 'the empty start lane must expose board-owned space').not.toBeNull()
+    if (!startPoint) {
+      throw new Error('Expected empty board space for the marquee start')
+    }
 
-    await orcaPage.mouse.move(startX, startY)
+    await orcaPage.mouse.move(startPoint.x, startPoint.y)
     await orcaPage.mouse.down()
     await orcaPage.mouse.move(box.x + box.width - 18, box.y + 80, { steps: 4 })
 
