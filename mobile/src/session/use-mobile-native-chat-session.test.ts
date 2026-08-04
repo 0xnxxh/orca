@@ -8,6 +8,9 @@ import {
   type MobileNativeChatSession
 } from './use-mobile-native-chat-session'
 
+/** Hands a pending `sendRequest` promise's settlers to the test body. */
+type PageSettle = { resolve: (response: unknown) => void; reject: (reason: unknown) => void }
+
 function message(id: string): NativeChatMessage {
   return {
     id,
@@ -255,10 +258,19 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.loadingEarlier).toBe(false)
   })
 
-  it('drops a failure from a page the session swapped out from under', async () => {
-    let rejectEarlier: (reason: unknown) => void = () => {}
+  // Both stale-failure guards have to hold: a swapped-out page can fail by
+  // rejecting or by resolving not-ok, and each has its own `requestIsCurrent()`.
+  it.each([
+    ['a rejected request', (settle: PageSettle) => settle.reject(new Error('disconnected'))],
+    ['a not-ok response', (settle: PageSettle) => settle.resolve({ ok: false, error: 'offline' })]
+  ])('drops %s from a page the session swapped out from under', async (_label, settleEarlier) => {
+    const settle: PageSettle = { resolve: () => {}, reject: () => {} }
     const sendRequest = vi.fn(
-      () => new Promise((_resolve, reject) => (rejectEarlier = reject))
+      () =>
+        new Promise((resolve, reject) => {
+          settle.resolve = resolve
+          settle.reject = reject
+        })
     ) as unknown as RpcClient['sendRequest']
     const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
       emit = onData
@@ -277,7 +289,7 @@ describe('useMobileNativeChatSession', () => {
       emit({ type: 'replacement', messages: [message('fresh')], hasMore: true, beforeOffset: 0 })
     )
     await act(async () => {
-      rejectEarlier(new Error('disconnected'))
+      settleEarlier(settle)
       await Promise.resolve()
     })
 

@@ -269,11 +269,19 @@ describe('MobileNativeChatView', () => {
     expect(header.props.accessibilityLabel).toBe('Couldn’t load earlier messages. Tap to retry')
   })
 
-  it('keeps the header tappable-but-idle while a page is in flight', async () => {
-    await render({ hasMore: true, loadingEarlier: true, onLoadEarlier: vi.fn() })
+  // An in-flight retry outranks the failure it is retrying, so the header shows
+  // the spinner rather than a stale error the user has already acted on.
+  it('disables the header and hides the failure while a retry is in flight', async () => {
+    await render({
+      hasMore: true,
+      loadingEarlier: true,
+      loadEarlierError: 'Couldn’t load earlier messages',
+      onLoadEarlier: vi.fn()
+    })
 
     const header = loadEarlierHeader()
     expect(header.props.disabled).toBe(true)
+    expect(headerText(header)).not.toContain('Couldn’t load earlier messages')
     expect(headerText(header)).not.toContain('Tap to retry')
   })
 })
