@@ -46,22 +46,23 @@ export function searchSshConfigHosts(
 
   for (const entry of hosts) {
     const normalizedAlias = normalizeSshConfigAlias(entry.host)
-    if (suppressedAliasSet.has(normalizedAlias)) {
-      continue
-    }
     if (seenAliases.has(normalizedAlias)) {
       continue
     }
     seenAliases.add(normalizedAlias)
     const alreadyInOrca = existingAliases.has(normalizedAlias)
+    // Why: tombstones only block passive bulk import — the picker still lists the
+    // Host so deleting one Orca target never looks like "~/.ssh/config is empty".
+    const previouslyRemoved = !alreadyInOrca && suppressedAliasSet.has(normalizedAlias)
     totalHostCount += 1
-    newHostCount += alreadyInOrca ? 0 : 1
+    // Why: "Add all" must match importFromSshConfig without reAdopt (tombstones stay).
+    newHostCount += alreadyInOrca || previouslyRemoved ? 0 : 1
     if (!matchesQuery(entry, normalizedQuery)) {
       continue
     }
     matchCount += 1
     if (summaries.length < SSH_CONFIG_HOST_RESULT_LIMIT) {
-      summaries.push(toSummary(entry, alreadyInOrca))
+      summaries.push(toSummary(entry, alreadyInOrca, previouslyRemoved))
     }
   }
 
@@ -138,7 +139,11 @@ function matchesAlias(entry: SshConfigHost, normalizedAlias: string): boolean {
   return normalizeSshConfigAlias(entry.host) === normalizedAlias
 }
 
-function toSummary(entry: SshConfigHost, alreadyInOrca: boolean): SshConfigHostSummary {
+function toSummary(
+  entry: SshConfigHost,
+  alreadyInOrca: boolean,
+  previouslyRemoved = false
+): SshConfigHostSummary {
   return {
     alias: entry.host,
     hostname: entry.hostname || entry.host,
@@ -147,7 +152,8 @@ function toSummary(entry: SshConfigHost, alreadyInOrca: boolean): SshConfigHostS
     ...(entry.identityFile ? { identityFile: entry.identityFile } : {}),
     ...(entry.proxyCommand ? { proxyCommand: entry.proxyCommand } : {}),
     ...(entry.proxyJump ? { jumpHost: entry.proxyJump } : {}),
-    alreadyInOrca
+    alreadyInOrca,
+    ...(previouslyRemoved ? { previouslyRemoved: true } : {})
   }
 }
 

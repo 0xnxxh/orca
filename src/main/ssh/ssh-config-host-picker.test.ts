@@ -79,13 +79,33 @@ describe('SSH config host picker search', () => {
     expect(result.hosts[0]).toMatchObject({ alias: 'prod', alreadyInOrca: true })
   })
 
-  it('omits suppressed aliases from results and counts', () => {
+  it('lists suppressed aliases for re-pick but excludes them from Add-all newHostCount', () => {
     const result = searchSshConfigHosts([{ host: 'removed' }, { host: 'active' }], [], '', [
       'removed'
     ])
 
-    expect(result).toMatchObject({ totalHostCount: 1, newHostCount: 1, matchCount: 1 })
-    expect(result.hosts.map((host) => host.alias)).toEqual(['active'])
+    expect(result).toMatchObject({ totalHostCount: 2, newHostCount: 1, matchCount: 2 })
+    expect(result.hosts).toEqual([
+      expect.objectContaining({ alias: 'removed', previouslyRemoved: true, alreadyInOrca: false }),
+      expect.objectContaining({ alias: 'active', alreadyInOrca: false })
+    ])
+    expect(result.hosts.find((host) => host.alias === 'active')?.previouslyRemoved).toBeUndefined()
+  })
+
+  it('does not mark a host as previously removed when it is already in Orca', () => {
+    const result = searchSshConfigHosts(
+      [{ host: 'prod' }],
+      [{ configHost: 'prod', label: 'Production' }],
+      '',
+      ['prod']
+    )
+
+    expect(result.hosts[0]).toMatchObject({
+      alias: 'prod',
+      alreadyInOrca: true
+    })
+    expect(result.hosts[0]?.previouslyRemoved).toBeUndefined()
+    expect(result.newHostCount).toBe(0)
   })
 })
 

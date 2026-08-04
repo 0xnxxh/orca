@@ -95,7 +95,8 @@ export class SshConnectionStore {
     if (target && !isRuntimeOwnedSshTarget(target)) {
       const alias = target.configHost ?? target.label
       if (alias) {
-        // Why: one suppression source keeps passive import and the config picker consistent.
+        // Why: tombstone so passive ~/.ssh/config sync does not resurrect the host.
+        // The config picker still lists it so re-pick/save can reclaim the alias.
         this.store.addDeletedSshConfigAlias(alias)
       }
       this.store.addRemovedSshTargetTombstone(buildRemovedSshTargetTombstone(target, Date.now()))

@@ -202,6 +202,16 @@ export function AddRemoteHostSshConfigPicker({
                         'In Orca'
                       )}
                     </Badge>
+                  ) : host.previouslyRemoved ? (
+                    <Badge
+                      variant="outline"
+                      className="mt-0.5 shrink-0 text-[10.5px] text-muted-foreground"
+                    >
+                      {translate(
+                        'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerPreviouslyRemoved',
+                        'Removed from Orca'
+                      )}
+                    </Badge>
                   ) : null}
                 </button>
               </li>
@@ -239,10 +249,12 @@ export function AddRemoteHostSshConfigPicker({
                   'Add all {{value0}} to Orca',
                   { value0: newHostCount }
                 )
-              : totalHostCount > 0
+              : // Why: the remainder can be already-in-Orca or merely tombstoned, so the
+                // label cannot claim either one specifically.
+                totalHostCount > 0
                 ? translate(
-                    'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerAllInOrca',
-                    'All hosts already in Orca'
+                    'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerNoNewHosts',
+                    'No new hosts to add'
                   )
                 : translate(
                     'auto.components.sidebar.AddRemoteHostDialog.sshConfigPickerAddAllEmpty',

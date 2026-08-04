@@ -46,13 +46,17 @@ const resolveConfigHost = vi.fn()
 const importConfig = vi.fn()
 const listTargets = vi.fn()
 
-function configHost(alias: string): Record<string, unknown> {
+function configHost(
+  alias: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
   return {
     alias,
     hostname: `${alias}.internal`,
     port: 22,
     username: 'deploy',
-    alreadyInOrca: false
+    alreadyInOrca: false,
+    ...overrides
   }
 }
 
@@ -83,6 +87,13 @@ async function openPicker(): Promise<ReturnType<typeof userEvent.setup>> {
   await user.click(screen.getByRole('button', { name: /Fill from/ }))
   await screen.findByRole('button', { name: /alpha/ })
   return user
+}
+
+async function openPickerWith(result: Record<string, unknown>): Promise<void> {
+  listConfigHosts.mockResolvedValue({ hasMore: false, ...result })
+  const user = userEvent.setup()
+  render(<AddRemoteHostDialog mode="ssh" onOpenChange={vi.fn()} />)
+  await user.click(screen.getByRole('button', { name: /Fill from/ }))
 }
 
 describe('SSH config picker host selection', () => {
@@ -140,6 +151,50 @@ describe('SSH config picker host selection', () => {
       pending.resolve(resolution('alpha', 'alpha.internal'))
       await pending.promise
     })
+  })
+})
+
+describe('SSH config picker tombstoned hosts', () => {
+  it('keeps a previously removed host pickable while an adopted one stays disabled', async () => {
+    await openPickerWith({
+      hosts: [
+        configHost('removed', { previouslyRemoved: true }),
+        configHost('kept', { alreadyInOrca: true })
+      ],
+      totalHostCount: 2,
+      newHostCount: 0,
+      matchCount: 2
+    })
+
+    const removed = await screen.findByRole('button', { name: /removed/ })
+    expect(removed.hasAttribute('disabled')).toBe(false)
+    expect(removed.textContent).toContain('Removed from Orca')
+
+    const kept = screen.getByRole('button', { name: /kept/ })
+    expect(kept.hasAttribute('disabled')).toBe(true)
+    expect(kept.textContent).toContain('In Orca')
+  })
+
+  it('never claims the config is empty when every host is only tombstoned', async () => {
+    await openPickerWith({
+      hosts: [configHost('removed', { previouslyRemoved: true })],
+      totalHostCount: 1,
+      newHostCount: 0,
+      matchCount: 1
+    })
+
+    const addAll = await screen.findByRole('button', { name: 'No new hosts to add' })
+    expect(addAll.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByText('No hosts in ~/.ssh/config')).toBeNull()
+  })
+
+  it('still shows the empty state when the config really has no hosts', async () => {
+    await openPickerWith({ hosts: [], totalHostCount: 0, newHostCount: 0, matchCount: 0 })
+
+    expect(await screen.findByText('No hosts in ~/.ssh/config')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Add all to Orca' }).hasAttribute('disabled')).toBe(
+      true
+    )
   })
 })
 

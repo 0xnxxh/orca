@@ -103,6 +103,11 @@ export type SshConfigHostSummary = {
   jumpHost?: string
   /** True when an Orca SSH target already uses this config alias. */
   alreadyInOrca: boolean
+  /**
+   * True when the user deleted this alias from Orca (tombstone). Still listed so they
+   * can re-pick it; passive import and "Add all" keep it out until re-adopt / save.
+   */
+  previouslyRemoved?: boolean
 }
 
 /** Max hosts one picker query returns; shared so the renderer's copy cannot drift. */
