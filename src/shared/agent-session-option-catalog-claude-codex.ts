@@ -72,19 +72,29 @@ function claudeEffortWithChoices(choices: typeof EXTENDED_EFFORT_CHOICES): Catal
   }
 }
 
+export function createClaudeCatalogOptions(args: {
+  effortLevelIds: readonly string[]
+  supportsFastMode?: boolean
+}): CatalogOption[] {
+  const effortChoices = EXTENDED_EFFORT_CHOICES.filter((choice) =>
+    args.effortLevelIds.includes(choice.value)
+  )
+  return [
+    ...(effortChoices.length > 0 ? [claudeEffortWithChoices(effortChoices)] : []),
+    ...(args.supportsFastMode ? [CLAUDE_FAST_MODE] : [])
+  ]
+}
+
 function parseClaudeCatalogModels(stdout: string): CatalogModel[] {
   return parseClaudeModelList(stdout).map((model) => {
-    const effortChoices = EXTENDED_EFFORT_CHOICES.filter((choice) =>
-      model.effortLevels.includes(choice.value)
-    )
     return {
       id: model.id,
       label: model.label,
       ...(model.description ? { description: model.description } : {}),
-      options: [
-        ...(effortChoices.length > 0 ? [claudeEffortWithChoices(effortChoices)] : []),
-        ...(model.supportsFastMode ? [CLAUDE_FAST_MODE] : [])
-      ]
+      options: createClaudeCatalogOptions({
+        effortLevelIds: model.effortLevels,
+        supportsFastMode: model.supportsFastMode
+      })
     }
   })
 }

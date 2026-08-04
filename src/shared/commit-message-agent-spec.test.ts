@@ -234,7 +234,8 @@ describe('model discovery parsers', () => {
           { id: 'xhigh', label: 'Extra High' },
           { id: 'max', label: 'Max' }
         ],
-        defaultThinkingLevel: 'low'
+        defaultThinkingLevel: 'low',
+        supportsFastMode: true
       },
       { id: 'haiku', label: 'Haiku' }
     ])

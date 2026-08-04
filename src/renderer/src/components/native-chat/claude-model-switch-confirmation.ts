@@ -39,11 +39,23 @@ function hasClaudeModelSwitchSuccess(buffer: string, modelLabel: string): boolea
   if (text.includes(marker)) {
     return true
   }
-  // Why: the echo names the resolved model ("Set model to Opus 5 (1M
-  // context)"), which drifts from picker labels across CLI versions; the
-  // family word is the stable shared prefix.
-  const family = modelLabel.match(/[a-z]+/i)?.[0]?.toLowerCase()
-  return family ? text.includes(`setmodelto${family}`) : false
+  // Why: resolved echoes insert a version ("Opus 5 (1M context)"); retaining
+  // every picker token prevents one context variant from confirming another.
+  const labelTokens = modelLabel.toLowerCase().match(/[a-z]+|\d+[a-z]*/g) ?? []
+  const successStart = text.lastIndexOf('setmodelto')
+  if (successStart < 0 || labelTokens.length === 0) {
+    return false
+  }
+  const successText = text.slice(successStart)
+  let tokenEnd = 0
+  for (const token of labelTokens) {
+    const tokenStart = successText.indexOf(token, tokenEnd)
+    if (tokenStart < 0) {
+      return false
+    }
+    tokenEnd = tokenStart + token.length
+  }
+  return true
 }
 
 function hasClaudeModelSwitchRejection(buffer: string): boolean {

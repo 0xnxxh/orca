@@ -27,6 +27,8 @@ export type CommitMessageModel = {
   thinkingLevels?: ThinkingLevel[]
   /** Required when thinkingLevels is present. */
   defaultThinkingLevel?: string
+  /** Whether the model exposes Claude's mid-session Fast mode toggle. */
+  supportsFastMode?: boolean
 }
 
 export type CommitMessageAgentSpec = {
@@ -58,6 +60,7 @@ export type CommitMessageModelCapability = {
   description?: string
   thinkingLevels?: ThinkingLevel[]
   defaultThinkingLevel?: string
+  supportsFastMode?: boolean
 }
 
 export type CommitMessageAgentCapability = {
@@ -166,7 +169,8 @@ export function parseClaudeModels(stdout: string): CommitMessageModel[] {
                 ? 'low'
                 : thinkingLevels[0].id
             }
-          : {})
+          : {}),
+        ...(model.supportsFastMode ? { supportsFastMode: true } : {})
       }
     })
   )
@@ -788,7 +792,8 @@ function toCommitMessageAgentCapability(
       label: model.label,
       ...(model.description ? { description: model.description } : {}),
       ...(model.thinkingLevels ? { thinkingLevels: [...model.thinkingLevels] } : {}),
-      ...(model.defaultThinkingLevel ? { defaultThinkingLevel: model.defaultThinkingLevel } : {})
+      ...(model.defaultThinkingLevel ? { defaultThinkingLevel: model.defaultThinkingLevel } : {}),
+      ...(model.supportsFastMode ? { supportsFastMode: true } : {})
     }))
   }
 }

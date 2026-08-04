@@ -1,8 +1,18 @@
 import type { AgentType } from '../../../../shared/agent-status-types'
-import type { CatalogModel } from '../../../../shared/agent-session-option-catalog'
-import { getCommitMessageModelDiscoveryHostKeyForScope } from '../../../../shared/commit-message-host-key'
+import {
+  createClaudeCatalogOptions,
+  type CatalogModel
+} from '../../../../shared/agent-session-option-catalog'
+import {
+  getCommitMessageModelDiscoveryHostKeyForLocalRuntime,
+  getCommitMessageModelDiscoveryHostKeyForScope
+} from '../../../../shared/commit-message-host-key'
 import { getSettingsForAgentTabRuntimeOwner } from '@/lib/agent-paste-draft'
 import { getConnectionIdFromState } from '@/lib/connection-context'
+import {
+  getLocalProjectExecutionRuntimeContext,
+  getWslDistroFromPath
+} from '@/lib/local-preflight-context'
 import {
   discoverRuntimeCommitMessageModels,
   getRuntimeGitScope,
@@ -13,6 +23,23 @@ import { useAppStore } from '@/store'
 export type NativeChatModelDiscoveryContext = {
   hostKey: string
   runtime: RuntimeGitContext
+}
+
+export function resolveNativeChatModelDiscoveryHostKey(
+  state: Parameters<typeof getLocalProjectExecutionRuntimeContext>[0],
+  worktreeId: string | null,
+  worktreePath: string,
+  scope: string | null | undefined
+): string {
+  if (scope !== null) {
+    return getCommitMessageModelDiscoveryHostKeyForScope(scope)
+  }
+  const localProjectRuntime = getLocalProjectExecutionRuntimeContext(state, worktreeId)
+  const wslDistro =
+    localProjectRuntime?.status === 'resolved' && localProjectRuntime.runtime.kind === 'wsl'
+      ? localProjectRuntime.runtime.distro
+      : getWslDistroFromPath(worktreePath)
+  return getCommitMessageModelDiscoveryHostKeyForLocalRuntime(wslDistro)
 }
 
 export function resolveNativeChatModelDiscoveryContext(
@@ -31,7 +58,7 @@ export function resolveNativeChatModelDiscoveryContext(
   const worktreePath = worktreeId ? (state.getKnownWorktreeById?.(worktreeId)?.path ?? '') : ''
   const scope = getRuntimeGitScope(settings, connectionId)
   return {
-    hostKey: getCommitMessageModelDiscoveryHostKeyForScope(scope),
+    hostKey: resolveNativeChatModelDiscoveryHostKey(state, worktreeId, worktreePath, scope),
     runtime: {
       settings,
       worktreeId,
@@ -53,6 +80,12 @@ export async function discoverNativeChatCatalogModels(
     id: model.id,
     label: model.label,
     ...(model.description ? { description: model.description } : {}),
-    options: []
+    options:
+      agent === 'claude'
+        ? createClaudeCatalogOptions({
+            effortLevelIds: model.thinkingLevels?.map(({ id }) => id) ?? [],
+            supportsFastMode: model.supportsFastMode
+          })
+        : []
   }))
 }

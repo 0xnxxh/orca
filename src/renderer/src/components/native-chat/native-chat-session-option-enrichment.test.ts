@@ -1,14 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogModel } from '../../../../shared/agent-session-option-catalog'
 import {
+  discoverNativeChatCatalogModels,
+  resolveNativeChatModelDiscoveryHostKey
+} from './native-chat-session-option-discovery'
+import {
   clearNativeChatModelEnrichmentForTests,
   ensureNativeChatModelEnrichment,
   readNativeChatEnrichedModels,
   subscribeNativeChatEnrichedModels
 } from './native-chat-session-option-enrichment'
 
+const mocks = vi.hoisted(() => ({
+  discoverRuntimeCommitMessageModels: vi.fn()
+}))
+
+vi.mock('@/runtime/runtime-git-client', () => ({
+  discoverRuntimeCommitMessageModels: mocks.discoverRuntimeCommitMessageModels,
+  getRuntimeGitScope: vi.fn()
+}))
+
 describe('native chat session option enrichment', () => {
-  beforeEach(() => clearNativeChatModelEnrichmentForTests())
+  beforeEach(() => {
+    clearNativeChatModelEnrichmentForTests()
+    mocks.discoverRuntimeCommitMessageModels.mockReset()
+  })
 
   it('keeps reads synchronous while one host-scoped probe is in flight', async () => {
     let resolveDiscovery: ((models: CatalogModel[]) => void) | undefined
@@ -59,16 +75,53 @@ describe('native chat session option enrichment', () => {
     expect(discover).not.toHaveBeenCalled()
   })
 
+  it('keeps WSL discovery separate from the Windows host and other distros', () => {
+    expect(
+      resolveNativeChatModelDiscoveryHostKey(
+        {} as never,
+        null,
+        '\\\\wsl.localhost\\Ubuntu\\home\\orca',
+        null
+      )
+    ).toBe('wsl:Ubuntu')
+    expect(
+      resolveNativeChatModelDiscoveryHostKey(
+        {} as never,
+        null,
+        '\\\\wsl.localhost\\Debian\\home\\orca',
+        null
+      )
+    ).toBe('wsl:Debian')
+    expect(resolveNativeChatModelDiscoveryHostKey({} as never, null, 'C:\\repo', null)).toBe(
+      'local'
+    )
+  })
+
   it('overlays discovered Claude variants on the alias seed per host', async () => {
-    const discover = vi.fn().mockResolvedValue([
-      {
-        id: 'opus[1m]',
-        label: 'Opus (1M context)',
-        description: 'Opus 5 with 1M context',
-        options: []
-      },
-      { id: 'sonnet', label: 'Sonnet', options: [] }
-    ] satisfies CatalogModel[])
+    mocks.discoverRuntimeCommitMessageModels.mockResolvedValue({
+      success: true,
+      models: [
+        {
+          id: 'opus[1m]',
+          label: 'Opus (1M context)',
+          description: 'Opus 5 with 1M context',
+          thinkingLevels: [
+            { id: 'low', label: 'Low' },
+            { id: 'high', label: 'High' }
+          ],
+          defaultThinkingLevel: 'low',
+          supportsFastMode: true
+        },
+        { id: 'sonnet', label: 'Sonnet' }
+      ]
+    })
+    const discover = vi.fn(() =>
+      discoverNativeChatCatalogModels('claude', {
+        settings: {},
+        worktreeId: 'repo::/worktree',
+        worktreePath: '/worktree'
+      })
+    )
     const listener = vi.fn()
     subscribeNativeChatEnrichedModels('claude', 'ssh:host', listener)
 
@@ -83,7 +136,19 @@ describe('native chat session option enrichment', () => {
     ])
     expect(models.at(-1)).toMatchObject({
       id: 'opus[1m]',
-      description: 'Opus 5 with 1M context'
+      description: 'Opus 5 with 1M context',
+      options: [
+        expect.objectContaining({
+          id: 'effort',
+          kind: expect.objectContaining({
+            choices: [
+              { value: 'low', label: 'Low' },
+              { value: 'high', label: 'High' }
+            ]
+          })
+        }),
+        expect.objectContaining({ id: 'fastMode' })
+      ]
     })
     expect(readNativeChatEnrichedModels('claude', 'local')).toBeNull()
   })
