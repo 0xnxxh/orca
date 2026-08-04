@@ -55,7 +55,11 @@ type RawListedModel = {
   supportsFastMode?: unknown
 }
 
-function toListedModel(raw: RawListedModel): ClaudeListedModel | null {
+function toListedModel(value: unknown): ClaudeListedModel | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  const raw = value as RawListedModel
   const id = typeof raw.value === 'string' ? raw.value.trim() : ''
   if (!id) {
     return null
@@ -99,7 +103,7 @@ export function parseClaudeModelList(stdout: string): ClaudeListedModel[] {
     const seen = new Set<string>()
     const listed: ClaudeListedModel[] = []
     for (const entry of models) {
-      const model = toListedModel(entry as RawListedModel)
+      const model = toListedModel(entry)
       // Why: the `default` row mirrors whichever entry it currently resolves
       // to; Orca's pickers manage their own default selection.
       if (!model || model.id === 'default' || seen.has(model.id)) {

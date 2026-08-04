@@ -77,6 +77,13 @@ describe('parseClaudeModelList', () => {
     ])
   })
 
+  it('skips non-object model entries instead of failing the discovery response', () => {
+    const stdout = controlResponseLine([null, 7, [], { value: 'sonnet', displayName: 'Sonnet' }])
+    expect(parseClaudeModelList(stdout)).toEqual([
+      { id: 'sonnet', label: 'Sonnet', effortLevels: [], supportsFastMode: false }
+    ])
+  })
+
   it('returns no models for the control error emitted by CLIs without list_models', () => {
     // Captured from `claude` 2.1.100: unsupported subtype still exits 0.
     const stdout =
