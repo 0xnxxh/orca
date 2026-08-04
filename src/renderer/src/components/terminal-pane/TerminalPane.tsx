@@ -56,8 +56,8 @@ import type { TerminalKittyKeyboardModeTracker } from '../../../../shared/termin
 import {
   applyExpandedLayoutTo,
   cancelPendingPaneSizeRefreshFrames,
-  createExpandCollapseActions,
-  restoreExpandedLayoutFrom
+  restoreExpandedLayoutFrom,
+  useExpandCollapseActions
 } from './expand-collapse'
 import { useTerminalKeyboardShortcuts, type SearchState } from './keyboard-handlers'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
@@ -1255,7 +1255,7 @@ function TerminalPane(
     refreshPaneSizes,
     syncExpandedLayout,
     toggleExpandPane
-  } = createExpandCollapseActions({
+  } = useExpandCollapseActions({
     expandedPaneIdRef,
     expandedStyleSnapshotRef,
     containerRef,

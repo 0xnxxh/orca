@@ -1530,6 +1530,10 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
         executionHostId
       })
     },
+    // Why: the runtime RPC transport has no cancel verb, so the in-flight scan
+    // settles on its own timeout. The renderer's refreshId guard already drops
+    // the late result; this only means web pays for a scan nobody reads.
+    cancelListSessions: () => Promise.resolve(),
     prepareSessionResume: (args: AiVaultPrepareSessionResumeArgs) =>
       callRuntimeResult<AiVaultPrepareSessionResumeResult>('aiVault.prepareSessionResume', args),
     // Why: no server-side RPC for subagent transcript listing yet, so report an empty (not erroring) result.
@@ -3246,6 +3250,15 @@ function createSshApi(): NonNullable<Partial<PreloadApi>['ssh']> {
       Promise.reject(new Error('SSH target management is unavailable in the web client.')),
     removeTarget: () => Promise.resolve(),
     importConfig: () => Promise.resolve({ targets: [], repoReadoptions: [] }),
+    listConfigHosts: () =>
+      Promise.resolve({
+        hosts: [],
+        totalHostCount: 0,
+        newHostCount: 0,
+        matchCount: 0,
+        hasMore: false
+      }),
+    resolveConfigHost: () => Promise.resolve(null),
     connect: async (args) => {
       const { state } = await callRuntimeResult<{ state: SshConnectionState | null }>(
         'ssh.connect',
