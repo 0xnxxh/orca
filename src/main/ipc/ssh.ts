@@ -7,7 +7,7 @@ import {
   listUserSshConfigHostSummaries,
   resolveUserSshConfigHost
 } from '../ssh/ssh-config-host-picker'
-import type { SshConnectionCallbacks } from '../ssh/ssh-connection'
+import type { SshConnection, SshConnectionCallbacks } from '../ssh/ssh-connection'
 import { SshConnectionManager } from '../ssh/ssh-connection-manager'
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { SshRelaySession, type SshRelayAiVaultHostInfo } from '../ssh/ssh-relay-session'
@@ -290,6 +290,33 @@ async function abandonFailedSshSession(targetId: string, session: SshRelaySessio
   }
   if (activeSessions.get(targetId) === session) {
     activeSessions.delete(targetId)
+  }
+}
+
+// Why: a connect cancelled after its transport already opened still owns that transport and its
+// unpublished session — nothing else will reach them, so it has to close them itself. Why only the
+// connection it minted, and by identity: disconnecting by target id (or closing a transport it merely
+// reused) would tear down the replacement connect's live transport.
+async function abandonCancelledConnectAttempt(
+  targetId: string,
+  session: SshRelaySession,
+  mintedConnection: SshConnection | null
+): Promise<void> {
+  // Why the identity guard: every path that removes a session from activeSessions detaches it first,
+  // so re-detaching a superseded session would only clobber the replacement's lease state.
+  if (activeSessions.get(targetId) === session) {
+    await abandonFailedSshSession(targetId, session)
+  }
+  if (!mintedConnection) {
+    return
+  }
+  try {
+    await connectionManager!.disconnectConnection(targetId, mintedConnection)
+  } catch (error) {
+    // Why: the caller is about to throw the cancellation; a teardown throw must not replace it.
+    console.warn(
+      `[ssh] Failed to disconnect cancelled connect transport for ${targetId}: ${error instanceof Error ? error.message : String(error)}`
+    )
   }
 }
 
@@ -1163,6 +1190,12 @@ export function registerSshHandlers(
     const ownsSession = (): boolean =>
       isCurrentConnectAttempt(targetId, authority) && activeSessions.get(targetId) === session
 
+    // Why captured here and not with existingState: connect() reuses an already-connected transport,
+    // and only a transport this attempt opened is this attempt's to close when it loses the race.
+    const priorConnection = connectionManager!.getConnection(targetId)
+    const mintedConnection = (): SshConnection | null =>
+      conn && conn !== priorConnection ? conn : null
+
     try {
       conn = await connectionManager!.connect(target)
       if (!ownsSession()) {
@@ -1173,6 +1206,7 @@ export function registerSshHandlers(
       const errObj = err instanceof Error ? err : new Error(String(err))
       const status: SshConnectionStatus = isAuthError(errObj) ? 'auth-failed' : 'error'
       if (!ownsSession()) {
+        await abandonCancelledConnectAttempt(targetId, session, mintedConnection())
         throw createCancelledConnectAttemptError()
       }
       // Why: clear this failed connect's flag so a later non-prompting connect isn't deferred.
@@ -1213,6 +1247,7 @@ export function registerSshHandlers(
       })
     } catch (err) {
       if (!ownsSession()) {
+        await abandonCancelledConnectAttempt(targetId, session, mintedConnection())
         throw createCancelledConnectAttemptError()
       }
       await abandonFailedSshSession(targetId, session)

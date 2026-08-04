@@ -274,6 +274,8 @@ describe('PtyConsumerSession', () => {
       ownerLease: first.grant.ownerLease
     })
     expect(retry.displacedOwner?.connectionId).toBe('connection-2')
+    // Why: the committed replacement already retired the incumbent, so only connection-2 is left to displace.
+    expect(session.activeGrant('connection-1')).toBeNull()
   })
 
   it('retries overlapping recovery against the incumbent after publication rolls back', () => {
@@ -299,6 +301,8 @@ describe('PtyConsumerSession', () => {
       ownerLease: first.grant.ownerLease
     })
     expect(retry.displacedOwner?.connectionId).toBe('connection-1')
+    // Why: the rolled-back replacement never published, so it holds no grant the retry could displace.
+    expect(session.activeGrant('connection-2')).toBeNull()
   })
 
   it('types mismatched recovery without disturbing principal or lease ownership', () => {

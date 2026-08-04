@@ -45,6 +45,7 @@ const {
   mockConnectionManager: {
     connect: vi.fn(),
     disconnect: vi.fn(),
+    disconnectConnection: vi.fn(),
     reconnect: vi.fn(),
     getConnection: vi.fn(),
     getState: vi.fn(),
@@ -319,6 +320,7 @@ describe('SSH IPC handlers', () => {
   const createConnectionManagerMock = () => ({
     connect: vi.fn(),
     disconnect: vi.fn(),
+    disconnectConnection: vi.fn(),
     reconnect: vi.fn(),
     getConnection: vi.fn(),
     getState: vi.fn(),
@@ -388,6 +390,7 @@ describe('SSH IPC handlers', () => {
 
     mockConnectionManager.connect.mockReset()
     mockConnectionManager.disconnect.mockReset()
+    mockConnectionManager.disconnectConnection.mockReset().mockResolvedValue(undefined)
     mockConnectionManager.reconnect.mockReset()
     mockConnectionManager.getConnection.mockReset()
     mockConnectionManager.getState.mockReset()
@@ -2030,6 +2033,106 @@ describe('SSH IPC handlers', () => {
 
     await expect(freshConnect).resolves.toMatchObject({ targetId: 'ssh-1', status: 'connected' })
     expect(mockDeployAndLaunchRelay).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the transport a cancelled connect opened after the disconnect finished', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    const lateConn = { id: 'late-transport' }
+    let resolveStaleConnect!: (connection: unknown) => void
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getConnection.mockReturnValue(undefined)
+    mockConnectionManager.connect.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStaleConnect = resolve
+      })
+    )
+    mockConnectionManager.disconnect.mockResolvedValue(undefined)
+
+    const staleConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1))
+    // Why await the whole disconnect: the leak only exists once its teardown has already run, so
+    // nothing else is left to close the transport this attempt opens afterwards.
+    await handlers.get('ssh:disconnect')!(null, { targetId: 'ssh-1' })
+
+    resolveStaleConnect(lateConn)
+
+    await expect(staleConnect).rejects.toThrow('SSH connection attempt was cancelled')
+    expect(mockConnectionManager.disconnectConnection).toHaveBeenCalledWith('ssh-1', lateConn)
+    expect(getActiveMultiplexer('ssh-1')).toBeUndefined()
+  })
+
+  it('closes the transport when establish resumes after the connect was invalidated', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    const conn = { id: 'establishing-transport' }
+    let releaseRelayLaunch = (): void => {}
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getConnection.mockReturnValue(undefined)
+    mockConnectionManager.connect.mockResolvedValue(conn)
+    mockConnectionManager.disconnect.mockResolvedValue(undefined)
+    mockDeployAndLaunchRelay.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseRelayLaunch = () => resolve(createRelayLaunchResult())
+        })
+    )
+
+    const connect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    await vi.waitFor(() => expect(mockDeployAndLaunchRelay).toHaveBeenCalledTimes(1))
+    await handlers.get('ssh:disconnect')!(null, { targetId: 'ssh-1' })
+
+    releaseRelayLaunch()
+
+    await expect(connect).rejects.toThrow('SSH connection attempt was cancelled')
+    expect(mockConnectionManager.disconnectConnection).toHaveBeenCalledWith('ssh-1', conn)
+    expect(getActiveMultiplexer('ssh-1')).toBeUndefined()
+  })
+
+  it('leaves a reused transport to its replacement when the connect is cancelled', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    // Why: connect() hands back the already-open transport, so this attempt never owned it.
+    const sharedConn = { id: 'shared-transport' }
+    let resolveStaleConnect!: (connection: unknown) => void
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getConnection.mockReturnValue(sharedConn)
+    mockConnectionManager.connect.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStaleConnect = resolve
+      })
+    )
+    mockConnectionManager.disconnect.mockResolvedValue(undefined)
+
+    const staleConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1))
+    await handlers.get('ssh:disconnect')!(null, { targetId: 'ssh-1' })
+
+    resolveStaleConnect(sharedConn)
+
+    await expect(staleConnect).rejects.toThrow('SSH connection attempt was cancelled')
+    expect(mockConnectionManager.disconnectConnection).not.toHaveBeenCalled()
   })
 
   it('keeps reconnect behind transport disconnect when forward teardown fails', async () => {

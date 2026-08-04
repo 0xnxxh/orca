@@ -300,7 +300,8 @@ describe('relay PTY consumer owner displacement', () => {
     const firstReconnectClientId = dispatcher.attachClient(
       (data, settle) => {
         firstReconnectWrites.push(Buffer.from(data))
-        firstReconnectSettlement = settle
+        // Why ??=: the test settles the grant response, not whatever frame the dispatcher wrote last.
+        firstReconnectSettlement ??= settle
         return true
       },
       { supportsWriteCallback: true },
