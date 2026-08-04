@@ -640,7 +640,9 @@ export function createMainWindow(
   const doubleTapDetector = new ModifierDoubleTapDetector()
 
   // Why: one mapping of action → IPC/side effect, shared by the keydown and double-tap paths so they can't drift.
-  const sendResolvedWindowShortcutAction = (action: WindowShortcutAction): void => {
+  const sendResolvedWindowShortcutAction = (
+    action: Exclude<WindowShortcutAction, { type: 'toggleWorktreePalette' }>
+  ): void => {
     switch (action.type) {
       // The renderer's DictationController re-checks enabled/sttModel and ignores hold mode, so this path needs no voice guards.
       case 'dictationKeyDown':
