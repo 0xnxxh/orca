@@ -34,13 +34,12 @@ describe('agent map filtering', () => {
     expect(agentMapState(card({ bucket: 'idle', dotState: 'idle' }))).toBe('idle')
   })
 
-  it('applies state, host, and project filters independently', () => {
+  it('applies state and host filters independently', () => {
     const hidden = card({ paneKey: 'hidden', repoId: 'hidden', hostKind: 'ssh', unseen: true })
     const visible = filterAgentMapCards({
       cards: [hidden],
       enabledStates: new Set(['done']),
-      hostFilter: 'ssh',
-      hiddenProjectIds: new Set()
+      hostFilter: 'ssh'
     })
 
     expect(visible).toEqual([hidden])
@@ -48,24 +47,14 @@ describe('agent map filtering', () => {
       filterAgentMapCards({
         cards: [hidden],
         enabledStates: new Set(['idle']),
-        hostFilter: 'ssh',
-        hiddenProjectIds: new Set()
+        hostFilter: 'ssh'
       })
     ).toEqual([])
     expect(
       filterAgentMapCards({
         cards: [hidden],
         enabledStates: new Set(['done']),
-        hostFilter: 'local',
-        hiddenProjectIds: new Set()
-      })
-    ).toEqual([])
-    expect(
-      filterAgentMapCards({
-        cards: [hidden],
-        enabledStates: new Set(['done']),
-        hostFilter: 'ssh',
-        hiddenProjectIds: new Set(['hidden'])
+        hostFilter: 'local'
       })
     ).toEqual([])
   })

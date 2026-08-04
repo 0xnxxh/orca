@@ -142,13 +142,52 @@ describe('AgentKanbanBoard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
     expect(await screen.findByText('0 of 0 agents shown')).toBeInTheDocument()
-    expect(screen.getByText('Agent states')).toBeInTheDocument()
     expect(screen.queryByText('Live containment map')).not.toBeInTheDocument()
-    expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
-    expect(screen.queryByText('Choose what stays visible')).not.toBeInTheDocument()
+    // The map has no rail of its own; its filters live in the shared toolbar.
+    expect(screen.queryByRole('complementary', { name: 'Map filters' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Agent states')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
     expect(screen.getByText('Needs You')).toBeInTheDocument()
+  })
+
+  it('filters the map from the shared toolbar filter, not a rail', async () => {
+    renderBoard([
+      card({ paneKey: 'busy', worktreeName: 'busy-wt', worktreeId: 'w-busy' }),
+      card({
+        paneKey: 'finished',
+        worktreeName: 'done-wt',
+        worktreeId: 'w-done',
+        bucket: 'done',
+        dotState: 'done',
+        finishedAt: 5,
+        unseen: true
+      })
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    expect(await screen.findByText('2 of 2 agents shown')).toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /Working/ }))
+
+    expect(await screen.findByText('1 of 2 agents shown')).toBeInTheDocument()
+    // A muted state counts toward the Filter badge like any other filter. The
+    // open menu hides the trigger from the a11y tree, so read it by its label.
+    expect(screen.getByRole('menu')).toHaveAccessibleName('Filter 1')
+  })
+
+  it('offers agent states only on the map, where no column separates them', async () => {
+    renderBoard([card({ paneKey: 'busy' })])
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+    expect(await screen.findByText('Project')).toBeInTheDocument()
+    expect(screen.queryByText('Agent states')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+
+    expect(await screen.findByText('Agent states')).toBeInTheDocument()
   })
 
   it('keeps the selected map visible beside its terminal panel', async () => {

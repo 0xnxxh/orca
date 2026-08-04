@@ -28,6 +28,7 @@ import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
+import { useAgentMapStateFilter } from './useAgentMapStateFilter'
 
 export type AgentDashboardView = 'map' | 'board'
 
@@ -198,6 +199,7 @@ export function AgentKanbanBoard({
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [filters, setFilters] = useState<DashboardFilters>(EMPTY_DASHBOARD_FILTERS)
+  const { agentStates, toggleAgentState, resetAgentStates } = useAgentMapStateFilter()
   const filteredCards = useMemo(
     () => filterDashboardCards(availableCards, query, filters),
     [availableCards, filters, query]
@@ -368,6 +370,9 @@ export function AgentKanbanBoard({
           onQueryChange={setQuery}
           filters={filters}
           onFiltersChange={setFilters}
+          agentStates={view === 'map' ? agentStates : undefined}
+          onAgentStateToggle={toggleAgentState}
+          onAgentStatesReset={resetAgentStates}
           searchInputRef={searchInputRef}
         />
         {view !== 'board' ? (
@@ -389,6 +394,7 @@ export function AgentKanbanBoard({
                 }
                 compact={dialogCard !== null}
                 selectedPaneKey={dialogCard?.paneKey}
+                enabledStates={agentStates}
                 launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId}
                 workspaceContextMenusEnabled={workspaceContextMenusEnabled}
                 onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}

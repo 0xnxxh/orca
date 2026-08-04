@@ -19,23 +19,19 @@ export function agentMapState(card: DashboardCard): AgentMapState {
 export function filterAgentMapCards({
   cards,
   enabledStates,
-  hostFilter,
-  hiddenProjectIds
+  hostFilter
 }: {
   cards: DashboardCard[]
   enabledStates: ReadonlySet<AgentMapState>
   hostFilter: AgentMapHostFilter
-  hiddenProjectIds: ReadonlySet<string>
 }): DashboardCard[] {
-  return cards.filter((card) => {
-    if (
-      (hostFilter !== 'all' && (card.hostKind ?? 'local') !== hostFilter) ||
-      hiddenProjectIds.has(card.repoId)
-    ) {
-      return false
-    }
-    return enabledStates.has(agentMapState(card))
-  })
+  // Project filtering lives in the shared toolbar filter, which has already
+  // narrowed these cards.
+  return cards.filter(
+    (card) =>
+      (hostFilter === 'all' || (card.hostKind ?? 'local') === hostFilter) &&
+      enabledStates.has(agentMapState(card))
+  )
 }
 
 export function countAgentMapCards(cards: DashboardCard[]): AgentMapCounts {

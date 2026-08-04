@@ -14789,13 +14789,7 @@
         "remote": "Remote"
       },
       "filters": {
-        "title": "Map filters",
-        "control": "Choose what stays visible",
         "showStates": "Agent states",
-        "hidden": "{{count}} agents hidden",
-        "hidden_one": "{{count}} agent hidden",
-        "hidden_other": "{{count}} agents hidden",
-        "showAll": "Show all",
         "canvasSummary": "{{shown}} of {{total}} agents shown"
       },
       "liveContainmentMap": "Live containment map",

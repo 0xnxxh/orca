@@ -11,9 +11,7 @@ import type {
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import type { TuiAgent } from '../../../../shared/types'
 import { AgentMapCanvas, type AgentMapCanvasHandle } from './AgentMapCanvas'
-import { AgentMapFilterRail } from './AgentMapFilterRail'
 import {
-  countAgentMapCards,
   filterAgentMapCards,
   type AgentMapState,
   type AgentMapHostFilter
@@ -28,6 +26,9 @@ type AgentMapProps = {
   className?: string
   compact?: boolean
   selectedPaneKey?: string | null
+  /** Owned by the board so the shared toolbar filter can drive it. Defaults to
+   *  every state, i.e. the map shows whatever it is handed. */
+  enabledStates?: ReadonlySet<AgentMapState>
   launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
@@ -37,7 +38,12 @@ type AgentMapProps = {
 }
 
 const HOST_FILTERS: AgentMapHostFilter[] = ['all', 'local', 'ssh', 'wsl', 'remote']
-const DEFAULT_STATES: AgentMapState[] = ['attention', 'working', 'done', 'idle']
+const ALL_AGENT_STATES: ReadonlySet<AgentMapState> = new Set<AgentMapState>([
+  'attention',
+  'working',
+  'done',
+  'idle'
+])
 
 function hostFilterLabel(filter: AgentMapHostFilter): string {
   switch (filter) {
@@ -61,6 +67,7 @@ export function AgentMap({
   className,
   compact = false,
   selectedPaneKey = null,
+  enabledStates = ALL_AGENT_STATES,
   launchableAgentsByWorktreeId,
   workspaceContextMenusEnabled = false,
   onWorkspaceContextMenuOpenChange,
@@ -71,10 +78,6 @@ export function AgentMap({
   const canvasRef = useRef<AgentMapCanvasHandle>(null)
   const layoutCacheRef = useRef<AgentMapLayoutCache | null>(null)
   const [hostFilter, setHostFilter] = useState<AgentMapHostFilter>('all')
-  const [enabledStates, setEnabledStates] = useState<Set<AgentMapState>>(
-    () => new Set(DEFAULT_STATES)
-  )
-  const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<string>>(() => new Set())
   const hostCounts = useMemo(() => {
     const counts: Record<DashboardCardHostKind, number> = {
       local: 0,
@@ -87,28 +90,14 @@ export function AgentMap({
     }
     return counts
   }, [cards])
-  const projects = useMemo(() => {
-    const byId = new Map<string, { id: string; name: string; count: number }>()
-    for (const card of cards) {
-      const current = byId.get(card.repoId)
-      if (current) {
-        current.count += 1
-      } else {
-        byId.set(card.repoId, { id: card.repoId, name: card.repoName, count: 1 })
-      }
-    }
-    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
-  }, [cards])
-  const counts = useMemo(() => countAgentMapCards(cards), [cards])
   const visibleCards = useMemo(
     () =>
       filterAgentMapCards({
         cards,
         enabledStates,
-        hostFilter,
-        hiddenProjectIds
+        hostFilter
       }),
-    [cards, enabledStates, hiddenProjectIds, hostFilter]
+    [cards, enabledStates, hostFilter]
   )
   const layoutResult = useMemo(
     () => updateAgentMapLayout(layoutCacheRef.current, visibleCards, now),
@@ -119,50 +108,8 @@ export function AgentMap({
   }, [layoutResult.cache])
   const layout = layoutResult.layout
 
-  const toggleState = (state: AgentMapState): void => {
-    setEnabledStates((current) => {
-      const next = new Set(current)
-      if (next.has(state)) {
-        next.delete(state)
-      } else {
-        next.add(state)
-      }
-      return next
-    })
-  }
-  const toggleProject = (projectId: string): void => {
-    setHiddenProjectIds((current) => {
-      const next = new Set(current)
-      if (next.has(projectId)) {
-        next.delete(projectId)
-      } else {
-        next.add(projectId)
-      }
-      return next
-    })
-  }
-  const showAll = (): void => {
-    setEnabledStates(new Set(DEFAULT_STATES))
-    setHiddenProjectIds(new Set())
-    setHostFilter('all')
-  }
-
   return (
     <section className={cn('flex min-h-0 flex-1', className)}>
-      {!compact ? (
-        <AgentMapFilterRail
-          counts={counts}
-          enabledStates={enabledStates}
-          hiddenProjectIds={hiddenProjectIds}
-          projects={projects}
-          totalCount={cards.length}
-          visibleCount={visibleCards.length}
-          onFit={() => canvasRef.current?.fit()}
-          onProjectToggle={toggleProject}
-          onShowAll={showAll}
-          onStateToggle={toggleState}
-        />
-      ) : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-border px-3 py-2">
           <strong className="min-w-0 truncate text-xs">

@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/dashboard-snapshot'
 import type { TuiAgent } from '../../../../shared/types'
 import { AgentMap } from './AgentMap'
+import type { AgentMapState } from './agent-map-filter'
 import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
 
 const NOW = 2_000_000_000
@@ -46,6 +47,7 @@ function renderMap(
     selectedPaneKey = null,
     compact = false,
     workspaceContextMenusEnabled = false,
+    enabledStates,
     launchableAgentsByWorktreeId,
     onSpawnAgent,
     onSleepWorkspace
@@ -54,6 +56,7 @@ function renderMap(
     selectedPaneKey?: string | null
     compact?: boolean
     workspaceContextMenusEnabled?: boolean
+    enabledStates?: ReadonlySet<AgentMapState>
     launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
     onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
     onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
@@ -67,6 +70,7 @@ function renderMap(
       selectedPaneKey={selectedPaneKey}
       compact={compact}
       workspaceContextMenusEnabled={workspaceContextMenusEnabled}
+      enabledStates={enabledStates}
       launchableAgentsByWorktreeId={launchableAgentsByWorktreeId}
       onSpawnAgent={onSpawnAgent}
       onSleepWorkspace={onSleepWorkspace}
@@ -158,7 +162,8 @@ describe('AgentMap', () => {
 
     expect(ring).toHaveClass('is-open')
     expect(screen.queryByRole('button', { name: 'Focus ring' })).not.toBeInTheDocument()
-    expect(screen.getAllByText('Orca')).toHaveLength(2)
+    // The popover names the project; the map itself draws it uppercased.
+    expect(screen.getByText('Orca')).toBeInTheDocument()
     expect(screen.getByText('1 agent · 1 active · 0 done')).toBeInTheDocument()
     expect(screen.getByText('Agent alpha')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: /Agent alpha/ })[1])
@@ -325,12 +330,6 @@ describe('AgentMap', () => {
     expect(viewportCenter()[1]).toBeCloseTo(nodeCenter()[1])
   })
 
-  it('shows map filters at the pop-out default-width breakpoint', () => {
-    renderMap([card()])
-
-    expect(screen.getByRole('complementary', { name: 'Map filters' })).toHaveClass('md:flex')
-  })
-
   it('increases map label scale when users zoom out', () => {
     const { container } = renderMap([card()])
     const labelGroup = container.querySelector('.agent-map-worktree-label')?.parentElement
@@ -441,42 +440,50 @@ describe('AgentMap', () => {
     expect(screen.getByRole('button', { name: /Agent alpha/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /New result/ })).toHaveClass('fleet-status-done')
     expect(screen.getByRole('button', { name: /Seen result/ })).toHaveClass('fleet-status-idle')
-    expect(screen.getByRole('button', { name: /^Done/ })).toHaveTextContent('1')
-    expect(screen.getByRole('button', { name: /^Idle/ })).toHaveTextContent('1')
   })
 
-  it('lets users hide states and projects independently', () => {
-    renderMap([
-      card(),
-      card({
-        paneKey: 'other',
-        conversationName: 'Other project',
-        repoId: 'repo-2',
-        repoName: 'Mobile'
-      })
-    ])
+  it('hides the states the toolbar filter has muted', () => {
+    const done = card({
+      paneKey: 'done',
+      conversationName: 'Done agent',
+      unseen: true,
+      bucket: 'done',
+      dotState: 'done',
+      finishedAt: NOW - 60_000
+    })
+    renderMap([card(), done], { enabledStates: new Set<AgentMapState>(['done']) })
 
-    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
     expect(screen.queryByRole('button', { name: /Agent alpha/ })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
-    fireEvent.click(screen.getByRole('button', { name: /^Mobile/ }))
-    expect(screen.getByRole('button', { name: /Agent alpha/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Other project/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Done agent/ })).toBeInTheDocument()
   })
 
   it('preserves the viewport when filters temporarily empty the map', () => {
-    const { container } = renderMap([card()])
+    const agent = card()
+    const all = new Set<AgentMapState>(['attention', 'working', 'done', 'idle'])
+    const view = renderMap([agent], { enabledStates: all })
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
-    const viewBox = container
+    const viewBox = view.container
       .querySelector<SVGSVGElement>('.agent-map-canvas > svg')!
       .getAttribute('viewBox')
 
-    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
-    expect(container.querySelector('.agent-map-canvas > svg')).not.toBeInTheDocument()
-    expect(screen.getByText('1 agent hidden')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^Working/ }))
+    const onOpenTerminal = vi.fn()
+    view.rerender(
+      <AgentMap
+        cards={[agent]}
+        now={NOW}
+        onOpenTerminal={onOpenTerminal}
+        enabledStates={new Set<AgentMapState>(['done'])}
+      />
+    )
+    expect(view.container.querySelector('.agent-map-canvas > svg')).not.toBeInTheDocument()
+    view.rerender(
+      <AgentMap cards={[agent]} now={NOW} onOpenTerminal={onOpenTerminal} enabledStates={all} />
+    )
 
-    expect(container.querySelector('.agent-map-canvas > svg')).toHaveAttribute('viewBox', viewBox)
+    expect(view.container.querySelector('.agent-map-canvas > svg')).toHaveAttribute(
+      'viewBox',
+      viewBox
+    )
   })
 
   it('preserves the viewport through an empty source snapshot', () => {
