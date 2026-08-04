@@ -250,7 +250,20 @@ describe('WorktreeJumpPalette', () => {
       worktreesByRepo: { 'repo-1': [defaultBranch, feature, folderMain] },
       showSleepingWorkspaces: false,
       browserTabsByWorktree: {
-        feature: [{ id: 'browser-tab-1' }]
+        feature: [
+          {
+            id: 'browser-tab-1',
+            worktreeId: 'feature',
+            url: 'https://example.com',
+            title: 'example.com',
+            loading: false,
+            faviconUrl: null,
+            canGoBack: false,
+            canGoForward: false,
+            loadError: null,
+            createdAt: 0
+          }
+        ]
       }
     })
 
