@@ -8489,7 +8489,9 @@
               "d5c5b47bb9": "update",
               "fb854902d9": "connecting",
               "9a9f8d4910": "Connect Jira Cloud to browse, create, and link issues.",
-              "74f3063026": "{{value0}} site{{value1}} connected"
+              "74f3063026": "{{value0}} site{{value1}} connected",
+              "statusConnected": "Connected",
+              "statusNotConnected": "Not connected"
             }
           }
         },
@@ -9312,7 +9314,9 @@
                 "disconnect_all": "Disconnect",
                 "account_scope_prefix": "Account scope",
                 "2d60ec7921": "Connect a Jira Cloud site with an API token, or a self-hosted Jira with a personal access token or username and password. Credentials are sent to the selected remote runtime and stored there with runtime-supported encryption.",
-                "977e360b71": "Connect a Jira Cloud site with an API token, or a self-hosted Jira with a personal access token or username and password. Credentials are stored locally and encrypted when local runtime storage supports it."
+                "977e360b71": "Connect a Jira Cloud site with an API token, or a self-hosted Jira with a personal access token or username and password. Credentials are stored locally and encrypted when local runtime storage supports it.",
+                "statusConnected": "Connected",
+                "statusNotConnected": "Not connected"
               }
             }
           }
@@ -9353,7 +9357,13 @@
                   "63a7f47392": "ORCA_BITBUCKET_EMAIL",
                   "24ac1c69dc": "Bitbucket status is not available in this runtime yet.",
                   "a924e8dcd1": "Pull requests and build statuses via Bitbucket Cloud API tokens.",
-                  "0fa5629dad": "Pull requests and build statuses"
+                  "0fa5629dad": "Pull requests and build statuses",
+                  "statusConnected": "Connected",
+                  "statusUnavailable": "Unavailable",
+                  "statusNotConfigured": "Not configured",
+                  "statusAuthFailed": "Auth failed",
+                  "statusConfigured": "Configured",
+                  "statusOptionalSetup": "Optional setup"
                 }
               }
             }
