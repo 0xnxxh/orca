@@ -24,6 +24,8 @@ export type MobileNativeChatSession = {
   hasMore: boolean
   /** Whether an older-history page is currently loading. */
   loadingEarlier: boolean
+  /** Set when the last older-history page failed; retry via `loadEarlier`. */
+  loadEarlierError: string | null
   /** Grow the window to page in older history. */
   loadEarlier: () => void
 }
@@ -35,6 +37,8 @@ const EMPTY_MESSAGES: NativeChatMessage[] = []
 const INITIAL_LIMIT = 40
 const PAGE = 60
 const MAX_MESSAGES = 2000
+
+const LOAD_EARLIER_ERROR = 'Couldn’t load earlier messages'
 
 type ReadSessionResult =
   | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
@@ -81,6 +85,7 @@ export function useMobileNativeChatSession(args: {
   const [error, setError] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const [loadEarlierError, setLoadEarlierError] = useState<string | null>(null)
   const loadingEarlierRef = useRef(false)
   const beforeOffsetRef = useRef<number | null>(null)
   // Stateful id-dedup merger: caches the id→index map so each live append frame
@@ -108,6 +113,7 @@ export function useMobileNativeChatSession(args: {
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
     setLoadingEarlier(false)
+    setLoadEarlierError(null)
     setList([])
     setError(undefined)
     setHasMore(false)
@@ -140,6 +146,8 @@ export function useMobileNativeChatSession(args: {
           limitRef.current = INITIAL_LIMIT
           loadingEarlierRef.current = false
           setLoadingEarlier(false)
+          // The fresh window supersedes the failed page, so stop blocking paging.
+          setLoadEarlierError(null)
         }
         const replaceSnapshot = frame.type === 'snapshot'
         const applied = applyMobileNativeChatStreamFrame({
@@ -198,6 +206,9 @@ export function useMobileNativeChatSession(args: {
     const beforeOffset = beforeOffsetRef.current
     loadingEarlierRef.current = true
     setLoadingEarlier(true)
+    setLoadEarlierError(null)
+    const requestIsCurrent = (): boolean =>
+      sessionIdRef.current === requestSessionId && streamGenerationRef.current === requestGeneration
     void (async () => {
       try {
         const response = await client.sendRequest('nativeChat.readSession', {
@@ -207,18 +218,17 @@ export function useMobileNativeChatSession(args: {
           ...(beforeOffset === null ? {} : { beforeOffset }),
           ...(transcriptPath ? { transcriptPath } : {})
         })
-        if (!response.ok) {
-          return
-        }
-        const result = response.result as ReadSessionResult
-        if ('error' in result) {
+        const result = response.ok ? (response.result as ReadSessionResult) : null
+        if (!result || 'error' in result) {
+          // Surface the failed page: doing nothing silently reads as a dead
+          // scroll, and the header row is the only retry affordance.
+          if (requestIsCurrent()) {
+            setLoadEarlierError(LOAD_EARLIER_ERROR)
+          }
           return
         }
         // Drop a stale resolve from a session that swapped underneath us.
-        if (
-          sessionIdRef.current !== requestSessionId ||
-          streamGenerationRef.current !== requestGeneration
-        ) {
+        if (!requestIsCurrent()) {
           return
         }
         limitRef.current = nextLimit
@@ -233,12 +243,15 @@ export function useMobileNativeChatSession(args: {
           setList(result.messages)
           setHasMore(result.messages.length >= nextLimit)
         }
+      } catch {
+        // A rejected transport request (disconnect mid-page) is a failed page too;
+        // without this it also escaped as an unhandled rejection.
+        if (requestIsCurrent()) {
+          setLoadEarlierError(LOAD_EARLIER_ERROR)
+        }
       } finally {
         // A late page from a prior tab must not unlock the current tab's request.
-        if (
-          sessionIdRef.current === requestSessionId &&
-          streamGenerationRef.current === requestGeneration
-        ) {
+        if (requestIsCurrent()) {
           loadingEarlierRef.current = false
           setLoadingEarlier(false)
         }
@@ -255,6 +268,7 @@ export function useMobileNativeChatSession(args: {
     error,
     hasMore,
     loadingEarlier,
+    loadEarlierError,
     loadEarlier
   }
 }

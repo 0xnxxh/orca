@@ -54,6 +54,9 @@ type Props = {
   streaming: string | null
   hasMore?: boolean
   loadingEarlier?: boolean
+  /** Last older-history page failed; shows an inline retry in the header row and
+   *  stops the near-top scroll trigger from re-firing against the same failure. */
+  loadEarlierError?: string | null
   onLoadEarlier?: () => void
   onSend: (text: string) => Promise<boolean>
   /** Optimistic queued sends (owned by the route so they survive view switches). */
@@ -113,6 +116,7 @@ export function MobileNativeChatView({
   streaming,
   hasMore,
   loadingEarlier,
+  loadEarlierError,
   onLoadEarlier,
   onSend,
   pending,
@@ -213,12 +217,14 @@ export function MobileNativeChatView({
       const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
       const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
       setAtBottom(distanceFromBottom < 80)
-      // Near the top — page in older history.
-      if (contentOffset.y < 60 && hasMore && !loadingEarlier) {
+      // Near the top — page in older history. A failed page stops this: the user
+      // stays near the top, so every later scroll frame would re-fire the same
+      // doomed request. Only the header's explicit retry clears it.
+      if (contentOffset.y < 60 && hasMore && !loadingEarlier && !loadEarlierError) {
         onLoadEarlier?.()
       }
     },
-    [hasMore, loadingEarlier, onLoadEarlier]
+    [hasMore, loadingEarlier, loadEarlierError, onLoadEarlier]
   )
 
   // Align a single message's top to the top of the viewport.
@@ -302,9 +308,20 @@ export function MobileNativeChatView({
                     style={styles.loadEarlier}
                     onPress={onLoadEarlier}
                     disabled={loadingEarlier}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      loadEarlierError
+                        ? `${loadEarlierError}. Tap to retry`
+                        : 'Load earlier messages'
+                    }
                   >
                     {loadingEarlier ? (
                       <ActivityIndicator size="small" color={colors.textMuted} />
+                    ) : loadEarlierError ? (
+                      <>
+                        <Text style={styles.loadEarlierErrorText}>{loadEarlierError}</Text>
+                        <Text style={styles.loadEarlierRetryText}>Tap to retry</Text>
+                      </>
                     ) : (
                       <Text style={styles.loadEarlierText}>Load earlier messages</Text>
                     )}

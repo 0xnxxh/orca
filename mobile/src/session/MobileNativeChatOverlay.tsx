@@ -73,6 +73,7 @@ export function MobileNativeChatOverlay({
         onOpenFile={controller.handleNativeChatOpenFile}
         hasMore={session.hasMore}
         loadingEarlier={session.loadingEarlier}
+        loadEarlierError={session.loadEarlierError}
         onLoadEarlier={session.loadEarlier}
         onSend={images.sendNativeChat}
         pending={controller.chatPending}

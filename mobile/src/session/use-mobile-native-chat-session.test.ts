@@ -174,6 +174,144 @@ describe('useMobileNativeChatSession', () => {
     }
   )
 
+  it('surfaces a failed older-history page and clears it on a retry', async () => {
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'offline' })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { messages: [message('older')], hasMore: false, beforeOffset: 0 }
+      })
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`window-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.loadEarlierError).toBe('Couldn’t load earlier messages')
+    expect(state?.loadingEarlier).toBe(false)
+    // The failure must not consume the page budget — the retry asks for the same
+    // cursor, not the one after it.
+    expect(state?.hasMore).toBe(true)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.loadEarlierError).toBeNull()
+    expect(state?.messages.map((entry) => entry.id)[0]).toBe('older')
+    expect(sendRequest.mock.calls[1]?.[1]).toEqual(sendRequest.mock.calls[0]?.[1])
+  })
+
+  it('surfaces an error result from an older-history page', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ ok: true, result: { error: 'read failed' } })
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`window-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+
+    expect(state?.loadEarlierError).toBe('Couldn’t load earlier messages')
+  })
+
+  it('surfaces a rejected older-history request instead of leaking it', async () => {
+    const sendRequest = vi.fn().mockRejectedValue(new Error('disconnected'))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`window-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+
+    expect(state?.loadEarlierError).toBe('Couldn’t load earlier messages')
+    expect(state?.loadingEarlier).toBe(false)
+  })
+
+  it('drops a failure from a page the session swapped out from under', async () => {
+    let rejectEarlier: (reason: unknown) => void = () => {}
+    const sendRequest = vi.fn(
+      () => new Promise((_resolve, reject) => (rejectEarlier = reject))
+    ) as unknown as RpcClient['sendRequest']
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`window-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    act(() => state?.loadEarlier())
+
+    await act(async () =>
+      emit({ type: 'replacement', messages: [message('fresh')], hasMore: true, beforeOffset: 0 })
+    )
+    await act(async () => {
+      rejectEarlier(new Error('disconnected'))
+      await Promise.resolve()
+    })
+
+    // The fresh window already superseded that page; a stale failure must not
+    // block paging on it.
+    expect(state?.loadEarlierError).toBeNull()
+  })
+
+  it('clears a surfaced failure when an authoritative window replaces the transcript', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ ok: false, error: 'offline' })
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`window-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.loadEarlierError).toBe('Couldn’t load earlier messages')
+
+    await act(async () =>
+      emit({ type: 'replacement', messages: [message('fresh')], hasMore: true, beforeOffset: 0 })
+    )
+
+    expect(state?.loadEarlierError).toBeNull()
+  })
+
   it('rejects a cursor page invalidated by live trim and retries with a growing tail', async () => {
     let resolveCursorPage: (response: unknown) => void = () => {}
     const sendRequest = vi
