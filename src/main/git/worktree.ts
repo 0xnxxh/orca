@@ -7,6 +7,12 @@ import {
 } from '../../shared/git-branch-cleanup'
 import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
 import { withSpan } from '../observability/tracer'
+import { withWorktreeRemoveStageSpan } from '../observability/instrumentation'
+import {
+  moveWorktreeDirectoryToTrash,
+  restoreWorktreeDirectoryFromTrash,
+  scheduleWorktreeTrashDeletion
+} from '../worktree-trash'
 import type {
   GitWorktreeInfo,
   LocalBaseRefRefreshResult,
@@ -1131,23 +1137,27 @@ async function performRemoveWorktree(
   // Why: callers outside the IPC/runtime preflight must not bypass Git's lock contract or rely on localized stderr after side effects.
   assertWorktreeUnlockedForRemoval(removedWorktree)
 
-  const args = ['worktree', 'remove']
-  if (force) {
-    args.push('--force')
-  }
-  args.push(worktreePath)
-  try {
-    await gitExecFileAsync(args, gitExecOptions(repoPath, options))
-  } catch (error) {
-    if (force || !isSubmoduleWorktreeRemovalRefusal(error)) {
-      throw error
+  if (
+    !(await tryRemoveWorktreeWithDeferredDirectoryDeletion(repoPath, worktreePath, force, options))
+  ) {
+    const args = ['worktree', 'remove']
+    if (force) {
+      args.push('--force')
     }
-    // Why: Git refuses non-force removal of a worktree with an initialised submodule even when clean; re-prove cleanliness, then --force.
-    await assertWorktreeCleanForRemoval(worktreePath, false, options)
-    await gitExecFileAsync(
-      ['worktree', 'remove', '--force', worktreePath],
-      gitExecOptions(repoPath, options)
-    )
+    args.push(worktreePath)
+    try {
+      await gitExecFileAsync(args, gitExecOptions(repoPath, options))
+    } catch (error) {
+      if (force || !isSubmoduleWorktreeRemovalRefusal(error)) {
+        throw error
+      }
+      // Why: Git refuses non-force removal of a worktree with an initialised submodule even when clean; re-prove cleanliness, then --force.
+      await assertWorktreeCleanForRemoval(worktreePath, false, options)
+      await gitExecFileAsync(
+        ['worktree', 'remove', '--force', worktreePath],
+        gitExecOptions(repoPath, options)
+      )
+    }
   }
 
   if (!branchName) {
@@ -1162,6 +1172,78 @@ async function performRemoveWorktree(
   return withSpan('worktree.remove.branch_delete', () =>
     deleteBranchAfterWorktreeRemoval(repoPath, branchName, branchHead, options)
   )
+}
+
+/**
+ * Rename the checkout into a sibling trash directory and clear Git's registration for the
+ * now-missing path, so the multi-GB recursive delete runs after this removal has returned.
+ * Returns false when the caller must let `git worktree remove` delete the directory inline.
+ */
+async function tryRemoveWorktreeWithDeferredDirectoryDeletion(
+  repoPath: string,
+  worktreePath: string,
+  force: boolean,
+  options: RemoveWorktreeOptions
+): Promise<boolean> {
+  // Why: WSL-owned checkouts are deleted inside the distro, so Node on Windows must not rename them.
+  if (options.wslDistro) {
+    return false
+  }
+  if (!force) {
+    try {
+      // Why: `git worktree remove` re-checks cleanliness as it removes; prove the same thing here or leave removal to Git.
+      await assertWorktreeCleanForRemoval(worktreePath, false, options)
+    } catch {
+      return false
+    }
+  }
+
+  const trashPath = await withWorktreeRemoveStageSpan('trash_rename', 'local', () =>
+    moveWorktreeDirectoryToTrash(worktreePath)
+  )
+  if (!trashPath) {
+    return false
+  }
+  try {
+    await clearGitRegistrationForMissingWorktree(repoPath, worktreePath, options)
+  } catch (error) {
+    // Why: put the checkout back so the in-place removal below still sees the worktree Git registered.
+    if (await restoreWorktreeDirectoryFromTrash(trashPath, worktreePath)) {
+      return false
+    }
+    throw error
+  }
+  scheduleWorktreeTrashDeletion(trashPath)
+  return true
+}
+
+async function clearGitRegistrationForMissingWorktree(
+  repoPath: string,
+  worktreePath: string,
+  options: RemoveWorktreeOptions
+): Promise<void> {
+  try {
+    // Removing an already-missing directory is accepted back to the Git 2.25 baseline and touches only this entry.
+    await gitExecFileAsync(
+      ['worktree', 'remove', '--force', worktreePath],
+      gitExecOptions(repoPath, options)
+    )
+    return
+  } catch (error) {
+    console.warn(
+      `[git] Failed to deregister the moved worktree "${worktreePath}"; pruning instead`,
+      error
+    )
+  }
+
+  await gitExecFileAsync(['worktree', 'prune'], gitExecOptions(repoPath, options))
+  // Strict (not the shared scan): an unreadable repo must not read as proof that the row is gone.
+  const stillRegistered = (await listWorktreesStrict(repoPath, options)).some((worktree) =>
+    areWorktreePathsEqual(worktree.path, worktreePath)
+  )
+  if (stillRegistered) {
+    throw new Error(`Git still reports a registration for "${worktreePath}" after pruning it.`)
+  }
 }
 
 async function deleteBranchAfterWorktreeRemoval(
