@@ -7,10 +7,6 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { foldToolMessages } from './mobile-native-chat-blocks'
 import { normalizeImageTranscriptMessages } from './mobile-native-chat-image-transcript-markers'
 import { stripNoiseMessages } from './mobile-native-chat-noise'
-import {
-  createMobileNativeChatStreamingGate,
-  deriveMobileNativeChatStreaming
-} from './mobile-native-chat-streaming-gate'
 import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
 
 /** The centered empty-state copy for a chat with no messages, mirroring the
@@ -47,36 +43,15 @@ export type MobileNativeChatPendingItem = {
   images?: string[]
 }
 
-/** Derive the list data from the raw transcript: fold tool turns into the
- *  assistant turn, optionally append a synthetic streaming bubble, then the
- *  route-owned optimistic "queued" messages at the tail. Returns the
- *  intermediate `folded`/`streaming` so the caller can memoize on them.
- *  One-shot form: derives the streaming bubble through a fresh gate (no
- *  cross-tick memory); the live view threads its own gate instead. */
-export function buildMobileNativeChatData({
-  messages,
-  streamingText,
-  pending
-}: {
-  messages: NativeChatMessage[]
-  streamingText?: string
-  pending: MobileNativeChatPendingItem[]
-}): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
-  const folded = foldMobileNativeChatMessages(messages)
-  const { streaming } = deriveMobileNativeChatStreaming(
-    createMobileNativeChatStreamingGate(),
-    folded,
-    streamingText
-  )
-  return buildMobileNativeChatTransientData({ folded, streaming, pending })
-}
-
 export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): NativeChatMessage[] {
   // Normalize first (desktop assembler parity): image marker turns fold into
   // image-ref blocks instead of rendering as raw `[Image: …]` text.
   return foldToolMessages(stripNoiseMessages(normalizeImageTranscriptMessages(messages)))
 }
 
+/** Assemble the list data the chat renders: the folded transcript, then a
+ *  synthetic bubble for the streaming text the gate let through, then the
+ *  route-owned optimistic "queued" messages at the tail. */
 export function buildMobileNativeChatTransientData({
   folded,
   streaming,

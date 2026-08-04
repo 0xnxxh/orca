@@ -106,6 +106,47 @@ describe('deriveMobileNativeChatStreaming', () => {
     expect(results).toEqual([null, 'Done.', null, null])
   })
 
+  it('hides a reply whose own turn landed before its status text arrived', () => {
+    // The pane stays `working` past the reply (a subagent or a background task
+    // is still live), and the transcript push beats the throttled status text.
+    // Anchoring on that textless tick would adopt the reply as pre-stream
+    // history and render it a second time as a bubble.
+    const prior = [assistant('a1', 'Done.')]
+    const landed = [...prior, assistant('a2', 'Done.')]
+    const { results } = run([
+      { folded: prior, live: true },
+      { folded: landed, live: true },
+      { folded: landed, text: 'Done.', live: true },
+      { folded: landed, text: 'Done.', live: true }
+    ])
+    expect(results).toEqual([null, null, null, null])
+  })
+
+  it('keeps the pre-stream baseline across a hidden gap taken between turns', () => {
+    // Peeking at the terminal while idle tears the transcript down to empty. An
+    // empty tail is not history: adopting it strands the baseline and swallows
+    // the repeated-prefix reply that arrives next.
+    const prior = [assistant('a1', 'Done.')]
+    const { results } = run([
+      { folded: prior },
+      { folded: [] },
+      { folded: [], live: true },
+      { folded: prior, text: 'Done.', live: true }
+    ])
+    expect(results).toEqual([null, null, null, 'Done.'])
+  })
+
+  it('anchors on the first tail it sees when mounted mid-turn', () => {
+    // Opening a workspace whose agent is already working: that first textless
+    // tick is the only pre-stream history the gate will ever get.
+    const prior = [assistant('a1', 'Done.')]
+    const { results } = run([
+      { folded: prior, live: true },
+      { folded: prior, text: 'Done.', live: true }
+    ])
+    expect(results).toEqual([null, 'Done.'])
+  })
+
   it('anchors on a textless tick once the turn ends', () => {
     const prior = [assistant('a1', 'first answer')]
     const landed = [...prior, assistant('a2', 'second answer')]
@@ -131,9 +172,9 @@ describe('deriveMobileNativeChatStreaming', () => {
     expect(results).toEqual([null, 'part one', null, 'part'])
   })
 
-  it('falls back to suppress-on-prefix when mounted mid-stream', () => {
-    // No idle tick ever observed: a duplicate bubble is worse than briefly
-    // hiding a mount-coincident repeated reply.
+  it('falls back to suppress-on-prefix when text arrives on the first tick', () => {
+    // No tail ever observed before the text: a duplicate bubble is worse than
+    // briefly hiding a mount-coincident repeated reply.
     const landed = [assistant('a1', 'flushed part still streaming in status')]
     const { results } = run([{ folded: landed, text: 'flushed part' }])
     expect(results).toEqual([null])

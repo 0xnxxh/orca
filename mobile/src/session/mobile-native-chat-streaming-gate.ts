@@ -13,8 +13,8 @@ export type MobileNativeChatStreamingGate = {
   /** Streamed text seen on the previous tick ('' while idle). */
   prevText: string
   /** Folded tail message id when the current segment began; null while the
-   *  gate has never observed an idle tick (mounted mid-stream), where the
-   *  legacy suppress-on-prefix rule applies. */
+   *  gate has never observed a transcript tail (text arrived on its very first
+   *  tick), where the legacy suppress-on-prefix rule applies. */
   baselineTailId: string | null
 }
 
@@ -68,23 +68,23 @@ export function deriveMobileNativeChatStreaming(
   const tail = folded.at(-1)
   const tailId = tail?.id ?? null
   if (!text) {
-    if (options.streamLive && scopedGate.prevText !== '') {
-      // A gap inside a live segment (chat hidden, transcript reloading, throttle
-      // not caught up): re-anchoring here would adopt the reply that just landed
-      // as pre-stream history and render it a second time as a bubble.
-      return { gate: scopedGate, streaming: null }
-    }
-    // Idle: keep anchoring the baseline to the live tail so the next segment
-    // knows which tail predates it.
-    return { gate: advanceGate(scopedGate, '', tailId), streaming: null }
+    // Only a textless tick that carries a real tail and is outside a live turn
+    // is trustworthy pre-stream history. Mid-turn gaps (a tool call, a throttle
+    // lull, the transcript landing the reply before its status text) would
+    // otherwise adopt that reply as history and render it a second time as a
+    // bubble; a torn-down transcript carries no tail at all. The exception is a
+    // gate that has never anchored — mounted mid-turn, the first real tail it
+    // sees is the best pre-stream history it will ever get.
+    const canAnchor = tailId !== null && (!options.streamLive || scopedGate.baselineTailId === null)
+    return { gate: canAnchor ? advanceGate(scopedGate, '', tailId) : scopedGate, streaming: null }
   }
   // A stream that is not an extension of the previous tick is a new segment
   // (next reply part); re-anchor to the tail that predates it.
   const segmentStart = scopedGate.prevText !== '' && !text.startsWith(scopedGate.prevText)
   const baselineTailId = segmentStart ? tailId : scopedGate.baselineTailId
   const tailLeadsWithStream = assistantTailText(tail).startsWith(text)
-  // A null baseline (mounted mid-stream, never saw an idle tick) is unequal to
-  // every real tail id, so this degrades to the legacy suppress-on-prefix rule.
+  // A null baseline (text on the very first tick, no tail ever seen) is unequal
+  // to every real tail id, so this degrades to the legacy suppress-on-prefix rule.
   const caughtUp = tailLeadsWithStream && tailId !== baselineTailId
   return {
     gate: advanceGate(scopedGate, text, baselineTailId),

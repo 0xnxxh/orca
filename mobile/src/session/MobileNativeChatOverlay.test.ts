@@ -145,6 +145,21 @@ describe('MobileNativeChatOverlay streaming gate', () => {
     expect(streaming()).toBe('Done.')
   })
 
+  it('keeps the bubble across a peek at the terminal taken between turns', async () => {
+    // Same toggle, but taken while idle: the transcript empties before the next
+    // turn starts, so the gate has to reject that empty tail as a baseline.
+    const prior = [assistantTurn('a1', 'Done.')]
+    await render({ messages: prior })
+
+    await update({ show: false, messages: [] })
+    await update({ show: false, messages: [], streamLive: true })
+    await update({ messages: [], streamLive: true })
+    await update({ messages: [], streamingText: 'Done.', streamLive: true })
+    await update({ messages: prior, streamingText: 'Done.', streamLive: true })
+
+    expect(streaming()).toBe('Done.')
+  })
+
   it('hides a repeated part whose own turn landed during a mid-turn gap', async () => {
     // Between parts the status frame carries no assistant text (a tool call), so
     // the stream goes textless while the turn is still live and the part that

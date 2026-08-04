@@ -47,8 +47,12 @@ vi.mock('./use-mobile-native-chat-drafts', () => ({
 vi.mock('./use-mobile-native-chat-prompts', () => ({
   useMobileNativeChatPrompts: () => ({ permission: null, question: null, ask: null })
 }))
+const answerSendArgs: { streamIdentity?: string }[] = []
 vi.mock('./use-mobile-native-chat-answer-send', () => ({
-  useMobileNativeChatAnswerSend: () => ({ answerAsk: vi.fn(), cancelPending: vi.fn() })
+  useMobileNativeChatAnswerSend: (args: { streamIdentity?: string }) => {
+    answerSendArgs.push(args)
+    return { answerAsk: vi.fn(), cancelPending: vi.fn() }
+  }
 }))
 vi.mock('./mobile-native-chat-permission-send', () => ({
   useMobileNativeChatPermissionSend: () => vi.fn()
@@ -499,5 +503,21 @@ describe('useMobileNativeChatController streaming scope', () => {
     expect(controller?.nativeChatAgentWorking).toBe(false)
     expect(controller?.nativeChatStreamScopeKey).toBe(scopeKey)
     expect(controller?.nativeChatStreamLive).toBe(true)
+  })
+
+  it('keeps the delayed-send route guard view-gated, unlike the stream scope', () => {
+    // `streamIdentity` fences a delayed answer/stop to the route it was armed
+    // on, so it must still drop its session when chat closes — the scope key is
+    // the one that has to survive the toggle. Same string while chat is open.
+    const before = answerSendArgs.at(-1)?.streamIdentity
+    expect(before).toBe(controller?.nativeChatStreamScopeKey)
+
+    viewMode.isTabChatView = () => false
+    act(() => renderer?.update(createElement(Harness)))
+
+    const after = answerSendArgs.at(-1)?.streamIdentity
+    expect(after).not.toBe(before)
+    expect(after).not.toContain('session-1')
+    expect(controller?.nativeChatStreamScopeKey).toBe(before)
   })
 })
