@@ -74,6 +74,21 @@ describe('detectFilePathSegments', () => {
     expect(detectFilePathSegments('/repo/src/index.ts')).toEqual([
       { type: 'file', value: '/repo/src/index.ts', path: '/repo/src/index.ts' }
     ])
+    expect(detectFilePathSegments('/root.ts')).toEqual([
+      { type: 'file', value: '/root.ts', path: '/root.ts' }
+    ])
+  })
+
+  it('detects files directly under explicit Windows and relative roots', () => {
+    expect(detectFilePathSegments(String.raw`C:\root.ts`)).toEqual([
+      { type: 'file', value: String.raw`C:\root.ts`, path: String.raw`C:\root.ts` }
+    ])
+    expect(detectFilePathSegments('./root.ts')).toEqual([
+      { type: 'file', value: './root.ts', path: 'root.ts' }
+    ])
+    expect(detectFilePathSegments('../root.ts')).toEqual([
+      { type: 'file', value: '../root.ts', path: '../root.ts' }
+    ])
   })
 
   it('detects paths with :line and :line:col suffixes', () => {

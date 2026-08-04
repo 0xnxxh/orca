@@ -87,7 +87,7 @@ const EXTENSION_SET = new Set<string>(FILE_EXTENSIONS)
 // alternatives cover Windows drives, UNC, and POSIX absolute roots; the optional
 // tail captures agent-style :line(:col) citations.
 const CANDIDATE_PATTERN =
-  /(?:[A-Za-z]:[\\/]|\\\\|[\\/])?(?:\.{1,2}[\\/])?(?:[\w.@~+-]+[\\/])+[\w.@+-]+\.[A-Za-z0-9]+(?::[1-9]\d*(?::[1-9]\d*)?)?/g
+  /(?:(?:[A-Za-z]:[\\/]|\\\\|[\\/]|\.{1,2}[\\/])(?:[\w.@~+-]+[\\/])*|(?:[\w.@~+-]+[\\/])+)[\w.@+-]+\.[A-Za-z0-9]+(?::[1-9]\d*(?::[1-9]\d*)?)?/g
 
 // A path candidate in chat prose is short; a much longer run can't hold one worth
 // linkifying but can push CANDIDATE_PATTERN into super-linear backtracking, so we
