@@ -303,9 +303,8 @@ export function MobileNativeChatView({
               contentContainerStyle={styles.listContent}
               onScroll={onScroll}
               scrollEventThrottle={32}
-              // Anchor the viewport to the first visible row so a loadEarlier
-              // prepend grows the list upward instead of jumping the reader.
-              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              // Skip the load-earlier header so the first visible message stays anchored.
+              maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
               onContentSizeChange={() => {
                 if (data.length > 0 && atBottom && !keepHistoryPosition) {
                   listRef.current?.scrollToEnd({ animated: false })
