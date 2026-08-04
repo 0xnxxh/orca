@@ -10,7 +10,7 @@ export type CoordinatorRuntime = {
     worktreeSelector?: string,
     limit?: number
   ): Promise<{
-    terminals: { handle: string; worktreeId: string; connected: boolean; writable: boolean }[]
+    terminals: { handle: string; worktreeId: string; connected: boolean; writable?: boolean }[]
   }>
   createTerminal(
     worktreeSelector?: string,
@@ -501,7 +501,9 @@ export class Coordinator {
             t.handle !== this.opts.coordinatorHandle &&
             !busyHandles.has(t.handle) &&
             t.connected &&
-            t.writable
+            // Why: absent means the runtime makes no claim beyond `connected`
+            // (record-backed entry); only an explicit `false` disqualifies.
+            t.writable !== false
         )
         .map((t) => t.handle)
     } catch {

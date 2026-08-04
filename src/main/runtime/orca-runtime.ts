@@ -14851,7 +14851,11 @@ export class OrcaRuntimeService {
   async listTerminals(
     worktreeSelector?: string,
     limit = DEFAULT_TERMINAL_LIST_LIMIT,
-    opts: { handles?: readonly string[]; requireFreshPtyLiveness?: boolean } = {}
+    opts: {
+      handles?: readonly string[]
+      requireFreshPtyLiveness?: boolean
+      includeVisualLayouts?: boolean
+    } = {}
   ): Promise<RuntimeTerminalListResult> {
     if (!Number.isInteger(limit) || limit <= 0) {
       throw new Error('invalid_limit')
@@ -14968,11 +14972,12 @@ export class OrcaRuntimeService {
       ? terminals.filter((terminal) => requestedHandles.has(terminal.handle))
       : terminals
     const listedTerminals = matchingTerminals.slice(0, limit)
-    const visualLayouts = this.buildTerminalVisualLayouts(
-      listedTerminals,
-      worktreesById,
-      targetWorktreeId
-    )
+    // Why: undefined (pre-flag client) must still get layouts; only an explicit
+    // `false` opts out.
+    const visualLayouts =
+      opts.includeVisualLayouts === false
+        ? []
+        : this.buildTerminalVisualLayouts(listedTerminals, worktreesById, targetWorktreeId)
 
     return {
       terminals: listedTerminals,
@@ -15963,6 +15968,9 @@ export class OrcaRuntimeService {
       return {
         ...summary,
         preview,
+        // Why: mirrors terminal.send's PTY gate exactly (connected only —
+        // orphaned handles still accept writes and adoption re-attaches them).
+        writable: pty.pty.connected,
         tabId: pty.pty.tabId ?? pty.record.tabId,
         leafId: parsePaneKey(pty.pty.paneKey ?? '')?.leafId ?? pty.record.leafId,
         paneRuntimeId: -1,
@@ -15985,6 +15993,7 @@ export class OrcaRuntimeService {
     return {
       ...summary,
       preview,
+      writable: leaf.writable,
       paneRuntimeId: leaf.paneRuntimeId,
       ptyId: leaf.ptyId,
       rendererGraphEpoch: this.rendererGraphEpoch
@@ -30582,7 +30591,9 @@ export class OrcaRuntimeService {
       leafId: orphaned ? `pty:${pty.ptyId}` : pane.leafId,
       title: getLatestPtyTitle(pty),
       connected: pty.connected,
-      writable: pty.connected,
+      // Why: no `writable` — for a PTY record it would only restate `connected`,
+      // which is exactly what terminal.send gates on. Callers needing the claim
+      // use terminal.show.
       lastOutputAt: pty.lastOutputAt,
       preview: pty.preview
     }

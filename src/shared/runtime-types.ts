@@ -448,7 +448,9 @@ export type RuntimeTerminalSummary = {
   leafId: string
   title: string | null
   connected: boolean
-  writable: boolean
+  // Why: only graph-backed entries can claim writability independently of
+  // `connected`; record-backed (PTY) entries omit it rather than restate it.
+  writable?: boolean
   lastOutputAt: number | null
   preview: string
 }
@@ -575,6 +577,9 @@ export type RuntimeWorktreeTerminalSleepResult = {
 )
 
 export type RuntimeTerminalShow = RuntimeTerminalSummary & {
+  // Why: `terminal show` always states writability — exactly what terminal.send's
+  // gate enforces, so the two can never disagree.
+  writable: boolean
   paneRuntimeId: number
   ptyId: string | null
   rendererGraphEpoch: number

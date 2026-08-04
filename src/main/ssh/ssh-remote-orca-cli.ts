@@ -188,7 +188,9 @@ async function dispatchRemoteCli(
     case 'terminal list':
       return await call(dispatcher, 'terminal.list', {
         worktree: optionalRemoteCliString(parsed.flags, 'worktree'),
-        limit: optionalRemoteCliNumber(parsed.flags, 'limit')
+        limit: optionalRemoteCliNumber(parsed.flags, 'limit'),
+        // Why: only the human formatter renders layouts; --json ships and discards them.
+        includeVisualLayouts: !parsed.flags.has('json')
       })
     case 'orchestration send': {
       const type = optionalRemoteCliString(parsed.flags, 'type')

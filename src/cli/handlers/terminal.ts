@@ -55,7 +55,9 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
   'terminal list': async ({ flags, client, cwd, json }) => {
     const result = await client.call<RuntimeTerminalListResult>('terminal.list', {
       worktree: await getOptionalWorktreeSelector(flags, 'worktree', cwd, client),
-      limit: getOptionalPositiveIntegerFlag(flags, 'limit')
+      limit: getOptionalPositiveIntegerFlag(flags, 'limit'),
+      // Why: only the human formatter renders layouts; --json ships and discards them.
+      includeVisualLayouts: !json
     })
     printResult(result, json, formatTerminalList)
   },

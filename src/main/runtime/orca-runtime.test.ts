@@ -20759,6 +20759,51 @@ describe('OrcaRuntimeService', () => {
     ).rejects.toThrow('terminal_topology_conflict')
   })
 
+  it('never claims writable for an orphaned listing entry, and keeps show aligned with the send gate', async () => {
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [TEST_WORKTREE_ID]: [] }
+    })
+    const runtime = new OrcaRuntimeService({ ...runtimeStore, flushOrThrow: vi.fn() } as never)
+    const writes: [string, string][] = []
+    runtime.setPtyController({
+      write: (ptyId: string, data: string) => {
+        writes.push([ptyId, data])
+        return true
+      },
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [
+        {
+          id: 'pty-orphan',
+          incarnationId: 'inc-orphan',
+          terminalHandle: 'term_orphan',
+          title: 'shell',
+          cwd: TEST_WORKTREE_PATH,
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
+        }
+      ]
+    } as never)
+    runtime.registerPty('pty-orphan', TEST_WORKTREE_ID)
+    runtime.onPtySpawned('pty-orphan', 'inc-orphan', { awaitsRegistration: false })
+
+    const listed = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
+    const entry = listed.terminals.find((terminal) => terminal.ptyId === 'pty-orphan')
+    expect(entry).toMatchObject({ orphaned: true, connected: true })
+    // The listing makes no writability claim it cannot back: `writable` would
+    // only restate `connected` here.
+    expect(entry?.writable).toBeUndefined()
+
+    // ...but the orphan is genuinely writable, so show and send must agree.
+    const shown = await runtime.showTerminal(entry!.handle)
+    expect(shown.writable).toBe(true)
+    await expect(runtime.sendTerminal(entry!.handle, { text: 'hi' })).resolves.toMatchObject({
+      accepted: true
+    })
+    expect(writes).toEqual([['pty-orphan', 'hi']])
+  })
+
   it('rejects connection mismatch and reused handles while allowing a WSL-owned orphan', async () => {
     const makeRuntime = (): OrcaRuntimeService => {
       const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({

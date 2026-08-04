@@ -3702,8 +3702,26 @@ describe('orca cli worktree awareness', () => {
 
     expect(callMock).toHaveBeenNthCalledWith(2, 'terminal.list', {
       worktree: 'id:repo::/tmp/repo/feature',
-      limit: undefined
+      limit: undefined,
+      includeVisualLayouts: false
     })
+  })
+
+  it('requests visual layouts only for the human-readable terminal list', async () => {
+    queueFixtures(
+      callMock,
+      worktreeListFixture([buildWorktree('/tmp/repo/feature', 'feature/foo')]),
+      okFixture('req_term', { terminals: [], totalCount: 0, truncated: false })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(['terminal', 'list', '--worktree', 'active'], '/tmp/repo/feature/src')
+
+    expect(callMock).toHaveBeenNthCalledWith(
+      2,
+      'terminal.list',
+      expect.objectContaining({ includeVisualLayouts: true })
+    )
   })
 
   it('rejects implicit remote terminal create instead of resolving from client cwd', async () => {
