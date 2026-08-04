@@ -1,4 +1,7 @@
-import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
+import {
+  isRpcHealthProbeMethod,
+  RpcApplicationResponsiveness
+} from './rpc-application-responsiveness'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 
 export class RpcApplicationResponseTracker {
@@ -9,11 +12,16 @@ export class RpcApplicationResponseTracker {
     private readonly hooks: { onLatched?: (method: string) => void; onRecovered?: () => void } = {}
   ) {}
 
-  recordTimeout(id: string, method: string, connected: boolean): boolean {
-    if (!connected) {
+  recordTimeout(
+    id: string,
+    method: string,
+    connected: boolean,
+    applicationHealthProbe: boolean
+  ): boolean {
+    if (!connected || !applicationHealthProbe || isRpcHealthProbeMethod(method)) {
       return false
     }
-    const result = this.responsiveness.recordTimeout(method)
+    const result = this.responsiveness.recordTimeout()
     if (result.latched) {
       this.hooks.onLatched?.(method)
     }

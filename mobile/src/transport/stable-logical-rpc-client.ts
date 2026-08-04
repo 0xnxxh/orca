@@ -1,19 +1,25 @@
 import type { ConnectionState, RpcResponse } from './types'
 import type { RpcClient } from './rpc-client'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 
 export type MobileConnectionPath = 'lan' | 'tailscale' | 'relay'
 
-export class LogicalClientCutoverError extends Error {
+const LOGICAL_CLIENT_CUTOVER_ERROR_CODE = 'logical-client-cutover' as const
+
+export class LogicalClientCutoverError extends RecoverableRpcError {
+  readonly rpcErrorCode = LOGICAL_CLIENT_CUTOVER_ERROR_CODE
+
   constructor() {
     super('RPC interrupted by connection migration')
+    this.name = 'LogicalClientCutoverError'
   }
 }
 
-// Why: instanceof can miss across bundle copies, so also match by message.
 export function isLogicalClientCutoverError(error: unknown): boolean {
   return (
     error instanceof LogicalClientCutoverError ||
-    (error instanceof Error && error.message === 'RPC interrupted by connection migration')
+    (error instanceof Error &&
+      (error as { rpcErrorCode?: unknown }).rpcErrorCode === LOGICAL_CLIENT_CUTOVER_ERROR_CODE)
   )
 }
 
@@ -61,7 +67,7 @@ export function createStableLogicalRpcClient(
         return Promise.reject(new Error('Client closed'))
       }
       if (suspended) {
-        return Promise.reject(new Error('Client suspended'))
+        return Promise.reject(new RecoverableRpcError('Client suspended'))
       }
       const requestGeneration = generation
       const session = activeSession

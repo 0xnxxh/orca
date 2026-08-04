@@ -20,6 +20,7 @@ import { isRpcResponse } from './rpc-response-shape'
 import type { ConnectionState, RpcResponse } from './types'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 import { RpcApplicationResponseTracker } from './rpc-application-response-tracker'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 import type {
   MobileRelayRpcSession,
   MobileRelayRpcSessionOptions
@@ -42,7 +43,11 @@ export function connectMobileRelayRpcSession(
   let inboundActivitySequence = 0
   const controlProbe = createMobileRelayControlProbe({
     isActive: () => !closed && state === 'connected',
-    sendProbe: () => sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS, false, false),
+    sendProbe: () =>
+      sendRpc('status.get', undefined, {
+        timeoutMs: CONTROL_PROBE_TIMEOUT_MS,
+        probeAfterTimeout: false
+      }),
     getControlResponseSequence: () => controlResponseSequence,
     getInboundActivitySequence: () => inboundActivitySequence,
     onDemote: (error) => {
@@ -96,7 +101,10 @@ export function connectMobileRelayRpcSession(
       await waitForConnected(budget.timeoutMs)
       const timeoutError = `relay RPC timed out: ${method}`
       const timeoutMs = resolvePostConnectRequestTimeout(budget, requestTimeoutMs, timeoutError)
-      return sendRpc(method, params, timeoutMs)
+      return sendRpc(method, params, {
+        timeoutMs,
+        applicationHealthProbe: options?.applicationHealthProbe === true
+      })
     },
 
     subscribe(method, params, listener, options) {
@@ -145,8 +153,7 @@ export function connectMobileRelayRpcSession(
       const response = await sendRpc(
         'pairing.getEndpoints',
         { resumeConfirmReqId: args.resumeConfirmReqId },
-        requestTimeoutMs,
-        true
+        { timeoutMs: requestTimeoutMs, beforeConnected: true }
       )
       if (!response.ok) {
         throw new Error(response.error.code)
@@ -168,12 +175,16 @@ export function connectMobileRelayRpcSession(
   function sendRpc(
     method: string,
     params: unknown,
-    timeoutMs = requestTimeoutMs,
-    beforeConnected = false,
-    probeAfterTimeout = true
+    options: {
+      timeoutMs?: number
+      beforeConnected?: boolean
+      probeAfterTimeout?: boolean
+      applicationHealthProbe?: boolean
+    } = {}
   ): Promise<RpcResponse> {
-    if (closed || (!beforeConnected && state !== 'connected')) {
-      return Promise.reject(new Error('relay session not connected'))
+    const timeoutMs = options.timeoutMs ?? requestTimeoutMs
+    if (closed || (!options.beforeConnected && state !== 'connected')) {
+      return Promise.reject(new RecoverableRpcError('relay session not connected'))
     }
     const id = nextId()
     return new Promise((resolve, reject) => {
@@ -183,11 +194,18 @@ export function connectMobileRelayRpcSession(
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
-        if (applicationResponseTracker.recordTimeout(id, method, state === 'connected')) {
+        if (
+          applicationResponseTracker.recordTimeout(
+            id,
+            method,
+            state === 'connected',
+            options.applicationHealthProbe === true
+          )
+        ) {
           fail(error)
           return
         }
-        if (probeAfterTimeout) {
+        if (options.probeAfterTimeout !== false) {
           controlProbe.probe(true)
         }
       }, timeoutMs)
@@ -195,7 +213,7 @@ export function connectMobileRelayRpcSession(
       if (!sendFrame({ id, method, params })) {
         clearTimeout(timer)
         pending.delete(id)
-        reject(new Error('relay E2EE channel not ready'))
+        reject(new RecoverableRpcError('relay E2EE channel not ready'))
       }
     })
   }

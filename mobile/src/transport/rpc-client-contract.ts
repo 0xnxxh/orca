@@ -10,6 +10,8 @@ export type SendRequestOptions = {
   strictDeadline?: boolean
   /** Reject immediately instead of replaying a disconnected request after reconnect. */
   failWhenDisconnected?: boolean
+  /** Treat a timeout as application-health evidence, not only a request failure. */
+  applicationHealthProbe?: boolean
 }
 
 export type SubscribeOptions = {

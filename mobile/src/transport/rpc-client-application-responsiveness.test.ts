@@ -89,7 +89,7 @@ describe('direct RPC application responsiveness', () => {
     const socket = sockets[0]!
     socket.openAndAuthenticate()
     const first = client
-      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
       .catch((error: unknown) => error)
 
     await vi.advanceTimersByTimeAsync(100)
@@ -112,7 +112,7 @@ describe('direct RPC application responsiveness', () => {
     ).toMatchObject({ kind: 'warning', label: 'Connected, not responding' })
 
     const second = client
-      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
       .catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(100)
 
@@ -124,12 +124,42 @@ describe('direct RPC application responsiveness', () => {
     client.close()
   })
 
-  it('clears an application stall when a subscription answers', async () => {
+  it('confirms ordinary request timeouts without latching or recycling', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = sockets[0]!
     socket.openAndAuthenticate()
     const first = client
       .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .catch((error: unknown) => error)
+
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(first).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    const probe = sentRequest(socket, 'status.get')
+    socket.receive(`encrypted:${JSON.stringify({ id: probe.id, ok: true, result: {} })}`)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(client.getRpcUnresponsiveSince?.()).toBeNull()
+    const second = client
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(100)
+
+    await expect(second).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    expect(client.getRpcUnresponsiveSince?.()).toBeNull()
+    expect(socket.close).not.toHaveBeenCalled()
+    client.close()
+  })
+
+  it('clears an application stall when a subscription answers', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = sockets[0]!
+    socket.openAndAuthenticate()
+    const first = client
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
       .catch((error: unknown) => error)
 
     await vi.advanceTimersByTimeAsync(100)
@@ -151,7 +181,7 @@ describe('direct RPC application responsiveness', () => {
     expect(client.getRpcUnresponsiveSince?.()).toBeNull()
 
     const second = client
-      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
       .catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(100)
     await expect(second).resolves.toMatchObject({

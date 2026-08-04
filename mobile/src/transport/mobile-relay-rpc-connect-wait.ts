@@ -1,4 +1,5 @@
 import type { ConnectionState } from './types'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 
 export function waitForMobileRelayRpcConnected(args: {
   getState: () => ConnectionState
@@ -10,12 +11,12 @@ export function waitForMobileRelayRpcConnected(args: {
     return Promise.resolve()
   }
   if (state === 'disconnected' || state === 'auth-failed') {
-    return Promise.reject(new Error(`relay session ${state}`))
+    return Promise.reject(sessionStateError(state))
   }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       unsubscribe()
-      reject(new Error('relay session connection timed out'))
+      reject(new RecoverableRpcError('relay session connection timed out'))
     }, args.timeoutMs)
     const unsubscribe = args.subscribe((next) => {
       if (next === 'connected') {
@@ -25,8 +26,13 @@ export function waitForMobileRelayRpcConnected(args: {
       } else if (next === 'disconnected' || next === 'auth-failed') {
         clearTimeout(timer)
         unsubscribe()
-        reject(new Error(`relay session ${next}`))
+        reject(sessionStateError(next))
       }
     })
   })
+}
+
+function sessionStateError(state: 'disconnected' | 'auth-failed'): Error {
+  const message = `relay session ${state}`
+  return state === 'disconnected' ? new RecoverableRpcError(message) : new Error(message)
 }

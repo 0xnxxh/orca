@@ -41,10 +41,7 @@ export class RpcApplicationResponsiveness {
     return latched
   }
 
-  recordTimeout(method: string, now = Date.now()): { latched: boolean; recycle: boolean } {
-    if (isRpcHealthProbeMethod(method)) {
-      return { latched: false, recycle: false }
-    }
+  recordTimeout(now = Date.now()): { latched: boolean; recycle: boolean } {
     this.timeoutStreak += 1
     const latched = this.unresponsiveSince === null
     this.unresponsiveSince ??= now

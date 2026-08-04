@@ -45,6 +45,7 @@ import { isStaleForegroundDial } from './rpc-stale-dial'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 import { RpcApplicationResponseTracker } from './rpc-application-response-tracker'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -971,7 +972,14 @@ export function connect(
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (requestWs === ws) {
             timedOutControlRequestIds.remember(id)
-            if (applicationResponseTracker.recordTimeout(id, method, true)) {
+            if (
+              applicationResponseTracker.recordTimeout(
+                id,
+                method,
+                true,
+                options?.applicationHealthProbe === true
+              )
+            ) {
               emitLog('error', 'RPC channel unresponsive', 'Recycling the connection')
               forceSocketReconnect(requestWs)
               return
@@ -996,7 +1004,7 @@ export function connect(
         if (!sendEncrypted({ id, deviceToken, method, params })) {
           pending.delete(id)
           clearTimeout(timeout)
-          reject(new Error('Connection interrupted'))
+          reject(new RecoverableRpcError('Connection interrupted'))
         }
       })
     },

@@ -3,6 +3,7 @@ import { RelayPhoneHelloSchema } from '../../../src/shared/mobile-relay-phone-pr
 import { MobileE2EEV2ClientSession } from './mobile-e2ee-v2-client-session'
 import { MobileE2EEV2PhysicalChannel } from './mobile-e2ee-v2-physical-channel'
 import { isRpcResponse } from './rpc-response-shape'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 import type { RpcResponse } from './types'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 export { RelayOuterError } from './mobile-relay-e2ee-link'
@@ -162,7 +163,7 @@ export function connectMobileRelayForPairing(args: {
         ) {
           clearTimeout(timer)
           pending.delete(id)
-          reject(new Error('relay E2EE channel not ready'))
+          reject(new RecoverableRpcError('relay E2EE channel not ready'))
         }
       })
     },

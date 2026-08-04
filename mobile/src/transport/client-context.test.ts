@@ -297,7 +297,8 @@ describe('useHostClient', () => {
       {
         timeoutMs: expect.any(Number),
         budgetSpansConnect: true,
-        strictDeadline: true
+        strictDeadline: true,
+        applicationHealthProbe: true
       }
     )
     expect(completed).toBe(false)
@@ -468,7 +469,7 @@ describe('useHostClient', () => {
     // own — latching it must re-render metric subscribers with no timers.
     const responsiveness = connectMock.mock.calls[0]?.[3] as RpcApplicationResponsiveness
     await act(async () => {
-      responsiveness.recordTimeout('worktree.ps', 4242)
+      responsiveness.recordTimeout(4242)
     })
     expect(observed).toBe(4242)
 
@@ -675,7 +676,8 @@ describe('useHostClient', () => {
       {
         timeoutMs: expect.any(Number),
         budgetSpansConnect: true,
-        strictDeadline: true
+        strictDeadline: true,
+        applicationHealthProbe: true
       }
     )
 

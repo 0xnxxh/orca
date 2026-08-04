@@ -7,6 +7,7 @@ import {
   LogicalClientCutoverError
 } from './stable-logical-rpc-client'
 import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 
 class FakeSession implements RpcClient {
   readonly sendRequest =
@@ -106,7 +107,7 @@ describe('stable logical RPC client', () => {
     const nextSession = new FakeSession('connected')
     const pending = deferred<RpcResponse>()
     oldSession.sendRequest
-      .mockRejectedValueOnce(new Error('Connection interrupted'))
+      .mockRejectedValueOnce(new RecoverableRpcError('Connection interrupted'))
       .mockReturnValue(pending.promise)
     nextSession.sendRequest.mockResolvedValue(success('relay'))
     const client = createStableLogicalRpcClient(oldSession, 'lan')
@@ -122,7 +123,8 @@ describe('stable logical RPC client', () => {
       {
         timeoutMs: expect.any(Number),
         budgetSpansConnect: true,
-        strictDeadline: true
+        strictDeadline: true,
+        applicationHealthProbe: true
       }
     )
     pending.resolve(success('late'))

@@ -1,6 +1,6 @@
 import type { RpcClient } from './rpc-client'
 import { isRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
-import { isLogicalClientCutoverError } from './stable-logical-rpc-client'
+import { isRecoverableRpcError } from './recoverable-rpc-error'
 
 export const FORCE_RECONNECT_TIMEOUT_MS = 15_000
 
@@ -27,7 +27,8 @@ export async function verifyForceReconnectRpcHealth(
         {
           timeoutMs,
           budgetSpansConnect: true,
-          strictDeadline: true
+          strictDeadline: true,
+          applicationHealthProbe: true
         }
       )
       // Why: any resolved reply — success or application error — round-tripped the
@@ -69,24 +70,7 @@ function isRecoverableHealthError(
   error: unknown,
   state: ReturnType<RpcClient['getState']>
 ): boolean {
-  return (
-    state === 'reconnecting' ||
-    isLogicalClientCutoverError(error) ||
-    isRpcDeliveryUnknown(error) ||
-    // Why: every literal is a recoverable mid-cutover state minted by rpc-client,
-    // stable-logical-rpc-client, mobile-relay-rpc-session, or the relay connect
-    // wait ('relay session disconnected' comes from its `relay session ${state}`
-    // template); missing one turns a benign cutover into replacement retirement.
-    (error instanceof Error &&
-      [
-        'Connection interrupted',
-        'Client suspended',
-        'relay session disconnected',
-        'relay session not connected',
-        'relay session connection timed out',
-        'relay E2EE channel not ready'
-      ].includes(error.message))
-  )
+  return state === 'reconnecting' || isRecoverableRpcError(error) || isRpcDeliveryUnknown(error)
 }
 
 function waitForReconnectState(

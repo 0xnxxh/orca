@@ -9,6 +9,7 @@ import {
   LogicalClientCutoverError
 } from './stable-logical-rpc-client'
 import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
+import { RecoverableRpcError } from './recoverable-rpc-error'
 
 describe('Force Reconnect RPC health', () => {
   afterEach(() => vi.useRealTimers())
@@ -51,7 +52,8 @@ describe('Force Reconnect RPC health', () => {
       {
         timeoutMs: 1_000,
         budgetSpansConnect: true,
-        strictDeadline: true
+        strictDeadline: true,
+        applicationHealthProbe: true
       }
     )
   })
@@ -77,7 +79,7 @@ describe('Force Reconnect RPC health', () => {
 
   it('clears the shared latch with an application-level replacement probe', async () => {
     const responsiveness = new RpcApplicationResponsiveness()
-    responsiveness.recordTimeout('browser.screenshot', 123)
+    responsiveness.recordTimeout(123)
     const sendRequest = vi.fn(async (method: string) => {
       responsiveness.recordResponse(method)
       return { id: 'rpc-1', ok: true, result: {} } as RpcResponse
@@ -125,7 +127,7 @@ describe('Force Reconnect RPC health', () => {
 
   it('treats an application-error reply as proof of control-channel liveness', async () => {
     const responsiveness = new RpcApplicationResponsiveness()
-    responsiveness.recordTimeout('browser.screenshot', 123)
+    responsiveness.recordTimeout(123)
     const sendRequest = vi.fn(async (method: string) => {
       responsiveness.recordResponse(method)
       return {
@@ -164,7 +166,7 @@ describe('Force Reconnect RPC health', () => {
 
   it('paces immediately-rejecting recoverable errors instead of spinning', async () => {
     vi.useFakeTimers()
-    const sendRequest = vi.fn(() => Promise.reject(new Error('Client suspended')))
+    const sendRequest = vi.fn(() => Promise.reject(new RecoverableRpcError('Client suspended')))
     const client = { sendRequest, getState: () => 'connected' as const } as unknown as RpcClient
     let outcome = 'pending'
     const verification = verifyForceReconnectRpcHealth(client).catch((error: Error) => {
@@ -177,6 +179,14 @@ describe('Force Reconnect RPC health', () => {
     expect(outcome).toBe('Client suspended')
     expect(sendRequest.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(sendRequest.mock.calls.length).toBeLessThanOrEqual(61)
+  })
+
+  it('does not classify an untyped message as recoverable', async () => {
+    const sendRequest = vi.fn(() => Promise.reject(new Error('Client suspended')))
+    const client = { sendRequest, getState: () => 'connected' as const } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow('Client suspended')
+    expect(sendRequest).toHaveBeenCalledOnce()
   })
 
   it('fails when authorization retries reach auth-failed', async () => {

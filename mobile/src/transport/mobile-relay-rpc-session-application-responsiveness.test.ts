@@ -99,7 +99,7 @@ describe('mobile relay subscription application responsiveness', () => {
     vi.useFakeTimers()
     try {
       const first = session
-        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
         .catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(100)
       await expect(first).resolves.toMatchObject({
@@ -124,12 +124,43 @@ describe('mobile relay subscription application responsiveness', () => {
       expect(session.getRpcUnresponsiveSince?.()).toBeNull()
 
       const second = session
-        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
         .catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(100)
       await expect(second).resolves.toMatchObject({
         message: 'relay RPC timed out: browser.screenshot'
       })
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps ordinary request timeouts out of the shared health verdict', async () => {
+    const session = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const first = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+
+      await expect(first).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getRpcUnresponsiveSince?.()).toBeNull()
+
+      const second = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+
+      await expect(second).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getRpcUnresponsiveSince?.()).toBeNull()
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {

@@ -297,7 +297,7 @@ describe('mobile relay RPC session', () => {
     vi.useFakeTimers()
     try {
       const first = session
-        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
         .catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(100)
       await expect(first).resolves.toMatchObject({
@@ -313,7 +313,7 @@ describe('mobile relay RPC session', () => {
       expect(session.getRpcUnresponsiveSince?.()).not.toBeNull()
       expect(session.getState()).toBe('connected')
       const second = session
-        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
         .catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(100)
 
