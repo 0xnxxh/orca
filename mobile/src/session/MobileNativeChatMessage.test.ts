@@ -141,4 +141,14 @@ describe('MobileNativeChatMessage', () => {
       '{\n  "cmd": "git status",\n  "description": "Inspect changes"\n}'
     )
   })
+
+  it('does not echo the row label as detail when a row has nothing to expand', () => {
+    // The Tools toggle opens every row at once, bypassing the tap guard — a row
+    // whose formatted input is its own label would echo itself in a panel that
+    // no tap can dismiss.
+    const tree = render(toolMessage([{ type: 'tool-call', name: 'ListTodos', input: '{}' }]), {
+      toolsExpanded: true
+    })
+    expect(textIn(tree.root).filter((text) => text === '{}')).toHaveLength(1)
+  })
 })

@@ -109,6 +109,10 @@ function ToolLine({
     result !== undefined ||
     preview.length > 40 ||
     (call !== undefined && isStructuredToolInput(call.input))
+  // The group toggle opens every line at once, bypassing the tap guard, so the
+  // panel has to consult it too — else a detail-less row echoes its own label
+  // under itself and no tap can dismiss it.
+  const showDetail = hasDetail && expanded
   // A tool that targets a file (Read/Edit/Write…) renders its preview as a
   // tappable link that opens the file, independent of the line's expand tap.
   const filePath = call ? toolFilePath(call.input) : null
@@ -120,7 +124,7 @@ function ToolLine({
         onPress={() => hasDetail && setExpanded((v) => !v)}
         hitSlop={6}
       >
-        {expanded ? (
+        {showDetail ? (
           <ChevronDown size={15} color={colors.textMuted} strokeWidth={2} />
         ) : (
           <SquareChevronRight size={15} color={colors.textMuted} strokeWidth={2} />
@@ -137,7 +141,7 @@ function ToolLine({
           </Text>
         ) : null}
       </Pressable>
-      {expanded ? (
+      {showDetail ? (
         <View style={styles.toolDetail}>
           {callDiff ? <DiffView lines={callDiff} /> : null}
           {callDetail ? <Text style={styles.mono}>{callDetail}</Text> : null}
