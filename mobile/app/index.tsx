@@ -17,7 +17,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
 import { getHostListLoadRevision } from '../src/transport/host-list-load-sharing'
-import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
+import { useOpenMobileHostEdit } from '../src/transport/use-open-mobile-host-edit'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { fetchHomeHostWorktreeInfo } from '../src/worktree/home-host-worktree-fetch'
 import { totalHomeStats, type HomeStatsSummary } from '../src/stats/home-stats-total'
@@ -57,7 +57,7 @@ import {
 } from '../src/tasks/mobile-task-providers'
 import { useOpenMobileTasks } from '../src/tasks/use-open-mobile-tasks'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
-import { createMobileSessionHref } from '../src/session/mobile-session-route'
+import { useOpenMobileSession } from '../src/session/use-open-mobile-session'
 
 function endpointLabel(endpoint: string): string {
   try {
@@ -209,7 +209,9 @@ function repoColor(name: string): string {
 
 export default function HomeScreen() {
   const router = useRouter()
+  const openMobileHostEdit = useOpenMobileHostEdit()
   const openMobileTasks = useOpenMobileTasks()
+  const openMobileSession = useOpenMobileSession()
   const insets = useSafeAreaInsets()
   // Why: cap/center content on wide/tablet canvases so cards don't stretch edge-to-edge on iPad.
   const { isWideLayout, contentMaxWidth } = useResponsiveLayout()
@@ -740,13 +742,11 @@ export default function HomeScreen() {
                   <Pressable
                     style={({ pressed }) => [styles.resumeCard, pressed && styles.hostCardPressed]}
                     onPress={() =>
-                      router.push(
-                        createMobileSessionHref({
-                          hostId: resumeWorktree.hostId,
-                          worktreeId: resumeWorktree.worktree.worktreeId,
-                          name: resumeWorktree.worktree.displayName || resumeWorktree.worktree.repo
-                        })
-                      )
+                      openMobileSession({
+                        hostId: resumeWorktree.hostId,
+                        worktreeId: resumeWorktree.worktree.worktreeId,
+                        name: resumeWorktree.worktree.displayName || resumeWorktree.worktree.repo
+                      })
                     }
                   >
                     <View style={styles.resumeIcon}>
@@ -910,7 +910,7 @@ export default function HomeScreen() {
           onDismiss: () => setActionTarget(null),
           onReconnect: (hostId) => void forceReconnectHost(hostId).catch(showForceReconnectError),
           onDisconnect: closeHostClient,
-          onEdit: (hostId) => navigateToMobileHostEdit(router, hostId),
+          onEdit: openMobileHostEdit,
           onRemove: setConfirmRemove
         })}
         onClose={() => setActionTarget(null)}
