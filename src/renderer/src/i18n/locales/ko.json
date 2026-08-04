@@ -10636,7 +10636,6 @@
                 "fd46a70f1a": "시작됨",
                 "a54ae21c6f": "상태:",
                 "e4e3af15ee": "전체 세부정보 보기",
-                "2524d1fb83": "자세한 내용을 로그 테일에서 확인할 수 있습니다.",
                 "a2fb3f4408": "처음 100개 작업 표시",
                 "df137989b3": "처음 20개의 주석 표시 중",
                 "1f2b980522": "검사 세부 정보 로드 중…",
@@ -10689,7 +10688,8 @@
                 "5e6e5a13fa": "보기",
                 "actionRequiredHint": "이 검사는 병합 차단이 해제되기 전에 GitHub에서 수동 작업(예: 워크플로 실행 승인)이 필요합니다.",
                 "b3195cba33": "작성자의 봇 지정 해제",
-                "f588b46a6c": "작성자를 봇으로 지정"
+                "f588b46a6c": "작성자를 봇으로 지정",
+                "checkDetailsLoadFailed": "체크 세부 정보를 불러오지 못했습니다."
               },
               "empty": {
                 "state": {
@@ -14348,6 +14348,11 @@
       },
       "webRuntimeSession": {
         "remoteHostDisconnected": "The workspace is not connected to a remote Orca host."
+      },
+      "gitlabJobTraceClient": {
+        "loadFailed": "GitLab 작업 로그를 불러오지 못했습니다.",
+        "emptyTrace": "이 GitLab 작업의 로그를 사용할 수 없습니다.",
+        "timedOut": "GitLab 작업 로그를 불러오는 중 시간이 초과되었습니다."
       }
     }
   },

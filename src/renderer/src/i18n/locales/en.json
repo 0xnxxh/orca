@@ -10804,7 +10804,6 @@
                 "a54ae21c6f": "Status:",
                 "e4e3af15ee": "View full details",
                 "b8c4e2a1f7": "View full logs",
-                "2524d1fb83": "Log tail available in full details.",
                 "a2fb3f4408": "Showing first 100 jobs",
                 "df137989b3": "Showing first 20 annotations",
                 "1f2b980522": "Loading check details…",
@@ -10856,7 +10855,8 @@
                 "5e6e5a13fa": "View",
                 "actionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
                 "b3195cba33": "Unmark author as bot",
-                "f588b46a6c": "Mark author as bot"
+                "f588b46a6c": "Mark author as bot",
+                "checkDetailsLoadFailed": "Failed to load check details."
               },
               "empty": {
                 "state": {
@@ -14559,6 +14559,11 @@
       },
       "webRuntimeSession": {
         "remoteHostDisconnected": "The workspace is not connected to a remote Orca host."
+      },
+      "gitlabJobTraceClient": {
+        "loadFailed": "Failed to load the GitLab job log.",
+        "emptyTrace": "No log is available for this GitLab job.",
+        "timedOut": "Timed out loading the GitLab job log."
       }
     }
   },
