@@ -6,6 +6,7 @@ import { mobileConnectionPathLabel } from '../transport/mobile-connection-path-l
 import type { MobileConnectionPath } from '../transport/stable-logical-rpc-client'
 import type { ConnectionState, HostProfile } from '../transport/types'
 import { colors, radii, spacing } from '../theme/mobile-theme'
+import { homeHostWorktreeSummary, type HostWorktreeInfo } from '../worktree/home-worktree-info'
 import { StatusDot } from './StatusDot'
 
 export function MobileHostCard(props: {
@@ -13,13 +14,15 @@ export function MobileHostCard(props: {
   state: ConnectionState
   verdict: ConnectionVerdict
   path: MobileConnectionPath
-  // Prebuilt by homeHostWorktreeSummary so fresh/stale/unavailable wording stays in one place.
-  worktreeSummary?: string | null
+  // Why: the card owns the fresh/stale/unavailable wording so no caller can re-gate the counts
+  // away (STA-3123 shipped that bug once already).
+  worktreeInfo?: HostWorktreeInfo
   onPress: () => void
   onLongPress: () => void
 }) {
   const connected = props.state === 'connected'
   const isError = ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
+  const worktreeSummary = homeHostWorktreeSummary(props.worktreeInfo)
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
@@ -44,9 +47,9 @@ export function MobileHostCard(props: {
             {connected ? ` · ${mobileConnectionPathLabel(props.path)}` : ''}
           </Text>
         </View>
-        {connected && props.worktreeSummary ? (
+        {connected && worktreeSummary ? (
           <Text style={styles.worktreeMetaText} numberOfLines={1}>
-            {props.worktreeSummary}
+            {worktreeSummary}
           </Text>
         ) : null}
         {props.verdict.kind === 'unreachable' && !props.host.relay ? (

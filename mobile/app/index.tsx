@@ -19,11 +19,8 @@ import { loadHosts } from '../src/transport/host-store'
 import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { fetchHomeHostWorktreeInfo } from '../src/worktree/home-host-worktree-fetch'
-import {
-  homeHostWorktreeSummary,
-  type HomeWorktreeSummary,
-  type HostWorktreeInfo
-} from '../src/worktree/home-worktree-info'
+import { totalHomeStats, type HomeStatsSummary } from '../src/stats/home-stats-total'
+import type { HomeWorktreeSummary, HostWorktreeInfo } from '../src/worktree/home-worktree-info'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { createHostConnectRefetchGate } from '../src/transport/host-connect-refetch-gate'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
@@ -66,13 +63,6 @@ function endpointLabel(endpoint: string): string {
   } catch {
     return endpoint
   }
-}
-
-type StatsSummary = {
-  totalAgentsSpawned: number
-  totalPRsCreated: number
-  totalAgentTimeMs: number
-  firstEventAt: number | null
 }
 
 type HomeTaskSettings = {
@@ -123,7 +113,9 @@ function clientKey(client: RpcClient): number {
 function fetchStats(
   client: RpcClient,
   hostId: string,
-  setStats: (s: StatsSummary) => void,
+  setStats: (
+    updater: (prev: Record<string, HomeStatsSummary>) => Record<string, HomeStatsSummary>
+  ) => void,
   disposed: () => boolean
 ) {
   sendSingleFlightRequest(client, hostId, 'stats.summary')
@@ -132,7 +124,8 @@ function fetchStats(
         return
       }
       if (response.ok) {
-        setStats(response.result as StatsSummary)
+        // Keyed by host: the header totals every desktop instead of showing whoever replied last.
+        setStats((prev) => ({ ...prev, [hostId]: response.result as HomeStatsSummary }))
       }
     })
     .catch(() => {})
@@ -223,7 +216,8 @@ export default function HomeScreen() {
   const [hostStates, setHostStates] = useState<Record<string, ConnectionState>>({})
   const [hostAttempts, setHostAttempts] = useState<Record<string, number>>({})
   const [hostLastConnected, setHostLastConnected] = useState<Record<string, number | null>>({})
-  const [stats, setStats] = useState<StatsSummary | null>(null)
+  const [statsByHost, setStatsByHost] = useState<Record<string, HomeStatsSummary>>({})
+  const stats = useMemo(() => totalHomeStats(statsByHost), [statsByHost])
   const [worktreeInfo, setWorktreeInfo] = useState<Record<string, HostWorktreeInfo>>({})
   const [accountsByHost, setAccountsByHost] = useState<Record<string, AccountsSnapshot>>({})
   const [taskProvidersByHost, setTaskProvidersByHost] = useState<Record<string, TaskProvider[]>>({})
@@ -326,7 +320,7 @@ export default function HomeScreen() {
       })
       for (const entry of allClientsRef.current) {
         if (entry.client.getState() === 'connected') {
-          fetchStats(entry.client, entry.hostId, setStats, () => stale)
+          fetchStats(entry.client, entry.hostId, setStatsByHost, () => stale)
           void fetchHomeHostWorktreeInfo(entry.client, entry.hostId, setWorktreeInfo, () => stale)
           fetchAccountsSnapshot(entry.client, entry.hostId, setAccountsByHost, () => stale)
           fetchTaskProviders(entry.client, entry.hostId, setTaskProvidersByHost, () => stale)
@@ -441,7 +435,7 @@ export default function HomeScreen() {
           // Why: the socket survives backgrounding/handoffs by reconnecting, so re-read the host
           // snapshot on every reconnect — a one-shot latch left the card on stale data forever.
           if (reconnected) {
-            fetchStats(entry.client, entry.hostId, setStats, () => false)
+            fetchStats(entry.client, entry.hostId, setStatsByHost, () => false)
             void fetchHomeHostWorktreeInfo(entry.client, entry.hostId, setWorktreeInfo, () => false)
             fetchTaskProviders(entry.client, entry.hostId, setTaskProvidersByHost, () => false)
           }
@@ -703,7 +697,6 @@ export default function HomeScreen() {
             const state = hostStates[item.id] ?? 'connecting'
             const attempts = hostAttempts[item.id] ?? 0
             const lastConnectedAt = hostLastConnected[item.id] ?? null
-            const info = worktreeInfo[item.id]
             const verdict = classifyConnection({
               state,
               reconnectAttempts: attempts,
@@ -716,7 +709,7 @@ export default function HomeScreen() {
                 state={state}
                 verdict={verdict}
                 path={hostPaths[item.id] ?? 'lan'}
-                worktreeSummary={homeHostWorktreeSummary(info)}
+                worktreeInfo={worktreeInfo[item.id]}
                 onPress={() => router.push(`/h/${item.id}`)}
                 onLongPress={() => {
                   triggerMediumImpact()
