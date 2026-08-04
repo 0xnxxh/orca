@@ -57,7 +57,8 @@ import {
   removeWorktree,
   _resetWorktreeScanCacheForTests,
   WORKTREE_LIST_TIMEOUT_MS,
-  WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS
+  WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS,
+  WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS
 } from './worktree'
 
 // Why: detectSparseCheckout on main also requires core.sparseCheckout=true in git
@@ -330,6 +331,10 @@ branch refs/heads/main
     expect(moveWorktreeDirectoryToTrashMock).toHaveBeenCalledWith('/repo-feature')
     expect(scheduleWorktreeTrashDeletionMock).toHaveBeenCalledWith('/trash/wt-1-abcdef01')
     expect(calls).toContain('git worktree remove --force /repo-feature')
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['worktree', 'remove', '--force', '/repo-feature'],
+      { cwd: '/repo', timeout: WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS }
+    )
     expect(calls).not.toContain('git worktree remove /repo-feature')
     expect(calls).not.toContain('git worktree prune')
     expect(calls).toContain('git branch -d -- feature/test')
@@ -362,6 +367,17 @@ branch refs/heads/main
     await removeWorktree('/repo', '/repo-feature')
 
     expect(getGitCalls()).toContain('git worktree prune')
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['worktree', 'prune'], {
+      cwd: '/repo',
+      timeout: WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS
+    })
+    expect(
+      gitExecFileAsyncMock.mock.calls.filter(
+        ([args, options]) =>
+          args.join(' ') === 'worktree list --porcelain -z' &&
+          options.timeout === WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS
+      )
+    ).toHaveLength(2)
     expect(scheduleWorktreeTrashDeletionMock).toHaveBeenCalledWith('/trash/wt-2-abcdef02')
     expect(restoreWorktreeDirectoryFromTrashMock).not.toHaveBeenCalled()
   })

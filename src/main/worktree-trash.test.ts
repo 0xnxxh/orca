@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -61,6 +61,18 @@ describe('moveWorktreeDirectoryToTrash', () => {
 
     expect(await moveWorktreeDirectoryToTrash(worktreePath)).toBeUndefined()
     expect(existsSync(getWorktreeTrashRoot(worktreePath))).toBe(false)
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses a symlinked trash root', async () => {
+    const worktreePath = join(scratchDir, 'repo', 'feature')
+    const externalRoot = join(scratchDir, 'external')
+    await createWorktreeDirectory(worktreePath)
+    await mkdir(externalRoot)
+    await symlink(externalRoot, getWorktreeTrashRoot(worktreePath))
+
+    expect(await moveWorktreeDirectoryToTrash(worktreePath)).toBeUndefined()
+    expect(existsSync(worktreePath)).toBe(true)
+    expect(await readdir(externalRoot)).toEqual([])
   })
 
   async function seededWorktree(name: string): Promise<string> {
@@ -139,6 +151,18 @@ describe('sweepStaleWorktreeTrash', () => {
     expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0 })
     expect(existsSync(join(deepTrashRoot, 'wt-1700000000002-abcdef03'))).toBe(true)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not sweep through a symlinked trash root',
+    async () => {
+      const externalEntry = join(scratchDir, 'external', 'wt-1700000000003-abcdef04')
+      await mkdir(externalEntry, { recursive: true })
+      await symlink(join(scratchDir, 'external'), join(scratchDir, WORKTREE_TRASH_DIR_NAME))
+
+      expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0 })
+      expect(existsSync(externalEntry)).toBe(true)
+    }
+  )
 })
 
 describe('collectWorktreeTrashSweepRoots', () => {
@@ -170,5 +194,20 @@ describe('collectWorktreeTrashSweepRoots', () => {
         settings
       )
     ).toEqual([])
+  })
+
+  it('skips WSL repos that cannot create host trash', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      expect(
+        collectWorktreeTrashSweepRoots(
+          [repo({ path: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\orca' })],
+          settings
+        )
+      ).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
   })
 })

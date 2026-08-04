@@ -3,12 +3,13 @@
 // is a metadata operation, and the recursive delete then runs after the IPC has already returned.
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rename, rmdir } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rename, rmdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { removeHostTree } from './host-tree-removal'
 import { isFolderRepo } from '../shared/repo-kind'
 import { computeWorkspaceRoot, getWorktreePathSettings } from './ipc/worktree-logic'
 import type { GlobalSettings, Repo } from '../shared/types'
+import { parseWslPath } from './wsl'
 
 export const WORKTREE_TRASH_DIR_NAME = '.orca-worktree-trash'
 
@@ -39,6 +40,10 @@ export async function moveWorktreeDirectoryToTrash(
   const trashPath = join(trashRoot, `wt-${Date.now()}-${randomBytes(4).toString('hex')}`)
   try {
     await mkdir(trashRoot, { recursive: true })
+    const trashRootStat = await lstat(trashRoot)
+    if (!trashRootStat.isDirectory() || trashRootStat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory worktree trash root: ${trashRoot}`)
+    }
     await rename(worktreePath, trashPath)
     return trashPath
   } catch (error) {
@@ -97,6 +102,10 @@ export async function sweepStaleWorktreeTrash(
   for (const trashRoot of await collectExistingTrashRoots(workspaceRoots)) {
     let entries: string[]
     try {
+      const trashRootStat = await lstat(trashRoot)
+      if (!trashRootStat.isDirectory() || trashRootStat.isSymbolicLink()) {
+        continue
+      }
       entries = await readdir(trashRoot)
     } catch {
       continue
@@ -150,7 +159,7 @@ export function collectWorktreeTrashSweepRoots(
 ): string[] {
   const roots = new Set<string>()
   for (const repo of repos) {
-    if (repo.connectionId || isFolderRepo(repo)) {
+    if (repo.connectionId || isFolderRepo(repo) || parseWslPath(repo.path)) {
       continue
     }
     try {

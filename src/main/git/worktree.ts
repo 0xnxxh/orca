@@ -93,6 +93,7 @@ const PRUNABLE_EXISTENCE_PROBE_CONCURRENCY = 8
 // Why: bound `git worktree add` so a OneDrive cloud-placeholder stall fails fast (STA-1292); generous enough for a legit large checkout (#7225).
 export const WORKTREE_ADD_TIMEOUT_MS = 180_000
 export const WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS = 30_000
+export const WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS = 30_000
 // Why: one wedged shared scan otherwise hangs every later list, including create's post-add re-list.
 export const WORKTREE_LIST_TIMEOUT_MS = 30_000
 
@@ -1222,11 +1223,15 @@ async function clearGitRegistrationForMissingWorktree(
   worktreePath: string,
   options: RemoveWorktreeOptions
 ): Promise<void> {
+  const registrationOptions = {
+    ...options,
+    timeout: options.timeout ?? WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS
+  }
   try {
     // Removing an already-missing directory is accepted back to the Git 2.25 baseline and touches only this entry.
     await gitExecFileAsync(
       ['worktree', 'remove', '--force', worktreePath],
-      gitExecOptions(repoPath, options)
+      gitExecOptions(repoPath, registrationOptions)
     )
     return
   } catch (error) {
@@ -1236,10 +1241,10 @@ async function clearGitRegistrationForMissingWorktree(
     )
   }
 
-  await gitExecFileAsync(['worktree', 'prune'], gitExecOptions(repoPath, options))
+  await gitExecFileAsync(['worktree', 'prune'], gitExecOptions(repoPath, registrationOptions))
   // Strict (not the shared scan): an unreadable repo must not read as proof that the row is gone.
-  const stillRegistered = (await listWorktreesStrict(repoPath, options)).some((worktree) =>
-    areWorktreePathsEqual(worktree.path, worktreePath)
+  const stillRegistered = (await listWorktreesStrict(repoPath, registrationOptions)).some(
+    (worktree) => areWorktreePathsEqual(worktree.path, worktreePath)
   )
   if (stillRegistered) {
     throw new Error(`Git still reports a registration for "${worktreePath}" after pruning it.`)
