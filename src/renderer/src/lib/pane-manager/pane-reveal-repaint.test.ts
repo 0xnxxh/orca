@@ -38,7 +38,6 @@ function createPane(options: { webglAddon?: FakeWebglAddon | null } = {}): Manag
     serializeAddon: {} as never,
     unicode11Addon: {} as never,
     webLinksAddon: {} as never,
-    compositionHandler: null,
     pendingSplitScrollState: null,
     debugLabel: null
   }
