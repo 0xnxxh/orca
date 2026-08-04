@@ -81,15 +81,17 @@ describe('deriveMobileNativeChatStreaming', () => {
 
   it('keeps the segment baseline through textless ticks while the turn is live', () => {
     // Chat is hidden mid-stream: the transcript unsubscribes and the status
-    // stops reaching the gate, but the turn has not ended.
+    // stops reaching the gate, but the turn has not ended. Coming back, the
+    // stream text returns before the re-read transcript does.
     const prior = [assistant('a1', 'Done.')]
     const { results } = run([
       { folded: prior },
       { folded: prior, text: 'Done.', live: true },
       { folded: [], live: true },
+      { folded: [], text: 'Done.', live: true },
       { folded: prior, text: 'Done.', live: true }
     ])
-    expect(results).toEqual([null, 'Done.', null, 'Done.'])
+    expect(results).toEqual([null, 'Done.', null, 'Done.', 'Done.'])
   })
 
   it('still hides after a hidden gap once the reply landed as its own turn', () => {

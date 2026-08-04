@@ -136,19 +136,25 @@ describe('MobileNativeChatOverlay streaming gate', () => {
 
     await update({ show: false, messages: [], streamLive: true })
     expect(streaming()).toBe('hidden')
-    // Back on chat: the throttled status trails the first re-render by a tick.
-    await update({ messages: prior, streamLive: true })
+    // Back on chat the session withholds its transcript until a fresh read
+    // settles, so the throttled stream text returns a round trip ahead of it.
+    await update({ messages: [], streamLive: true })
+    await update({ messages: [], streamingText: 'Done.', streamLive: true })
     await update({ messages: prior, streamingText: 'Done.', streamLive: true })
 
     expect(streaming()).toBe('Done.')
   })
 
-  it('still hides the bubble when the reply landed while chat was hidden', async () => {
+  it('hides a repeated part whose own turn landed during a mid-turn gap', async () => {
+    // Between parts the status frame carries no assistant text (a tool call), so
+    // the stream goes textless while the turn is still live and the part that
+    // just finished lands in the transcript. Re-anchoring on that tick would
+    // adopt it as history and render it a second time.
     const prior = [assistantTurn('a1', 'Done.')]
     await render({ messages: prior })
     await update({ messages: prior, streamingText: 'Done.', streamLive: true })
+    expect(streaming()).toBe('Done.')
 
-    await update({ show: false, messages: [], streamLive: true })
     const landed = [...prior, assistantTurn('a2', 'Done.')]
     await update({ messages: landed, streamLive: true })
     await update({ messages: landed, streamingText: 'Done.', streamLive: true })
