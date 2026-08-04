@@ -139,6 +139,12 @@ export type DaemonIdentityChangeEvent = {
 const MAX_TOMBSTONES = 1000
 const MAX_CONCURRENT_CHECKPOINTS = 4
 
+// Why far below the client's 30s default: a wedged daemon holds its socket open, so an unbounded
+// probe stalls a pane mount for the full request timeout — and the owner fan-out waits on every
+// adapter, so one hung daemon stalls each restoring pane. Answering "unknown" quickly is strictly
+// better here: unknown never authorizes retirement, it only defers it.
+export const LIVENESS_PROBE_TIMEOUT_MS = 2_000
+
 // Why: providers take an absolute teardown deadline, but the client RPC takes a
 // relative timeout — convert only here, at the request itself, so sequential RPCs
 // naturally share the remaining budget (undefined keeps the client's 30s default).
@@ -905,7 +911,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
         try {
           const result = await this.client.request<{ size: { cols: number; rows: number } | null }>(
             'getSize',
-            { sessionId: id }
+            { sessionId: id },
+            LIVENESS_PROBE_TIMEOUT_MS
           )
           return result.size !== null
         } catch (error) {
@@ -925,7 +932,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
       // the first daemon protocol. Requested directly rather than through `listProcesses` so a
       // liveness probe does not publish inventory audit observations as a side effect; both
       // rethrow on failure, so either way a dead socket stays `null` instead of reading absent.
-      const { sessions } = await this.client.request<ListSessionsResult>('listSessions', undefined)
+      const { sessions } = await this.client.request<ListSessionsResult>(
+        'listSessions',
+        undefined,
+        LIVENESS_PROBE_TIMEOUT_MS
+      )
       return sessions.some((session) => session.sessionId === id && session.isAlive)
     } catch {
       return null

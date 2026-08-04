@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { DaemonClient } from './client'
 import { DaemonProtocolError } from './daemon-errors'
-import { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { DaemonPtyAdapter, LIVENESS_PROBE_TIMEOUT_MS } from './daemon-pty-adapter'
 import {
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
   GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
@@ -1238,7 +1238,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       await expect(legacy.probePtyLiveness('legacy-live')).resolves.toBe(true)
       await expect(legacy.probePtyLiveness('legacy-exited')).resolves.toBe(false)
       await expect(legacy.probePtyLiveness('never-existed')).resolves.toBe(false)
-      expect(request).toHaveBeenCalledWith('listSessions', undefined)
+      expect(request).toHaveBeenCalledWith('listSessions', undefined, LIVENESS_PROBE_TIMEOUT_MS)
       expect(request).not.toHaveBeenCalledWith('getSize', expect.anything())
 
       legacy.dispose()
@@ -1289,7 +1289,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       const flaky = createProbeAdapter(GET_SIZE_PROTOCOL_VERSION, request)
 
       await expect(flaky.probePtyLiveness('live-elsewhere')).resolves.toBeNull()
-      expect(request).not.toHaveBeenCalledWith('listSessions', undefined)
+      expect(request).not.toHaveBeenCalledWith('listSessions', undefined, LIVENESS_PROBE_TIMEOUT_MS)
 
       flaky.dispose()
     })
