@@ -136,6 +136,35 @@ describe('diffFromText', () => {
     expect(diffFromText('-- legacy comment')).toBeNull()
   })
 
+  it('classifies a --- content deletion in header-less agent-tool output', () => {
+    const diff = diffFromText('---sql comment\n+new\n-more context')
+    expect(diff).toEqual([
+      { kind: 'del', text: '--sql comment' },
+      { kind: 'add', text: 'new' },
+      { kind: 'del', text: 'more context' }
+    ])
+  })
+
+  it('does not read an adjacent --x / ++y content pair as a file header', () => {
+    const diff = diffFromText('@@ -1,2 +1,2 @@\n ctx\n---note\n+++flag')
+    expect(diff).toEqual([
+      { kind: 'meta', text: '@@ -1,2 +1,2 @@' },
+      { kind: 'context', text: ' ctx' },
+      { kind: 'del', text: '--note' },
+      { kind: 'add', text: '++flag' }
+    ])
+  })
+
+  it('does not read a spaced -- / ++ content pair inside a hunk as a file header', () => {
+    const diff = diffFromText('@@ -1,2 +1,2 @@\n ctx\n--- note\n+++ flag')
+    expect(diff).toEqual([
+      { kind: 'meta', text: '@@ -1,2 +1,2 @@' },
+      { kind: 'context', text: ' ctx' },
+      { kind: 'del', text: '-- note' },
+      { kind: 'add', text: '++ flag' }
+    ])
+  })
+
   it('handles /dev/null headers for an added file', () => {
     const diff = diffFromText('--- /dev/null\n+++ b/x.sql\n+-- new comment\n+SELECT 1;')
     expect(diff?.filter((l) => l.kind === 'add').map((l) => l.text)).toEqual([
