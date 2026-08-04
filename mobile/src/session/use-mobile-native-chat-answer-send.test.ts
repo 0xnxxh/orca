@@ -427,6 +427,21 @@ describe('useMobileNativeChatAnswerSend', () => {
     await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
   })
 
+  it('answers again on the same handle after an earlier answer already landed', async () => {
+    const onSendError = vi.fn()
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])).resolves.toBe(true)
+    // A landed answer resolves its turn FALSE — correct for a queued successor,
+    // fatal if the turn outlives the chain. Leaving it parked in the slot fences
+    // every later answer on this handle for the life of the hook, not just an
+    // overlapping one, so the ask card dies after its first use.
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(onSendError).not.toHaveBeenCalled()
+  })
+
   it('fences a superseding answer after the cancelled chain moved the selector', async () => {
     const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
     await mount({ sendRequest } as unknown as RpcClient, vi.fn())
