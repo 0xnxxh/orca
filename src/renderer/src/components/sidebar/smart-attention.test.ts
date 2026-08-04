@@ -605,6 +605,54 @@ describe('buildAttentionByWorktree', () => {
     })
   })
 
+  it('does not revive a restored row from one title before layout hydration', () => {
+    const w = makeWorktree('wt-1')
+    const tab = makeTab('tab-1', w.id)
+    const key = paneKey(tab.id, LEAF_1)
+    const map = buildAttentionByWorktree(
+      [w],
+      { [w.id]: [tab] },
+      {
+        [key]: makeEntry({
+          paneKey: key,
+          state: 'working',
+          restoredUnconfirmed: true
+        })
+      },
+      { [tab.id]: { 1: '⠋ Claude' } },
+      ptyMap([tab.id]),
+      NOW
+    )
+
+    expect(map.get(w.id)).toEqual(IDLE)
+  })
+
+  it('still uses one unmapped title when the hook is only age-stale', () => {
+    const w = makeWorktree('wt-1')
+    const tab = makeTab('tab-1', w.id)
+    const key = paneKey(tab.id, LEAF_1)
+    const map = buildAttentionByWorktree(
+      [w],
+      { [w.id]: [tab] },
+      {
+        [key]: makeEntry({
+          paneKey: key,
+          state: 'working',
+          updatedAt: NOW - AGENT_STATUS_STALE_AFTER_MS - 1
+        })
+      },
+      { [tab.id]: { 1: '✋ Gemini CLI' } },
+      ptyMap([tab.id]),
+      NOW
+    )
+
+    expect(map.get(w.id)).toEqual({
+      cls: 1,
+      attentionTimestamp: NOW,
+      cause: 'title-heuristic'
+    })
+  })
+
   it('per-pane authority across panes: pane A fresh hook=done, pane B no hook + permission title → Class 1', () => {
     const w = makeWorktree('wt-1')
     const tab = makeTab('tab-1', w.id)

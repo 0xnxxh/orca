@@ -311,9 +311,12 @@ export function buildAttentionByWorktree(
       if (paneTitles && Object.keys(paneTitles).length > 0) {
         // Why: split-pane tabs host multiple agents, one title each; mirrors getWorkingAgentsPerWorktree precedence.
         const tabLayout = terminalLayoutsByTabId?.[tab.id]
-        for (const [runtimePaneId, title] of Object.entries(paneTitles)) {
+        const paneTitleEntries = Object.entries(paneTitles)
+        for (const [runtimePaneId, title] of paneTitleEntries) {
           const leafId = resolveRuntimePaneTitleLeafId(tabLayout, runtimePaneId)
-          if (leafId !== null && hookLeafIds.has(leafId)) {
+          const hasSingleUnmappedHook =
+            leafId === null && hookLeafIds.size === 1 && paneTitleEntries.length === 1
+          if ((leafId !== null && hookLeafIds.has(leafId)) || hasSingleUnmappedHook) {
             continue
           }
           panes.push({
