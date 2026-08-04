@@ -16,8 +16,11 @@ export function useMobileNativeChatPrompts(args: {
   enabled: boolean
   status: AgentStatusEntry | null | undefined
   messages: readonly NativeChatMessage[]
+  /** True while `messages` is an unsettled read (including the cached list held
+   *  across a reconnect). Required: an ask derived from it may already be answered. */
+  transcriptLoading: boolean
 }): MobileNativeChatPrompts {
-  const { enabled, status, messages } = args
+  const { enabled, status, messages, transcriptLoading } = args
   const blocked = status?.state === 'waiting' || status?.state === 'blocked'
   // Both permission paths sit inside the paused gate: an approval envelope can
   // outlive its answer (the host keeps it sticky), so only a waiting/blocked
@@ -37,9 +40,12 @@ export function useMobileNativeChatPrompts(args: {
     () => parseAskFromStatus(status?.interactivePrompt, status?.toolName),
     [status?.interactivePrompt, status?.toolName]
   )
+  // A held transcript is a cache, not settled history: the ask it still shows may
+  // have been answered elsewhere, and this card writes to the agent's TUI. The
+  // live `askFromStatus` path is unaffected, so a truly pending card stays put.
   const askFromMessages = useMemo(
-    () => (askFromStatus ? null : extractPendingAsk(messages)),
-    [askFromStatus, messages]
+    () => (askFromStatus || transcriptLoading ? null : extractPendingAsk(messages)),
+    [askFromStatus, transcriptLoading, messages]
   )
 
   return {

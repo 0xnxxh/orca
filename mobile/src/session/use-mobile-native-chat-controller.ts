@@ -175,7 +175,8 @@ export function useMobileNativeChatController(args: {
   } = useMobileNativeChatPrompts({
     enabled: activeChatResolution != null,
     status: nativeChatStatus,
-    messages: nativeChatSession.messages
+    messages: nativeChatSession.messages,
+    transcriptLoading: nativeChatSession.transcriptLoading
   })
 
   const handleNativeChatOpenFile = useCallback(
