@@ -425,6 +425,7 @@ import {
   isPathInsideOrEqual,
   normalizeRuntimePathForComparison
 } from '../../shared/cross-platform-path'
+import { findRuntimeWorkspaceFileOwner } from '../../shared/runtime-workspace-file-owner'
 import { resolveTerminalStartupCwd } from '../../shared/terminal-startup-cwd'
 import { isWslUncPath, parseWslUncPath } from '../../shared/wsl-paths'
 import {
@@ -515,7 +516,7 @@ import {
 } from './workspace-session-terminal-membership-authority'
 import { RuntimeEmulatorCommands } from './orca-runtime-emulator'
 import type { EmulatorBridge } from '../emulator/emulator-bridge'
-import { RuntimeFileCommands } from './orca-runtime-files'
+import { getRuntimeFileTargetExecutionHostId, RuntimeFileCommands } from './orca-runtime-files'
 import { RuntimeGitCommands } from './orca-runtime-git'
 import {
   activateClientSessionTabSelection,
@@ -8542,6 +8543,8 @@ export class OrcaRuntimeService {
     requireStore: () => this.requireStore(),
     resolveWorktreeSelector: (selector) => this.resolveWorktreeSelector(selector),
     resolveRuntimeFileTarget: (selector) => this.resolveRuntimeFileTarget(selector),
+    resolveKnownWorkspaceFileTarget: (absolutePath, connectionId) =>
+      this.resolveKnownWorkspaceFileTarget(absolutePath, connectionId),
     resolveTerminalCwd: (terminalHandle) => this.resolveTerminalCwd(terminalHandle),
     resolveTerminalContext: (terminalHandle) => this.resolveTerminalContext(terminalHandle),
     resolveTerminalFileUriHostname: (terminalHandle) =>
@@ -8857,6 +8860,72 @@ export class OrcaRuntimeService {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const repo = store.getRepo(worktree.repoId)
     return { worktree, connectionId: repo?.connectionId ?? undefined }
+  }
+
+  private async resolveKnownWorkspaceFileTarget(
+    absolutePath: string,
+    executionHostId: ExecutionHostId
+  ): Promise<{
+    worktree: ResolvedWorktree
+    connectionId?: string
+    relativePath: string
+  } | null> {
+    const targets = new Map<
+      string,
+      {
+        worktree: ResolvedWorktree
+        connectionId?: string
+        executionHostId: ExecutionHostId
+      }
+    >()
+    for (const worktree of await this.listResolvedWorktrees()) {
+      if (!this.isRuntimeWorktreeVisible(worktree)) {
+        continue
+      }
+      const candidateConnectionId = this.store?.getRepo(worktree.repoId)?.connectionId ?? undefined
+      const target = {
+        worktree,
+        executionHostId: getRuntimeFileTargetExecutionHostId({
+          worktree,
+          connectionId: candidateConnectionId
+        }),
+        ...(candidateConnectionId ? { connectionId: candidateConnectionId } : {})
+      }
+      targets.set(`${target.executionHostId}\0${worktree.id}`, target)
+    }
+    for (const folderWorkspace of this.store?.getFolderWorkspaces?.() ?? []) {
+      try {
+        const candidateConnectionId =
+          this.resolveFolderWorkspaceConnectionId(folderWorkspace) ?? undefined
+        const worktree = this.folderWorkspaceToResolvedWorktree(folderWorkspace)
+        const target = {
+          worktree,
+          executionHostId: getRuntimeFileTargetExecutionHostId({
+            worktree,
+            connectionId: candidateConnectionId
+          }),
+          ...(candidateConnectionId ? { connectionId: candidateConnectionId } : {})
+        }
+        targets.set(`${target.executionHostId}\0${worktree.id}`, target)
+      } catch {
+        // An ambiguous folder workspace has no single filesystem authority.
+      }
+    }
+
+    const owner = findRuntimeWorkspaceFileOwner(
+      [...targets.values()].map((target) => ({
+        workspaceId: target.worktree.id,
+        rootPath: target.worktree.path,
+        executionHostId: target.executionHostId
+      })),
+      absolutePath,
+      executionHostId
+    )
+    if (!owner) {
+      return null
+    }
+    const target = targets.get(`${owner.executionHostId}\0${owner.workspaceId}`)
+    return target ? { ...target, relativePath: owner.relativePath } : null
   }
 
   onMobileSessionTabsChanged(

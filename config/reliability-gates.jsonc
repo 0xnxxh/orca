@@ -11,6 +11,101 @@
   },
   "gates": [
     {
+      "id": "editor.restored-sibling-owner-reparent",
+      "title": "Restored sibling tabs migrate filesystem authority before becoming editable",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "editor-runtime",
+      "layer": "renderer-store-controller-contract",
+      "surfaces": [
+        "restored editor tabs",
+        "editor save and autosave",
+        "filesystem watches and hot-exit persistence"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "ssh", "paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "ssh", "paired-runtime"],
+      "coverageNotes": "Deterministic store/controller tests cover local, direct-SSH, paired-runtime identity, folder workspaces, queue quiescence, stale route and connection-generation rejection, authoritative active-workspace projection, owner-derived IDs, drafts and editor maps, tab/group placement, exact watch replacement, change/delete/rename correlation, explicit save, autosave, collision refusal without activation reconciliation, provenance, and restart hot-exit persistence. Live headed/headless paired-runtime and post-establish Electron IPC remain uncollected.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/11304",
+        "https://github.com/stablyai/orca/pull/11369"
+      ],
+      "invariant": "A restored absolute path owned by a same-host sibling workspace cannot read, save, watch, or persist until old saves drain, the exact route and host generations are revalidated, and one authoritative activation transaction installs the sibling owner, target projection, editor state, reconciliation, and first-activation terminal preparation; collisions and stale routes fail before activation preparation or reconciliation.",
+      "oracle": "Hold an old-owner save in flight, start migration, then remove the sibling, change a folder root, or reconnect SSH and require owner migration to fail closed after quiescence. On a stable route require one coherent target-workspace projection, first-activation terminal generation preparation, destination authority for explicit save and autosave, exact watch replacement, destination-only change/delete/rename handling, owner-derived state rekeys, and hot-exit restart ownership. Seed an invalid destination tab/group model before a collision and require the target projection to remain byte-identical.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/restored-editor-owner-reparent.test.ts src/renderer/src/components/editor/restored-editor-owner-save-lifecycle.test.ts src/renderer/src/lib/runtime-workspace-file-route.test.ts"
+      ],
+      "testFiles": [
+        "src/renderer/src/store/slices/restored-editor-owner-reparent.test.ts",
+        "src/renderer/src/components/editor/restored-editor-owner-save-lifecycle.test.ts",
+        "src/renderer/src/lib/runtime-workspace-file-route.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/renderer/src/store/slices/restored-editor-owner-reparent.test.ts",
+          "assertions": [
+            "one atomic commit rekeys owner-derived editor, preview, draft, cursor, view, tab, group, active, reveal, focus, provenance, and persistence state",
+            "active reparenting uses the centralized workspace activation transaction for terminal, browser, pending-creation, explorer, first-activation, and post-commit state",
+            "source watch unsubscribes once, destination watch subscribes once, and only destination change/delete/rename events reach the file",
+            "dirty and clean destination collisions fail closed without changing either open session or reconciling destination tabs and groups",
+            "folder and direct-SSH owners retain exact root, host, target, and connection-generation authority"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/editor/restored-editor-owner-save-lifecycle.test.ts",
+          "assertions": [
+            "migration waits for the old save queue and routes later explicit and automatic saves through the destination worktree",
+            "a removed sibling, changed folder root, or changed direct-SSH generation after quiescence rejects migration without changing ownership"
+          ]
+        },
+        {
+          "file": "src/renderer/src/lib/runtime-workspace-file-route.test.ts",
+          "assertions": [
+            "same-host runtime, folder, local, and direct-SSH roots resolve without cross-host fallback"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-03",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/restored-editor-owner-reparent.test.ts src/renderer/src/components/editor/restored-editor-owner-save-lifecycle.test.ts src/renderer/src/lib/runtime-workspace-file-route.test.ts",
+          "result": "passed",
+          "durationSeconds": 3,
+          "summary": "Three deterministic files passed 20 lifecycle, stale-route, activation, ownership, host, collision, persistence, watch, and save tests."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 5,
+        "scope": "focused renderer store/controller contract on a local development runner"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "One local deterministic run is recorded; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The final2 verifier's byte-identical post-quiescence lifecycle scope passed 21/21 on 7890271160 and failed 7 tests on f92db196a1; base e08eba674c, published 1bcfe3bcb0, and revert b3627461ab were structurally red. The permanent collision oracle is in test blob ac62a89c671a0c8f081ebf06736715bd2150ce9f (SHA-256 a61970ace80be1cb56f781aee6f878a8446c6c4527f9eb0cd0c151d8df96bf50). The same byte-identical blob is structurally red on base, published, and revert, behaviorally red on rejected final2 candidate 7890271160 because pre-commit reconciliation removes the stale destination tab, and green on implementation b72a838cdc; the full permanent gate passes 20/20."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Route lookup scans only the already-indexed renderer workspace catalog, while migration is O(open editor files + source/destination tabs/groups) and performs no provider call, Git scan, polling, retry, subprocess, or global fanout beyond the required old/new watch delta."
+      },
+      "promotionCriteria": [
+        "Collect two fresh child-verifier decisions against the correction candidate.",
+        "Collect headed and headless paired-runtime coverage after the post-establish Electron IPC gap is fixed.",
+        "Collect physical Windows or WSL path/host evidence and CI soak history."
+      ],
+      "knownGaps": [
+        "Headed Electron post-establish IPC, paired headless, reconnect, and physical Windows/WSL journeys are uncollected.",
+        "Cold many-repo main-process sibling discovery remains a separately measured follow-up.",
+        "Registered-workspace symlink policy remains inherited and unchanged."
+      ],
+      "demotionRule": "Keep experimental or demote if migration can race a save, retain source authority, fan out watches, lose dirty/editor state, accept an owner-generation change, merge a collision, or the focused contract flakes without a product or harness bug."
+    },
+    {
       "id": "terminal-provider.login-session-retirement",
       "title": "macOS login-session retirement preserves live daemons through transient rejection bursts",
       "maturity": "experimental",
