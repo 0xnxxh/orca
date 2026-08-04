@@ -135,6 +135,30 @@ describe('useMobileNativeChatSessionOptions', () => {
     expect(effort!.kind).toMatchObject({ currentValue: 'low' })
   })
 
+  it('does not revive a stale session-start report over a newer local pick', async () => {
+    mount({ reportedModel: 'claude-sonnet-5' })
+    await act(async () => {
+      await api!.setOption('model', 'opus')
+    })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'opus' })
+    // Leaving the tab and returning re-delivers the SAME session-start report,
+    // which cannot have observed the `/model opus` sent after it.
+    update({ scopeKey: 'host\0worktree\0other' })
+    update({ scopeKey: 'host\0worktree\0tab' })
+    expect(api!.snapshot[0]).toMatchObject({ valueSource: 'dispatched' })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'opus' })
+  })
+
+  it('still lets a genuinely new report supersede a local pick', async () => {
+    mount({ reportedModel: 'claude-sonnet-5' })
+    await act(async () => {
+      await api!.setOption('model', 'opus')
+    })
+    update({ reportedModel: 'claude-haiku-4-5' })
+    expect(api!.snapshot[0]).toMatchObject({ valueSource: 'reported' })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'haiku' })
+  })
+
   it('keeps the live tab’s tracked model when other tabs overflow the record cap', async () => {
     mount()
     await act(async () => {

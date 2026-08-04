@@ -39,11 +39,17 @@ type PendingOperation = { id: string; token: number }
 // scope cache. Bounded so long sessions across many tabs can't grow unbounded.
 const MOBILE_SESSION_OPTION_RECORD_CAP = 32
 const recordsByScope = new Map<string, NativeChatSessionOptionRecord>()
+// The catalog model id last taken from a hook report, per scope. Mobile cannot
+// read the agent's screen, so a repeat of the same report is not new evidence.
+const appliedReportByScope = new Map<string, string>()
 
 function getScopedRecord(scopeKey: string, agent: string): NativeChatSessionOptionRecord {
   const existing = recordsByScope.get(scopeKey)
   const record =
     existing && existing.agent === agent ? existing : createNativeChatSessionOptionRecord(agent)
+  if (record !== existing) {
+    appliedReportByScope.delete(scopeKey)
+  }
   // Why: delete-then-set on every read makes the touched scope most-recent, so
   // eviction only sheds the oldest UNTOUCHED tab. Insertion order alone would let
   // a long-lived active tab be the oldest key and lose its tracked model.
@@ -55,12 +61,14 @@ function getScopedRecord(scopeKey: string, agent: string): NativeChatSessionOpti
       break
     }
     recordsByScope.delete(oldest)
+    appliedReportByScope.delete(oldest)
   }
   return record
 }
 
 export function clearMobileSessionOptionRecordsForTests(): void {
   recordsByScope.clear()
+  appliedReportByScope.clear()
 }
 
 const EMPTY_SNAPSHOT: SessionOptionDescriptor[] = []
@@ -109,6 +117,14 @@ export function useMobileNativeChatSessionOptions(args: {
     if (!matched) {
       return
     }
+    // Why: the same report is re-delivered whenever the tab is re-entered or the
+    // status stream reconnects, and a session-start report cannot have observed a
+    // `/model` sent after it. Re-applying it would revert the user's pick. Only a
+    // report that CHANGES is evidence; the value itself still wins when it does.
+    if (appliedReportByScope.get(scopeKey) === matched) {
+      return
+    }
+    appliedReportByScope.set(scopeKey, matched)
     const record = getScopedRecord(scopeKey, agent)
     if (applyNativeChatReportedSessionOptions(record, { model: matched })) {
       bump()
