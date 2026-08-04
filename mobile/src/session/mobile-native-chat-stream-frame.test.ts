@@ -237,6 +237,29 @@ describe('applyMobileNativeChatStreamFrame', () => {
     })
   })
 
+  it('replaces retained history when a single row precedes an authoritative replay', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['removed-1', 'a', 'b'].map(message))
+
+    // Boundary of the `firstIndex > 0` rule: one dropped row is still a dropped
+    // row, and merging here would strand 'removed-1' the host no longer has.
+    const replay = [message('a'), message('b')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: false, beforeOffset: 0 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: false,
+      beforeOffset: 0,
+      windowReplaced: true
+    })
+  })
+
   it('keeps the pagination cursor when an append does not trim history', () => {
     const merger = createNativeChatMerger()
     replaceList(merger, [message('a')])

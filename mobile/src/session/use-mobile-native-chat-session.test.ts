@@ -333,6 +333,30 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.hasMore).toBe(false)
   })
 
+  it('keeps the base snapshot authoritative when a live append arrives first', async () => {
+    const sendRequest = vi.fn()
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    // Only a snapshot marks the base as delivered, so an append landing first
+    // must not demote the real base snapshot to a reconnect replay.
+    await act(async () =>
+      emit({ type: 'appended', messages: [message('early-a'), message('early-b')] })
+    )
+    await act(async () =>
+      emit({
+        type: 'snapshot',
+        messages: [message('early-b'), message('base-c')],
+        hasMore: true,
+        beforeOffset: 3
+      })
+    )
+
+    expect(state?.messages.map((entry) => entry.id)).toEqual(['early-b', 'base-c'])
+  })
+
   it('rejects a cursor page invalidated by live trim and retries with a growing tail', async () => {
     let resolveCursorPage: (response: unknown) => void = () => {}
     const sendRequest = vi
