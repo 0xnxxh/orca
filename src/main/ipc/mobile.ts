@@ -2,6 +2,7 @@ import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { networkInterfaces } from 'node:os'
 import type { RuntimeAccessGrant } from '../../shared/runtime-access-grants'
 import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-connection-mode'
+import { classifyRemotePairingHostname } from '../../shared/remote-pairing-address'
 import { isTailnetIPv4Address } from '../../shared/tailnet-address'
 import type { DeviceEntry } from '../runtime/device-registry'
 import { NETWORK_EXPOSURE_FAILED_GUIDANCE } from '../runtime/network-exposure-guidance'
@@ -184,19 +185,23 @@ export function registerMobileHandlers(
       // Why: STA-2370 — generating a runtime pairing offer is the user's explicit opt-in to remote
       // reach, so widen the loopback listener before advertising its LAN endpoint. If the widen fails the
       // listener stays on loopback, so report unavailable rather than advertise a dead LAN endpoint.
-      try {
-        await rpcServer.ensureNetworkExposure()
-      } catch (error) {
-        console.error(
-          '[mobile] Network exposure failed while creating a runtime pairing offer:',
-          error
-        )
-        // Why: STA-2370 — carry the specific reason/guidance to the renderer (mirrors the mobile-QR path) so
-        // a widen failure is distinguishable from a missing address, not collapsed into a bare unavailable.
-        return {
-          available: false as const,
-          reason: 'network_exposure_failed' as const,
-          guidance: NETWORK_EXPOSURE_FAILED_GUIDANCE
+      // A loopback advertised address ("This computer only") is the opposite opt-in: the loopback listener
+      // already serves it, and the widen never narrows back, so it must not expose the runtime off-host.
+      if (classifyRemotePairingHostname(ip) !== 'loopback') {
+        try {
+          await rpcServer.ensureNetworkExposure()
+        } catch (error) {
+          console.error(
+            '[mobile] Network exposure failed while creating a runtime pairing offer:',
+            error
+          )
+          // Why: STA-2370 — carry the specific reason/guidance to the renderer (mirrors the mobile-QR path) so
+          // a widen failure is distinguishable from a missing address, not collapsed into a bare unavailable.
+          return {
+            available: false as const,
+            reason: 'network_exposure_failed' as const,
+            guidance: NETWORK_EXPOSURE_FAILED_GUIDANCE
+          }
         }
       }
 

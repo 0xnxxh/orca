@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as NodeOs from 'node:os'
 
 const { handleMock, networkInterfacesMock } = vi.hoisted(() => ({
   handleMock: vi.fn(),
@@ -17,12 +18,21 @@ vi.mock('qrcode', () => ({
   }
 }))
 
-vi.mock('os', () => ({
+// Why: only the interface enumeration is faked; the real `os` stays available for the integration
+// test below, which needs tmpdir() for a real runtime's user data directory.
+vi.mock('os', async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeOs>()),
   networkInterfaces: networkInterfacesMock
 }))
 
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { registerMobileHandlers } from './mobile'
 import { NETWORK_EXPOSURE_FAILED_GUIDANCE } from '../runtime/network-exposure-guidance'
+import { OrcaRuntimeService } from '../runtime/orca-runtime'
+import { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
+import { WebSocketTransport } from '../runtime/rpc/ws-transport'
 
 describe('registerMobileHandlers', () => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -319,6 +329,32 @@ describe('registerMobileHandlers', () => {
     )
   })
 
+  it.each(['127.0.0.1', 'localhost', '::1'])(
+    'mints a %s runtime link without widening the listener off-host',
+    async (address) => {
+      const createPairingOffer = vi.fn().mockReturnValue({
+        available: true,
+        pairingUrl: 'orca://pair#runtime',
+        webClientUrl: `http://${address}:6768/web-index.html?pairing=runtime`,
+        endpoint: `ws://${address}:6768`,
+        deviceId: 'runtime-local'
+      })
+      const ensureNetworkExposure = vi.fn().mockResolvedValue(undefined)
+      const rpcServer = { createPairingOffer, ensureNetworkExposure }
+
+      registerMobileHandlers(rpcServer as never)
+
+      await expect(
+        handlers.get('mobile:getRuntimePairingUrl')?.(null, { address, rotate: true })
+      ).resolves.toMatchObject({ available: true, deviceId: 'runtime-local' })
+
+      // Why: "This computer only" exists so nothing is exposed off-host — a loopback link is already
+      // served by the loopback listener, and the widen is one-way for the life of the process.
+      expect(ensureNetworkExposure).not.toHaveBeenCalled()
+      expect(createPairingOffer).toHaveBeenCalled()
+    }
+  )
+
   it('reports the runtime pairing url unavailable and mints no offer when the widen fails', async () => {
     const createPairingOffer = vi.fn()
     // Why: STA-2370 — a failed widen leaves the listener on loopback, so the handler must NOT advertise a
@@ -494,5 +530,61 @@ describe('registerMobileHandlers', () => {
       })
     ).toEqual({ ok: false, reason: 'unsupported' })
     expect(runPowerShell).not.toHaveBeenCalled()
+  })
+})
+
+describe('runtime pairing bind host', () => {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>()
+
+  const wsTransportOf = (server: OrcaRuntimeRpcServer): WebSocketTransport | undefined =>
+    (server['activeTransports'] as unknown[]).find(
+      (transport): transport is WebSocketTransport => transport instanceof WebSocketTransport
+    )
+
+  beforeEach(() => {
+    handlers.clear()
+    handleMock.mockReset()
+    networkInterfacesMock.mockReset()
+    networkInterfacesMock.mockReturnValue({})
+    handleMock.mockImplementation((channel: string, handler: (...args: unknown[]) => unknown) => {
+      handlers.set(channel, handler)
+    })
+  })
+
+  it('keeps a real listener on loopback for a local link and widens it only for an off-host one', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-mobile-ipc-'))
+    const server = new OrcaRuntimeRpcServer({
+      runtime: new OrcaRuntimeService(),
+      userDataPath,
+      enableWebSocket: true,
+      wsPort: 0
+    })
+
+    await server.start()
+    try {
+      registerMobileHandlers(server)
+      expect(wsTransportOf(server)?.resolvedHost).toBe('127.0.0.1')
+
+      await expect(
+        handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+          address: '127.0.0.1',
+          rotate: true
+        })
+      ).resolves.toMatchObject({ available: true })
+      // Why: the exposure regression — picking "This computer only" used to rebind the listener to
+      // 0.0.0.0 and leave it there, publishing the runtime to the whole LAN for the rest of the process.
+      expect(wsTransportOf(server)?.resolvedHost).toBe('127.0.0.1')
+
+      await expect(
+        handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+          address: '100.64.1.20',
+          rotate: true
+        })
+      ).resolves.toMatchObject({ available: true })
+      // Why: the LAN/Tailscale choice still opts in — a client off this host cannot reach a loopback bind.
+      expect(wsTransportOf(server)?.resolvedHost).toBe('0.0.0.0')
+    } finally {
+      await server.stop()
+    }
   })
 })
