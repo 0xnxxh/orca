@@ -1,6 +1,13 @@
 import type { Terminal } from '@xterm/xterm'
 import { resolveCursorAgentImeAnchor } from './terminal-ime-anchor'
 
+type ImeAnchorCellMetrics = {
+  cellWidth: number
+  cellHeight: number
+  cols: number
+  rows: number
+}
+
 /**
  * Keep the OS IME candidate window anchored to the cell the user is typing in.
  *
@@ -9,6 +16,13 @@ import { resolveCursorAgentImeAnchor } from './terminal-ime-anchor'
  * from its own cursor, which can be stale or intentionally hidden by TUIs. We
  * force-sync after xterm's own composition handlers so the OS sees the corrected
  * location before it opens the candidate window.
+ *
+ * xterm rewrites the textarea's position from its own `compositionupdate`
+ * handler, so the update listener has to stay — CJK IMEs compose long sequences
+ * (romaji→kana→kanji, pinyin phrases) during which xterm's uncorrected position
+ * would otherwise win. Instead the update path is made free of forced layout:
+ * cell metrics are measured once per composition and reused, and a style write is
+ * skipped when the inline value already matches (a CSSOM read, not a layout one).
  *
  * Cell dimensions are derived from the public .xterm-screen element's bounds
  * (xterm sizes that element to cols*cellWidth × rows*cellHeight) rather than
@@ -24,14 +38,50 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
   }
   const screenElement = terminal.element.querySelector<HTMLElement>('.xterm-screen')
   const textarea = terminal.textarea
-  const handler = (): void => {
+  let metrics: ImeAnchorCellMetrics | null = null
+  let deferredApply: number | null = null
+  let deferredAnchor: { row: number; column: number } | null = null
+
+  const measureCells = (): ImeAnchorCellMetrics | null => {
     if (!screenElement) {
-      return
+      return null
     }
     const rect = screenElement.getBoundingClientRect()
     const cellWidth = rect.width / terminal.cols
     const cellHeight = rect.height / terminal.rows
     if (!(cellWidth > 0) || !(cellHeight > 0)) {
+      return null
+    }
+    return { cellWidth, cellHeight, cols: terminal.cols, rows: terminal.rows }
+  }
+
+  // Why: xterm rewrites these between our events, so compare against the live
+  // inline value — a CSSOM read, unlike getBoundingClientRect — and skip the
+  // write when it already matches instead of re-invalidating layout.
+  const writeOffset = (property: 'top' | 'left', value: string): void => {
+    if (textarea.style[property] !== value) {
+      textarea.style[property] = value
+    }
+  }
+
+  const applyAnchor = (row: number, column: number, cells: ImeAnchorCellMetrics): void => {
+    writeOffset('top', `${row * cells.cellHeight}px`)
+    writeOffset('left', `${column * cells.cellWidth}px`)
+  }
+
+  const handler = (event?: Event): void => {
+    if (!screenElement) {
+      return
+    }
+    // Re-measure per composition (font size or zoom may have changed since the
+    // last one); every compositionupdate then reuses it and forces no layout.
+    const staleMetrics =
+      !metrics || metrics.cols !== terminal.cols || metrics.rows !== terminal.rows
+    if (event?.type !== 'compositionupdate' || staleMetrics) {
+      metrics = measureCells()
+    }
+    const cells = metrics
+    if (!cells) {
       return
     }
     const buf = terminal.buffer.active
@@ -48,19 +98,24 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
       row: buf.cursorY,
       column: Math.min(buf.cursorX, terminal.cols - 1)
     }
-    const applyAnchor = (): void => {
-      textarea.style.top = `${anchor.row * cellHeight}px`
-      textarea.style.left = `${anchor.column * cellWidth}px`
+    applyAnchor(anchor.row, anchor.column, cells)
+    // Why: xterm re-positions the textarea from a setTimeout(0) of its own after
+    // each compositionupdate, so the correction has to land after that timer —
+    // one pending timer per burst, re-reading the anchor when it fires.
+    if (!cursorAgentAnchor) {
+      return
     }
-    applyAnchor()
-    if (cursorAgentAnchor) {
-      window.setTimeout(() => {
-        if (textarea.isConnected) {
-          applyAnchor()
+    deferredAnchor = anchor
+    if (deferredApply === null) {
+      deferredApply = window.setTimeout(() => {
+        deferredApply = null
+        if (textarea.isConnected && metrics && deferredAnchor) {
+          applyAnchor(deferredAnchor.row, deferredAnchor.column, metrics)
         }
       }, 0)
     }
   }
+
   terminal.element.addEventListener('compositionstart', handler)
   terminal.element.addEventListener('compositionupdate', handler)
   return handler
