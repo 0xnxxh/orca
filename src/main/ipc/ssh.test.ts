@@ -2520,6 +2520,51 @@ describe('SSH IPC handlers', () => {
     expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-1')
   })
 
+  it('ssh:resetRelay does not open a transport when shutdown starts while it waits for a connect', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    let failConnect!: (error: unknown) => void
+    const connectResult = new Promise((_resolve, reject) => {
+      failConnect = reject
+    })
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockReturnValue(connectResult)
+    // Why undefined: reset must fall through to opening its own transport, which is the call under test.
+    mockConnectionManager.getConnection.mockReturnValue(undefined)
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+
+    const connectPromise = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<unknown>
+    await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1))
+
+    // Why admitted first: the gate latches only after reset is already parked behind the connect, so
+    // the entry fence cannot be what stops it.
+    const resetPromise = handlers.get('ssh:resetRelay')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<void>
+    await Promise.resolve()
+
+    quitTeardownStartGate.tryStart({ preventDefault() {} })
+    failConnect(new Error('transport lost'))
+    await expect(connectPromise).rejects.toThrow('transport lost')
+
+    await expect(resetPromise).rejects.toThrow('closed for app shutdown')
+    // Why once: the resumed reset must not open a second transport that would outlive the drain.
+    expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1)
+    expect(mockForceStopRelayForTarget).not.toHaveBeenCalled()
+  })
+
   it('ssh:connect waits for an in-flight reset before starting a new connection', async () => {
     const target: SshTarget = {
       id: 'ssh-1',

@@ -1319,7 +1319,13 @@ export function registerSshHandlers(
     }
 
     const existingConn = connectionManager!.getConnection(targetId)
-    const conn = existingConn ?? (await connectionManager!.connect(target))
+    let conn = existingConn
+    if (!conn) {
+      // Why re-check: admission fenced this reset before it parked on the in-flight connect, so shutdown
+      // may have started (and drained) while we waited — opening a transport now would outlive the drain.
+      assertSshConnectsNotFenced()
+      conn = await connectionManager!.connect(target)
+    }
     try {
       await forceStopRelayForTarget(conn, targetId)
     } finally {
