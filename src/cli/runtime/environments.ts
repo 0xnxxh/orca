@@ -1,8 +1,10 @@
 import {
   addEnvironmentFromPairingCode as addEnvironmentFromPairingCodeInStore,
+  getEnvironmentRuntimeCompat as getEnvironmentRuntimeCompatInStore,
   getEnvironmentStorePath,
   listEnvironments,
   markEnvironmentUsed as markEnvironmentUsedInStore,
+  recordEnvironmentRuntimeCompat as recordEnvironmentRuntimeCompatInStore,
   removeEnvironment as removeEnvironmentFromStore,
   resolveEnvironment as resolveEnvironmentFromStore,
   resolveEnvironmentPairingOffer as resolveEnvironmentPairingOfferFromStore,
@@ -11,7 +13,8 @@ import {
 } from '../../shared/runtime-environment-store'
 import type {
   KnownRuntimeEnvironment,
-  PublicKnownRuntimeEnvironment
+  PublicKnownRuntimeEnvironment,
+  RuntimeEnvironmentCompat
 } from '../../shared/runtime-environments'
 import type { PairingOffer } from '../../shared/pairing'
 import { RuntimeClientError } from './types'
@@ -57,6 +60,21 @@ export function markEnvironmentUsed(
   args: { runtimeId?: string | null; now?: number } = {}
 ): void {
   translateStoreError(() => markEnvironmentUsedInStore(userDataPath, selector, args))
+}
+
+export function getEnvironmentRuntimeCompat(
+  userDataPath: string,
+  selector: string
+): RuntimeEnvironmentCompat | null {
+  return translateStoreError(() => getEnvironmentRuntimeCompatInStore(userDataPath, selector))
+}
+
+export function recordEnvironmentRuntimeCompat(
+  userDataPath: string,
+  selector: string,
+  compat: RuntimeEnvironmentCompat
+): void {
+  translateStoreError(() => recordEnvironmentRuntimeCompatInStore(userDataPath, selector, compat))
 }
 
 function translateStoreError<TResult>(fn: () => TResult): TResult {

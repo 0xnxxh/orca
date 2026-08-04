@@ -20,6 +20,18 @@ export type PublicRuntimeAccessEndpoint = z.infer<typeof PublicRuntimeAccessEndp
 export const RuntimeEnvironmentSourceSchema = z.enum(['manual', 'ephemeral-vm'])
 export type RuntimeEnvironmentSource = z.infer<typeof RuntimeEnvironmentSourceSchema>
 
+// Why: proof that this exact runtime launch already passed the protocol-compat check, so the CLI can skip
+// its preflight connection. runtimeId is minted per runtime launch, so any restart or upgrade retires it;
+// the client versions are recorded too so a CLI update re-checks.
+export const RuntimeEnvironmentCompatSchema = z.object({
+  runtimeId: z.string().min(1),
+  appVersion: z.string().min(1).optional(),
+  clientProtocolVersion: z.number().finite(),
+  minCompatibleServerProtocolVersion: z.number().finite()
+})
+
+export type RuntimeEnvironmentCompat = z.infer<typeof RuntimeEnvironmentCompatSchema>
+
 export const KnownRuntimeEnvironmentSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -28,6 +40,7 @@ export const KnownRuntimeEnvironmentSchema = z.object({
   pairingRevision: z.number().finite().optional(),
   lastUsedAt: z.number().finite().nullable(),
   runtimeId: z.string().min(1).nullable(),
+  runtimeCompat: RuntimeEnvironmentCompatSchema.optional(),
   source: RuntimeEnvironmentSourceSchema.optional(),
   connectionDependency: z.literal('ssh-tunnel').optional(),
   endpoints: z.array(RuntimeAccessEndpointSchema).min(1),

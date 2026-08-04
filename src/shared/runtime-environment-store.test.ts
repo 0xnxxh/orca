@@ -6,10 +6,12 @@ import { encodePairingOffer } from './pairing'
 import {
   RuntimeEnvironmentStoreError,
   addEnvironmentFromPairingCode,
+  getEnvironmentRuntimeCompat,
   getEnvironmentStorePath,
   listEnvironments,
   MAX_RUNTIME_ENVIRONMENT_STORE_FILE_BYTES,
   markEnvironmentUsed,
+  recordEnvironmentRuntimeCompat,
   updateEnvironmentFromPairingCode
 } from './runtime-environment-store'
 
@@ -149,6 +151,32 @@ describe('runtime environment store', () => {
       lastUsedAt: 2_000,
       runtimeId: 'runtime-2'
     })
+  })
+
+  it('retires a recorded compat verdict as soon as another runtime answers', () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-env-store-'))
+    tempDirs.push(userDataPath)
+    const env = addEnvironmentFromPairingCode(userDataPath, {
+      name: 'dev box',
+      pairingCode: pairingCode()
+    })
+    const compat = {
+      runtimeId: 'runtime-1',
+      appVersion: '1.4.165',
+      clientProtocolVersion: 7,
+      minCompatibleServerProtocolVersion: 3
+    }
+
+    recordEnvironmentRuntimeCompat(userDataPath, env.id, compat, 1_000)
+    expect(getEnvironmentRuntimeCompat(userDataPath, env.id)).toEqual(compat)
+
+    // Same runtime inside the throttle window keeps the verdict.
+    markEnvironmentUsed(userDataPath, env.id, { runtimeId: 'runtime-1', now: 2_000 })
+    expect(getEnvironmentRuntimeCompat(userDataPath, env.id)).toEqual(compat)
+
+    // A restarted runtime mints a new runtimeId, so the verdict no longer applies.
+    markEnvironmentUsed(userDataPath, env.id, { runtimeId: 'runtime-2', now: 3_000 })
+    expect(getEnvironmentRuntimeCompat(userDataPath, env.id)).toBeNull()
   })
 
   it('rejects an oversized sparse environment store before parsing it', () => {

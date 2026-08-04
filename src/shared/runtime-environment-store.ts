@@ -13,6 +13,7 @@ import {
   KnownRuntimeEnvironmentSchema,
   RuntimeEnvironmentStoreSchema,
   type KnownRuntimeEnvironment,
+  type RuntimeEnvironmentCompat,
   type RuntimeEnvironmentSource,
   type RuntimeEnvironmentStore
 } from './runtime-environments'
@@ -182,24 +183,69 @@ export function markEnvironmentUsed(
   const environment = resolveEnvironmentFromStore(store, selector)
   const now = args.now ?? Date.now()
   const runtimeIdChanged = args.runtimeId != null && args.runtimeId !== environment.runtimeId
+  // Why: the runtime that answered is not the one we verified, so its compat verdict no longer applies.
+  const compatIsStale =
+    environment.runtimeCompat != null &&
+    args.runtimeId != null &&
+    environment.runtimeCompat.runtimeId !== args.runtimeId
   const lastUsedIsFresh =
     environment.lastUsedAt != null &&
     now >= environment.lastUsedAt &&
     now - environment.lastUsedAt < LAST_USED_PERSIST_INTERVAL_MS
-  if (!runtimeIdChanged && lastUsedIsFresh) {
+  if (!runtimeIdChanged && !compatIsStale && lastUsedIsFresh) {
     return
   }
-  const next = store.environments.map((entry) =>
-    entry.id === environment.id
-      ? {
-          ...entry,
-          runtimeId: args.runtimeId ?? entry.runtimeId,
-          lastUsedAt: now,
-          updatedAt: now
-        }
-      : entry
-  )
+  const next = store.environments.map((entry) => {
+    if (entry.id !== environment.id) {
+      return entry
+    }
+    const { runtimeCompat, ...rest } = entry
+    return {
+      ...rest,
+      ...(compatIsStale || !runtimeCompat ? {} : { runtimeCompat }),
+      runtimeId: args.runtimeId ?? entry.runtimeId,
+      lastUsedAt: now,
+      updatedAt: now
+    }
+  })
   writeEnvironmentStore(userDataPath, { version: 1, environments: next })
+}
+
+/** The compat verdict recorded for this environment, or null when nothing has been verified yet. */
+export function getEnvironmentRuntimeCompat(
+  userDataPath: string,
+  selector: string
+): RuntimeEnvironmentCompat | null {
+  const environment = resolveEnvironmentFromStore(readEnvironmentStore(userDataPath), selector)
+  return environment.runtimeCompat ?? null
+}
+
+/** Records a passed compat check so later commands can skip their preflight connection. */
+export function recordEnvironmentRuntimeCompat(
+  userDataPath: string,
+  selector: string,
+  compat: RuntimeEnvironmentCompat,
+  now = Date.now()
+): void {
+  const store = readEnvironmentStore(userDataPath)
+  const environment = resolveEnvironmentFromStore(store, selector)
+  const current = environment.runtimeCompat
+  if (
+    current?.runtimeId === compat.runtimeId &&
+    current.appVersion === compat.appVersion &&
+    current.clientProtocolVersion === compat.clientProtocolVersion &&
+    current.minCompatibleServerProtocolVersion === compat.minCompatibleServerProtocolVersion
+  ) {
+    return
+  }
+  writeEnvironmentStore(userDataPath, {
+    version: 1,
+    environments: store.environments.map((entry) =>
+      entry.id === environment.id
+        ? { ...entry, runtimeCompat: compat, runtimeId: compat.runtimeId, updatedAt: now }
+        : entry
+    )
+  })
 }
 
 function resolveEnvironmentFromStore(

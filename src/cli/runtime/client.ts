@@ -12,13 +12,11 @@ import { getCliStatus, resolveDesktopWindowStatus } from './status'
 import { sendRequest } from './transport'
 import { RuntimeClientError, RuntimeRpcFailureError, type RuntimeRpcSuccess } from './types'
 import type { sendWebSocketRequest } from './websocket-transport'
-import { markEnvironmentUsed, resolveEnvironmentPairingOffer } from './environments'
-import { describeRuntimeCompatBlock, evaluateRuntimeCompat } from '../../shared/protocol-compat'
+import { resolveEnvironmentPairingOffer } from './environments'
+import { RemoteRuntimeCompatGate } from './remote-runtime-compat-gate'
 import {
-  MIN_COMPATIBLE_RUNTIME_SERVER_VERSION,
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
-  ORCHESTRATION_CONTRACT_VERSION,
-  RUNTIME_PROTOCOL_VERSION
+  ORCHESTRATION_CONTRACT_VERSION
 } from '../../shared/protocol-version'
 import { createOrchestrationCompatibilityEnvelope } from './orchestration-compatibility-envelope'
 import { getTimeoutMsParam, isWaitingCheck } from './runtime-request-timeout'
@@ -43,7 +41,7 @@ export class RuntimeClient {
   private readonly requestTimeoutMs: number
   private readonly remotePairing: PairingOffer | null
   private readonly environmentSelector: string | null
-  private remoteCompatChecked = false
+  private readonly remoteCompat: RemoteRuntimeCompatGate
   private orchestrationContractCheck: Promise<void> | null = null
   private readonly orchestrationCompatibility = createOrchestrationCompatibilityEnvelope(
     process.env
@@ -62,6 +60,7 @@ export class RuntimeClient {
     this.requestTimeoutMs = requestTimeoutMs
     this.environmentSelector = environmentSelector
     this.remotePairing = resolveRemotePairing(userDataPath, remotePairingCode, environmentSelector)
+    this.remoteCompat = new RemoteRuntimeCompatGate(userDataPath, environmentSelector)
   }
 
   get isRemote(): boolean {
@@ -97,10 +96,10 @@ export class RuntimeClient {
       ...compatibilityEnvelope
     }
     if (this.remotePairing) {
-      if (method !== 'status.get') {
-        await this.ensureRemoteRuntimeCompatible(effectiveTimeoutMs)
-      }
       const sendWebSocketRequest = await loadSendWebSocketRequest()
+      if (method !== 'status.get') {
+        await this.remoteCompat.ensure(this.remotePairing, effectiveTimeoutMs, sendWebSocketRequest)
+      }
       let response
       try {
         response = await sendWebSocketRequest<TResult>(
@@ -116,11 +115,7 @@ export class RuntimeClient {
       if (response.ok === false) {
         throw new RuntimeRpcFailureError(response)
       }
-      if (this.environmentSelector) {
-        markEnvironmentUsed(this.userDataPath, this.environmentSelector, {
-          runtimeId: response._meta.runtimeId
-        })
-      }
+      this.remoteCompat.noteRespondingRuntimeId(response._meta.runtimeId)
       return response
     }
     const metadata = readMetadata(this.userDataPath)
@@ -157,8 +152,7 @@ export class RuntimeClient {
   async getCliStatus(): Promise<RuntimeRpcSuccess<CliStatusResult>> {
     if (this.remotePairing) {
       const response = await this.call<RuntimeStatus>('status.get')
-      this.assertRemoteRuntimeStatusCompatible(response.result)
-      this.remoteCompatChecked = true
+      this.remoteCompat.noteVerifiedStatus(response.result, response._meta.runtimeId)
       const graphState = response.result.graphStatus
       return {
         id: response.id,
@@ -196,29 +190,6 @@ export class RuntimeClient {
     return getCliStatus(this.userDataPath)
   }
 
-  private async ensureRemoteRuntimeCompatible(timeoutMs: number): Promise<void> {
-    if (!this.remotePairing || this.remoteCompatChecked) {
-      return
-    }
-    const sendWebSocketRequest = await loadSendWebSocketRequest()
-    const response = await sendWebSocketRequest<RuntimeStatus>(
-      this.remotePairing,
-      'status.get',
-      undefined,
-      timeoutMs
-    )
-    if (response.ok === false) {
-      throw new RuntimeRpcFailureError(response)
-    }
-    this.assertRemoteRuntimeStatusCompatible(response.result)
-    this.remoteCompatChecked = true
-    if (this.environmentSelector) {
-      markEnvironmentUsed(this.userDataPath, this.environmentSelector, {
-        runtimeId: response._meta.runtimeId
-      })
-    }
-  }
-
   private async ensureOrchestrationContractCompatible(timeoutMs: number): Promise<void> {
     if (!this.orchestrationContractCheck) {
       this.orchestrationContractCheck = this.checkOrchestrationContractCompatibility(timeoutMs)
@@ -229,8 +200,7 @@ export class RuntimeClient {
   private async checkOrchestrationContractCompatibility(timeoutMs: number): Promise<void> {
     const response = await this.call<RuntimeStatus>('status.get', undefined, { timeoutMs })
     if (this.remotePairing) {
-      this.assertRemoteRuntimeStatusCompatible(response.result)
-      this.remoteCompatChecked = true
+      this.remoteCompat.noteVerifiedStatus(response.result, response._meta.runtimeId)
     }
     if (!response.result.capabilities?.includes(ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY)) {
       throw new RuntimeClientError(
@@ -238,19 +208,6 @@ export class RuntimeClient {
         'The connected Orca runtime does not support the current orchestration contract. No effects were applied.',
         orchestrationMigrationData('runtime_capability_missing')
       )
-    }
-  }
-
-  private assertRemoteRuntimeStatusCompatible(status: RuntimeStatus): void {
-    const verdict = evaluateRuntimeCompat({
-      clientProtocolVersion: RUNTIME_PROTOCOL_VERSION,
-      minCompatibleServerProtocolVersion: MIN_COMPATIBLE_RUNTIME_SERVER_VERSION,
-      serverProtocolVersion: status.runtimeProtocolVersion ?? status.protocolVersion,
-      serverMinCompatibleClientProtocolVersion:
-        status.minCompatibleRuntimeClientVersion ?? status.minCompatibleMobileVersion
-    })
-    if (verdict.kind === 'blocked') {
-      throw new RuntimeClientError('incompatible_runtime', describeRuntimeCompatBlock(verdict))
     }
   }
 
