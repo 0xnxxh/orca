@@ -138,9 +138,9 @@ export function createStableLogicalRpcClient(
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
     },
-    notifyForeground: () => {
+    notifyForeground: (reason) => {
       if (!suspended) {
-        activeSession.notifyForeground()
+        activeSession.notifyForeground(reason)
       }
     },
     close() {

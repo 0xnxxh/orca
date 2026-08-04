@@ -4,21 +4,21 @@ import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
 import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
 import {
-  encodeBase64Url,
-  isDirectorResolutionFailure,
+  dialRelayThroughDirectorFallback,
   persistRelayHost,
-  toError
+  suspendRelayIfStillConnected
 } from './mobile-endpoint-supervisor-support'
 import { selectDialableRelayCredentials } from './mobile-relay-credential-selection'
 import { createRelayRecoveryLog, type RelayRecoveryLog } from './mobile-relay-recovery-log'
 import {
-  applyResumeConfirmation,
   mobileRelayCredentialNeedsRotation,
   rotateMobileRelayCredential
 } from './mobile-relay-credential-rotation'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
+import { MobileRelayFocusProbe } from './mobile-relay-focus-probe'
+import { MobileRelaySessionEstablisher } from './mobile-relay-session-establisher'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
-import type { HostProfile } from './types'
+import type { ForegroundNudgeReason, HostProfile } from './types'
 
 export type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
 
@@ -31,6 +31,7 @@ export class MobileEndpointSupervisor {
   private stopped = false
   private foreground = true
   private operationInFlight = false
+  private readonly focusProbe: MobileRelayFocusProbe
   private credentialRotationInFlight = false
   private relayRotationPending = false
   private unsubscribeState: (() => void) | null = null
@@ -39,6 +40,7 @@ export class MobileEndpointSupervisor {
   private readonly leaseRotation: RelayLeaseRotationTimer
   private readonly logRelay: RelayRecoveryLog
   private readonly directProbe: DirectReturnProbe
+  private readonly sessionEstablisher: MobileRelaySessionEstablisher
 
   constructor(
     private readonly logical: StableLogicalRpcClient,
@@ -53,9 +55,41 @@ export class MobileEndpointSupervisor {
     })
     this.logRelay = createRelayRecoveryLog(dependencies.now, dependencies.onLog)
     this.relayReconnect = new RelayReconnectController(dependencies, this.recoverRelay.bind(this))
+    this.focusProbe = new MobileRelayFocusProbe({
+      logical,
+      now: dependencies.now,
+      canProbe: () => !this.stopped && this.foreground,
+      onDead: (detail) => {
+        this.logRelay('relay probe failed; recovering', detail)
+        suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+        void this.recoverRelay()
+      }
+    })
     this.leaseRotation = new RelayLeaseRotationTimer(dependencies, () => {
       this.relayRotationPending = true
       void this.recoverRelay(true)
+    })
+    this.sessionEstablisher = new MobileRelaySessionEstablisher({
+      logical,
+      controller: this.relayReconnect,
+      openRelay: dependencies.openRelay,
+      randomBytes: dependencies.randomBytes,
+      writeBundle: dependencies.writeBundle,
+      isActive: () => !this.stopped && this.foreground,
+      isForeground: () => this.foreground,
+      relay: () => this.host.relay,
+      bundle: () => this.bundle,
+      adoptBundle: (bundle) => {
+        this.bundle = bundle
+      },
+      recordMigration: () => {
+        this.relayRotationPending = false
+        this.hysteresis.recordMigration(dependencies.now())
+        this.logRelay('runtime channel migrated to relay')
+      },
+      scheduleLease: (expiry) =>
+        this.leaseRotation.scheduleFromLease(this.stopped || !this.foreground ? null : expiry),
+      scheduleDirectProbe: () => this.directProbe.schedule()
     })
     this.directProbe = new DirectReturnProbe(dependencies, {
       hysteresis: this.hysteresis,
@@ -127,6 +161,23 @@ export class MobileEndpointSupervisor {
     }
   }
 
+  nudge(reason: ForegroundNudgeReason): void {
+    if (this.stopped) {
+      return
+    }
+    if (!this.foreground) {
+      this.setForeground(true)
+      return
+    }
+    const verdict = this.relayReconnect.handleActiveNudge(this.logical, reason)
+    if (verdict === 'probe') {
+      void this.focusProbe.probe()
+    } else if (verdict === 'replace') {
+      void this.recoverRelay(true, true)
+    }
+    this.directProbe.schedule(0)
+  }
+
   stop(): void {
     this.stopped = true
     this.unsubscribeState?.()
@@ -136,7 +187,10 @@ export class MobileEndpointSupervisor {
     this.leaseRotation.clear()
   }
 
-  private async recoverRelay(forceReplacement = false): Promise<void> {
+  // suspectActive: the caller believes the live relay socket may be half-open (network
+  // change). Dial the replacement make-before-break — the dot stays green — and only
+  // bring the old session down when no replacement can be established.
+  private async recoverRelay(forceReplacement = false, suspectActive = false): Promise<void> {
     // Why: connecting/handshaking is live direct progress; a relay dial would race it.
     if (
       this.stopped ||
@@ -150,6 +204,10 @@ export class MobileEndpointSupervisor {
     // Why: revival and lease timers can overlap resume failures; one shared cooldown
     // prevents PEER_DROPPED/LIMIT_EXCEEDED reconnect churn.
     if (this.relayReconnect.shouldDefer()) {
+      if (suspectActive) {
+        // Why: the armed retry runs unforced and dead-ends on a stale 'connected'.
+        suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+      }
       this.logRelay('recovery deferred by cooldown or gate')
       return
     }
@@ -173,6 +231,9 @@ export class MobileEndpointSupervisor {
             : 'no relay credential bundle; slow reprobe armed'
         )
         this.relayReconnect.armCredentialReprobe()
+        if (suspectActive) {
+          suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+        }
         return
       }
       for (const credential of selection.credentials) {
@@ -195,8 +256,11 @@ export class MobileEndpointSupervisor {
       }
       // Why: cleanup may happen while a relay dial is awaiting the network;
       // record its outcome without recreating a foreground retry timer.
-      const scheduleRetry = !forceReplacement && this.foreground && !this.stopped
+      const scheduleRetry = (!forceReplacement || suspectActive) && this.foreground && !this.stopped
       this.relayReconnect.registerFailure(lastError, scheduleRetry)
+      if (suspectActive) {
+        suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+      }
     } finally {
       this.operationInFlight = false
       if (forceReplacement && this.relayRotationPending && !this.stopped && this.foreground) {
@@ -209,75 +273,19 @@ export class MobileEndpointSupervisor {
     }
   }
 
-  private async tryRelayCredential(credential: {
+  private tryRelayCredential(credential: {
     token: string
     version: number
   }): Promise<{ ok: true } | { ok: false; error: Error }> {
-    const first = await this.openAndMigrateRelay(credential)
-    if (first.ok) {
-      return first
-    }
-    if (!isDirectorResolutionFailure(first.error) || !this.host.relay) {
-      return first
-    }
-    try {
-      const resolved = await this.dependencies.resolveRelay({
-        relay: this.host.relay,
-        resumeToken: credential.token
-      })
-      this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
-      return await this.openAndMigrateRelay(credential)
-    } catch (error) {
-      return { ok: false, error: toError(error) }
-    }
-  }
-
-  private async openAndMigrateRelay(credential: {
-    token: string
-    version: number
-  }): Promise<{ ok: true } | { ok: false; error: Error }> {
-    // Why: director resolution and grace fallback can finish after background/stop.
-    if (this.stopped || !this.foreground || !this.host.relay || !this.bundle) {
-      return { ok: false, error: new Error('relay state missing') }
-    }
-    const session = this.dependencies.openRelay(
-      this.host.relay,
-      credential,
-      `confirm-${encodeBase64Url(this.dependencies.randomBytes(16))}`
-    )
-    try {
-      await this.logical.migrateTo(session, 'relay')
-      this.relayReconnect.setActiveSession(session)
-      if (!this.foreground) {
-        this.relayReconnect.suspendActiveRelay(this.logical)
+    return dialRelayThroughDirectorFallback({
+      resumeToken: credential.token,
+      relay: () => this.host.relay,
+      dial: () => this.sessionEstablisher.establish(credential),
+      resolveRelay: this.dependencies.resolveRelay,
+      persistResolvedRelay: async (resolved) => {
+        this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
       }
-      this.relayRotationPending = false
-      this.hysteresis.recordMigration(this.dependencies.now())
-      this.logRelay('runtime channel migrated to relay')
-      const confirmation = session.getResumeConfirmation()
-      if (confirmation) {
-        this.bundle = applyResumeConfirmation(this.bundle, credential.version, confirmation)
-        // Why: the relay is already authenticated; a SecureStore failure must
-        // not open another socket or count against transport recovery backoff.
-        await this.dependencies.writeBundle(this.bundle).catch(() => {})
-      }
-      // Why: async persistence can finish after stop/background; never recreate a stale timer.
-      // Why: rotate against the resume credential's expiry, never the hello's
-      // leaseExpiresAt — that field is the cell's ~10s attach-reservation
-      // deadline, and using it forced a session replacement every second.
-      // Why: renewed=false means a re-resume provably returns the same
-      // unchanged deadline — rotating then just churns one replacement per
-      // clamp floor until a fresh credential arrives over direct or disk.
-      this.leaseRotation.scheduleFromLease(
-        this.stopped || !this.foreground || confirmation?.renewed === false
-          ? null
-          : (confirmation?.resumeExpiresAt ?? session.getResumeExpiresAt())
-      )
-      this.directProbe.schedule()
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: session.getFailure() ?? toError(error) }
-    }
+    })
   }
 
   private async rotateCredentialIfNeeded(force = false): Promise<void> {

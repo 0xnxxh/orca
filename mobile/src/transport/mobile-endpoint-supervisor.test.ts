@@ -156,7 +156,28 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
-  it('replaces a half-open relay on a network nudge, then backs off failed resumes', async () => {
+  it('replaces a relay make-before-break on a network nudge without going grey', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const deps = dependencies({
+      openDirect: vi.fn(() => new FakeSession('disconnected'))
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    expect(deps.openRelay).toHaveBeenCalledOnce()
+    expect(logical.getActivePath()).toBe('relay')
+
+    // The OS reports a network handoff, but the relay never published onclose.
+    // The replacement authenticates, migrateTo swaps sessions — never disconnected.
+    supervisor.nudge('network-change')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(deps.openRelay).toHaveBeenCalledTimes(2)
+    expect(logical.suspendActiveSession).not.toHaveBeenCalled()
+    expect(logical.getState()).toBe('connected')
+    supervisor.stop()
+  })
+
+  it('suspends only after a failed replacement dial, then backs off further nudges', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     const openRelay = vi
       .fn()
@@ -174,16 +195,16 @@ describe('mobile endpoint supervisor', () => {
     await supervisor.start()
     expect(openRelay).toHaveBeenCalledOnce()
 
-    // The OS reports a network handoff, but the dead relay never published onclose.
-    supervisor.setForeground(true)
+    // PEER_DROPPED on the replacement: the suspect session comes down so the
+    // armed retry can run, and the failure books the shared cooldown.
+    supervisor.nudge('network-change')
     await vi.advanceTimersByTimeAsync(0)
     expect(logical.suspendActiveSession).toHaveBeenCalledOnce()
     expect(openRelay).toHaveBeenCalledTimes(2)
 
-    // The relay cell rejects the replacement with PEER_DROPPED; more flap nudges
-    // must share the existing cooldown rather than opening more sockets.
+    // More flap nudges share the existing cooldown rather than opening sockets.
     for (let i = 0; i < 5; i++) {
-      supervisor.setForeground(true)
+      supervisor.nudge('network-change')
       await vi.advanceTimersByTimeAsync(0)
     }
     expect(openRelay).toHaveBeenCalledTimes(2)
@@ -193,6 +214,40 @@ describe('mobile endpoint supervisor', () => {
     expect(openRelay).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(openRelay).toHaveBeenCalledTimes(3)
+    supervisor.stop()
+  })
+
+  it('probes a healthy relay on a focus nudge and keeps it untouched', async () => {
+    const logical = new FakeLogicalClient('connected', 'relay')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+    await supervisor.start()
+
+    supervisor.nudge('focus')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(logical.sendRequest).toHaveBeenCalledWith('status.get', null, { timeoutMs: 4000 })
+    expect(logical.suspendActiveSession).not.toHaveBeenCalled()
+    expect(deps.openRelay).not.toHaveBeenCalled()
+
+    // Repeated focus events inside the probe window coalesce into one probe.
+    supervisor.nudge('focus')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(logical.sendRequest).toHaveBeenCalledOnce()
+    supervisor.stop()
+  })
+
+  it('suspends and re-dials when the focus probe fails', async () => {
+    const logical = new FakeLogicalClient('connected', 'relay')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+    await supervisor.start()
+
+    logical.sendRequest.mockRejectedValueOnce(new Error('relay RPC timed out: status.get'))
+    supervisor.nudge('focus')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(logical.suspendActiveSession).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(deps.openRelay).toHaveBeenCalledOnce())
+    expect(logical.getState()).toBe('connected')
     supervisor.stop()
   })
 
@@ -714,7 +769,9 @@ describe('mobile endpoint supervisor', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(openRelay).toHaveBeenCalledTimes(2)
 
-    supervisor.setForeground(true)
+    // A network nudge inside the cooldown suspends the suspect session but must
+    // not dial early; the armed retry fires exactly at the 250 ms boundary.
+    supervisor.nudge('network-change')
     await vi.advanceTimersByTimeAsync(249)
     expect(openRelay).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)

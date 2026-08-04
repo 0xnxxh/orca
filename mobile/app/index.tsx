@@ -24,12 +24,8 @@ import type { HomeWorktreeSummary, HostWorktreeInfo } from '../src/worktree/home
 import type { RpcClient } from '../src/transport/rpc-client'
 import { createHostConnectRefetchGate } from '../src/transport/host-connect-refetch-gate'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
-import {
-  useAllHostClients,
-  useCloseHost,
-  useForceReconnect,
-  usePrimeHosts
-} from '../src/transport/client-context'
+import { useCloseHost, useForceReconnect, usePrimeHosts } from '../src/transport/client-context'
+import { useAllHostClients } from '../src/transport/use-all-host-clients'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {

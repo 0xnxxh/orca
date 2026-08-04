@@ -512,7 +512,8 @@ export function HostScreen({
   useFocusEffect(
     useCallback(() => {
       // Why: focus nudges reconnect and probes a possibly half-open socket; empty deps fire per focus, not per state flip (which defeats backoff).
-      clientRef.current?.notifyForeground()
+      // 'focus' keeps a healthy relay green — probe, never suspend (S2 grey blink).
+      clientRef.current?.notifyForeground('focus')
     }, [])
   )
 
@@ -734,10 +735,9 @@ export function HostScreen({
   )
 
   const displayWorktrees = useMemo(() => {
-    const base =
-      connState === 'disconnected' || connState === 'reconnecting' || connState === 'auth-failed'
-        ? lastKnownWorktrees
-        : worktrees
+    // Why: live `worktrees` is authoritative only while connected; under the amber
+    // mount default, connecting/handshaking must keep the pre-reconnect list too.
+    const base = connState === 'connected' ? worktrees : lastKnownWorktrees
     if (sleptIds.size === 0 && optimisticActiveWorktreeId === null) {
       return base
     }

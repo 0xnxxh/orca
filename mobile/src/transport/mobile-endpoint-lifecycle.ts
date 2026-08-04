@@ -1,5 +1,5 @@
 import * as ExpoCrypto from 'expo-crypto'
-import type { ConnectionLogSink, HostProfile } from './types'
+import type { ConnectionLogSink, ForegroundNudgeReason, HostProfile } from './types'
 import { connect } from './rpc-client'
 import { MobileEndpointSupervisor } from './mobile-endpoint-supervisor'
 import { connectMobileRelayRpcSession } from './mobile-relay-rpc-session'
@@ -15,6 +15,7 @@ import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 
 type EndpointLifecycle = {
   setForeground(foreground: boolean): void
+  nudge(reason: ForegroundNudgeReason): void
   stop(): void
 }
 
@@ -62,6 +63,9 @@ export function startMobileEndpointLifecycle(
     setForeground(next) {
       foreground = next
       owner.setForeground(next)
+    },
+    nudge(reason) {
+      owner.nudge(reason)
     },
     stop() {
       stopped = true
