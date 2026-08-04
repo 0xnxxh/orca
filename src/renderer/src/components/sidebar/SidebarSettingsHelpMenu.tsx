@@ -114,8 +114,7 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
   }
 
   const revealAdminOptions = (altKey: boolean): void => {
-    // Why: onboarding replay and restart stay off the default Help menu; holding
-    // Option/Alt before opening is an intentional power-user affordance.
+    // Why: Restart stays off the default Help menu; hold Option/Alt when opening.
     setShowAdminOptions(altKey)
   }
 
@@ -268,19 +267,17 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
                 />
               </DropdownMenuItem>
             ) : null}
-            {showAdminOptions ? (
-              <DropdownMenuItem
-                className="whitespace-nowrap"
-                onClick={handleShowOnboarding}
-                onSelect={handleShowOnboarding}
-              >
-                <School className="size-3.5" />
-                {translate(
-                  'auto.components.sidebar.SidebarSettingsHelpMenu.b7e4d2a19c',
-                  'Onboarding'
-                )}
-              </DropdownMenuItem>
-            ) : null}
+            <DropdownMenuItem
+              className="whitespace-nowrap"
+              onClick={handleShowOnboarding}
+              onSelect={handleShowOnboarding}
+            >
+              <School className="size-3.5" />
+              {translate(
+                'auto.components.sidebar.SidebarSettingsHelpMenu.b7e4d2a19c',
+                'Onboarding'
+              )}
+            </DropdownMenuItem>
             <ExternalMenuItem
               label={translate(
                 'auto.components.sidebar.SidebarSettingsHelpMenu.cdc87f897e',
