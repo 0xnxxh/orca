@@ -239,6 +239,13 @@ test.describe('terminal reattach mouse mode', () => {
       // ── The reported symptom: drag now paints a selection over the TUI ──
       await dragAcrossTuiRows(secondLaunch.page, afterReattach.screen)
       const afterDrag = await readTerminalSurface(secondLaunch.page)
+      // Why a screenshot and not the video fixture: this spec quits and relaunches Orca,
+      // so the recorder's WebM never flushes. This frame IS the proof — on main the drag
+      // paints an xterm row selection across the live TUI; here it must stay clean.
+      const proofShot = process.env.ORCA_E2E_PROOF_SCREENSHOT
+      if (proofShot) {
+        await secondLaunch.page.screenshot({ path: proofShot })
+      }
       expect(afterDrag, 'terminal surface unavailable after the drag').not.toBeNull()
       expect(
         afterDrag!.selectionText,
