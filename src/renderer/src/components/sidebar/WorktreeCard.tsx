@@ -363,9 +363,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
     }
   }, [sshOwnerEnvironmentId])
   const isSshDisconnected = sshStatus != null && sshStatus !== 'connected'
-  // Why: only reported on positive evidence, so a removed host never offers a Connect that can only fail.
+  // Why: only reported on positive evidence, so a removed host never offers a Connect that can
+  // only fail. Runtime-owned targets are excluded for the same reason sshStatus excludes them —
+  // ssh:listTargets filters them out, so "absent from the target list" is not evidence of removal.
   const sshTargetRemoved = useAppStore((s) =>
-    repo?.connectionId
+    repo?.connectionId && !isRuntimeOwnedSshTargetId(repo.connectionId)
       ? selectRuntimeAwareSshTargetRemoved(s, sshOwnerEnvironmentId, repo.connectionId)
       : false
   )
@@ -1875,7 +1877,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
         ],
         titleRenaming && '!border-transparent !bg-transparent !shadow-none !ring-0',
         isDeleting && 'opacity-50 grayscale cursor-not-allowed',
-        (isSshDisconnected || isRuntimeDisconnected) && !isDeleting && 'opacity-60'
+        // Why: no SSH dim — the inline host control now states the disconnected state
+        // explicitly, and a subtree opacity would composite its destructive tint and spinner
+        // down to an illegible alpha (a descendant cannot escape an ancestor's opacity).
+        isRuntimeDisconnected && !isDeleting && 'opacity-60'
       )}
       data-worktree-card-surface="true"
       data-worktree-card-active={isActiveSurface ? activeSurfaceVariant : undefined}

@@ -40,9 +40,9 @@ type WorktreeCardSshHostControlProps = {
 const PILL_BASE =
   'h-4 shrink-0 gap-0.5 rounded !px-0.5 text-[10px] font-medium leading-none has-[>svg]:!px-0.5'
 const PILL_QUIET =
-  'text-muted-foreground border border-worktree-sidebar-border bg-worktree-sidebar shadow-none hover:bg-worktree-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring'
+  'text-muted-foreground border border-worktree-sidebar-border bg-worktree-sidebar shadow-none hover:bg-worktree-sidebar-accent hover:text-foreground focus-visible:border-worktree-sidebar-border focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring'
 const PILL_FAILED =
-  'text-destructive border border-destructive/40 bg-destructive/10 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring'
+  'text-destructive border border-destructive/40 bg-destructive/10 hover:bg-destructive/15 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring'
 
 function PassiveGlyph({
   icon,
@@ -133,8 +133,29 @@ export function WorktreeCardSshHostControl({
     }
   }, [setSshConnectionState, sshOwnerEnvironmentId, status, targetId])
 
-  // Why: a removed host can never connect, so it is checked before any status — offering
-  // Connect there is the exact bug targetRemoved exists to prevent. It also drops the
+  // A live connection outranks a stale removal tombstone. A null status is a runtime-owned
+  // target: no renderer-reachable connect, and the card has always shown the plain host glyph
+  // there rather than a false disconnected state.
+  if (status === null || status === 'connected') {
+    return (
+      <PassiveGlyph
+        targetLabel={targetLabel}
+        icon={<Server className="size-3 text-muted-foreground" />}
+        tooltip={translate(
+          'auto.components.sidebar.WorktreeCardSshHostControl.connectedTooltip',
+          'Project on SSH host'
+        )}
+        accessibleName={translate(
+          'auto.components.sidebar.WorktreeCardSshHostControl.connectedName',
+          'Project on SSH host {{value0}}',
+          { value0: targetLabel }
+        )}
+      />
+    )
+  }
+
+  // Why: a removed host can never connect, so it is checked before any failure status —
+  // offering Connect there is the exact bug targetRemoved exists to prevent. It also drops the
   // destructive tint: a removed host is a settled fact, not an error to act on.
   if (targetRemoved) {
     return (
@@ -148,26 +169,6 @@ export function WorktreeCardSshHostControl({
         accessibleName={translate(
           'auto.components.sidebar.WorktreeCardSshHostControl.removedName',
           'SSH host {{value0}} was removed',
-          { value0: targetLabel }
-        )}
-      />
-    )
-  }
-
-  // A null status is a runtime-owned target: no renderer-reachable connect, and the card
-  // has always shown the plain host glyph here rather than a disconnected state.
-  if (status === null || status === 'connected') {
-    return (
-      <PassiveGlyph
-        targetLabel={targetLabel}
-        icon={<Server className="size-3 text-muted-foreground" />}
-        tooltip={translate(
-          'auto.components.sidebar.WorktreeCardSshHostControl.connectedTooltip',
-          'Project on SSH host'
-        )}
-        accessibleName={translate(
-          'auto.components.sidebar.WorktreeCardSshHostControl.connectedName',
-          'Project on SSH host {{value0}}',
           { value0: targetLabel }
         )}
       />
@@ -239,27 +240,38 @@ export function WorktreeCardSshHostControl({
           aria-label={accessibleName}
           data-ssh-target-label={targetLabel}
           aria-busy={connecting || undefined}
-          disabled={connecting}
+          // Why: aria-disabled, not disabled — `disabled` adds pointer-events-none, so an
+          // impatient second click would fall through to the card (activating the workspace,
+          // or opening Edit metadata on a double-click), drop focus to <body>, and kill the
+          // tooltip for the entire in-flight window.
+          aria-disabled={connecting || undefined}
           onPointerDown={onPointerDown}
+          onKeyDown={(event) => {
+            // Why: the sidebar scroll root treats a bubbled Enter as "focus the terminal"
+            // (WorktreeList handleContainerKeyDown), which would cancel this button's own
+            // activation and move focus off the card.
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.stopPropagation()
+            }
+          }}
           onClick={(event) => {
             // Reconnecting a host and navigating to a workspace are separate intents.
             event.stopPropagation()
             event.preventDefault()
+            if (connecting) {
+              return
+            }
             void handleConnect()
           }}
         >
           {connecting ? (
             <Loader2 className="size-2.5 animate-spin motion-reduce:animate-none" />
           ) : (
-            <ServerOff className="size-2.5" />
+            iconOnly && <ServerOff className="size-2.5" />
           )}
-          {iconOnly ? (
-            <span className="sr-only">{label}</span>
-          ) : (
-            // Why: reserve the widest verb's width so a remote status transition can't
-            // jitter the title row mid-connect.
-            <span className="min-w-[3.5rem] text-left">{label}</span>
-          )}
+          {/* Why: aria-label already names the control, so a second sr-only copy would be
+              dead markup; the label span exists only for sighted users. */}
+          {!iconOnly && <span className="text-left">{label}</span>}
         </Button>
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>

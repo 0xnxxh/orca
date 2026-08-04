@@ -13,6 +13,7 @@ const updateWorktreeMeta = vi.fn()
 let WorktreeCard: typeof WorktreeCardComponent
 let sshConnectionStates = new Map<string, { status: string }>()
 let sshTargetLabels = new Map<string, string>()
+let removedSshTargetLabels = new Map<string, string>()
 let runtimeStatusByEnvironmentId = new Map<string, { status?: unknown }>()
 let runtimeEnvironments: { id: string; name: string }[] = []
 let sshStateByEnvironment = new Map()
@@ -35,7 +36,7 @@ vi.mock('@/store', () => ({
       remoteBranchConflictByWorktreeId: {},
       runtimeEnvironments,
       runtimeStatusByEnvironmentId,
-      removedSshTargetLabels: new Map(),
+      removedSshTargetLabels,
       settings: null,
       sshConnectionStates,
       sshStateByEnvironment,
@@ -119,6 +120,7 @@ describe('WorktreeCard SSH reconnect prompt', () => {
     vi.clearAllMocks()
     sshConnectionStates = new Map()
     sshTargetLabels = new Map()
+    removedSshTargetLabels = new Map()
     runtimeStatusByEnvironmentId = new Map()
     runtimeEnvironments = []
     sshStateByEnvironment = new Map()
@@ -139,6 +141,9 @@ describe('WorktreeCard SSH reconnect prompt', () => {
     expect(markup).toContain('Connect to SSH host Remote target')
     expect(markup).toContain('Connect')
     expect(markup).not.toContain('ssh-disconnected-dialog')
+    // Why: a card-root opacity composites the whole subtree, so it would dim the control's
+    // destructive tint and spinner in the exact state the control exists for.
+    expect(markup).not.toContain('opacity-60')
   })
 
   it('names the failure state in the control verb rather than a generic Connect', () => {
@@ -180,6 +185,35 @@ describe('WorktreeCard SSH reconnect prompt', () => {
     )
 
     expect(markup).toContain('Retry SSH connection to Remote target')
+  })
+
+  // Why: ssh:listTargets filters runtime-owned targets out, so "absent from the target list"
+  // is not evidence of removal — deriving targetRemoved from it would put every ephemeral-VM
+  // workspace card into the dead "host removed" state.
+  it('never reports a runtime-owned SSH target as removed', () => {
+    const markup = renderToStaticMarkup(
+      <WorktreeCard
+        worktree={makeWorktree()}
+        repo={{ ...makeRepo(), connectionId: 'runtime-ssh-abc123' }}
+        isActive={false}
+      />
+    )
+
+    expect(markup).not.toContain('was removed')
+    expect(markup).toContain('Project on SSH host')
+  })
+
+  // Why: a removed host can never connect, so the card must not offer a Connect that only fails.
+  it('reports a removed SSH host once the target list no longer carries it', () => {
+    sshConnectionStates.set('ssh-target-1', { status: 'error' })
+    removedSshTargetLabels.set('ssh-target-1', 'Remote target (removed)')
+
+    const markup = renderToStaticMarkup(
+      <WorktreeCard worktree={makeWorktree()} repo={makeRepo()} isActive={false} />
+    )
+
+    expect(markup).toContain('was removed')
+    expect(markup).not.toContain('Retry SSH connection')
   })
 
   it('marks a runtime-host worktree disconnected when its environment has no status', () => {

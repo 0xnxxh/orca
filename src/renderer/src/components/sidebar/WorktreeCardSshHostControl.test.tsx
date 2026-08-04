@@ -128,8 +128,11 @@ describe('WorktreeCardSshHostControl', () => {
       renderControl({ status })
 
       const button = screen.getByRole('button', { name: 'Connecting to SSH host devbox' })
-      expect(button).toBeDisabled()
+      // Why: aria-disabled, not disabled — a real `disabled` would let a second click fall
+      // through to the card and would kill the tooltip for the whole in-flight window.
+      expect(button).toHaveAttribute('aria-disabled', 'true')
       expect(button).toHaveAttribute('aria-busy', 'true')
+      expect(button).not.toBeDisabled()
     }
   )
 
@@ -160,8 +163,9 @@ describe('WorktreeCardSshHostControl', () => {
   it('keeps the label available to assistive tech but not on screen in icon-only mode', () => {
     renderControl({ iconOnly: true })
 
+    // Why: aria-label is the accessible name, so a second sr-only copy would be dead markup.
     const button = screen.getByRole('button', { name: 'Connect to SSH host devbox' })
-    expect(button.querySelector('.sr-only')).toHaveTextContent('Connect')
+    expect(button).not.toHaveTextContent('Connect')
     expect(button).toHaveClass('w-4')
   })
 
@@ -287,13 +291,69 @@ describe('WorktreeCardSshHostControl', () => {
     const [first, second] = screen.getAllByRole('button')
     await user.click(first)
 
-    await waitFor(() => expect(second).toBeDisabled())
+    await waitFor(() => expect(second).toHaveAttribute('aria-disabled', 'true'))
     expect(connect).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps the pill 16px tall in every state so the title row never shifts', () => {
+  // Why: aria-disabled leaves the button clickable, so the handler owns the guard.
+  it('ignores a second click while its own connect is in flight', async () => {
+    const connect = vi.fn().mockReturnValue(new Promise(() => {}))
+    installSshApi(connect)
+    const user = userEvent.setup()
+    renderControl()
+
+    const button = screen.getByRole('button')
+    await user.click(button)
+    await user.click(button)
+
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+
+  // Why: the sidebar scroll root treats a bubbled Enter as "focus the terminal", which would
+  // cancel the button's activation and move focus off the card.
+  it('does not let Enter or Space bubble to the sidebar key handler', async () => {
+    const onContainerKeyDown = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <div onKeyDown={onContainerKeyDown}>
+        <WorktreeCardSshHostControl
+          targetId="ssh-target-1"
+          targetLabel="devbox"
+          status="disconnected"
+          targetRemoved={false}
+          sshOwnerEnvironmentId={null}
+          iconOnly={false}
+          onPointerDown={() => {}}
+        />
+      </div>
+    )
+
+    screen.getByRole('button').focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard(' ')
+
+    expect(onContainerKeyDown).not.toHaveBeenCalled()
+  })
+
+  it('shows the connected glyph even if a stale removal tombstone is present', () => {
+    renderControl({ status: 'connected', targetRemoved: true })
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByText('Project on SSH host devbox')).toBeInTheDocument()
+  })
+
+  // Why: the title row hosts sibling h-4 pills; a taller state would shift every card on the host.
+  it('carries one height class across every actionable state', () => {
     const heights = new Set<string>()
-    for (const status of ['disconnected', 'error', 'connecting'] as const) {
+    for (const status of [
+      'disconnected',
+      'error',
+      'auth-failed',
+      'reconnection-failed',
+      'connecting',
+      'deploying-relay',
+      'reconnecting'
+    ] as const) {
       cleanup()
       renderControl({ status })
       const classes = screen.getByRole('button').className
@@ -301,5 +361,17 @@ describe('WorktreeCardSshHostControl', () => {
     }
 
     expect([...heights]).toEqual(['h-4'])
+  })
+
+  // Why: the passive branch swaps the 16px button for a bare glyph span; a larger icon there
+  // would make the row taller in exactly the states with nothing to act on.
+  it.each([
+    ['connected', false],
+    [null, false],
+    ['error', true]
+  ] as const)('sizes the passive glyph for %s at size-3', (status, targetRemoved) => {
+    const { container } = renderControl({ status, targetRemoved })
+
+    expect(container.querySelector('svg')).toHaveClass('size-3')
   })
 })
