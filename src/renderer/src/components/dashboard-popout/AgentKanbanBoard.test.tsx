@@ -40,18 +40,24 @@ vi.mock('./AgentKanbanCard', () => ({
 vi.mock('./AgentDashboardInspectorDrawer', () => ({
   AgentDashboardInspectorDrawer: ({
     card,
-    onOpenChange
+    width,
+    onOpenChange,
+    onWidthChange
   }: {
     card: DashboardCard
+    width: number
     onOpenChange: (open: boolean) => void
+    onWidthChange: (width: number) => void
   }) => (
     <div
       data-testid="agent-inspector-drawer"
       data-bucket={card.bucket}
       data-pty-id={card.ptyId ?? undefined}
       data-view-mode={card.viewMode}
+      data-width={width}
     >
       <button data-testid="agent-inspector-close" onClick={() => onOpenChange(false)} />
+      <button data-testid="agent-inspector-resize" onClick={() => onWidthChange(400)} />
     </div>
   )
 }))
@@ -255,6 +261,19 @@ describe('AgentKanbanBoard', () => {
     fireEvent.click(screen.getByTestId('card'))
 
     expect(screen.getByTestId('agent-inspector-drawer')).toHaveAttribute('data-view-mode', 'chat')
+  })
+
+  it('retains the chosen inspector width across cards', () => {
+    renderBoard([card({ viewMode: 'chat' })])
+    fireEvent.click(screen.getByTestId('card'))
+    expect(screen.getByTestId('agent-inspector-drawer')).toHaveAttribute('data-width', '672')
+
+    fireEvent.click(screen.getByTestId('agent-inspector-resize'))
+    expect(screen.getByTestId('agent-inspector-drawer')).toHaveAttribute('data-width', '400')
+    fireEvent.click(screen.getByTestId('agent-inspector-close'))
+    fireEvent.click(screen.getByTestId('card'))
+
+    expect(screen.getByTestId('agent-inspector-drawer')).toHaveAttribute('data-width', '400')
   })
 
   it('keeps the inspector drawer open across bucket moves and card removal', () => {

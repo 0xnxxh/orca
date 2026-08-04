@@ -1,14 +1,20 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SquareArrowOutUpRight, XIcon } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import { agentStateLabel } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { clampSidebarResizeWidth, useSidebarResize } from '@/hooks/useSidebarResize'
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentChatPanel } from './AgentChatPanel'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
+import {
+  AGENT_DASHBOARD_INSPECTOR_MIN_WIDTH,
+  AGENT_DASHBOARD_INSPECTOR_RESIZE_STEP,
+  AGENT_DASHBOARD_INSPECTOR_VIEWPORT_GAP
+} from './agent-dashboard-inspector-width'
 
 export type AgentRevealArgs = {
   repoId: string
@@ -19,17 +25,65 @@ export type AgentRevealArgs = {
 
 type AgentDashboardInspectorDrawerProps = {
   card: DashboardCard
+  width: number
   onOpenChange: (open: boolean) => void
   onReveal: (args: AgentRevealArgs) => void
+  onWidthChange: (width: number) => void
+}
+
+function viewportWidth(): number {
+  return document.documentElement.clientWidth || window.innerWidth
 }
 
 /** Dashboard card details slide from the window edge without shrinking the board. */
 export function AgentDashboardInspectorDrawer({
   card,
+  width,
   onOpenChange,
-  onReveal
+  onReveal,
+  onWidthChange
 }: AgentDashboardInspectorDrawerProps): React.JSX.Element {
   const [showTerminal, setShowTerminal] = useState(card.viewMode !== 'chat')
+  const [currentViewportWidth, setCurrentViewportWidth] = useState(viewportWidth)
+  const maxWidth = Math.max(0, currentViewportWidth - AGENT_DASHBOARD_INSPECTOR_VIEWPORT_GAP)
+  const minWidth = Math.min(AGENT_DASHBOARD_INSPECTOR_MIN_WIDTH, maxWidth)
+  const renderedWidth = clampSidebarResizeWidth(width, minWidth, maxWidth)
+  const { containerRef, onResizeStart } = useSidebarResize<HTMLDivElement>({
+    isOpen: true,
+    width: renderedWidth,
+    minWidth,
+    maxWidth,
+    deltaSign: 1,
+    setWidth: onWidthChange
+  })
+
+  useEffect(() => {
+    const updateViewportWidth = (): void => setCurrentViewportWidth(viewportWidth())
+    window.addEventListener('resize', updateViewportWidth)
+    return () => window.removeEventListener('resize', updateViewportWidth)
+  }, [])
+
+  const handleResizeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const direction = event.key === 'ArrowRight' ? 1 : -1
+      const step = AGENT_DASHBOARD_INSPECTOR_RESIZE_STEP * (event.shiftKey ? 2 : 1)
+      onWidthChange(clampSidebarResizeWidth(renderedWidth + direction * step, minWidth, maxWidth))
+    },
+    [maxWidth, minWidth, onWidthChange, renderedWidth]
+  )
+  const handleResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>): void => {
+      if (event.button === 0) {
+        onResizeStart(event)
+      }
+    },
+    [onResizeStart]
+  )
   const reveal = useCallback(() => {
     onReveal({
       repoId: card.repoId,
@@ -43,11 +97,17 @@ export function AgentDashboardInspectorDrawer({
   return (
     <Sheet open modal={false} onOpenChange={onOpenChange}>
       <SheetContent
+        ref={containerRef}
         side="left"
         showCloseButton={false}
         overlayClassName="hidden"
         aria-describedby={undefined}
-        className="w-[min(42rem,calc(100vw-3rem))] p-0 sm:max-w-none"
+        className="w-[var(--agent-dashboard-inspector-width)] max-w-[calc(100vw-3rem)] p-0 sm:max-w-[calc(100vw-3rem)]"
+        style={
+          {
+            '--agent-dashboard-inspector-width': `${renderedWidth}px`
+          } as React.CSSProperties
+        }
         onEscapeKeyDown={(event) => {
           if (event.target instanceof HTMLElement && event.target.closest('.xterm')) {
             event.preventDefault()
@@ -55,6 +115,20 @@ export function AgentDashboardInspectorDrawer({
         }}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
+        <div
+          role="separator"
+          aria-label={translate('dashboardPopout.inspector.resize', 'Resize agent details')}
+          aria-orientation="vertical"
+          aria-valuemax={Math.round(maxWidth)}
+          aria-valuemin={Math.round(minWidth)}
+          aria-valuenow={Math.round(renderedWidth)}
+          tabIndex={0}
+          className="group absolute inset-y-0 -right-1.5 z-20 flex w-3 cursor-col-resize touch-none justify-center outline-none"
+          onMouseDown={handleResizeStart}
+          onKeyDown={handleResizeKeyDown}
+        >
+          <div className="h-full w-px bg-transparent transition-colors group-hover:bg-ring/50 group-active:bg-ring group-focus-visible:bg-ring" />
+        </div>
         <SheetTitle className="sr-only">
           {translate('dashboardPopout.inspector.title', 'Agent details')}
         </SheetTitle>

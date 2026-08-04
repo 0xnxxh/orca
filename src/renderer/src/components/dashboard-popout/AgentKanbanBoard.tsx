@@ -16,6 +16,7 @@ import {
   AgentDashboardInspectorDrawer,
   type AgentRevealArgs
 } from './AgentDashboardInspectorDrawer'
+import { AGENT_DASHBOARD_INSPECTOR_DEFAULT_WIDTH } from './agent-dashboard-inspector-width'
 import {
   EMPTY_DASHBOARD_FILTERS,
   filterDashboardCards,
@@ -183,6 +184,7 @@ export function AgentKanbanBoard({
   // card vanishing entirely (pane closed) — the user dismisses it explicitly.
   // Its live routing is cleared because daemon PTY ids can be reused.
   const [openedCard, setOpenedCard] = useState<DashboardCard | null>(null)
+  const [inspectorWidth, setInspectorWidth] = useState(AGENT_DASHBOARD_INSPECTOR_DEFAULT_WIDTH)
   const inspectorCard = useMemo(() => {
     if (!openedCard) {
       return null
@@ -278,8 +280,10 @@ export function AgentKanbanBoard({
           <AgentDashboardInspectorDrawer
             key={`${inspectorCard.paneKey}:${inspectorCard.viewMode ?? 'terminal'}`}
             card={inspectorCard}
+            width={inspectorWidth}
             onOpenChange={handleInspectorOpenChange}
             onReveal={onRevealAgent}
+            onWidthChange={setInspectorWidth}
           />
         ) : null}
       </div>

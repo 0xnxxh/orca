@@ -14768,7 +14768,8 @@
     },
     "settingsLabel": "Agent Dashboard settings",
     "inspector": {
-      "title": "Agent details"
+      "title": "Agent details",
+      "resize": "Resize agent details"
     },
     "chat": {
       "empty": "No messages in this transcript yet.",

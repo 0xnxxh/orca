@@ -79,8 +79,10 @@ describe('AgentDashboardInspectorDrawer', () => {
     render(
       <AgentDashboardInspectorDrawer
         card={card({ terminalInput: TERMINAL_INPUT })}
+        width={672}
         onOpenChange={() => {}}
         onReveal={() => {}}
+        onWidthChange={() => {}}
       />
     )
 
@@ -89,6 +91,11 @@ describe('AgentDashboardInspectorDrawer', () => {
       'data-[state=open]:slide-in-from-left',
       'p-0'
     )
+    expect(
+      (document.querySelector('[data-slot="sheet-content"]') as HTMLElement).style.getPropertyValue(
+        '--agent-dashboard-inspector-width'
+      )
+    ).toBe('672px')
     expect(screen.getByTestId('preview')).toHaveAttribute(
       'data-terminal-input',
       JSON.stringify(TERMINAL_INPUT)
@@ -100,8 +107,10 @@ describe('AgentDashboardInspectorDrawer', () => {
     render(
       <AgentDashboardInspectorDrawer
         card={card({ viewMode: 'chat' })}
+        width={672}
         onOpenChange={() => {}}
         onReveal={() => {}}
+        onWidthChange={() => {}}
       />
     )
 
@@ -119,8 +128,10 @@ describe('AgentDashboardInspectorDrawer', () => {
     render(
       <AgentDashboardInspectorDrawer
         card={card()}
+        width={672}
         onOpenChange={onOpenChange}
         onReveal={onReveal}
+        onWidthChange={() => {}}
       />
     )
 
@@ -133,5 +144,67 @@ describe('AgentDashboardInspectorDrawer', () => {
       leafId: 'leaf1'
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('resizes from the right edge and clamps to a usable minimum', () => {
+    const onWidthChange = vi.fn()
+    render(
+      <AgentDashboardInspectorDrawer
+        card={card({ viewMode: 'chat' })}
+        width={672}
+        onOpenChange={() => {}}
+        onReveal={() => {}}
+        onWidthChange={onWidthChange}
+      />
+    )
+
+    const handle = screen.getByRole('separator', { name: 'Resize agent details' })
+    fireEvent.mouseDown(handle, { button: 0, clientX: 672 })
+    fireEvent.mouseMove(window, { clientX: 0 })
+    fireEvent.mouseUp(window)
+
+    expect(onWidthChange).toHaveBeenCalledWith(320)
+  })
+
+  it('keeps the drawer inside the viewport and ignores secondary-button drags', () => {
+    const onWidthChange = vi.fn()
+    render(
+      <AgentDashboardInspectorDrawer
+        card={card({ viewMode: 'chat' })}
+        width={672}
+        onOpenChange={() => {}}
+        onReveal={() => {}}
+        onWidthChange={onWidthChange}
+      />
+    )
+
+    const handle = screen.getByRole('separator', { name: 'Resize agent details' })
+    fireEvent.mouseDown(handle, { button: 2, clientX: 672 })
+    fireEvent.mouseMove(window, { clientX: 2_000 })
+    fireEvent.mouseUp(window)
+    expect(onWidthChange).not.toHaveBeenCalled()
+
+    fireEvent.mouseDown(handle, { button: 0, clientX: 672 })
+    fireEvent.mouseMove(window, { clientX: 2_000 })
+    fireEvent.mouseUp(window)
+    expect(onWidthChange).toHaveBeenCalledWith(window.innerWidth - 48)
+  })
+
+  it('supports keyboard resizing', () => {
+    const onWidthChange = vi.fn()
+    render(
+      <AgentDashboardInspectorDrawer
+        card={card({ viewMode: 'chat' })}
+        width={480}
+        onOpenChange={() => {}}
+        onReveal={() => {}}
+        onWidthChange={onWidthChange}
+      />
+    )
+
+    const handle = screen.getByRole('separator', { name: 'Resize agent details' })
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+
+    expect(onWidthChange).toHaveBeenCalledWith(456)
   })
 })
