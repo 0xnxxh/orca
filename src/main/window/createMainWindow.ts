@@ -662,9 +662,6 @@ export function createMainWindow(
       case 'toggleRightSidebar':
         mainWindow.webContents.send('ui:toggleRightSidebar')
         return
-      case 'toggleWorktreePalette':
-        mainWindow.webContents.send('ui:toggleWorktreePalette')
-        return
       case 'toggleFloatingTerminal':
         mainWindow.webContents.send('ui:toggleFloatingTerminal')
         return
@@ -709,6 +706,9 @@ export function createMainWindow(
     }
   ): boolean => {
     const { focusedShortcutContext, isAutoRepeat } = options
+    if (action.type === 'toggleWorktreePalette') {
+      return false
+    }
     if (
       floatingTerminalInputFocused &&
       (action.type === 'toggleLeftSidebar' || action.type === 'toggleRightSidebar')

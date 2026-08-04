@@ -26,6 +26,10 @@ import { syncZoomCSSVar } from '@/lib/ui-zoom'
 import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 import { canShowRightSidebarForView } from '@/lib/right-sidebar-visibility'
 import {
+  isImeOwnedKeyboardEvent,
+  resolveImeModifierGesture
+} from '@/lib/ime-composition-keyboard-event'
+import {
   isPairedWebClientWindow,
   shouldRenderDesktopWindowChrome
 } from '@/lib/desktop-window-chrome'
@@ -1572,6 +1576,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const doubleTapDetector = new ModifierDoubleTapDetector()
+    let imeOwnedModifierGesture = false
 
     const createRegisteredCommandHandlers = (
       input?: ShortcutDispatchInput,
@@ -1866,6 +1871,18 @@ function App(): React.JSX.Element {
         return
       }
 
+      if (matchShortcut('worktree.palette')) {
+        input.preventDefault()
+        notifyTerminalCapture('worktree.palette')
+        const store = useAppStore.getState()
+        if (store.activeModal === 'worktree-palette') {
+          store.closeModal()
+        } else {
+          store.openModal('worktree-palette')
+        }
+        return
+      }
+
       // Skip editable surfaces so TipTap's Cmd+B bold works; this renderer-side fallback covers the blur→press IPC race (docs/markdown-cmd-b-bold-design.md).
       if (isEditableTarget(input.target)) {
         return
@@ -1932,6 +1949,12 @@ function App(): React.JSX.Element {
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
+      const gesture = resolveImeModifierGesture(imeOwnedModifierGesture, e)
+      imeOwnedModifierGesture = gesture.active
+      if (gesture.owned || isImeOwnedKeyboardEvent(e)) {
+        doubleTapDetector.reset()
+        return
+      }
       const detected = doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyDown',
@@ -1972,6 +1995,12 @@ function App(): React.JSX.Element {
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
+      const gesture = resolveImeModifierGesture(imeOwnedModifierGesture, e)
+      imeOwnedModifierGesture = gesture.active
+      if (gesture.owned || isImeOwnedKeyboardEvent(e)) {
+        doubleTapDetector.reset()
+        return
+      }
       doubleTapDetector.process(
         toModifierDoubleTapEvent({
           type: 'keyUp',
@@ -1987,7 +2016,10 @@ function App(): React.JSX.Element {
     }
 
     // Why: a window blur mid-gesture must not leave the detector armed.
-    const onBlur = (): void => doubleTapDetector.reset()
+    const onBlur = (): void => {
+      imeOwnedModifierGesture = false
+      doubleTapDetector.reset()
+    }
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     window.addEventListener('keyup', onKeyUp, { capture: true })

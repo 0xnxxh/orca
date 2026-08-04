@@ -6,6 +6,13 @@ type ImeKeyboardEvent = {
   nativeEvent?: { isComposing?: boolean; keyCode?: number }
 }
 
+type ImeModifierGestureEvent = ImeKeyboardEvent & {
+  altKey?: boolean
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+}
+
 /** True when the IME, rather than Orca, owns a keyboard event. */
 export function isImeOwnedKeyboardEvent(event: object): boolean {
   const candidate = event as ImeKeyboardEvent
@@ -15,6 +22,15 @@ export function isImeOwnedKeyboardEvent(event: object): boolean {
     candidate.nativeEvent?.isComposing === true ||
     candidate.nativeEvent?.keyCode === 229
   )
+}
+
+export function resolveImeModifierGesture(
+  active: boolean,
+  event: ImeModifierGestureEvent
+): { active: boolean; owned: boolean } {
+  const hasModifier = Boolean(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+  const owned = active || (hasModifier && isImeOwnedKeyboardEvent(event))
+  return { active: owned && hasModifier, owned }
 }
 
 /**

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { isImeCompositionKeyDown, isImeOwnedKeyboardEvent } from './ime-composition-keyboard-event'
+import {
+  isImeCompositionKeyDown,
+  isImeOwnedKeyboardEvent,
+  resolveImeModifierGesture
+} from './ime-composition-keyboard-event'
 
 function keyEvent(nativeEvent: { isComposing?: boolean; keyCode?: number }): ReactKeyboardEvent {
   return {
@@ -33,5 +37,43 @@ describe('isImeCompositionKeyDown', () => {
     const shift = { code: 'ShiftLeft', shiftKey: true, isComposing: false }
     expect(isImeOwnedKeyboardEvent({ ...shift, key: 'Process', keyCode: 229 })).toBe(true)
     expect(isImeOwnedKeyboardEvent({ ...shift, key: 'Shift', keyCode: 16 })).toBe(false)
+  })
+
+  it('owns the marked Windows palette chord without swallowing the ordinary chord', () => {
+    const chord = { key: 'J', code: 'KeyJ', ctrlKey: true, shiftKey: true, keyCode: 74 }
+    expect(isImeOwnedKeyboardEvent({ ...chord, isComposing: true })).toBe(true)
+    expect(isImeOwnedKeyboardEvent({ ...chord, isComposing: false })).toBe(false)
+  })
+
+  it('keeps ownership through the recorded marked modifiers and unmarked dispatch key', () => {
+    let gesture = resolveImeModifierGesture(false, {
+      ctrlKey: true,
+      isComposing: true
+    })
+    expect(gesture).toEqual({ active: true, owned: true })
+
+    gesture = resolveImeModifierGesture(gesture.active, {
+      ctrlKey: true,
+      shiftKey: true,
+      isComposing: true
+    })
+    gesture = resolveImeModifierGesture(gesture.active, {
+      ctrlKey: true,
+      shiftKey: true,
+      isComposing: false
+    })
+    expect(gesture).toEqual({ active: true, owned: true })
+
+    gesture = resolveImeModifierGesture(gesture.active, {
+      isComposing: false
+    })
+    expect(gesture).toEqual({ active: false, owned: true })
+    expect(
+      resolveImeModifierGesture(false, {
+        ctrlKey: true,
+        shiftKey: true,
+        isComposing: false
+      })
+    ).toEqual({ active: false, owned: false })
   })
 })
