@@ -118,21 +118,19 @@ export function buildNativeChatSessionOptionSnapshot(args: {
   models: readonly CatalogModel[]
   record: NativeChatSessionOptionRecord
   mode: NativeChatSessionOptionMode
-  includeTrackedModelChoice: boolean
 }): SessionOptionDescriptor[] {
   const { catalog, models, record, mode } = args
   if (models.length === 0) {
     return []
   }
   const modelTracked = record.model
-  const listedModelChoices = models.map(({ id, label, description }) => ({
+  // Why: callers reconcile the tracked model into `models`, so every listed row
+  // is a real choice and the trigger never shows a value without one.
+  const modelChoices = models.map(({ id, label, description }) => ({
     value: id,
     label,
     ...(description ? { description } : {})
   }))
-  const modelChoices = args.includeTrackedModelChoice
-    ? choiceWithCurrent(listedModelChoices, modelTracked)
-    : listedModelChoices
   const modelSettable = settableState({ mode, apply: catalog.modelApply })
   const modelAction = actionForApply(catalog.modelApply, modelTracked, mode)
   const snapshot: SessionOptionDescriptor[] = [

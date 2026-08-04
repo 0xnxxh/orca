@@ -8,6 +8,7 @@ import type {
 } from '../../../../shared/native-chat-session-options'
 import type * as nativeChatAgentProfiles from '../../../../shared/native-chat-agent-profiles'
 import { clearNativeChatSessionOptionCacheForTests } from './native-chat-session-option-cache'
+import { clearNativeChatModelEnrichmentForTests } from './native-chat-session-option-enrichment'
 
 const mocks = vi.hoisted(() => ({
   cancelPendingSends: vi.fn(),
@@ -138,6 +139,7 @@ describe('NativeChatComposer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearNativeChatSessionOptionCacheForTests()
+    clearNativeChatModelEnrichmentForTests()
     mocks.fieldProps = null
     mocks.modelSwitchOutcome = 'applied'
     mocks.draftScopeKeys.length = 0
@@ -316,6 +318,59 @@ describe('NativeChatComposer', () => {
     act(() => mocks.fieldProps?.onCompositionEnd?.({ currentTarget: textarea }))
 
     expect(mocks.setDraft).not.toHaveBeenCalled()
+  })
+
+  it('renders the Claude model picker while host discovery is still pending', () => {
+    mocks.discoverCommitMessageModels.mockReturnValue(new Promise(() => {}))
+    render(
+      <NativeChatComposer
+        terminalTabId="tab-1"
+        paneKey="tab-1:leaf-1"
+        targetPtyId="pty-1"
+        agent="claude"
+        readTerminalScreen={() => null}
+      />
+    )
+
+    expect(mocks.fieldProps?.sessionOptionsSnapshot?.[0]).toMatchObject({
+      id: 'model',
+      kind: {
+        choices: expect.arrayContaining([
+          expect.objectContaining({ value: 'opus', label: 'Opus' }),
+          expect.objectContaining({ value: 'sonnet', label: 'Sonnet' })
+        ])
+      }
+    })
+  })
+
+  it('keeps the Claude model picker when an older remote runtime omits the catalog origin', async () => {
+    mocks.discoverCommitMessageModels.mockResolvedValue({
+      success: true,
+      defaultModelId: 'sonnet',
+      models: [{ id: 'sonnet', label: 'Sonnet' }]
+    })
+    render(
+      <NativeChatComposer
+        terminalTabId="tab-1"
+        paneKey="tab-1:leaf-1"
+        targetPtyId="pty-1"
+        agent="claude"
+        readTerminalScreen={() => null}
+      />
+    )
+
+    await waitFor(() => expect(mocks.discoverCommitMessageModels).toHaveBeenCalled())
+    await act(async () => undefined)
+
+    expect(mocks.fieldProps?.sessionOptionsSnapshot?.[0]).toMatchObject({
+      id: 'model',
+      kind: {
+        choices: expect.arrayContaining([
+          expect.objectContaining({ value: 'fable', label: 'Fable' }),
+          expect.objectContaining({ value: 'haiku', label: 'Haiku' })
+        ])
+      }
+    })
   })
 
   it('shows the model already selected in the Claude TUI when chat opens', async () => {
