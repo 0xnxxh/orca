@@ -11289,7 +11289,7 @@
                 "fastForwardOnly": "fast-forward만 허용",
                 "fastForwardOnlyDescription": "병합이나 리베이스가 필요 없을 때만 pull합니다.",
                 "title": "Pull 정책 필요",
-                "diverged": "Diverged",
+                "diverged": "분기됨",
                 "body": "이 브랜치에는 로컬 commits과 원격 commits이 모두 있습니다. 이 워크트리 또는 SSH 호스트에서 명령 하나를 실행한 다음 풀 또는 동기화를 다시 시도하세요.",
                 "copyAria": "{{value0}} pull 정책 명령 복사",
                 "copied": "복사됨",
