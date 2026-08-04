@@ -13919,7 +13919,19 @@
           "53f06f0ad5": "Retry source",
           "pendingAutomationMissing": "Automation no longer available.",
           "pendingAutomationRunMissing": "Run history no longer available.",
-          "noSearchMatches": "No automations match your search."
+          "noSearchMatches": "No automations match your search.",
+          "paused": "Paused",
+          "runCount": "{{count}} runs",
+          "runCount_one": "{{count}} run",
+          "runCount_other": "{{count}} runs",
+          "projectDefaultBaseRef": "project default",
+          "createFromBaseRef": "Create from {{baseRef}}",
+          "missingWorkspace": "Missing workspace",
+          "runUsageSummary": "{{cost}} est. · {{tokens}} tokens",
+          "usageUnavailable": "Usage unavailable",
+          "noRunUsageYet": "No run usage yet",
+          "noWorkspace": "No workspace",
+          "latestSavedOutput": "Latest saved output"
         },
         "CreateFromPicker": {
           "f061f49e3f": "Search repo branches...",

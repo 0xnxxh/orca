@@ -45,8 +45,13 @@ export function AutomationListSearchField({
         )}
         aria-invalid={isTooLarge || undefined}
         aria-describedby={isTooLarge ? 'automations-list-search-too-large' : undefined}
-        className="h-8 border-border/60 bg-background pl-8 text-xs"
-        style={hasText ? { paddingRight: isTooLarge ? 72 : 28 } : undefined}
+        // Why: the page-level capture Escape handler blurs inputs; this opts out
+        // so the first Escape clears the query without also losing focus.
+        data-escape-clears-value={hasText ? 'true' : undefined}
+        className={cn(
+          'h-8 border-border/60 bg-background pl-8 text-xs',
+          hasText && (isTooLarge ? 'pr-20' : 'pr-7')
+        )}
         onChange={(event) => onQueryChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || event.nativeEvent.isComposing) {

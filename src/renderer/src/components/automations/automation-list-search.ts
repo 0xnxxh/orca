@@ -77,21 +77,6 @@ export function getActiveAutomationListSearchQuery(
   return resolved.status === 'active' ? resolved.query : null
 }
 
-/** @deprecated Prefer resolveAutomationListSearchQuery. null means too large. */
-export function getAutomationListSearchQuery(
-  rawQuery: string,
-  maxBytes = AUTOMATION_LIST_SEARCH_QUERY_MAX_BYTES
-): string | null {
-  const resolved = resolveAutomationListSearchQuery(rawQuery, maxBytes)
-  if (resolved.status === 'too_large') {
-    return null
-  }
-  if (resolved.status === 'inactive') {
-    return ''
-  }
-  return resolved.query
-}
-
 /** Avoid splitting a surrogate pair at the cap boundary. */
 export function truncateAutomationListSearchField(value: string, maxCodeUnits: number): string {
   if (value.length <= maxCodeUnits) {

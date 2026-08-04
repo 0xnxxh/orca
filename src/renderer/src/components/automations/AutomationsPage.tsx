@@ -105,6 +105,7 @@ import {
   getRuntimeSourceHostAvailability,
   type RepoBackedAutomationSourceContext
 } from './automation-source-context'
+import type { AutomationPaneTab, SelectedExternalRunPage } from './automation-page-state'
 import {
   getExternalAutomationKey,
   getExternalAutomationSourceKey,
@@ -122,14 +123,6 @@ import { translate } from '@/i18n/i18n'
 
 const AGENTS = getAgentCatalog().map((agent) => agent.id)
 const AUTOMATIONS_CHANGED_EVENT = 'orca:automations-changed'
-type AutomationPaneTab = 'overview' | 'runs'
-
-type SelectedExternalRunPage = {
-  manager: ExternalAutomationManager
-  job: ExternalAutomationJob
-  run: ExternalAutomationRun
-}
-
 export default function AutomationsPage(): React.JSX.Element {
   const repos = useAppStore((s) => s.repos)
   const projectHostSetups = useAppStore((s) => s.projectHostSetups)
@@ -236,6 +229,9 @@ export default function AutomationsPage(): React.JSX.Element {
   const [dontAskDeleteAgain, setDontAskDeleteAgain] = useState(false)
   const editRequestRef = useRef(0)
   const deleteConfirmButtonRef = useRef<HTMLButtonElement>(null)
+  // Why: both dialogs stay mounted, so a shared ref would let one dialog's
+  // unmount clear the focus target the other still needs.
+  const externalDeleteConfirmButtonRef = useRef<HTMLButtonElement>(null)
   const completionInFlightRef = useRef<Set<string>>(new Set())
   const rerunRunIdsInFlightRef = useRef<Set<string>>(new Set())
   const workspaceNameCacheRef = useRef<Map<string, string>>(new Map())
@@ -1880,6 +1876,12 @@ export default function AutomationsPage(): React.JSX.Element {
         return
       }
 
+      // Why: fields that clear their own value on Escape consume this press;
+      // blurring here would drop focus and let the next Escape close the page.
+      if (target.dataset.escapeClearsValue === 'true') {
+        return
+      }
+
       // Why: match Tasks page behavior: Esc first exits field focus, then exits
       // the page once focus is back on page chrome.
       if (
@@ -2026,7 +2028,7 @@ export default function AutomationsPage(): React.JSX.Element {
 
       <ExternalAutomationDeleteDialog
         externalDeleteTarget={externalDeleteTarget}
-        confirmButtonRef={deleteConfirmButtonRef}
+        confirmButtonRef={externalDeleteConfirmButtonRef}
         onOpenChange={(open) => {
           if (!open) {
             setExternalDeleteTarget(null)
@@ -2079,12 +2081,22 @@ export default function AutomationsPage(): React.JSX.Element {
           activePaneTab={activePaneTab}
           relativeNow={relativeNow}
           externalActionKey={externalActionKey}
-          selectedRepoDisplayName={selectedRepo?.displayName ?? 'Unknown project'}
+          selectedRepoDisplayName={
+            selectedRepo?.displayName ??
+            translate('auto.components.automations.AutomationsPage.13118faadf', 'Unknown project')
+          }
           selectedRepoDefaultBaseRef={selectedRepo?.worktreeBaseRef ?? null}
           selectedWorkspaceName={
             selected?.workspaceMode === 'new_per_run'
-              ? 'New workspace each run'
-              : (selectedWorktree?.displayName ?? 'Missing workspace')
+              ? translate(
+                  'auto.components.automations.AutomationsPage.cd8397cc32',
+                  'New workspace each run'
+                )
+              : (selectedWorktree?.displayName ??
+                translate(
+                  'auto.components.automations.AutomationsPage.missingWorkspace',
+                  'Missing workspace'
+                ))
           }
           hostLabelById={hostLabelById}
           selectedRunNowAvailability={selectedRunNowAvailability}

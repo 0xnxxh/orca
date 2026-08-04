@@ -37,15 +37,8 @@ import type { AutomationTargetAvailability } from './automation-target-availabil
 import type { AutomationRunViewState } from './automation-run-view-state'
 import type { AutomationRunWorkspaceDisplay } from './automation-run-workspace-display'
 import type { ExternalAutomationSourceAvailability } from './external-automation-source-availability'
+import type { AutomationPaneTab, SelectedExternalRunPage } from './automation-page-state'
 import { translate } from '@/i18n/i18n'
-
-type AutomationPaneTab = 'overview' | 'runs'
-
-type SelectedExternalRunPage = {
-  manager: ExternalAutomationManager
-  job: ExternalAutomationJob
-  run: ExternalAutomationRun
-}
 
 type AutomationsDetailPaneProps = {
   selected: Automation | null
@@ -70,7 +63,7 @@ type AutomationsDetailPaneProps = {
   selectedAutomationRunPageViewState: AutomationRunViewState | null
   canRerunSelectedAutomationRunPage: boolean
   isSelectedAutomationRunPageRerunPending: boolean
-  worktreeMap: Map<string, Worktree>
+  worktreeMap: ReadonlyMap<string, Worktree>
   fetchExternalAutomationRuns: FetchExternalAutomationRuns
   onActivePaneTabChange: (tab: AutomationPaneTab) => void
   onClearExternalRunPage: () => void
@@ -263,10 +256,19 @@ export function AutomationsDetailPane({
                     relativeNow
                   ),
                   'Orca',
-                  selectedAutomationRunPageWorkspaceDisplay?.detailLabel ?? 'No workspace'
+                  selectedAutomationRunPageWorkspaceDisplay?.detailLabel ??
+                    translate(
+                      'auto.components.automations.AutomationsPage.noWorkspace',
+                      'No workspace'
+                    )
                 ]}
                 detail={
-                  selectedAutomationRunPage.outputSnapshot?.truncated ? 'Latest saved output' : null
+                  selectedAutomationRunPage.outputSnapshot?.truncated
+                    ? translate(
+                        'auto.components.automations.AutomationsPage.latestSavedOutput',
+                        'Latest saved output'
+                      )
+                    : null
                 }
                 statusLabel={getAutomationRunStatusLabel(selectedAutomationRunPage.status)}
                 statusVariant={getAutomationRunStatusVariant(selectedAutomationRunPage.status)}

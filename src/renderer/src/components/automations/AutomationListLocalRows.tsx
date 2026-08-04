@@ -67,6 +67,20 @@ export function AutomationListLocalRows({
   onToggle: (automation: Automation) => void
   onDelete: (automation: Automation) => void
 }): React.JSX.Element {
+  // Why: one pass over runs instead of a full scan per rendered automation —
+  // this list re-renders on the relativeNow timer.
+  const runsByAutomationId = React.useMemo(() => {
+    const grouped = new Map<string, AutomationRun[]>()
+    for (const run of runs) {
+      const existing = grouped.get(run.automationId)
+      if (existing) {
+        existing.push(run)
+      } else {
+        grouped.set(run.automationId, [run])
+      }
+    }
+    return grouped
+  }, [runs])
   return (
     <>
       {automations.map((automation) => {
@@ -84,24 +98,50 @@ export function AutomationListLocalRows({
           automationHostTarget,
           sourceHostAvailability: automationSourceHostAvailabilityById.get(automation.id)
         })
+        const baseRefLabel =
+          automation.baseBranch ??
+          automationRepo?.worktreeBaseRef ??
+          translate(
+            'auto.components.automations.AutomationsPage.projectDefaultBaseRef',
+            'project default'
+          )
         const workspaceLabel =
           automation.workspaceMode === 'new_per_run'
-            ? `Create from ${automation.baseBranch ?? automationRepo?.worktreeBaseRef ?? 'project default'}`
-            : (automationWorktree?.displayName ?? 'Missing workspace')
+            ? translate(
+                'auto.components.automations.AutomationsPage.createFromBaseRef',
+                'Create from {{baseRef}}',
+                { baseRef: baseRefLabel }
+              )
+            : (automationWorktree?.displayName ??
+              translate(
+                'auto.components.automations.AutomationsPage.missingWorkspace',
+                'Missing workspace'
+              ))
         const usageSummary = summarizeAutomationRunUsage(
-          runs.filter((run) => run.automationId === automation.id)
+          runsByAutomationId.get(automation.id) ?? []
         )
         const usageText =
           usageSummary.knownRuns > 0
-            ? `${formatAutomationCost(
-                usageSummary.estimatedCostUsd
-              )} est. · ${formatAutomationTokens(usageSummary.totalTokens)} tokens`
+            ? translate(
+                'auto.components.automations.AutomationsPage.runUsageSummary',
+                '{{cost}} est. · {{tokens}} tokens',
+                {
+                  cost: formatAutomationCost(usageSummary.estimatedCostUsd),
+                  tokens: formatAutomationTokens(usageSummary.totalTokens)
+                }
+              )
             : usageSummary.unavailableRuns > 0
-              ? 'Usage unavailable'
-              : 'No run usage yet'
+              ? translate(
+                  'auto.components.automations.AutomationsPage.usageUnavailable',
+                  'Usage unavailable'
+                )
+              : translate(
+                  'auto.components.automations.AutomationsPage.noRunUsageYet',
+                  'No run usage yet'
+                )
         const nextRunLabel = automation.enabled
           ? formatAutomationDateTimeWithRelative(automation.nextRunAt, relativeNow)
-          : 'Paused'
+          : translate('auto.components.automations.AutomationsPage.paused', 'Paused')
         const scheduleLabel = formatAutomationSchedule(automation.rrule)
         return (
           <ContextMenu key={automation.id}>

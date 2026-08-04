@@ -14,6 +14,7 @@ import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import type { TaskSourceHostAvailability } from '../task-source-context-summary'
 import type { AutomationHostTarget } from './automation-host-client'
 import { clampAutomationListSearchQueryInput } from './automation-list-search'
+import type { AutomationPaneTab } from './automation-page-state'
 import { AutomationListSearchField } from './AutomationListSearchField'
 import { getAutomationTemplates, type AutomationTemplate } from './automation-templates'
 import type { ExternalAutomationListEntry } from './external-automation-list-entries'
@@ -47,7 +48,7 @@ type AutomationsListPanelProps = {
   externalActionKey: string | null
   selectAutomationId: (automationId: string | null) => void
   selectExternalKey: (externalKey: string | null) => void
-  setActivePaneTab: (tab: 'overview' | 'runs') => void
+  setActivePaneTab: (tab: AutomationPaneTab) => void
   runNow: (automation: Automation) => void
   openEditDialog: (automation: Automation) => void
   toggleAutomation: (automation: Automation) => void

@@ -7,6 +7,8 @@ import {
   buildAutomationListSearchIndex,
   buildAutomationProjectSearchText,
   resolveAutomationListSearchQuery,
+  truncateAutomationListSearchField,
+  AUTOMATION_LIST_SEARCH_PROMPT_MAX_CODE_UNITS,
   type AutomationListSearchFields,
   type AutomationListSearchIndex
 } from './automation-list-search'
@@ -59,7 +61,8 @@ export function useAutomationListSearch({
   const isListSearchActive = activeListSearchQuery !== null
 
   // Why: fingerprint includes id + search fields so refresh ticks that only
-  // change nextRunAt / usage do not rebuild indexes or re-run matching.
+  // change nextRunAt / usage do not rebuild indexes or re-run matching. Prompts
+  // are truncated to the indexed prefix so each tick stays O(bound) per row.
   const automationSearchFingerprint = useMemo(
     () =>
       automations
@@ -69,7 +72,11 @@ export function useAutomationListSearch({
             displayName: repo?.displayName,
             path: repo?.path
           })
-          return `${automation.id}\u0001${automation.name}\u0001${project}\u0001${automation.prompt}`
+          const prompt = truncateAutomationListSearchField(
+            automation.prompt,
+            AUTOMATION_LIST_SEARCH_PROMPT_MAX_CODE_UNITS
+          )
+          return `${automation.id}\u0001${automation.name}\u0001${project}\u0001${prompt}`
         })
         .join('\u0000'),
     [automations, repoMap]
@@ -102,7 +109,11 @@ export function useAutomationListSearch({
           if (entry.kind === 'source') {
             return `${entry.key}\u0001${entry.manager.targetLabel}\u0001${getExternalProviderLabel(entry.manager)}\u0001`
           }
-          return `${entry.key}\u0001${entry.job.name}\u0001${getExternalProviderLabel(entry.manager)}\u0001${entry.manager.targetLabel}\u0001${entry.job.workdir ?? ''}\u0001${entry.job.prompt ?? entry.job.promptPreview ?? ''}`
+          const prompt = truncateAutomationListSearchField(
+            entry.job.prompt ?? entry.job.promptPreview ?? '',
+            AUTOMATION_LIST_SEARCH_PROMPT_MAX_CODE_UNITS
+          )
+          return `${entry.key}\u0001${entry.job.name}\u0001${getExternalProviderLabel(entry.manager)}\u0001${entry.manager.targetLabel}\u0001${entry.job.workdir ?? ''}\u0001${prompt}`
         })
         .join('\u0000'),
     [externalAutomationEntries]

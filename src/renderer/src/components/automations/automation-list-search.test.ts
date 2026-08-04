@@ -13,7 +13,6 @@ import {
   filterByAutomationListSearch,
   filterByAutomationListSearchIndex,
   getActiveAutomationListSearchQuery,
-  getAutomationListSearchQuery,
   isAutomationListSearchQueryTooLarge,
   normalizeAutomationListSearchField,
   resolveAutomationListSearchQuery,
@@ -22,7 +21,6 @@ import {
 
 describe('automation-list-search', () => {
   it('normalizes query casing and whitespace', () => {
-    expect(getAutomationListSearchQuery('  Auto PR  ')).toBe('auto pr')
     expect(getActiveAutomationListSearchQuery('  Auto PR  ')).toBe('auto pr')
     expect(resolveAutomationListSearchQuery('  Auto PR  ')).toEqual({
       status: 'active',
@@ -33,7 +31,6 @@ describe('automation-list-search', () => {
   it('rejects oversized queries without searching', () => {
     const oversized = 'a'.repeat(AUTOMATION_LIST_SEARCH_QUERY_MAX_BYTES + 1)
     expect(isAutomationListSearchQueryTooLarge(oversized)).toBe(true)
-    expect(getAutomationListSearchQuery(oversized)).toBeNull()
     expect(getActiveAutomationListSearchQuery(oversized)).toBeNull()
     expect(resolveAutomationListSearchQuery(oversized)).toEqual({ status: 'too_large' })
     expect(
@@ -49,6 +46,14 @@ describe('automation-list-search', () => {
     ]
     // Why: oversized paste must leave the list unfiltered, not blank it.
     expect(filterByAutomationListSearch(items, oversized, (item) => item)).toBe(items)
+  })
+
+  it('rejects queries over the byte limit but under the code-unit limit', () => {
+    // 3 UTF-8 bytes per character, so half the cap in code units is over it in bytes.
+    const multiByte = '한'.repeat(AUTOMATION_LIST_SEARCH_QUERY_MAX_BYTES / 2)
+    expect(multiByte.length).toBeLessThanOrEqual(AUTOMATION_LIST_SEARCH_QUERY_MAX_BYTES)
+    expect(isAutomationListSearchQueryTooLarge(multiByte)).toBe(true)
+    expect(resolveAutomationListSearchQuery(multiByte)).toEqual({ status: 'too_large' })
   })
 
   it('treats whitespace-only queries as inactive (no search work)', () => {
@@ -152,6 +157,12 @@ describe('automation-list-search', () => {
         'a'.repeat(AUTOMATION_LIST_SEARCH_QUERY_MAX_BYTES + 1)
       )
     ).toBe(items)
+    // Why: a desynchronized index must leave the list unfiltered, not blank it.
+    expect(
+      filterByActiveAutomationListSearchQuery(items, indexes.slice(0, 1), 'apk').map(
+        (item) => item.id
+      )
+    ).toEqual(['1', '2', '3'])
   })
 
   it('builds a stable fingerprint from search sources only', () => {

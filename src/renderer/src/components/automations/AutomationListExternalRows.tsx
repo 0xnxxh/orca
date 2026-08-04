@@ -104,7 +104,7 @@ export function AutomationListExternalRows({
         }
         const nextRunLabel = entry.job.enabled
           ? formatExternalDate(entry.job.nextRunAt, relativeNow)
-          : 'Paused'
+          : translate('auto.components.automations.AutomationsPage.paused', 'Paused')
         const entrySshStatus =
           entry.manager.target.type === 'ssh'
             ? sshConnectionStates.get(entry.manager.target.connectionId)?.status
@@ -151,7 +151,11 @@ export function AutomationListExternalRows({
                     <span className="shrink-0">·</span>
                     <span className="truncate">
                       {entry.manager.provider === 'hermes'
-                        ? `${entry.job.runCount} ${entry.job.runCount === 1 ? 'run' : 'runs'}`
+                        ? translate(
+                            'auto.components.automations.AutomationsPage.runCount',
+                            '{{count}} runs',
+                            { count: entry.job.runCount }
+                          )
                         : entry.manager.canManage
                           ? translate(
                               'auto.components.automations.AutomationsPage.aecdc3681f',

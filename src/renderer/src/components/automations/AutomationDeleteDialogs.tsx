@@ -152,7 +152,7 @@ export function ExternalAutomationDeleteDialog({
                   'auto.components.automations.AutomationsPage.8500baacb4',
                   'external source'
                 )}{' '}
-            {translate('auto.components.automations.AutomationsPage.1b586f0e2b', 'on')}
+            {translate('auto.components.automations.AutomationsPage.1b586f0e2b', 'on')}{' '}
             {externalDeleteTarget?.manager.targetLabel}.
           </DialogDescription>
         </DialogHeader>
