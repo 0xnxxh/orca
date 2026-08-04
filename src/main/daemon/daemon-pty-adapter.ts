@@ -37,6 +37,7 @@ import {
   type TakePendingOutputResult
 } from './types'
 import {
+  GET_SIZE_PROTOCOL_VERSION,
   HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
   STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION
 } from './daemon-protocol-version'
@@ -896,15 +897,23 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return this.activeSessionIds.has(id)
   }
 
-  async probePtyLiveness(id: string, opts?: { deadlineMs?: number }): Promise<boolean | null> {
+  async probePtyLiveness(id: string): Promise<boolean | null> {
     try {
-      // Why connect first (like listProcesses): a merely disconnected adapter would otherwise
-      // answer `null` forever, and one unknown poisons the owner fan-out into "unprovable".
-      await this.ensureConnected(opts?.deadlineMs)
+      if (this.protocolVersion < GET_SIZE_PROTOCOL_VERSION) {
+        // Why: a pre-v18 daemon rejects `getSize` as unknown, so it would answer `null` forever
+        // and one `null` makes the whole owner fan-out unprovable — a dead pane could then never
+        // be retired. listSessions is the same inventory legacy discovery already routes by, and
+        // is requested directly (not via listProcesses, which swallows errors into an empty list)
+        // so a dead socket still rejects rather than reading as absence.
+        const { sessions } = await this.client.request<ListSessionsResult>(
+          'listSessions',
+          undefined
+        )
+        return sessions.some((session) => session.sessionId === id && session.isAlive)
+      }
       const result = await this.client.request<{ size: { cols: number; rows: number } | null }>(
         'getSize',
-        { sessionId: id },
-        remainingRequestTimeoutMs(opts?.deadlineMs)
+        { sessionId: id }
       )
       return result.size !== null
     } catch {

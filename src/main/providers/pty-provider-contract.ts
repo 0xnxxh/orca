@@ -112,12 +112,8 @@ export type IPtyProvider = {
   supportsAgentSessionCreateOperations?: (options?: PtyProbeOptions) => boolean | Promise<boolean>
   attach(id: string): Promise<void>
   hasPty?: (id: string) => boolean
-  /**
-   * Exact provider readback: false only when the provider answered that the PTY is absent.
-   * `deadlineMs` is absolute and bounds connect + request so a wedged endpoint answers
-   * `null` inside the caller's budget instead of the client's default request timeout.
-   */
-  probePtyLiveness?: (id: string, opts?: { deadlineMs?: number }) => Promise<boolean | null>
+  /** Exact provider readback: false only when the provider answered that the PTY is absent. */
+  probePtyLiveness?: (id: string) => Promise<boolean | null>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
   /**

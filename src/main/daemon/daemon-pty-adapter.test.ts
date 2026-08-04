@@ -9,6 +9,7 @@ import { DaemonPtyAdapter } from './daemon-pty-adapter'
 import {
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
   GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
+  GET_SIZE_PROTOCOL_VERSION,
   PROTOCOL_VERSION
 } from './daemon-protocol-version'
 import { DaemonServer } from './daemon-server'
@@ -1203,33 +1204,56 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       await expect(adapter.probePtyLiveness('session')).resolves.toBeNull()
     })
 
-    it('connects first so an unconnected adapter still answers authoritatively', async () => {
-      // Why it matters: one unknown poisons the owner fan-out, and an unprovable owner
-      // leaves the pane's binding unretireable — a never-connected adapter must not be it.
-      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
-      const unconnected = new DaemonPtyAdapter({ socketPath, tokenPath })
-      try {
-        await expect(unconnected.probePtyLiveness(id)).resolves.toBe(true)
-        await expect(unconnected.probePtyLiveness('missing-session')).resolves.toBe(false)
-      } finally {
-        unconnected.dispose()
-      }
+    function createProbeAdapter(
+      protocolVersion: number,
+      request: ReturnType<typeof vi.fn>
+    ): DaemonPtyAdapter {
+      const probeAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion })
+      ;(
+        probeAdapter as unknown as {
+          client: { request: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
+        }
+      ).client = { request, disconnect: vi.fn() }
+      return probeAdapter
+    }
+
+    // Why: a pre-v18 daemon rejects `getSize` as an unknown request type, so it would answer
+    // `null` forever — and one `null` makes the owner fan-out permanently unprovable, which
+    // would leave a genuinely dead pane unable to ever retire and respawn.
+    it('answers a pre-getSize daemon from its session inventory', async () => {
+      // Faithful pre-v18 daemon: routeRequest falls through its switch and error-replies.
+      const request = vi.fn(async (type: string) => {
+        if (type !== 'listSessions') {
+          throw new Error(`Unknown request type: ${type}`)
+        }
+        return {
+          sessions: [
+            { sessionId: 'legacy-live', isAlive: true },
+            { sessionId: 'legacy-exited', isAlive: false }
+          ]
+        }
+      })
+      const legacy = createProbeAdapter(GET_SIZE_PROTOCOL_VERSION - 1, request)
+
+      await expect(legacy.probePtyLiveness('legacy-live')).resolves.toBe(true)
+      await expect(legacy.probePtyLiveness('legacy-exited')).resolves.toBe(false)
+      await expect(legacy.probePtyLiveness('never-existed')).resolves.toBe(false)
+      expect(request).toHaveBeenCalledWith('listSessions', undefined)
+      expect(request).not.toHaveBeenCalledWith('getSize', expect.anything())
+
+      legacy.dispose()
     })
 
-    it('bounds the probe request by the caller deadline', async () => {
-      // Why: unbounded, a wedged daemon answers `null` only after the client's 30s default,
-      // stalling the attach that is waiting on the answer.
-      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
-      const client = (adapter as unknown as { client: DaemonClient }).client
-      const request = vi.spyOn(client, 'request')
+    // The P0 boundary: an owner that cannot be reached must never read as one that answered "absent".
+    it('still answers unknown when a pre-getSize daemon cannot be reached', async () => {
+      const request = vi.fn(async () => {
+        throw new Error('Not connected')
+      })
+      const legacy = createProbeAdapter(GET_SIZE_PROTOCOL_VERSION - 1, request)
 
-      await expect(adapter.probePtyLiveness(id, { deadlineMs: Date.now() + 750 })).resolves.toBe(
-        true
-      )
+      await expect(legacy.probePtyLiveness('legacy-live')).resolves.toBeNull()
 
-      const timeoutMs = request.mock.calls.at(-1)?.[2]
-      expect(timeoutMs).toBeGreaterThan(0)
-      expect(timeoutMs).toBeLessThanOrEqual(750)
+      legacy.dispose()
     })
   })
 

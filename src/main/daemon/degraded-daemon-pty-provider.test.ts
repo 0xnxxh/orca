@@ -97,12 +97,6 @@ function createProvider(
       }
     },
     emitExit: (id: string, code: number) => {
-      // Mirrors DaemonPtyAdapter: the exit event drops the id from activeSessionIds, so
-      // hasPty stops claiming it.
-      const idx = sessions.indexOf(id)
-      if (idx !== -1) {
-        sessions.splice(idx, 1)
-      }
       for (const listener of exitListeners) {
         listener({ id, code })
       }
@@ -235,41 +229,6 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.spawn).toHaveBeenCalledWith({ cols: 80, rows: 24 })
     expect(current.write).toHaveBeenCalledWith('daemon-session', 'old\n')
     expect(fallback.write).toHaveBeenCalledWith(fresh.id, 'new\n')
-  })
-
-  it('routes an undiscovered existing session to its owner instead of the fallback', async () => {
-    // Why: discovery is fail-open (a listProcesses failure just warns), so a live daemon
-    // session can be unmapped. Sending its attach to the fallback makes a running agent
-    // answer "Session not found", which is how its pane got retired.
-    const current = createDaemonAdapter('daemon', ['undiscovered-session'])
-    const legacy = createDaemonAdapter('legacy', ['legacy-session'])
-    const fallback = createProvider('fallback')
-    const provider = new DegradedDaemonPtyProvider({ current, legacy: [legacy], fallback })
-
-    await provider.spawn({
-      sessionId: 'undiscovered-session',
-      attachOnly: true,
-      cols: 80,
-      rows: 24
-    })
-    await provider.spawn({ sessionId: 'legacy-session', attachOnly: true, cols: 80, rows: 24 })
-    const fresh = await provider.spawn({ sessionId: 'minted-session', cols: 80, rows: 24 })
-
-    expect(current.spawn).toHaveBeenCalledWith({
-      sessionId: 'undiscovered-session',
-      attachOnly: true,
-      cols: 80,
-      rows: 24
-    })
-    expect(legacy.spawn).toHaveBeenCalledWith({
-      sessionId: 'legacy-session',
-      attachOnly: true,
-      cols: 80,
-      rows: 24
-    })
-    // A minted id nobody owns still routes to the degraded fallback.
-    expect(fallback.spawn).toHaveBeenCalledWith({ sessionId: 'minted-session', cols: 80, rows: 24 })
-    expect(fresh.id).toBe('minted-session')
   })
 
   it('routes later fresh PTYs to the daemon after spawn health recovers', async () => {

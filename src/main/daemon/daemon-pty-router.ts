@@ -41,14 +41,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
-    // Why the hasPty scan: an id the map lost (legacy discovery failed) still has a live owner,
-    // and sending it to the current daemon makes that owner read as "Session not found".
-    // Fresh ids match no adapter and still route to current.
-    const { sessionId } = opts
-    const adapter = sessionId
-      ? (this.sessionAdapters.get(sessionId) ??
-        this.allAdapters().find((candidate) => candidate.hasPty(sessionId)))
-      : undefined
+    const adapter = opts.sessionId ? this.sessionAdapters.get(opts.sessionId) : undefined
     const target = adapter ?? this.current
     const result = await target.spawn(opts)
     // Why: the adapter filters intentional recovery exits and canonical-ID races before publishing proof.
@@ -92,8 +85,8 @@ export class DaemonPtyRouter implements IPtyProvider {
     return this.current.hasPty(id) || this.legacy.some((adapter) => adapter.hasPty(id))
   }
 
-  async probePtyLiveness(id: string, opts?: { deadlineMs?: number }): Promise<boolean | null> {
-    return await probePtyOwners(id, this.sessionAdapters.get(id), this.allAdapters(), opts)
+  async probePtyLiveness(id: string): Promise<boolean | null> {
+    return await probePtyOwners(id, this.sessionAdapters.get(id), this.allAdapters())
   }
 
   write(id: string, data: string): void {
