@@ -202,7 +202,14 @@ describe('collectWorktreeTrashSweepRoots', () => {
     try {
       expect(
         collectWorktreeTrashSweepRoots(
-          [repo({ path: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\orca' })],
+          [
+            repo({ path: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\orca' }),
+            repo({
+              id: 'repo-2',
+              path: 'C:\\code\\orca',
+              worktreeBasePath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\trees'
+            })
+          ],
           settings
         )
       ).toEqual([])

@@ -13,6 +13,7 @@ import {
   restoreWorktreeDirectoryFromTrash,
   scheduleWorktreeTrashDeletion
 } from '../worktree-trash'
+import { parseWslPath } from '../wsl'
 import type {
   GitWorktreeInfo,
   LocalBaseRefRefreshResult,
@@ -1187,7 +1188,7 @@ async function tryRemoveWorktreeWithDeferredDirectoryDeletion(
   options: RemoveWorktreeOptions
 ): Promise<boolean> {
   // Why: WSL-owned checkouts are deleted inside the distro, so Node on Windows must not rename them.
-  if (options.wslDistro) {
+  if (options.wslDistro || parseWslPath(worktreePath)) {
     return false
   }
   if (!force) {

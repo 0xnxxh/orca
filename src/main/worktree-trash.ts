@@ -163,7 +163,10 @@ export function collectWorktreeTrashSweepRoots(
       continue
     }
     try {
-      roots.add(computeWorkspaceRoot(repo.path, getWorktreePathSettings(repo, settings)))
+      const workspaceRoot = computeWorkspaceRoot(repo.path, getWorktreePathSettings(repo, settings))
+      if (!parseWslPath(workspaceRoot)) {
+        roots.add(workspaceRoot)
+      }
     } catch {
       // A repo with an unusable configured base path simply has no trash root to sweep.
     }

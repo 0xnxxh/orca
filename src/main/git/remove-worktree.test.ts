@@ -489,6 +489,24 @@ branch refs/heads/main
     expect(getGitCalls()).toContain('git worktree remove /repo-feature')
   })
 
+  it('does not rename a WSL checkout configured for a native Windows repo', async () => {
+    const originalPlatform = process.platform
+    const worktreePath = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\feature'
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      mockGitCommands({})
+
+      await removeWorktree('C:\\repo', worktreePath, false, {
+        knownRemovedWorktree: { branch: '', head: '', locked: false }
+      })
+
+      expect(moveWorktreeDirectoryToTrashMock).not.toHaveBeenCalled()
+      expect(getGitCalls()).toEqual([`git worktree remove ${worktreePath}`])
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
   it('passes one --force before the worktree path for dirty-file removal', async () => {
     mockGitCommands({
       'git worktree list --porcelain': {
