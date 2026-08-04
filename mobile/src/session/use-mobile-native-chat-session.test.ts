@@ -222,6 +222,35 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.messages.at(-1)?.id).toBe('live-1')
   })
 
+  it('enables paging when a replay trims a window that previously had no earlier rows', async () => {
+    const sendRequest = vi.fn()
+    const window = Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({ type: 'snapshot', messages: window, hasMore: false, beforeOffset: 0 })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () =>
+      emit({
+        type: 'snapshot',
+        messages: [...window.slice(1), message('live-1')],
+        hasMore: true,
+        beforeOffset: 10
+      })
+    )
+
+    expect(state?.messages[0]?.id).toBe('win-1')
+    expect(state?.hasMore).toBe(true)
+    act(() => state?.loadEarlier())
+    expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
+      agent: 'claude',
+      sessionId: 'session',
+      limit: 100
+    })
+  })
+
   it('drops paged rows that an authoritative replay says were removed', async () => {
     const sendRequest = vi.fn().mockResolvedValue({
       ok: true,

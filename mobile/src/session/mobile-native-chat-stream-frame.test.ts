@@ -43,7 +43,12 @@ describe('applyMobileNativeChatStreamFrame', () => {
 
     const result = applyMobileNativeChatStreamFrame({
       merger,
-      frame: { type: 'snapshot', messages: [message('b'), message('c'), message('d')] },
+      frame: {
+        type: 'snapshot',
+        messages: [message('b'), message('c'), message('d')],
+        hasMore: true,
+        beforeOffset: 20
+      },
       limit: 3,
       replaceSnapshot: false
     })
@@ -51,7 +56,32 @@ describe('applyMobileNativeChatStreamFrame', () => {
     expect(result).toMatchObject({
       kind: 'messages',
       messages: [message('b'), message('c'), message('d')],
-      cursorInvalidated: true
+      cursorInvalidated: true,
+      hasMore: true
+    })
+  })
+
+  it('refreshes paging metadata when a replay still starts at the retained oldest row', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, [message('a'), message('b')])
+
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: {
+          type: 'snapshot',
+          messages: [message('a'), message('b')],
+          hasMore: false,
+          beforeOffset: 0
+        },
+        limit: 40,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: [message('a'), message('b')],
+      hasMore: false,
+      beforeOffset: 0
     })
   })
 

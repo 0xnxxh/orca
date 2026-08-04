@@ -80,8 +80,8 @@ export function useMobileNativeChatAnswerSend(args: {
   // superseding answer inherits the cancelled chain's hold (it re-enters before
   // the old chain unwinds), and only the last chain out releases the lock.
   const writeHoldsRef = useRef(new Map<string, number>())
-  // Successors wait for the prior chain's active RPC before sharing its hold.
-  const writeTurnsRef = useRef(new Map<string, Promise<void>>())
+  // Successors wait for the prior RPC and inherit any delivery ambiguity.
+  const writeTurnsRef = useRef(new Map<string, Promise<boolean>>())
   const delaysRef = useRef<
     Set<{ timer: ReturnType<typeof setTimeout>; resolve: (completed: boolean) => void }>
   >(new Set())
@@ -124,9 +124,9 @@ export function useMobileNativeChatAnswerSend(args: {
         return false
       }
       holds.set(handle, heldCount + 1)
-      const previousTurn = writeTurnsRef.current.get(handle) ?? Promise.resolve()
-      let finishTurn: () => void = () => undefined
-      const turn = new Promise<void>((resolve) => {
+      const previousTurn = writeTurnsRef.current.get(handle) ?? Promise.resolve(true)
+      let finishTurn: (safeToContinue: boolean) => void = () => undefined
+      const turn = new Promise<boolean>((resolve) => {
         finishTurn = resolve
       })
       writeTurnsRef.current.set(handle, turn)
@@ -135,9 +135,10 @@ export function useMobileNativeChatAnswerSend(args: {
       const generation = generationRef.current
       let sawUnknownOutcome = false
       let sawAcceptedGroup = false
+      let predecessorSafe = true
       try {
-        await previousTurn
-        if (generationRef.current !== generation) {
+        predecessorSafe = await previousTurn
+        if (!predecessorSafe || generationRef.current !== generation) {
           return false
         }
         // One budget for the whole answer instead of a fresh timeout per keystroke
@@ -262,7 +263,7 @@ export function useMobileNativeChatAnswerSend(args: {
         }
         return groups.length > 0
       } finally {
-        finishTurn()
+        finishTurn(predecessorSafe && !sawUnknownOutcome)
         if (writeTurnsRef.current.get(handle) === turn) {
           writeTurnsRef.current.delete(handle)
         }

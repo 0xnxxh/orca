@@ -25,19 +25,19 @@ export type AppliedMobileNativeChatFrame =
       windowReplaced?: boolean
     }
 
-function replayExtendsRetainedTail(
+function replayRetainedTailStart(
   merger: NativeChatMerger,
   messages: readonly NativeChatMessage[],
   hasMore: boolean | undefined
-): boolean {
+): number | null {
   const firstIndex = messages[0] ? merger.indexById.get(messages[0].id) : undefined
   if (firstIndex === undefined) {
-    return false
+    return null
   }
   // `hasMore: false` is authoritative: retained rows before the replay window
   // were removed while disconnected, even when the newest IDs still match.
   if (hasMore === false && firstIndex > 0) {
-    return false
+    return null
   }
   let expectedIndex = firstIndex
   let sawNewMessage = false
@@ -46,12 +46,12 @@ function replayExtendsRetainedTail(
     if (existingIndex === undefined) {
       sawNewMessage = true
     } else if (sawNewMessage || existingIndex !== expectedIndex) {
-      return false
+      return null
     } else {
       expectedIndex += 1
     }
   }
-  return expectedIndex === merger.list.length
+  return expectedIndex === merger.list.length ? firstIndex : null
 }
 
 /** Applies runtime stream frames while preserving the initial-snapshot versus
@@ -79,12 +79,11 @@ export function applyMobileNativeChatStreamFrame(args: {
   if (!Array.isArray(frame.messages)) {
     return { kind: 'ignored' }
   }
-  const replayExtendsHistory =
-    frame.type === 'snapshot' &&
-    !replaceSnapshot &&
-    merger.list.length > 0 &&
-    replayExtendsRetainedTail(merger, frame.messages, frame.hasMore)
-  if (frame.type === 'replacement' || (frame.type === 'snapshot' && !replayExtendsHistory)) {
+  const replayStartIndex =
+    frame.type === 'snapshot' && !replaceSnapshot && merger.list.length > 0
+      ? replayRetainedTailStart(merger, frame.messages, frame.hasMore)
+      : null
+  if (frame.type === 'replacement' || (frame.type === 'snapshot' && replayStartIndex === null)) {
     replaceList(merger, frame.messages)
     return {
       kind: 'messages',
@@ -96,11 +95,23 @@ export function applyMobileNativeChatStreamFrame(args: {
   }
   const previousFirstId = merger.list[0]?.id
   const messages = applyAppend(merger, frame.messages, limit)
+  const cursorInvalidated = Boolean(previousFirstId && messages[0]?.id !== previousFirstId)
+  const replayStillStartsAtOldest = frame.type === 'snapshot' && replayStartIndex === 0
   return {
     kind: 'messages',
     messages,
     // Why: once the bounded live window drops its oldest row, the snapshot's
     // byte cursor no longer describes the oldest retained message.
-    ...(previousFirstId && messages[0]?.id !== previousFirstId ? { cursorInvalidated: true } : {})
+    ...(cursorInvalidated ? { cursorInvalidated: true } : {}),
+    // A trimmed replay creates page-able history even if the prior window had
+    // none; otherwise only a replay sharing our oldest row owns its metadata.
+    ...(frame.type === 'snapshot' && cursorInvalidated
+      ? { hasMore: true }
+      : replayStillStartsAtOldest
+        ? {
+            ...(frame.hasMore == null ? {} : { hasMore: frame.hasMore }),
+            ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
+          }
+        : {})
   }
 }

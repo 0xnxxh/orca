@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { MAX_TOOL_RESULT_CHARS } from './mobile-native-chat-message-styles'
 
 vi.mock('react-native', async () => {
   const React = await import('react')
@@ -30,7 +31,7 @@ function userMessage(blocks: NativeChatMessage['blocks']): NativeChatMessage {
   return { id: 'u1', role: 'user', blocks, timestamp: null, source: 'transcript' }
 }
 
-describe('MobileNativeChatMessage image-ref rendering', () => {
+describe('MobileNativeChatMessage', () => {
   let renderer: ReactTestRenderer | null = null
 
   beforeEach(() => {
@@ -41,7 +42,10 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     renderer = null
   })
 
-  function render(message: NativeChatMessage): ReactTestRenderer {
+  function render(
+    message: NativeChatMessage,
+    props: { toolsExpanded?: boolean } = {}
+  ): ReactTestRenderer {
     const original = console.error
     const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
       if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
@@ -51,7 +55,7 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     })
     try {
       act(() => {
-        renderer = create(createElement(MobileNativeChatMessage, { message }))
+        renderer = create(createElement(MobileNativeChatMessage, { message, ...props }))
       })
     } finally {
       spy.mockRestore()
@@ -83,5 +87,27 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       .findAllByType('Text' as never)
       .map((node) => String(node.children.join('')))
     expect(texts.some((text) => text.includes('/tmp/host.png'))).toBe(true)
+  })
+
+  it('bounds expanded diff-less tool input before native text layout', () => {
+    const tree = render(
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [
+          { type: 'tool-call', name: 'CustomTool', input: { payload: 'x'.repeat(100_000) } }
+        ],
+        timestamp: null,
+        source: 'transcript'
+      },
+      { toolsExpanded: true }
+    )
+
+    const detail = tree.root
+      .findAllByType('Text' as never)
+      .map((node) => String(node.children.join('')))
+      .find((text) => text.startsWith('{\n'))
+    expect(detail).toHaveLength(MAX_TOOL_RESULT_CHARS + 1)
+    expect(detail?.endsWith('…')).toBe(true)
   })
 })

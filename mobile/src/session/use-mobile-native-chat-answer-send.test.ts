@@ -491,4 +491,39 @@ describe('useMobileNativeChatAnswerSend', () => {
     await expect(second).resolves.toBe(true)
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
+
+  it('does not write a successor after the prior delivery becomes ambiguous', async () => {
+    let rejectFirst: (error: Error) => void = () => undefined
+    const onSendError = vi.fn()
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      rejectFirst(markRpcDeliveryUnknown(new Error('Connection closed')))
+      await Promise.resolve()
+    })
+
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(onSendError).toHaveBeenCalledWith('Answer unconfirmed — check chat before retrying')
+  })
 })

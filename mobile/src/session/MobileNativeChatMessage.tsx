@@ -73,6 +73,13 @@ function ResultBody({
   )
 }
 
+function formatBoundedToolInput(input: unknown): string {
+  const detail = formatToolInput(input)
+  return detail.length > MAX_TOOL_RESULT_CHARS
+    ? `${detail.slice(0, MAX_TOOL_RESULT_CHARS)}…`
+    : detail
+}
+
 /** One request: a tool call and its result rendered together as a single
  *  expandable line. `defaultExpanded` lets the group toggle open every line. */
 function ToolLine({
@@ -135,9 +142,9 @@ function ToolLine({
         <View style={styles.toolDetail}>
           {callDiff ? <DiffView lines={callDiff} /> : null}
           {/* Diff-less calls show the full formatted input (pretty JSON), not
-              the one-line label repeated (desktop parity). */}
+              the one-line label repeated, bounded like desktop tool detail. */}
           {!callDiff && call ? (
-            <Text style={styles.mono}>{formatToolInput(call.input)}</Text>
+            <Text style={styles.mono}>{formatBoundedToolInput(call.input)}</Text>
           ) : null}
           {result ? (
             <ResultBody output={result.output} isError={result.isError} diff={resultDiff} />
