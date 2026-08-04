@@ -8,6 +8,7 @@ import { parseAgentQuestion } from './mobile-native-chat-question'
 export type MobileNativeChatPrompts = {
   permission: ReturnType<typeof detectAgentPermission>
   question: ReturnType<typeof parseAgentQuestion>
+  detectedAsk: ReturnType<typeof parseAskFromStatus>
   ask: ReturnType<typeof parseAskFromStatus>
 }
 
@@ -42,9 +43,15 @@ export function useMobileNativeChatPrompts(args: {
     [askFromStatus, messages]
   )
 
+  const detectedAsk = askFromStatus ?? askFromMessages
+
   return {
     permission,
     question,
-    ask: enabled ? (askFromStatus ?? askFromMessages) : null
+    detectedAsk: enabled ? detectedAsk : null,
+    // Ask cards sit inside the same paused gate as the approval envelope above:
+    // the prompt payload outlives its answer, so only a waiting/blocked agent
+    // may surface one — never a working or done one.
+    ask: enabled && blocked ? detectedAsk : null
   }
 }

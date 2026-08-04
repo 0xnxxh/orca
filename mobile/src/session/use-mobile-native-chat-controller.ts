@@ -20,6 +20,7 @@ import { openMobileNativeChatFile } from './mobile-native-chat-open-file'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
+import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
 import { useMobileNativeChatCancelAsk } from './use-mobile-native-chat-cancel-ask'
 import {
   useMobileNativeChatDrafts,
@@ -51,7 +52,13 @@ export type MobileNativeChatController = {
   nativeChatStreamingText?: string
   nativeChatPermission: ReturnType<typeof detectAgentPermission>
   nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
+  /** The pending ask, already null while dismissed (dismissal lives here so it
+   *  survives the chat-view subtree unmounting on a view toggle). */
   nativeChatAsk: ReturnType<typeof parseAskFromStatus>
+  /** Stable key for the current ask card (keys the card component). */
+  nativeChatAskKey: string | null
+  /** Hide the current ask until a genuinely different question arrives. */
+  dismissNativeChatAsk: () => void
   handleNativeChatOpenFile: (relativePath: string) => void
   handleNativeChatAnswerAsk: (
     prompt: AskPrompt,
@@ -169,11 +176,22 @@ export function useMobileNativeChatController(args: {
   const {
     permission: nativeChatPermission,
     question: nativeChatQuestion,
-    ask: nativeChatAsk
+    detectedAsk: nativeChatDetectedAsk,
+    ask: nativeChatAskPrompt
   } = useMobileNativeChatPrompts({
     enabled: activeChatResolution != null,
     status: nativeChatStatus,
     messages: nativeChatSession.messages
+  })
+  const {
+    askKey: nativeChatAskKey,
+    showAsk: showNativeChatAsk,
+    dismissAsk: dismissNativeChatAsk
+  } = useMobileNativeChatAskDismiss({
+    ask: nativeChatAskPrompt,
+    detectedAsk: nativeChatDetectedAsk,
+    scopeKey: activeSessionTabId,
+    observing: showNativeChat
   })
 
   const handleNativeChatOpenFile = useCallback(
@@ -275,7 +293,9 @@ export function useMobileNativeChatController(args: {
     nativeChatStreamingText,
     nativeChatPermission,
     nativeChatQuestion,
-    nativeChatAsk,
+    nativeChatAsk: showNativeChatAsk ? nativeChatAskPrompt : null,
+    nativeChatAskKey,
+    dismissNativeChatAsk,
     handleNativeChatOpenFile,
     handleNativeChatAnswerAsk: answerAsk,
     handleNativeChatCancelAsk: cancelAsk,

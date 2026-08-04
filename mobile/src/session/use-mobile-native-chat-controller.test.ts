@@ -45,7 +45,12 @@ vi.mock('./use-mobile-native-chat-drafts', () => ({
   }
 }))
 vi.mock('./use-mobile-native-chat-prompts', () => ({
-  useMobileNativeChatPrompts: () => ({ permission: null, question: null, ask: null })
+  useMobileNativeChatPrompts: () => ({
+    permission: null,
+    question: null,
+    detectedAsk: null,
+    ask: null
+  })
 }))
 vi.mock('./use-mobile-native-chat-answer-send', () => ({
   useMobileNativeChatAnswerSend: () => ({ answerAsk: vi.fn(), cancelPending: vi.fn() })
