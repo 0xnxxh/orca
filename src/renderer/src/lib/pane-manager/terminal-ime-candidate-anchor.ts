@@ -109,23 +109,29 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
     // each compositionupdate, so the correction has to land after that timer —
     // one pending timer per burst, re-reading the anchor when it fires.
     if (!isCursorAgent) {
+      if (deferredApply !== null) {
+        window.clearTimeout(deferredApply)
+        deferredApply = null
+      }
       return
     }
-    if (deferredApply === null) {
-      deferredApply = window.setTimeout(() => {
-        deferredApply = null
-        if (!textarea.isConnected) {
-          return
-        }
-        if (!metrics || metrics.cols !== terminal.cols || metrics.rows !== terminal.rows) {
-          metrics = measureCells()
-        }
-        if (metrics) {
-          const currentAnchor = resolveAnchor().anchor
-          applyAnchor(currentAnchor.row, currentAnchor.column, metrics)
-        }
-      }, 0)
+    // Re-queue after xterm's latest timer while keeping only one correction pending.
+    if (deferredApply !== null) {
+      window.clearTimeout(deferredApply)
     }
+    deferredApply = window.setTimeout(() => {
+      deferredApply = null
+      if (!textarea.isConnected) {
+        return
+      }
+      if (!metrics || metrics.cols !== terminal.cols || metrics.rows !== terminal.rows) {
+        metrics = measureCells()
+      }
+      if (metrics) {
+        const currentAnchor = resolveAnchor().anchor
+        applyAnchor(currentAnchor.row, currentAnchor.column, metrics)
+      }
+    }, 0)
   }
 
   terminal.element.addEventListener('compositionstart', handler)

@@ -193,6 +193,24 @@ describe('installTerminalImeCandidateAnchor', () => {
     expect(harness.style).toEqual({ top: `${2 * CELL_HEIGHT}px`, left: `${7 * CELL_WIDTH}px` })
   })
 
+  it("re-queues the correction after xterm's latest composition timer", () => {
+    const harness = createHarness()
+    harness.setLines(['Cursor Agent', '', '→ hello'])
+    harness.element.addEventListener('compositionupdate', () => {
+      window.setTimeout(() => {
+        harness.style.top = '0px'
+      }, 0)
+    })
+    installTerminalImeCandidateAnchor(harness.terminal)
+
+    harness.setCursor(0, 1)
+    fire(harness.element, 'compositionstart')
+    fire(harness.element, 'compositionupdate')
+    vi.runAllTimers()
+
+    expect(harness.style.top).toBe(`${2 * CELL_HEIGHT}px`)
+  })
+
   it('refreshes the deferred metrics and anchor after a refit', () => {
     const harness = createHarness()
     harness.setLines(['Cursor Agent', '', '→ hello'])
