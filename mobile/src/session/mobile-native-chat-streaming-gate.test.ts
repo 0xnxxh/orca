@@ -159,6 +159,22 @@ describe('deriveMobileNativeChatStreaming', () => {
     expect(results).toEqual([null, 'second answer', null, 'second answer'])
   })
 
+  it('does not treat the previous turn as a segment start after re-anchoring', () => {
+    // The textless anchor clears the remembered text too. Keeping it would read
+    // the next turn's opener as a new segment, re-anchor onto the reply that
+    // just landed, and render it a second time as a bubble.
+    const prior = [assistant('a1', 'context')]
+    const firstLanded = [...prior, assistant('a2', 'Alpha done')]
+    const secondLanded = [...firstLanded, assistant('a3', 'Beta reply')]
+    const { results } = run([
+      { folded: prior },
+      { folded: prior, text: 'Alpha', live: true },
+      { folded: firstLanded }, // turn ended — re-anchor onto a2
+      { folded: secondLanded, text: 'Beta', live: true } // a3 already landed
+    ])
+    expect(results).toEqual([null, 'Alpha', null, null])
+  })
+
   it('re-anchors when a new reply part replaces the stream mid-turn', () => {
     const prior = [assistant('a1', 'context')]
     const partOneLanded = [...prior, assistant('a2', 'part one full text')]
