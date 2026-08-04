@@ -3,7 +3,7 @@
 // is a metadata operation, and the recursive delete then runs after the IPC has already returned.
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, rename } from 'node:fs/promises'
+import { mkdir, readdir, rename, rmdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { removeHostTree } from './host-tree-removal'
 import { isFolderRepo } from '../shared/repo-kind'
@@ -46,6 +46,8 @@ export async function moveWorktreeDirectoryToTrash(
       `[worktrees] Deferred deletion unavailable for ${worktreePath}; deleting in place`,
       error
     )
+    // Leave no empty trash root behind when the rename never happened; rmdir keeps queued entries.
+    await rmdir(trashRoot).catch(() => {})
     return undefined
   }
 }

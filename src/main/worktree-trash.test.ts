@@ -56,8 +56,11 @@ describe('moveWorktreeDirectoryToTrash', () => {
     }
   })
 
-  it('reports the rename as unavailable when the checkout is missing', async () => {
-    expect(await moveWorktreeDirectoryToTrash(join(scratchDir, 'repo', 'gone'))).toBeUndefined()
+  it('reports the rename as unavailable and leaves no trash root when the checkout is missing', async () => {
+    const worktreePath = join(scratchDir, 'repo', 'gone')
+
+    expect(await moveWorktreeDirectoryToTrash(worktreePath)).toBeUndefined()
+    expect(existsSync(getWorktreeTrashRoot(worktreePath))).toBe(false)
   })
 
   async function seededWorktree(name: string): Promise<string> {
