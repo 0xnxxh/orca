@@ -17,6 +17,14 @@ const { createRemotePaneLayoutPusher } = await import('./remote-pane-layout-push
 
 const PERSISTS = 100
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve = (_value: T): void => undefined
+  const promise = new Promise<T>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
+
 function makeLayout(overrides: Partial<TerminalLayoutSnapshot> = {}): TerminalLayoutSnapshot {
   return {
     root: {
@@ -142,6 +150,24 @@ describe('createRemotePaneLayoutPusher', () => {
     pusher.push(input)
 
     expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a stale failure invalidate a newer in-flight layout', async () => {
+    const first = deferred<boolean>()
+    const second = deferred<boolean>()
+    updateWebRuntimePaneLayout.mockImplementationOnce(() => first.promise)
+    updateWebRuntimePaneLayout.mockImplementationOnce(() => second.promise)
+    const pusher = createRemotePaneLayoutPusher()
+    const changedLayout = makeLayout({ expandedLeafId: 'leaf-a' })
+
+    pusher.push({ worktreeId: 'wt-1', tabId: 'tab-1', layout: makeLayout() })
+    pusher.push({ worktreeId: 'wt-1', tabId: 'tab-1', layout: changedLayout })
+    first.resolve(false)
+    await Promise.resolve()
+    pusher.push({ worktreeId: 'wt-1', tabId: 'tab-1', layout: changedLayout })
+
+    expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(2)
+    second.resolve(true)
   })
 
   it('re-pushes after a remount re-establishes host geometry', () => {
