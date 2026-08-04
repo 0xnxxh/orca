@@ -231,6 +231,7 @@ import {
 import { StarNagService } from './star-nag/service'
 import { agentHookServer, type AgentHookProviderSessionIdentity } from './agent-hooks/server'
 import { createHookProviderSessionInvalidator } from './agent-hooks/hook-provider-session-invalidation'
+import { createHookStatusSessionTabsInvalidator } from './agent-hooks/hook-status-session-tabs-invalidation'
 import { wslHookRelayManager } from './agent-hooks/wsl-hook-relay-manager'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
 import { rememberBranchRenameFailureOutput } from './agent-hooks/branch-rename-failure-output'
@@ -2110,7 +2111,9 @@ void app.whenReady().then(async () => {
         undefined
     }))
     for (const worktreeId of collectChangedProviderSessionWorktrees(ownedIdentities)) {
-      runtime?.notifyMobileSessionTabsChanged(worktreeId)
+      // Why not `notifyMobileSessionTabsChanged` alone: it re-emits at the unchanged
+      // `snapshotVersion`, which every client drops on its monotonic gate.
+      runtime?.touchMobileSessionTabsForWorktree(worktreeId, { immediate: true })
     }
   }
   const unsubscribeStatusChanges = agentHookServer.subscribeStatusChanges((statuses) => {
@@ -2122,9 +2125,32 @@ void app.whenReady().then(async () => {
       publishProviderSessionChanges(sessions)
     }
   )
+  // Why: hook rows are the only carrier of live agent state on a headless host, and
+  // nothing else republishes `session.tabs` when one changes — so a paired client
+  // would keep the pane's last projection until an unrelated PTY touch came along.
+  const hookStatusChangedSessionTabs = createHookStatusSessionTabsInvalidator()
+  const unsubscribeHookStatusSessionTabs = agentHookServer.subscribeEnrichedStatus((enriched) => {
+    if (hookStatusChangedSessionTabs(enriched)) {
+      runtime?.touchMobileSessionTabsForPane(enriched.paneKey, enriched.worktreeId ?? null)
+    }
+  })
+  // Teardown: agent exit, pane close, and the SSH transient-disconnect batch all land
+  // here. Without it the live state published above becomes a zombie question card.
+  const unsubscribeHookStatusClear = agentHookServer.subscribePaneStatusClear((clear) => {
+    const clearedPaneKeys =
+      'paneKey' in clear
+        ? [clear.paneKey]
+        : hookStatusChangedSessionTabs.forgetConnection(clear.connectionId)
+    for (const paneKey of clearedPaneKeys) {
+      hookStatusChangedSessionTabs.forgetPane(paneKey)
+      runtime?.touchMobileSessionTabsForPane(paneKey)
+    }
+  })
   unsubscribeAgentAwakeStatusChanges = () => {
     unsubscribeStatusChanges()
     unsubscribeProviderSessionChanges()
+    unsubscribeHookStatusSessionTabs()
+    unsubscribeHookStatusClear()
   }
   // Why: telemetry must init before any IPC handler/renderer can call track(); it's a no-op in dev and while TELEMETRY_ENABLED is false, so it's safe early.
   initTelemetry(store)
