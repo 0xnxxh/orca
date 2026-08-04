@@ -21,6 +21,7 @@ import {
   type TerminalTabColdParkCandidate
 } from './terminal-hidden-view-parking'
 import {
+  getParkVerdictUnparkPinUntilMs,
   recordParkVerdictFlips,
   type ParkVerdictFlipRecord
 } from './terminal-park-verdict-flip-telemetry'
@@ -204,9 +205,24 @@ export function useTerminalTabColdParking(args: {
     // Why: a tab the byte watchers cannot cover (no capture, no layout
     // snapshot, legacy leaf ids) must never park — it would go silent for
     // bells/titles/completions, the failure that sank the first attempt.
+    // Coverage is re-derived from state the authorized unmount rewrites, so a
+    // churning verdict is damped to NOT-parked (a mounted pane never goes
+    // silent) instead of looping React into #185.
+    const parkVerdictPinUntilMsByTabId = new Map<string, number>()
     for (const terminalTab of terminalTabs) {
+      if (!nextColdParkedTerminalTabIds.has(terminalTab.id)) {
+        continue
+      }
+      const parkVerdictPinUntilMs = getParkVerdictUnparkPinUntilMs({
+        records: parkVerdictRecordsRef.current,
+        tabId: terminalTab.id,
+        nowMs
+      })
+      if (parkVerdictPinUntilMs !== null) {
+        parkVerdictPinUntilMsByTabId.set(terminalTab.id, parkVerdictPinUntilMs)
+      }
       if (
-        nextColdParkedTerminalTabIds.has(terminalTab.id) &&
+        parkVerdictPinUntilMs !== null ||
         !canWatcherCoverParkedTerminalTab(worktreeId, terminalTab)
       ) {
         nextColdParkedTerminalTabIds.delete(terminalTab.id)
@@ -230,6 +246,10 @@ export function useTerminalTabColdParking(args: {
         parkingEnabled: terminalParkingEnabled,
         hiddenSinceMs: candidate.hiddenSinceMs,
         parkCooldownUntilMs: measureParkCooldownUntilRef.current,
+        // Why: a pinned tab is past every hysteresis deadline, so the pin
+        // expiry is often the only pending wakeup left — and the pin exists
+        // precisely to stop the churn that would otherwise re-run this effect.
+        parkVerdictPinUntilMs: parkVerdictPinUntilMsByTabId.get(candidate.id) ?? null,
         nowMs,
         ...overrides
       })
