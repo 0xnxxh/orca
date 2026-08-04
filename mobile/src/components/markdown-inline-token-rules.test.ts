@@ -21,6 +21,11 @@ describe('isIntrawordUnderscoreToken', () => {
     expect(isIntrawordUnderscoreToken('_foo_s bar', 0, '_foo_')).toBe(true)
   })
 
+  it('rejects dunder emphasis inside a path', () => {
+    expect(isIntrawordUnderscoreToken('src/__init__.py', 4, '__init__')).toBe(true)
+    expect(isIntrawordUnderscoreToken(String.raw`src\__init__.py`, 4, '__init__')).toBe(true)
+  })
+
   it('ignores non-underscore tokens', () => {
     expect(isIntrawordUnderscoreToken('a*b*c', 1, '*b*')).toBe(false)
   })

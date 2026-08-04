@@ -115,6 +115,19 @@ describe('detectFilePathSegments', () => {
     ])
   })
 
+  it('does not partially parse numeric-looking non-line tails', () => {
+    expect(detectFilePathSegments('log src/app.ts:1e3 oops')).toEqual([
+      { type: 'text', value: 'log ' },
+      { type: 'file', value: 'src/app.ts', path: 'src/app.ts' },
+      { type: 'text', value: ':1e3 oops' }
+    ])
+    expect(detectFilePathSegments('coverage src/app.ts:80% of lines')).toEqual([
+      { type: 'text', value: 'coverage ' },
+      { type: 'file', value: 'src/app.ts', path: 'src/app.ts' },
+      { type: 'text', value: ':80% of lines' }
+    ])
+  })
+
   it('does not match bare filenames without a slash', () => {
     expect(detectFilePathSegments('open Main.tsx please')).toEqual([
       { type: 'text', value: 'open Main.tsx please' }

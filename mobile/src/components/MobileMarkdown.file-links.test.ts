@@ -96,6 +96,19 @@ describe('MobileMarkdown file links', () => {
     expect(onOpenFile).toHaveBeenNthCalledWith(2, 'src/baz_qux.ts')
   })
 
+  it('keeps markdown links between snake_case paths tappable', () => {
+    pressByText(
+      render('Updated src/foo_bar.py; see [the PR](https://example.com/x) before src/baz_qux.py'),
+      'the PR'
+    )
+    expect(openURL).toHaveBeenCalledWith('https://example.com/x')
+  })
+
+  it('opens a dunder path as one link', () => {
+    pressByText(render('see a/__tests__/x.ts now'), 'a/__tests__/x.ts')
+    expect(onOpenFile).toHaveBeenCalledExactlyOnceWith('a/__tests__/x.ts')
+  })
+
   it('detects paths inside bold spans', () => {
     pressByText(render('changed **src/foo.ts** heavily'), 'src/foo.ts')
     expect(onOpenFile).toHaveBeenCalledWith('src/foo.ts')

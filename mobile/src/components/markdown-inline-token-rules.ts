@@ -1,10 +1,12 @@
 // Post-checks for inline markdown tokens that a single-pass tokenizer regex
 // cannot express on its own.
 
+const INTRAWORD_FLANK_PATTERN = /[\w\\/]/
+
 /**
  * True when a `_…_` / `__…__` token sits inside a word (snake_case, dunder
- * tails). CommonMark treats intraword underscores as literal text; rejecting
- * the token also keeps file paths like src/foo_bar.ts whole for detection.
+ * tails). CommonMark treats intraword underscores as literal text; path
+ * separators count as flanks so dunder path segments also stay whole.
  */
 export function isIntrawordUnderscoreToken(text: string, index: number, token: string): boolean {
   if (!token.startsWith('_')) {
@@ -12,7 +14,7 @@ export function isIntrawordUnderscoreToken(text: string, index: number, token: s
   }
   const prev = index > 0 ? text[index - 1]! : ''
   const next = text[index + token.length] ?? ''
-  return /\w/.test(prev) || /\w/.test(next)
+  return INTRAWORD_FLANK_PATTERN.test(prev) || INTRAWORD_FLANK_PATTERN.test(next)
 }
 
 /**

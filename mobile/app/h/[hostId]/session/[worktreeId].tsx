@@ -3192,8 +3192,7 @@ export default function SessionScreen() {
     })
   }, [])
 
-  // Tap a terminal or chat file path → resolve on host, open as file tab/preview
-  // (mirrors desktop Cmd/Ctrl-click); chat taps surface misses via toast.
+  // Tap a terminal or chat file path → resolve on host, open as file tab/preview.
   const { handleFileTap, handleNativeChatFileTap } = useMobileFileTapHandlers<MobileSessionTab>({
     client,
     hostId,
@@ -3208,7 +3207,7 @@ export default function SessionScreen() {
     getActiveSessionTabType: () => activeSessionTabTypeRef.current,
     switchSessionTab: (tab) => switchSessionTabRef.current?.(tab),
     scheduleDelayedAction,
-    showToast
+    reportChatTapFailure: nativeChatSendError.show
   })
 
   const handleOpenedFileDiffActivationSeqRef = useRef(0)

@@ -19,13 +19,13 @@ type MobileFileTapHandlerOptions<T extends FileTapSessionTab> = {
   getActiveSessionTabType: () => string | null
   switchSessionTab: (tab: T) => void
   scheduleDelayedAction: (callback: () => void, delayMs: number) => unknown
-  showToast: (message: string) => void
+  reportChatTapFailure: (message: string) => void
 }
 
 /**
  * Tap-to-open handlers for file references, shared by the terminal (link taps
  * with the terminal's cwd) and native chat (worktree-root-relative paths, with
- * failure toasts). Handlers are identity-stable and read the latest options at
+ * failure feedback). Handlers are identity-stable and read the latest options at
  * dispatch time; the shared activation seq lets a newer tap on either surface
  * supersede an in-flight one.
  */
@@ -50,7 +50,7 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
     hostId,
     openBrowser,
     scheduleDelayedAction,
-    showToast,
+    reportChatTapFailure,
     switchSessionTab,
     terminalCwdRef,
     worktreeId,
@@ -73,7 +73,7 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
       hostId,
       openBrowser,
       scheduleDelayedAction,
-      showToast,
+      reportChatTapFailure,
       switchSessionTab,
       terminalCwdRef,
       worktreeId,
@@ -90,7 +90,7 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
     openBrowser,
     router,
     scheduleDelayedAction,
-    showToast,
+    reportChatTapFailure,
     switchSessionTab,
     terminalCwdRef,
     worktreeId,
@@ -166,7 +166,7 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
       }),
       switchSessionTab: current.switchSessionTab,
       scheduleDelayedAction: current.scheduleDelayedAction,
-      onOpenFailed: () => current.showToast(`Couldn't open ${pathText}`)
+      onOpenFailed: () => current.reportChatTapFailure(`Couldn't open ${pathText}`)
     })
   }, [])
 
