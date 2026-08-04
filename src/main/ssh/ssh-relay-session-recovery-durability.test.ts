@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../../shared/pty-consumer-session'
 import { SshRelaySession } from './ssh-relay-session'
 import {
   createMismatchedOwnerRecoveryError,
@@ -152,6 +153,46 @@ describe('SshRelaySession consumer recovery durability', () => {
     await establishing
     expect(established).toBe(true)
     session.dispose()
+  })
+
+  it('retries a pending incumbent publication before recovering its persisted lease', async () => {
+    vi.useFakeTimers()
+    try {
+      const targetId = 'target-owner-publication-pending'
+      const deps = createMockDeps()
+      vi.mocked(deps.mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+        targetId,
+        clientInstanceId: 'persisted-client',
+        serverBuildId: 'test-relay-build',
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'persisted-owner'
+      })
+      openConsumerSessionMock.mockRejectedValueOnce(
+        Object.assign(new Error('Owner grant publication is still pending'), {
+          code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
+        })
+      )
+      const session = new SshRelaySession(
+        targetId,
+        deps.getMainWindow,
+        deps.mockStore,
+        deps.mockPortForward
+      )
+
+      const establishing = session.establish(deps.mockConn)
+      await vi.advanceTimersByTimeAsync(25)
+      await establishing
+
+      expect(openConsumerSessionMock).toHaveBeenCalledTimes(2)
+      expect(openConsumerSessionMock.mock.calls[0]?.[1]).toMatchObject({
+        clientInstanceId: 'persisted-client',
+        resume: { ownerGeneration: 1, ownerLease: 'persisted-owner' }
+      })
+      session.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps destructive disposal pending until consumer recovery is removed', async () => {

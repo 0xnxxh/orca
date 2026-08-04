@@ -257,7 +257,13 @@ vi.mock('../ssh/ssh-port-scanner', () => ({
   }
 }))
 
-import { getSshConnectionManager, registerSshHandlers, resetSshHandlerStateForTests } from './ssh'
+import {
+  detachAllSshSessionsForShutdown,
+  getActiveMultiplexer,
+  getSshConnectionManager,
+  registerSshHandlers,
+  resetSshHandlerStateForTests
+} from './ssh'
 import { RelayVersionMismatchError } from '../ssh/ssh-relay-version-mismatch-error'
 import {
   SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD,
@@ -555,6 +561,89 @@ describe('SSH IPC handlers', () => {
     expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-1')
     expect(mockStore.removeSshRemotePtyLeases).toHaveBeenCalledWith('ssh-1')
     expect(mockSshStore.removeTarget).toHaveBeenCalledWith('ssh-1')
+  })
+
+  it('detaches active SSH sessions during app shutdown without terminating recovery', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockResolvedValue({})
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+    mockMux.dispose.mockClear()
+    mockConnectionManager.disconnectAll.mockClear().mockResolvedValue(undefined)
+
+    await detachAllSshSessionsForShutdown()
+
+    expect(mockPortForwardManager.removeAllForwards).toHaveBeenCalledWith('ssh-1')
+    expect(mockMux.dispose).toHaveBeenCalledWith('connection_lost')
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith('ssh-1', 'detached')
+    expect(mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
+    expect(mockConnectionManager.disconnectAll).toHaveBeenCalled()
+  })
+
+  it('drains the replacement session a paused connect publishes after shutdown began', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockResolvedValue({})
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    mockConnectionManager.disconnectAll.mockResolvedValue(undefined)
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+
+    // Why here: the old session's lease flush is the one window where doConnect resumes straight into
+    // publishing its replacement session without re-checking authority.
+    let releaseDetach = (): void => {}
+    const detachFlush = new Promise<void>((resolve) => {
+      releaseDetach = resolve
+    })
+    mockStore.markSshRemotePtyLeasesAsync.mockImplementationOnce(() => detachFlush)
+
+    const replacement = handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+    // Why: let the replacement connect reach the flush before shutdown snapshots what to drain.
+    for (let tick = 0; tick < 10; tick++) {
+      await Promise.resolve()
+    }
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith('ssh-1', 'detached')
+
+    mockConnectionManager.disconnectAll.mockClear()
+    const shutdown = detachAllSshSessionsForShutdown()
+    releaseDetach()
+
+    await expect(replacement).rejects.toThrow()
+    await shutdown
+
+    // Why two detaches: the old session's, plus the replacement the paused connect published after the
+    // first drain had already snapshotted activeSessions.
+    const detaches = mockStore.markSshRemotePtyLeasesAsync.mock.calls.filter(
+      (call) => call[1] === 'detached'
+    )
+    expect(detaches).toHaveLength(2)
+    expect(mockConnectionManager.disconnectAll).toHaveBeenCalledTimes(2)
+    expect(getActiveMultiplexer('ssh-1')).toBeUndefined()
+    await expect(handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })).rejects.toThrow(
+      'closed for app shutdown'
+    )
   })
 
   it('ssh:importConfig returns imported targets', async () => {

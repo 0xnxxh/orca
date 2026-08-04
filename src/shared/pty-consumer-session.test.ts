@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
   PtyConsumerSession,
   type PtyConsumerAuthentication,
@@ -145,10 +146,92 @@ describe('PtyConsumerSession', () => {
     })
   })
 
-  it('rejects recovery while the current owner is still active', () => {
+  it('displaces a still-attached owner that a matching resume proof reclaims', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))
     first.commitPublication()
+
+    const recovered = session.admit(
+      ownerHello({
+        resume: {
+          ownerGeneration: first.grant.ownerGeneration!,
+          ownerLease: first.grant.ownerLease!
+        }
+      }),
+      auth('connection-2')
+    )
+
+    expect(recovered.displacedOwner).toEqual({
+      connectionId: 'connection-1',
+      grant: first.grant
+    })
+    // Why: the incumbent keeps authority until the replacement grant is actually published.
+    expect(session.activeGrant('connection-1')).toBe(first.grant)
+
+    recovered.commitPublication()
+    expect(recovered.grant).toMatchObject({ role: 'session-owner', ownerGeneration: 2 })
+    expect(session.activeGrant('connection-1')).toBeNull()
+    expect(session.activeGrant('connection-2')).toBe(recovered.grant)
+  })
+
+  it('restores the displaced owner when the replacement publication rolls back', () => {
+    const session = createSession()
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    first.commitPublication()
+
+    const recovered = session.admit(
+      ownerHello({
+        resume: {
+          ownerGeneration: first.grant.ownerGeneration!,
+          ownerLease: first.grant.ownerLease!
+        }
+      }),
+      auth('connection-2')
+    )
+    recovered.rollbackPublication()
+
+    expect(session.activeGrant('connection-1')).toBe(first.grant)
+    expect(session.activeGrant('connection-2')).toBeNull()
+    // Why: the restored incumbent must still hold the lease it was admitted with.
+    const reclaimed = session.admit(
+      ownerHello({
+        resume: {
+          ownerGeneration: first.grant.ownerGeneration!,
+          ownerLease: first.grant.ownerLease!
+        }
+      }),
+      auth('connection-3')
+    )
+    expect(reclaimed.displacedOwner?.connectionId).toBe('connection-1')
+  })
+
+  it('expires a displaced owner restored after its connection already closed', () => {
+    let now = 10
+    const session = createSession({ now: () => now })
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    first.commitPublication()
+
+    const recovered = session.admit(
+      ownerHello({
+        resume: {
+          ownerGeneration: first.grant.ownerGeneration!,
+          ownerLease: first.grant.ownerLease!
+        }
+      }),
+      auth('connection-2')
+    )
+    session.close('connection-1')
+    recovered.rollbackPublication()
+
+    now += 30_000
+    session.sweepExpired()
+    const fresh = session.admit(ownerHello(), auth('connection-4'))
+    expect(fresh.grant.role).toBe('session-owner')
+  })
+
+  it('refuses recovery while the incumbent grant publication is still settling', () => {
+    const session = createSession()
+    const first = session.admit(ownerHello(), auth('connection-1'))
 
     expect(() =>
       session.admit(
@@ -160,7 +243,12 @@ describe('PtyConsumerSession', () => {
         }),
         auth('connection-2')
       )
-    ).toThrow('Active owner')
+    ).toThrow(
+      expect.objectContaining({
+        code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+        message: expect.stringContaining('still pending')
+      })
+    )
   })
 
   it('types mismatched recovery without disturbing principal or lease ownership', () => {
