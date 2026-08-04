@@ -27,10 +27,16 @@ export type AppliedMobileNativeChatFrame =
 
 function replayExtendsRetainedTail(
   merger: NativeChatMerger,
-  messages: readonly NativeChatMessage[]
+  messages: readonly NativeChatMessage[],
+  hasMore: boolean | undefined
 ): boolean {
   const firstIndex = messages[0] ? merger.indexById.get(messages[0].id) : undefined
   if (firstIndex === undefined) {
+    return false
+  }
+  // `hasMore: false` is authoritative: retained rows before the replay window
+  // were removed while disconnected, even when the newest IDs still match.
+  if (hasMore === false && firstIndex > 0) {
     return false
   }
   let expectedIndex = firstIndex
@@ -77,7 +83,7 @@ export function applyMobileNativeChatStreamFrame(args: {
     frame.type === 'snapshot' &&
     !replaceSnapshot &&
     merger.list.length > 0 &&
-    replayExtendsRetainedTail(merger, frame.messages)
+    replayExtendsRetainedTail(merger, frame.messages, frame.hasMore)
   if (frame.type === 'replacement' || (frame.type === 'snapshot' && !replayExtendsHistory)) {
     replaceList(merger, frame.messages)
     return {

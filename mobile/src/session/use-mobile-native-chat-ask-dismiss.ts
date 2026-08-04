@@ -23,20 +23,28 @@ export function useMobileNativeChatAskDismiss(args: {
 } {
   const { ask, scopeKey, observing } = args
   const askKey = ask ? JSON.stringify(ask.questions) : null
-  const [dismissed, setDismissed] = useState<{ scope: string | null; key: string } | null>(null)
+  const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, string>>(
+    () => new Map()
+  )
   // Once the prompt clears while observable (agent moved on), forget the
   // dismissal so a later question — even an identical one — shows again.
   const askPresent = ask != null
   useEffect(() => {
     if (observing && !askPresent) {
-      setDismissed((prev) => (prev !== null && prev.scope === scopeKey ? null : prev))
+      setDismissedByScope((previous) => {
+        if (!previous.has(scopeKey)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(scopeKey)
+        return next
+      })
     }
   }, [observing, askPresent, scopeKey])
-  const showAsk =
-    askPresent && !(dismissed !== null && dismissed.scope === scopeKey && dismissed.key === askKey)
+  const showAsk = askPresent && dismissedByScope.get(scopeKey) !== askKey
   const dismissAsk = (): void => {
     if (askKey !== null) {
-      setDismissed({ scope: scopeKey, key: askKey })
+      setDismissedByScope((previous) => new Map(previous).set(scopeKey, askKey))
     }
   }
 

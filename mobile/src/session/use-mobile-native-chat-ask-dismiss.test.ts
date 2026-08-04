@@ -104,9 +104,14 @@ describe('useMobileNativeChatAskDismiss', () => {
     // The same question on another tab is a different pending prompt.
     await update({ prompt: first, scopeKey: 'tab-2' })
     expect(state?.showAsk).toBe(true)
+    act(() => state?.dismissAsk())
+    expect(state?.showAsk).toBe(false)
 
-    // Returning to the dismissing tab keeps it hidden.
+    // Dismissing tab 2 must not overwrite tab 1's dismissal.
     await update({ prompt: first, scopeKey: 'tab-1' })
+    expect(state?.showAsk).toBe(false)
+
+    await update({ prompt: first, scopeKey: 'tab-2' })
     expect(state?.showAsk).toBe(false)
   })
 })

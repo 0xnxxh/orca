@@ -222,6 +222,36 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.messages.at(-1)?.id).toBe('live-1')
   })
 
+  it('drops paged rows that an authoritative replay says were removed', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        messages: Array.from({ length: 60 }, (_unused, index) => message(`paged-${index}`)),
+        hasMore: false,
+        beforeOffset: 40
+      }
+    })
+    const window = Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({ type: 'snapshot', messages: window, hasMore: true, beforeOffset: 100 })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.messages).toHaveLength(100)
+
+    await act(async () =>
+      emit({ type: 'snapshot', messages: window, hasMore: false, beforeOffset: 0 })
+    )
+
+    expect(state?.messages).toEqual(window)
+    expect(state?.hasMore).toBe(false)
+  })
+
   it('surfaces a failed older-history page and clears it on a retry', async () => {
     const sendRequest = vi
       .fn()
