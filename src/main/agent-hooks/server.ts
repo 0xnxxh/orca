@@ -1084,8 +1084,13 @@ export class AgentHookServer {
     const connectionClearWatermark = payload.connectionId
       ? this.connectionTimestampWatermarkById.get(payload.connectionId)
       : undefined
-    // Why: Date.now() can repeat across reconnect; a remote replay must sort strictly after its connection's transient clear.
-    const now = Math.max(Date.now(), (connectionClearWatermark ?? -1) + 1)
+    // Why: renderer ordering rejects older rows; live evidence must sort after reconnect clears and restored rows across clock rollback.
+    const restoredStatusWatermark = previous?.restoredUnconfirmed ? previous.receivedAt : undefined
+    const now = Math.max(
+      Date.now(),
+      (connectionClearWatermark ?? -1) + 1,
+      (restoredStatusWatermark ?? -1) + 1
+    )
     if (payload.connectionId) {
       this.connectionTimestampWatermarkById.set(payload.connectionId, now)
     }

@@ -288,8 +288,11 @@ export function buildAttentionByWorktree(
       if (hookEntries) {
         for (const entry of hookEntries) {
           panes.push({ kind: 'hook', entry })
-          // Why: only fresh hook entries suppress the title fallback; a stale one would hide the live title and drop to Class 4.
-          if (!isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)) {
+          // Why: restored rows own their co-restored title without asserting live state.
+          if (
+            !entry.restoredUnconfirmed &&
+            !isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)
+          ) {
             continue
           }
           const leafId = leafIdFromPaneKey(entry.paneKey)

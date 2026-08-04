@@ -7092,25 +7092,35 @@ describe('Last-status persistence', () => {
     }
     const firstServer = new AgentHookServer()
     await firstServer.start({ env: 'production', userDataPath })
-    firstServer.ingestRemote(
-      { paneKey: PANE, tabId: 'tab-1', worktreeId: 'wt-1', payload },
-      'conn-1'
-    )
+    firstServer.ingestTerminalStatus({
+      paneKey: PANE,
+      tabId: 'tab-1',
+      worktreeId: 'wt-1',
+      connectionId: null,
+      payload
+    })
     firstServer.flushStatusPersistSync()
     firstServer.stop()
 
     const server = new AgentHookServer()
     await server.start({ env: 'production', userDataPath })
     try {
-      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBe(true)
+      const restored = server.getStatusSnapshot()[0]
+      if (!restored) {
+        throw new Error('expected hydrated status')
+      }
+      expect(restored?.restoredUnconfirmed).toBe(true)
+      vi.spyOn(Date, 'now').mockReturnValue(restored.receivedAt - 1_000)
       server.ingestTerminalStatus({
         paneKey: PANE,
         tabId: 'tab-1',
         worktreeId: 'wt-1',
-        connectionId: 'conn-1',
+        connectionId: null,
         payload
       })
-      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+      const confirmed = server.getStatusSnapshot()[0]
+      expect(confirmed?.restoredUnconfirmed).toBeUndefined()
+      expect(confirmed?.receivedAt).toBe(restored.receivedAt + 1)
     } finally {
       server.stop()
     }
