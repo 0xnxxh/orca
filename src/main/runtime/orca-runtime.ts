@@ -1053,6 +1053,7 @@ type RuntimeStore = {
   updateFolderWorkspace?: Store['updateFolderWorkspace']
   removeFolderWorkspace?: Store['removeFolderWorkspace']
   removeProject?: Store['removeProject']
+  removeProjectForHost?: Store['removeProjectForHost']
   reorderRepos?: Store['reorderRepos']
   getAllWorktreeMeta: Store['getAllWorktreeMeta']
   getWorktreeMeta: Store['getWorktreeMeta']
@@ -5249,6 +5250,13 @@ export class OrcaRuntimeService {
   notifyWorktreesChangedForRemoteClients(repoId: string): void {
     this.invalidateResolvedWorktreeCache()
     this.emitClientEvent({ type: 'worktreesChanged', repoId })
+  }
+
+  // Why: host-local repo IPC mutations never enter runtime methods, so paired
+  // clients need an explicit catalog invalidation; the local renderer already
+  // got its own repos:changed and must not be re-notified (#11994).
+  notifyReposChangedForRemoteClients(): void {
+    this.emitClientEvent({ type: 'reposChanged' })
   }
 
   private notifyActivateWorktree(
@@ -18428,7 +18436,20 @@ export class OrcaRuntimeService {
       throw new Error('runtime_unavailable')
     }
     const repo = await this.resolveRepoSelector(repoSelector)
-    this.store.removeProject(repo.id)
+    // Why: removeProject is id-only, but the same id may be registered on a sibling
+    // execution host; a path:/name: selector resolves one row and must remove only it.
+    const hostId = getRepoExecutionHostId(repo)
+    const idExistsOnOtherHost = this.store
+      .getRepos()
+      .some((entry) => entry.id === repo.id && getRepoExecutionHostId(entry) !== hostId)
+    if (idExistsOnOtherHost) {
+      if (!this.store.removeProjectForHost) {
+        throw new Error('runtime_unavailable')
+      }
+      this.store.removeProjectForHost(repo.id, hostId)
+    } else {
+      this.store.removeProject(repo.id)
+    }
     this.terminalTopologyRevisionByRepoId.delete(repo.id)
     this.invalidateResolvedWorktreeCache()
     this.invalidateWorktreeScanCacheForRepo(repo.id)
