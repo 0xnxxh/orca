@@ -6754,6 +6754,64 @@ describe('registerPtyHandlers', () => {
     ])
   })
 
+  it('waits for local provider startup before resolving snapshot capability', async () => {
+    const barrier = makeDeferred()
+    const awaitLocalPtyProviderStartup = vi.fn(() => barrier.promise)
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { awaitLocalPtyProviderStartup }
+    )
+    const pending = Promise.resolve(
+      handlers.get('pty:getAuthoritativeBufferSnapshotCapabilities')?.(null, {
+        ids: ['restored-local-pty']
+      })
+    )
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+
+    await Promise.resolve()
+    expect(awaitLocalPtyProviderStartup).toHaveBeenCalledTimes(1)
+    expect(settled).toBe(false)
+
+    installDaemonTestProvider({ canProvideAuthoritativeBufferSnapshot: () => true })
+    barrier.resolve()
+
+    await expect(pending).resolves.toEqual([{ id: 'restored-local-pty', authoritative: true }])
+  })
+
+  it('does not gate remote snapshot capability on local provider startup', async () => {
+    const awaitLocalPtyProviderStartup = vi.fn(() => new Promise<void>(() => {}))
+    registerSshPtyProvider('ssh-1', {
+      canProvideAuthoritativeBufferSnapshot: () => false
+    } as never)
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { awaitLocalPtyProviderStartup }
+    )
+
+    const result = await handlers.get('pty:getAuthoritativeBufferSnapshotCapabilities')?.(null, {
+      ids: ['remote:environment@@pty-1', 'ssh:ssh-1@@pty-2']
+    })
+
+    expect(awaitLocalPtyProviderStartup).not.toHaveBeenCalled()
+    expect(result).toEqual([
+      { id: 'remote:environment@@pty-1', authoritative: false },
+      { id: 'ssh:ssh-1@@pty-2', authoritative: false }
+    ])
+  })
+
   it('answers false, not null, for a resolved provider with no snapshot capability', async () => {
     // Null is never cached, so missing optional methods must resolve false.
     registerPtyHandlers(mainWindow as never)

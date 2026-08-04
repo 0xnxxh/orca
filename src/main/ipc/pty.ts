@@ -6969,8 +6969,24 @@ export function registerPtyHandlers(
 
   ipcMain.handle(
     'pty:getAuthoritativeBufferSnapshotCapabilities',
-    (_event, args: { ids?: unknown }) => {
+    async (_event, args: { ids?: unknown }) => {
       const ids = Array.isArray(args?.ids) ? args.ids.slice(0, 512) : []
+      const hasLocalPtyId = ids.some((value) => {
+        if (
+          typeof value !== 'string' ||
+          value.length === 0 ||
+          value.length > 512 ||
+          value.startsWith('remote:') ||
+          parseAppSshPtyId(value)
+        ) {
+          return false
+        }
+        const ownedConnectionId = ptyOwnership.get(value)
+        return ownedConnectionId === undefined || ownedConnectionId === null
+      })
+      if (hasLocalPtyId) {
+        await getLocalPtyProviderStartupPromise()
+      }
       const capabilities: { id: string; authoritative: boolean | null }[] = []
       const seen = new Set<string>()
       for (const value of ids) {
