@@ -150,5 +150,10 @@ describe('MobileNativeChatMessage', () => {
       toolsExpanded: true
     })
     expect(textIn(tree.root).filter((text) => text === '{}')).toHaveLength(1)
+    // The chevron has to agree with the panel, or the row claims to be open over
+    // nothing and the tap that would close it is guarded off. Only the run header
+    // is open here; the row itself stays collapsed.
+    expect(tree.root.findAllByType('ChevronDown' as never)).toHaveLength(1)
+    expect(tree.root.findAllByType('SquareChevronRight' as never)).toHaveLength(1)
   })
 })
