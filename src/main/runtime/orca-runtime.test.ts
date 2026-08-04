@@ -2994,6 +2994,33 @@ describe('OrcaRuntimeService', () => {
     expect(createTerminal).not.toHaveBeenCalled()
   })
 
+  it('recovers a pane from a relay-driven expiry, which carries no retirement reason', async () => {
+    const tabId = 'tab-relay-expired'
+    // The counterpart of the test above: without this, refusing *every* 'expired' lease stays green.
+    const runtime = createRuntimeWithSshLease('pty-relay-expired', tabId, 'expired')
+    const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
+    runtime.registerPty('pty-relay-expired', TEST_WORKTREE_ID, null, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID
+    })
+    const handle = runtime.resolveTerminalPane(paneKey, TEST_WORKTREE_ID).handle
+    runtime.onPtyExit('pty-relay-expired', 0)
+    const createTerminal = vi.spyOn(runtime, 'createTerminal').mockResolvedValue({
+      handle: 'term-relay-expired',
+      tabId,
+      paneKey,
+      ptyId: 'pty-relay-recovered',
+      worktreeId: TEST_WORKTREE_ID,
+      title: null,
+      surface: 'background'
+    })
+
+    await expect(
+      runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, handle)
+    ).resolves.toMatchObject({ handle: 'term-relay-expired' })
+    expect(createTerminal).toHaveBeenCalledOnce()
+  })
+
   it('drops a stale leaf when a woken agent PTY is re-keyed to a new leaf on renderer reload', async () => {
     const runtime = createRuntime()
     const tabId = 'tab-1'

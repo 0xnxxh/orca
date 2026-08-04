@@ -434,6 +434,34 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     )
   })
 
+  // STA-3077 I2: a pane the durable layout no longer holds must not be grafted back by reattach.
+  it('leaves the lease detached and publishes no surface when the durable bind is refused', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: vi.fn().mockResolvedValue({ incarnationId: 'incarnation-refused' }),
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
+      typeof mockStore.getSshRemotePtyLeases
+    >)
+    vi.mocked(mockStore.persistPtyBinding).mockReturnValue('refused')
+    const runtime = { onPtySpawned: vi.fn(), registerPty: vi.fn() }
+    const session = new SshRelaySession(
+      'target-1',
+      getMainWindow,
+      mockStore,
+      mockPortForward,
+      runtime as never
+    )
+
+    await session.establish(mockConn)
+
+    expect(runtime.registerPty).not.toHaveBeenCalled()
+    expect(runtime.onPtySpawned).not.toHaveBeenCalled()
+    // Detached, not retired: an absent pane is not evidence the remote PTY is gone.
+    expect(mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
+  })
+
   it('does not restore a PTY whose matching exit shares the attach reply batch', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const incarnationId = 'incarnation-exited-during-attach'

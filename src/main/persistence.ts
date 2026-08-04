@@ -7579,15 +7579,19 @@ export class Store {
   removeSshRemotePtyLeases(targetId: string): void {
     this.state.sshRemotePtyLeases ??= []
     this.supersededByLeaseInsert.delete(targetId)
+    const incarnationsBefore = this.state.sshRelayIncarnations?.length ?? 0
     this.state.sshRelayIncarnations = this.state.sshRelayIncarnations?.filter(
       (entry) => entry.targetId !== targetId
     )
+    // Why gate on this too: a target can hold an incarnation with no lease rows, and leaving that
+    // removal unflushed restores the stale identity — which retires the next connect's fresh leases.
+    const incarnationRemoved = (this.state.sshRelayIncarnations?.length ?? 0) !== incarnationsBefore
     this.clearSshRemotePtyBindingsForTarget(targetId)
     const before = this.state.sshRemotePtyLeases.length
     this.state.sshRemotePtyLeases = this.state.sshRemotePtyLeases.filter(
       (lease) => lease.targetId !== targetId
     )
-    if (this.state.sshRemotePtyLeases.length !== before) {
+    if (this.state.sshRemotePtyLeases.length !== before || incarnationRemoved) {
       this.flush()
     }
   }

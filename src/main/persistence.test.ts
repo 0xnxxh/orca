@@ -9873,6 +9873,17 @@ describe('Store', () => {
     expect(store.getSshRelayIncarnation('target-2')?.pid).toBe(8)
   })
 
+  it('durably forgets the incarnation of a target that has no lease rows left', async () => {
+    const store = await createStore()
+    store.setSshRelayIncarnation({ targetId: 'target-1', pid: 7, derivedStartAt: 1_000 })
+    store.flush()
+
+    // Why: with no lease row to remove, the flush used to be skipped and the removal stayed in memory.
+    store.removeSshRemotePtyLeases('target-1')
+
+    expect(await createStore().then((s) => s.getSshRelayIncarnation('target-1'))).toBeNull()
+  })
+
   it('retires every live lease for a target while sparing the remote PTYs', async () => {
     const store = await createStore()
     for (const ptyId of ['pty-1', 'pty-2', 'pty-3']) {
