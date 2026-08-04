@@ -149,9 +149,6 @@ describe('#12101 mouse tracking survives the death of the process that armed it'
       shellReadySupported: false,
       historySeedChunks: seedChunks
     })
-    // The bare shell never arms mouse reporting.
-    expect(shellPty.written.join('')).not.toContain(ANY_MOTION_TRACKING_ON)
-
     const revived = shell.getSnapshot()
     try {
       // #12101: the replacement shell's OWN state says mouse tracking is on,

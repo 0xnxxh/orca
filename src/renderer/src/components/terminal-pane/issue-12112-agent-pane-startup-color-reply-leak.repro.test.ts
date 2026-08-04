@@ -148,14 +148,17 @@ async function createRendererPane(): Promise<RendererPane> {
   }
 }
 
-async function settle(): Promise<void> {
-  for (let tick = 0; tick < 12; tick += 1) {
+async function settleUntil(condition: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
+  expect(condition()).toBe(true)
 }
 
 describe('#12112 opencode startup OSC 10/11 replies on the local path', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -171,7 +174,7 @@ describe('#12112 opencode startup OSC 10/11 replies on the local path', () => {
 
     try {
       tty.emitStartupBurst()
-      await settle()
+      await settleUntil(() => tty.programInput().includes(OSC11_REPLY))
 
       expect(pane.renderedText()).not.toMatch(LEAKED_COLOR_REPLY_TEXT)
       expect(tty.programInput()).toContain(OSC10_REPLY)
@@ -199,7 +202,7 @@ describe('#12112 opencode startup OSC 10/11 replies on the local path', () => {
 
     try {
       tty.emitStartupBurst()
-      await settle()
+      await settleUntil(() => tty.programInput().includes(OSC11_REPLY))
 
       expect(pane.renderedText()).not.toMatch(LEAKED_COLOR_REPLY_TEXT)
       expect(tty.programInput()).toContain(OSC10_REPLY)
@@ -242,10 +245,9 @@ describe('#12112 opencode startup OSC 10/11 replies on the local path', () => {
 
       expect(emitted.join(''), `layout ${index}`).not.toMatch(LEAKED_COLOR_REPLY_TEXT)
     }
-    vi.useRealTimers()
   })
 
-  it('the posix startup ingress forwards its own echoed reply that ConPTY suppresses', () => {
+  it('suppresses its own cooked echo on POSIX and ConPTY', () => {
     // No xterm, no transport: the asymmetry alone, with each backend's observed
     // cooked echo handed straight back the way its line discipline would.
     vi.useFakeTimers()
@@ -278,6 +280,5 @@ describe('#12112 opencode startup OSC 10/11 replies on the local path', () => {
       expect(writes, ownerBackend).toEqual([OSC10_REPLY, OSC11_REPLY])
       expect(visible, ownerBackend).not.toMatch(LEAKED_COLOR_REPLY_TEXT)
     }
-    vi.useRealTimers()
   })
 })

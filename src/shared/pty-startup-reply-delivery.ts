@@ -291,23 +291,19 @@ export class PtyStartupReplyDelivery {
       this.flushPendingWrites()
       return
     }
-    void this.echoProbe().then((state) => {
-      if (this.closed || this.pendingWrites.length === 0) {
-        return
-      }
-      if (state === 'echoing') {
-        this.armWriteTimer(ECHO_POLL_INTERVAL_MS)
-        return
-      }
-      // `quiet` retires the kernel's caret projection and nothing else; `unknown` is
-      // not evidence of anything and retires none. Neither drops the readline shape.
-      //
-      // The verdict ages: ~3ms separates it from the write, and a program that dies in
-      // that window leaves the shell to restore cooked mode, which would echo the caret
-      // form unsuppressed. Accepted rather than armed against, because re-arming that
-      // projection puts every read ending in `^` back under a 500ms partial hold.
-      this.flushPendingWrites(state === 'quiet')
-    })
+    void this.echoProbe()
+      .catch(() => 'unknown' as const)
+      .then((state) => {
+        if (this.closed || this.pendingWrites.length === 0) {
+          return
+        }
+        if (state === 'echoing') {
+          this.armWriteTimer(ECHO_POLL_INTERVAL_MS)
+          return
+        }
+        // `quiet` retires the kernel caret projection; `unknown` keeps both shapes.
+        this.flushPendingWrites(state === 'quiet')
+      })
   }
 
   private flushPendingWrites(kernelEchoImpossible = false): void {

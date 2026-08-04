@@ -9049,9 +9049,16 @@ describe('connectPanePty', () => {
       await flushAsyncTicks(30)
 
       expect(transport.connect).toHaveBeenCalledTimes(2)
+      expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('tab-pty')
+      expect(transport.connect.mock.calls[1]?.[0]?.sessionId).toBeUndefined()
       const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
         ([data]) => data as string
       )
+      const output = writes.join('')
+      const snapshotIndex = output.indexOf('\x1b[?1003h\x1b[?1006h\x1b[?2004huser@host ~ $ ')
+      const resetIndex = output.indexOf(POST_REPLAY_MODE_RESET)
+      expect(snapshotIndex).toBeGreaterThanOrEqual(0)
+      expect(resetIndex).toBeGreaterThan(snapshotIndex)
       expect(writes).toContain(POST_REPLAY_MODE_RESET)
       expect(writes).not.toContain(POST_REPLAY_LIVE_AGENT_REATTACH_RESET)
     })

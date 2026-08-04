@@ -80,6 +80,19 @@ describe('getRecoveredHistorySeedSegments', () => {
     ).toEqual([])
   })
 
+  it('keeps a torn escape last when it is the only recovered data', () => {
+    expect(
+      getRecoveredHistorySeedSegments(
+        restoreInfo({
+          scrollbackAnsi: '',
+          snapshotAnsi: '',
+          rehydrateSequences: '',
+          pendingEscapeTailAnsi: '\x1b[3'
+        })
+      )
+    ).toEqual([MOUSE_OFF, '\x1b[3'])
+  })
+
   it('leaves the revived emulator unarmed while preserving scrollback (#12101)', () => {
     const emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
     try {

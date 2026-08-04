@@ -881,6 +881,22 @@ describe('PtyStartupIngress', () => {
     expect(visible(emissions)).toBe('')
   })
 
+  it('falls back immediately when the echo probe rejects', async () => {
+    vi.useFakeTimers()
+    const echoProbe: PtySlaveEchoProbe = async () => {
+      throw new Error('probe failed')
+    }
+    const { ingress, writes, emissions } = createHarness({ echoProbe })
+    ingress.accept('\x1b]10;?\x07')
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(writes).toEqual([FOREGROUND_REPLY])
+    ingress.accept(POSIX_COOKED_ECHOES[0]?.(FOREGROUND_REPLY) ?? '')
+    ingress.drainAndClose()
+    expect(visible(emissions)).toBe('')
+  })
+
   it('stops polling a tty that never leaves cooked mode and answers it anyway', async () => {
     vi.useFakeTimers()
     const echoProbe = scriptedEchoProbe('echoing')
