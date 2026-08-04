@@ -55,7 +55,36 @@ describe('native chat session option enrichment', () => {
 
   it('does not probe agents whose catalogs have no discovery command', () => {
     const discover = vi.fn()
-    ensureNativeChatModelEnrichment({ agent: 'claude', hostKey: 'local', discover })
+    ensureNativeChatModelEnrichment({ agent: 'gemini', hostKey: 'local', discover })
     expect(discover).not.toHaveBeenCalled()
+  })
+
+  it('overlays discovered Claude variants on the alias seed per host', async () => {
+    const discover = vi.fn().mockResolvedValue([
+      {
+        id: 'opus[1m]',
+        label: 'Opus (1M context)',
+        description: 'Opus 5 with 1M context',
+        options: []
+      },
+      { id: 'sonnet', label: 'Sonnet', options: [] }
+    ] satisfies CatalogModel[])
+    const listener = vi.fn()
+    subscribeNativeChatEnrichedModels('claude', 'ssh:host', listener)
+
+    ensureNativeChatModelEnrichment({ agent: 'claude', hostKey: 'ssh:host', discover })
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce())
+
+    const models = readNativeChatEnrichedModels('claude', 'ssh:host')!
+    expect(models.map(({ id }) => id)).toEqual(['fable', 'opus', 'sonnet', 'haiku', 'opus[1m]'])
+    // Why: matched seed entries must keep their cataloged effort/fast options.
+    expect(models.find(({ id }) => id === 'sonnet')?.options.map(({ id }) => id)).toEqual([
+      'effort'
+    ])
+    expect(models.at(-1)).toMatchObject({
+      id: 'opus[1m]',
+      description: 'Opus 5 with 1M context'
+    })
+    expect(readNativeChatEnrichedModels('claude', 'local')).toBeNull()
   })
 })

@@ -36,7 +36,14 @@ function compactTerminalText(buffer: string): string {
 function hasClaudeModelSwitchSuccess(buffer: string, modelLabel: string): boolean {
   const text = compactTerminalText(buffer)
   const marker = `setmodelto${modelLabel.replace(/\s+/g, '').toLowerCase()}`
-  return text.includes(marker)
+  if (text.includes(marker)) {
+    return true
+  }
+  // Why: the echo names the resolved model ("Set model to Opus 5 (1M
+  // context)"), which drifts from picker labels across CLI versions; the
+  // family word is the stable shared prefix.
+  const family = modelLabel.match(/[a-z]+/i)?.[0]?.toLowerCase()
+  return family ? text.includes(`setmodelto${family}`) : false
 }
 
 function hasClaudeModelSwitchRejection(buffer: string): boolean {

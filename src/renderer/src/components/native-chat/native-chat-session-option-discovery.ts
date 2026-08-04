@@ -52,6 +52,7 @@ export async function discoverNativeChatCatalogModels(
   return result.models.map((model) => ({
     id: model.id,
     label: model.label,
+    ...(model.description ? { description: model.description } : {}),
     options: []
   }))
 }
