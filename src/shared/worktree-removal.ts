@@ -15,6 +15,11 @@ export type WorktreeForceDeleteReason =
   | 'missing-registration'
   | 'unstopped-pty'
 
+// Why: everything before this separator is the worktree id — a user-chosen filesystem path.
+// Only the detail after it is Orca's own wording, so verdict matchers anchor on the boundary
+// rather than scanning the whole message and letting a path spell out a verdict.
+export const UNSTOPPED_PTY_DETAIL_SEPARATOR = ' — '
+
 // Why: verification distinguishes a PTY it watched stay alive from one it could not reach,
 // and the delete toast must not flatten the two — a user waiving "we could not confirm" is
 // making a different decision than one killing a terminal Orca just saw running. The marker
@@ -34,7 +39,10 @@ export function isUnstoppedPtyRemovalError(error: string): boolean {
 
 /** True only when verification positively observed the PTYs still running. */
 export function isProvenLivePtyRemovalError(error: string): boolean {
-  return isUnstoppedPtyRemovalError(error) && error.includes(UNSTOPPED_PTY_LIVE_DETAIL_PREFIX)
+  return (
+    isUnstoppedPtyRemovalError(error) &&
+    error.includes(`${UNSTOPPED_PTY_DETAIL_SEPARATOR}${UNSTOPPED_PTY_LIVE_DETAIL_PREFIX}`)
+  )
 }
 
 export function createLockedWorktreeRemovalError(lockReason?: string): Error {
