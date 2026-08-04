@@ -667,12 +667,12 @@ function resolveStablePaneOwner(
   }
 }
 
-async function retirePersistedStablePaneOwner(
+function retirePersistedStablePaneOwner(
   store: Store | undefined,
   owner: StablePaneOwner,
   worktreeId: string,
   connectionId: string | null | undefined
-): Promise<boolean> {
+): boolean {
   if (!store) {
     return false
   }
@@ -694,10 +694,7 @@ async function retirePersistedStablePaneOwner(
     return false
   }
   store.setWorkspaceSession(retired, hostId)
-  // Why: the retirement must be durable before the fresh spawn rebinds the pane, but
-  // writeToDiskSync fsyncs the whole multi-MB state from the main thread — a restore that
-  // retires N dead panes paid that stall N times. The async twin keeps the ordering.
-  await store.flushPendingOrThrowAsync()
+  store.flushOrThrow()
   return true
 }
 
@@ -713,39 +710,73 @@ type StablePaneSpawnContext = {
   onFreshSpawn?: (result: PtySpawnResult) => void
 }
 
+/** Signals that every provider that could own this PTY answered that it is absent. */
+const STABLE_PANE_OWNER_PROVEN_GONE = Symbol('stable_pane_owner_proven_gone')
+
+// Why: a doomed session in graceful teardown still reports alive while refusing attach, and
+// the daemon's force-kill fallback (KILL_TIMEOUT_MS) bounds that window — so re-prove past it
+// instead of failing the pane for the whole window.
+const STABLE_PANE_OWNER_ABSENCE_PROOF_TIMEOUT_MS = 6_000
+const STABLE_PANE_OWNER_ABSENCE_PROOF_RETRY_MS = 250
+export const STABLE_PANE_OWNER_UNVERIFIED_MESSAGE =
+  'This terminal is still claimed by a session that did not answer; its history was kept. Try again in a moment.'
+
+/**
+ * Re-attaches until the owner either answers or is provably gone. A "Session not found" that
+ * coincides with a live probe is never proof: a degraded router answers unmapped ids from the
+ * local fallback, which never owned the daemon session, and a session mid-teardown refuses
+ * attach while still alive. Both are transient, so the veto retries rather than wedging the
+ * pane — only a provider that answers "absent" authorizes destroying the binding.
+ */
+async function attachStablePaneOwnerUntilProvenGone(
+  provider: IPtyProvider,
+  owner: StablePaneOwner,
+  spawnOptions: PtySpawnOptions
+): Promise<PtySpawnResult | typeof STABLE_PANE_OWNER_PROVEN_GONE> {
+  const deadlineMs = Date.now() + STABLE_PANE_OWNER_ABSENCE_PROOF_TIMEOUT_MS
+  for (;;) {
+    try {
+      return await provider.spawn({
+        ...spawnOptions,
+        sessionId: owner.ptyId,
+        attachOnly: true,
+        isNewSession: undefined,
+        command: undefined,
+        commandDelivery: undefined,
+        startupCommandDelivery: undefined,
+        launchAgent: undefined,
+        startupIngress: undefined,
+        agentSessionEnsure: undefined,
+        agentSessionCreateOperationId: undefined,
+        onPtySpawnCommitted: undefined
+      })
+    } catch (error) {
+      if (!isPtyAlreadyGoneError(error)) {
+        throw error
+      }
+      // Providers without a probe are their own sole owner, so their refusal is authoritative.
+      if (!provider.probePtyLiveness) {
+        return STABLE_PANE_OWNER_PROVEN_GONE
+      }
+      // Why the deadline: a wedged endpoint would otherwise burn the client's 30s request
+      // timeout per probe; the shared budget also caps the whole unproven wait.
+      if ((await provider.probePtyLiveness(owner.ptyId, { deadlineMs })) === false) {
+        return STABLE_PANE_OWNER_PROVEN_GONE
+      }
+      if (Date.now() >= deadlineMs) {
+        throw new Error(STABLE_PANE_OWNER_UNVERIFIED_MESSAGE)
+      }
+      await delay(STABLE_PANE_OWNER_ABSENCE_PROOF_RETRY_MS)
+    }
+  }
+}
+
 async function attachStablePaneOwner(
   args: StablePaneSpawnContext & { owner: StablePaneOwner }
 ): Promise<{ result: PtySpawnResult; owner: StablePaneOwner } | null> {
   const { owner, provider, runtime, spawnOptions } = args
-  let result: PtySpawnResult
-  try {
-    result = await provider.spawn({
-      ...spawnOptions,
-      sessionId: owner.ptyId,
-      attachOnly: true,
-      isNewSession: undefined,
-      command: undefined,
-      commandDelivery: undefined,
-      startupCommandDelivery: undefined,
-      launchAgent: undefined,
-      startupIngress: undefined,
-      agentSessionEnsure: undefined,
-      agentSessionCreateOperationId: undefined,
-      onPtySpawnCommitted: undefined
-    })
-  } catch (error) {
-    if (!isPtyAlreadyGoneError(error)) {
-      throw error
-    }
-    // Why: "Session not found" only proves the provider we asked has no such PTY — and a
-    // degraded router answers unmapped ids from the local fallback, which never owned a
-    // daemon session. Retiring on that would signal exit and delete a live agent's pane
-    // binding. Absence must be proven across every possible owner first; `null` (nobody
-    // could answer) is not absence. Providers without a probe are their own sole owner,
-    // so their refusal stays authoritative.
-    if (provider.probePtyLiveness && (await provider.probePtyLiveness(owner.ptyId)) !== false) {
-      throw new Error('terminal_pane_owner_unverified')
-    }
+  const attached = await attachStablePaneOwnerUntilProvenGone(provider, owner, spawnOptions)
+  if (attached === STABLE_PANE_OWNER_PROVEN_GONE) {
     const ownerBeforeRetire = args.resolveOwner?.()
     if (
       ownerBeforeRetire &&
@@ -761,7 +792,7 @@ async function attachStablePaneOwner(
     ptyOwnership.delete(owner.ptyId)
     if (
       args.worktreeId &&
-      !(await retirePersistedStablePaneOwner(args.store, owner, args.worktreeId, args.connectionId))
+      !retirePersistedStablePaneOwner(args.store, owner, args.worktreeId, args.connectionId)
     ) {
       throw new Error('terminal_pane_owner_changed')
     }
@@ -771,13 +802,13 @@ async function attachStablePaneOwner(
     return null
   }
   if (
-    result.id !== owner.ptyId ||
-    result.isReattach !== true ||
-    (owner.incarnationId !== undefined && result.incarnationId !== owner.incarnationId)
+    attached.id !== owner.ptyId ||
+    attached.isReattach !== true ||
+    (owner.incarnationId !== undefined && attached.incarnationId !== owner.incarnationId)
   ) {
     throw new Error('terminal_pane_owner_changed')
   }
-  return { result, owner }
+  return { result: attached, owner }
 }
 
 async function spawnForStablePane(

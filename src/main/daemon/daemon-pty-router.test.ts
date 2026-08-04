@@ -146,6 +146,12 @@ function createAdapter(
       }
     },
     emitExit: (id: string, code: number, incarnationId?: string) => {
+      // Mirrors DaemonPtyAdapter: the exit event drops the id from activeSessionIds, so
+      // hasPty stops claiming it.
+      const idx = sessions.indexOf(id)
+      if (idx !== -1) {
+        sessions.splice(idx, 1)
+      }
       for (const listener of exitListeners) {
         listener({ id, code, ...(incarnationId ? { incarnationId } : {}) })
       }
@@ -478,8 +484,56 @@ describe('DaemonPtyRouter', () => {
     const router = new DaemonPtyRouter({ current, legacy: [legacy] })
 
     await expect(router.probePtyLiveness('surviving-session')).resolves.toBe(true)
-    expect(current.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('surviving-session')
-    expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('surviving-session')
+    expect(current.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('surviving-session', undefined)
+    expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('surviving-session', undefined)
+  })
+
+  it('shares one caller deadline across every probed owner', async () => {
+    // Why: an unbounded probe burns the client's 30s request timeout per wedged owner,
+    // stalling the attach that is waiting on the answer.
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy')
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await router.probePtyLiveness('unmapped-session', { deadlineMs: 4_242 })
+
+    expect(current.probePtyLiveness).toHaveBeenCalledWith('unmapped-session', {
+      deadlineMs: 4_242
+    })
+    expect(legacy.probePtyLiveness).toHaveBeenCalledWith('unmapped-session', { deadlineMs: 4_242 })
+  })
+
+  it('routes an undiscovered existing session to the adapter that still owns it', async () => {
+    // Why: legacy discovery is fail-open, so an unmapped id can still be live on an old
+    // daemon; sending its attach to the current daemon fakes "Session not found".
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['undiscovered-legacy-session'])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy discovery failed'))
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await router.discoverLegacySessions()
+    await router.spawn({
+      sessionId: 'undiscovered-legacy-session',
+      attachOnly: true,
+      cols: 80,
+      rows: 24
+    })
+    await router.spawn({ sessionId: 'minted-session', cols: 80, rows: 24 })
+
+    expect(legacy.spawn).toHaveBeenCalledWith({
+      sessionId: 'undiscovered-legacy-session',
+      attachOnly: true,
+      cols: 80,
+      rows: 24
+    })
+    // A minted id nobody owns still routes to the current daemon.
+    expect(current.spawn).toHaveBeenCalledWith({
+      sessionId: 'minted-session',
+      cols: 80,
+      rows: 24
+    })
+    warn.mockRestore()
   })
 
   it('does not report absence while any possible daemon owner is unavailable', async () => {

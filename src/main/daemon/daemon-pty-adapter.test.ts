@@ -1202,6 +1202,35 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       await expect(adapter.probePtyLiveness('session')).resolves.toBeNull()
     })
+
+    it('connects first so an unconnected adapter still answers authoritatively', async () => {
+      // Why it matters: one unknown poisons the owner fan-out, and an unprovable owner
+      // leaves the pane's binding unretireable — a never-connected adapter must not be it.
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const unconnected = new DaemonPtyAdapter({ socketPath, tokenPath })
+      try {
+        await expect(unconnected.probePtyLiveness(id)).resolves.toBe(true)
+        await expect(unconnected.probePtyLiveness('missing-session')).resolves.toBe(false)
+      } finally {
+        unconnected.dispose()
+      }
+    })
+
+    it('bounds the probe request by the caller deadline', async () => {
+      // Why: unbounded, a wedged daemon answers `null` only after the client's 30s default,
+      // stalling the attach that is waiting on the answer.
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const client = (adapter as unknown as { client: DaemonClient }).client
+      const request = vi.spyOn(client, 'request')
+
+      await expect(adapter.probePtyLiveness(id, { deadlineMs: Date.now() + 750 })).resolves.toBe(
+        true
+      )
+
+      const timeoutMs = request.mock.calls.at(-1)?.[2]
+      expect(timeoutMs).toBeGreaterThan(0)
+      expect(timeoutMs).toBeLessThanOrEqual(750)
+    })
   })
 
   describe('getBufferSnapshot', () => {

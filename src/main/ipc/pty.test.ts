@@ -231,6 +231,7 @@ import {
   getLocalPtyProvider,
   isCurrentPtyExit,
   restorePtyIncarnation,
+  STABLE_PANE_OWNER_UNVERIFIED_MESSAGE,
   type PrepareCodexSessionResume
 } from './pty'
 import { resetMacosLoginShellPreflightForTests } from '../providers/macos-tcc-login-shell'
@@ -9042,9 +9043,9 @@ describe('registerPtyHandlers', () => {
         command: 'codex resume exact-dead-provider-session'
       })
       expect(store.setWorkspaceSession).toHaveBeenCalledOnce()
-      // Why: the retire is durable before the rebind, but off the synchronous fsync path.
-      expect(store.flushPendingOrThrowAsync).toHaveBeenCalledOnce()
-      expect(store.flushOrThrow).not.toHaveBeenCalled()
+      // Why: the retire must be durable before the fresh spawn rebinds the pane.
+      expect(store.flushOrThrow).toHaveBeenCalledOnce()
+      expect(store.flushPendingOrThrowAsync).not.toHaveBeenCalled()
       expect(runtime.onPtyExit).toHaveBeenCalledWith(
         'pty-dead-persisted-owner',
         0,
@@ -9053,26 +9054,32 @@ describe('registerPtyHandlers', () => {
     }
   )
 
-  it.each([
-    { label: 'another owner reports it alive', liveness: true },
-    { label: 'no owner could answer', liveness: null }
-  ])('keeps a persisted owner whose absence is unproven ($label)', async ({ liveness }) => {
+  const mountUnprovenStablePaneOwner = (opts: {
+    attachAttempt: (attempt: number) => { id: string; incarnationId?: string; isReattach?: true }
+    liveness: (attempt: number) => boolean | null
+  }) => {
     const worktreeId = 'repo-1::/tmp/unproven-owner'
     const cwd = '/tmp/unproven-owner'
     const tabId = 'tab-unproven-owner'
     const leafId = '56565656-5656-4656-8656-565656565656'
     const paneKey = makePaneKey(tabId, leafId)
+    let attachAttempts = 0
+    let probeAttempts = 0
     // Why: a degraded router answers unmapped ids from the local fallback, which never
     // owned this daemon session — the same "Session not found" a truly dead PTY yields.
     const providerSpawn = vi.fn(
       async (options: { attachOnly?: boolean; command?: string; sessionId?: string }) => {
         if (options.attachOnly) {
-          throw new Error('Session not found: pty-unproven-owner')
+          attachAttempts += 1
+          return opts.attachAttempt(attachAttempts)
         }
         return { id: 'pty-fresh-unproven', incarnationId: 'inc-fresh-unproven' }
       }
     )
-    const probePtyLiveness = vi.fn(async () => liveness)
+    const probePtyLiveness = vi.fn(async () => {
+      probeAttempts += 1
+      return opts.liveness(probeAttempts)
+    })
     setLocalPtyProvider({
       spawn: providerSpawn,
       probePtyLiveness,
@@ -9152,31 +9159,107 @@ describe('registerPtyHandlers', () => {
       store as never
     )
 
-    await expect(
-      handlers.get('pty:spawn')!(null, {
-        cols: 80,
-        rows: 24,
-        cwd,
-        command: 'codex resume unproven-owner-session',
-        worktreeId,
-        tabId,
-        leafId,
-        env: {
-          ORCA_PANE_KEY: paneKey,
-          ORCA_TAB_ID: tabId,
-          ORCA_WORKTREE_ID: worktreeId
-        }
-      })
-    ).rejects.toThrow('terminal_pane_owner_unverified')
+    return {
+      providerSpawn,
+      probePtyLiveness,
+      runtime,
+      store,
+      worktreeId,
+      getSession: () => session,
+      spawn: () =>
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          cwd,
+          command: 'codex resume unproven-owner-session',
+          worktreeId,
+          tabId,
+          leafId,
+          env: {
+            ORCA_PANE_KEY: paneKey,
+            ORCA_TAB_ID: tabId,
+            ORCA_WORKTREE_ID: worktreeId
+          }
+        })
+    }
+  }
 
-    expect(probePtyLiveness).toHaveBeenCalledWith('pty-unproven-owner')
+  const sessionNotFound = (): never => {
+    throw new Error('Session not found: pty-unproven-owner')
+  }
+
+  it.each([
+    { label: 'another owner reports it alive', liveness: true },
+    { label: 'no owner could answer', liveness: null }
+  ])('keeps a persisted owner whose absence is unproven ($label)', async ({ liveness }) => {
+    vi.useFakeTimers()
+    const pane = mountUnprovenStablePaneOwner({
+      attachAttempt: sessionNotFound,
+      liveness: () => liveness
+    })
+
+    const settled = Promise.resolve(pane.spawn()).then(
+      () => null,
+      (error: Error) => error
+    )
+    await vi.advanceTimersByTimeAsync(30_000)
+    const failure = await settled
+
+    expect(failure?.message).toBe(STABLE_PANE_OWNER_UNVERIFIED_MESSAGE)
+    // A raw internal token would reach the pane toast verbatim; this one reads as English.
+    expect(failure?.message).not.toMatch(/^[a-z_]+$/)
+    expect(pane.probePtyLiveness).toHaveBeenCalledWith('pty-unproven-owner', {
+      deadlineMs: expect.any(Number)
+    })
     // The live PTY keeps its pane binding, gets no synthetic exit, and is not duplicated.
-    expect(providerSpawn).toHaveBeenCalledOnce()
-    expect(providerSpawn.mock.calls[0]?.[0]).toMatchObject({ attachOnly: true })
-    expect(runtime.onPtyExit).not.toHaveBeenCalled()
-    expect(store.setWorkspaceSession).not.toHaveBeenCalled()
-    expect(store.flushOrThrow).not.toHaveBeenCalled()
-    expect(session.tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(pane.providerSpawn.mock.calls.every(([options]) => options.attachOnly === true)).toBe(
+      true
+    )
+    expect(pane.runtime.onPtyExit).not.toHaveBeenCalled()
+    expect(pane.store.setWorkspaceSession).not.toHaveBeenCalled()
+    expect(pane.store.flushOrThrow).not.toHaveBeenCalled()
+    expect(pane.getSession().tabsByWorktree[pane.worktreeId]).toHaveLength(1)
+  })
+
+  it('re-proves absence instead of wedging a pane whose owner is still tearing down', async () => {
+    vi.useFakeTimers()
+    // A session in graceful teardown reports alive while createOrAttach already refuses it;
+    // the force-kill fallback ends that window, so the pane must retire, not fail forever.
+    const pane = mountUnprovenStablePaneOwner({
+      attachAttempt: sessionNotFound,
+      liveness: (attempt) => attempt < 3
+    })
+
+    const settled = pane.spawn()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    await expect(settled).resolves.toMatchObject({ id: 'pty-fresh-unproven' })
+    expect(pane.probePtyLiveness).toHaveBeenCalledTimes(3)
+    expect(pane.runtime.onPtyExit).toHaveBeenCalledWith(
+      'pty-unproven-owner',
+      0,
+      'inc-unproven-owner'
+    )
+    expect(pane.store.flushOrThrow).toHaveBeenCalledOnce()
+  })
+
+  it('reattaches when the retry reaches the owner the first attach was misrouted past', async () => {
+    vi.useFakeTimers()
+    const pane = mountUnprovenStablePaneOwner({
+      attachAttempt: (attempt) =>
+        attempt === 1
+          ? sessionNotFound()
+          : { id: 'pty-unproven-owner', incarnationId: 'inc-unproven-owner', isReattach: true },
+      liveness: () => true
+    })
+
+    const settled = pane.spawn()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    await expect(settled).resolves.toMatchObject({ id: 'pty-unproven-owner' })
+    expect(pane.runtime.onPtyExit).not.toHaveBeenCalled()
+    expect(pane.store.setWorkspaceSession).not.toHaveBeenCalled()
+    expect(pane.store.flushOrThrow).not.toHaveBeenCalled()
   })
 
   it('retires a dead owner from the exact SSH host session before fresh recovery', async () => {

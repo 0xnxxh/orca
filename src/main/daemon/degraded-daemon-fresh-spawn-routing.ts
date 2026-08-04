@@ -11,7 +11,9 @@ export class DegradedDaemonFreshSpawnRouter {
     private readonly current: IPtyProvider,
     private readonly fallback: IPtyProvider,
     private readonly sessionProviders: Map<string, IPtyProvider>,
-    private readonly probeCurrent: (() => Promise<boolean>) | null
+    private readonly probeCurrent: (() => Promise<boolean>) | null,
+    private readonly findExistingSessionProvider: (sessionId: string) => IPtyProvider | null = () =>
+      null
   ) {
     this.target = fallback
   }
@@ -66,7 +68,15 @@ export class DegradedDaemonFreshSpawnRouter {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
-    const mapped = opts.sessionId ? this.sessionProviders.get(opts.sessionId) : undefined
+    // Why the second lookup: an id the map lost (discovery failed, or it never ran) still has a
+    // real owner. Sending it to the fallback makes a live daemon session read as "Session not
+    // found", which is how a running agent's pane got retired. Every non-spawn path already
+    // resolves it this way; fresh ids match nobody and still route to the fallback.
+    const mapped = opts.sessionId
+      ? (this.sessionProviders.get(opts.sessionId) ??
+        this.findExistingSessionProvider(opts.sessionId) ??
+        undefined)
+      : undefined
     const target = mapped ?? this.target
     const result = await target.spawn(opts)
     if (!result.exitedBeforeSpawnReply) {

@@ -896,11 +896,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return this.activeSessionIds.has(id)
   }
 
-  async probePtyLiveness(id: string): Promise<boolean | null> {
+  async probePtyLiveness(id: string, opts?: { deadlineMs?: number }): Promise<boolean | null> {
     try {
+      // Why connect first (like listProcesses): a merely disconnected adapter would otherwise
+      // answer `null` forever, and one unknown poisons the owner fan-out into "unprovable".
+      await this.ensureConnected(opts?.deadlineMs)
       const result = await this.client.request<{ size: { cols: number; rows: number } | null }>(
         'getSize',
-        { sessionId: id }
+        { sessionId: id },
+        remainingRequestTimeoutMs(opts?.deadlineMs)
       )
       return result.size !== null
     } catch {

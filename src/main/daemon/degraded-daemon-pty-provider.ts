@@ -44,7 +44,8 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
       opts.current,
       opts.fallback,
       this.sessionProviders,
-      opts.probeCurrentDaemonSpawn ?? null
+      opts.probeCurrentDaemonSpawn ?? null,
+      (sessionId) => this.findProviderForExistingSession(sessionId)
     )
 
     for (const provider of this.allProviders()) {
@@ -89,8 +90,8 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return mapped ? (mapped.hasPty?.(id) ?? true) : this.findProviderForExistingSession(id) !== null
   }
 
-  async probePtyLiveness(id: string): Promise<boolean | null> {
-    return await probePtyOwners(id, this.sessionProviders.get(id), this.allDaemonAdapters())
+  async probePtyLiveness(id: string, opts?: { deadlineMs?: number }): Promise<boolean | null> {
+    return await probePtyOwners(id, this.sessionProviders.get(id), this.allDaemonAdapters(), opts)
   }
 
   // Why: an unknown id cannot borrow listing authority from the fresh-spawn provider.
