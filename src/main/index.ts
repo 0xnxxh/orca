@@ -160,8 +160,10 @@ import {
   acquireSingleInstanceLock,
   logSingleInstanceLockBypass,
   logSingleInstanceLockFailure,
+  shouldActivateDesktopForSecondInstance,
   shouldBypassSingleInstanceLock,
-  shouldSkipSingleInstanceLock
+  shouldSkipSingleInstanceLock,
+  SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE
 } from './startup/single-instance-lock'
 import { startEventLoopStallProbe } from './startup/event-loop-stall-probe'
 import { startMainThreadChurnProbe } from './diagnostics/main-thread-churn-probe'
@@ -229,6 +231,7 @@ import {
 import { StarNagService } from './star-nag/service'
 import { agentHookServer, type AgentHookProviderSessionIdentity } from './agent-hooks/server'
 import { createHookProviderSessionInvalidator } from './agent-hooks/hook-provider-session-invalidation'
+import { createHookStatusSessionTabsInvalidator } from './agent-hooks/hook-status-session-tabs-invalidation'
 import { wslHookRelayManager } from './agent-hooks/wsl-hook-relay-manager'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
 import { rememberBranchRenameFailureOutput } from './agent-hooks/branch-rename-failure-output'
@@ -606,7 +609,11 @@ function focusExistingWindow(): void {
   })
 }
 
-function requestDesktopActivation(): void {
+function requestDesktopActivation(argv: readonly string[] = []): void {
+  // Why: a duplicate `orca serve` must not drag a headless server into opening a desktop window (#11935).
+  if (!shouldActivateDesktopForSecondInstance(argv)) {
+    return
+  }
   desktopActivationGate.requestActivation()
 }
 
@@ -726,10 +733,11 @@ if (startupDiagnosticsEnabled) {
 if (!hasSingleInstanceLock) {
   // Why: a false-negative lock loss otherwise looks like a silent crash on packaged macOS; `open --stderr` can capture this line.
   logSingleInstanceLockFailure()
-  app.quit()
+  // Why: a graceful quit is deferred pre-ready, so this launch would still walk into Linux display init and SIGSEGV (#11935).
+  app.exit(SINGLE_INSTANCE_ALREADY_RUNNING_EXIT_CODE)
 }
 
-// Why: when another process holds the lock we've already quit; skip file-writing side effects so this transient process never touches userData.
+// Why: when another process holds the lock we've already exited; skip file-writing side effects so this transient process never touches userData.
 if (hasSingleInstanceLock) {
   // Why: couple to dev-parent only for electron-vite desktop runs; `orca serve`'s parent (CLI shim/background shell) isn't the intended server lifetime.
   const shouldCoupleToDevParent = is.dev && !isServeMode
@@ -2103,7 +2111,9 @@ void app.whenReady().then(async () => {
         undefined
     }))
     for (const worktreeId of collectChangedProviderSessionWorktrees(ownedIdentities)) {
-      runtime?.notifyMobileSessionTabsChanged(worktreeId)
+      // Why not `notifyMobileSessionTabsChanged` alone: it re-emits at the unchanged
+      // `snapshotVersion`, which every client drops on its monotonic gate.
+      runtime?.touchMobileSessionTabsForWorktree(worktreeId, { immediate: true })
     }
   }
   const unsubscribeStatusChanges = agentHookServer.subscribeStatusChanges((statuses) => {
@@ -2115,9 +2125,32 @@ void app.whenReady().then(async () => {
       publishProviderSessionChanges(sessions)
     }
   )
+  // Why: hook rows are the only carrier of live agent state on a headless host, and
+  // nothing else republishes `session.tabs` when one changes — so a paired client
+  // would keep the pane's last projection until an unrelated PTY touch came along.
+  const hookStatusChangedSessionTabs = createHookStatusSessionTabsInvalidator()
+  const unsubscribeHookStatusSessionTabs = agentHookServer.subscribeEnrichedStatus((enriched) => {
+    if (hookStatusChangedSessionTabs(enriched)) {
+      runtime?.touchMobileSessionTabsForPane(enriched.paneKey, enriched.worktreeId ?? null)
+    }
+  })
+  // Teardown: agent exit, pane close, and the SSH transient-disconnect batch all land
+  // here. Without it the live state published above becomes a zombie question card.
+  const unsubscribeHookStatusClear = agentHookServer.subscribePaneStatusClear((clear) => {
+    const clearedPaneKeys =
+      'paneKey' in clear
+        ? [clear.paneKey]
+        : hookStatusChangedSessionTabs.forgetConnection(clear.connectionId)
+    for (const paneKey of clearedPaneKeys) {
+      hookStatusChangedSessionTabs.forgetPane(paneKey)
+      runtime?.touchMobileSessionTabsForPane(paneKey)
+    }
+  })
   unsubscribeAgentAwakeStatusChanges = () => {
     unsubscribeStatusChanges()
     unsubscribeProviderSessionChanges()
+    unsubscribeHookStatusSessionTabs()
+    unsubscribeHookStatusClear()
   }
   // Why: telemetry must init before any IPC handler/renderer can call track(); it's a no-op in dev and while TELEMETRY_ENABLED is false, so it's safe early.
   initTelemetry(store)
