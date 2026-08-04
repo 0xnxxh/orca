@@ -298,8 +298,8 @@ export function MobileNativeChatView({
               contentContainerStyle={styles.listContent}
               onScroll={onScroll}
               scrollEventThrottle={32}
-              // Skip the load-earlier header so the first visible message stays anchored.
-              maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
+              // FlatList adds its header offset internally; anchor the first message.
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={() => {
                 if (data.length > 0 && atBottom && !keepHistoryPosition) {
                   listRef.current?.scrollToEnd({ animated: false })

@@ -236,7 +236,7 @@ describe('MobileNativeChatView', () => {
       await update({ messages: [current], hasMore: true, loadingEarlier: true })
       await update({ messages: [older, current], hasMore: false, loadingEarlier: false })
       const list = renderer!.root.find((node) => node.type === 'FlatList')
-      expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 1 })
+      expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
       act(() => list.props.onContentSizeChange())
       await act(async () => vi.runAllTimersAsync())
 
