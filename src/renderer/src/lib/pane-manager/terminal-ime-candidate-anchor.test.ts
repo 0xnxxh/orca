@@ -193,6 +193,21 @@ describe('installTerminalImeCandidateAnchor', () => {
     expect(harness.style).toEqual({ top: `${2 * CELL_HEIGHT}px`, left: `${7 * CELL_WIDTH}px` })
   })
 
+  it('refreshes the deferred metrics and anchor after a refit', () => {
+    const harness = createHarness()
+    harness.setLines(['Cursor Agent', '', '→ hello'])
+    installTerminalImeCandidateAnchor(harness.terminal)
+    typeHangulSyllable(harness, 0, 5, 1)
+
+    Object.assign(harness.terminal, { cols: 40 })
+    harness.setLines(['Cursor Agent', '', '', '→ hello'])
+    harness.style.top = '0px'
+    vi.runAllTimers()
+
+    expect(harness.counts.rectReads).toBe(2)
+    expect(harness.style).toEqual({ top: `${3 * CELL_HEIGHT}px`, left: `${14 * CELL_WIDTH}px` })
+  })
+
   it('stops writing once the textarea has been detached', () => {
     const harness = createHarness()
     harness.setLines(['Cursor Agent', '', '→ hello'])

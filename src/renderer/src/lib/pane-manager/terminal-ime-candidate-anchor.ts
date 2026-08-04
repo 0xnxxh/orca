@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
-import { resolveCursorAgentImeAnchor } from './terminal-ime-anchor'
+import { resolveCursorAgentImeAnchor, type TerminalImeAnchor } from './terminal-ime-anchor'
 
 type ImeAnchorCellMetrics = {
   cellWidth: number
@@ -40,7 +40,6 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
   const textarea = terminal.textarea
   let metrics: ImeAnchorCellMetrics | null = null
   let deferredApply: number | null = null
-  let deferredAnchor: { row: number; column: number } | null = null
 
   const measureCells = (): ImeAnchorCellMetrics | null => {
     if (!screenElement) {
@@ -69,6 +68,26 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
     writeOffset('left', `${column * cells.cellWidth}px`)
   }
 
+  const resolveAnchor = (): { anchor: TerminalImeAnchor; isCursorAgent: boolean } => {
+    const buf = terminal.buffer.active
+    // Why: Cursor Agent draws its prompt UI while leaving xterm's public cursor
+    // on a blank row, so the OS IME anchor needs the rendered prompt row instead.
+    const cursorAgentAnchor = resolveCursorAgentImeAnchor({
+      buffer: buf,
+      rows: terminal.rows,
+      cols: terminal.cols,
+      cursorX: buf.cursorX,
+      cursorY: buf.cursorY
+    })
+    return {
+      anchor: cursorAgentAnchor ?? {
+        row: buf.cursorY,
+        column: Math.min(buf.cursorX, terminal.cols - 1)
+      },
+      isCursorAgent: cursorAgentAnchor !== null
+    }
+  }
+
   const handler = (event?: Event): void => {
     if (!screenElement) {
       return
@@ -84,33 +103,26 @@ export function installTerminalImeCandidateAnchor(terminal: Terminal): (() => vo
     if (!cells) {
       return
     }
-    const buf = terminal.buffer.active
-    // Why: Cursor Agent draws its prompt UI while leaving xterm's public cursor
-    // on a blank row, so the OS IME anchor needs the rendered prompt row instead.
-    const cursorAgentAnchor = resolveCursorAgentImeAnchor({
-      buffer: buf,
-      rows: terminal.rows,
-      cols: terminal.cols,
-      cursorX: buf.cursorX,
-      cursorY: buf.cursorY
-    })
-    const anchor = cursorAgentAnchor ?? {
-      row: buf.cursorY,
-      column: Math.min(buf.cursorX, terminal.cols - 1)
-    }
+    const { anchor, isCursorAgent } = resolveAnchor()
     applyAnchor(anchor.row, anchor.column, cells)
     // Why: xterm re-positions the textarea from a setTimeout(0) of its own after
     // each compositionupdate, so the correction has to land after that timer —
     // one pending timer per burst, re-reading the anchor when it fires.
-    if (!cursorAgentAnchor) {
+    if (!isCursorAgent) {
       return
     }
-    deferredAnchor = anchor
     if (deferredApply === null) {
       deferredApply = window.setTimeout(() => {
         deferredApply = null
-        if (textarea.isConnected && metrics && deferredAnchor) {
-          applyAnchor(deferredAnchor.row, deferredAnchor.column, metrics)
+        if (!textarea.isConnected) {
+          return
+        }
+        if (!metrics || metrics.cols !== terminal.cols || metrics.rows !== terminal.rows) {
+          metrics = measureCells()
+        }
+        if (metrics) {
+          const currentAnchor = resolveAnchor().anchor
+          applyAnchor(currentAnchor.row, currentAnchor.column, metrics)
         }
       }, 0)
     }
