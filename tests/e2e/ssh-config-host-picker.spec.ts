@@ -136,9 +136,12 @@ test.describe('SSH config host picker', () => {
       orcaPage.getByText(new RegExp(`Filled from ${escapeRegExp(prod.alias)}`, 'i'))
     ).toBeVisible({ timeout: 5_000 })
 
+    // Why: toast can auto-dismiss while Save IPC finishes; assert both in parallel.
     await form.getByRole('button', { name: 'Save' }).click()
-    await expect(form).toBeHidden({ timeout: 10_000 })
-    await expect(orcaPage.getByText('SSH host added.')).toBeVisible({ timeout: 5_000 })
+    await Promise.all([
+      expect(form).toBeHidden({ timeout: 10_000 }),
+      expect(orcaPage.getByText('SSH host added.')).toBeVisible({ timeout: 10_000 })
+    ])
 
     const sshSection = await openSshHostSettings(orcaPage)
     await expectSshHostListedInSettings(sshSection, prod)
