@@ -182,7 +182,7 @@ export function NativeChatComposerField({
               onChange={(e) => onDraftChange(e.target.value, e.currentTarget)}
               onKeyDown={(event) => {
                 const ownsCompositionEnter =
-                  event.nativeEvent.isComposing &&
+                  (event.nativeEvent.isComposing || compositionActiveRef.current) &&
                   ((event.key === 'Enter' && (event.keyCode === 13 || event.keyCode === 229)) ||
                     (event.key === 'Process' && event.keyCode === 229))
                 if (ownsCompositionEnter) {

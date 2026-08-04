@@ -192,6 +192,28 @@ describe('native chat composer composition ownership', () => {
     expect(onKeyDown).toHaveBeenCalledOnce()
   })
 
+  it('retains an active composition when the Process event omits its composing flag', () => {
+    const onKeyDown = vi.fn()
+    render(composerField('가', { onKeyDown }))
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    fireEvent.keyDown(textarea, {
+      key: 'Process',
+      keyCode: 229,
+      isComposing: false
+    })
+    fireEvent.compositionEnd(textarea, { data: '가' })
+
+    const redispatchResult = fireEvent.keyDown(textarea, {
+      key: 'Enter',
+      keyCode: 13,
+      isComposing: false
+    })
+
+    expect(redispatchResult).toBe(false)
+    expect(onKeyDown).not.toHaveBeenCalled()
+  })
+
   it('retains the macOS marked Enter/229 gesture through its unmarked redispatch', () => {
     const onKeyDown = vi.fn()
     let clearPending: FrameRequestCallback | undefined
