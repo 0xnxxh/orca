@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../../shared/pty-consumer-session'
+import {
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+} from '../../shared/pty-consumer-session'
 import { SshRelaySession } from './ssh-relay-session'
 import {
   createMismatchedOwnerRecoveryError,
@@ -189,6 +192,42 @@ describe('SshRelaySession consumer recovery durability', () => {
         clientInstanceId: 'persisted-client',
         resume: { ownerGeneration: 1, ownerLease: 'persisted-owner' }
       })
+      session.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves persisted recovery while a superseding transport is still live', async () => {
+    vi.useFakeTimers()
+    try {
+      const targetId = 'target-owner-generation-superseded'
+      const deps = createMockDeps()
+      vi.mocked(deps.mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+        targetId,
+        clientInstanceId: 'persisted-client',
+        serverBuildId: 'test-relay-build',
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'persisted-owner'
+      })
+      const superseded = Object.assign(new Error('Owner recovery generation was superseded'), {
+        code: PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+      })
+      openConsumerSessionMock.mockRejectedValue(superseded)
+      const session = new SshRelaySession(
+        targetId,
+        deps.getMainWindow,
+        deps.mockStore,
+        deps.mockPortForward
+      )
+
+      const failed = expect(session.establish(deps.mockConn)).rejects.toBe(superseded)
+      await vi.advanceTimersByTimeAsync(3_000)
+      await failed
+
+      expect(openConsumerSessionMock.mock.calls.length).toBeGreaterThan(1)
+      expect(deps.mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
       session.dispose()
     } finally {
       vi.useRealTimers()

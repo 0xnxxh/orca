@@ -10,7 +10,7 @@
 
 import { createServer, createConnection, type Socket, type Server } from 'node:net'
 import { join } from 'node:path'
-import { unlinkSync, existsSync, statSync, readFileSync, chmodSync } from 'node:fs'
+import { unlinkSync, existsSync, statSync, readFileSync, chmodSync, closeSync } from 'node:fs'
 import {
   RELAY_SENTINEL,
   FrameDecoder,
@@ -597,6 +597,17 @@ async function main(): Promise<void> {
         }
         stdoutDrainWaiters.add(cb)
         return () => stdoutDrainWaiters.delete(cb)
+      },
+      close: () => {
+        stdoutAlive = false
+        flushStdoutDrainWaiters()
+        for (const fd of [process.stdin.fd, process.stdout.fd]) {
+          try {
+            closeSync(fd)
+          } catch {
+            // Already closed by the peer.
+          }
+        }
       }
     },
     undefined,

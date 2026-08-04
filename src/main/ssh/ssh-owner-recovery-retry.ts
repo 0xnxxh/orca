@@ -1,7 +1,9 @@
-import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../../shared/pty-consumer-session'
+import {
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+} from '../../shared/pty-consumer-session'
 
-// Why this budget is safe: the relay displaces a still-attached owner outright, so the only refusal
-// left is an incumbent grant whose publication has not settled — bounded by one relay response write.
+// Why: bound polling when publication is settling or a superseded attempt is closing its transport.
 export const SSH_OWNER_RECOVERY_WAIT_MS = 3_000
 const SSH_OWNER_RECOVERY_INITIAL_DELAY_MS = 25
 const SSH_OWNER_RECOVERY_MAX_DELAY_MS = 250
@@ -34,7 +36,7 @@ function waitForRetry(delayMs: number, gate: SshOwnerRecoveryRetryGate): Promise
   })
 }
 
-export async function retrySshOwnerRecoveryWhilePublicationPending<T>(
+export async function retrySshOwnerRecoveryWhileBlocked<T>(
   attempt: () => Promise<T>,
   gate: SshOwnerRecoveryRetryGate,
   waitMs: number = SSH_OWNER_RECOVERY_WAIT_MS
@@ -45,9 +47,10 @@ export async function retrySshOwnerRecoveryWhilePublicationPending<T>(
     try {
       return await attempt()
     } catch (error) {
+      const code = (error as { code?: unknown } | null | undefined)?.code
       if (
-        (error as { code?: unknown } | null | undefined)?.code !==
-          PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR ||
+        (code !== PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR &&
+          code !== PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR) ||
         !gate.isCurrent()
       ) {
         throw error

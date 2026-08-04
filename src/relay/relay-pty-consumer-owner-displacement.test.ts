@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   RelayDispatcher,
   type RelayClientSessionIdentity,
@@ -6,7 +6,10 @@ import {
 } from './dispatcher'
 import { encodeJsonRpcFrame, MessageType } from './protocol'
 import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
-import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../shared/pty-consumer-session'
+import {
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+} from '../shared/pty-consumer-session'
 
 const endpointIdentity: RelayClientSessionIdentity = {
   principal: 'endpoint-principal',
@@ -59,13 +62,14 @@ describe('relay PTY consumer owner displacement', () => {
     // Why no settle deferral: a half-open peer is indistinguishable from a live one at the sink — writes
     // still "succeed" locally, so the relay never learns the owner is gone.
     const staleWrites: Buffer[] = []
+    const closeStaleTransport = vi.fn()
     dispatcher = new RelayDispatcher(
       (data, settle) => {
         staleWrites.push(Buffer.from(data))
         settle({ ok: true })
         return true
       },
-      { supportsWriteCallback: true },
+      { supportsWriteCallback: true, close: closeStaleTransport },
       endpointIdentity
     )
     const detached: number[] = []
@@ -120,6 +124,7 @@ describe('relay PTY consumer owner displacement', () => {
     expect(adapter.deliveryMode(1)).toBe('subscriber')
     expect(adapter.openDelivery(1, 'pty-2', 'incarnation-1')).toBeNull()
     expect(detached).toContain(1)
+    expect(closeStaleTransport).toHaveBeenCalledOnce()
 
     // Why: retained, not closed — the reconnected owner still has to rotate the stale delivery forward.
     expect(adapter.getDebugSnapshot()).toMatchObject({ deliveryTokens: 1, graceTimers: 1 })
@@ -274,7 +279,7 @@ describe('relay PTY consumer owner displacement', () => {
     expect(detached).toContain(1)
   })
 
-  it('serializes overlapping reconnect grants without invalidating the original proof', async () => {
+  it('fences an old proof while its replacement is live', async () => {
     const incumbentWrites: Buffer[] = []
     dispatcher = new RelayDispatcher(
       (data, settle) => {
@@ -340,12 +345,24 @@ describe('relay PTY consumer owner displacement', () => {
     )
     await flushRequests()
 
-    expect(response(retryWrites, 4)!.result).toMatchObject({
+    expect(response(retryWrites, 4)!.error).toMatchObject({
+      code: PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+    })
+    expect(adapter.deliveryMode(firstReconnectClientId)).toBe('source-owner')
+    expect(adapter.deliveryMode(retryClientId)).toBe('subscriber')
+
+    dispatcher.detachClient(firstReconnectClientId)
+    dispatcher.feedClient(
+      retryClientId,
+      requestFrame(5, 'pty.openClient', ownerHelloParams(resume))
+    )
+    await flushRequests()
+
+    expect(response(retryWrites, 5)!.result).toMatchObject({
       role: 'session-owner',
       ownerGeneration: 3,
       ownerLease: incumbentGrant.ownerLease
     })
-    expect(adapter.deliveryMode(firstReconnectClientId)).toBe('subscriber')
     expect(adapter.deliveryMode(retryClientId)).toBe('source-owner')
   })
 })

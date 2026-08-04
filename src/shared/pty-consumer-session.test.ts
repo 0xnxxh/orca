@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR,
   PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
   PtyConsumerSession,
   type PtyConsumerAuthentication,
@@ -251,7 +252,7 @@ describe('PtyConsumerSession', () => {
     )
   })
 
-  it('retries overlapping recovery against the stable lease after publication commits', () => {
+  it('fences an old recovery generation after its replacement commits', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))
     first.commitPublication()
@@ -266,7 +267,19 @@ describe('PtyConsumerSession', () => {
     )
 
     replacement.commitPublication()
-    const retry = session.admit(ownerHello({ resume }), auth('connection-3'))
+    expect(() => session.admit(ownerHello({ resume }), auth('connection-3'))).toThrow(
+      expect.objectContaining({ code: PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR })
+    )
+
+    const retry = session.admit(
+      ownerHello({
+        resume: {
+          ownerGeneration: replacement.grant.ownerGeneration!,
+          ownerLease: replacement.grant.ownerLease!
+        }
+      }),
+      auth('connection-3')
+    )
 
     expect(retry.grant).toMatchObject({
       role: 'session-owner',
@@ -276,6 +289,27 @@ describe('PtyConsumerSession', () => {
     expect(retry.displacedOwner?.connectionId).toBe('connection-2')
     // Why: the committed replacement already retired the incumbent, so only connection-2 is left to displace.
     expect(session.activeGrant('connection-1')).toBeNull()
+  })
+
+  it('accepts an older stable proof after its replacement disconnects', () => {
+    const session = createSession()
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    first.commitPublication()
+    const resume = {
+      ownerGeneration: first.grant.ownerGeneration!,
+      ownerLease: first.grant.ownerLease!
+    }
+    const replacement = session.admit(ownerHello({ resume }), auth('connection-2'))
+    replacement.commitPublication()
+    session.close('connection-2')
+
+    const retry = session.admit(ownerHello({ resume }), auth('connection-3'))
+
+    expect(retry.grant).toMatchObject({
+      role: 'session-owner',
+      ownerGeneration: 3,
+      ownerLease: first.grant.ownerLease
+    })
   })
 
   it('retries overlapping recovery against the incumbent after publication rolls back', () => {

@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../../shared/pty-consumer-session'
-import { retrySshOwnerRecoveryWhilePublicationPending } from './ssh-owner-recovery-retry'
+import {
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
+  PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+} from '../../shared/pty-consumer-session'
+import { retrySshOwnerRecoveryWhileBlocked } from './ssh-owner-recovery-retry'
 
 function publicationPendingError(): Error & { code: number } {
   return Object.assign(new Error('Owner grant publication is still pending'), {
     code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
+  })
+}
+
+function supersededError(): Error & { code: number } {
+  return Object.assign(new Error('Owner recovery generation was superseded'), {
+    code: PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
   })
 }
 
@@ -28,7 +37,7 @@ describe('SSH owner recovery retry', () => {
       .mockRejectedValueOnce(publicationPendingError())
       .mockResolvedValue('recovered')
 
-    const recovery = retrySshOwnerRecoveryWhilePublicationPending(attempt, openGate())
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate())
     await vi.advanceTimersByTimeAsync(75)
 
     await expect(recovery).resolves.toBe('recovered')
@@ -40,7 +49,7 @@ describe('SSH owner recovery retry', () => {
     const error = publicationPendingError()
     const attempt = vi.fn<() => Promise<never>>().mockRejectedValue(error)
 
-    const recovery = retrySshOwnerRecoveryWhilePublicationPending(attempt, openGate(), 60)
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate(), 60)
     const rejection = expect(recovery).rejects.toBe(error)
     await vi.advanceTimersByTimeAsync(60)
 
@@ -52,10 +61,22 @@ describe('SSH owner recovery retry', () => {
     const error = Object.assign(new Error('stale owner'), { code: -32041 })
     const attempt = vi.fn<() => Promise<never>>().mockRejectedValue(error)
 
-    await expect(retrySshOwnerRecoveryWhilePublicationPending(attempt, openGate())).rejects.toBe(
-      error
-    )
+    await expect(retrySshOwnerRecoveryWhileBlocked(attempt, openGate())).rejects.toBe(error)
     expect(attempt).toHaveBeenCalledOnce()
+  })
+
+  it('retries while a superseded transport is closing', async () => {
+    vi.useFakeTimers()
+    const attempt = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(supersededError())
+      .mockResolvedValue('recovered')
+
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate())
+    await vi.advanceTimersByTimeAsync(25)
+
+    await expect(recovery).resolves.toBe('recovered')
+    expect(attempt).toHaveBeenCalledTimes(2)
   })
 
   it('stops waiting when the relay channel closes', async () => {
@@ -64,7 +85,7 @@ describe('SSH owner recovery retry', () => {
     let close: (() => void) | undefined
     const error = publicationPendingError()
     const attempt = vi.fn<() => Promise<never>>().mockRejectedValue(error)
-    const recovery = retrySshOwnerRecoveryWhilePublicationPending(attempt, {
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, {
       isCurrent: () => current,
       onClosed: (listener) => {
         close = listener

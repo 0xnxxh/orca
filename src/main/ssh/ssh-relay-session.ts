@@ -81,7 +81,7 @@ import type { Store } from '../persistence'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
-import { retrySshOwnerRecoveryWhilePublicationPending } from './ssh-owner-recovery-retry'
+import { retrySshOwnerRecoveryWhileBlocked } from './ssh-owner-recovery-retry'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import {
   acknowledgeRemoteOrcaCliPostOutput,
@@ -1028,7 +1028,7 @@ export class SshRelaySession {
       outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
     }
     try {
-      return await retrySshOwnerRecoveryWhilePublicationPending(
+      return await retrySshOwnerRecoveryWhileBlocked(
         () =>
           openSshPtyConsumerSession(mux, {
             ...options,

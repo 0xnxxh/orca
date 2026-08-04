@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
   PTY_CONSUMER_OWNER_GRACE_MS,
-  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
   PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
   type PtyConsumerAuthentication,
@@ -17,6 +16,7 @@ import {
   MAX_CAPABILITY_VERSIONS,
   validateHello
 } from './pty-consumer-session-hello'
+import { assertPtyConsumerOwnerRecovery } from './pty-consumer-owner-recovery'
 
 export * from './pty-consumer-session-contract'
 
@@ -228,23 +228,7 @@ export class PtyConsumerSession {
     if (!hello.resume) {
       return null
     }
-    const recoveryMatches =
-      hello.resume.ownerLease === current.lease &&
-      hello.clientInstanceId === current.clientInstanceId &&
-      authentication.principal === current.principal
-    if (!recoveryMatches) {
-      throw Object.assign(
-        new Error('Owner recovery lease is stale or belongs to another principal'),
-        { code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR }
-      )
-    }
-    if (current.state === 'pending') {
-      // Why coded: unlike a still-attached owner this cannot be fenced — the incumbent grant is mid
-      // publication, so there is nothing to displace yet. Bounded by one response write, so retryable.
-      throw Object.assign(new Error('Owner grant publication is still pending'), {
-        code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
-      })
-    }
+    assertPtyConsumerOwnerRecovery(hello, authentication, current)
     // Why an active owner is displaced rather than refused: the resume proof matched this owner's
     // generation, lease, client instance, and principal on a *different* transport, so the requester is
     // the same logical owner reconnecting. Waiting for the incumbent's socket to close is unbounded —
