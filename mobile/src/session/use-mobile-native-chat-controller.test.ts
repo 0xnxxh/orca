@@ -82,6 +82,7 @@ import {
   useMobileNativeChatController,
   type MobileNativeChatController
 } from './use-mobile-native-chat-controller'
+import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
 
 const sendWithOutcome = vi.mocked(sendMobileNativeChatMessageWithOutcome)
 
@@ -461,10 +462,18 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     })
   }
 
+  /** Drive the transcript stand-in the way the real hook couples the two fields
+   *  (`transcriptLoading` is exactly `status === 'loading'`), so these tests can
+   *  only express states the session hook can actually reach. */
+  function setTranscript(status: MobileNativeChatStatus): void {
+    sessionState.status = status
+    sessionState.transcriptLoading = status === 'loading'
+  }
+
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     viewMode.isTabChatView = () => true
-    sessionState.transcriptLoading = false
+    setTranscript('ready')
     promptsState.ask = PROMPT
     promptsState.detectedAsk = PROMPT
     const original = console.error
@@ -489,7 +498,7 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     controller = null
     promptsState.ask = null
     promptsState.detectedAsk = null
-    sessionState.transcriptLoading = false
+    setTranscript('ready')
     viewMode.isTabChatView = () => true
   })
 
@@ -509,11 +518,11 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
 
     // Terminal -> chat: observable again, but the transcript read is in flight.
     viewMode.isTabChatView = () => true
-    sessionState.transcriptLoading = true
+    setTranscript('loading')
     step()
 
     // The read lands and re-derives the same still-pending ask.
-    sessionState.transcriptLoading = false
+    setTranscript('ready')
     promptsState.ask = PROMPT
     promptsState.detectedAsk = PROMPT
     step()
@@ -526,7 +535,7 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     // must stay observable whenever a prompt is actually on screen — otherwise the
     // dismissal is silently dropped and the answered card never goes away.
     act(() => renderer?.unmount())
-    sessionState.transcriptLoading = true
+    setTranscript('loading')
     act(() => {
       renderer = create(createElement(Harness))
     })
@@ -552,5 +561,67 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     step()
 
     expect(controller?.nativeChatAsk).not.toBeNull()
+  })
+
+  it('keeps the dismissal while a dropped client empties the transcript', () => {
+    // `transcriptLoading` is only true for an in-flight read. A dropped client
+    // parks the session at 'idle', where the hook withholds `messages` with that
+    // flag already false — so the derived prompt reads null for a reason that
+    // says nothing about the agent, and the reset effect retired a live dismissal.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    setTranscript('idle')
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    // Reconnect: the read lands and the same question is still pending.
+    setTranscript('ready')
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).toBeNull()
+  })
+
+  it('retires the dismissal when a failed read still reports the last transcript', () => {
+    // A read error leaves the last successful read in `messages`, so a prompt
+    // that clears under it is real evidence — unlike the never-read empty list
+    // of 'idle'/'waiting-session'. Treating 'error' as unobservable would freeze
+    // the dismissal and hide the next identical question for good.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    setTranscript('error')
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).not.toBeNull()
+  })
+
+  it('keeps the dismissal while the tab has no provider session yet', () => {
+    // 'waiting-session' withholds `messages` the same way, also with
+    // transcriptLoading false. The tab still shows chat (resolveMobileNativeChat
+    // resolves from `launchAgent` alone), so a live dismissal is on screen for it.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    setTranscript('waiting-session')
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    setTranscript('ready')
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).toBeNull()
   })
 })

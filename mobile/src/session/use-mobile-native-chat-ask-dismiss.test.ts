@@ -7,9 +7,11 @@ import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dism
 describe('useMobileNativeChatAskDismiss', () => {
   let renderer: ReactTestRenderer | null = null
   let state: ReturnType<typeof useMobileNativeChatAskDismiss> | null = null
+  let renders = 0
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    renders = 0
   })
 
   afterEach(() => {
@@ -29,6 +31,7 @@ describe('useMobileNativeChatAskDismiss', () => {
     scopeKey?: string | null
     observing?: boolean
   }): null {
+    renders += 1
     state = useMobileNativeChatAskDismiss({
       ask: prompt,
       detectedAsk: detectedPrompt,
@@ -159,6 +162,24 @@ describe('useMobileNativeChatAskDismiss', () => {
 
     await update({ prompt: first, scopeKey: 'tab-2' })
     expect(state?.showAsk).toBe(false)
+  })
+
+  it('reports nothing to show without a prompt', async () => {
+    await mount({ prompt: null })
+    expect(state?.showAsk).toBe(false)
+  })
+
+  it('does not re-render a scope with nothing dismissed when the prompt changes', async () => {
+    await mount({ prompt: first })
+    const afterMount = renders
+
+    await update({ prompt: replacement })
+
+    // One render for the prop change and no more: the reset effect must hand back
+    // the same Map when this scope has no dismissal, or every observed prompt
+    // change commits a fresh one. The hook sits on the session route, so that
+    // wasted commit re-renders the whole session surface.
+    expect(renders).toBe(afterMount + 1)
   })
 
   it('records a settled answer against its originating tab', async () => {

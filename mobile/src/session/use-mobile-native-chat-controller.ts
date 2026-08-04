@@ -188,8 +188,16 @@ export function useMobileNativeChatController(args: {
   // Believing that null retires a live dismissal — the same resurfacing bug the
   // off-chat guard fixes. A detected prompt is observable on its own; a null one
   // only counts once the read has settled.
+  //
+  // Settled means a read actually landed, not just `!transcriptLoading`: that
+  // flag covers the in-flight read alone, while the session hook also withholds
+  // `messages` when the client is gone ('idle') or the tab has not reported a
+  // provider session yet ('waiting-session') — both of which leave the flag false
+  // over an empty list that was never read.
+  const nativeChatTranscriptSettled =
+    nativeChatSession.status === 'ready' || nativeChatSession.status === 'error'
   const nativeChatAskObservable =
-    showNativeChat && (nativeChatDetectedAsk != null || !nativeChatSession.transcriptLoading)
+    showNativeChat && (nativeChatDetectedAsk != null || nativeChatTranscriptSettled)
   const {
     askKey: nativeChatAskKey,
     showAsk: showNativeChatAsk,

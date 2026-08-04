@@ -118,6 +118,16 @@ describe('useMobileNativeChatPrompts ask state gate', () => {
     expect(promptsFor(null, askMessages).ask).not.toBeNull()
   })
 
+  it('does not leak a paused-out sticky status prompt through the transcript fallback', () => {
+    // The post-answer window: the status still carries the prompt while flipping
+    // to `working`, and the transcript's tool-result row has not landed yet, so
+    // both sources still describe the answered question. The paused gate only
+    // holds because a status prompt suppresses the transcript fallback outright.
+    const working = promptsFor({ state: 'working', interactivePrompt: ASK }, askMessages)
+    expect(working.ask).toBeNull()
+    expect(working.detectedAsk).not.toBeNull()
+  })
+
   it('still refuses an unpaused sticky status prompt that the transcript does not back', () => {
     const answered: NativeChatMessage[] = [
       ...askMessages,
