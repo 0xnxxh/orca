@@ -273,6 +273,46 @@ describe('SshRelaySession consumer recovery durability', () => {
     expect(openConsumerSessionMock).toHaveBeenCalledTimes(1)
   })
 
+  it('leaves recovery state alone when a newer owner already claimed the target record', async () => {
+    const targetId = 'target-stale-owner-loser'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+      targetId,
+      clientInstanceId: 'persisted-client',
+      serverBuildId: 'test-relay-build',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'stale-owner'
+    })
+    const winner = {
+      mode: 'negotiated' as const,
+      clientInstanceId: 'persisted-client',
+      clientGeneration: 2,
+      ownerGeneration: 5,
+      ownerLease: 'winner-owner'
+    }
+    openConsumerSessionMock.mockImplementationOnce(() => {
+      // Why inside the rejection: the record is target-scoped, so the winner can land while this
+      // attempt is still unwinding its own resume.
+      const record = getSshPtyConsumerRecovery(targetId)!
+      record.owner = winner
+      record.checkpointsByAppPtyId.set('pty-1', {
+        id: 'pty-1'
+      } as unknown as never)
+      return Promise.reject(createMismatchedOwnerRecoveryError())
+    })
+    openConsumerSessionMock.mockRejectedValueOnce(new Error('fresh open failed'))
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+
+    await expect(session.establish(mockConn)).rejects.toThrow('fresh open failed')
+
+    const record = getSshPtyConsumerRecovery(targetId)!
+    expect(record.owner).toBe(winner)
+    expect(record.checkpointsByAppPtyId.has('pty-1')).toBe(true)
+    expect(mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
   it('does not remember a consumer opened after establish was disposed', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     let signalOpenStarted!: () => void

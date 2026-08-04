@@ -282,6 +282,7 @@ import {
 } from './pty'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import { getSshPtyConsumerRecovery } from '../ssh/ssh-pty-consumer-recovery'
+import { quitTeardownStartGate } from '../quit-teardown-start-gate'
 
 describe('SSH IPC handlers', () => {
   const relayBuildId = '0.1.0+ipc-test'
@@ -592,7 +593,7 @@ describe('SSH IPC handlers', () => {
     expect(mockConnectionManager.disconnectAll).toHaveBeenCalled()
   })
 
-  it('drains the replacement session a paused connect publishes after shutdown began', async () => {
+  it('refuses the replacement session a paused connect would publish after shutdown began', async () => {
     const target: SshTarget = {
       id: 'ssh-1',
       label: 'Server',
@@ -627,23 +628,73 @@ describe('SSH IPC handlers', () => {
     expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith('ssh-1', 'detached')
 
     mockConnectionManager.disconnectAll.mockClear()
+    // Why latch the gate here: the committed quit path owns it, so the drain alone must not fence.
+    quitTeardownStartGate.tryStart({ preventDefault() {} })
     const shutdown = detachAllSshSessionsForShutdown()
     releaseDetach()
 
-    await expect(replacement).rejects.toThrow()
+    await expect(replacement).rejects.toThrow('closed for app shutdown')
     await shutdown
 
-    // Why two detaches: the old session's, plus the replacement the paused connect published after the
-    // first drain had already snapshotted activeSessions.
+    // Why one detach: the fence sits at the publication point, so the resumed connect never registers a
+    // replacement session — only the old session it had already torn down was detached.
     const detaches = mockStore.markSshRemotePtyLeasesAsync.mock.calls.filter(
       (call) => call[1] === 'detached'
     )
-    expect(detaches).toHaveLength(2)
+    expect(detaches).toHaveLength(1)
+    // Why twice: once for the drain's snapshot, once after joining the connect that was still in flight.
     expect(mockConnectionManager.disconnectAll).toHaveBeenCalledTimes(2)
     expect(getActiveMultiplexer('ssh-1')).toBeUndefined()
     await expect(handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })).rejects.toThrow(
       'closed for app shutdown'
     )
+  })
+
+  it('joins an in-flight test-connection probe before the final shutdown disconnect', async () => {
+    const target: SshTarget = {
+      id: 'ssh-probe',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-probe',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    mockConnectionManager.disconnectAll.mockResolvedValue(undefined)
+    mockConnectionManager.disconnect.mockClear().mockResolvedValue(undefined)
+
+    // Why: a probe holds a transport no session owns, so shutdown has to wait for it to hand it back.
+    const probeState = {
+      targetId: 'ssh-probe',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    }
+    let openProbeTransport = (): void => {}
+    mockConnectionManager.connect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          openProbeTransport = () => resolve({ getState: () => probeState })
+        })
+    )
+    const probe = handlers.get('ssh:testConnection')!(null, { targetId: 'ssh-probe' })
+    for (let tick = 0; tick < 5; tick++) {
+      await Promise.resolve()
+    }
+    expect(mockConnectionManager.connect).toHaveBeenCalledWith(target)
+
+    quitTeardownStartGate.tryStart({ preventDefault() {} })
+    const shutdown = detachAllSshSessionsForShutdown()
+    openProbeTransport()
+    await shutdown
+
+    expect(await probe).toMatchObject({ success: true })
+    expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-probe')
   })
 
   it('ssh:importConfig returns imported targets', async () => {

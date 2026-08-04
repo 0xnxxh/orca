@@ -1054,26 +1054,36 @@ export class SshRelaySession {
         throw error
       }
       const recovery = getSshPtyConsumerRecovery(this.targetId)
-      if (recovery) {
-        delete recovery.owner
-        recovery.checkpointsByAppPtyId.clear()
-        for (const [ptyId, migration] of recovery.modelMigrationsByAppPtyId) {
-          recovery.modelMigrationsByAppPtyId.set(
-            ptyId,
-            migration.then(() =>
-              Object.freeze({
-                status: 'checkpoint-unavailable' as const,
-                reason: 'completion-failed' as const
-              })
+      // Why identity-guarded: the record is target-scoped and its clientInstanceId is shared by every
+      // session for that target, so only a record still describing the owner this attempt tried to
+      // resume is ours to drop — otherwise a loser wipes the winner's checkpoints.
+      const ownsRecoveryRecord =
+        ownsAttempt() &&
+        (!recovery?.owner ||
+          (recovery.owner.ownerGeneration === previousOwner.ownerGeneration &&
+            recovery.owner.ownerLease === previousOwner.ownerLease))
+      if (ownsRecoveryRecord) {
+        if (recovery) {
+          delete recovery.owner
+          recovery.checkpointsByAppPtyId.clear()
+          for (const [ptyId, migration] of recovery.modelMigrationsByAppPtyId) {
+            recovery.modelMigrationsByAppPtyId.set(
+              ptyId,
+              migration.then(() =>
+                Object.freeze({
+                  status: 'checkpoint-unavailable' as const,
+                  reason: 'completion-failed' as const
+                })
+              )
             )
-          )
+          }
         }
+        await removeSshPtyConsumerOwnerRecovery(
+          this.targetId,
+          this.ptyConsumerClientInstanceId,
+          this.store
+        )
       }
-      await removeSshPtyConsumerOwnerRecovery(
-        this.targetId,
-        this.ptyConsumerClientInstanceId,
-        this.store
-      )
       if (!ownsAttempt()) {
         throw new Error('Session disposed during establish')
       }

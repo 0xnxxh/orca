@@ -127,6 +127,68 @@ describe('relay PTY consumer owner displacement', () => {
     expect(rotation.recovery.map((span) => span.data)).toEqual(['tail'])
   })
 
+  it('retains the incumbent delivery once when its socket closes mid-publication', async () => {
+    const incumbentWrites: Buffer[] = []
+    dispatcher = new RelayDispatcher(
+      (data, settle) => {
+        incumbentWrites.push(Buffer.from(data))
+        settle({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a')
+
+    dispatcher.feed(requestFrame(1, 'pty.openClient', ownerHelloParams()))
+    await flushRequests()
+    const incumbentGrant = response(incumbentWrites, 1)!.result as Record<string, unknown>
+    const incumbentDelivery = adapter.openDelivery(1, 'pty-1', 'incarnation-1')!
+    adapter.appendSource(incumbentDelivery, {
+      spanId: 'span-1',
+      data: 'tail',
+      displayStart: 0,
+      displayEnd: 4,
+      splittable: true,
+      transform: { transformed: false, rawLengthSu: 4, scalarSafe: true }
+    })
+
+    const reconnectWrites: Buffer[] = []
+    let grantSettlement: ((result: SinkWriteSettlement) => void) | undefined
+    const reconnectClientId = dispatcher.attachClient(
+      (data, settle) => {
+        reconnectWrites.push(Buffer.from(data))
+        grantSettlement = settle
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    dispatcher.feedClient(
+      reconnectClientId,
+      requestFrame(
+        2,
+        'pty.openClient',
+        ownerHelloParams({
+          ownerGeneration: incumbentGrant.ownerGeneration,
+          ownerLease: incumbentGrant.ownerLease
+        })
+      )
+    )
+    await flushRequests()
+
+    // Why this ordering: the incumbent's socket close and the replacement's grant write are independent
+    // events, so detach-then-commit has to leave exactly one retention, not two competing ones.
+    dispatcher.invalidateClient()
+    grantSettlement!({ ok: true })
+
+    expect(adapter.deliveryMode(reconnectClientId)).toBe('source-owner')
+    expect(adapter.getDebugSnapshot()).toMatchObject({ deliveryTokens: 1, graceTimers: 1 })
+    const rotation = adapter.rotateDelivery(incumbentDelivery, reconnectClientId, 0)
+    expect(rotation.identity).toMatchObject({ ownerGeneration: 2, clientGeneration: 2 })
+    expect(adapter.getDebugSnapshot()).toMatchObject({ graceTimers: 0 })
+  })
+
   it('keeps the incumbent owner when the replacement grant fails to publish', async () => {
     const incumbentWrites: Buffer[] = []
     dispatcher = new RelayDispatcher(

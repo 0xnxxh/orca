@@ -25,6 +25,7 @@ import type {
   DirectSshAuthority
 } from '../../shared/ssh-types'
 import { SSH_TERMINATE_RECONNECT_REQUIRED } from '../../shared/constants'
+import { quitTeardownStartGate } from '../quit-teardown-start-gate'
 import { isRuntimeOwnedSshTargetId } from '../../shared/execution-host'
 import { isAuthError } from '../ssh/ssh-connection-utils'
 import { createCancelledConnectAttemptError } from '../ssh/ssh-connect-attempt-cancellation'
@@ -306,12 +307,11 @@ type ConnectAttempt = {
 const connectInFlight = new Map<string, ConnectAttempt>()
 const pendingTransportReconnects = new Set<string>()
 
-// Why: once the committed quit path starts draining SSH, a connect that has not yet published its
-// session must not start one — the drain has already snapshotted what it will tear down.
-let sshShutdownFenced = false
-
+// Why the quit gate rather than a local latch: "the committed quit has begun" already has an owner,
+// and a private copy could be set by something that is not actually quitting — leaving SSH connects
+// refused for the rest of the process lifetime.
 function assertSshConnectsNotFenced(): void {
-  if (sshShutdownFenced) {
+  if (quitTeardownStartGate.hasStarted()) {
     throw new Error('SSH connects are closed for app shutdown')
   }
 }
@@ -332,6 +332,7 @@ const resetRelayInFlight = new Map<string, Promise<void>>()
 
 // Why: ssh:testConnection connects then disconnects; suppressing broadcasts during the test avoids worktree cards flashing connected → disconnected.
 const testingTargets = new Set<string>()
+const testConnectionProbes = new Set<Promise<unknown>>()
 
 // Why: without backoff, a relay channel that keeps dying reconnects as fast as the network allows, hammering local + remote sshd; track attempts and back off to end the loop recoverably.
 type RelayLostBackoffState = {
@@ -1143,6 +1144,11 @@ export function registerSshHandlers(
       }
     }
 
+    // Why here and not only at entry: this is the publication point, and it is the last statement
+    // before the transport opens. Checking it in the same synchronous block as activeSessions.set
+    // means a connect either registers before the shutdown drain snapshots, or registers never and
+    // owns nothing to clean up.
+    assertSshConnectsNotFenced()
     // Why: create the session early so onStateChange sees it in 'deploying' and skips reconnect logic.
     const session = new SshRelaySession(
       targetId,
@@ -1407,19 +1413,26 @@ export function registerSshHandlers(
     }
 
     testingTargets.add(args.targetId)
-    try {
+    // Why a tracked promise and not just the id: a probe holds a real transport that no session owns,
+    // so shutdown has to be able to join it before the final drain disconnects what is left.
+    const probe = (async () => {
       // Why: a probe transport opened after the shutdown drain would outlive orderly teardown.
       assertSshConnectsNotFenced()
       const conn = await connectionManager!.connect(target)
       const state = conn.getState()
       await connectionManager!.disconnect(args.targetId)
-      return { success: true, state }
+      return state
+    })()
+    testConnectionProbes.add(probe)
+    try {
+      return { success: true, state: await probe }
     } catch (err) {
       return {
         success: false,
         error: err instanceof Error ? err.message : String(err)
       }
     } finally {
+      testConnectionProbes.delete(probe)
       testingTargets.delete(args.targetId)
       // Why: clear so a test's credential prompt doesn't leave lastRequiredPassphrase=true and defer this target at startup.
       credentialRequestedForTarget.delete(args.targetId)
@@ -1545,13 +1558,13 @@ async function settleWithinMs(work: readonly Promise<unknown>[], timeoutMs: numb
   ])
 }
 
+// Why no fence latch here: the committed quit path sets it before calling this, so it is already on
+// for the snapshot below. Called without that gate (tests), this degrades to a plain drain.
 export async function detachAllSshSessionsForShutdown(): Promise<void> {
-  // Why synchronous, before the first await: connectTarget registers its attempt and checks the fence
-  // in one uninterrupted block, so fencing and snapshotting here leaves no gap for an unjoined connect.
-  sshShutdownFenced = true
   const inFlightWork: Promise<unknown>[] = [
     ...[...connectInFlight.values()].map((attempt) => attempt.promise),
-    ...resetRelayInFlight.values()
+    ...resetRelayInFlight.values(),
+    ...testConnectionProbes
   ]
   for (const targetId of Array.from(connectInFlight.keys())) {
     invalidateConnectAttempt(targetId)
@@ -1608,8 +1621,9 @@ export async function resetSshHandlerStateForTests(): Promise<void> {
   resetSshProviderAuthorities()
   resetRelayInFlight.clear()
   testingTargets.clear()
+  testConnectionProbes.clear()
   credentialRequestedForTarget.clear()
-  sshShutdownFenced = false
+  quitTeardownStartGate.resetForTests()
 
   await connectionManager?.disconnectAll()
   portForwardManager?.dispose()
