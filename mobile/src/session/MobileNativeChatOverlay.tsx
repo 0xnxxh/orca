@@ -51,6 +51,8 @@ export function MobileNativeChatOverlay({
         streamingText={controller.nativeChatStreamingText}
         onStop={controller.handleNativeChatStop}
         ask={controller.nativeChatAsk}
+        askKey={controller.nativeChatAskKey}
+        onDismissAsk={controller.dismissNativeChatAsk}
         onAnswerAsk={controller.handleNativeChatAnswerAsk}
         onCancelAsk={controller.handleNativeChatCancelAsk}
         question={controller.nativeChatQuestion}
@@ -60,6 +62,7 @@ export function MobileNativeChatOverlay({
         onOpenFile={controller.handleNativeChatOpenFile}
         hasMore={session.hasMore}
         loadingEarlier={session.loadingEarlier}
+        loadEarlierError={session.loadEarlierError}
         onLoadEarlier={session.loadEarlier}
         onSend={images.sendNativeChat}
         pending={controller.chatPending}

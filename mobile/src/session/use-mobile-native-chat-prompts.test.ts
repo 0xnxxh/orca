@@ -2,26 +2,38 @@ import { createElement } from 'react'
 import TestRenderer from 'react-test-renderer'
 import { describe, expect, it } from 'vitest'
 import type { AgentStatusEntry } from '../../../src/shared/agent-status-types'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 
 const APPROVAL = JSON.stringify({
   approval: { tool: 'Bash', summary: 'pnpm build > build.log 2>&1' }
 })
 
-function permissionFor(status: Partial<AgentStatusEntry> | null): unknown {
-  let captured: unknown
+const ASK = JSON.stringify({
+  questions: [{ question: 'Which path?', options: ['fast', 'safe'] }]
+})
+
+function promptsFor(
+  status: Partial<AgentStatusEntry> | null,
+  messages: NativeChatMessage[] = []
+): ReturnType<typeof useMobileNativeChatPrompts> {
+  let captured: ReturnType<typeof useMobileNativeChatPrompts> | undefined
   function Probe(): null {
     captured = useMobileNativeChatPrompts({
       enabled: true,
       status: status as AgentStatusEntry | null,
-      messages: []
-    }).permission
+      messages
+    })
     return null
   }
   TestRenderer.act(() => {
     TestRenderer.create(createElement(Probe))
   })
-  return captured
+  return captured!
+}
+
+function permissionFor(status: Partial<AgentStatusEntry> | null): unknown {
+  return promptsFor(status).permission
 }
 
 describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
@@ -58,5 +70,42 @@ describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
     }) as { options: Array<{ label: string }> } | null
     expect(permission).toMatchObject({ title: 'Permission requested' })
     expect(permission?.options.map((o) => o.label)).toEqual(['Yes', 'No'])
+  })
+})
+
+describe('useMobileNativeChatPrompts ask state gate', () => {
+  const askMessages: NativeChatMessage[] = [
+    {
+      id: 'm1',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool-call',
+          name: 'AskUserQuestion',
+          input: { questions: [{ question: 'Which path?', options: ['fast', 'safe'] }] }
+        }
+      ],
+      timestamp: 0,
+      source: 'transcript'
+    }
+  ]
+
+  it('renders the ask card only while the agent is waiting or blocked', () => {
+    expect(promptsFor({ state: 'waiting', interactivePrompt: ASK }).ask).toMatchObject({
+      questions: [{ question: 'Which path?' }]
+    })
+    expect(promptsFor({ state: 'blocked', interactivePrompt: ASK }).ask).not.toBeNull()
+  })
+
+  it('renders no ask card from a sticky prompt while the agent is working or done', () => {
+    // The prompt payload outlives its answer — same paused gate as permission.
+    expect(promptsFor({ state: 'working', interactivePrompt: ASK }).ask).toBeNull()
+    expect(promptsFor({ state: 'done', interactivePrompt: ASK }).ask).toBeNull()
+  })
+
+  it('gates the transcript-derived pending ask the same way', () => {
+    expect(promptsFor({ state: 'waiting' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor({ state: 'working' }, askMessages).ask).toBeNull()
+    expect(promptsFor(null, askMessages).ask).toBeNull()
   })
 })

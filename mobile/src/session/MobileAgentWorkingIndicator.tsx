@@ -3,8 +3,14 @@ import { Animated, StyleSheet, Text, View } from 'react-native'
 import { colors, spacing, typography } from '../theme/mobile-theme'
 
 /** Animated three-dot "agent is working" row, shown while the active agent is
- *  still producing a reply. Pure presentation — visibility is the caller's call. */
-export function MobileAgentWorkingIndicator(): React.JSX.Element {
+ *  still producing a reply. Pure presentation — visibility is the caller's call.
+ *  `stale` mutes it while the transport is down: the state came from
+ *  pre-disconnect data and must not read as live activity. */
+export function MobileAgentWorkingIndicator({
+  stale = false
+}: {
+  stale?: boolean
+}): React.JSX.Element {
   const dots = [
     useRef(new Animated.Value(0.3)).current,
     useRef(new Animated.Value(0.3)).current,
@@ -12,6 +18,9 @@ export function MobileAgentWorkingIndicator(): React.JSX.Element {
   ]
 
   useEffect(() => {
+    if (stale) {
+      return
+    }
     const animations = dots.map((dot, i) =>
       Animated.loop(
         Animated.sequence([
@@ -24,16 +33,18 @@ export function MobileAgentWorkingIndicator(): React.JSX.Element {
     animations.forEach((a) => a.start())
     return () => animations.forEach((a) => a.stop())
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [stale])
 
   return (
-    <View style={styles.row}>
-      <Text style={styles.label}>Agent is working</Text>
-      <View style={styles.dots}>
-        {dots.map((dot, i) => (
-          <Animated.View key={i} style={[styles.dot, { opacity: dot }]} />
-        ))}
-      </View>
+    <View style={[styles.row, stale && styles.rowStale]}>
+      <Text style={styles.label}>{stale ? 'Agent status stale' : 'Agent is working'}</Text>
+      {stale ? null : (
+        <View style={styles.dots}>
+          {dots.map((dot, i) => (
+            <Animated.View key={i} style={[styles.dot, { opacity: dot }]} />
+          ))}
+        </View>
+      )}
     </View>
   )
 }
@@ -45,6 +56,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
+  },
+  rowStale: {
+    opacity: 0.55
   },
   label: {
     color: colors.textMuted,

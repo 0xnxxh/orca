@@ -17,7 +17,8 @@ import { isRenderableImageUri } from './mobile-native-chat-image-preview'
 import { MAX_TOOL_RESULT_CHARS, styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
 import { nativeChatMessageText } from './mobile-native-chat-message-text'
 import {
-  summarizeToolInput,
+  describeToolInput,
+  formatToolInput,
   summarizeToolRun,
   toolFilePath
 } from './mobile-native-chat-tool-summary'
@@ -88,14 +89,20 @@ function ToolLine({
   const [expanded, setExpanded] = useState(defaultExpanded)
   const { call, result } = pair
   const name = call ? call.name : 'Result'
+  // The row label is a human summary (path / primary arg), never raw JSON;
+  // the expanded detail below shows the full formatted input.
   const preview = call
-    ? summarizeToolInput(call.input)
+    ? describeToolInput(call.input)
     : (result?.output.split('\n')[0]?.slice(0, 80) ?? '')
   // Why: collapsed tool rows are the common path; defer bounded diff parsing
   // until the user asks to reveal the detail.
   const callDiff = expanded && call ? diffFromToolCall(call.name, call.input, diffLineLimit) : null
   const resultDiff = expanded && result ? diffFromText(result.output, diffLineLimit) : null
-  const hasDetail = callDiff !== null || result !== undefined || preview.length > 40
+  const hasDetail =
+    callDiff !== null ||
+    result !== undefined ||
+    preview.length > 40 ||
+    (call !== undefined && call.input !== null && typeof call.input === 'object')
   // A tool that targets a file (Read/Edit/Write…) renders its preview as a
   // tappable link that opens the file, independent of the line's expand tap.
   const filePath = call ? toolFilePath(call.input) : null
@@ -127,7 +134,11 @@ function ToolLine({
       {expanded ? (
         <View style={styles.toolDetail}>
           {callDiff ? <DiffView lines={callDiff} /> : null}
-          {!callDiff && call && preview ? <Text style={styles.mono}>{preview}</Text> : null}
+          {/* Diff-less calls show the full formatted input (pretty JSON), not
+              the one-line label repeated (desktop parity). */}
+          {!callDiff && call ? (
+            <Text style={styles.mono}>{formatToolInput(call.input)}</Text>
+          ) : null}
           {result ? (
             <ResultBody output={result.output} isError={result.isError} diff={resultDiff} />
           ) : null}

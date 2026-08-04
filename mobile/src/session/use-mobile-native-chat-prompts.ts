@@ -45,6 +45,9 @@ export function useMobileNativeChatPrompts(args: {
   return {
     permission,
     question,
-    ask: enabled ? (askFromStatus ?? askFromMessages) : null
+    // Ask cards sit inside the same paused gate as the approval envelope above:
+    // the prompt payload outlives its answer, so only a waiting/blocked agent
+    // may surface one — never a working or done one.
+    ask: enabled && blocked ? (askFromStatus ?? askFromMessages) : null
   }
 }

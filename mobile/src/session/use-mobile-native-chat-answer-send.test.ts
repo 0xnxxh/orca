@@ -11,6 +11,11 @@ import {
   markMobileNativeChatInputStale,
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite,
+  resetMobileNativeChatTerminalWritesForTests
+} from './mobile-native-chat-terminal-write-lock'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 
 type AnswerSend = ReturnType<typeof useMobileNativeChatAnswerSend>
@@ -45,6 +50,7 @@ describe('useMobileNativeChatAnswerSend', () => {
     vi.useFakeTimers()
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     resetMobileNativeChatStaleInputForTests()
+    resetMobileNativeChatTerminalWritesForTests()
   })
 
   afterEach(() => {
@@ -375,8 +381,9 @@ describe('useMobileNativeChatAnswerSend', () => {
   })
 
   it('cancels delayed keystrokes when the acknowledged input lease is lost', async () => {
+    const onSendError = vi.fn()
     const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
-    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
 
     const prompt: AskPrompt = {
       questions: [
@@ -395,5 +402,53 @@ describe('useMobileNativeChatAnswerSend', () => {
 
     await expect(result).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
+    // The first group DID land before the swap aborted the chain — the card
+    // must not end looking cleanly sent (STA-3333: abort paths misreported).
+    expect(onSendError).toHaveBeenCalledWith('Answer partly sent — check chat before retrying')
+  })
+
+  it('rejects an answer while another composed write holds the terminal', async () => {
+    const onSendError = vi.fn()
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    // An image paste sequence is mid-flight into the same PTY.
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(false)
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent')
+
+    // Once that sequence releases, answers flow again.
+    releaseMobileNativeChatTerminalWrite('terminal')
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
+  })
+
+  it('lets a superseding answer inherit the cancelled chain’s lock and releases it last', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    const prompt: AskPrompt = {
+      questions: [
+        { question: 'q1', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'q2', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    }
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(prompt, [{ indices: [0] }, { indices: [0] }])
+    })
+    // The user changes their mind mid-pacing: the new answer must not be
+    // rejected by the lock its own predecessor still holds.
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+    })
+    await act(async () => vi.runAllTimersAsync())
+
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(true)
+    // Both chains unwound: the terminal is free for the next composed write.
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
+    releaseMobileNativeChatTerminalWrite('terminal')
   })
 })

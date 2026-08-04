@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest'
 import type { NativeChatBlock } from './native-chat-types'
-import { briefToolArg, summarizeToolInput, summarizeToolRun } from './native-chat-tool-summary'
+import {
+  briefToolArg,
+  describeToolInput,
+  summarizeToolInput,
+  summarizeToolRun
+} from './native-chat-tool-summary'
+
+describe('describeToolInput', () => {
+  it('labels a file-target call with its path, not raw JSON', () => {
+    expect(describeToolInput({ file_path: '/repo/src/app/Main.tsx', offset: 10 })).toBe(
+      '/repo/src/app/Main.tsx'
+    )
+    expect(describeToolInput({ path: 'src/index.ts' })).toBe('src/index.ts')
+  })
+
+  it('labels a command-shaped call with the command text', () => {
+    expect(describeToolInput({ command: 'pnpm test', description: 'Run tests' })).toBe('pnpm test')
+    expect(describeToolInput({ pattern: 'foo.*bar', glob: '*.ts' })).toBe('foo.*bar')
+  })
+
+  it('falls back to the bounded JSON preview for other shapes', () => {
+    expect(describeToolInput({ todos: [{ id: 1 }] })).toBe(
+      summarizeToolInput({ todos: [{ id: 1 }] })
+    )
+    expect(describeToolInput('raw string input')).toBe('raw string input')
+    expect(describeToolInput(null)).toBe('')
+  })
+
+  it('truncates an overlong path like any other preview', () => {
+    const path = `/very/${'long/'.repeat(30)}file.ts`
+    expect(describeToolInput({ file_path: path }).length).toBeLessThanOrEqual(80)
+    expect(describeToolInput({ file_path: path })).toContain('…')
+  })
+})
 
 describe('summarizeToolInput bounded preview', () => {
   it('collapses depth beyond the bound instead of serializing the whole tree', () => {

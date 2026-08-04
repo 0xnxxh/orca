@@ -7,10 +7,32 @@ const MAX_PREVIEW_DEPTH = 2
 const MAX_TOOL_RUN_SUMMARY_PARTS = 3
 
 export function summarizeToolInput(input: unknown): string {
-  const collapsed = toRawPreview(input).replace(/\s+/g, ' ').trim()
+  return truncatePreview(toRawPreview(input).replace(/\s+/g, ' ').trim())
+}
+
+function truncatePreview(collapsed: string): string {
   return collapsed.length <= MAX_PREVIEW_LENGTH
     ? collapsed
     : `${collapsed.slice(0, MAX_PREVIEW_LENGTH - 1)}…`
+}
+
+/** Human label for a tool line: the target file path, else the primary string
+ *  argument (command/query/…), else the bounded JSON preview. Keeps raw
+ *  `{"file_path":…}` JSON out of the tappable row label. */
+export function describeToolInput(input: unknown): string {
+  const path = toolFilePath(input)
+  if (path) {
+    return truncatePreview(path)
+  }
+  if (input && typeof input === 'object') {
+    const value = input as Record<string, unknown>
+    const primary =
+      value.command ?? value.cmd ?? value.query ?? value.pattern ?? value.description ?? value.url
+    if (typeof primary === 'string' && primary.trim()) {
+      return summarizeToolInput(primary)
+    }
+  }
+  return summarizeToolInput(input)
 }
 
 /** Full, pretty-printed tool-call input for the expanded detail view. Strings

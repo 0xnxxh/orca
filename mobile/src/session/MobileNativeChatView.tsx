@@ -20,7 +20,8 @@ import {
   mobileNativeChatEmptyState,
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
-import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
+import { useMobileNativeChatStreamingBubble } from './use-mobile-native-chat-streaming-bubble'
+import { MobileNativeChatLoadEarlierHeader } from './MobileNativeChatLoadEarlierHeader'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -52,6 +53,8 @@ type Props = {
   streamingText?: string
   hasMore?: boolean
   loadingEarlier?: boolean
+  /** Last older-history page failed; shows an inline retry in the header row. */
+  loadEarlierError?: string | null
   onLoadEarlier?: () => void
   onSend: (text: string) => Promise<boolean>
   /** Optimistic queued sends (owned by the route so they survive view switches). */
@@ -85,6 +88,11 @@ type Props = {
   /** Structured AskUserQuestion prompt parsed from the transcript (preferred over
    *  the heuristic question card). */
   ask?: AskPrompt | null
+  /** Stable key for the ask card. Dismissal state lives in the controller (it
+   *  must survive this subtree unmounting on a chat↔terminal toggle). */
+  askKey?: string | null
+  /** Hide the answered/dismissed ask until a different question arrives. */
+  onDismissAsk?: () => void
   /** Deliver the ask answer as per-question selections; the send hook turns them
    *  into selector keystrokes (Claude) or pasted label text (other agents). */
   onAnswerAsk?: (prompt: AskPrompt, selections: AskAnswerSelection[]) => Promise<boolean>
@@ -110,6 +118,7 @@ export function MobileNativeChatView({
   streamingText,
   hasMore,
   loadingEarlier,
+  loadEarlierError,
   onLoadEarlier,
   onSend,
   pending,
@@ -130,6 +139,8 @@ export function MobileNativeChatView({
   filePaths,
   onNeedFiles,
   ask,
+  askKey,
+  onDismissAsk,
   onAnswerAsk,
   onCancelAsk,
   question,
@@ -142,10 +153,6 @@ export function MobileNativeChatView({
   const insets = useSafeAreaInsets()
   const listRef = useRef<FlatList<NativeChatMessage>>(null)
   const [toolsExpanded, setToolsExpanded] = useState(false)
-  // Dismiss the question card as soon as it's answered; the live status lingers
-  // briefly (the agent emits a post-tool event with the same prompt), so hide it
-  // until a genuinely different question arrives.
-  const { askKey, showAsk, dismissAsk } = useMobileNativeChatAskDismiss(ask)
   // Lift the composer clear of the keyboard, plus the bottom safe-area so it
   // never sits under the home indicator / nav bar (mirrors the terminal dock).
   const bottomPad = keyboardInset > 0 ? keyboardInset + insets.bottom : insets.bottom
@@ -166,9 +173,10 @@ export function MobileNativeChatView({
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
   const foldedMessages = useMemo(() => foldMobileNativeChatMessages(messages), [messages])
+  const streaming = useMobileNativeChatStreamingBubble(foldedMessages, streamingText)
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streamingText, pending }),
-    [foldedMessages, streamingText, pending]
+    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streaming, pending }),
+    [foldedMessages, streaming, pending]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above
@@ -256,6 +264,10 @@ export function MobileNativeChatView({
     return () => clearTimeout(timer)
   }, [rawLockReason])
   const lockReason = lockHeld ? rawLockReason : null
+  // Everything derived from agent status is pre-disconnect data while the
+  // transport is down: mute the working row and disable Stop (a tap could not
+  // reach the PTY anyway). Shares the lock's debounce so blips don't flicker it.
+  const statusStale = lockReason === 'disconnected'
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
@@ -274,6 +286,9 @@ export function MobileNativeChatView({
               contentContainerStyle={styles.listContent}
               onScroll={onScroll}
               scrollEventThrottle={32}
+              // Anchor the viewport to the first visible row so a loadEarlier
+              // prepend grows the list upward instead of jumping the reader.
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={() => {
                 if (data.length > 0 && atBottom) {
                   listRef.current?.scrollToEnd({ animated: false })
@@ -296,17 +311,11 @@ export function MobileNativeChatView({
               }}
               ListHeaderComponent={
                 hasMore ? (
-                  <Pressable
-                    style={styles.loadEarlier}
-                    onPress={onLoadEarlier}
-                    disabled={loadingEarlier}
-                  >
-                    {loadingEarlier ? (
-                      <ActivityIndicator size="small" color={colors.textMuted} />
-                    ) : (
-                      <Text style={styles.loadEarlierText}>Load earlier messages</Text>
-                    )}
-                  </Pressable>
+                  <MobileNativeChatLoadEarlierHeader
+                    loadingEarlier={loadingEarlier}
+                    loadEarlierError={loadEarlierError}
+                    onLoadEarlier={onLoadEarlier}
+                  />
                 ) : null
               }
               ListEmptyComponent={
@@ -333,22 +342,24 @@ export function MobileNativeChatView({
         </GestureHandlerRootView>
       )}
       {/* Pending agent prompt: a structured AskUserQuestion wins, then a
-          heuristic permission, then a heuristic question. */}
-      {showAsk && ask ? (
+          heuristic permission, then a heuristic question. The controller owns
+          dismissal (it must survive this subtree unmounting on a view toggle);
+          `ask` arrives already nulled while dismissed. */}
+      {ask ? (
         <MobileNativeChatAsk
           key={askKey ?? 'ask'}
           prompt={ask}
           onAnswer={async (selections) => {
             const accepted = (await onAnswerAsk?.(ask, selections)) ?? false
             if (accepted) {
-              dismissAsk()
+              onDismissAsk?.()
             }
             return accepted
           }}
           onCancel={async () => {
             const accepted = (await onCancelAsk?.()) ?? false
             if (accepted) {
-              dismissAsk()
+              onDismissAsk?.()
             }
             return accepted
           }}
@@ -370,7 +381,7 @@ export function MobileNativeChatView({
           tool-calls expand/collapse toggle on the left, Stop in the far corner. */}
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
-          {agentWorking ? <MobileAgentWorkingIndicator /> : null}
+          {agentWorking ? <MobileAgentWorkingIndicator stale={statusStale} /> : null}
           <Pressable
             style={({ pressed }) => [styles.chromeToggle, pressed && styles.pressed]}
             onPress={() => setToolsExpanded((v) => !v)}
@@ -386,8 +397,13 @@ export function MobileNativeChatView({
         </View>
         {agentWorking ? (
           <Pressable
-            style={({ pressed }) => [styles.stopButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.stopButton,
+              pressed && !statusStale && styles.pressed,
+              statusStale && styles.stopDisabled
+            ]}
             onPress={onStop}
+            disabled={statusStale}
             hitSlop={8}
             accessibilityLabel="Stop the agent"
           >

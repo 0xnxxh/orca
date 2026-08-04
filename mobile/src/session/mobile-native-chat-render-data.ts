@@ -7,6 +7,10 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { foldToolMessages } from './mobile-native-chat-blocks'
 import { normalizeImageTranscriptMessages } from './mobile-native-chat-image-transcript-markers'
 import { stripNoiseMessages } from './mobile-native-chat-noise'
+import {
+  createMobileNativeChatStreamingGate,
+  deriveMobileNativeChatStreaming
+} from './mobile-native-chat-streaming-gate'
 import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
 
 /** The centered empty-state copy for a chat with no messages, mirroring the
@@ -46,7 +50,9 @@ export type MobileNativeChatPendingItem = {
 /** Derive the list data from the raw transcript: fold tool turns into the
  *  assistant turn, optionally append a synthetic streaming bubble, then the
  *  route-owned optimistic "queued" messages at the tail. Returns the
- *  intermediate `folded`/`streaming` so the caller can memoize on them. */
+ *  intermediate `folded`/`streaming` so the caller can memoize on them.
+ *  One-shot form: derives the streaming bubble through a fresh gate (no
+ *  cross-tick memory); the live view threads its own gate instead. */
 export function buildMobileNativeChatData({
   messages,
   streamingText,
@@ -57,7 +63,12 @@ export function buildMobileNativeChatData({
   pending: MobileNativeChatPendingItem[]
 }): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
   const folded = foldMobileNativeChatMessages(messages)
-  return buildMobileNativeChatTransientData({ folded, streamingText, pending })
+  const { streaming } = deriveMobileNativeChatStreaming(
+    createMobileNativeChatStreamingGate(),
+    folded,
+    streamingText
+  )
+  return buildMobileNativeChatTransientData({ folded, streaming, pending })
 }
 
 export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): NativeChatMessage[] {
@@ -68,16 +79,14 @@ export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): Nat
 
 export function buildMobileNativeChatTransientData({
   folded,
-  streamingText,
+  streaming,
   pending
 }: {
   folded: NativeChatMessage[]
-  streamingText?: string
+  /** Streaming bubble text, already gated by `deriveMobileNativeChatStreaming`. */
+  streaming: string | null
   pending: MobileNativeChatPendingItem[]
 }): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
-  // Only show the streaming bubble while its text leads the transcript — once the
-  // real assistant turn lands with the same text, drop the synthetic one.
-  const streaming = deriveStreaming(folded, streamingText)
   const data: NativeChatMessage[] = [
     ...folded,
     ...(streaming
@@ -105,27 +114,4 @@ export function buildMobileNativeChatTransientData({
     }))
   ]
   return { folded, streaming, data }
-}
-
-function deriveStreaming(folded: NativeChatMessage[], streamingText?: string): string | null {
-  const text = streamingText?.trim()
-  if (!text) {
-    return null
-  }
-  const last = folded[folded.length - 1]
-  const lastText =
-    last?.role === 'assistant'
-      ? last.blocks
-          .filter((b) => b.type === 'text')
-          .map((b) => (b.type === 'text' ? b.text : ''))
-          .join('')
-          .trim()
-      : ''
-  // Hide the synthetic bubble only once the real turn has landed leading with the
-  // streamed text. A bare length compare would suppress a short new reply behind a
-  // longer previous turn; a completed prior turn won't start with the new prefix.
-  if (lastText.startsWith(text)) {
-    return null
-  }
-  return text
 }

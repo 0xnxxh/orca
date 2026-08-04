@@ -19,10 +19,18 @@ export type AppliedMobileNativeChatFrame =
       hasMore?: boolean
       beforeOffset?: number
       cursorInvalidated?: boolean
+      /** The frame replaced the whole retained window (replacement, first
+       *  snapshot, or a replay snapshot disjoint from local history) — the
+       *  caller must reset its paging window/cursor to the frame's. */
+      windowReplaced?: boolean
     }
 
 /** Applies runtime stream frames while preserving the initial-snapshot versus
- *  reconnect-replay distinction owned by the session hook. */
+ *  reconnect-replay distinction owned by the session hook. A replay snapshot
+ *  that overlaps the retained list merges in by id — paged-in history survives
+ *  a socket blip instead of collapsing to the replayed window. A disjoint
+ *  replay (long outage, compaction while away) can't be stitched without a
+ *  gap, so it falls back to replacing with the fresh authoritative window. */
 export function applyMobileNativeChatStreamFrame(args: {
   merger: NativeChatMerger
   frame: MobileNativeChatStreamFrame
@@ -42,12 +50,18 @@ export function applyMobileNativeChatStreamFrame(args: {
   if (!Array.isArray(frame.messages)) {
     return { kind: 'ignored' }
   }
-  if (frame.type === 'replacement' || (frame.type === 'snapshot' && replaceSnapshot)) {
+  const replayOverlapsHistory =
+    frame.type === 'snapshot' &&
+    !replaceSnapshot &&
+    merger.list.length > 0 &&
+    frame.messages.some((message) => merger.indexById.has(message.id))
+  if (frame.type === 'replacement' || (frame.type === 'snapshot' && !replayOverlapsHistory)) {
     replaceList(merger, frame.messages)
     return {
       kind: 'messages',
       messages: merger.list,
       hasMore: frame.hasMore,
+      windowReplaced: true,
       ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
     }
   }

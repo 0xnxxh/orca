@@ -174,6 +174,113 @@ describe('useMobileNativeChatSession', () => {
     }
   )
 
+  it('keeps paged-in history across an auto-reconnect replay snapshot', async () => {
+    // The transport replays the subscription with its original params after an
+    // in-place reconnect, so the replayed snapshot is the newest initial window
+    // again. It must merge into the grown history, not truncate it back to 40.
+    const sendRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        messages: Array.from({ length: 60 }, (_unused, index) => message(`paged-${index}`)),
+        hasMore: false,
+        beforeOffset: 40
+      }
+    })
+    const window = Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({ type: 'snapshot', messages: window, hasMore: true, beforeOffset: 100 })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.messages).toHaveLength(100)
+
+    // Reconnect replay: the same newest-40 window. History survives untouched.
+    await act(async () =>
+      emit({ type: 'snapshot', messages: window, hasMore: true, beforeOffset: 100 })
+    )
+    expect(state?.messages).toHaveLength(100)
+    expect(state?.messages[0]?.id).toBe('paged-0')
+
+    // A replay carrying one message that arrived while away merges it in; the
+    // grown window stays bounded, so only the single oldest row trims.
+    await act(async () =>
+      emit({
+        type: 'snapshot',
+        messages: [...window, message('live-1')],
+        hasMore: true,
+        beforeOffset: 100
+      })
+    )
+    expect(state?.messages).toHaveLength(100)
+    expect(state?.messages[0]?.id).toBe('paged-1')
+    expect(state?.messages.at(-1)?.id).toBe('live-1')
+  })
+
+  it('surfaces a failed older-history page and clears it on a retry', async () => {
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: { message: 'nope' } })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { messages: [message('older')], hasMore: false, beforeOffset: 0 }
+      })
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.loadEarlierError).toBeTruthy()
+    expect(state?.loadingEarlier).toBe(false)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+    expect(state?.loadEarlierError).toBeNull()
+    expect(state?.messages[0]?.id).toBe('older')
+  })
+
+  it('surfaces a rejected older-history request instead of leaking it', async () => {
+    const sendRequest = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error('Connection interrupted')
+      ) as unknown as RpcClient['sendRequest']
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () => {
+      state?.loadEarlier()
+      await Promise.resolve()
+    })
+
+    expect(state?.loadEarlierError).toBeTruthy()
+    expect(state?.loadingEarlier).toBe(false)
+  })
+
   it('rejects a cursor page invalidated by live trim and retries with a growing tail', async () => {
     let resolveCursorPage: (response: unknown) => void = () => {}
     const sendRequest = vi
@@ -291,7 +398,8 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
   it('re-reads instead of resurfacing a settled read when the same identity returns', async () => {
     // Leaving chat view nulls the agent, then returning restores the identity a
     // settled read already matched — but its list was cleared, so trusting it
-    // would report 'ready' over an empty transcript.
+    // would report 'ready' over an empty transcript. The last settled list for
+    // this identity keeps rendering while the re-read is in flight.
     const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
       onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
       return () => {}
@@ -309,12 +417,17 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       renderer?.update(createElement(Harness, { client, sessionId: 'session-a', agent: 'claude' }))
     )
 
-    expect(renders[0]).toMatchObject({ status: 'loading', transcriptLoading: true, ids: [] })
+    expect(renders[0]).toMatchObject({
+      status: 'loading',
+      transcriptLoading: true,
+      ids: ['a-1']
+    })
   })
 
-  it('re-reads instead of resurfacing a settled read after a reconnect', async () => {
-    // A reconnect swaps the client without moving the identity; the effect
-    // re-subscribes and clears the list, so the old outcome must not stand.
+  it('keeps the last settled list rendered while a swapped client re-reads', async () => {
+    // A manual-retry reconnect swaps the client without moving the identity; the
+    // old outcome must not stand ('loading', not 'ready'), but the cached
+    // transcript keeps rendering instead of collapsing to a full-screen spinner.
     const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
       onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
       return () => {}
@@ -323,13 +436,33 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     await mountAt(client, 'session-a')
     expect(renders.at(-1)).toMatchObject({ status: 'ready' })
 
-    const reconnected = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    let emitFresh: (frame: unknown) => void = () => {}
+    const reconnected = {
+      subscribe: vi.fn((_method: string, _params: unknown, onData: (frame: unknown) => void) => {
+        emitFresh = onData
+        return () => {}
+      })
+    } as unknown as RpcClient
     renders.length = 0
     await act(async () =>
       renderer?.update(createElement(Harness, { client: reconnected, sessionId: 'session-a' }))
     )
 
-    expect(renders[0]).toMatchObject({ status: 'loading', transcriptLoading: true, ids: [] })
+    expect(renders[0]).toMatchObject({
+      status: 'loading',
+      transcriptLoading: true,
+      ids: ['a-1']
+    })
+
+    // The fresh client's snapshot supersedes the held list.
+    await act(async () =>
+      emitFresh({ type: 'snapshot', messages: [message('a-1'), message('a-2')], hasMore: false })
+    )
+    expect(renders.at(-1)).toMatchObject({
+      status: 'ready',
+      transcriptLoading: false,
+      ids: ['a-1', 'a-2']
+    })
   })
 
   it('never hands out the previous session’s messages under the new session id', async () => {
