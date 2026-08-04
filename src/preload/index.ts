@@ -27,6 +27,9 @@ import type { VerifyAndAddRuntimeEnvironmentResult } from '../shared/remote-pair
 import type {
   SshMutationExpectation,
   SshConnectionState,
+  SshConfigHostListArgs,
+  SshConfigHostListResult,
+  SshConfigHostResolution,
   SshConfigImportResult,
   SshTargetAddResult,
   SshTarget,
@@ -95,7 +98,8 @@ import type {
   WorktreeBaseStatusEvent,
   WorktreeDefaultTabsLaunch,
   WorktreeHeadIdentity,
-  WorktreeRemoteBranchConflictEvent
+  WorktreeRemoteBranchConflictEvent,
+  WorktreeSetupLaunch
 } from '../shared/types'
 import type { PtyModelRestoreNeededEvent } from '../shared/pty-model-restore-marker'
 import type { PtyListedSession } from '../shared/pty-listed-session'
@@ -286,6 +290,17 @@ import {
   registerRendererRestartIpcRelays
 } from './renderer-restart-wiring'
 
+// Why: the sync checkpoint only stages; this joins its durable write so a
+// navigating path can abort instead of losing the staged session.
+async function awaitBeforeUnloadCheckpoint(): Promise<void> {
+  const result = (await ipcRenderer.invoke('app:await-before-unload-checkpoint')) as {
+    ok?: unknown
+  }
+  if (result?.ok !== true) {
+    throw new Error('Failed to persist renderer state before unload.')
+  }
+}
+
 type NativeFileDropCallback = (data: NativeFileDropPayload) => void
 
 const nativeFileDropCallbacks: NativeFileDropCallback[] = []
@@ -475,7 +490,8 @@ const api = {
     restart: async (): Promise<void> => {
       await prepareRendererForAppRestart(window, {
         startedEventName: ORCA_APP_RESTART_STARTED_EVENT,
-        abortedEventName: ORCA_APP_RESTART_ABORTED_EVENT
+        abortedEventName: ORCA_APP_RESTART_ABORTED_EVENT,
+        awaitCheckpoint: awaitBeforeUnloadCheckpoint
       })
       try {
         return await ipcRenderer.invoke('app:restart')
@@ -2435,6 +2451,17 @@ const api = {
       webContentsId: number
     }): Promise<boolean> => ipcRenderer.invoke('browser:registerGuest', args),
 
+    isGuestRegistered: (args: { browserPageId: string; webContentsId: number }): Promise<boolean> =>
+      ipcRenderer.invoke('browser:isGuestRegistered', args),
+
+    repairGuestRegistration: (args: {
+      browserPageId: string
+      workspaceId: string
+      worktreeId: string
+      sessionProfileId?: string | null
+      webContentsId: number
+    }): Promise<boolean> => ipcRenderer.invoke('browser:repairGuestRegistration', args),
+
     unregisterGuest: (args: { browserPageId: string }): Promise<void> =>
       ipcRenderer.invoke('browser:unregisterGuest', args),
 
@@ -2868,8 +2895,7 @@ const api = {
       repoId: string
       worktreePath: string
       command: string
-    }): Promise<{ runnerScriptPath: string; envVars: Record<string, string> }> =>
-      ipcRenderer.invoke('hooks:createIssueCommandRunner', args),
+    }): Promise<WorktreeSetupLaunch> => ipcRenderer.invoke('hooks:createIssueCommandRunner', args),
 
     readIssueCommand: (args: {
       repoId: string
@@ -2955,11 +2981,18 @@ const api = {
     download: () => ipcRenderer.invoke('updater:download'),
     dismissNudge: () => ipcRenderer.invoke('updater:dismissNudge'),
     dismissAvailableUpdate: () => ipcRenderer.invoke('updater:dismissAvailableUpdate'),
+    getLinuxPackageInstallInstructions: () =>
+      ipcRenderer.invoke('updater:getLinuxPackageInstallInstructions'),
+    showLinuxPackage: () => ipcRenderer.invoke('updater:showLinuxPackage'),
     listBuilds: (channel) => ipcRenderer.invoke('updater:listBuilds', channel),
     quitAndInstall: (): Promise<void> =>
-      prepareAndInvokeUpdaterInstall(window, updaterQuitAbortRelay, () =>
-        ipcRenderer.invoke('updater:quitAndInstall')
+      prepareAndInvokeUpdaterInstall(
+        window,
+        updaterQuitAbortRelay,
+        () => ipcRenderer.invoke('updater:quitAndInstall'),
+        awaitBeforeUnloadCheckpoint
       ),
+
     onStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)
       ipcRenderer.on('updater:status', listener)
@@ -3685,7 +3718,7 @@ const api = {
       callback: (data: {
         repoId: string
         worktreeId: string
-        setup?: { runnerScriptPath: string; envVars: Record<string, string> }
+        setup?: WorktreeSetupLaunch
         startup?: { command: string; env?: Record<string, string> }
         defaultTabs?: WorktreeDefaultTabsLaunch
       }) => void
@@ -3695,7 +3728,7 @@ const api = {
         data: {
           repoId: string
           worktreeId: string
-          setup?: { runnerScriptPath: string; envVars: Record<string, string> }
+          setup?: WorktreeSetupLaunch
           startup?: { command: string; env?: Record<string, string> }
           defaultTabs?: WorktreeDefaultTabsLaunch
         }
@@ -4149,6 +4182,8 @@ const api = {
   aiVault: {
     listSessions: (args?: AiVaultListArgs): Promise<unknown> =>
       ipcRenderer.invoke('aiVault:listSessions', args),
+    cancelListSessions: (args: { requestToken: string }): Promise<void> =>
+      ipcRenderer.invoke('aiVault:cancelListSessions', args),
     prepareSessionResume: (args: AiVaultPrepareSessionResumeArgs): Promise<unknown> =>
       ipcRenderer.invoke('aiVault:prepareSessionResume', args),
     listSubagentSessions: (args: AiVaultSubagentListArgs): Promise<unknown> =>
@@ -4395,6 +4430,12 @@ const api = {
     importConfig: (args?: { reAdopt?: boolean }): Promise<SshConfigImportResult> =>
       ipcRenderer.invoke('ssh:importConfig', args),
 
+    listConfigHosts: (args?: SshConfigHostListArgs): Promise<SshConfigHostListResult> =>
+      ipcRenderer.invoke('ssh:listConfigHosts', args),
+
+    resolveConfigHost: (args: { alias: string }): Promise<SshConfigHostResolution | null> =>
+      ipcRenderer.invoke('ssh:resolveConfigHost', args),
+
     // Why: `initiator: 'auto'` marks connects Orca issues on its own (pane remounts, automations).
     // Only a user-initiated connect re-earns the auto-reconnect budget; defaulting to 'user' keeps
     // every unmarked caller on the pre-existing behavior.
@@ -4620,7 +4661,7 @@ const api = {
       address?: string
       rotate?: boolean
     }): Promise<
-      | { available: false }
+      | { available: false; reason?: 'network_exposure_failed'; guidance?: string }
       | {
           available: true
           pairingUrl: string

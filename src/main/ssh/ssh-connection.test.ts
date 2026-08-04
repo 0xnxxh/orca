@@ -172,7 +172,9 @@ const {
   removeControlSocketPathMock: vi.fn(),
   // Why mock: attemptConnect probes real ~/.ssh defaults; under fake timers that I/O races the
   // wall-clock budget helper and flakes as status 'connecting' (CI: tests node 24 shard).
-  requiresSystemSshForSecurityKeyMock: vi.fn(async () => false),
+  requiresSystemSshForSecurityKeyMock: vi.fn<
+    typeof SshTransportSelection.requiresSystemSshForSecurityKey
+  >(async () => false),
   spawnSystemSshMock: vi.fn(),
   spawnSystemSshCommandMock: vi.fn()
 }))
@@ -2237,6 +2239,30 @@ describe('SshConnection', () => {
       'echo after-connect',
       { gssapiOnly: true }
     )
+  })
+
+  it('tries GSSAPI first for a manually owned config-picker target', async () => {
+    vi.mocked(resolveWithSshG).mockResolvedValue(
+      createResolvedConfig({ proxyUseFdpass: false, gssapiAuthentication: true })
+    )
+    const conn = new SshConnection(
+      createTarget({
+        source: 'manual',
+        configHost: 'prod',
+        host: 'prod.internal',
+        gssapiAuthentication: true
+      }),
+      createCallbacks()
+    )
+
+    await conn.connect()
+
+    expect(spawnSystemSshCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'manual', configHost: 'prod' }),
+      'echo ORCA-SYSTEM-SSH-OK',
+      expect.objectContaining({ gssapiOnly: true, wrapCommand: false })
+    )
+    expect(clientInstances).toHaveLength(0)
   })
 
   it('falls back to ssh2 when the GSSAPI-first system SSH attempt fails', async () => {
