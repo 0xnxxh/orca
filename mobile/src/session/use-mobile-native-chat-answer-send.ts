@@ -247,7 +247,10 @@ export function useMobileNativeChatAnswerSend(args: {
           if (generationRef.current !== generation) {
             return false
           }
-          return (await sendTerminal(formatAskAnswer(prompt, selections), true)) || fail()
+          // A superseded chain must not report success either: an accepted answer
+          // retires the shared send-error banner, wiping the successor's fence.
+          const sent = (await sendTerminal(formatAskAnswer(prompt, selections), true)) || fail()
+          return sent && generationRef.current === generation
         }
         const groups =
           resolveNativeChatTranscriptAgent(agentRef.current) === 'codex'
@@ -270,7 +273,8 @@ export function useMobileNativeChatAnswerSend(args: {
             deadline += MOBILE_NATIVE_CHAT_QUESTION_STEP_MS
           }
         }
-        return groups.length > 0
+        // Superseded on the last key: same as above, the successor owns the surface.
+        return groups.length > 0 && generationRef.current === generation
       } finally {
         // Any accepted key changed the live selector, so a queued replacement
         // cannot safely apply its from-scratch key plan to that new position.

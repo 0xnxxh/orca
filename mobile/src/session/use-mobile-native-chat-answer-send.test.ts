@@ -17,6 +17,7 @@ import {
   resetMobileNativeChatTerminalWritesForTests
 } from './mobile-native-chat-terminal-write-lock'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
+import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
 
 type AnswerSend = ReturnType<typeof useMobileNativeChatAnswerSend>
 
@@ -45,8 +46,13 @@ describe('useMobileNativeChatAnswerSend', () => {
   let mountedClient: RpcClient | null = null
   let mountedOnSendError: ((message: string) => void) | null = null
   let mountedAgent: AgentType = 'claude'
+  // The route sends through useNativeChatAcceptedAction, whose accepted callback
+  // retires the shared send-error banner (use-mobile-native-chat-controller.ts).
+  let acceptedAnswerAsk: AnswerSend['answerAsk'] | null = null
+  let onAccepted = vi.fn()
 
   beforeEach(() => {
+    onAccepted = vi.fn()
     vi.useFakeTimers()
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     resetMobileNativeChatStaleInputForTests()
@@ -57,6 +63,7 @@ describe('useMobileNativeChatAnswerSend', () => {
     act(() => renderer?.unmount())
     renderer = null
     answerSend = null
+    acceptedAnswerAsk = null
     mountedClient = null
     mountedOnSendError = null
     mountedAgent = 'claude'
@@ -74,6 +81,7 @@ describe('useMobileNativeChatAnswerSend', () => {
       streamIdentity: 'host\0worktree\0tab\0session',
       onSendError: mountedOnSendError!
     })
+    acceptedAnswerAsk = useNativeChatAcceptedAction(answerSend.answerAsk, onAccepted)
     return null
   }
 
@@ -639,5 +647,166 @@ describe('useMobileNativeChatAnswerSend', () => {
     await expect(second).resolves.toBe(true)
     expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
     releaseMobileNativeChatTerminalWrite('terminal')
+  })
+
+  it('does not retire the fence banner when the superseded answer lands', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    // The healthy path: the first answer LANDS, which is also the case that fences
+    // hardest — its key moved the live selector.
+    await act(async () => {
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
+    // A superseded chain reporting success would clear the banner it just raised —
+    // the accepted hook runs after the fence, so the user would see nothing at all.
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retire the fence banner when a superseded pasted answer lands', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError, 'grok')
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+
+    // The pasted shape commits with Enter, so a superseded chain is doubly unsafe
+    // to report as accepted — the answer it committed is not the one on screen.
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
+  })
+
+  it('fences a third answer behind an already-fenced successor, reporting once', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    let third: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      third = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    await expect(third).resolves.toBe(false)
+    // The middle chain sent nothing, so only the verdict it INHERITED can stop the
+    // third from replaying a from-scratch plan onto the advanced selector.
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    // Only the newest chain owns the error surface.
+    expect(onSendError).toHaveBeenCalledTimes(1)
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
+  })
+
+  it('queues a late third answer behind the successor already on the wire', async () => {
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    let third: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    // Nothing landed, so the successor is cleared and puts its own key on the wire.
+    await act(async () => {
+      settle[0]!({ ...acceptedResponse(), result: { send: { accepted: false } } })
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      third = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The first chain unwound while the second was mid-write: it must not have
+    // dropped the second's turn, or this one writes into the same PTY concurrently.
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      settle[1]!(acceptedResponse())
+      await Promise.resolve()
+    })
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    await expect(third).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 })
