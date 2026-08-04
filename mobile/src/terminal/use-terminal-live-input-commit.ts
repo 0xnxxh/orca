@@ -131,6 +131,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
         typeof nativeEvent.replacementText !== 'string' ||
         !nativeEvent.replacementRange
       ) {
+        isComposingRef.current = true
         return
       }
 
@@ -139,10 +140,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
         replacementText: nativeEvent.replacementText,
         replacementRange: nativeEvent.replacementRange
       })
-      isComposingRef.current = false
       if (!commit) {
+        isComposingRef.current = true
         return
       }
+      isComposingRef.current = false
       committedTextRef.current = commit.committedText
       if (commit.payload.length > 0) {
         void queueSend(activeHandle, commit.payload)

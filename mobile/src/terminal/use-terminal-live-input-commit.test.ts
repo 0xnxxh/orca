@@ -102,6 +102,21 @@ const ORDINARY_ABC_TRACE: readonly RecordedChange[] = [
   { text: 'abc', isComposing: false, replacementText: 'c', start: 2, end: 2 }
 ]
 
+const RECORDED_IOS_KOREAN_TRANSFORM_TRACE: readonly RecordedChange[] = [
+  { text: 'ㅇ', isComposing: false, replacementText: 'ㅇ', start: 0, end: 0 },
+  { text: '아', isComposing: false, replacementText: 'ㅏ', start: 1, end: 1 },
+  { text: '안', isComposing: false, replacementText: 'ㄴ', start: 1, end: 1 },
+  { text: '안ㄴ', isComposing: false, replacementText: 'ㄴ', start: 1, end: 1 },
+  { text: '안녀', isComposing: false, replacementText: 'ㅕ', start: 2, end: 2 },
+  { text: '안녕', isComposing: false, replacementText: 'ㅇ', start: 2, end: 2 },
+  { text: '안녕ㅎ', isComposing: false, replacementText: 'ㅎ', start: 2, end: 2 },
+  { text: '안녕하', isComposing: false, replacementText: 'ㅏ', start: 3, end: 3 },
+  { text: '안녕핫', isComposing: false, replacementText: 'ㅅ', start: 3, end: 3 },
+  { text: '안녕하세', isComposing: false, replacementText: 'ㅔ', start: 3, end: 3 },
+  { text: '안녕하셍', isComposing: false, replacementText: 'ㅇ', start: 4, end: 4 },
+  { text: '안녕하세요', isComposing: false, replacementText: 'ㅛ', start: 4, end: 4 }
+]
+
 const RECORDED_ANDROID_GBOARD_BACKSPACE_TRACE: readonly RecordedChange[] = [
   { text: 'a', isComposing: false, replacementText: 'a', start: 0, end: 0 },
   { text: '', isComposing: false, replacementText: '', start: 0, end: 1 }
@@ -398,6 +413,25 @@ describe('terminal live input commit hook', () => {
     await vi.waitFor(() => expect(english.sent).toEqual(['a', 'b', 'c']))
   })
 
+  it('replays iOS Korean post-change transforms without normalizing text', async () => {
+    const korean = createHarness()
+    replay(korean.handlers, RECORDED_IOS_KOREAN_TRANSFORM_TRACE)
+    korean.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(korean.sent.at(-1)).toBe('\r'))
+    const terminalText = korean.sent
+      .join('')
+      .split('')
+      .reduce((text, character) =>
+        character === '\x7f' ? Array.from(text).slice(0, -1).join('') : text + character
+      )
+    expect(terminalText).toBe('안녕하세요\r')
+
+    const english = createHarness()
+    replay(english.handlers, ORDINARY_ABC_TRACE)
+    await vi.waitFor(() => expect(english.sent).toEqual(['a', 'b', 'c']))
+  })
+
   it('emits nothing for the recorded Pinyin cancellation trace', () => {
     const { handlers, sent } = createHarness()
     const changes = [
@@ -429,13 +463,39 @@ describe('terminal live input commit hook', () => {
     expect(sent).toEqual([])
   })
 
-  it('emits nothing when native replacement evidence is absent', () => {
+  it('blocks sends when native replacement evidence is absent', async () => {
     const { handlers, sent } = createHarness()
     handlers.handleLiveInputChange({
       nativeEvent: {
         text: 'mutable snapshot'
       } as never
     })
+    handlers.handleLiveInputSubmit()
     expect(sent).toEqual([])
+    await expect(handlers.handleLiveInputAccessoryBytes({ bytes: '\r' })).resolves.toEqual({
+      kind: 'suppress-raw'
+    })
+  })
+
+  it('blocks an incomplete command until native evidence reconciles', async () => {
+    const { handlers, sent } = createHarness()
+    change(handlers, ORDINARY_ABC_TRACE[0])
+    change(handlers, {
+      text: 'ab',
+      isComposing: false,
+      replacementText: 'b',
+      start: -1,
+      end: 1
+    })
+
+    handlers.handleLiveInputSubmit()
+    await expect(handlers.handleLiveInputAccessoryBytes({ bytes: '\r' })).resolves.toEqual({
+      kind: 'suppress-raw'
+    })
+    expect(sent).toEqual(['a'])
+
+    change(handlers, ORDINARY_ABC_TRACE[1])
+    handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(sent).toEqual(['a', 'b', '\r']))
   })
 })

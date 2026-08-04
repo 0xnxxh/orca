@@ -41,17 +41,19 @@ export function deriveTerminalLiveCommit(
   ) {
     return null
   }
-
-  const retainedText = committedText.slice(0, start)
-  const nextCommittedText = retainedText + change.replacementText
-  if (change.text !== nextCommittedText) {
-    return null
+  if (change.text === committedText) {
+    return { committedText, payload: '' }
   }
 
-  const eraseCount = Array.from(committedText.slice(start)).length
+  const retainedText = committedText.slice(0, start)
+  const predictedText = retainedText + change.replacementText
+  const operationMatchesText = change.text === predictedText
+  const replacementStart = operationMatchesText ? start : 0
+
+  const eraseCount = Array.from(committedText.slice(replacementStart)).length
   return {
-    committedText: nextCommittedText,
-    payload: TERMINAL_DEL_BYTE.repeat(eraseCount) + change.replacementText
+    committedText: change.text,
+    payload: TERMINAL_DEL_BYTE.repeat(eraseCount) + change.text.slice(replacementStart)
   }
 }
 
