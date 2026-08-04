@@ -243,12 +243,14 @@ export function HostScreen({
       if (!client) {
         return
       }
+      // alwaysShowDefaultBranchWorkspace is deliberately absent: mobile reads it
+      // but has no toggle, so echoing its local default would silently revert a
+      // desktop opt-out on the first filter tap before ui.get lands (#8873).
       const payload: WorkspaceViewSettings = {
         groupBy: groupModeToDesktop(next.groupMode),
         sortBy: next.sortMode,
         hideSleepingWorkspaces: next.hideSleeping,
         hideDefaultBranchWorkspace: next.hideDefaultBranch,
-        alwaysShowDefaultBranchWorkspace: next.alwaysShowDefaultBranch,
         filterRepoIds: next.filterRepoIds,
         collapsedGroups: next.collapsedGroups
       }

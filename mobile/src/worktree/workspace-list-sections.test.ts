@@ -165,6 +165,24 @@ describe('filterWorktrees', () => {
     ).toEqual([legacyMain])
   })
 
+  it('keeps a sleeping folder workspace on hosts that omit isMainWorktree', () => {
+    // A folder workspace has no branch, so the legacy branch heuristic can never
+    // recognise it — without its own arm, #8873 still reproduces on old desktops.
+    const legacyFolder = worktree({
+      workspaceKind: 'folder-workspace',
+      worktreeId: 'folder:legacy-1',
+      branch: ''
+    })
+
+    expect(
+      filterWorktrees(
+        [legacyFolder],
+        { filterRepoIds: new Set(), hideSleeping: true, hideDefaultBranch: false },
+        ''
+      )
+    ).toEqual([legacyFolder])
+  })
+
   it('lets hide-default-branch still win over the sleeping exemption', () => {
     const main = worktree({ worktreeId: 'main', branch: 'main', isMainWorktree: true })
 

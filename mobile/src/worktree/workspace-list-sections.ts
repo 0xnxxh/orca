@@ -67,13 +67,15 @@ function isDefaultBranchWorkspace(w: Worktree): boolean {
 
 /**
  * Whether "Hide sleeping" must keep this row — the project's entry point (#8873).
- * Falls back to the branch heuristic for hosts that predate isMainWorktree.
+ * Falls back to the branch heuristic for hosts that predate isMainWorktree; a
+ * folder workspace is always its project's entry point, and isDefaultBranchWorkspace
+ * rejects it by design, so it needs its own legacy arm or #8873 still reproduces.
  */
 function isSleepingSweepExempt(w: Worktree, alwaysShowDefaultBranch: boolean | undefined): boolean {
   if (alwaysShowDefaultBranch === false) {
     return false
   }
-  return w.isMainWorktree ?? isDefaultBranchWorkspace(w)
+  return w.isMainWorktree ?? (w.workspaceKind === 'folder-workspace' || isDefaultBranchWorkspace(w))
 }
 
 function orderMainWorktreeFirst(worktrees: Worktree[]): Worktree[] {
