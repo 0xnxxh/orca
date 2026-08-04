@@ -142,7 +142,10 @@ export function useMobileNativeChatAnswerSend(args: {
           // Fenced. Report it: the card re-enables on a false result, so silence
           // here is indistinguishable from a dead button. "Check chat" rather than
           // a bare "not sent" because the PREVIOUS answer's keys may have landed.
-          if (generationRef.current === generation) {
+          // Gate on the turn slot, not the generation: a dropped input lease bumps
+          // the generation without writing the Escape that Stop and ask-cancel do,
+          // so the card is still up and silence there strands an advanced selector.
+          if (writeTurnsRef.current.get(handle) === turn) {
             onSendError('Answer not sent — check chat before retrying')
           }
           return false

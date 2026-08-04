@@ -607,6 +607,44 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
   })
 
+  it('tells the user when a dropped lease fences a queued answer whose predecessor landed', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    // A transport blip, not a user cancel: unlike Stop and ask-cancel, the lost
+    // input lease writes no Escape, so the card stays up with Submit re-enabled.
+    await setEnabled(false)
+    await act(async () => {
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    // The first option key LANDED, so the live selector already moved. Reporting
+    // nothing invites a retry that double-steps it.
+    expect(onSendError).toHaveBeenCalledTimes(1)
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
+  })
+
   it('keeps the terminal locked while a queued successor writes', async () => {
     const settle: Array<(response: unknown) => void> = []
     const sendRequest = vi.fn().mockImplementation(
