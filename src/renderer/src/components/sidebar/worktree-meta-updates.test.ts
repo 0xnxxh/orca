@@ -3,6 +3,7 @@ import type { WorktreeMeta } from '../../../../shared/types'
 import {
   buildWorktreeMetaUpdates,
   type WorktreeMetaDraft,
+  type WorktreeMetaLiveLinks,
   type WorktreeMetaSnapshot
 } from './worktree-meta-updates'
 
@@ -31,9 +32,10 @@ function makeSnapshot(overrides: Partial<WorktreeMetaSnapshot> = {}): WorktreeMe
  *  stored value — the invariant is asserted on every build in this suite. */
 function buildUpdates(
   draft: Partial<WorktreeMetaDraft>,
-  snapshot: Partial<WorktreeMetaSnapshot> = {}
+  snapshot: Partial<WorktreeMetaSnapshot> = {},
+  live: WorktreeMetaLiveLinks = {}
 ): Partial<WorktreeMeta> {
-  const updates = buildWorktreeMetaUpdates(makeDraft(draft), makeSnapshot(snapshot))
+  const updates = buildWorktreeMetaUpdates(makeDraft(draft), makeSnapshot(snapshot), live)
   const undefinedKeys = Object.keys(updates).filter(
     (key) => updates[key as keyof WorktreeMeta] === undefined
   )
@@ -65,7 +67,7 @@ describe('buildWorktreeMetaUpdates', () => {
   })
 
   it('writes a GitHub issue number and clears the Linear slots', () => {
-    expect(buildUpdates({ issueInput: '12' }, { linkedLinearIssue: 'STA-335' })).toEqual({
+    expect(buildUpdates({ issueInput: '12' }, {}, { linkedLinearIssue: 'STA-335' })).toEqual({
       linkedIssue: 12,
       linkedLinearIssue: null,
       linkedLinearIssueWorkspaceId: null,
@@ -112,7 +114,11 @@ describe('buildWorktreeMetaUpdates', () => {
 
   it('clears every provider slot when the issue field is emptied', () => {
     expect(
-      buildUpdates({ issueInput: '  ' }, { issueInput: '42', linkedLinearIssue: 'STA-335' })
+      buildUpdates(
+        { issueInput: '  ' },
+        { issueInput: '42' },
+        { linkedIssue: 42, linkedLinearIssue: 'STA-335' }
+      )
     ).toEqual({
       linkedIssue: null,
       linkedLinearIssue: null,
@@ -135,7 +141,12 @@ describe('buildWorktreeMetaUpdates', () => {
   it('displaces a Linear linked work item when the issue field changes', () => {
     const updates = buildUpdates(
       { issueInput: '12' },
-      { linkedWorkItemProvider: 'linear', linkedWorkItemType: 'issue' }
+      {},
+      {
+        linkedLinearIssue: 'STA-335',
+        linkedWorkItemProvider: 'linear',
+        linkedWorkItemType: 'issue'
+      }
     )
 
     expect(updates).toHaveProperty('linkedWorkItem', null)
@@ -147,6 +158,7 @@ describe('buildWorktreeMetaUpdates', () => {
   it('leaves a PR-typed work item alone', () => {
     const updates = buildUpdates(
       { issueInput: '12' },
+      {},
       { linkedWorkItemProvider: 'github', linkedWorkItemType: 'pr' }
     )
 
@@ -160,12 +172,110 @@ describe('buildWorktreeMetaUpdates', () => {
     for (const provider of ['jira', 'gitlab'] as const) {
       const updates = buildUpdates(
         { issueInput: '12' },
+        {},
         { linkedWorkItemProvider: provider, linkedWorkItemType: 'issue' }
       )
 
       expect(updates).not.toHaveProperty('linkedWorkItem')
       expect(updates).not.toHaveProperty('linkedTaskSourceContext')
     }
+  })
+
+  // Only the spelling changed, so the field names the same issue it already
+  // holds — treating that as an edit would clear the title and source context.
+  it('emits nothing when a GitHub number is respelled with a hash', () => {
+    const updates = buildUpdates(
+      { issueInput: '#42' },
+      { issueInput: '42' },
+      { linkedIssue: 42, linkedWorkItemProvider: 'github', linkedWorkItemType: 'issue' }
+    )
+
+    expect(updates).toEqual({ linkedPR: null })
+  })
+
+  it('emits nothing when a Linear identifier is respelled in lower case', () => {
+    const updates = buildUpdates(
+      { issueInput: 'sta-335', issueProvider: 'linear' },
+      { issueInput: 'STA-335', issueProvider: 'linear' },
+      { linkedLinearIssue: 'STA-335' }
+    )
+
+    expect(updates).toEqual({ linkedPR: null })
+  })
+
+  it('emits nothing when a Linear identifier is respelled as its stored URL', () => {
+    const updates = buildUpdates(
+      { issueInput: 'https://linear.app/acme/issue/STA-335/fix-auth', issueProvider: 'linear' },
+      {
+        issueInput: 'STA-335',
+        issueProvider: 'linear',
+        linkedLinearIssueOrganizationUrlKey: 'acme'
+      },
+      { linkedLinearIssue: 'STA-335' }
+    )
+
+    expect(updates).toEqual({ linkedPR: null })
+  })
+
+  // The URL adds the org key the stored link lacked, which is worth persisting —
+  // but it still names the same issue, so its title and routing context stay.
+  it('records an organization key for a stored bare identifier without displacing it', () => {
+    const updates = buildUpdates(
+      { issueInput: 'https://linear.app/acme/issue/STA-335', issueProvider: 'linear' },
+      { issueInput: 'STA-335', issueProvider: 'linear' },
+      {
+        linkedLinearIssue: 'STA-335',
+        linkedWorkItemProvider: 'linear',
+        linkedWorkItemType: 'issue'
+      }
+    )
+
+    expect(updates.linkedLinearIssueOrganizationUrlKey).toBe('acme')
+    expect(updates).not.toHaveProperty('linkedWorkItem')
+    expect(updates).not.toHaveProperty('linkedTaskSourceContext')
+  })
+
+  // Same identifier, different organization: a team-prefix collision across two
+  // Linear workspaces is a different issue, so the stale title has to go.
+  it('displaces the work item when a URL names another organization', () => {
+    const updates = buildUpdates(
+      { issueInput: 'https://linear.app/other/issue/STA-335', issueProvider: 'linear' },
+      {
+        issueInput: 'STA-335',
+        issueProvider: 'linear',
+        linkedLinearIssueOrganizationUrlKey: 'acme'
+      },
+      {
+        linkedLinearIssue: 'STA-335',
+        linkedLinearIssueOrganizationUrlKey: 'acme',
+        linkedWorkItemProvider: 'linear',
+        linkedWorkItemType: 'issue'
+      }
+    )
+
+    expect(updates.linkedLinearIssueOrganizationUrlKey).toBe('other')
+    expect(updates).toHaveProperty('linkedWorkItem', null)
+    expect(updates).toHaveProperty('linkedTaskSourceContext', null)
+  })
+
+  // A CLI or background write can land while the dialog is open. Displacement
+  // reads live state, so the save cannot leave both provider slots populated.
+  it('clears a Linear link added after the snapshot was taken', () => {
+    const updates = buildUpdates({ issueInput: '12' }, {}, { linkedLinearIssue: 'STA-999' })
+
+    expect(updates.linkedIssue).toBe(12)
+    expect(updates.linkedLinearIssue).toBeNull()
+  })
+
+  it('clears a Linear link added after the snapshot when the field is emptied', () => {
+    const updates = buildUpdates(
+      { issueInput: '' },
+      { issueInput: '42' },
+      { linkedLinearIssue: 'STA-999' }
+    )
+
+    expect(updates.linkedIssue).toBeNull()
+    expect(updates.linkedLinearIssue).toBeNull()
   })
 
   it('ignores a provider switch on an empty field', () => {
@@ -181,7 +291,7 @@ describe('buildWorktreeMetaUpdates', () => {
   })
 
   it('does not displace a Linear work item when the issue field is clean', () => {
-    const updates = buildUpdates({ commentInput: 'note' }, { linkedWorkItemProvider: 'linear' })
+    const updates = buildUpdates({ commentInput: 'note' }, {}, { linkedWorkItemProvider: 'linear' })
 
     expect(updates).not.toHaveProperty('linkedWorkItem')
     expect(updates).not.toHaveProperty('linkedTaskSourceContext')
@@ -220,6 +330,7 @@ describe('buildWorktreeMetaUpdates', () => {
     expect(
       buildUpdates(
         { issueInput: 'https://github.com/stablyai/orca/issues/6933' },
+        {},
         { linkedLinearIssue: 'STA-335' }
       )
     ).toEqual({

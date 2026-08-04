@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import { parseGitHubIssueOrPRNumber } from '@/lib/github-links'
 import { issueCacheKey as getIssueCacheKey } from '@/store/slices/github'
@@ -43,6 +43,9 @@ async function resolveIssueUrlWithinTimeout(
  *  owner-routed fetch, Linear identifiers via the stored org key or a lookup. */
 export function useWorktreeIssueLink(args: {
   worktreeId: string
+  /** The repo bucket the opening row belongs to, for IDs the owner index reports
+   *  as ambiguous across hosts. Falls back to the index when absent. */
+  ownerRepoId?: string | null
   issueInput: string
   issueProvider: IssueLinkProvider
   linearOrganizationUrlKey?: string | null
@@ -59,6 +62,7 @@ export function useWorktreeIssueLink(args: {
 } {
   const {
     worktreeId,
+    ownerRepoId,
     issueInput,
     issueProvider,
     linearOrganizationUrlKey,
@@ -68,12 +72,15 @@ export function useWorktreeIssueLink(args: {
   const isLinear = issueProvider === 'linear'
   const fetchIssue = useAppStore((s) => s.fetchIssue)
   const fetchLinearIssue = useAppStore((s) => s.fetchLinearIssue)
-  const viewerOrganizationUrlKey = useAppStore(
-    (s) => s.linearStatus?.viewer?.organizationUrlKey ?? null
-  )
   const [openingIssue, setOpeningIssue] = useState(false)
   const [failedIssueInput, setFailedIssueInput] = useState<string | null>(null)
   const mountedRef = useMountedRef()
+  // Why: the field stays editable while a lookup is in flight, and Promise.race
+  // cannot cancel the losing promise. A result that lands after the value moved
+  // on — or after a reset — must not open the issue the user just replaced.
+  const openRequestRef = useRef(0)
+  const latestRequestKeyRef = useRef('')
+  latestRequestKeyRef.current = `${issueProvider}\u0000${issueInput}`
 
   // Why: `matchGitHubItemPath` strips trailing slashes with an unanchored `/\/+$/`,
   // which is quadratic — a 160 KB paste of slashes freezes the renderer for ~19s.
@@ -100,11 +107,12 @@ export function useWorktreeIssueLink(args: {
     () => (isLinear ? parseLinearIssueInput(boundedInput) : null),
     [isLinear, boundedInput]
   )
-  // Why: the input's own org key wins, then the workspace's stored one, then the
-  // connected viewer's — a bare identifier is only resolvable through the latter two.
-  // The stored key describes the persisted issue, so it only applies while the typed
-  // identifier still *is* that issue; reusing it for a newly typed one builds a URL
-  // in the wrong org and short-circuits the lookup that would have reported the miss.
+  // Why: only an org key that is authoritative *for this identifier* may build a
+  // URL directly — the input's own, or the workspace's stored one while the typed
+  // identifier still is that issue. The connected viewer's key is not: a bare key
+  // for another of the user's Linear workspaces would open a not-found page, or a
+  // different issue on a team-prefix collision. Anything else falls through to the
+  // all-workspace lookup below, which answers with the issue's canonical URL.
   const linearIssueUrl = useMemo(() => {
     if (!parsedLinearIssue) {
       return null
@@ -115,15 +123,13 @@ export function useWorktreeIssueLink(args: {
     return buildLinearIssueUrl({
       identifier: parsedLinearIssue.identifier,
       organizationUrlKey:
-        parsedLinearIssue.organizationUrlKey ??
-        (storedKeyApplies ? linearOrganizationUrlKey : null) ??
-        viewerOrganizationUrlKey
+        parsedLinearIssue.organizationUrlKey ?? (storedKeyApplies ? linearOrganizationUrlKey : null)
     })
-  }, [parsedLinearIssue, linkedLinearIssue, linearOrganizationUrlKey, viewerOrganizationUrlKey])
+  }, [parsedLinearIssue, linkedLinearIssue, linearOrganizationUrlKey])
 
   const issueRepo = useAppStore((s) => {
-    const owner = findIndexedWorktreeOwner(s.worktreesByRepo, worktreeId)
-    return owner ? s.repos.find((repo) => repo.id === owner.repoId) : undefined
+    const repoId = ownerRepoId ?? findIndexedWorktreeOwner(s.worktreesByRepo, worktreeId)?.repoId
+    return repoId ? s.repos.find((repo) => repo.id === repoId) : undefined
   })
   const cachedIssueUrl = useAppStore((s) => {
     if (!issueRepo || issueNumber === null) {
@@ -154,6 +160,14 @@ export function useWorktreeIssueLink(args: {
       return
     }
     setFailedIssueInput(null)
+    const generation = ++openRequestRef.current
+    const requestKey = latestRequestKeyRef.current
+    // Why: the losing side of the timeout race keeps running, so every result
+    // has to prove it still belongs to the field the user is looking at.
+    const isCurrentRequest = (): boolean =>
+      mountedRef.current &&
+      openRequestRef.current === generation &&
+      latestRequestKeyRef.current === requestKey
 
     if (isLinear) {
       if (!parsedLinearIssue) {
@@ -167,15 +181,18 @@ export function useWorktreeIssueLink(args: {
       setOpeningIssue(true)
       try {
         // Why: 'all' — the issue may belong to a different Linear workspace than
-        // the selected one, which is the usual case for a pasted identifier.
+        // the selected one, which is the usual case for a bare or pasted identifier.
         const url = await resolveIssueUrlWithinTimeout(
           fetchLinearIssue(parsedLinearIssue.identifier, 'all', {
             sourceContext: linearSourceContext ?? null
           })
         )
+        if (!isCurrentRequest()) {
+          return
+        }
         if (url) {
           void window.api.shell.openUrl(url)
-        } else if (mountedRef.current) {
+        } else {
           // Why: the fetchers normalize every failure — no Linear connection,
           // unknown identifier, dead runtime — to null, so without this the
           // button just stops spinning and the click looks ignored.
@@ -212,9 +229,12 @@ export function useWorktreeIssueLink(args: {
       const url = await resolveIssueUrlWithinTimeout(
         fetchIssue(issueRepo.path, issueNumber, { repoId: issueRepo.id })
       )
+      if (!isCurrentRequest()) {
+        return
+      }
       if (url) {
         void window.api.shell.openUrl(url)
-      } else if (mountedRef.current) {
+      } else {
         setFailedIssueInput(issueInput)
       }
     } finally {
@@ -240,6 +260,9 @@ export function useWorktreeIssueLink(args: {
   ])
 
   const resetOpeningIssue = useCallback(() => {
+    // Bumping the generation retires any in-flight lookup: a reset means this is
+    // a fresh dialog session, and the old result must not open or report here.
+    openRequestRef.current += 1
     setOpeningIssue(false)
     setFailedIssueInput(null)
   }, [])

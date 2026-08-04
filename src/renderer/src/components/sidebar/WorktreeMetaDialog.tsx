@@ -19,13 +19,11 @@ import {
   type WorktreeMetaSnapshot
 } from './worktree-meta-updates'
 import { useWorktreeIssueLink } from './use-worktree-issue-link'
+import { useWorktreeMetaWorkspace } from './use-worktree-meta-workspace'
 import { WorktreeIssueLinkField } from './WorktreeIssueLinkField'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
-import { findIndexedWorktreeOwner } from '@/lib/worktree-runtime-owner-index'
-import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
-import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import { isWorkItemLinkQueryTooLarge } from '../../../../shared/new-workspace/work-item-link-query-bounds'
 import {
   getIssueLinkProviderFromUrl,
@@ -67,32 +65,18 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
       ? (modalData.afterSave as (payload: WorktreeMetaSavedPayload) => void | Promise<void>)
       : null
 
-  const workspaceScope = useMemo(() => parseWorkspaceKey(worktreeId), [worktreeId])
-  // Why: link state is read from the store rather than threaded through the
-  // untyped modalData bag — a call site that forgot a key would otherwise seed
-  // an empty field and silently destroy the link on save.
-  const indexedWorktree = useAppStore((s) => {
-    const owner = findIndexedWorktreeOwner(s.worktreesByRepo, worktreeId)
-    return owner
-      ? s.worktreesByRepo[owner.repoId]?.find((item) => item.id === worktreeId)
-      : undefined
-  })
-  // Why: folder workspaces are absent from worktreesByRepo, so the lookup above
-  // returns undefined and the row renders blank for them. The selector returns
-  // the stored record — a stable reference — and the projection happens outside
-  // it, because a selector that built the object would return a fresh identity
-  // on every store write and re-render the dialog continuously.
-  const folderWorkspace = useAppStore((s) =>
-    workspaceScope?.type === 'folder'
-      ? (s.folderWorkspaces.find((item) => item.id === workspaceScope.folderWorkspaceId) ?? null)
-      : null
-  )
-  const worktree = useMemo(
-    () => (folderWorkspace ? folderWorkspaceToWorktree(folderWorkspace) : indexedWorktree),
-    [folderWorkspace, indexedWorktree]
-  )
-  const linkedIssue = worktree?.linkedIssue ?? null
-  const linkedLinearIssue = worktree?.linkedLinearIssue ?? null
+  // Why: the opening row names its repo bucket for workspace IDs the owner index
+  // reads as ambiguous across hosts.
+  const ownerRepoId = typeof modalData.repoId === 'string' ? modalData.repoId : null
+  const {
+    worktree,
+    linkedIssue,
+    linkedLinearIssue,
+    currentIssue,
+    currentProvider,
+    isFolderWorkspace,
+    liveLinks
+  } = useWorktreeMetaWorkspace({ worktreeId, ownerRepoId })
   // Why: ChecksPanel seeds the PR it is looking at, which may not be linked yet.
   const currentPR =
     typeof modalData.currentPR === 'number'
@@ -100,22 +84,6 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
       : worktree?.linkedPR != null
         ? String(worktree.linkedPR)
         : ''
-  // Why: `typeof` rather than a null check — an unhydrated projection can leave
-  // linkedIssue undefined, which `!== null` would read as a GitHub link.
-  const currentProvider: IssueLinkProvider =
-    typeof linkedIssue === 'number' ? 'github' : linkedLinearIssue ? 'linear' : 'github'
-  // Why: the value and its provider must come from one source. Every call site
-  // passed `currentIssue: worktree.linkedIssue`, so the modalData seed was pure
-  // duplication that could only ever drift from the chip.
-  const currentIssue =
-    currentProvider === 'linear'
-      ? (linkedLinearIssue ?? '')
-      : typeof linkedIssue === 'number'
-        ? String(linkedIssue)
-        : ''
-  // Why: folder workspaces persist links only through their creation-time
-  // linkedTask; updateWorktreeMeta drops link keys for them entirely.
-  const isFolderWorkspace = workspaceScope?.type === 'folder'
 
   const [displayNameInput, setDisplayNameInput] = useState('')
   const [issueInput, setIssueInput] = useState('')
@@ -128,6 +96,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   const { canOpenIssue, openingIssue, openIssueFailed, handleOpenIssue, resetOpeningIssue } =
     useWorktreeIssueLink({
       worktreeId,
+      ownerRepoId,
       issueInput,
       issueProvider,
       linearOrganizationUrlKey: worktree?.linkedLinearIssueOrganizationUrlKey ?? null,
@@ -156,9 +125,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
       comment: currentComment,
       issueInput: currentIssue,
       issueProvider: currentProvider,
-      linkedLinearIssue,
-      linkedWorkItemProvider: worktree?.linkedWorkItem?.provider ?? null,
-      linkedWorkItemType: worktree?.linkedWorkItem?.type ?? null
+      linkedLinearIssueOrganizationUrlKey: worktree?.linkedLinearIssueOrganizationUrlKey ?? null
     })
     setSaveError(null)
     resetOpeningIssue()
@@ -253,7 +220,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     // spinner for the whole in-flight save.
     setSaveError(null)
     try {
-      const updates = buildWorktreeMetaUpdates(draft, snapshot)
+      const updates = buildWorktreeMetaUpdates(draft, snapshot, liveLinks)
 
       const result = await updateWorktreeMeta(worktreeId, updates)
       // Why: a failed save refetches and reverts the optimistic write. Closing
@@ -278,7 +245,17 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
         setSaving(false)
       }
     }
-  }, [worktreeId, canSave, draft, snapshot, updateWorktreeMeta, closeModal, afterSave, mountedRef])
+  }, [
+    worktreeId,
+    canSave,
+    draft,
+    snapshot,
+    liveLinks,
+    updateWorktreeMeta,
+    closeModal,
+    afterSave,
+    mountedRef
+  ])
 
   const handleCommentKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

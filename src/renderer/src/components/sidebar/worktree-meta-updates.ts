@@ -29,8 +29,20 @@ export type WorktreeMetaSnapshot = {
   comment: string
   issueInput: string
   issueProvider: IssueLinkProvider
-  /** The stored Linear identifier, which decides whether a clear is real. */
+  /** Stands in for an org key the typed value omits, so re-saving a stored bare
+   *  identifier does not read as a change. */
+  linkedLinearIssueOrganizationUrlKey?: string | null
+}
+
+/** The link state as it stands now, read at save time rather than at open.
+ *  Displacement is decided against this: a CLI or background write that landed
+ *  while the dialog was open must not survive a save the dialog warned would
+ *  displace it, and a clear must not be emitted for a slot that is already empty
+ *  — persistence gates the remote Linear capability on key presence, not value. */
+export type WorktreeMetaLiveLinks = {
+  linkedIssue?: number | null
   linkedLinearIssue?: string | null
+  linkedLinearIssueOrganizationUrlKey?: string | null
   linkedWorkItemProvider?: WorkspaceSourceProvider | null
   /** `linkedWorkItem` also describes PRs and MRs, which this row does not own. */
   linkedWorkItemType?: WorkspaceLinkedItem['type'] | null
@@ -83,17 +95,77 @@ function buildCommentUpdate(
   return trimmed === current.comment ? {} : { comment: trimmed }
 }
 
+/** Which issue a value names, ignoring spelling: `42` and `#42` are one GitHub
+ *  link, `sta-335`, `STA-335` and its linear.app URL are one Linear link. A
+ *  Linear URL still refines a
+ *  stored org key, so the key belongs to the identity — with the stored one
+ *  standing in when the input omits it. Unparseable text compares as raw text:
+ *  there is nothing to normalize, and the builder writes nothing for it anyway. */
+function issueLinkIdentity(
+  input: string,
+  provider: IssueLinkProvider,
+  storedLinearOrganizationUrlKey: string | null
+): string {
+  const trimmed = input.trim()
+  if (trimmed === '') {
+    return ''
+  }
+  const parsed = parseIssueLinkInput(trimmed, provider)
+  if (!parsed) {
+    return `raw:${provider}:${trimmed}`
+  }
+  if (parsed.provider === 'github') {
+    return `github:${parsed.number}`
+  }
+  const organizationUrlKey = parsed.organizationUrlKey ?? storedLinearOrganizationUrlKey ?? ''
+  return `linear:${parsed.identifier}:${organizationUrlKey.trim().toLowerCase()}`
+}
+
+// Why: normalized identity rather than trimmed text. Retyping the same issue in
+// another spelling — `42` to `#42`, `STA-335` to its URL — would otherwise enter
+// the displacement path and clear the title and source context of the very link
+// it re-states. A provider switch is only visible through the identity when
+// there is a value to reinterpret, which is the intent an empty field lacks.
 export function isIssueFieldDirty(
   draft: WorktreeMetaDraft,
   current: WorktreeMetaSnapshot
 ): boolean {
-  if (draft.issueInput.trim() !== current.issueInput.trim()) {
-    return true
+  const storedOrganizationUrlKey = current.linkedLinearIssueOrganizationUrlKey ?? null
+  return (
+    issueLinkIdentity(draft.issueInput, draft.issueProvider, storedOrganizationUrlKey) !==
+    issueLinkIdentity(current.issueInput, current.issueProvider, storedOrganizationUrlKey)
+  )
+}
+
+/** Whether the value being saved names the very issue `linkedWorkItem` already
+ *  describes. Org keys only disagree when both are known: a stored link without
+ *  one is not evidence of a different organization, so a URL that supplies it
+ *  refines the link rather than replacing it. */
+function keepsLinkedWorkItem(
+  input: string,
+  provider: IssueLinkProvider,
+  live: WorktreeMetaLiveLinks
+): boolean {
+  const parsed = parseIssueLinkInput(input.trim(), provider)
+  if (!parsed || live.linkedWorkItemType !== 'issue') {
+    return false
   }
-  // Why: a provider switch only means something when there is a value to
-  // reinterpret. Toggling the chip on an empty field states no intent, and
-  // treating it as dirty would turn a comment-only save into a link wipe.
-  return draft.issueProvider !== current.issueProvider && draft.issueInput.trim() !== ''
+  if (parsed.provider === 'github') {
+    return live.linkedWorkItemProvider === 'github' && parsed.number === live.linkedIssue
+  }
+  if (
+    live.linkedWorkItemProvider !== 'linear' ||
+    parsed.identifier.toUpperCase() !== live.linkedLinearIssue?.trim().toUpperCase()
+  ) {
+    return false
+  }
+  const storedOrganizationUrlKey = live.linkedLinearIssueOrganizationUrlKey?.trim()
+  const nextOrganizationUrlKey = parsed.organizationUrlKey?.trim()
+  return (
+    !storedOrganizationUrlKey ||
+    !nextOrganizationUrlKey ||
+    storedOrganizationUrlKey.toLowerCase() === nextOrganizationUrlKey.toLowerCase()
+  )
 }
 
 /** Owns both provider slot families. One issue per workspace: writing one
@@ -102,7 +174,8 @@ export function isIssueFieldDirty(
  *  destroy a link the user came here to keep. */
 function buildIssueLinkUpdates(
   draft: WorktreeMetaDraft,
-  current: WorktreeMetaSnapshot
+  current: WorktreeMetaSnapshot,
+  live: WorktreeMetaLiveLinks
 ): Partial<WorktreeMeta> {
   if (!isIssueFieldDirty(draft, current)) {
     return {}
@@ -111,20 +184,26 @@ function buildIssueLinkUpdates(
   const trimmed = draft.issueInput.trim()
   // Why: the linked work item and its source context describe the issue being
   // replaced. Leaving them would keep a stale title badge and mis-scope Linear
-  // reads. Narrow on purpose: `type` because the field also records the PR or MR
-  // a workspace was created from, and provider because GitLab and Jira issues
-  // have no slot in this row — displacing what it cannot display would destroy a
-  // link the user was never shown and has no other editor to restore it from.
+  // reads — but only when the save names a *different* issue: a value that
+  // re-states the same one, such as a URL adding an org key, must keep its own
+  // title and SSH/runtime routing context. Narrow on purpose: `type` because the
+  // field also records the PR or MR a workspace was created from, and provider
+  // because GitLab and Jira issues have no slot in this row — displacing what it
+  // cannot display would destroy a link the user was never shown and has no
+  // other editor to restore it from.
   const displacedWorkItem: Partial<WorktreeMeta> =
-    (current.linkedWorkItemProvider === 'github' || current.linkedWorkItemProvider === 'linear') &&
-    current.linkedWorkItemType === 'issue'
+    !keepsLinkedWorkItem(trimmed, draft.issueProvider, live) &&
+    (live.linkedWorkItemProvider === 'github' || live.linkedWorkItemProvider === 'linear') &&
+    live.linkedWorkItemType === 'issue'
       ? { linkedWorkItem: null, linkedTaskSourceContext: null }
       : {}
 
   // Why: persistence gates the remote Linear capability on key presence, not
   // value. A synthetic clear on a workspace that never held a Linear link would
-  // fail a GitHub-only save against an older runtime, citing Linear.
-  const displacedLinear: Partial<WorktreeMeta> = current.linkedLinearIssue
+  // fail a GitHub-only save against an older runtime, citing Linear. Read live,
+  // not from the snapshot: a link added since the dialog opened would otherwise
+  // outlive a save that just promised to displace it.
+  const displacedLinear: Partial<WorktreeMeta> = live.linkedLinearIssue
     ? LINEAR_ISSUE_LINK_CLEARED
     : {}
 
@@ -173,12 +252,13 @@ function buildPrLinkUpdate(draft: WorktreeMetaDraft): Partial<WorktreeMeta> {
  *  present-but-undefined key erases the stored value. */
 export function buildWorktreeMetaUpdates(
   draft: WorktreeMetaDraft,
-  current: WorktreeMetaSnapshot
+  current: WorktreeMetaSnapshot,
+  live: WorktreeMetaLiveLinks
 ): Partial<WorktreeMeta> {
   return {
     ...buildCommentUpdate(draft, current),
     ...buildDisplayNameUpdate(draft, current),
-    ...buildIssueLinkUpdates(draft, current),
+    ...buildIssueLinkUpdates(draft, current, live),
     ...buildPrLinkUpdate(draft)
   }
 }
