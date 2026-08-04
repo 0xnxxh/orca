@@ -38,6 +38,7 @@ import {
 } from './types'
 import {
   HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
+  SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION,
   STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION
 } from './daemon-protocol-version'
 import {
@@ -276,7 +277,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.supportsCheckpoints = this.protocolVersion >= 4
     this.supportsIncrementalCheckpoints = this.protocolVersion >= 13
     this.supportsProducerFlowControl = this.protocolVersion >= 19
-    this.supportsAuthoritativeBufferSnapshots = this.protocolVersion >= 20
+    this.supportsAuthoritativeBufferSnapshots =
+      this.protocolVersion >= SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION
     this.supportsStartupIngress = supportsPtyStartupIngress(this.protocolVersion)
     this.client.onDisconnected(() => {
       if (!this.respawnAdoptionClosed) {
@@ -959,7 +961,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (!this.supportsProducerFlowControl) {
       return
     }
-    // Why: preserved v19 daemons can thin but can't return the absolute snapshot sequence to recover a gap; clear their stale hint too.
+    // Why: preserved daemons without a sequence-safe, faithful serializer cannot heal a thinned stream.
     // Why also gate on 2031 (#9993): backgrounding is what hands transient-fact scan
     // authority to the daemon. A pre-v29 daemon can announce a 2031 subscribe but never
     // retract it, so a TUI exiting while hidden would strand the subscription and the
