@@ -35,6 +35,16 @@ describe('terminal live native replacement commits', () => {
     ).toEqual({ committedText: 'a', payload: '\x7f' })
   })
 
+  it('emits nothing for the collapsed pre-delete cursor snapshot', () => {
+    expect(
+      deriveTerminalLiveCommit('a', {
+        text: '',
+        replacementText: '',
+        replacementRange: { start: 1, end: 1 }
+      })
+    ).toBeNull()
+  })
+
   it('emits nothing for a cancelled preedit or ambiguous non-suffix replacement', () => {
     expect(
       deriveTerminalLiveCommit('', {

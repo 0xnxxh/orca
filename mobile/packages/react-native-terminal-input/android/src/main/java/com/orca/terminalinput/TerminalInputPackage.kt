@@ -113,6 +113,40 @@ private class TerminalReactEditText(
     return if (start >= 0 && end >= start) Pair(start, end) else null
   }
 
+  fun deletionReplacement(
+      beforeLength: Int,
+      afterLength: Int,
+      inCodePoints: Boolean,
+  ): Triple<Int, Int, String>? {
+    if (beforeLength < 0 || afterLength < 0) return null
+    val currentText = text?.toString() ?: return null
+    val orderedSelectionStart = minOf(selectionStart, selectionEnd)
+    val orderedSelectionEnd = maxOf(selectionStart, selectionEnd)
+    if (orderedSelectionStart < 0 || orderedSelectionEnd > currentText.length) return null
+    val composing = composingRange()
+    val retainedStart = minOf(orderedSelectionStart, composing?.first ?: orderedSelectionStart)
+    val retainedEnd = maxOf(orderedSelectionEnd, composing?.second ?: orderedSelectionEnd)
+    val beforeStart =
+        if (inCodePoints) {
+          val available = Character.codePointCount(currentText, 0, retainedStart)
+          Character.offsetByCodePoints(currentText, retainedStart, -minOf(beforeLength, available))
+        } else {
+          maxOf(0, retainedStart - beforeLength)
+        }
+    val afterEnd =
+        if (inCodePoints) {
+          val available = Character.codePointCount(currentText, retainedEnd, currentText.length)
+          Character.offsetByCodePoints(currentText, retainedEnd, minOf(afterLength, available))
+        } else {
+          minOf(currentText.length, retainedEnd + afterLength)
+        }
+    return Triple(
+        beforeStart,
+        afterEnd,
+        currentText.substring(retainedStart, retainedEnd),
+    )
+  }
+
   private fun dispatch(text: String, replacementText: String, start: Int, end: Int) {
     val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, id) ?: return
     dispatcher.dispatchEvent(
@@ -161,15 +195,23 @@ private class TerminalInputConnection(
   }
 
   override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-    val range = editText.replacementRange()
-    return editText.mutateInput(editText.composingRange() != null, "", range) {
+    val replacement = editText.deletionReplacement(beforeLength, afterLength, false)
+    return editText.mutateInput(
+        editText.composingRange() != null,
+        replacement?.third ?: "",
+        replacement?.let { Pair(it.first, it.second) },
+    ) {
       super.deleteSurroundingText(beforeLength, afterLength)
     }
   }
 
   override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
-    val range = editText.replacementRange()
-    return editText.mutateInput(editText.composingRange() != null, "", range) {
+    val replacement = editText.deletionReplacement(beforeLength, afterLength, true)
+    return editText.mutateInput(
+        editText.composingRange() != null,
+        replacement?.third ?: "",
+        replacement?.let { Pair(it.first, it.second) },
+    ) {
       super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
     }
   }

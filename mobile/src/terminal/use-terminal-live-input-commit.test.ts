@@ -69,6 +69,11 @@ const ORDINARY_ABC_TRACE: readonly RecordedChange[] = [
   { text: 'abc', isComposing: false, replacementText: 'c', start: 2, end: 2 }
 ]
 
+const RECORDED_ANDROID_GBOARD_BACKSPACE_TRACE: readonly RecordedChange[] = [
+  { text: 'a', isComposing: false, replacementText: 'a', start: 0, end: 0 },
+  { text: '', isComposing: false, replacementText: '', start: 0, end: 1 }
+]
+
 const IOS_ROMAJI_RECORDED_PREFIX = 'あきカナたあbcabc'
 const RECORDED_IOS_ROMAJI_TRACE: readonly RecordedChange[] = [
   {
@@ -288,6 +293,16 @@ describe('terminal live input commit hook', () => {
     const { handlers, sent } = createHarness()
     replay(handlers, ORDINARY_ABC_TRACE)
     await vi.waitFor(() => expect(sent).toEqual(['a', 'b', 'c']))
+  })
+
+  it('replays the recorded Gboard Backspace replacement exactly once', async () => {
+    const { handlers, sent } = createHarness()
+
+    change(handlers, RECORDED_ANDROID_GBOARD_BACKSPACE_TRACE[0])
+    handlers.handleLiveInputKeyPress({ nativeEvent: { key: 'Backspace' } })
+    change(handlers, RECORDED_ANDROID_GBOARD_BACKSPACE_TRACE[1])
+
+    await vi.waitFor(() => expect(sent).toEqual(['a', '\x7f']))
   })
 
   it('preserves rapid input order while transport sends are delayed', async () => {
