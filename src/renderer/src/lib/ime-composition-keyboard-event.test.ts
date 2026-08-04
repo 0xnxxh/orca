@@ -28,4 +28,10 @@ describe('isImeCompositionKeyDown', () => {
   it('is false for a plain Enter outside of composition', () => {
     expect(isImeCompositionKeyDown(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(false)
   })
+
+  it('keeps the recorded Process/ShiftLeft event IME-owned without treating ordinary Shift as IME', () => {
+    const shift = { code: 'ShiftLeft', shiftKey: true, isComposing: false }
+    expect(isImeOwnedKeyboardEvent({ ...shift, key: 'Process', keyCode: 229 })).toBe(true)
+    expect(isImeOwnedKeyboardEvent({ ...shift, key: 'Shift', keyCode: 16 })).toBe(false)
+  })
 })

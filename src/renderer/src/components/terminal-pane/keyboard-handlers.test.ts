@@ -11,6 +11,7 @@ import {
 function makeKeyEvent(
   overrides: Partial<{
     key: string
+    code: string
     metaKey: boolean
     ctrlKey: boolean
     shiftKey: boolean
@@ -19,16 +20,39 @@ function makeKeyEvent(
     isComposing: boolean
     keyCode: number
   }>
-): Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'repeat'> {
+) {
   return {
     key: 'g',
+    code: 'KeyG',
     metaKey: false,
     ctrlKey: false,
     shiftKey: false,
     altKey: false,
     repeat: false,
+    isComposing: false,
+    keyCode: 0,
     ...overrides
   }
+}
+
+function resolveShortcutAction(
+  overrides: Parameters<typeof makeKeyEvent>[0],
+  isMac = true,
+  isWindows = false
+) {
+  return resolveTerminalKeyboardShortcutAction(
+    makeKeyEvent(overrides),
+    isMac,
+    'false',
+    0,
+    isWindows,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    () => 'alt-enter',
+    () => true
+  )
 }
 
 describe('matchSearchNavigate', () => {
@@ -96,40 +120,40 @@ describe('matchSearchNavigate', () => {
 
 describe('resolveTerminalKeyboardShortcutAction', () => {
   it('routes macOS Shift+Enter with the active Windows PTY host bytes', () => {
-    expect(
-      resolveTerminalKeyboardShortcutAction(
-        makeKeyEvent({ key: 'Enter', shiftKey: true }),
-        true,
-        'false',
-        0,
-        false,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        () => 'alt-enter',
-        () => true
-      )
-    ).toEqual({ type: 'sendInput', data: '\x1b\r' })
+    expect(resolveShortcutAction({ key: 'Enter', shiftKey: true })).toEqual({
+      type: 'sendInput',
+      data: '\x1b\r'
+    })
   })
 
   it('refuses a marked real Enter before shortcut resolution', () => {
-    const event = makeKeyEvent({ key: 'Enter', shiftKey: true, isComposing: true, keyCode: 13 })
-    expect(
-      resolveTerminalKeyboardShortcutAction(
-        event,
-        true,
-        'false',
-        0,
+    const event = makeKeyEvent({
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: true,
+      isComposing: true,
+      keyCode: 13
+    })
+    expect(resolveShortcutAction(event)).toBeNull()
+  })
+
+  it('refuses marked copy without changing the ordinary clipboard shortcut', () => {
+    const resolve = (isComposing: boolean) =>
+      resolveShortcutAction(
+        {
+          key: 'c',
+          code: 'KeyC',
+          ctrlKey: true,
+          shiftKey: true,
+          isComposing,
+          keyCode: 67
+        },
         false,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        () => 'alt-enter',
-        () => true
+        true
       )
-    ).toBeNull()
+
+    expect(resolve(true)).toBeNull()
+    expect(resolve(false)).toEqual({ type: 'copySelection' })
   })
 })
 
