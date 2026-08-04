@@ -667,12 +667,12 @@ function resolveStablePaneOwner(
   }
 }
 
-function retirePersistedStablePaneOwner(
+async function retirePersistedStablePaneOwner(
   store: Store | undefined,
   owner: StablePaneOwner,
   worktreeId: string,
   connectionId: string | null | undefined
-): boolean {
+): Promise<boolean> {
   if (!store) {
     return false
   }
@@ -694,7 +694,10 @@ function retirePersistedStablePaneOwner(
     return false
   }
   store.setWorkspaceSession(retired, hostId)
-  store.flushOrThrow()
+  // Why: the retirement must be durable before the fresh spawn rebinds the pane, but
+  // writeToDiskSync fsyncs the whole multi-MB state from the main thread — a restore that
+  // retires N dead panes paid that stall N times. The async twin keeps the ordering.
+  await store.flushPendingOrThrowAsync()
   return true
 }
 
@@ -734,6 +737,15 @@ async function attachStablePaneOwner(
     if (!isPtyAlreadyGoneError(error)) {
       throw error
     }
+    // Why: "Session not found" only proves the provider we asked has no such PTY — and a
+    // degraded router answers unmapped ids from the local fallback, which never owned a
+    // daemon session. Retiring on that would signal exit and delete a live agent's pane
+    // binding. Absence must be proven across every possible owner first; `null` (nobody
+    // could answer) is not absence. Providers without a probe are their own sole owner,
+    // so their refusal stays authoritative.
+    if (provider.probePtyLiveness && (await provider.probePtyLiveness(owner.ptyId)) !== false) {
+      throw new Error('terminal_pane_owner_unverified')
+    }
     const ownerBeforeRetire = args.resolveOwner?.()
     if (
       ownerBeforeRetire &&
@@ -749,7 +761,7 @@ async function attachStablePaneOwner(
     ptyOwnership.delete(owner.ptyId)
     if (
       args.worktreeId &&
-      !retirePersistedStablePaneOwner(args.store, owner, args.worktreeId, args.connectionId)
+      !(await retirePersistedStablePaneOwner(args.store, owner, args.worktreeId, args.connectionId))
     ) {
       throw new Error('terminal_pane_owner_changed')
     }
