@@ -94,7 +94,7 @@ describe('createSetupRunnerScript', () => {
       const result = createSetupRunnerScript(
         { ...makeRepo(), path: 'C:\\Users\\jinwo\\git\\orca' },
         'C:\\repo\\feature',
-        'pnpm install',
+        '#!/usr/bin/env bash\npnpm install',
         undefined,
         { family: 'posix' }
       )
@@ -113,7 +113,7 @@ describe('createSetupRunnerScript', () => {
       })
       expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
         'C:\\repo\\.git\\worktrees\\feature\\orca\\setup-runner.sh',
-        '#!/usr/bin/env bash\nset -e\npnpm install\n',
+        '#!/usr/bin/env bash\nset -e\n#!/usr/bin/env bash\npnpm install\n',
         'utf-8'
       )
       // Why: chmod over a native Windows path is meaningless; only the WSL branch sets the bit.
@@ -184,6 +184,17 @@ describe('createSetupRunnerScript', () => {
     // expansion itself or `!world!` is consumed as a variable reference.
     expect(runner).toContain('setlocal EnableExtensions DisableDelayedExpansion')
     expect(runner).toContain('call echo hello!world!')
+  })
+
+  it('drops a leading shebang instead of calling it as a batch command', async () => {
+    const { buildWindowsRunnerScript } = await import('./hooks')
+
+    // Why: a shebang script falls back here when Git Bash is unavailable; `call #!/...`
+    // would abort on errorlevel before any real setup line ran.
+    const runner = buildWindowsRunnerScript('#!/usr/bin/env bash\npnpm install')
+
+    expect(runner).not.toContain('#!')
+    expect(runner).toContain('call pnpm install')
   })
 
   it('derives ORCA_WORKSPACE_NAME from a POSIX worktree path', async () => {

@@ -9,6 +9,7 @@ import { shouldWaitForSetupBeforeAgentStartup } from '../shared/setup-agent-star
 import { TERMINAL_GIT_CREDENTIAL_GUARD_POLICY_ENV } from '../shared/terminal-git-credential-guard'
 import { parseOrcaYaml } from '../shared/orca-yaml'
 import { nativeWindowsPathToPosixShellPath } from '../shared/setup-runner-command'
+import { isShebangLine, scriptDeclaresPosixShell } from '../shared/setup-script-shebang'
 import { resolveWindowsShellStartupFamily } from '../shared/windows-terminal-shell'
 import { resolveWindowsGitBashShellPath } from './git-bash'
 import { gitExecFileSync, promptGuardShellEnv } from './git/runner'
@@ -401,9 +402,17 @@ export function buildWindowsRunnerScript(script: string): string {
   // Why: launchers invoke this runner under `cmd /v:on`, and EnableExtensions does not reset an
   // inherited delayed-expansion state — without this, every `!` in a user setup line is eaten.
   let runnerScript = '@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\n'
+  let isFirstLine = true
 
   for (const rawLine of iterateLfScriptLines(script)) {
     const command = rawLine.trim()
+    // Why: a leading `#!` declares an interpreter; `call`ing it would abort the run on errorlevel.
+    if (isFirstLine) {
+      isFirstLine = false
+      if (isShebangLine(command)) {
+        continue
+      }
+    }
     if (!command) {
       runnerScript += '\r\n'
       continue
@@ -500,8 +509,8 @@ export function createIssueCommandRunnerScript(
     script: command,
     runnerBaseName: 'issue-command-runner',
     runtimeTarget: getHookRuntimeTarget(projectRuntime),
-    // Why: issue commands run in the same terminal as setup, so a Git Bash setup
-    // runner must not be paired with a cmd issue runner in one session.
+    // Why: issue commands share the setup session's shell resolution; the runner still
+    // needs its own `#!` line to be treated as bash.
     setupShell
   })
 }
@@ -528,8 +537,14 @@ function createWorktreeRunnerScript(args: {
   // Why: WSL worktrees are Linux fs even though process.platform is 'win32'; use bash for WSL, .cmd for native Windows.
   const wslWorktree = isWslPath(worktreePath) || Boolean(runtimeTarget?.wslDistro)
   const nativeWindowsWorktree = process.platform === 'win32' && !wslWorktree
+  // Why: the terminal-shell preference says nothing about the language a project's script is
+  // written in, and every pre-existing Windows script was authored against the cmd runner. Only a
+  // `#!` line opts a script into bash, so the same orca.yaml runs identically for every Windows
+  // user of the repo instead of following whichever terminal each of them happens to prefer.
   const runnerShell: SetupRunnerShell = nativeWindowsWorktree
-    ? (setupShell ?? { family: 'cmd' })
+    ? setupShell?.family === 'posix' && scriptDeclaresPosixShell(script)
+      ? setupShell
+      : { family: 'cmd' }
     : { family: 'posix' }
   const launchShell: SetupRunnerShell | undefined = nativeWindowsWorktree
     ? runnerShell
@@ -583,8 +598,7 @@ function createWorktreeRunnerScript(args: {
     envVars,
     // Why: WSL git returns /mnt paths that Node converts back to C:\ for file
     // writes; retain the runtime signal so launch converts them to /mnt again.
-    // Issue-command runners take the same resolved shell, so one session never
-    // mixes a bash setup runner with a cmd issue runner.
+    // On native Windows it mirrors the family the runner file was written in.
     ...(launchShell ? { shell: launchShell } : {}),
     ...(waitForAgentStartup === true ? { waitForAgentStartup: true } : {})
   }
@@ -615,9 +629,8 @@ export function resolveSetupRunnerShell(
       options.resolveGitBashShellPath ??
       ((shell: string) => resolveWindowsGitBashShellPath(shell, { platform }))
     if (resolveGitBashShellPath(configuredShell)) {
-      // Note: Git Bash users with batch-syntax orca.yaml setup content get a bash
-      // interpreter from here on. The flip is intentional and documented in
-      // docs/reference/windows-setup-shell.md.
+      // Note: this only reports that a bash runner *could* launch here. Whether one is
+      // used is decided per script by its `#!` line — see docs/reference/windows-setup-shell.md.
       return { family: 'posix' }
     }
   }
