@@ -21,6 +21,7 @@ let tabsByWorktree: Record<string, { id: string }[]> = {}
 let ptyIdsByTabId: Record<string, string[]> = {}
 let browserTabsByWorktree: Record<string, { id: string }[]> = {}
 let settings: Partial<GlobalSettings> | null = null
+let activityStatus = 'idle'
 let projectGroups: unknown[] = []
 let workspaceDeleteModifierPressed = false
 let gitConflictOperationByWorktree: Record<string, GitConflictOperation> = {}
@@ -60,7 +61,7 @@ vi.mock('@/components/ui/tooltip', () => ({
 }))
 
 vi.mock('./use-worktree-activity-status', () => ({
-  useWorktreeActivityStatus: () => 'idle'
+  useWorktreeActivityStatus: () => activityStatus
 }))
 
 vi.mock('./CacheTimer', () => ({
@@ -148,6 +149,7 @@ describe('WorktreeCard quick actions', () => {
     projectGroups = []
     workspaceDeleteModifierPressed = false
     gitConflictOperationByWorktree = {}
+    activityStatus = 'idle'
   })
 
   it('marks the unread toggle as a workspace-board-preserving action', () => {
@@ -232,6 +234,19 @@ describe('WorktreeCard quick actions', () => {
     expect(markup).not.toContain('>Folder</span>')
     expect(markup).toContain('>quick-action</span>')
     expect(markup).toContain('data-worktree-card-meta-row=""')
+  })
+
+  it('keeps the quiet status dot when the branch card property is off', () => {
+    settings = { experimentalNewWorktreeCardStyle: true }
+    worktreeCardProperties = ['status']
+    activityStatus = 'inactive'
+
+    const markup = renderToStaticMarkup(
+      <WorktreeCard worktree={makeWorktree()} repo={makeRepo()} isActive={false} />
+    )
+
+    expect(markup).toContain('bg-neutral-500/40')
+    expect(markup).not.toContain('lucide-git-branch')
   })
 
   it('does not render a branch icon for synthetic folder workspace path identity', () => {
