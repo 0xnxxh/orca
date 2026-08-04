@@ -500,7 +500,7 @@ const api = {
         throw error
       }
     },
-    reload: (): Promise<void> => ipcRenderer.invoke('app:reload'),
+    reload: (): Promise<boolean> => ipcRenderer.invoke('app:reload'),
     stageBeforeUnloadSync: (args: Parameters<PreloadApi['app']['stageBeforeUnloadSync']>[0]) => {
       const result = ipcRenderer.sendSync('app:stage-before-unload-sync', args) as {
         ok?: unknown

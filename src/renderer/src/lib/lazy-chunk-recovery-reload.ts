@@ -47,6 +47,24 @@ function waitForRefusedNavigation(win: Window): RefusedNavigationWait {
   return { outcome, cancel }
 }
 
+/**
+ * A browser-initiated reload cannot be vetoed by the main-process navigation guard, unlike
+ * `location.reload()`. Resolves false when there is no host bridge or main declined this
+ * sender (the dashboard pop-out), i.e. the in-document reload is still required.
+ */
+async function requestHostReload(settled: Promise<unknown>): Promise<boolean> {
+  const hostReload = window.api?.app?.reload
+  if (typeof hostReload !== 'function') {
+    return false
+  }
+  try {
+    // Race the refusal wait: a landed reload can tear this document down before the reply.
+    return await Promise.race([hostReload(), settled.then(() => true)])
+  } catch {
+    return false
+  }
+}
+
 /** Resolves only if the navigation is refused; a landed reload destroys this document. */
 export async function requestLazyChunkRecoveryReload(
   win: Window,
@@ -69,7 +87,9 @@ export async function requestLazyChunkRecoveryReload(
   try {
     const refused = waitForRefusedNavigation(win)
     cancelRefusalWait = refused.cancel
-    win.location.reload()
+    if (!(await requestHostReload(refused.outcome))) {
+      win.location.reload()
+    }
     return await refused.outcome
   } catch {
     return 'request-failed'

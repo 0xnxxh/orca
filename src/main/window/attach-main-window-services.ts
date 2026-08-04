@@ -286,16 +286,19 @@ function registerAppReloadHandler(
   activeAppReloadHandlerToken = handlerToken
   const mainWebContents = mainWindow.webContents
   ipcMain.removeHandler('app:reload')
-  ipcMain.handle('app:reload', (event) => {
+  // Returns whether the reload was actually issued so a declined sender (the dashboard
+  // pop-out, a stale window) can fall back instead of waiting on a reload that never comes.
+  ipcMain.handle('app:reload', (event): boolean => {
     if (
       mainWindow.isDestroyed() ||
       mainWebContents.isDestroyed() ||
       event.sender !== mainWebContents
     ) {
-      return
+      return false
     }
     onBeforeRendererReload?.({ webContentsId: mainWebContents.id, ignoreCache: false })
     mainWebContents.reload()
+    return true
   })
   mainWindow.on('closed', () => {
     if (activeAppReloadHandlerToken !== handlerToken) {

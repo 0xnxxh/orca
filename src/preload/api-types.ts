@@ -983,8 +983,9 @@ export type AppApi = {
    *  sessions survive and can reattach after the new process starts. */
   restart: () => Promise<void>
   /** Reloads the current app renderer through main so expected renderer
-   *  teardown can be classified before Electron emits process-gone events. */
-  reload: () => Promise<void>
+   *  teardown can be classified before Electron emits process-gone events.
+   *  Resolves false when main declines the sender (e.g. the dashboard pop-out). */
+  reload: () => Promise<boolean>
   /** Stages the renderer's final state synchronously before unload. */
   stageBeforeUnloadSync: (args: {
     sessions: { state: WorkspaceSessionState; hostId?: ExecutionHostId }[]

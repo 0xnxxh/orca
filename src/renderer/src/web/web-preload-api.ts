@@ -547,7 +547,11 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       getFeatureWallAssetBaseUrl: () => Promise.resolve('/'),
       relaunch: () => Promise.resolve(window.location.reload()),
       restart: () => Promise.resolve(window.location.reload()),
-      reload: () => Promise.resolve(window.location.reload()),
+      // The web host reloads in-document itself, so report it as issued.
+      reload: () => {
+        window.location.reload()
+        return Promise.resolve(true)
+      },
       stageBeforeUnloadSync: ({ sessions, ui }) => {
         // Why: beforeunload cannot await the paired runtime, so the web adapter
         // guarantees immediate browser-local durability for the final snapshot.
