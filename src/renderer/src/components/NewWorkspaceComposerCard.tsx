@@ -66,6 +66,7 @@ import type { TaskSourceContext } from '../../../shared/task-source-context'
 import type { RuntimeStatus } from '../../../shared/runtime-types'
 import { unwrapRuntimeRpcResult } from '@/runtime/runtime-rpc-client'
 import { translate } from '@/i18n/i18n'
+import { withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
 type EphemeralVmRecipeOption = NonNullable<OrcaHooks['environmentRecipes']>[number]
@@ -208,33 +209,6 @@ const SSH_STATUS_LABELS: Partial<Record<SshConnectionStatus, string>> = {
 
 function getSshStatusLabel(status: SshConnectionStatus): string {
   return SSH_STATUS_LABELS[status] ?? status
-}
-
-// Why: bound how long the run-target picker waits on a host connect so a stalled backend
-// connect can't leave the row's disabled/spinner state stuck forever. The backend keeps going.
-const RUN_TARGET_CONNECT_UI_TIMEOUT_MS = 20_000
-
-async function withUiConnectTimeout<T>(promise: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        new Error(
-          translate(
-            'auto.components.NewWorkspaceComposerCard.connectTimedOut',
-            'Connection timed out. It may still be connecting in the background.'
-          )
-        )
-      )
-    }, RUN_TARGET_CONNECT_UI_TIMEOUT_MS)
-  })
-  try {
-    return await Promise.race([promise, timeout])
-  } finally {
-    if (timer) {
-      clearTimeout(timer)
-    }
-  }
 }
 
 function SetupCommandPreview({ setupConfig }: { setupConfig: SetupConfig }): React.JSX.Element {

@@ -5,12 +5,10 @@ import { translate } from '@/i18n/i18n'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { useAppStore } from '../../store'
 import { STATUS_LABELS, statusColor } from '../settings/SshTargetCard'
+import { canConnectSshStatus } from '@/ssh/ssh-connection-recoverability'
+import { sshConnectVerb } from '@/ssh/ssh-connect-verb'
 import type { SshConnectionStatus } from '../../../../shared/ssh-types'
 import type { RemoteWorkspaceSyncStatus } from '../../store/slices/ssh'
-
-function isReconnectable(status: SshConnectionStatus): boolean {
-  return ['disconnected', 'reconnection-failed', 'error', 'auth-failed'].includes(status)
-}
 
 function syncStatusLabel(status: RemoteWorkspaceSyncStatus | undefined): string | null {
   switch (status?.phase) {
@@ -132,13 +130,13 @@ export function SshTargetStatusRow({
       </div>
       {busy ? (
         <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
-      ) : isReconnectable(status) ? (
+      ) : canConnectSshStatus(status) ? (
         <button
           type="button"
           onClick={() => void handleConnect()}
           className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent/70"
         >
-          {translate('auto.components.status.bar.SshStatusSegment.63f36455cc', 'Connect')}
+          {sshConnectVerb(status)}
         </button>
       ) : status === 'connected' ? (
         <button
