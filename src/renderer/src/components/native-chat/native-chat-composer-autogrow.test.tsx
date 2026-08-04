@@ -194,6 +194,13 @@ describe('native chat composer composition ownership', () => {
 
   it('retains the macOS marked Enter/229 gesture through its unmarked redispatch', () => {
     const onKeyDown = vi.fn()
+    let clearPending: FrameRequestCallback | undefined
+    const animationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        clearPending = callback
+        return 1
+      })
     render(composerField('테스트', { onKeyDown }))
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.compositionStart(textarea)
@@ -210,9 +217,34 @@ describe('native chat composer composition ownership', () => {
     expect(redispatchResult).toBe(false)
     expect(onKeyDown).not.toHaveBeenCalled()
 
+    clearPending?.(0)
     fireEvent.keyUp(textarea, { key: 'Enter', keyCode: 13 })
     fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 13, isComposing: false })
     expect(onKeyDown).toHaveBeenCalledOnce()
+    animationFrame.mockRestore()
+  })
+
+  it('expires a marked Enter when the browser does not redispatch it', () => {
+    const onKeyDown = vi.fn()
+    let clearPending: FrameRequestCallback | undefined
+    const animationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        clearPending = callback
+        return 1
+      })
+    render(composerField('가', { onKeyDown }))
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.compositionStart(textarea)
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229, isComposing: true })
+    fireEvent.compositionEnd(textarea, { data: '가' })
+    fireEvent.keyUp(textarea, { key: 'Enter', keyCode: 13 })
+
+    clearPending?.(0)
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 13, isComposing: false })
+
+    expect(onKeyDown).toHaveBeenCalledOnce()
+    animationFrame.mockRestore()
   })
 
   it('passes ordinary English Enter through without an IME gesture', () => {

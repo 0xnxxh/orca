@@ -204,6 +204,16 @@ export function NativeChatComposerField({
               onKeyUp={(event) => {
                 if (event.key === 'Process' && event.keyCode === 229) {
                   pendingCompositionEnterRef.current = false
+                  return
+                }
+                if (
+                  pendingCompositionEnterRef.current &&
+                  event.key === 'Enter' &&
+                  event.keyCode === 13
+                ) {
+                  requestAnimationFrame(() => {
+                    pendingCompositionEnterRef.current = false
+                  })
                 }
               }}
               onBlur={() => {
