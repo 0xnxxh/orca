@@ -240,7 +240,7 @@ describe('mobile rpc-client request deadline', () => {
     expect(sentRequest(socket, 'status.get')).toBeDefined()
     socket.receive(`encrypted:${JSON.stringify({ id: timedOutRequest.id, ok: true, result: {} })}`)
 
-    await vi.advanceTimersByTimeAsync(8_000)
+    await vi.advanceTimersByTimeAsync(16_500)
     expect(socket.close).not.toHaveBeenCalled()
     expect(client.getState()).toBe('connected')
 
@@ -265,7 +265,7 @@ describe('mobile rpc-client request deadline', () => {
 
     client.notifyForeground()
     socket.receive(`encrypted:${JSON.stringify({ id: timedOutRequest.id, ok: true, result: {} })}`)
-    await vi.advanceTimersByTimeAsync(8_000)
+    await vi.advanceTimersByTimeAsync(16_500)
 
     expect(socket.close).not.toHaveBeenCalled()
     expect(client.getState()).toBe('connected')
@@ -392,7 +392,7 @@ describe('mobile rpc-client request deadline', () => {
     expect(sentRequests(socket, 'status.get')).toHaveLength(2)
     socket.receive(`encrypted:${JSON.stringify({ id: stalledRequest.id, ok: true, result: {} })}`)
 
-    await vi.advanceTimersByTimeAsync(8_000)
+    await vi.advanceTimersByTimeAsync(16_500)
     expect(client.getState()).toBe('connected')
     expect(socket.close).not.toHaveBeenCalled()
     client.close()
@@ -420,7 +420,7 @@ describe('mobile rpc-client request deadline', () => {
     expect(sentRequests(socket, 'status.get')).toHaveLength(2)
     socket.receive(`encrypted:${JSON.stringify({ id: firstProbe.id, ok: true, result: {} })}`)
 
-    await vi.advanceTimersByTimeAsync(8_000)
+    await vi.advanceTimersByTimeAsync(16_500)
     expect(client.getState()).toBe('connected')
     expect(socket.close).not.toHaveBeenCalled()
     client.close()

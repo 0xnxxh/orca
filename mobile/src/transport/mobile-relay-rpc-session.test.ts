@@ -346,7 +346,7 @@ describe('mobile relay RPC session', () => {
         JSON.stringify({ id: timedOutRequest.id, ok: true, result: {}, _meta: {} })
       )
 
-      await vi.advanceTimersByTimeAsync(8_000)
+      await vi.advanceTimersByTimeAsync(16_500)
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {
@@ -817,7 +817,7 @@ describe('mobile relay RPC session', () => {
       fakes.linkOptions!.onText(
         JSON.stringify({ id: timedOutRequest.id, ok: true, result: {}, _meta: {} })
       )
-      await vi.advanceTimersByTimeAsync(8_000)
+      await vi.advanceTimersByTimeAsync(16_500)
 
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
