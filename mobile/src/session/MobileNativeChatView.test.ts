@@ -252,6 +252,22 @@ describe('MobileNativeChatView', () => {
     expect(stopButton().props.disabled).toBe(true)
   })
 
+  it('never goes stale when the link recovers inside the hold', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'disconnected' })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    await relock('waiting')
+    await settleLockDebounce()
+
+    // The armed timer has to be cancelled, not just overruled — a surviving one
+    // would fire late and mute a row whose transport is already back.
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(false)
+  })
+
   it('restores a live Stop as soon as the transport reconnects', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })

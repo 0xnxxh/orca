@@ -41,7 +41,9 @@ export function MobileAgentWorkingIndicator({
   return (
     // Not dimmed: the label is the only thing left carrying the state once the
     // dots go, and fading it under `textMuted` drops it below AA on `bgBase`.
-    <View style={styles.row}>
+    // The live region is constant, not toggled with `stale` — Android only
+    // announces content changes once the mode is already set.
+    <View style={styles.row} accessibilityLiveRegion="polite">
       <Text style={styles.label}>{stale ? 'Agent status stale' : 'Agent is working'}</Text>
       {stale ? null : (
         <View style={styles.dots}>
