@@ -618,13 +618,19 @@ describe('SSH IPC handlers', () => {
     const detachFlush = new Promise<void>((resolve) => {
       releaseDetach = resolve
     })
-    mockStore.markSshRemotePtyLeasesAsync.mockImplementationOnce(() => detachFlush)
+    let signalEnteredDetach = (): void => {}
+    const enteredDetach = new Promise<void>((resolve) => {
+      signalEnteredDetach = resolve
+    })
+    mockStore.markSshRemotePtyLeasesAsync.mockImplementationOnce(() => {
+      signalEnteredDetach()
+      return detachFlush
+    })
 
     const replacement = handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
-    // Why: let the replacement connect reach the flush before shutdown snapshots what to drain.
-    for (let tick = 0; tick < 10; tick++) {
-      await Promise.resolve()
-    }
+    // Why await the flush entry and not ticks: shutdown must not snapshot what to drain until the
+    // replacement connect is parked in the lease flush.
+    await enteredDetach
     expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith('ssh-1', 'detached')
 
     mockConnectionManager.disconnectAll.mockClear()

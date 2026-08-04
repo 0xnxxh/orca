@@ -46,7 +46,8 @@ export async function retrySshOwnerRecoveryWhilePublicationPending<T>(
       return await attempt()
     } catch (error) {
       if (
-        (error as { code?: unknown }).code !== PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR ||
+        (error as { code?: unknown } | null | undefined)?.code !==
+          PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR ||
         !gate.isCurrent()
       ) {
         throw error
