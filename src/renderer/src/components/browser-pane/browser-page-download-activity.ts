@@ -38,10 +38,7 @@ function trackDownloadStarted(downloadId: string, browserPageId: string): void {
 // finished event), and Orca has no resume path — without this transition the
 // veto would outlive the download for the whole session. A resumed download
 // re-actives on its next 'progressing' tick, restoring the veto.
-function trackDownloadProgress(
-  downloadId: string,
-  state: 'progressing' | 'interrupted' | null
-): void {
+function trackDownloadProgress(downloadId: string, state: 'progressing' | 'interrupted' | null): void {
   const download = trackedDownloadsById.get(downloadId)
   if (!download || state === null) {
     return
