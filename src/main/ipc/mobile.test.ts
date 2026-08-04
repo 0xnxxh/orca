@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type * as NodeOs from 'node:os'
 
 const { handleMock, networkInterfacesMock } = vi.hoisted(() => ({
@@ -318,7 +318,8 @@ describe('registerMobileHandlers', () => {
       address: '100.64.1.20',
       rotate: true,
       name: expect.stringMatching(/^Runtime /),
-      scope: 'runtime'
+      scope: 'runtime',
+      reach: 'network'
     })
     // Why: STA-2370 — generating a runtime offer must widen the listener BEFORE advertising its endpoint,
     // or a client could read the URL and connect before the LAN bind exists. Assert call ORDER, not just
@@ -329,31 +330,110 @@ describe('registerMobileHandlers', () => {
     )
   })
 
-  it.each(['127.0.0.1', 'localhost', '::1'])(
-    'mints a %s runtime link without widening the listener off-host',
-    async (address) => {
-      const createPairingOffer = vi.fn().mockReturnValue({
-        available: true,
-        pairingUrl: 'orca://pair#runtime',
-        webClientUrl: `http://${address}:6768/web-index.html?pairing=runtime`,
-        endpoint: `ws://${address}:6768`,
-        deviceId: 'runtime-local'
+  const stubRuntimePairingServer = (
+    address: string
+  ): { createPairingOffer: Mock; ensureNetworkExposure: Mock } => ({
+    createPairingOffer: vi.fn().mockReturnValue({
+      available: true,
+      pairingUrl: 'orca://pair#runtime',
+      webClientUrl: `http://${address}/web-index.html?pairing=runtime`,
+      endpoint: `ws://${address}`,
+      deviceId: 'runtime-local'
+    }),
+    ensureNetworkExposure: vi.fn().mockResolvedValue(undefined)
+  })
+
+  // Why: every loopback form the address field accepts must behave identically once the user declared
+  // "This computer only" — `splitHostPort`/`ws://` overrides all reach the handler verbatim, so gating on
+  // the raw string alone treated `localhost:8443` and `ws://127.0.0.1:6768` as off-host.
+  it.each([
+    '127.0.0.1',
+    'localhost',
+    '::1',
+    '127.0.0.1:8443',
+    'localhost:8443',
+    '[::1]:6768',
+    'ws://127.0.0.1:6768'
+  ])('mints a %s runtime link without widening the listener off-host', async (address) => {
+    const rpcServer = stubRuntimePairingServer(address)
+
+    registerMobileHandlers(rpcServer as never)
+
+    await expect(
+      handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+        address,
+        rotate: true,
+        reach: 'this-computer'
       })
-      const ensureNetworkExposure = vi.fn().mockResolvedValue(undefined)
-      const rpcServer = { createPairingOffer, ensureNetworkExposure }
+    ).resolves.toMatchObject({ available: true, deviceId: 'runtime-local' })
+
+    // Why: "This computer only" exists so nothing is exposed off-host — a loopback link is already
+    // served by the loopback listener, and the widen is one-way for the life of the process.
+    expect(rpcServer.ensureNetworkExposure).not.toHaveBeenCalled()
+    expect(rpcServer.createPairingOffer).toHaveBeenCalledWith(
+      expect.objectContaining({ reach: 'this-computer' })
+    )
+  })
+
+  // Why: the Custom field is documented as "SSH tunnel, reverse proxy, or custom hostname", so a loopback
+  // front-end there still needs the listener open behind it — gating the widen on the address SHAPE broke
+  // `ssh -L 8443:<desktop-lan-ip>:6768` (sshd dials the LAN address on this host and gets refused).
+  it.each(['127.0.0.1:8443', 'localhost', 'ws://127.0.0.1:6768'])(
+    'widens the listener for a custom %s address that fronts a tunnel',
+    async (address) => {
+      const rpcServer = stubRuntimePairingServer(address)
 
       registerMobileHandlers(rpcServer as never)
 
       await expect(
-        handlers.get('mobile:getRuntimePairingUrl')?.(null, { address, rotate: true })
-      ).resolves.toMatchObject({ available: true, deviceId: 'runtime-local' })
+        handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+          address,
+          rotate: true,
+          reach: 'network'
+        })
+      ).resolves.toMatchObject({ available: true })
 
-      // Why: "This computer only" exists so nothing is exposed off-host — a loopback link is already
-      // served by the loopback listener, and the widen is one-way for the life of the process.
-      expect(ensureNetworkExposure).not.toHaveBeenCalled()
-      expect(createPairingOffer).toHaveBeenCalled()
+      expect(rpcServer.ensureNetworkExposure).toHaveBeenCalled()
+      expect(rpcServer.createPairingOffer).toHaveBeenCalledWith(
+        expect.objectContaining({ reach: 'network' })
+      )
     }
   )
+
+  it('widens for a loopback address when the caller declares no reach', async () => {
+    const rpcServer = stubRuntimePairingServer('127.0.0.1:6768')
+
+    registerMobileHandlers(rpcServer as never)
+
+    await expect(
+      handlers.get('mobile:getRuntimePairingUrl')?.(null, { address: '127.0.0.1', rotate: true })
+    ).resolves.toMatchObject({ available: true })
+
+    // Why: only an explicit "This computer only" declines remote reach; an undeclared caller keeps the
+    // pre-STA-2370 opt-in behavior rather than silently minting a link the widen never backed.
+    expect(rpcServer.ensureNetworkExposure).toHaveBeenCalled()
+  })
+
+  it('widens when a this-computer reach carries an off-host address', async () => {
+    const rpcServer = stubRuntimePairingServer('192.168.1.5:6768')
+
+    registerMobileHandlers(rpcServer as never)
+
+    await expect(
+      handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+        address: '192.168.1.5',
+        rotate: true,
+        reach: 'this-computer'
+      })
+    ).resolves.toMatchObject({ available: true })
+
+    // Why: the declared reach and the advertised address disagree; honoring the declaration would mint a
+    // LAN link with no LAN listener behind it, so the address it actually publishes wins.
+    expect(rpcServer.ensureNetworkExposure).toHaveBeenCalled()
+    expect(rpcServer.createPairingOffer).toHaveBeenCalledWith(
+      expect.objectContaining({ reach: 'network' })
+    )
+  })
 
   it('reports the runtime pairing url unavailable and mints no offer when the widen fails', async () => {
     const createPairingOffer = vi.fn()
@@ -551,16 +631,21 @@ describe('runtime pairing bind host', () => {
     })
   })
 
-  it('keeps a real listener on loopback for a local link and widens it only for an off-host one', async () => {
-    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-mobile-ipc-'))
+  const startServer = async (userDataPath: string): Promise<OrcaRuntimeRpcServer> => {
     const server = new OrcaRuntimeRpcServer({
       runtime: new OrcaRuntimeService(),
       userDataPath,
       enableWebSocket: true,
       wsPort: 0
     })
-
     await server.start()
+    return server
+  }
+
+  it('keeps a real listener on loopback for a local link and widens it only for an off-host one', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-mobile-ipc-'))
+    const server = await startServer(userDataPath)
+
     try {
       registerMobileHandlers(server)
       expect(wsTransportOf(server)?.resolvedHost).toBe('127.0.0.1')
@@ -568,7 +653,8 @@ describe('runtime pairing bind host', () => {
       await expect(
         handlers.get('mobile:getRuntimePairingUrl')?.(null, {
           address: '127.0.0.1',
-          rotate: true
+          rotate: true,
+          reach: 'this-computer'
         })
       ).resolves.toMatchObject({ available: true })
       // Why: the exposure regression — picking "This computer only" used to rebind the listener to
@@ -578,13 +664,75 @@ describe('runtime pairing bind host', () => {
       await expect(
         handlers.get('mobile:getRuntimePairingUrl')?.(null, {
           address: '100.64.1.20',
-          rotate: true
+          rotate: true,
+          reach: 'network'
         })
       ).resolves.toMatchObject({ available: true })
       // Why: the LAN/Tailscale choice still opts in — a client off this host cannot reach a loopback bind.
       expect(wsTransportOf(server)?.resolvedHost).toBe('0.0.0.0')
     } finally {
       await server.stop()
+    }
+  })
+
+  // Why: the whole guarantee is worthless if it lasts one process — the local web client authenticating
+  // marks its grant lastSeenAt > 0, which used to make the NEXT launch bind every interface.
+  it('still binds loopback on the next launch after the local link has been used', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-mobile-ipc-'))
+    const server = await startServer(userDataPath)
+    let deviceId: string
+    try {
+      registerMobileHandlers(server)
+      const offer = (await handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+        address: '127.0.0.1',
+        rotate: true,
+        reach: 'this-computer'
+      })) as { available: true; deviceId: string }
+      expect(offer.available).toBe(true)
+      deviceId = offer.deviceId
+      // Exactly what MobileSocketWiring does for every authenticated socket, local browser included.
+      server.getDeviceRegistry()?.updateLastSeen(deviceId)
+    } finally {
+      await server.stop()
+    }
+
+    const relaunched = await startServer(userDataPath)
+    try {
+      expect(
+        relaunched
+          .getDeviceRegistry()
+          ?.listDevices()
+          .some((device) => device.deviceId === deviceId && device.lastSeenAt > 0)
+      ).toBe(true)
+      expect(wsTransportOf(relaunched)?.resolvedHost).toBe('127.0.0.1')
+    } finally {
+      await relaunched.stop()
+    }
+  })
+
+  it('binds all interfaces on the next launch after a network link has been used', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-mobile-ipc-'))
+    const server = await startServer(userDataPath)
+    try {
+      registerMobileHandlers(server)
+      const offer = (await handlers.get('mobile:getRuntimePairingUrl')?.(null, {
+        address: '100.64.1.20',
+        rotate: true,
+        reach: 'network'
+      })) as { available: true; deviceId: string }
+      expect(offer.available).toBe(true)
+      server.getDeviceRegistry()?.updateLastSeen(offer.deviceId)
+    } finally {
+      await server.stop()
+    }
+
+    const relaunched = await startServer(userDataPath)
+    try {
+      // Why: the reconnect widen must survive — a client that really did connect from off-host has to
+      // find the listener at launch without the user re-pairing.
+      expect(wsTransportOf(relaunched)?.resolvedHost).toBe('0.0.0.0')
+    } finally {
+      await relaunched.stop()
     }
   })
 })
