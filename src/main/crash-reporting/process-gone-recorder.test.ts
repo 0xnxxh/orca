@@ -14,6 +14,7 @@ import {
 } from './crash-breadcrumb-store'
 import { ProcessGoneDedupe } from './process-gone-dedupe'
 import { recordProcessGoneCrash, type ProcessGoneCrashEvent } from './process-gone-recorder'
+import { resetProcessTreeKillWindowForTest } from './process-tree-kill-window'
 import { _resetTracerForTests, setActiveSink, type TracerSink } from '../observability/tracer'
 
 type CapturingSink = TracerSink & { records: unknown[]; flushMock: ReturnType<typeof vi.fn> }
@@ -51,6 +52,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   _resetTracerForTests()
   clearCrashBreadcrumbsForTest()
@@ -362,5 +364,111 @@ describe('recordProcessGoneCrash', () => {
     recordProcessGoneCrash({ record } as never, event(), dedupe)
 
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
+  })
+})
+
+// Field timeline from crash bundle F0BMK043Q2V (win32 10.0.26200, 1.4.164):
+// Network Service killed/1 at 22:09:38.662, GPU killed/1 at .737, renderer
+// killed/1 at .746 — one `taskkill` of the tree reported as a renderer crash.
+describe('recordProcessGoneCrash whole-process-tree kills', () => {
+  const networkServiceKill = event({
+    source: 'child',
+    processType: 'Utility',
+    reason: 'killed',
+    exitCode: 1,
+    details: {
+      name: 'Network Service',
+      serviceName: 'network.mojom.NetworkService',
+      type: 'Utility'
+    }
+  })
+  const gpuKill = event({
+    source: 'child',
+    processType: 'GPU',
+    reason: 'killed',
+    exitCode: 1,
+    details: { serviceName: 'GPU', type: 'GPU' }
+  })
+  const rendererKill = event({ reason: 'killed', exitCode: 1 })
+
+  beforeEach(() => {
+    resetProcessTreeKillWindowForTest()
+  })
+
+  it('does not report the renderer kill when the children died first', () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const dedupe = new ProcessGoneDedupe()
+    const nowSpy = vi.spyOn(Date, 'now')
+
+    nowSpy.mockReturnValue(1_785_708_578_662)
+    recordProcessGoneCrash({ record } as never, networkServiceKill, dedupe)
+    nowSpy.mockReturnValue(1_785_708_578_737)
+    recordProcessGoneCrash({ record } as never, gpuKill, dedupe)
+    nowSpy.mockReturnValue(1_785_708_578_746)
+    recordProcessGoneCrash({ record } as never, rendererKill, dedupe)
+
+    expect(record).not.toHaveBeenCalled()
+    expect(getCrashBreadcrumbSnapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'process_gone_suppressed',
+          data: expect.objectContaining({ source: 'renderer', siblingKills: 2 })
+        })
+      ])
+    )
+  })
+
+  // Field timeline from crash bundle F0BMVQ3640H: renderer killed/1 first, then
+  // Network Service +5ms and GPU +41ms — the same tree kill, opposite order.
+  it('does not report the renderer kill when the children died right after', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const dedupe = new ProcessGoneDedupe()
+    vi.useFakeTimers()
+    vi.setSystemTime(1_785_818_589_464)
+
+    recordProcessGoneCrash({ record } as never, rendererKill, dedupe)
+    vi.advanceTimersByTime(5)
+    recordProcessGoneCrash({ record } as never, networkServiceKill, dedupe)
+    vi.advanceTimersByTime(36)
+    recordProcessGoneCrash({ record } as never, gpuKill, dedupe)
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(record).not.toHaveBeenCalled()
+    expect(getCrashBreadcrumbSnapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'process_gone_suppressed',
+          data: expect.objectContaining({ source: 'renderer', siblingKills: 2 })
+        })
+      ])
+    )
+  })
+
+  it('still reports a solitary renderer kill once the sibling window settles', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    vi.useFakeTimers()
+
+    // Linux exit 61696 self-recovers with no child kills; it must stay reportable.
+    recordProcessGoneCrash(
+      { record } as never,
+      event({ reason: 'killed', exitCode: 61696 }),
+      new ProcessGoneDedupe()
+    )
+    expect(record).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(record).toHaveBeenCalledOnce()
+  })
+
+  it('ignores child kills that died with a different exit code', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    const dedupe = new ProcessGoneDedupe()
+    vi.useFakeTimers()
+
+    recordProcessGoneCrash({ record } as never, gpuKill, dedupe)
+    recordProcessGoneCrash({ record } as never, event({ reason: 'killed', exitCode: 9 }), dedupe)
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(record).toHaveBeenCalledOnce()
   })
 })
