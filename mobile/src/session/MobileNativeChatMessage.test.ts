@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MAX_TOOL_RESULT_CHARS } from './mobile-native-chat-message-styles'
@@ -109,5 +109,33 @@ describe('MobileNativeChatMessage', () => {
       .find((text) => text.startsWith('{\n'))
     expect(detail).toHaveLength(MAX_TOOL_RESULT_CHARS + 1)
     expect(detail?.endsWith('…')).toBe(true)
+  })
+
+  it('expands formatted detail for a pending JSON-string tool input', () => {
+    const tree = render({
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool-call',
+          name: 'CustomTool',
+          input: '{"cmd":"git status","description":"Inspect changes"}'
+        }
+      ],
+      timestamp: null,
+      source: 'transcript'
+    })
+    const textIn = (node: ReactTestInstance): string[] =>
+      node.findAllByType('Text' as never).map((text) => String(text.children.join('')))
+    const pressableWith = (label: string) =>
+      tree.root.findAllByType('Pressable' as never).find((node) => textIn(node).includes(label))!
+
+    act(() => pressableWith('1×').props.onPress())
+    expect(textIn(tree.root).some((text) => text.startsWith('{\n'))).toBe(false)
+
+    act(() => pressableWith('CustomTool').props.onPress())
+    expect(textIn(tree.root)).toContain(
+      '{\n  "cmd": "git status",\n  "description": "Inspect changes"\n}'
+    )
   })
 })

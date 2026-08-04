@@ -57,6 +57,11 @@ export function formatToolInput(input: unknown): string {
   }
 }
 
+export function isStructuredToolInput(input: unknown): boolean {
+  const normalized = normalizeToolInput(input)
+  return normalized !== null && typeof normalized === 'object'
+}
+
 export function toolFilePath(input: unknown): string | null {
   const normalized = normalizeToolInput(input)
   if (!normalized || typeof normalized !== 'object') {

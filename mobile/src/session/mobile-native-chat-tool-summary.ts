@@ -3,6 +3,7 @@ export {
   countToolCalls,
   describeToolInput,
   formatToolInput,
+  isStructuredToolInput,
   summarizeToolInput,
   summarizeToolRun,
   toolFilePath

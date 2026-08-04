@@ -19,6 +19,7 @@ import { nativeChatMessageText } from './mobile-native-chat-message-text'
 import {
   describeToolInput,
   formatToolInput,
+  isStructuredToolInput,
   summarizeToolRun,
   toolFilePath
 } from './mobile-native-chat-tool-summary'
@@ -109,7 +110,7 @@ function ToolLine({
     callDiff !== null ||
     result !== undefined ||
     preview.length > 40 ||
-    (call !== undefined && call.input !== null && typeof call.input === 'object')
+    (call !== undefined && isStructuredToolInput(call.input))
   // A tool that targets a file (Read/Edit/Write…) renders its preview as a
   // tappable link that opens the file, independent of the line's expand tap.
   const filePath = call ? toolFilePath(call.input) : null
