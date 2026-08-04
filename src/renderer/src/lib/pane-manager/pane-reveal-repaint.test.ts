@@ -114,7 +114,7 @@ describe('schedulePaneRevealRepaint', () => {
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
-  it('coordinates a settled atlas clear across every live manager', () => {
+  it('coordinates a settled atlas clear across recovery-eligible managers', () => {
     const pane = createPane({ webglAddon: { clearTextureAtlas: vi.fn() } })
     const siblingPane = createPane({ webglAddon: { clearTextureAtlas: vi.fn() } })
     const targetManager = registerPaneManager(() => [pane])
