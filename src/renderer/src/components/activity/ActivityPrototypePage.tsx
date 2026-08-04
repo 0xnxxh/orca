@@ -57,6 +57,7 @@ import {
 } from './activity-portal-thread-reconciliation'
 import {
   createActivityPortalReadinessLatch,
+  type ActivityPortalReadinessLatch,
   type ActivityPortalReadinessStatus
 } from './activity-portal-readiness-oscillation'
 import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
@@ -300,6 +301,12 @@ export function useActivityTerminalPortalStatus(
     paneKey: null,
     status: 'loading'
   })
+  // Why: the swap effect churns target and paneKey, so a latch owned by this effect would restart
+  // its flip budget on every oscillation step; only the tab id is stable across that churn.
+  const readinessLatchRef = useRef<{ tabId: string | null; latch: ActivityPortalReadinessLatch }>({
+    tabId: null,
+    latch: createActivityPortalReadinessLatch()
+  })
 
   useLayoutEffect(() => {
     let disposed = false
@@ -347,7 +354,11 @@ export function useActivityTerminalPortalStatus(
       return disposeFrame
     }
 
-    const readinessLatch = createActivityPortalReadinessLatch()
+    const tabId = parsePaneKey(paneKey)?.tabId ?? null
+    if (readinessLatchRef.current.tabId !== tabId) {
+      readinessLatchRef.current = { tabId, latch: createActivityPortalReadinessLatch() }
+    }
+    const readinessLatch = readinessLatchRef.current.latch
 
     const updateReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
       scheduleReadiness(readinessLatch.next(status))
