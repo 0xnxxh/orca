@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useRef,
   type Dispatch,
   type MutableRefObject,
@@ -250,10 +249,6 @@ export function useMobileNativeChatController(args: {
   // tracking, but the options hook needs the seam's dispatcher — a ref breaks
   // the cycle without re-creating the send callbacks per snapshot.
   const recordSessionOptionCommandRef = useRef<(command: string) => void>(() => {})
-  const handleCommandSend = useCallback(
-    (command: string) => recordSessionOptionCommandRef.current(command),
-    []
-  )
 
   const {
     send: handleNativeChatSend,
@@ -266,7 +261,7 @@ export function useMobileNativeChatController(args: {
     handleRef: activeHandleRef,
     deviceTokenRef,
     agentRef: activeChatAgentRef,
-    onCommandSend: handleCommandSend,
+    commandSendRef: recordSessionOptionCommandRef,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -291,9 +286,7 @@ export function useMobileNativeChatController(args: {
     dispatchCommand: handleNativeChatDispatchCommand,
     onAgentPicker: handleAgentPicker
   })
-  useEffect(() => {
-    recordSessionOptionCommandRef.current = sessionOptions.recordCommand
-  }, [sessionOptions.recordCommand])
+  recordSessionOptionCommandRef.current = sessionOptions.recordCommand
   // Card actions retire the route's held failure banner too, not just sends.
   const answerAsk = useNativeChatAcceptedAction(handleNativeChatAnswerAsk, onSendResolved)
   const cancelAsk = useNativeChatAcceptedAction(handleNativeChatCancelAsk, onSendResolved)

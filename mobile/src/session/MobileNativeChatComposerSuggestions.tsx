@@ -32,6 +32,7 @@ export function MobileNativeChatComposerSuggestions({
         {suggestions.map((suggestion) => (
           <Pressable
             key={composerSuggestionKey(suggestion)}
+            accessibilityRole="button"
             style={({ pressed }) => [styles.suggestion, pressed && styles.suggestionPressed]}
             onPress={() => onPick(suggestion)}
           >

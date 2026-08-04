@@ -89,10 +89,15 @@ export function MobileNativeChatComposer({
   const sendingRef = useRef(false)
   const [sending, setSending] = useState(false)
   const trimmed = value.trim()
+  const sessionOptionDispatching = sessionOptions?.controller.pendingId != null
   // An attached image alone is a valid send (desktop parity), so the image rides
   // along even when the user sends no accompanying text.
   const canSend =
-    (trimmed.length > 0 || attachments.length > 0) && !disabled && !sending && !isAttaching
+    (trimmed.length > 0 || attachments.length > 0) &&
+    !disabled &&
+    !sending &&
+    !isAttaching &&
+    !sessionOptionDispatching
 
   const trigger = useMemo(() => detectAutocompleteTrigger(value, cursor), [value, cursor])
   const suggestions = useMemo<ComposerSuggestion[]>(() => {
@@ -143,7 +148,7 @@ export function MobileNativeChatComposer({
     sendingRef.current = true
     setSending(true)
     try {
-      const accepted = await onSend(trimmed)
+      const accepted = await onSend(value.trimEnd())
       if (accepted) {
         setCursor(0)
       }

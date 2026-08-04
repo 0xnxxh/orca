@@ -92,8 +92,59 @@ describe('MobileNativeChatComposer', () => {
 
     await act(async () => sendButton().props.onPress())
 
-    expect(onSend).toHaveBeenCalledWith('hello')
+    expect(onSend).toHaveBeenCalledWith(' hello')
     expect(onChangeText).not.toHaveBeenCalled()
+  })
+
+  it('preserves leading whitespace so prose is not turned into a slash command', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: ' /clear is prose ',
+            onChangeText: vi.fn(),
+            onSend
+          })
+        )
+      })
+    } finally {
+      restore()
+    }
+    await act(async () => sendButton().props.onPress())
+    expect(onSend).toHaveBeenCalledWith(' /clear is prose')
+  })
+
+  it('blocks composer submission while a session-option command is pending', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: 'hello',
+            onChangeText: vi.fn(),
+            onSend,
+            sessionOptions: {
+              isWorking: false,
+              controller: {
+                snapshot: [],
+                pendingId: 'model',
+                setOption: vi.fn(),
+                invokeAction: vi.fn(),
+                recordCommand: vi.fn()
+              }
+            }
+          })
+        )
+      })
+    } finally {
+      restore()
+    }
+    expect(sendButton().props).toMatchObject({ disabled: true })
+    await act(async () => sendButton().props.onPress())
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('keeps the draft when the send is rejected', async () => {
@@ -103,7 +154,7 @@ describe('MobileNativeChatComposer', () => {
 
     await act(async () => sendButton().props.onPress())
 
-    expect(onSend).toHaveBeenCalledWith('hello')
+    expect(onSend).toHaveBeenCalledWith(' hello')
     expect(onChangeText).not.toHaveBeenCalled()
   })
 

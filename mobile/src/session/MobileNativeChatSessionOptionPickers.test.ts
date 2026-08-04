@@ -71,15 +71,39 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     })
   }
 
-  const pill = (name: string): { props: { onPress: () => void; disabled?: boolean } } =>
+  const pill = (
+    name: string
+  ): {
+    props: {
+      onPress: () => void
+      disabled?: boolean
+      accessibilityRole?: string
+      accessibilityState?: { disabled?: boolean }
+    }
+  } =>
     renderer!.root.find(
       (node) =>
         node.type === 'Pressable' &&
         typeof node.props.accessibilityLabel === 'string' &&
         node.props.accessibilityLabel.startsWith(name)
-    ) as { props: { onPress: () => void; disabled?: boolean } }
+    ) as {
+      props: {
+        onPress: () => void
+        disabled?: boolean
+        accessibilityRole?: string
+        accessibilityState?: { disabled?: boolean }
+      }
+    }
 
-  const rowByText = (text: string): { props: { onPress: () => void } } => {
+  const rowByText = (
+    text: string
+  ): {
+    props: {
+      onPress: () => void
+      accessibilityRole?: string
+      accessibilityState?: { checked?: boolean; disabled?: boolean }
+    }
+  } => {
     const label = renderer!.root
       .findAll((node) => node.type === 'Text')
       .find((node) => (node.props as { children?: unknown }).children === text)
@@ -93,7 +117,13 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     if (!parent) {
       throw new Error(`No pressable row for ${text}`)
     }
-    return parent as unknown as { props: { onPress: () => void } }
+    return parent as unknown as {
+      props: {
+        onPress: () => void
+        accessibilityRole?: string
+        accessibilityState?: { checked?: boolean; disabled?: boolean }
+      }
+    }
   }
 
   beforeEach(() => {
@@ -132,6 +162,20 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     expect(setOption).toHaveBeenCalledWith('model', 'opus')
   })
 
+  it('announces choice selection and disabled state', async () => {
+    mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
+    expect(pill('Model').props).toMatchObject({
+      accessibilityRole: 'button',
+      accessibilityState: { disabled: false }
+    })
+    await act(async () => pill('Model').props.onPress())
+    expect(rowByText('Sonnet 5').props).toMatchObject({
+      accessibilityRole: 'radio',
+      accessibilityState: { checked: true, disabled: false }
+    })
+    expect(rowByText('Opus 4.8').props.accessibilityState?.checked).toBe(false)
+  })
+
   it('closes without dispatch when re-picking the tracked value', async () => {
     mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
     await act(async () => pill('Model').props.onPress())
@@ -149,6 +193,7 @@ describe('MobileNativeChatSessionOptionPickers', () => {
       }
     ])
     await act(async () => pill('Model').props.onPress())
+    expect(rowByText('Choose in agent picker…').props.accessibilityRole).toBe('button')
     await act(async () => rowByText('Choose in agent picker…').props.onPress())
     expect(invokeAction).toHaveBeenCalledWith('model')
   })

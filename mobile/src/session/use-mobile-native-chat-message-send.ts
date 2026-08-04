@@ -40,9 +40,9 @@ export function useMobileNativeChatMessageSend(args: {
   deviceTokenRef: MutableRefObject<string | null>
   /** Active tab's agent — classification is per-agent (command catalogs differ). */
   agentRef: MutableRefObject<string | null>
-  /** Fires after a catalog command send is accepted, so session-option state can
-   *  track typed commands like `/model sonnet` (desktop recordOutgoingCommand parity). */
-  onCommandSend?: (command: string) => void
+  /** Captured when a control send starts so a later tab switch cannot record its
+   *  session-option effects against the newly active tab. */
+  commandSendRef: MutableRefObject<(command: string) => void>
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
    *  at send time so the pre-clear can be sized to every line it occupies. */
@@ -63,7 +63,7 @@ export function useMobileNativeChatMessageSend(args: {
     handleRef,
     deviceTokenRef,
     agentRef,
-    onCommandSend,
+    commandSendRef,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -78,10 +78,13 @@ export function useMobileNativeChatMessageSend(args: {
       text: string,
       images: string[] | undefined,
       syncComposer: boolean,
+      recordControlSend: boolean,
       sharedDeadline?: number
     ): Promise<MobileNativeChatSendOutcome> => {
       const handle = handleRef.current
       const origin = captureSendOrigin(text)
+      const agent = agentRef.current
+      const recordCommand = commandSendRef.current
       // Why: the lease collapses one render after `connState`, so a question-card
       // answer (which reaches this send directly) would otherwise burn the whole
       // 15s heal+send budget waiting on a socket that is already gone.
@@ -176,7 +179,7 @@ export function useMobileNativeChatMessageSend(args: {
       // TUI, not the conversation — the transcript never echoes it as a user
       // turn, so an optimistic bubble would sit at "Queued" forever and the
       // unconfirmed hold could never observe a landing.
-      const classification = classifyMobileNativeChatSend(agentRef.current, text)
+      const classification = classifyMobileNativeChatSend(agent, text)
       if (outcome === 'unknown') {
         if (classification === 'chat') {
           // Why: an ack-lost send usually WAS delivered (issue seen on cellular
@@ -198,8 +201,10 @@ export function useMobileNativeChatMessageSend(args: {
         // `images` are local preview URIs for the optimistic echo only — the actual
         // image bytes already rode along as a bracketed paste before this text send.
         acceptSend(origin, text, images)
-      } else if (classification === 'command') {
-        onCommandSend?.(text.trim())
+      } else if (recordControlSend) {
+        // The session-option catalog can recognize controls omitted from the
+        // autocomplete catalog (for example Claude `/model` and `/fast`).
+        recordCommand(text.trim())
       }
       return 'accepted'
     },
@@ -209,11 +214,11 @@ export function useMobileNativeChatMessageSend(args: {
       captureSendOrigin,
       clearDraftForSend,
       client,
+      commandSendRef,
       deviceTokenRef,
       enabled,
       handleRef,
       holdUnconfirmedSend,
-      onCommandSend,
       onSendError,
       readSeededLaunchDraftSeed,
       restoreRejectedDraft
@@ -222,7 +227,7 @@ export function useMobileNativeChatMessageSend(args: {
 
   const sendWithOutcome = useCallback(
     (text: string, images?: string[], deadline?: number) =>
-      sendMessage(text, images, true, deadline),
+      sendMessage(text, images, true, true, deadline),
     [sendMessage]
   )
 
@@ -237,12 +242,13 @@ export function useMobileNativeChatMessageSend(args: {
   // A question answer is not composer text, so it never syncs the draft.
   const answerQuestion = useCallback(
     async (text: string): Promise<boolean> =>
-      (await sendMessage(text, undefined, false)) !== 'rejected',
+      (await sendMessage(text, undefined, false, true)) !== 'rejected',
     [sendMessage]
   )
 
   const dispatchCommand = useCallback(
-    (text: string): Promise<MobileNativeChatSendOutcome> => sendMessage(text, undefined, false),
+    (text: string): Promise<MobileNativeChatSendOutcome> =>
+      sendMessage(text, undefined, false, false),
     [sendMessage]
   )
 

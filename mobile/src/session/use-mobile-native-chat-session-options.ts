@@ -32,6 +32,8 @@ export type MobileNativeChatSessionOptionsController = {
   recordCommand: (command: string) => void
 }
 
+type PendingOperation = { id: string; token: number }
+
 // Why: per-tab records survive chat↔terminal flips and remounts, like desktop's
 // scope cache. Bounded so long sessions across many tabs can't grow unbounded.
 const MOBILE_SESSION_OPTION_RECORD_CAP = 32
@@ -71,13 +73,28 @@ export function useMobileNativeChatSessionOptions(args: {
   onAgentPicker?: () => void
 }): MobileNativeChatSessionOptionsController {
   const { agent, scopeKey, reportedModel, dispatchCommand, onAgentPicker } = args
-  const catalog = useMemo(() => (agent ? getAgentSessionOptionCatalog(agent) : null), [agent])
+  const catalog = useMemo(
+    () => (agent === 'claude' || agent === 'codex' ? getAgentSessionOptionCatalog(agent) : null),
+    [agent]
+  )
+  const identity = agent && scopeKey ? `${scopeKey}\0${agent}` : null
   const [version, setVersion] = useState(0)
-  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [pendingByIdentity, setPendingByIdentity] = useState<
+    Record<string, PendingOperation | undefined>
+  >({})
+  const pendingId = identity ? (pendingByIdentity[identity]?.id ?? null) : null
   const bump = useCallback(() => setVersion((current) => current + 1), [])
-  // Why: ordered applies — a later absolute target must observe the result of
-  // an earlier dispatch instead of computing against a stale baseline.
-  const applyQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  const activeIdentityRef = useRef(identity)
+  activeIdentityRef.current = identity
+  const applyQueuesRef = useRef(new Map<string, Promise<void>>())
+  const operationTokenRef = useRef(0)
+
+  useEffect(
+    () => () => {
+      activeIdentityRef.current = null
+    },
+    []
+  )
 
   // Seed the current model from live agent status; hook reports are authority
   // over locally dispatched guesses (desktop 'reported' source parity).
@@ -104,23 +121,47 @@ export function useMobileNativeChatSessionOptions(args: {
     return buildMobileSessionOptionSnapshot({ catalog, record: getScopedRecord(scopeKey, agent) })
   }, [agent, catalog, scopeKey, version])
 
-  const runSerialized = useCallback(<T>(id: string, run: () => Promise<T>): Promise<T> => {
-    const chained = applyQueueRef.current.then(run, run)
-    applyQueueRef.current = chained.then(
-      () => undefined,
-      () => undefined
-    )
-    setPendingId(id)
-    void chained.finally(() => setPendingId(null))
-    return chained
-  }, [])
+  const runSerialized = useCallback(
+    (operationIdentity: string, id: string, run: () => Promise<boolean>): Promise<boolean> => {
+      const previous = applyQueuesRef.current.get(operationIdentity) ?? Promise.resolve()
+      const runIfCurrent = (): Promise<boolean> =>
+        activeIdentityRef.current === operationIdentity ? run() : Promise.resolve(false)
+      const chained = previous.then(runIfCurrent, runIfCurrent)
+      const tail = chained.then(
+        () => undefined,
+        () => undefined
+      )
+      applyQueuesRef.current.set(operationIdentity, tail)
+      operationTokenRef.current += 1
+      const token = operationTokenRef.current
+      setPendingByIdentity((current) => ({
+        ...current,
+        [operationIdentity]: { id, token }
+      }))
+      void tail.then(() => {
+        if (applyQueuesRef.current.get(operationIdentity) === tail) {
+          applyQueuesRef.current.delete(operationIdentity)
+        }
+        setPendingByIdentity((current) => {
+          if (current[operationIdentity]?.token !== token) {
+            return current
+          }
+          const next = { ...current }
+          delete next[operationIdentity]
+          return next
+        })
+      })
+      return chained
+    },
+    []
+  )
 
   const setOption = useCallback(
     (id: string, value: SessionOptionValue): Promise<boolean> => {
-      if (!catalog || !scopeKey || !agent) {
+      if (!catalog || !scopeKey || !agent || !identity) {
         return Promise.resolve(false)
       }
-      return runSerialized(id, async () => {
+      return runSerialized(identity, id, async () => {
         const record = getScopedRecord(scopeKey, agent)
         const previousModelId = typeof record.model?.value === 'string' ? record.model.value : null
         const apply =
@@ -176,15 +217,15 @@ export function useMobileNativeChatSessionOptions(args: {
         return true
       })
     },
-    [agent, bump, catalog, dispatchCommand, runSerialized, scopeKey]
+    [agent, bump, catalog, dispatchCommand, identity, runSerialized, scopeKey]
   )
 
   const invokeAction = useCallback(
     (id: string): Promise<boolean> => {
-      if (!catalog || !scopeKey || !agent) {
+      if (!catalog || !scopeKey || !agent || !identity) {
         return Promise.resolve(false)
       }
-      return runSerialized(id, async () => {
+      return runSerialized(identity, id, async () => {
         const record = getScopedRecord(scopeKey, agent)
         const modelId = typeof record.model?.value === 'string' ? record.model.value : null
         const apply =
@@ -211,7 +252,7 @@ export function useMobileNativeChatSessionOptions(args: {
         return false
       })
     },
-    [agent, bump, catalog, dispatchCommand, onAgentPicker, runSerialized, scopeKey]
+    [agent, bump, catalog, dispatchCommand, identity, onAgentPicker, runSerialized, scopeKey]
   )
 
   const recordCommand = useCallback(

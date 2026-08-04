@@ -31,19 +31,22 @@ describe('useMobileNativeChatMessageSend', () => {
   const acceptSend = vi.fn()
   const holdUnconfirmedSend = vi.fn()
   const onCommandSend = vi.fn()
+  const commandSendRef = { current: onCommandSend }
+  const agentRef = { current: null as string | null }
 
   const mount = (
     readSeededLaunchDraftSeed: () => { text: string; createdAt: number | null } | null,
     agent: string | null = 'claude'
   ): void => {
+    agentRef.current = agent
     function Probe(): null {
       api = useMobileNativeChatMessageSend({
         client: { sendRequest: vi.fn() } as never,
         enabled: true,
         handleRef: { current: 'term' },
         deviceTokenRef: { current: 'device' },
-        agentRef: { current: agent },
-        onCommandSend,
+        agentRef,
+        commandSendRef,
         captureSendOrigin: () => ({ draftKey: 'k', pendingKey: 'p' }) as never,
         readSeededLaunchDraftSeed,
         clearDraftForSend: () => {},
@@ -79,6 +82,7 @@ describe('useMobileNativeChatMessageSend', () => {
     acceptSend.mockReset()
     holdUnconfirmedSend.mockReset()
     onCommandSend.mockReset()
+    commandSendRef.current = onCommandSend
   })
   afterEach(() => {
     act(() => {
@@ -205,14 +209,14 @@ describe('useMobileNativeChatMessageSend', () => {
   })
 
   it('never creates an optimistic echo for an unknown slash token', async () => {
-    // `/model` is not in Claude's verified catalog, but it still dispatches to
-    // the TUI — same no-echo rule, without claiming a verified command ran.
+    // `/model` is not in Claude's autocomplete catalog, but the session-option
+    // recorder still recognizes it without claiming a generic command ran.
     mount(() => null)
     await act(async () => {
       await api!.send('/model sonnet')
     })
     expect(acceptSend).not.toHaveBeenCalled()
-    expect(onCommandSend).not.toHaveBeenCalled()
+    expect(onCommandSend).toHaveBeenCalledWith('/model sonnet')
   })
 
   it('classifies per agent: /model is a catalog command for Codex', async () => {
@@ -238,13 +242,59 @@ describe('useMobileNativeChatMessageSend', () => {
   })
 
   it('dispatchCommand surfaces the outcome without echo or composer sync', async () => {
-    mount(() => null)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     let outcome: string | undefined
     await act(async () => {
       outcome = await api!.dispatchCommand('/model sonnet')
     })
     expect(outcome).toBe('accepted')
     expect(acceptSend).not.toHaveBeenCalled()
+    expect(onCommandSend).not.toHaveBeenCalled()
     expect(sentArgs().resolvedLaunchDraft).toBeUndefined()
+  })
+
+  it('binds classification to the agent that started the send', async () => {
+    let resolveSend!: (outcome: MobileNativeChatSendOutcome) => void
+    sendWithOutcome.mockReturnValue(
+      new Promise<MobileNativeChatSendOutcome>((resolve) => {
+        resolveSend = resolve
+      })
+    )
+    mount(() => null, 'claude')
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = api!.send('$skill')
+    })
+    agentRef.current = 'codex'
+    await act(async () => {
+      resolveSend('accepted')
+      await sending
+    })
+    expect(acceptSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('records a command against the tab that started the send', async () => {
+    let resolveSend!: (outcome: MobileNativeChatSendOutcome) => void
+    sendWithOutcome.mockReturnValue(
+      new Promise<MobileNativeChatSendOutcome>((resolve) => {
+        resolveSend = resolve
+      })
+    )
+    const originalRecorder = vi.fn()
+    const nextRecorder = vi.fn()
+    commandSendRef.current = originalRecorder
+    mount(() => null)
+    commandSendRef.current = originalRecorder
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = api!.send('/clear')
+    })
+    commandSendRef.current = nextRecorder
+    await act(async () => {
+      resolveSend('accepted')
+      await sending
+    })
+    expect(originalRecorder).toHaveBeenCalledWith('/clear')
+    expect(nextRecorder).not.toHaveBeenCalled()
   })
 })

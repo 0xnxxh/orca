@@ -13,23 +13,33 @@ type HookArgs = Parameters<typeof useMobileNativeChatSessionOptions>[0]
 describe('useMobileNativeChatSessionOptions', () => {
   let renderer: ReactTestRenderer | null = null
   let api: MobileNativeChatSessionOptionsController | null = null
+  let hookArgs: HookArgs
   const dispatchCommand = vi.fn<(command: string) => Promise<MobileNativeChatSendOutcome>>()
   const onAgentPicker = vi.fn()
 
+  function Probe(): null {
+    api = useMobileNativeChatSessionOptions(hookArgs)
+    return null
+  }
+
   const mount = (overrides: Partial<HookArgs> = {}): void => {
-    function Probe(): null {
-      api = useMobileNativeChatSessionOptions({
-        agent: 'claude',
-        scopeKey: 'host\0worktree\0tab',
-        reportedModel: null,
-        dispatchCommand,
-        onAgentPicker,
-        ...overrides
-      })
-      return null
+    hookArgs = {
+      agent: 'claude',
+      scopeKey: 'host\0worktree\0tab',
+      reportedModel: null,
+      dispatchCommand,
+      onAgentPicker,
+      ...overrides
     }
     act(() => {
       renderer = create(createElement(Probe))
+    })
+  }
+
+  const update = (overrides: Partial<HookArgs>): void => {
+    hookArgs = { ...hookArgs, ...overrides }
+    act(() => {
+      renderer!.update(createElement(Probe))
     })
   }
 
@@ -56,6 +66,11 @@ describe('useMobileNativeChatSessionOptions', () => {
 
   it('returns an empty snapshot for agents without a catalog', () => {
     mount({ agent: 'amp' })
+    expect(api!.snapshot).toEqual([])
+  })
+
+  it('does not expose catalog-backed agents outside the Claude and Codex scope', () => {
+    mount({ agent: 'gemini' })
     expect(api!.snapshot).toEqual([])
   })
 
@@ -118,5 +133,86 @@ describe('useMobileNativeChatSessionOptions', () => {
     const effort = api!.snapshot.find((descriptor) => descriptor.id === 'effort')
     expect(effort).toMatchObject({ valueSource: 'dispatched' })
     expect(effort!.kind).toMatchObject({ currentValue: 'low' })
+  })
+
+  it('keeps the latest queued operation pending until it settles', async () => {
+    const resolvers: Array<(outcome: MobileNativeChatSendOutcome) => void> = []
+    dispatchCommand.mockImplementation(
+      () =>
+        new Promise<MobileNativeChatSendOutcome>((resolve) => {
+          resolvers.push(resolve)
+        })
+    )
+    mount({ reportedModel: 'claude-sonnet-5' })
+    let first!: Promise<boolean>
+    let second!: Promise<boolean>
+    await act(async () => {
+      first = api!.setOption('effort', 'low')
+      second = api!.setOption('model', 'opus')
+      await Promise.resolve()
+    })
+    expect(api!.pendingId).toBe('model')
+    await act(async () => {
+      resolvers[0]!('accepted')
+      await Promise.resolve()
+    })
+    expect(dispatchCommand).toHaveBeenCalledTimes(2)
+    expect(api!.pendingId).toBe('model')
+    await act(async () => {
+      resolvers[1]!('accepted')
+      await Promise.all([first, second])
+    })
+    expect(api!.pendingId).toBeNull()
+  })
+
+  it('does not dispatch a queued option into a newly active tab', async () => {
+    let resolveFirst!: (outcome: MobileNativeChatSendOutcome) => void
+    dispatchCommand.mockImplementationOnce(
+      () =>
+        new Promise<MobileNativeChatSendOutcome>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+    mount({ reportedModel: 'claude-sonnet-5' })
+    let first!: Promise<boolean>
+    let queued!: Promise<boolean>
+    await act(async () => {
+      first = api!.setOption('effort', 'low')
+      queued = api!.setOption('model', 'opus')
+      await Promise.resolve()
+    })
+    update({ scopeKey: 'host\0worktree\0other-tab' })
+    await act(async () => {
+      resolveFirst('accepted')
+      await first
+    })
+    await expect(queued).resolves.toBe(false)
+    expect(dispatchCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not dispatch queued work after unmount', async () => {
+    let resolveFirst!: (outcome: MobileNativeChatSendOutcome) => void
+    dispatchCommand.mockImplementationOnce(
+      () =>
+        new Promise<MobileNativeChatSendOutcome>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+    mount({ reportedModel: 'claude-sonnet-5' })
+    let first!: Promise<boolean>
+    let queued!: Promise<boolean>
+    await act(async () => {
+      first = api!.setOption('effort', 'low')
+      queued = api!.setOption('model', 'opus')
+      await Promise.resolve()
+    })
+    act(() => {
+      renderer!.unmount()
+    })
+    renderer = null
+    resolveFirst('accepted')
+    await expect(first).resolves.toBe(true)
+    await expect(queued).resolves.toBe(false)
+    expect(dispatchCommand).toHaveBeenCalledTimes(1)
   })
 })

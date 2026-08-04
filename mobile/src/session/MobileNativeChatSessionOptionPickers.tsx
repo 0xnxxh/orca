@@ -36,6 +36,8 @@ function Pill({
   return (
     <Pressable
       accessibilityLabel={accessibleName}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       style={({ pressed }) => [styles.pill, pressed && !disabled && styles.pressed]}
       onPress={onPress}
       disabled={disabled}
@@ -68,6 +70,8 @@ function ChoiceRow({
 }): React.JSX.Element {
   return (
     <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected, disabled }}
       style={[styles.row, selected && styles.rowSelected, disabled && styles.rowDisabled]}
       onPress={onPress}
       disabled={disabled}
@@ -98,6 +102,8 @@ function ActionRow({
 }): React.JSX.Element {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       style={[styles.row, disabled && styles.rowDisabled]}
       onPress={onPress}
       disabled={disabled}
@@ -135,8 +141,7 @@ function DescriptorRows({
   if (descriptor.action?.type === 'agent-picker') {
     return <ActionRow label="Choose in agent picker…" disabled={locked} onPress={onInvokeAction} />
   }
-  // Why: absolute On/Off only when we have tracked truth. Unknown composed
-  // booleans leave the group unselected so empty radios are not a selection.
+  // Unknown booleans leave both radios unselected instead of inventing truth.
   if (descriptor.kind.type === 'boolean') {
     const current = descriptor.kind.currentValue
     return (
@@ -235,6 +240,7 @@ export function MobileNativeChatSessionOptionPickers({
             ) : null}
             <Pressable
               accessibilityLabel="Close picker"
+              accessibilityRole="button"
               style={styles.sheetClose}
               onPress={() => setOpen(null)}
               hitSlop={8}
