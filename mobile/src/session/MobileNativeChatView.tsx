@@ -154,6 +154,8 @@ export function MobileNativeChatView({
   // A short transcript leaves the reader both at the top and `atBottom`, so the
   // tail-follow paths would scroll away the history that just paged in.
   const keepHistoryPositionRef = useRef(Boolean(loadingEarlier))
+  // Snapshot, not a live ref read: effects flush before native layout, so by the
+  // time `onContentSizeChange` runs the ref is already cleared.
   const keepHistoryPosition = keepHistoryPositionRef.current
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
   useEffect(

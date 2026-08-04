@@ -222,7 +222,12 @@ describe('MobileNativeChatView', () => {
   it('still follows the tail once the history page has settled', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [older, message], hasMore: false })
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      // Drive a real paging cycle first: a hold that never releases would leave
+      // the chat permanently unable to follow the agent.
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
