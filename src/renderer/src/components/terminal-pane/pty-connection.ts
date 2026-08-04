@@ -2820,11 +2820,13 @@ export function connectPanePty(
   }
 
   const canApplyCommandCodeOutputStatus = (): boolean => {
-    const foreground = useAppStore.getState().paneForegroundAgentByPaneKey[cacheKey]
+    const state = useAppStore.getState()
+    const foreground = state.paneForegroundAgentByPaneKey[cacheKey]
     return canCommandCodeOutputOwnPane({
       foregroundAgent: foreground?.agent,
       shellForeground: foreground?.shellForeground,
-      paneOwnerAgent: getAuthoritativePaneAgent()
+      paneOwnerAgent: getAuthoritativePaneAgent(),
+      retainedPaneOwnerAgent: state.retainedAgentsByPaneKey[cacheKey]?.agentType
     })
   }
 

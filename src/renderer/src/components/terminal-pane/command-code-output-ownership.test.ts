@@ -15,13 +15,20 @@ describe('canCommandCodeOutputOwnPane', () => {
   it('rejects another agent owner or foreground process', () => {
     expect(canCommandCodeOutputOwnPane({ paneOwnerAgent: 'claude' })).toBe(false)
     expect(canCommandCodeOutputOwnPane({ foregroundAgent: 'claude' })).toBe(false)
+    expect(
+      canCommandCodeOutputOwnPane({
+        paneOwnerAgent: 'unknown',
+        retainedPaneOwnerAgent: 'claude'
+      })
+    ).toBe(false)
   })
 
   it('prefers the current foreground process over stale pane ownership', () => {
     expect(
       canCommandCodeOutputOwnPane({
         foregroundAgent: 'command-code',
-        paneOwnerAgent: 'claude'
+        paneOwnerAgent: 'claude',
+        retainedPaneOwnerAgent: 'claude'
       })
     ).toBe(true)
     expect(

@@ -16,6 +16,7 @@ const ROUTING = { connectionId: null }
 type MockStoreState = {
   tabsByWorktree: Record<string, { id: string; launchAgent?: AgentType }[]>
   agentStatusByPaneKey: Record<string, AgentStatusEntry | undefined>
+  retainedAgentsByPaneKey: Record<string, { agentType: AgentType } | undefined>
   paneForegroundAgentByPaneKey: Record<string, PaneForegroundAgentEntry>
   agentLaunchConfigByPaneKey: Record<string, { identity: { agentType?: AgentType } } | undefined>
   runtimePaneTitlesByTabId: Record<string, Record<number, string | undefined>>
@@ -46,6 +47,7 @@ function makeMockStoreState(): MockStoreState {
   return {
     tabsByWorktree: { [WORKTREE_ID]: [{ id: TAB_ID }] },
     agentStatusByPaneKey: {},
+    retainedAgentsByPaneKey: {},
     paneForegroundAgentByPaneKey: {},
     agentLaunchConfigByPaneKey: {},
     runtimePaneTitlesByTabId: { [TAB_ID]: { [PANE_ID]: '✳ Build feature' } },
@@ -129,6 +131,19 @@ describe('createParkedTerminalCommandStatusPolicy', () => {
     policy.dispose()
   })
 
+  it('rejects scrape status when retained Claude identity owns the pane', async () => {
+    mockStoreState.retainedAgentsByPaneKey[PANE_KEY] = { agentType: 'claude' }
+    mockStoreState.agentStatusByPaneKey[PANE_KEY] = makeStatusEntry({ agentType: 'unknown' })
+    const policy = await createPolicy(PTY_ID_LOCAL)
+
+    policy.onCommandCodeWorking('False prompt')
+    policy.onCommandCodeDone('False prompt')
+    vi.advanceTimersByTime(DONE_SETTLE_MS)
+
+    expect(mockStoreState.setAgentStatus).not.toHaveBeenCalled()
+    policy.dispose()
+  })
+
   it('rejects scrape status when Claude launch metadata owns the pane', async () => {
     mockStoreState.tabsByWorktree[WORKTREE_ID] = [{ id: TAB_ID, launchAgent: 'claude' }]
     const policy = await createPolicy(PTY_ID_LOCAL)
@@ -155,6 +170,7 @@ describe('createParkedTerminalCommandStatusPolicy', () => {
   it('lets a current Command Code process reclaim stale Claude ownership', async () => {
     mockStoreState.tabsByWorktree[WORKTREE_ID] = [{ id: TAB_ID, launchAgent: 'claude' }]
     mockStoreState.agentStatusByPaneKey[PANE_KEY] = makeStatusEntry({ state: 'done' })
+    mockStoreState.retainedAgentsByPaneKey[PANE_KEY] = { agentType: 'claude' }
     mockStoreState.paneForegroundAgentByPaneKey[PANE_KEY] = {
       agent: 'command-code',
       shellForeground: false

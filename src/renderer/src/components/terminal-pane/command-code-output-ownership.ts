@@ -5,6 +5,7 @@ export function canCommandCodeOutputOwnPane(args: {
   foregroundAgent?: TuiAgent | null
   shellForeground?: boolean
   paneOwnerAgent?: AgentType | null
+  retainedPaneOwnerAgent?: AgentType | null
 }): boolean {
   if (args.foregroundAgent) {
     return args.foregroundAgent === 'command-code'
@@ -12,9 +13,9 @@ export function canCommandCodeOutputOwnPane(args: {
   if (args.shellForeground) {
     return false
   }
-  return (
-    !args.paneOwnerAgent ||
-    args.paneOwnerAgent === 'unknown' ||
-    args.paneOwnerAgent === 'command-code'
-  )
+  const paneOwnerAgent =
+    args.paneOwnerAgent && args.paneOwnerAgent !== 'unknown'
+      ? args.paneOwnerAgent
+      : (args.retainedPaneOwnerAgent ?? args.paneOwnerAgent)
+  return !paneOwnerAgent || paneOwnerAgent === 'unknown' || paneOwnerAgent === 'command-code'
 }

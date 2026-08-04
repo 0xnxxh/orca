@@ -74,7 +74,8 @@ export function createParkedTerminalCommandStatusPolicy(options: {
     return canCommandCodeOutputOwnPane({
       foregroundAgent: foreground?.agent,
       shellForeground: foreground?.shellForeground,
-      paneOwnerAgent
+      paneOwnerAgent,
+      retainedPaneOwnerAgent: state.retainedAgentsByPaneKey[paneKey]?.agentType
     })
   }
 
