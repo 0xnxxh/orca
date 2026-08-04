@@ -9,9 +9,15 @@ export type HomeStatsSummary = {
  * Why: the home header shows one lifetime-usage row for every paired desktop. Each host answers
  * stats.summary for itself, so a single shared slot made the row flip to whichever host replied
  * last — visible churn now that every reconnect re-reads. Sum instead; one host still totals itself.
+ *
+ * Summing only `hostIds` keeps an unpaired desktop out of the total: replies are cached per host
+ * for the life of the process, so an entry outlives the host it describes.
  */
-export function totalHomeStats(byHost: Record<string, HomeStatsSummary>): HomeStatsSummary | null {
-  const hosts = Object.values(byHost)
+export function totalHomeStats(
+  byHost: Record<string, HomeStatsSummary>,
+  hostIds: readonly string[]
+): HomeStatsSummary | null {
+  const hosts = hostIds.filter((id) => id in byHost).map((id) => byHost[id])
   if (hosts.length === 0) {
     return null
   }

@@ -22,9 +22,9 @@ export type HostWorktreeInfo = {
   countsProvenAt?: number
 }
 
-// Why: the home snapshot is persisted across launches, so "Last known" could otherwise describe a
-// workspace set proven days ago. Past this window the counts stop being evidence about the host.
-export const HOME_WORKTREE_COUNTS_STALE_MAX_AGE_MS = 10 * 60_000
+// Why: the home snapshot is persisted across launches, so counts could otherwise be rendered as
+// live while describing a workspace set proven days ago. Past this window they are only history.
+export const HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS = 10 * 60_000
 
 export function markHomeWorktreeCatalogUnavailable(
   current: HostWorktreeInfo | undefined,
@@ -55,24 +55,23 @@ export function homeHostWorktreeSummary(
   if (!info) {
     return null
   }
-  // Why (STA-3123): a catalog that never loaded — or whose counts have aged out of the
-  // "last known" window — must not assert a count the host has not proven.
-  if (info.catalogUnavailable && !hasFreshEnoughCounts(info, now)) {
+  // Why (STA-3123): a catalog that never loaded must not assert a count the host has not proven.
+  if (info.catalogUnavailable && !info.staleCounts) {
     return 'Worktree list unavailable'
   }
   const counts = `${info.totalWorktrees} worktree${info.totalWorktrees === 1 ? '' : 's'}${
     info.activeCount > 0 ? ` · ${info.activeCount} active` : ''
   }`
-  return info.staleCounts ? `Last known: ${counts}` : counts
+  // Age bounds liveness, not the counts themselves: a failed refresh — or a rehydrated snapshot the
+  // host has not re-confirmed — is still the last thing it told us, so keep it and drop the claim
+  // that it is current.
+  return info.staleCounts || !provenRecently(info, now) ? `Last known: ${counts}` : counts
 }
 
-function hasFreshEnoughCounts(info: HostWorktreeInfo, now: number): boolean {
-  if (!info.staleCounts) {
-    return false
-  }
+function provenRecently(info: HostWorktreeInfo, now: number): boolean {
   // A snapshot written before countsProvenAt existed has an unknowable age; treat it as expired.
   return (
     typeof info.countsProvenAt === 'number' &&
-    now - info.countsProvenAt <= HOME_WORKTREE_COUNTS_STALE_MAX_AGE_MS
+    now - info.countsProvenAt <= HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS
   )
 }

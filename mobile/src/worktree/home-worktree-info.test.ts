@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  HOME_WORKTREE_COUNTS_STALE_MAX_AGE_MS,
+  HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS,
   homeHostWorktreeSummary,
   markHomeWorktreeCatalogUnavailable,
   type HostWorktreeInfo
@@ -76,27 +76,41 @@ describe('homeHostWorktreeSummary', () => {
     )
   })
 
-  it('stops calling aged-out counts "last known"', () => {
+  it('keeps the last proven counts however long ago the refresh failed', () => {
     const afterFailure = markHomeWorktreeCatalogUnavailable(loaded, 'host-1')
 
+    // A session that stays connected past the live window then hits one failed refresh is the
+    // headline case: the counts are history, not nothing.
     expect(
-      homeHostWorktreeSummary(afterFailure, provenAt + HOME_WORKTREE_COUNTS_STALE_MAX_AGE_MS)
+      homeHostWorktreeSummary(afterFailure, provenAt + HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS + 1)
     ).toBe('Last known: 12 worktrees · 2 active')
-    // A snapshot rehydrated from a previous app session describes a host we have not reached.
-    expect(
-      homeHostWorktreeSummary(afterFailure, provenAt + HOME_WORKTREE_COUNTS_STALE_MAX_AGE_MS + 1)
-    ).toBe('Worktree list unavailable')
     expect(homeHostWorktreeSummary(afterFailure, provenAt + 3 * 86_400_000)).toBe(
-      'Worktree list unavailable'
+      'Last known: 12 worktrees · 2 active'
     )
   })
 
-  it('treats counts persisted before age stamping as unproven', () => {
+  it('stops calling aged-out counts live even while a refresh is only pending', () => {
+    // A snapshot rehydrated from a previous app session describes a host we have not reached yet.
+    expect(homeHostWorktreeSummary(loaded, provenAt + HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS)).toBe(
+      '12 worktrees · 2 active'
+    )
+    expect(
+      homeHostWorktreeSummary(loaded, provenAt + HOME_WORKTREE_COUNTS_LIVE_MAX_AGE_MS + 1)
+    ).toBe('Last known: 12 worktrees · 2 active')
+    expect(homeHostWorktreeSummary(loaded, provenAt + 3 * 86_400_000)).toBe(
+      'Last known: 12 worktrees · 2 active'
+    )
+  })
+
+  it('treats counts persisted before age stamping as no longer live', () => {
     const preUpgrade: HostWorktreeInfo = { ...loaded, countsProvenAt: undefined }
 
+    expect(homeHostWorktreeSummary(preUpgrade, provenAt)).toBe(
+      'Last known: 12 worktrees · 2 active'
+    )
     expect(
       homeHostWorktreeSummary(markHomeWorktreeCatalogUnavailable(preUpgrade, 'host-1'), provenAt)
-    ).toBe('Worktree list unavailable')
+    ).toBe('Last known: 12 worktrees · 2 active')
   })
 
   it('reports unavailable only when no catalog ever loaded', () => {
