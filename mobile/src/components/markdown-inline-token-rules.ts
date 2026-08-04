@@ -21,6 +21,9 @@ export function isIntrawordUnderscoreToken(text: string, index: number, token: s
  */
 export function trimAutolinkTrailingPunctuation(url: string): { url: string; trailing: string } {
   let end = url.length
+  let parenthesisCountsReady = false
+  let openParentheses = 0
+  let closeParentheses = 0
   while (end > 0) {
     const char = url[end - 1]!
     if ('.,;:!?'.includes(char)) {
@@ -28,11 +31,19 @@ export function trimAutolinkTrailingPunctuation(url: string): { url: string; tra
       continue
     }
     if (char === ')') {
-      const body = url.slice(0, end)
-      const opens = body.split('(').length - 1
-      const closes = body.split(')').length - 1
-      if (closes > opens) {
+      if (!parenthesisCountsReady) {
+        for (let index = 0; index < end; index++) {
+          if (url[index] === '(') {
+            openParentheses++
+          } else if (url[index] === ')') {
+            closeParentheses++
+          }
+        }
+        parenthesisCountsReady = true
+      }
+      if (closeParentheses > openParentheses) {
         end--
+        closeParentheses--
         continue
       }
     }

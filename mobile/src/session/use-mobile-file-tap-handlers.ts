@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, type MutableRefObject } from 'react'
 import { useRouter } from 'expo-router'
 import { triggerSelection } from '../platform/haptics'
 import type { RpcClient } from '../transport/rpc-client'
@@ -40,12 +40,62 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
   ) => void
   handleNativeChatFileTap: (pathText: string) => void
 } {
+  const {
+    activeHandleRef,
+    client,
+    fetchSessionTabs,
+    getActiveSessionTabId,
+    getActiveSessionTabType,
+    getSessionTabs,
+    hostId,
+    openBrowser,
+    scheduleDelayedAction,
+    showToast,
+    switchSessionTab,
+    terminalCwdRef,
+    worktreeId,
+    worktreeName
+  } = options
   const router = useRouter()
   const routerRef = useRef(router)
-  routerRef.current = router
   const optionsRef = useRef(options)
-  optionsRef.current = options
   const activationSeqRef = useRef(0)
+
+  useLayoutEffect(() => {
+    routerRef.current = router
+    optionsRef.current = {
+      activeHandleRef,
+      client,
+      fetchSessionTabs,
+      getActiveSessionTabId,
+      getActiveSessionTabType,
+      getSessionTabs,
+      hostId,
+      openBrowser,
+      scheduleDelayedAction,
+      showToast,
+      switchSessionTab,
+      terminalCwdRef,
+      worktreeId,
+      worktreeName
+    }
+  }, [
+    activeHandleRef,
+    client,
+    fetchSessionTabs,
+    getActiveSessionTabId,
+    getActiveSessionTabType,
+    getSessionTabs,
+    hostId,
+    openBrowser,
+    router,
+    scheduleDelayedAction,
+    showToast,
+    switchSessionTab,
+    terminalCwdRef,
+    worktreeId,
+    worktreeName
+  ])
 
   const handleFileTap = useCallback(
     (handle: string, pathText: string, line: number | null, column: number | null) => {

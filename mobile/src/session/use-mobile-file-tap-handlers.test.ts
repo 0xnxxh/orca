@@ -66,6 +66,27 @@ describe('useMobileFileTapHandlers', () => {
     expect(handlers!.handleNativeChatFileTap).toBe(first!.handleNativeChatFileTap)
   })
 
+  it('dispatches through the latest options after a rerender', () => {
+    const firstSendRequest = vi.fn()
+    const firstOptions = createOptions(firstSendRequest)
+    act(() => {
+      renderer = create(createElement(Harness, { options: firstOptions }))
+    })
+
+    const latestSendRequest = vi.fn(async () => ok({ exists: false, isDirectory: false }))
+    act(() => {
+      renderer!.update(
+        createElement(Harness, {
+          options: { ...firstOptions, client: { sendRequest: latestSendRequest } }
+        })
+      )
+    })
+    handlers!.handleFileTap('terminal-1', 'index.ts', null, null)
+
+    expect(firstSendRequest).not.toHaveBeenCalled()
+    expect(latestSendRequest).toHaveBeenCalledTimes(1)
+  })
+
   it('resolves terminal taps with the terminal handle and cwd', async () => {
     const sendRequest = vi.fn(async () => ok({ exists: false, isDirectory: false }))
     act(() => {

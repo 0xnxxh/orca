@@ -1,4 +1,7 @@
-import type { RuntimeTerminalPathResolution } from '../../../src/shared/runtime-types'
+import type {
+  RuntimeFileOpenResult,
+  RuntimeTerminalPathResolution
+} from '../../../src/shared/runtime-types'
 import { filesystemPathToFileUri } from '../../../src/shared/file-uri-path'
 import { createMobileFilePreviewHref } from '../files/mobile-file-preview-route'
 import { classifyMobileArtifact } from './mobile-artifact-kind'
@@ -48,8 +51,19 @@ export function openMobileFileTap<T extends FileTapSessionTab>(
   void openMobileFileTapAsync(options).catch(() => {
     // File taps are best-effort: a failed host resolution should leave terminal
     // focus/input untouched. Surfaces that want feedback pass onOpenFailed.
-    options.onOpenFailed?.()
+    reportOpenFailure(options)
   })
+}
+
+function reportOpenFailure<T extends FileTapSessionTab>(
+  options: OpenMobileFileTapOptions<T>
+): void {
+  if (
+    options.onOpenFailed &&
+    shouldActivateOpenedMobileSessionTab(options.getActivationState(false))
+  ) {
+    options.onOpenFailed()
+  }
 }
 
 async function openMobileFileTapAsync<T extends FileTapSessionTab>(
@@ -69,12 +83,12 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
     { timeoutMs: 10_000 }
   )
   if (!response.ok) {
-    options.onOpenFailed?.()
+    reportOpenFailure(options)
     return
   }
   const resolved = (response as RpcSuccess).result as RuntimeTerminalPathResolution
   if (!resolved.exists || resolved.isDirectory) {
-    options.onOpenFailed?.()
+    reportOpenFailure(options)
     return
   }
   // Not a failure: the user moved off the source tab mid-resolve.
@@ -110,7 +124,7 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
       ? resolved.openTarget.relativePath
       : resolved.relativePath
   if (!openedPath) {
-    options.onOpenFailed?.()
+    reportOpenFailure(options)
     return
   }
   options.triggerOpenFeedback()
@@ -143,7 +157,12 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
     { timeoutMs: 15_000 }
   )
   if (!openResponse.ok) {
-    options.onOpenFailed?.()
+    reportOpenFailure(options)
+    return
+  }
+  const openResult = (openResponse as RpcSuccess).result as RuntimeFileOpenResult
+  if (!openResult.opened) {
+    reportOpenFailure(options)
     return
   }
   scheduleOpenedWorktreeTabActivation(options, openedPath)

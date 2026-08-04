@@ -53,6 +53,12 @@ describe('trimAutolinkTrailingPunctuation', () => {
     })
   })
 
+  it('handles long unmatched closing-parenthesis tails', () => {
+    const url = 'https://x.com/a_(b)'
+    const trailing = ')'.repeat(4096)
+    expect(trimAutolinkTrailingPunctuation(`${url}${trailing}`)).toEqual({ url, trailing })
+  })
+
   it('leaves clean URLs untouched', () => {
     expect(trimAutolinkTrailingPunctuation('https://x.com/a')).toEqual({
       url: 'https://x.com/a',
