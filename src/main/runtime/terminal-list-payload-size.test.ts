@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 
 // Measures the real `terminal.list` wire payload for a large listing, so the
@@ -7,6 +7,8 @@ import { OrcaRuntimeService } from './orca-runtime'
 const TERMINAL_COUNT = 134
 const PANES_PER_TAB = 2
 const TAB_COUNT = TERMINAL_COUNT / PANES_PER_TAB
+// Leaves ~19% headroom over the measured 75,467 B while catching material bloat.
+const MAX_OPTED_OUT_PAYLOAD_BYTES = 90_000
 const REPO_ID = 'repo-7f3a91c2e4b85d60'
 const WORKTREE_PATH = '/Users/dev/orca/workspaces/orca/perf-terminal-list-diet'
 const WORKTREE_ID = `${REPO_ID}::${WORKTREE_PATH}`
@@ -193,14 +195,17 @@ describe('terminal.list payload size', () => {
     const runtime = buildLoadedRuntime()
 
     const withLayouts = await runtime.listTerminals(`id:${WORKTREE_ID}`, 10_000)
+    const layoutBuilder = vi.fn(() => [])
+    Object.defineProperty(runtime, 'buildTerminalVisualLayouts', { value: layoutBuilder })
     const withoutLayouts = await runtime.listTerminals(`id:${WORKTREE_ID}`, 10_000, {
       includeVisualLayouts: false
     })
+    const { visualLayouts, ...expectedWithoutLayouts } = withLayouts
 
     expect(withLayouts.terminals).toHaveLength(TERMINAL_COUNT)
-    expect(withoutLayouts.terminals).toHaveLength(TERMINAL_COUNT)
-    expect(withLayouts.visualLayouts).toHaveLength(1)
-    expect(withoutLayouts.visualLayouts).toBeUndefined()
+    expect(visualLayouts).toHaveLength(1)
+    expect(withoutLayouts).toEqual(expectedWithoutLayouts)
+    expect(layoutBuilder).not.toHaveBeenCalled()
 
     const beforeBytes = Buffer.byteLength(JSON.stringify(withLayouts), 'utf8')
     const afterBytes = Buffer.byteLength(JSON.stringify(withoutLayouts), 'utf8')
@@ -213,6 +218,7 @@ describe('terminal.list payload size', () => {
     )
 
     expect(beforeBytes).toBeGreaterThan(100_000)
+    expect(afterBytes).toBeLessThanOrEqual(MAX_OPTED_OUT_PAYLOAD_BYTES)
     expect(reduction).toBeGreaterThan(0.25)
   })
 })
