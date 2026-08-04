@@ -162,9 +162,6 @@ export function MobileNativeChatView({
   const [atBottom, setAtBottom] = useState(true)
   const sendScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const keepHistoryPositionRef = useRef(Boolean(loadingEarlier))
-  if (loadingEarlier) {
-    keepHistoryPositionRef.current = true
-  }
   const keepHistoryPosition = keepHistoryPositionRef.current
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
   useEffect(
@@ -203,9 +200,7 @@ export function MobileNativeChatView({
     return () => clearTimeout(t)
   }, [data.length, atBottom, keyboardInset])
   useEffect(() => {
-    if (!loadingEarlier) {
-      keepHistoryPositionRef.current = false
-    }
+    keepHistoryPositionRef.current = Boolean(loadingEarlier)
   }, [loadingEarlier])
 
   const handleSend = useCallback(

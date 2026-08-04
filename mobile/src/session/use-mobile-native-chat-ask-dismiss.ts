@@ -28,12 +28,14 @@ export function useMobileNativeChatAskDismiss(args: {
   const askKey = ask ? JSON.stringify(ask.questions) : null
   const detectedAskKey = detectedAsk ? JSON.stringify(detectedAsk.questions) : null
   const detectedAskKeysRef = useRef(new Map<string | null, string | null>())
-  if (observing) {
-    detectedAskKeysRef.current.set(scopeKey, detectedAskKey)
-  }
   const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, string>>(
     () => new Map()
   )
+  useEffect(() => {
+    if (observing) {
+      detectedAskKeysRef.current.set(scopeKey, detectedAskKey)
+    }
+  }, [observing, detectedAskKey, scopeKey])
   // A cleared or genuinely different detected prompt retires the old dismissal.
   useEffect(() => {
     if (observing) {
