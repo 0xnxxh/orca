@@ -120,6 +120,15 @@ describe('shouldBypassXtermKeyboardEvent — Windows/Linux', () => {
     expect(shouldBypassXtermKeyboardEvent(event({ key: 'c', code: 'KeyC' }), noSel)).toBe(false)
   })
 
+  it('does not bypass physical Backslash', () => {
+    expect(
+      shouldBypassXtermKeyboardEvent(event({ key: '\\', code: 'Backslash', keyCode: 220 }), {
+        ...noSel,
+        kittyKeyboardFlags: 0
+      })
+    ).toBe(false)
+  })
+
   it('bubbles Shift+non-ASCII printable text so the active keyboard layout wins', () => {
     expect(
       shouldBypassXtermKeyboardEvent(event({ key: 'Ф', code: 'KeyA', shiftKey: true }), noSel)

@@ -23,7 +23,7 @@ describe('preview terminal IME action ownership', () => {
     })
   })
 
-  function install(): void {
+  function install(kittyKeyboardActive = false): void {
     const terminal = {
       attachCustomKeyEventHandler: (next: (event: KeyboardEvent) => boolean) => {
         handler = next
@@ -39,7 +39,7 @@ describe('preview terminal IME action ownership', () => {
         macOptionAsAlt: 'false',
         keybindings: undefined,
         terminalInput: null,
-        kittyKeyboardActive: () => false,
+        kittyKeyboardActive: () => kittyKeyboardActive,
         terminalShortcutPolicy: 'orca-first'
       })
     })
@@ -90,5 +90,19 @@ describe('preview terminal IME action ownership', () => {
     Object.defineProperty(event, 'keyCode', { value: 82 })
 
     expect(handler?.(event)).toBe(true)
+  })
+
+  it('leaves physical Backslash to native macOS keypress', () => {
+    shortcutPlatform.value = 'darwin'
+    install()
+
+    expect(handler?.(new KeyboardEvent('keydown', { code: 'Backslash', key: '\\' }))).toBe(false)
+  })
+
+  it('keeps physical Backslash in xterm while kitty reporting is active', () => {
+    shortcutPlatform.value = 'darwin'
+    install(true)
+
+    expect(handler?.(new KeyboardEvent('keydown', { code: 'Backslash', key: '\\' }))).toBe(true)
   })
 })

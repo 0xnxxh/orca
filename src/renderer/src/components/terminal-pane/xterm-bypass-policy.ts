@@ -28,6 +28,7 @@ export type XtermBypassEvent = {
 
 export type XtermBypassOptions = {
   isMac: boolean
+  kittyKeyboardFlags?: number
   /** True when the terminal has a current text selection — Ctrl+C on
    *  Windows/Linux should only bubble to clipboard when something is selected,
    *  otherwise it must reach the shell as SIGINT. */
@@ -46,7 +47,11 @@ function isSingleNonAsciiPrintableText(key: string): boolean {
   return codePoint !== undefined && codePoint >= 0x80
 }
 
-export function shouldBypassXtermForMacImeStart(event: XtermBypassEvent, isMac: boolean): boolean {
+export function shouldBypassXtermForMacNativeText(
+  event: XtermBypassEvent,
+  isMac: boolean,
+  kittyKeyboardActive = false
+): boolean {
   if (
     !isMac ||
     !isXtermHandledKeyEvent(event.type) ||
@@ -58,7 +63,9 @@ export function shouldBypassXtermForMacImeStart(event: XtermBypassEvent, isMac: 
     return false
   }
   // Why: macOS key bindings can replace layout text only after keydown; leave keypress/input to Chromium.
-  return isSingleNonAsciiPrintableText(event.key)
+  return (
+    isSingleNonAsciiPrintableText(event.key) || (!kittyKeyboardActive && event.code === 'Backslash')
+  )
 }
 
 function isXtermHandledKeyEvent(type: string): boolean {
@@ -136,7 +143,7 @@ export function shouldBypassXtermKeyboardEvent(
   }
 
   const { isMac, hasSelection } = options
-  if (shouldBypassXtermForMacImeStart(event, isMac)) {
+  if (shouldBypassXtermForMacNativeText(event, isMac, (options.kittyKeyboardFlags ?? 0) !== 0)) {
     return true
   }
   const platformModifierHeld = isMac

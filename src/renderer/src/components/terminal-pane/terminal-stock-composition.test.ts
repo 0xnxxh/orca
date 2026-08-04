@@ -48,6 +48,16 @@ function keyup(textarea: HTMLTextAreaElement, key: string, code: string, keyCode
   textarea.dispatchEvent(event)
 }
 
+function keypress(textarea: HTMLTextAreaElement, key: string, code: string, keyCode: number): void {
+  const event = new KeyboardEvent('keypress', { bubbles: true, code, key })
+  Object.defineProperties(event, {
+    charCode: { value: keyCode },
+    keyCode: { value: keyCode },
+    which: { value: keyCode }
+  })
+  textarea.dispatchEvent(event)
+}
+
 function compositionText(textarea: HTMLTextAreaElement, data: string): void {
   textarea.setSelectionRange(0, textarea.value.length)
   composition(textarea, 'compositionupdate', data)
@@ -142,6 +152,28 @@ describe('stock xterm composition ownership', () => {
     keydown(textarea, 'a', 65)
 
     expect(emitted.join('')).toBe('`a')
+    terminal.dispose()
+  })
+
+  it('uses native Qingg punctuation while preserving the ABC control', () => {
+    const { emitted, terminal, textarea } = openTerminal()
+    terminal.attachCustomKeyEventHandler(
+      (event) =>
+        !shouldBypassXtermKeyboardEvent(event, {
+          isMac: true,
+          hasSelection: false,
+          kittyKeyboardFlags: 0
+        })
+    )
+
+    keydown(textarea, '\\', 220, false, 'Backslash')
+    keypress(textarea, '\\', 'Backslash', 0x3001)
+    keyup(textarea, '\\', 'Backslash', 220)
+    keydown(textarea, '\\', 220, false, 'Backslash')
+    keypress(textarea, '\\', 'Backslash', 92)
+    keyup(textarea, '\\', 'Backslash', 220)
+
+    expect(emitted.join('')).toBe('、\\')
     terminal.dispose()
   })
 

@@ -9,7 +9,7 @@ import {
   type PreviewShortcutContext
 } from './preview-terminal-shortcuts'
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
-import { shouldBypassXtermForMacImeStart } from '@/components/terminal-pane/xterm-bypass-policy'
+import { shouldBypassXtermForMacNativeText } from '@/components/terminal-pane/xterm-bypass-policy'
 
 /**
  * Installs the preview terminal's ONE custom key handler (xterm allows a single
@@ -99,7 +99,13 @@ export function installPreviewTerminalKeyHandler(args: {
     if (isImeOwnedKeyboardEvent(event)) {
       return true
     }
-    if (shouldBypassXtermForMacImeStart(event, platform === 'darwin')) {
+    if (
+      shouldBypassXtermForMacNativeText(
+        event,
+        platform === 'darwin',
+        args.getShortcutContext().kittyKeyboardActive()
+      )
+    ) {
       return false
     }
     if (event.type !== 'keydown') {
