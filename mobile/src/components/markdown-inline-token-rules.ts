@@ -1,15 +1,10 @@
 // Post-checks for inline markdown tokens that a single-pass tokenizer regex
 // cannot express on its own.
 
-// A trailing '.' is deliberately absent: `_emphasis_.` ends a sentence.
-const INTRAWORD_FLANK_PATTERN = /[\w\\/]/
-
 /**
  * True when a `_…_` / `__…__` token sits inside a word (snake_case, dunder
  * tails). CommonMark treats intraword underscores as literal text; rejecting
  * the token also keeps file paths like src/foo_bar.ts whole for detection.
- * A path separator counts as a flank so `src/__init__.py` stays a path rather
- * than becoming bold `init` plus a stray `.py`.
  */
 export function isIntrawordUnderscoreToken(text: string, index: number, token: string): boolean {
   if (!token.startsWith('_')) {
@@ -17,7 +12,7 @@ export function isIntrawordUnderscoreToken(text: string, index: number, token: s
   }
   const prev = index > 0 ? text[index - 1]! : ''
   const next = text[index + token.length] ?? ''
-  return INTRAWORD_FLANK_PATTERN.test(prev) || INTRAWORD_FLANK_PATTERN.test(next)
+  return /\w/.test(prev) || /\w/.test(next)
 }
 
 /**

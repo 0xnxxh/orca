@@ -85,10 +85,9 @@ const EXTENSION_SET = new Set<string>(FILE_EXTENSIONS)
 // Accept the host's native separator because transcript paths originate on the
 // connected runtime, which may be Windows even when the phone is not. Leading
 // alternatives cover Windows drives, UNC, and POSIX absolute roots; the optional
-// tail captures agent-style :line(:col) citations, and the lookahead keeps a
-// non-line tail (`:1e3`, `:80%`) out of the citation.
+// tail captures agent-style :line(:col) citations.
 const CANDIDATE_PATTERN =
-  /(?:(?:[A-Za-z]:[\\/]|\\\\|[\\/]|\.{1,2}[\\/])(?:[\w.@~+-]+[\\/])*|(?:[\w.@~+-]+[\\/])+)[\w.@+-]+\.[A-Za-z0-9]+(?::[1-9]\d*(?::[1-9]\d*)?(?![\w@%]))?/g
+  /(?:(?:[A-Za-z]:[\\/]|\\\\|[\\/]|\.{1,2}[\\/])(?:[\w.@~+-]+[\\/])*|(?:[\w.@~+-]+[\\/])+)[\w.@+-]+\.[A-Za-z0-9]+(?::[1-9]\d*(?::[1-9]\d*)?)?/g
 
 // A path candidate in chat prose is short; a much longer run can't hold one worth
 // linkifying but can push CANDIDATE_PATTERN into super-linear backtracking, so we

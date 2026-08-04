@@ -115,33 +115,6 @@ describe('detectFilePathSegments', () => {
     ])
   })
 
-  it('does not read a line number out of a non-line numeric tail', () => {
-    expect(detectFilePathSegments('log src/app.ts:1e3 oops')).toEqual([
-      { type: 'text', value: 'log ' },
-      { type: 'file', value: 'src/app.ts', path: 'src/app.ts' },
-      { type: 'text', value: ':1e3 oops' }
-    ])
-    expect(detectFilePathSegments('coverage src/app.ts:80% of lines')).toEqual([
-      { type: 'text', value: 'coverage ' },
-      { type: 'file', value: 'src/app.ts', path: 'src/app.ts' },
-      { type: 'text', value: ':80% of lines' }
-    ])
-  })
-
-  it('opens the first line of a cited line range', () => {
-    expect(detectFilePathSegments('src/app.ts:42-45').filter((s) => s.type === 'file')).toEqual([
-      { type: 'file', value: 'src/app.ts:42', path: 'src/app.ts:42' }
-    ])
-  })
-
-  it('keeps dunder path segments whole instead of reading them as bold', () => {
-    expect(detectFilePathSegments('open src/__init__.py now')).toEqual([
-      { type: 'text', value: 'open ' },
-      { type: 'file', value: 'src/__init__.py', path: 'src/__init__.py' },
-      { type: 'text', value: ' now' }
-    ])
-  })
-
   it('does not match bare filenames without a slash', () => {
     expect(detectFilePathSegments('open Main.tsx please')).toEqual([
       { type: 'text', value: 'open Main.tsx please' }

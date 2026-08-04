@@ -96,26 +96,6 @@ describe('MobileMarkdown file links', () => {
     expect(onOpenFile).toHaveBeenNthCalledWith(2, 'src/baz_qux.ts')
   })
 
-  it('still formats tokens sitting between two snake_case words', () => {
-    const rendered = render('Fixed src/agent_session.ts by adding a **guard**, see src/pty_host.ts')
-    expect(flattenText(rendered.root)).not.toContain('**guard**')
-    pressByText(rendered, 'src/agent_session.ts')
-    pressByText(rendered, 'src/pty_host.ts')
-  })
-
-  it('keeps a markdown link between two snake_case words tappable', () => {
-    pressByText(
-      render('Updated foo_bar.py; the [PR](https://example.com/x) covers baz_qux.py'),
-      'PR'
-    )
-    expect(openURL).toHaveBeenCalledWith('https://example.com/x')
-  })
-
-  it('opens a dunder path whole instead of its post-emphasis remnant', () => {
-    pressByText(render('see a/__tests__/x.ts now'), 'a/__tests__/x.ts')
-    expect(onOpenFile).toHaveBeenCalledExactlyOnceWith('a/__tests__/x.ts')
-  })
-
   it('detects paths inside bold spans', () => {
     pressByText(render('changed **src/foo.ts** heavily'), 'src/foo.ts')
     expect(onOpenFile).toHaveBeenCalledWith('src/foo.ts')

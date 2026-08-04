@@ -3193,8 +3193,7 @@ export default function SessionScreen() {
   }, [])
 
   // Tap a terminal or chat file path → resolve on host, open as file tab/preview
-  // (mirrors desktop Cmd/Ctrl-click); chat misses ride the composer banner, which
-  // stays visible with the keyboard up, and fall back to the toast when it isn't.
+  // (mirrors desktop Cmd/Ctrl-click); chat taps surface misses via toast.
   const { handleFileTap, handleNativeChatFileTap } = useMobileFileTapHandlers<MobileSessionTab>({
     client,
     hostId,
@@ -3209,7 +3208,7 @@ export default function SessionScreen() {
     getActiveSessionTabType: () => activeSessionTabTypeRef.current,
     switchSessionTab: (tab) => switchSessionTabRef.current?.(tab),
     scheduleDelayedAction,
-    reportChatTapFailure: nativeChatSendError.show
+    showToast
   })
 
   const handleOpenedFileDiffActivationSeqRef = useRef(0)

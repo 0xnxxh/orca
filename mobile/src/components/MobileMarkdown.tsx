@@ -90,10 +90,6 @@ function renderInline(text: string, onOpenFile?: (pathText: string) => void): Re
     // CommonMark; leaving them unflushed keeps surrounding file paths whole
     // for detection in the eventual text run.
     if (token.startsWith('_') && isIntrawordUnderscoreToken(text, match.index, token)) {
-      // Rescan from just past the opening `_`: the rejected span reaches to the
-      // next underscore in the line, and any real tokens inside it (links, code,
-      // bold) would otherwise be swallowed and rendered as literal source.
-      pattern.lastIndex = match.index + 1
       continue
     }
     if (match.index > pendingStart) {

@@ -19,15 +19,13 @@ type MobileFileTapHandlerOptions<T extends FileTapSessionTab> = {
   getActiveSessionTabType: () => string | null
   switchSessionTab: (tab: T) => void
   scheduleDelayedAction: (callback: () => void, delayMs: number) => unknown
-  /** Surfaces a chat tap that opened nothing. Chat taps happen with the keyboard
-   *  up, which covers the toast, so the route routes this to the composer banner. */
-  reportChatTapFailure: (message: string) => void
+  showToast: (message: string) => void
 }
 
 /**
  * Tap-to-open handlers for file references, shared by the terminal (link taps
  * with the terminal's cwd) and native chat (worktree-root-relative paths, with
- * failure feedback). Handlers are identity-stable and read the latest options at
+ * failure toasts). Handlers are identity-stable and read the latest options at
  * dispatch time; the shared activation seq lets a newer tap on either surface
  * supersede an in-flight one.
  */
@@ -42,18 +40,62 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
   ) => void
   handleNativeChatFileTap: (pathText: string) => void
 } {
+  const {
+    activeHandleRef,
+    client,
+    fetchSessionTabs,
+    getActiveSessionTabId,
+    getActiveSessionTabType,
+    getSessionTabs,
+    hostId,
+    openBrowser,
+    scheduleDelayedAction,
+    showToast,
+    switchSessionTab,
+    terminalCwdRef,
+    worktreeId,
+    worktreeName
+  } = options
   const router = useRouter()
   const routerRef = useRef(router)
   const optionsRef = useRef(options)
   const activationSeqRef = useRef(0)
 
-  // Mirror the latest options for dispatch-time reads. No dep list: the call site
-  // rebuilds its accessor closures every render, so a dep list could never skip —
-  // it would only add an array to compare on a route that rerenders per keystroke.
   useLayoutEffect(() => {
     routerRef.current = router
-    optionsRef.current = options
-  })
+    optionsRef.current = {
+      activeHandleRef,
+      client,
+      fetchSessionTabs,
+      getActiveSessionTabId,
+      getActiveSessionTabType,
+      getSessionTabs,
+      hostId,
+      openBrowser,
+      scheduleDelayedAction,
+      showToast,
+      switchSessionTab,
+      terminalCwdRef,
+      worktreeId,
+      worktreeName
+    }
+  }, [
+    activeHandleRef,
+    client,
+    fetchSessionTabs,
+    getActiveSessionTabId,
+    getActiveSessionTabType,
+    getSessionTabs,
+    hostId,
+    openBrowser,
+    router,
+    scheduleDelayedAction,
+    showToast,
+    switchSessionTab,
+    terminalCwdRef,
+    worktreeId,
+    worktreeName
+  ])
 
   const handleFileTap = useCallback(
     (handle: string, pathText: string, line: number | null, column: number | null) => {
@@ -124,7 +166,7 @@ export function useMobileFileTapHandlers<T extends FileTapSessionTab>(
       }),
       switchSessionTab: current.switchSessionTab,
       scheduleDelayedAction: current.scheduleDelayedAction,
-      onOpenFailed: () => current.reportChatTapFailure(`Couldn't open ${pathText}`)
+      onOpenFailed: () => current.showToast(`Couldn't open ${pathText}`)
     })
   }, [])
 

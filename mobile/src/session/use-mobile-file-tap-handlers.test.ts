@@ -44,7 +44,7 @@ describe('useMobileFileTapHandlers', () => {
       getActiveSessionTabType: () => 'terminal',
       switchSessionTab: vi.fn(),
       scheduleDelayedAction: vi.fn(),
-      reportChatTapFailure: vi.fn()
+      showToast: vi.fn()
     }
   }
 
@@ -114,7 +114,7 @@ describe('useMobileFileTapHandlers', () => {
     expect(sendRequest).not.toHaveBeenCalled()
   })
 
-  it('resolves chat taps against the worktree root and reports a miss', async () => {
+  it('resolves chat taps against the worktree root and toasts on a miss', async () => {
     const sendRequest = vi.fn(async () => ok({ exists: false, isDirectory: false }))
     const options = createOptions(sendRequest)
     act(() => {
@@ -129,6 +129,6 @@ describe('useMobileFileTapHandlers', () => {
       { worktree: 'id:wt-1', pathText: 'mobile/src/x.ts' },
       { timeoutMs: 10_000 }
     )
-    expect(options.reportChatTapFailure).toHaveBeenCalledWith("Couldn't open mobile/src/x.ts:12")
+    expect(options.showToast).toHaveBeenCalledWith("Couldn't open mobile/src/x.ts:12")
   })
 })
