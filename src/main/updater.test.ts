@@ -4234,6 +4234,7 @@ describe('updater', () => {
         message:
           'The downloaded package no longer matches the verified release, so Orca will not hand it to a package manager. Download the update again, or get it from the official release page.'
       })
+      expect(send).toHaveBeenCalledWith('updater:quitAndInstallAborted')
       expect(recordUpdaterLifecycleMock).toHaveBeenCalledWith(
         'linux_package_revalidation_failed',
         expect.objectContaining({ action: 'restart-to-install', reason: 'hash-mismatch' }),
@@ -4242,7 +4243,7 @@ describe('updater', () => {
     })
 
     it('installs normally when the retained package still matches its digest', async () => {
-      const { updater } = await startUpdater('deb')
+      const { send, updater } = await startUpdater('deb')
       await reachDownloaded(updater, downloadedEvent())
 
       updater.quitAndInstall()
@@ -4250,6 +4251,9 @@ describe('updater', () => {
 
       expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
       expect(killAllPtyMock).toHaveBeenCalledTimes(1)
+      // Why: an abort push here would clear the restart flag mid-quit and re-arm the dirty-buffer
+      // prompt against the install that is already committed.
+      expect(send).not.toHaveBeenCalledWith('updater:quitAndInstallAborted')
       expect(recordUpdaterLifecycleMock).not.toHaveBeenCalledWith(
         'linux_package_revalidation_failed',
         expect.anything(),
@@ -4277,6 +4281,9 @@ describe('updater', () => {
       // The install is still abandoned — only the stale status is withheld.
       expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
       expect(lastStatus(send)).toMatchObject({ state: 'available', version: '1.0.61' })
+      // Withholding the status must not also withhold the abort: the renderer armed its restart and
+      // would otherwise skip its unsaved-work prompt for the rest of the session.
+      expect(send).toHaveBeenCalledWith('updater:quitAndInstallAborted')
       expect(recordUpdaterLifecycleMock).toHaveBeenCalledWith(
         'linux_package_revalidation_failed',
         expect.objectContaining({ reason: 'hash-mismatch' }),

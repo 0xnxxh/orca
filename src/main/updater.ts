@@ -717,6 +717,10 @@ async function performQuitAndInstall(): Promise<void> {
   // swapped or vanished package aborts instead of being installed as root. The synchronous guard
   // keeps every non-Linux install on its existing timing.
   if (getTrackedLinuxPackageArtifact() && !(await proveRetainedLinuxPackage(pendingVersion))) {
+    // Why: the renderer armed its restart before invoking, and it infers the abort from the error
+    // status — which a stale-cycle verdict deliberately withholds. Signal the abandon here, where
+    // it cannot depend on that decision, or the window keeps skipping its unsaved-work prompt.
+    mainWindowRef?.webContents.send('updater:quitAndInstallAborted')
     return
   }
   quitAndInstallInProgress = true
