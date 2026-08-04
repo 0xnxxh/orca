@@ -4,22 +4,25 @@ import {
   CODEX_SESSION_OPTION_CATALOG
 } from '../../../src/shared/agent-session-option-catalog-claude-codex'
 import {
-  applyMobileReportedSessionOptions,
-  buildMobileSessionOptionSnapshot,
-  createMobileSessionOptionRecord,
-  matchMobileCatalogModelId,
-  type MobileSessionOptionRecord
-} from './mobile-native-chat-session-option-state'
+  applyNativeChatReportedSessionOptions,
+  createNativeChatSessionOptionRecord,
+  matchNativeChatCatalogModelId,
+  type NativeChatSessionOptionRecord
+} from '../../../src/shared/native-chat-session-option-state'
+import { buildNativeChatSessionOptionSnapshot } from '../../../src/shared/native-chat-session-option-snapshot'
 
-function claudeRecord(): MobileSessionOptionRecord {
-  return createMobileSessionOptionRecord('claude')
+function claudeRecord(): NativeChatSessionOptionRecord {
+  return createNativeChatSessionOptionRecord('claude')
 }
 
-describe('buildMobileSessionOptionSnapshot', () => {
+describe('buildNativeChatSessionOptionSnapshot', () => {
   it('offers every catalog model with the current value unknown', () => {
-    const snapshot = buildMobileSessionOptionSnapshot({
+    const snapshot = buildNativeChatSessionOptionSnapshot({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
-      record: claudeRecord()
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record: claudeRecord(),
+      mode: 'live',
+      modelLabel: 'Model'
     })
     expect(snapshot).toHaveLength(1)
     const model = snapshot[0]!
@@ -36,9 +39,12 @@ describe('buildMobileSessionOptionSnapshot', () => {
   it('adds the tracked model’s options once the model is known', () => {
     const record = claudeRecord()
     record.model = { value: 'sonnet', source: 'dispatched' }
-    const snapshot = buildMobileSessionOptionSnapshot({
+    const snapshot = buildNativeChatSessionOptionSnapshot({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
-      record
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      mode: 'live',
+      modelLabel: 'Model'
     })
     expect(snapshot.map((descriptor) => descriptor.id)).toEqual(['model', 'effort'])
     expect(snapshot[0]).toMatchObject({ valueSource: 'dispatched' })
@@ -47,9 +53,12 @@ describe('buildMobileSessionOptionSnapshot', () => {
   it('keeps an untracked reported model visible as an extra choice', () => {
     const record = claudeRecord()
     record.model = { value: 'experimental-model', source: 'reported' }
-    const snapshot = buildMobileSessionOptionSnapshot({
+    const snapshot = buildNativeChatSessionOptionSnapshot({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
-      record
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      mode: 'live',
+      modelLabel: 'Model'
     })
     const model = snapshot[0]!
     if (model.kind.type !== 'select') {
@@ -63,9 +72,12 @@ describe('buildMobileSessionOptionSnapshot', () => {
   })
 
   it('exposes Codex model changes as an agent-picker action', () => {
-    const snapshot = buildMobileSessionOptionSnapshot({
+    const snapshot = buildNativeChatSessionOptionSnapshot({
       catalog: CODEX_SESSION_OPTION_CATALOG,
-      record: createMobileSessionOptionRecord('codex')
+      models: CODEX_SESSION_OPTION_CATALOG.models,
+      record: createNativeChatSessionOptionRecord('codex'),
+      mode: 'live',
+      modelLabel: 'Model'
     })
     expect(snapshot[0]).toMatchObject({ settable: true, action: { type: 'agent-picker' } })
   })
@@ -73,21 +85,24 @@ describe('buildMobileSessionOptionSnapshot', () => {
   it('marks flip-only toggles without a baseline as toggle actions', () => {
     const record = claudeRecord()
     record.model = { value: 'opus', source: 'reported' }
-    const snapshot = buildMobileSessionOptionSnapshot({
+    const snapshot = buildNativeChatSessionOptionSnapshot({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
-      record
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      mode: 'live',
+      modelLabel: 'Model'
     })
     const fastMode = snapshot.find((descriptor) => descriptor.id === 'fastMode')
     expect(fastMode).toMatchObject({ action: { type: 'toggle-command' } })
   })
 })
 
-describe('applyMobileReportedSessionOptions', () => {
+describe('applyNativeChatReportedSessionOptions', () => {
   it('reports become authority and reset stale per-model values on a model change', () => {
     const record = claudeRecord()
     record.model = { value: 'sonnet', source: 'dispatched' }
     record.valuesByModel.opus = { effort: { value: 'high', source: 'dispatched' } }
-    expect(applyMobileReportedSessionOptions(record, { model: 'opus' })).toBe(true)
+    expect(applyNativeChatReportedSessionOptions(record, { model: 'opus' })).toBe(true)
     expect(record.model).toEqual({ value: 'opus', source: 'reported' })
     // A model change invalidates previously tracked values for the destination.
     expect(record.valuesByModel.opus).toEqual({})
@@ -96,22 +111,22 @@ describe('applyMobileReportedSessionOptions', () => {
   it('is a no-op when the report matches tracked state', () => {
     const record = claudeRecord()
     record.model = { value: 'sonnet', source: 'reported' }
-    expect(applyMobileReportedSessionOptions(record, { model: 'sonnet' })).toBe(false)
+    expect(applyNativeChatReportedSessionOptions(record, { model: 'sonnet' })).toBe(false)
   })
 })
 
-describe('matchMobileCatalogModelId', () => {
+describe('matchNativeChatCatalogModelId', () => {
   it('matches exact ids, labels, and provider-id containment', () => {
-    expect(matchMobileCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'sonnet')).toBe('sonnet')
-    expect(matchMobileCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'Sonnet 5')).toBe('sonnet')
-    expect(matchMobileCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'claude-sonnet-5')).toBe(
+    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'sonnet')).toBe('sonnet')
+    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'Sonnet 5')).toBe('sonnet')
+    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'claude-sonnet-5')).toBe(
       'sonnet'
     )
-    expect(matchMobileCatalogModelId(CODEX_SESSION_OPTION_CATALOG, 'gpt-5.5')).toBe('gpt-5.5')
+    expect(matchNativeChatCatalogModelId(CODEX_SESSION_OPTION_CATALOG, 'gpt-5.5')).toBe('gpt-5.5')
   })
 
   it('returns null for unrecognized reports', () => {
-    expect(matchMobileCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'mystery-model')).toBeNull()
-    expect(matchMobileCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, '')).toBeNull()
+    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'mystery-model')).toBeNull()
+    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, '')).toBeNull()
   })
 })

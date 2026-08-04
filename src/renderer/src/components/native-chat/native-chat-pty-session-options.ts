@@ -8,8 +8,14 @@ import type {
   SessionOptionsSurface,
   SessionOptionValue
 } from '../../../../shared/native-chat-session-options'
+import { recordNativeChatSessionOptionCommand } from '../../../../shared/native-chat-session-option-commands'
 import {
+  applyNativeChatReportedSessionOptions,
+  clearNativeChatSessionModel,
   createNativeChatSessionOptionRecord,
+  setTrackedSessionOption
+} from '../../../../shared/native-chat-session-option-state'
+import {
   readNativeChatSessionOptionCache,
   writeNativeChatSessionOptionCache
 } from './native-chat-session-option-cache'
@@ -19,8 +25,6 @@ import {
   type NativeChatSessionOptionMode
 } from './native-chat-session-option-snapshot'
 import type { NativeChatSessionOptionDispatchCommand } from './native-chat-session-option-command-dispatch'
-import { applyNativeChatReportedSessionOptions } from './native-chat-session-option-reporting'
-import { recordNativeChatSessionOptionCommand } from './native-chat-session-option-command-recording'
 
 type PersistSelection = (args: {
   modelId: string
@@ -88,32 +92,14 @@ export function createNativeChatPtySessionOptions(
   }
 
   const clearModelTruth = (): void => {
-    const modelId = typeof record.model?.value === 'string' ? record.model.value : null
-    record.model = undefined
-    if (modelId) {
-      delete record.valuesByModel[modelId]
-    }
+    clearNativeChatSessionModel(record)
   }
 
   const setTrackedValue = (
     optionId: string,
     value: SessionOptionValue,
     source: 'applied' | 'dispatched'
-  ): string | null => {
-    if (optionId === 'model') {
-      record.model = { value, source }
-      return typeof value === 'string' ? value : null
-    }
-    const modelId = typeof record.model?.value === 'string' ? record.model.value : null
-    if (!modelId) {
-      return null
-    }
-    record.valuesByModel[modelId] = {
-      ...record.valuesByModel[modelId],
-      [optionId]: { value, source }
-    }
-    return modelId
-  }
+  ): string | null => setTrackedSessionOption(record, optionId, value, source)
 
   const persist = (modelId: string | null, optionId: string, value: SessionOptionValue): void => {
     if (modelId) {

@@ -4,32 +4,33 @@ import {
   CODEX_SESSION_OPTION_CATALOG
 } from '../../../src/shared/agent-session-option-catalog-claude-codex'
 import {
-  buildMobileSessionOptionCommand,
+  buildNativeChatSessionOptionCommand,
   parseBuiltSessionOptionCommand,
-  recordMobileOutgoingSessionOptionCommand
-} from './mobile-native-chat-session-option-commands'
+  recordNativeChatSessionOptionCommand
+} from '../../../src/shared/native-chat-session-option-commands'
 import {
-  createMobileSessionOptionRecord,
-  type MobileSessionOptionRecord
-} from './mobile-native-chat-session-option-state'
+  createNativeChatSessionOptionRecord,
+  type NativeChatSessionOptionRecord
+} from '../../../src/shared/native-chat-session-option-state'
 
-function claudeRecord(model?: string): MobileSessionOptionRecord {
-  const record = createMobileSessionOptionRecord('claude')
+function claudeRecord(model?: string): NativeChatSessionOptionRecord {
+  const record = createNativeChatSessionOptionRecord('claude')
   if (model) {
     record.model = { value: model, source: 'dispatched' }
   }
   return record
 }
 
-describe('buildMobileSessionOptionCommand', () => {
+describe('buildNativeChatSessionOptionCommand', () => {
   it('builds the catalog midSession command for model and options', () => {
     expect(
-      buildMobileSessionOptionCommand({
+      buildNativeChatSessionOptionCommand({
         optionId: 'model',
         value: 'opus',
         apply: CLAUDE_SESSION_OPTION_CATALOG.modelApply,
         modelId: null,
         catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
         record: claudeRecord()
       })
     ).toBe('/model opus')
@@ -37,12 +38,13 @@ describe('buildMobileSessionOptionCommand', () => {
       .find((model) => model.id === 'sonnet')!
       .options.find((option) => option.id === 'effort')!.apply
     expect(
-      buildMobileSessionOptionCommand({
+      buildNativeChatSessionOptionCommand({
         optionId: 'effort',
         value: 'high',
         apply: effortApply,
         modelId: 'sonnet',
         catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
         record: claudeRecord('sonnet')
       })
     ).toBe('/effort high')
@@ -53,12 +55,13 @@ describe('buildMobileSessionOptionCommand', () => {
       .find((model) => model.id === 'opus')!
       .options.find((option) => option.id === 'fastMode')!.apply
     expect(
-      buildMobileSessionOptionCommand({
+      buildNativeChatSessionOptionCommand({
         optionId: 'fastMode',
         value: true,
         apply: fastModeApply,
         modelId: 'opus',
         catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
         record: claudeRecord('opus')
       })
     ).toBe('/fast')
@@ -66,13 +69,14 @@ describe('buildMobileSessionOptionCommand', () => {
 
   it('has no absolute command for agent-picker applies (Codex model)', () => {
     expect(
-      buildMobileSessionOptionCommand({
+      buildNativeChatSessionOptionCommand({
         optionId: 'model',
         value: 'gpt-5.5',
         apply: CODEX_SESSION_OPTION_CATALOG.modelApply,
         modelId: null,
         catalog: CODEX_SESSION_OPTION_CATALOG,
-        record: createMobileSessionOptionRecord('codex')
+        models: CODEX_SESSION_OPTION_CATALOG.models,
+        record: createNativeChatSessionOptionRecord('codex')
       })
     ).toBeNull()
   })
@@ -87,11 +91,12 @@ describe('parseBuiltSessionOptionCommand', () => {
   })
 })
 
-describe('recordMobileOutgoingSessionOptionCommand', () => {
+describe('recordNativeChatSessionOptionCommand', () => {
   it('tracks a typed /model value as dispatched truth', () => {
     const record = claudeRecord()
-    const result = recordMobileOutgoingSessionOptionCommand({
+    const result = recordNativeChatSessionOptionCommand({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
       record,
       command: '/model sonnet'
     })
@@ -101,8 +106,9 @@ describe('recordMobileOutgoingSessionOptionCommand', () => {
 
   it('tracks a typed option value under the current model', () => {
     const record = claudeRecord('sonnet')
-    recordMobileOutgoingSessionOptionCommand({
+    recordNativeChatSessionOptionCommand({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
       record,
       command: '/effort low'
     })
@@ -110,16 +116,18 @@ describe('recordMobileOutgoingSessionOptionCommand', () => {
   })
 
   it('clears tracked truth for a bare picker command and reports the agent picker', () => {
-    const claudeResult = recordMobileOutgoingSessionOptionCommand({
+    const claudeResult = recordNativeChatSessionOptionCommand({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
       record: claudeRecord('sonnet'),
       command: '/model'
     })
     expect(claudeResult.opensAgentPicker).toBe(true)
-    const codexRecord = createMobileSessionOptionRecord('codex')
+    const codexRecord = createNativeChatSessionOptionRecord('codex')
     codexRecord.model = { value: 'gpt-5.5', source: 'dispatched' }
-    const codexResult = recordMobileOutgoingSessionOptionCommand({
+    const codexResult = recordNativeChatSessionOptionCommand({
       catalog: CODEX_SESSION_OPTION_CATALOG,
+      models: CODEX_SESSION_OPTION_CATALOG.models,
       record: codexRecord,
       command: '/model'
     })
@@ -130,8 +138,9 @@ describe('recordMobileOutgoingSessionOptionCommand', () => {
   it('clears a flip-only toggle’s tracked baseline on a typed flip', () => {
     const record = claudeRecord('opus')
     record.valuesByModel.opus = { fastMode: { value: true, source: 'applied' } }
-    recordMobileOutgoingSessionOptionCommand({
+    recordNativeChatSessionOptionCommand({
       catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
       record,
       command: '/fast'
     })
@@ -142,8 +151,9 @@ describe('recordMobileOutgoingSessionOptionCommand', () => {
   it('ignores unrelated commands', () => {
     const record = claudeRecord('sonnet')
     expect(
-      recordMobileOutgoingSessionOptionCommand({
+      recordNativeChatSessionOptionCommand({
         catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
         record,
         command: '/clear'
       })

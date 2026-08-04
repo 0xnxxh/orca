@@ -1,21 +1,17 @@
-// Mobile port of desktop's session-option command handling
-// (src/renderer/src/components/native-chat/native-chat-session-option-{command-builder,command-matching,command-recording}.ts).
-// Metro can only reach src/shared, so the renderer modules cannot be imported.
-
+import type {
+  AgentSessionOptionCatalog,
+  CatalogMidSessionApply,
+  CatalogModel,
+  CatalogOptionApply
+} from './agent-session-option-catalog'
+import type { SessionOptionValue } from './native-chat-session-options'
 import {
-  findCatalogModel,
-  type AgentSessionOptionCatalog,
-  type CatalogMidSessionApply,
-  type CatalogOptionApply
-} from '../../../src/shared/agent-session-option-catalog'
-import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
-import {
-  clearMobileModelTruth,
-  clearTrackedMobileOption,
-  flattenMobileSessionOptionRecord,
+  clearNativeChatSessionModel,
+  clearTrackedSessionOption,
+  flattenNativeChatSessionOptionRecord,
   isFlipOnlyMidSession,
-  type MobileSessionOptionRecord
-} from './mobile-native-chat-session-option-state'
+  type NativeChatSessionOptionRecord
+} from './native-chat-session-option-state'
 
 export function parseBuiltSessionOptionCommand(
   build: (value: SessionOptionValue) => string,
@@ -46,30 +42,27 @@ export function isSessionOptionAgentPickerCommand(
   )
 }
 
-/** Build the PTY command that applies `value` to `optionId` mid-session, or
- *  null when the catalog offers no command shape for it. */
-export function buildMobileSessionOptionCommand(args: {
+export function buildNativeChatSessionOptionCommand(args: {
   optionId: string
   value: SessionOptionValue
   apply: CatalogOptionApply
   modelId: string | null
   catalog: AgentSessionOptionCatalog
-  record: MobileSessionOptionRecord
+  models: readonly CatalogModel[]
+  record: NativeChatSessionOptionRecord
 }): string | null {
   const midSession = args.apply.midSession
   if (midSession?.kind === 'command') {
     return midSession.build(args.value)
   }
-  // Why: a known flip has an absolute target only for local tracking; the
-  // command itself always performs one inversion.
   if (midSession?.kind === 'toggle-command') {
     return midSession.command
   }
   if (!args.apply.composedIntoModel || !args.modelId || !args.catalog.composeModelValue) {
     return null
   }
-  const model = findCatalogModel(args.catalog, args.modelId)
-  const values = flattenMobileSessionOptionRecord(args.record, args.modelId)
+  const model = args.models.find((candidate) => candidate.id === args.modelId)
+  const values = flattenNativeChatSessionOptionRecord(args.record, args.modelId)
   for (const option of model?.options ?? []) {
     values[option.id] ??= option.kind.defaultValue
   }
@@ -80,23 +73,30 @@ export function buildMobileSessionOptionCommand(args: {
     : null
 }
 
+type PersistSessionOption = (
+  modelId: string | null,
+  optionId: string,
+  value: SessionOptionValue
+) => void
+
 function recordCommandApply(args: {
-  record: MobileSessionOptionRecord
+  record: NativeChatSessionOptionRecord
   optionId: string
   midSession: CatalogMidSessionApply | undefined
   command: string
+  persist?: PersistSessionOption
 }): boolean {
-  const { record, optionId, midSession, command } = args
+  const { record, optionId, midSession, command, persist } = args
   if (!midSession || midSession.kind === 'unsupported') {
     return false
   }
   if (isFlipOnlyMidSession(midSession) && command === midSession.command) {
     const modelId = typeof record.model?.value === 'string' ? record.model.value : null
-    clearTrackedMobileOption(record, modelId, optionId)
+    clearTrackedSessionOption(record, modelId, optionId)
     return true
   }
   if (isSessionOptionAgentPickerCommand(midSession, command)) {
-    clearMobileModelTruth(record)
+    clearNativeChatSessionModel(record)
     return true
   }
   if (midSession.kind !== 'command') {
@@ -109,11 +109,10 @@ function recordCommandApply(args: {
   const previousModelId = typeof record.model?.value === 'string' ? record.model.value : null
   if (optionId === 'model') {
     if (previousModelId !== value) {
-      // Why: a model command can reset model-scoped state, so an older value
-      // from a prior visit is no longer evidence about this live session.
       delete record.valuesByModel[value]
     }
     record.model = { value, source: 'dispatched' }
+    persist?.(value, optionId, value)
     return true
   }
   if (!previousModelId) {
@@ -123,27 +122,29 @@ function recordCommandApply(args: {
     ...record.valuesByModel[previousModelId],
     [optionId]: { value, source: 'dispatched' }
   }
+  persist?.(previousModelId, optionId, value)
   return true
 }
 
-/** Track a slash command the user typed themselves (e.g. `/model sonnet`) so
- *  the picker state follows manual dispatches too (desktop recordOutgoingCommand). */
-export function recordMobileOutgoingSessionOptionCommand(args: {
+export function recordNativeChatSessionOptionCommand(args: {
   catalog: AgentSessionOptionCatalog
-  record: MobileSessionOptionRecord
+  models: readonly CatalogModel[]
+  record: NativeChatSessionOptionRecord
   command: string
+  persist?: PersistSessionOption
 }): { changed: boolean; opensAgentPicker: boolean } {
-  const { catalog, record } = args
+  const { catalog, models, record, persist } = args
   const command = args.command.trim()
   let opensAgentPicker = isSessionOptionAgentPickerCommand(catalog.modelApply.midSession, command)
   let changed = recordCommandApply({
     record,
     optionId: 'model',
     midSession: catalog.modelApply.midSession,
-    command
+    command,
+    persist
   })
   const modelId = typeof record.model?.value === 'string' ? record.model.value : null
-  const model = modelId ? findCatalogModel(catalog, modelId) : undefined
+  const model = modelId ? models.find((candidate) => candidate.id === modelId) : undefined
   for (const option of model?.options ?? []) {
     opensAgentPicker =
       opensAgentPicker || isSessionOptionAgentPickerCommand(option.apply.midSession, command)
@@ -152,7 +153,8 @@ export function recordMobileOutgoingSessionOptionCommand(args: {
         record,
         optionId: option.id,
         midSession: option.apply.midSession,
-        command
+        command,
+        persist
       }) || changed
   }
   return { changed, opensAgentPicker }

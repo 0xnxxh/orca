@@ -6,19 +6,20 @@ import type {
 } from '../../../src/shared/native-chat-session-options'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import {
-  buildMobileSessionOptionCommand,
-  recordMobileOutgoingSessionOptionCommand
-} from './mobile-native-chat-session-option-commands'
+  buildNativeChatSessionOptionCommand,
+  recordNativeChatSessionOptionCommand
+} from '../../../src/shared/native-chat-session-option-commands'
+import { buildNativeChatSessionOptionSnapshot } from '../../../src/shared/native-chat-session-option-snapshot'
 import {
-  applyMobileReportedSessionOptions,
-  buildMobileSessionOptionSnapshot,
-  clearMobileModelTruth,
-  createMobileSessionOptionRecord,
-  getTrackedMobileOption,
+  applyNativeChatReportedSessionOptions,
+  clearNativeChatSessionModel,
+  createNativeChatSessionOptionRecord,
+  getTrackedSessionOption,
   isFlipOnlyMidSession,
-  matchMobileCatalogModelId,
-  type MobileSessionOptionRecord
-} from './mobile-native-chat-session-option-state'
+  matchNativeChatCatalogModelId,
+  setTrackedSessionOption,
+  type NativeChatSessionOptionRecord
+} from '../../../src/shared/native-chat-session-option-state'
 
 export type MobileNativeChatSessionOptionsController = {
   /** Model descriptor first, then the current model's options; empty when the
@@ -37,14 +38,14 @@ type PendingOperation = { id: string; token: number }
 // Why: per-tab records survive chat↔terminal flips and remounts, like desktop's
 // scope cache. Bounded so long sessions across many tabs can't grow unbounded.
 const MOBILE_SESSION_OPTION_RECORD_CAP = 32
-const recordsByScope = new Map<string, MobileSessionOptionRecord>()
+const recordsByScope = new Map<string, NativeChatSessionOptionRecord>()
 
-function getScopedRecord(scopeKey: string, agent: string): MobileSessionOptionRecord {
+function getScopedRecord(scopeKey: string, agent: string): NativeChatSessionOptionRecord {
   const existing = recordsByScope.get(scopeKey)
   if (existing && existing.agent === agent) {
     return existing
   }
-  const created = createMobileSessionOptionRecord(agent)
+  const created = createNativeChatSessionOptionRecord(agent)
   if (!recordsByScope.has(scopeKey) && recordsByScope.size >= MOBILE_SESSION_OPTION_RECORD_CAP) {
     const oldest = recordsByScope.keys().next().value
     if (oldest !== undefined) {
@@ -101,12 +102,12 @@ export function useMobileNativeChatSessionOptions(args: {
     if (!catalog || !scopeKey || !agent || !reportedModel) {
       return
     }
-    const matched = matchMobileCatalogModelId(catalog, reportedModel)
+    const matched = matchNativeChatCatalogModelId(catalog, reportedModel)
     if (!matched) {
       return
     }
     const record = getScopedRecord(scopeKey, agent)
-    if (applyMobileReportedSessionOptions(record, { model: matched })) {
+    if (applyNativeChatReportedSessionOptions(record, { model: matched })) {
       bump()
     }
   }, [agent, bump, catalog, reportedModel, scopeKey])
@@ -117,7 +118,13 @@ export function useMobileNativeChatSessionOptions(args: {
     }
     // Why: `version` invalidates this memo after in-place record mutations.
     void version
-    return buildMobileSessionOptionSnapshot({ catalog, record: getScopedRecord(scopeKey, agent) })
+    return buildNativeChatSessionOptionSnapshot({
+      catalog,
+      models: catalog.models,
+      record: getScopedRecord(scopeKey, agent),
+      mode: 'live',
+      modelLabel: 'Model'
+    })
   }, [agent, catalog, scopeKey, version])
 
   const runSerialized = useCallback(
@@ -174,7 +181,7 @@ export function useMobileNativeChatSessionOptions(args: {
         }
         const flipOnly = isFlipOnlyMidSession(apply.midSession)
         const trackedToggle = flipOnly
-          ? getTrackedMobileOption(record, previousModelId, id)
+          ? getTrackedSessionOption(record, previousModelId, id)
           : undefined
         if (flipOnly && !trackedToggle) {
           // Why: a flip from an unknown baseline cannot honor an absolute target.
@@ -184,12 +191,13 @@ export function useMobileNativeChatSessionOptions(args: {
         if (flipOnly && trackedToggle?.value === value) {
           return true
         }
-        const command = buildMobileSessionOptionCommand({
+        const command = buildNativeChatSessionOptionCommand({
           optionId: id,
           value,
           apply,
           modelId: previousModelId,
           catalog,
+          models: catalog.models,
           record
         })
         if (!command) {
@@ -204,14 +212,9 @@ export function useMobileNativeChatSessionOptions(args: {
             // Why: switching models can reset effort/toggles for the destination model.
             delete record.valuesByModel[value]
           }
-          record.model = { value, source: 'dispatched' }
-        } else if (previousModelId) {
-          // Why: flip-only never heals via agent report — track as applied best-known.
-          record.valuesByModel[previousModelId] = {
-            ...record.valuesByModel[previousModelId],
-            [id]: { value, source: flipOnly ? 'applied' : 'dispatched' }
-          }
         }
+        // Why: flip-only never heals via agent report — track as applied best-known.
+        setTrackedSessionOption(record, id, value, flipOnly ? 'applied' : 'dispatched')
         bump()
         return true
       })
@@ -239,12 +242,12 @@ export function useMobileNativeChatSessionOptions(args: {
           if (outcome === 'rejected') {
             return false
           }
-          clearMobileModelTruth(record)
+          clearNativeChatSessionModel(record)
           bump()
           onAgentPicker?.()
           return true
         }
-        if (isFlipOnlyMidSession(midSession) && !getTrackedMobileOption(record, modelId, id)) {
+        if (isFlipOnlyMidSession(midSession) && !getTrackedSessionOption(record, modelId, id)) {
           // Why: an unknown baseline remains unknown after one inversion.
           return (await dispatchCommand(midSession.command)) !== 'rejected'
         }
@@ -260,7 +263,12 @@ export function useMobileNativeChatSessionOptions(args: {
         return
       }
       const record = getScopedRecord(scopeKey, agent)
-      const result = recordMobileOutgoingSessionOptionCommand({ catalog, record, command })
+      const result = recordNativeChatSessionOptionCommand({
+        catalog,
+        models: catalog.models,
+        record,
+        command
+      })
       if (result.changed) {
         bump()
       }
