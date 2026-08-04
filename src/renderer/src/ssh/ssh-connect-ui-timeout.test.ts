@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SSH_CONNECT_UI_TIMEOUT_MS, withUiConnectTimeout } from './ssh-connect-ui-timeout'
+import {
+  SSH_CONNECT_UI_TIMEOUT_MS,
+  SSH_RECONNECT_UI_TIMEOUT_MS,
+  withUiConnectTimeout
+} from './ssh-connect-ui-timeout'
 
 vi.mock('@/i18n/i18n', () => ({
   translate: (_key: string, fallback: string) => fallback
@@ -33,6 +37,23 @@ describe('withUiConnectTimeout', () => {
     await vi.advanceTimersByTimeAsync(SSH_CONNECT_UI_TIMEOUT_MS)
 
     await assertion
+  })
+
+  // Why: an interactive passphrase alone allows 120s in main, so the reconnect surfaces pass
+  // a longer budget; the default composer budget must not fence them.
+  it('honours a caller-supplied budget instead of the composer default', async () => {
+    const stalled = withUiConnectTimeout(new Promise(() => {}), SSH_RECONNECT_UI_TIMEOUT_MS)
+    const assertion = expect(stalled).rejects.toThrow(/Connection timed out/)
+
+    await vi.advanceTimersByTimeAsync(SSH_CONNECT_UI_TIMEOUT_MS)
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(SSH_RECONNECT_UI_TIMEOUT_MS - SSH_CONNECT_UI_TIMEOUT_MS)
+    await assertion
+  })
+
+  it('gives a reconnect more time than main allows for an interactive passphrase', () => {
+    expect(SSH_RECONNECT_UI_TIMEOUT_MS).toBeGreaterThan(120_000)
   })
 
   it('clears the timer when the connect settles first, leaving no pending work', async () => {

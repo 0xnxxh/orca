@@ -12,7 +12,7 @@ import {
 } from '@/runtime/runtime-environment-ssh-state'
 import { canConnectSshStatus, isConnectingSshStatus } from '@/ssh/ssh-connection-recoverability'
 import { sshConnectingLabel, sshConnectVerb } from '@/ssh/ssh-connect-verb'
-import { withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
+import { SSH_RECONNECT_UI_TIMEOUT_MS, withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
 import {
   beginSshConnect,
   endSshConnect,
@@ -97,7 +97,10 @@ export function TerminalSshReconnectOverlay({
         // Bucket state is written inside the helper, mirroring the local path.
         await connectRuntimeEnvironmentSshTarget(sshOwnerEnvironmentId, targetId)
       } else {
-        const connectState = await withUiConnectTimeout(window.api.ssh.connect({ targetId }))
+        const connectState = await withUiConnectTimeout(
+          window.api.ssh.connect({ targetId }),
+          SSH_RECONNECT_UI_TIMEOUT_MS
+        )
         if (connectState) {
           // Why: ssh.connect can resolve before the global state-change IPC lands;
           // the waiting deferred PTY reattach path keys off this renderer store.

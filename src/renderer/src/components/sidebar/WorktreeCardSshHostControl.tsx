@@ -12,7 +12,7 @@ import {
 } from '@/runtime/runtime-environment-ssh-state'
 import { canConnectSshStatus, isConnectingSshStatus } from '@/ssh/ssh-connection-recoverability'
 import { sshConnectingLabel, sshConnectVerb } from '@/ssh/ssh-connect-verb'
-import { withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
+import { SSH_RECONNECT_UI_TIMEOUT_MS, withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
 import {
   beginSshConnect,
   endSshConnect,
@@ -94,7 +94,10 @@ export function WorktreeCardSshHostControl({
         // Bucket state is written inside the helper, mirroring the local path.
         await connectRuntimeEnvironmentSshTarget(sshOwnerEnvironmentId, targetId)
       } else {
-        const connectState = await withUiConnectTimeout(window.api.ssh.connect({ targetId }))
+        const connectState = await withUiConnectTimeout(
+          window.api.ssh.connect({ targetId }),
+          SSH_RECONNECT_UI_TIMEOUT_MS
+        )
         if (connectState) {
           // Why: ssh.connect can resolve before the global state-change IPC lands;
           // the waiting deferred PTY reattach path keys off this renderer store.
@@ -221,53 +224,47 @@ export function WorktreeCardSshHostControl({
         : accessibleName
 
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            // Why: icon-xs defaults to size-6 (24px); the pill is 16px, and the densest
-            // card mode must not become the tallest.
-            className={cn(
-              PILL_BASE,
-              failed ? PILL_FAILED : PILL_QUIET,
-              iconOnly && 'w-4 justify-center !px-0 has-[>svg]:!px-0'
-            )}
-            aria-label={accessibleName}
-            data-ssh-target-label={targetLabel}
-            aria-busy={connecting || undefined}
-            disabled={connecting}
-            onPointerDown={onPointerDown}
-            onClick={(event) => {
-              // Reconnecting a host and navigating to a workspace are separate intents.
-              event.stopPropagation()
-              event.preventDefault()
-              void handleConnect()
-            }}
-          >
-            {connecting ? (
-              <Loader2 className="size-2.5 animate-spin motion-reduce:animate-none" />
-            ) : (
-              <ServerOff className="size-2.5" />
-            )}
-            {iconOnly ? (
-              <span className="sr-only">{label}</span>
-            ) : (
-              // Why: reserve the widest verb's width so a remote status transition can't
-              // jitter the title row mid-connect.
-              <span className="min-w-[3.5rem] text-left">{label}</span>
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="right" sideOffset={8}>
-          {tooltip}
-        </TooltipContent>
-      </Tooltip>
-      {/* Why: announce transitions only, not every render, or a busy sidebar spams AT. */}
-      <span className="sr-only" role="status" aria-live="polite">
-        {accessibleName}
-      </span>
-    </>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          // Why: icon-xs defaults to size-6 (24px); the pill is 16px, and the densest
+          // card mode must not become the tallest.
+          className={cn(
+            PILL_BASE,
+            failed ? PILL_FAILED : PILL_QUIET,
+            iconOnly && 'w-4 justify-center !px-0 has-[>svg]:!px-0'
+          )}
+          aria-label={accessibleName}
+          data-ssh-target-label={targetLabel}
+          aria-busy={connecting || undefined}
+          disabled={connecting}
+          onPointerDown={onPointerDown}
+          onClick={(event) => {
+            // Reconnecting a host and navigating to a workspace are separate intents.
+            event.stopPropagation()
+            event.preventDefault()
+            void handleConnect()
+          }}
+        >
+          {connecting ? (
+            <Loader2 className="size-2.5 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <ServerOff className="size-2.5" />
+          )}
+          {iconOnly ? (
+            <span className="sr-only">{label}</span>
+          ) : (
+            // Why: reserve the widest verb's width so a remote status transition can't
+            // jitter the title row mid-connect.
+            <span className="min-w-[3.5rem] text-left">{label}</span>
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8}>
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
   )
 }

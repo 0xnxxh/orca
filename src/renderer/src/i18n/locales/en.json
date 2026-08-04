@@ -4447,19 +4447,6 @@
           "folderPathIdentity": "Branch / folder path",
           "cli": "Orca CLI"
         },
-        "SshDisconnectedDialog": {
-          "ca4a7892af": "Connecting...",
-          "89385db176": "Dismiss",
-          "656368f3a2": "Reconnection failed",
-          "376bed88e5": "The connection to the remote host encountered an error.",
-          "4afcca1d24": "Reconnect",
-          "11552bf786": "SSH Disconnected",
-          "cb5938ae79": "Reconnecting...",
-          "disconnected": "This SSH host is not connected.",
-          "reconnecting": "Reconnecting to the remote host...",
-          "reconnectionFailed": "Reconnection to the remote host failed.",
-          "authFailed": "Authentication to the remote host failed."
-        },
         "SshTargetRow": {
           "4677394048": "Connecting…",
           "75ad429b5d": "Connect"

@@ -5,7 +5,16 @@ import { translate } from '@/i18n/i18n'
 // keeps going regardless.
 export const SSH_CONNECT_UI_TIMEOUT_MS = 20_000
 
-export async function withUiConnectTimeout<T>(promise: Promise<T>): Promise<T> {
+// Why: a reconnect can legitimately outlast the composer budget — an interactive passphrase
+// prompt alone allows 120s (main's CREDENTIAL_TIMEOUT_MS) before the 30s connect even starts,
+// and a first relay deploy uploads a binary. A shorter fence would toast "timed out" and run
+// the stale-metadata resync against a host that is about to connect fine.
+export const SSH_RECONNECT_UI_TIMEOUT_MS = 180_000
+
+export async function withUiConnectTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = SSH_CONNECT_UI_TIMEOUT_MS
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -19,7 +28,7 @@ export async function withUiConnectTimeout<T>(promise: Promise<T>): Promise<T> {
           )
         )
       )
-    }, SSH_CONNECT_UI_TIMEOUT_MS)
+    }, timeoutMs)
   })
   try {
     return await Promise.race([promise, timeout])
