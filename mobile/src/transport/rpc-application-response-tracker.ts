@@ -1,5 +1,5 @@
 import {
-  isRpcHealthProbeMethod,
+  isRpcTransportControlMethod,
   RpcApplicationResponsiveness
 } from './rpc-application-responsiveness'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
@@ -18,7 +18,7 @@ export class RpcApplicationResponseTracker {
     connected: boolean,
     applicationHealthProbe: boolean
   ): boolean {
-    if (!connected || !applicationHealthProbe || isRpcHealthProbeMethod(method)) {
+    if (!connected || !applicationHealthProbe || isRpcTransportControlMethod(method)) {
       return false
     }
     const result = this.responsiveness.recordTimeout()

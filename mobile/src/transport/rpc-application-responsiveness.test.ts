@@ -32,4 +32,13 @@ describe('RpcApplicationResponsiveness subscriptions', () => {
     expect(listener).not.toHaveBeenCalled()
     expect(responsiveness.getUnresponsiveSince()).toBe(300)
   })
+
+  it('does not treat relay resume confirmation as application recovery', () => {
+    const responsiveness = new RpcApplicationResponsiveness()
+    responsiveness.recordControlPlaneFailure(100)
+
+    responsiveness.recordResponse('pairing.getEndpoints', 200)
+
+    expect(responsiveness.getUnresponsiveSince()).toBe(100)
+  })
 })

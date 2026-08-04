@@ -30,7 +30,6 @@ type StreamManagerOptions = {
   nextId: () => string
   sendFrame: (request: { id: string; method: string; params?: unknown }) => boolean
   waitForConnected: () => Promise<void>
-  onApplicationResponse?: (method: string) => void
 }
 
 export class MobileRelayRpcStreams {
@@ -128,9 +127,6 @@ export class MobileRelayRpcStreams {
       return false
     }
     stream.controlResponseReceived = true
-    if (response.ok) {
-      this.options.onApplicationResponse?.(stream.method)
-    }
     return true
   }
 

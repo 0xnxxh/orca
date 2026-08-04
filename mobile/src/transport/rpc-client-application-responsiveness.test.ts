@@ -154,7 +154,7 @@ describe('direct RPC application responsiveness', () => {
     client.close()
   })
 
-  it('clears an application stall when a subscription answers', async () => {
+  it('keeps an application stall latched when only a subscription answers', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = sockets[0]!
     socket.openAndAuthenticate()
@@ -178,7 +178,7 @@ describe('direct RPC application responsiveness', () => {
         result: { type: 'subscribed', streamId: 42 }
       })}`
     )
-    expect(client.getRpcUnresponsiveSince?.()).toBeNull()
+    expect(client.getRpcUnresponsiveSince?.()).not.toBeNull()
 
     const second = client
       .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
@@ -187,8 +187,8 @@ describe('direct RPC application responsiveness', () => {
     await expect(second).resolves.toMatchObject({
       message: 'Request timed out: browser.screenshot'
     })
-    expect(socket.close).not.toHaveBeenCalled()
-    expect(client.getState()).toBe('connected')
+    expect(socket.close).toHaveBeenCalledOnce()
+    expect(client.getState()).toBe('reconnecting')
     client.close()
   })
 
@@ -245,6 +245,31 @@ describe('direct RPC application responsiveness', () => {
         rpcUnresponsiveSince: client.getRpcUnresponsiveSince?.()
       })
     ).toMatchObject({ kind: 'normal', label: 'Connected' })
+    client.close()
+  })
+
+  it('preserves reconnect backoff across unhealthy replacement handshakes', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    sockets[0]!.openAndAuthenticate()
+
+    await vi.advanceTimersByTimeAsync(28_000)
+    await vi.advanceTimersByTimeAsync(500)
+    sockets[1]!.openAndAuthenticate()
+    expect(client.getReconnectAttempt()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(28_000)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(sockets).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(sockets).toHaveLength(3)
+
+    sockets[2]!.openAndAuthenticate()
+    const recovered = client.sendRequest('worktree.ps', {})
+    await vi.advanceTimersByTimeAsync(0)
+    const request = sentRequest(sockets[2]!, 'worktree.ps')
+    sockets[2]!.receive(`encrypted:${JSON.stringify({ id: request.id, ok: true, result: {} })}`)
+    await expect(recovered).resolves.toMatchObject({ ok: true })
+    expect(client.getReconnectAttempt()).toBe(0)
     client.close()
   })
 })

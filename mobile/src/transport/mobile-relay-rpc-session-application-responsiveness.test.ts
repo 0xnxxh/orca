@@ -94,7 +94,17 @@ describe('mobile relay subscription application responsiveness', () => {
     fakes.sendText.mockReturnValue(true)
   })
 
-  it('clears an application stall when a subscription answers', async () => {
+  it('does not clear an inherited stall during resume confirmation', async () => {
+    const responsiveness = new RpcApplicationResponsiveness()
+    responsiveness.recordControlPlaneFailure()
+
+    const session = await authenticateSession({ applicationResponsiveness: responsiveness })
+
+    expect(responsiveness.getUnresponsiveSince()).not.toBeNull()
+    session.close()
+  })
+
+  it('keeps an application stall latched when only a subscription answers', async () => {
     const session = await authenticateSession()
     vi.useFakeTimers()
     try {
@@ -121,7 +131,7 @@ describe('mobile relay subscription application responsiveness', () => {
           _meta: {}
         })
       )
-      expect(session.getRpcUnresponsiveSince?.()).toBeNull()
+      expect(session.getRpcUnresponsiveSince?.()).not.toBeNull()
 
       const second = session
         .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
@@ -130,8 +140,8 @@ describe('mobile relay subscription application responsiveness', () => {
       await expect(second).resolves.toMatchObject({
         message: 'relay RPC timed out: browser.screenshot'
       })
-      expect(session.getState()).toBe('connected')
-      expect(fakes.close).not.toHaveBeenCalled()
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
     } finally {
       session.close()
       vi.useRealTimers()

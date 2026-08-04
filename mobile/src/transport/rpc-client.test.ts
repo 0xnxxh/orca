@@ -605,7 +605,7 @@ describe('mobile rpc-client connection timeout', () => {
       expect(mockSockets).toHaveLength(2)
       openAndAuthenticate(mockSockets[1]!)
       expect(client.getState()).toBe('connected')
-      expect(client.getReconnectAttempt()).toBe(0)
+      expect(client.getReconnectAttempt()).toBe(1)
 
       await vi.advanceTimersByTimeAsync(1_000)
       expect(mockSockets).toHaveLength(2)

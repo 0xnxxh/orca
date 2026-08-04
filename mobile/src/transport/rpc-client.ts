@@ -150,8 +150,10 @@ export function connect(
     options.applicationResponsiveness,
     {
       onLatched: (method) => emitLog('warn', 'RPC channel not responding', `${method} timed out`),
-      onRecovered: () =>
+      onRecovered: () => {
+        reconnectAttempt = 0
         emitLog('success', 'RPC channel recovered', 'An application request completed')
+      }
     }
   )
   const streamListeners = new Map<string, StreamRequest>()
@@ -198,8 +200,9 @@ export function connect(
     if (next === 'connected') {
       lastConnectedAt = Date.now()
       authenticationGeneration++
-      // Why: only a completed E2EE handshake proves the path is healthy (issue #10119).
-      reconnectAttempt = 0
+      if (applicationResponseTracker.getUnresponsiveSince() == null) {
+        reconnectAttempt = 0
+      }
       // Why: a clean handshake proves the token is valid — reset the auth retry budget.
       authRejectionCount = 0
       for (const waiter of connectWaiters.splice(0)) {
@@ -489,9 +492,6 @@ export function connect(
       if (!response.ok && response.error.code === 'unauthorized') {
         handleAuthRejection('Unauthorized — pairing may be revoked')
         return
-      }
-      if (response.ok && firstStreamResponse && responseStream) {
-        applicationResponseTracker.recordResponse(responseStream.method)
       }
       const isStreaming = response.ok && (response as RpcSuccess).streaming === true
 

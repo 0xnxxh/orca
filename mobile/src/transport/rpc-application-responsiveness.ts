@@ -13,7 +13,7 @@ export class RpcApplicationResponsiveness {
   }
 
   recordResponse(method: string, now = Date.now()): boolean {
-    if (isRpcHealthProbeMethod(method)) {
+    if (isRpcTransportControlMethod(method)) {
       return false
     }
     return this.recordApplicationResponse(now)
@@ -62,6 +62,6 @@ export class RpcApplicationResponsiveness {
   }
 }
 
-export function isRpcHealthProbeMethod(method: string): boolean {
-  return method === 'status.get'
+export function isRpcTransportControlMethod(method: string): boolean {
+  return method === 'status.get' || method === 'pairing.getEndpoints'
 }
