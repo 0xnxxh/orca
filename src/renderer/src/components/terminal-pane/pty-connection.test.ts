@@ -9231,6 +9231,44 @@ describe('connectPanePty', () => {
     })
   })
 
+  it('re-arms mouse reporting a reattach snapshot restored for a live third-party TUI', async () => {
+    // Why: issue #8291 — the reattach reset wiped the modes the daemon snapshot just
+    // rehydrated, so xterm re-enabled its row-wise selection over a live TUI.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
+      if (sessionId) {
+        return { id: sessionId, snapshot: '\x1b[?1002h\x1b[?1006hthird-party tui session' }
+      }
+      return null
+    })
+    transportFactoryQueue.push(transport)
+    setReattachPaneTitle('zsh')
+
+    const pane = createPane(1)
+    const textarea = {} as HTMLTextAreaElement
+    configureTerminalFocusMode(pane, textarea)
+    await withMockedDocumentActiveElement(textarea, async () => {
+      const manager = createManager(1)
+      const deps = createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+      })
+
+      connectPanePty(pane as never, manager as never, deps as never)
+      await flushAsyncTicks(20)
+
+      expect(pane.terminal.write).toHaveBeenCalledWith(
+        `${POST_REPLAY_REATTACH_RESET}\x1b[?1002h\x1b[?1006h`,
+        expect.any(Function)
+      )
+      expect(pane.terminal.write).not.toHaveBeenCalledWith(
+        POST_REPLAY_REATTACH_RESET,
+        expect.any(Function)
+      )
+    })
+  })
+
   it('does not treat persisted tab launchAgent metadata as a live agent reattach', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')

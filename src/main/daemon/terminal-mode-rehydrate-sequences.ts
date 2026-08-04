@@ -1,3 +1,4 @@
+import { buildMouseModeRearmSequence } from '../../shared/terminal-mouse-mode-sequences'
 import type { TerminalModes } from './types'
 
 // Why no kitty flags here: rehydrateSequences feeds renderer xterms, and
@@ -20,28 +21,13 @@ export function buildRehydrateSequences(modes: TerminalModes): string {
   }
   // Why: mobile alt-screen scroll gestures need xterm's mouse mode restored
   // from cold snapshots; OpenCode/OpenTUI enables scrollable panes this way.
-  switch (modes.mouseTracking ? (modes.mouseTrackingMode ?? 'vt200') : 'none') {
-    case 'x10':
-      seqs.push('\x1b[?9h')
-      break
-    case 'vt200':
-      seqs.push('\x1b[?1000h')
-      break
-    case 'drag':
-      seqs.push('\x1b[?1002h')
-      break
-    case 'any':
-      seqs.push('\x1b[?1003h')
-      break
-    case 'none':
-      break
-  }
-  // Why: xterm tracks the mouse protocol and SGR encoding as independent
-  // modes, so snapshots must preserve the encoding even when reporting is off.
-  if (modes.sgrMousePixelsMode) {
-    seqs.push('\x1b[?1016h')
-  } else if (modes.sgrMouseMode) {
-    seqs.push('\x1b[?1006h')
-  }
+  // Why shared: the renderer re-arms the same bytes after a reattach reset.
+  seqs.push(
+    buildMouseModeRearmSequence({
+      mouseTrackingMode: modes.mouseTracking ? (modes.mouseTrackingMode ?? 'vt200') : 'none',
+      sgrMouseMode: modes.sgrMouseMode === true,
+      sgrMousePixelsMode: modes.sgrMousePixelsMode === true
+    })
+  )
   return seqs.join('')
 }

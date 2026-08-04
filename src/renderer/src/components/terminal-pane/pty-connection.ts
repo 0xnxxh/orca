@@ -117,6 +117,7 @@ import {
 } from '@/lib/pane-manager/pane-pty-resize-hold'
 import {
   buildPostReplayLiveAgentReattachReset,
+  buildReattachMouseModeRearm,
   POST_REPLAY_LIVE_AGENT_SNAPSHOT_RESET,
   POST_REPLAY_LIVE_SNAPSHOT_RESET,
   POST_REPLAY_MODE_RESET,
@@ -5501,9 +5502,14 @@ export function connectPanePty(
       if (ownerProcessEnded) {
         return POST_REPLAY_MODE_RESET
       }
-      return shouldPreserveAgentReattachModes()
-        ? buildPostReplayLiveAgentReattachReset(payload)
-        : POST_REPLAY_REATTACH_RESET
+      if (shouldPreserveAgentReattachModes()) {
+        return buildPostReplayLiveAgentReattachReset(payload)
+      }
+      // Why the re-arm: a third-party TUI Orca does not recognise as an agent is still live,
+      // and the daemon snapshot just rehydrated its mouse modes; wiping them re-enables
+      // xterm's row-wise selection over the TUI (#8291). A dead TUI's stale modes are still
+      // cleared by the confirmed-shell-foreground reset above.
+      return `${POST_REPLAY_REATTACH_RESET}${buildReattachMouseModeRearm(payload)}`
     }
 
     const consumeRestoredViewportBlankingMarker = (): boolean => {
