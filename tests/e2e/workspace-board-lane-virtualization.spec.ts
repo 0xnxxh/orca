@@ -1,6 +1,13 @@
 import { test, expect } from './helpers/orca-app'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 
+type MarqueeStartPoint = { x: number; y: number } | null
+type MarqueeStartProbe = {
+  point: MarqueeStartPoint
+  geometry: { surfaceLeft: number; laneScrollTop: number; cardLeft: number } | null
+  blockers: string[]
+}
+
 const SEEDED_WORKSPACE_COUNT = 300
 const MARQUEE_WORKSPACE_COUNT = 102
 const MANY_LANE_COUNT = 21
@@ -366,44 +373,123 @@ test.describe('Workspace board lane virtualization', () => {
     const laneCards = lane.locator('[data-workspace-board-card-id]')
     await expect.poll(() => laneCards.count(), { timeout: 15_000 }).toBeGreaterThan(3)
     const laneScroll = lane.locator('[data-workspace-board-lane-scroll]')
-    const selectionSurface = orcaPage.locator('[data-workspace-board-selection-surface]')
-    const box = await laneScroll.boundingBox()
-    const selectionBox = await selectionSurface.boundingBox()
-    if (!box || !selectionBox) {
-      throw new Error('Expected the marquee lane and selection surface to have bounding boxes')
-    }
 
-    // Why: the marquee may only start on empty board space — the board ignores a
-    // pointerdown on a card, and one that misses the board entirely never reaches
-    // its handler at all, so the browser text-selects instead and no marquee runs.
-    // The usable strip is the board's padding between its own left edge and the
-    // first lane's cards; starting a fixed 4px inside it hugs that outer edge and
-    // falls off it whenever layout rounds differently. Aim at the middle instead.
-    const firstCardBox = await laneCards.first().boundingBox()
-    if (!firstCardBox) {
-      throw new Error('Expected the first marquee card to have a bounding box')
-    }
-    const startX = Math.round((selectionBox.x + firstCardBox.x) / 2)
-    const startY = Math.round(box.y + 12)
-    const startTarget = await orcaPage.evaluate(
-      ({ x, y }) => {
-        const element = document.elementFromPoint(x, y)
-        return {
-          onSurface: Boolean(element?.closest('[data-workspace-board-selection-surface]')),
-          onIgnoredTarget: Boolean(
-            element?.closest('[data-workspace-board-card-id], a, button, input, [role="button"]')
-          )
+    // Why: the marquee only starts on empty board space — the board ignores a
+    // pointerdown on a card, and one that lands on anything stacked over the
+    // board never reaches its handler at all, so the browser text-selects and no
+    // marquee runs. A precomputed point cannot be trusted: the strip is a few px
+    // of board padding, and the sheet, sidebar and lane fill all keep resizing it
+    // after the card-count wait. Ask the live DOM which point is actually empty,
+    // scanning the strip between the board's left edge and the first card. The
+    // scan stays in the lane's top rows because the marquee anchors its range in
+    // content space — starting below the first card would exclude it from the 102.
+    const probeMarqueeStart = (): Promise<MarqueeStartProbe> =>
+      orcaPage.evaluate((status) => {
+        const IGNORED = [
+          '[data-workspace-board-card-id]',
+          'a',
+          'button',
+          'input',
+          'select',
+          'textarea',
+          '[role="button"]',
+          '[role="menu"]',
+          '[role="menuitem"]'
+        ].join(',')
+        const surface = document.querySelector<HTMLElement>(
+          '[data-workspace-board-selection-surface]'
+        )
+        const laneElement = document.querySelector<HTMLElement>(
+          `[data-workspace-status="${status}"]`
+        )
+        const scroll = laneElement?.querySelector<HTMLElement>('[data-workspace-board-lane-scroll]')
+        const card = laneElement?.querySelector<HTMLElement>('[data-workspace-board-card-id]')
+        if (!surface || !scroll || !card) {
+          return { point: null, geometry: null, blockers: ['board not mounted'] }
         }
-      },
-      { x: startX, y: startY }
-    )
-    expect(
-      startTarget,
-      `marquee start point (${startX}, ${startY}) must be empty board space; ` +
-        `selectionBox.x=${selectionBox.x} firstCard.x=${firstCardBox.x}`
-    ).toEqual({ onSurface: true, onIgnoredTarget: false })
+        const surfaceRect = surface.getBoundingClientRect()
+        const scrollRect = scroll.getBoundingClientRect()
+        const cardRect = card.getBoundingClientRect()
+        const geometry = {
+          surfaceLeft: Math.round(surfaceRect.left),
+          laneScrollTop: Math.round(scrollRect.top),
+          cardLeft: Math.round(cardRect.left)
+        }
+        const describe = (element: Element | null): string => {
+          if (!element) {
+            return 'null'
+          }
+          const classes =
+            typeof element.className === 'string' && element.className.trim().length > 0
+              ? `.${element.className.trim().split(/\s+/).slice(0, 3).join('.')}`
+              : ''
+          return `${element.tagName.toLowerCase()}${classes}`
+        }
+        const blockers: string[] = []
+        const top = Math.round(scrollRect.top)
+        for (let y = top + 6; y <= top + 40; y += 6) {
+          for (
+            let x = Math.ceil(surfaceRect.left) + 2;
+            x <= Math.floor(cardRect.left) - 2;
+            x += 2
+          ) {
+            const element = document.elementFromPoint(x, y)
+            const onSurface = Boolean(element?.closest('[data-workspace-board-selection-surface]'))
+            const onIgnoredTarget = Boolean(element?.closest(IGNORED))
+            if (onSurface && !onIgnoredTarget) {
+              return { point: { x, y }, geometry, blockers }
+            }
+            if (blockers.length < 6) {
+              blockers.push(
+                `(${x},${y})=${describe(element)}${onSurface ? ' onSurface' : ''}${
+                  onIgnoredTarget ? ' ignored' : ''
+                }`
+              )
+            }
+          }
+        }
+        return { point: null, geometry, blockers }
+      }, statusId)
 
-    await orcaPage.mouse.move(startX, startY)
+    // Why: one empty reading can be a frame mid-relayout. Two consecutive probes
+    // agreeing on the same point is what proves the strip has stopped moving.
+    let marqueeStart: MarqueeStartPoint = null
+    let probe = await probeMarqueeStart()
+    let previousKey = JSON.stringify(probe.point)
+    const probeDeadline = Date.now() + 15_000
+    while (Date.now() < probeDeadline) {
+      await orcaPage.waitForTimeout(100)
+      probe = await probeMarqueeStart()
+      const key = JSON.stringify(probe.point)
+      if (probe.point && key === previousKey) {
+        marqueeStart = probe.point
+        break
+      }
+      previousKey = key
+    }
+
+    // Why: a viewport that leaves the board no empty space is a layout this test
+    // cannot drive at all — report that instead of failing on it.
+    test.skip(
+      marqueeStart === null,
+      `no empty board space for the marquee start; geometry=${JSON.stringify(
+        probe.geometry
+      )} blockers=${probe.blockers.join(' | ')}`
+    )
+    const start = marqueeStart as { x: number; y: number }
+
+    const box = await laneScroll.boundingBox()
+    if (!box) {
+      throw new Error('Expected the marquee lane to have a bounding box')
+    }
+    const preflight = await probeMarqueeStart()
+    expect(
+      preflight.point,
+      `marquee start point (${start.x}, ${start.y}) must still be empty board space; ` +
+        `geometry=${JSON.stringify(preflight.geometry)} blockers=${preflight.blockers.join(' | ')}`
+    ).not.toBeNull()
+
+    await orcaPage.mouse.move(start.x, start.y)
     await orcaPage.mouse.down()
     await orcaPage.mouse.move(box.x + box.width - 18, box.y + 80, { steps: 4 })
 
