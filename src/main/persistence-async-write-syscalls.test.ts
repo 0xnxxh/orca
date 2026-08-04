@@ -198,6 +198,23 @@ function recordFsCalls(dir: string): void {
   fsCalls.recording = true
 }
 
+function delayNextDataFileRename(dir: string): ReturnType<typeof deferred> & {
+  started: Promise<void>
+} {
+  const release = deferred()
+  const started = deferred()
+  let held = false
+  fsCalls.waitAsync = (fn, target) => {
+    if (held || fn !== 'rename' || !target.startsWith(dataFile(dir))) {
+      return null
+    }
+    held = true
+    started.resolve()
+    return release.promise
+  }
+  return { ...release, started: started.promise }
+}
+
 function seedStaleBackup(dir: string): void {
   const path = `${dataFile(dir)}.bak.0`
   writeFileSync(path, '{"stale":true}', 'utf-8')
@@ -362,27 +379,19 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
   it('a sync checkpoint vetoes an async write already parked on rename', async () => {
     const dir = makeDir()
     const store = await createStore(dir)
-    const renameRelease = deferred()
-    const renameStarted = deferred()
-    fsCalls.waitAsync = (fn, target) => {
-      if (fn !== 'rename' || target === dataFile(dir) || !target.startsWith(dataFile(dir))) {
-        return null
-      }
-      renameStarted.resolve()
-      return renameRelease.promise
-    }
+    const rename = delayNextDataFileRename(dir)
 
     recordFsCalls(dir)
     store.updateUI({ sidebarWidth: 501 })
     vi.advanceTimersByTime(SAVE_DEBOUNCE_MS)
     const pending = store.waitForPendingWrite()
-    await renameStarted.promise
+    await rename.started
 
     store.updateUI({ sidebarWidth: 502 })
     store.flushOrThrow()
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(502)
 
-    renameRelease.resolve()
+    rename.resolve()
     await pending
     fsCalls.recording = false
     fsCalls.waitAsync = null
@@ -416,24 +425,14 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
   it('the throwing async barrier drains mutations made during its write', async () => {
     const dir = makeDir()
     const store = await createStore(dir)
-    const renameRelease = deferred()
-    const renameStarted = deferred()
-    let held = false
-    fsCalls.waitAsync = (fn, target) => {
-      if (held || fn !== 'rename' || !target.startsWith(dataFile(dir))) {
-        return null
-      }
-      held = true
-      renameStarted.resolve()
-      return renameRelease.promise
-    }
+    const rename = delayNextDataFileRename(dir)
     recordFsCalls(dir)
 
     store.updateUI({ sidebarWidth: 601 })
     const barrier = store.flushPendingOrThrowAsync()
-    await renameStarted.promise
+    await rename.started
     store.updateUI({ sidebarWidth: 602 })
-    renameRelease.resolve()
+    rename.resolve()
     await barrier
     fsCalls.recording = false
 
@@ -443,24 +442,14 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
   it('bounds a best-effort flush to one state generation', async () => {
     const dir = makeDir()
     const store = await createStore(dir)
-    const renameRelease = deferred()
-    const renameStarted = deferred()
-    let held = false
-    fsCalls.waitAsync = (fn, target) => {
-      if (held || fn !== 'rename' || !target.startsWith(dataFile(dir))) {
-        return null
-      }
-      held = true
-      renameStarted.resolve()
-      return renameRelease.promise
-    }
+    const rename = delayNextDataFileRename(dir)
     recordFsCalls(dir)
 
     store.updateUI({ sidebarWidth: 621 })
     const flush = store.flushPendingAsync()
-    await renameStarted.promise
+    await rename.started
     store.updateUI({ sidebarWidth: 622 })
-    renameRelease.resolve()
+    rename.resolve()
     await flush
     fsCalls.recording = false
 
@@ -515,6 +504,29 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
     fsCalls.recording = false
 
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(632)
+  })
+
+  it('rewrites a matching hash after a superseded rename installed stale state', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    store.updateUI({ sidebarWidth: 641 })
+    await store.flushPendingOrThrowAsync()
+    const rename = delayNextDataFileRename(dir)
+    recordFsCalls(dir)
+
+    store.updateUI({ sidebarWidth: 642 })
+    vi.advanceTimersByTime(SAVE_DEBOUNCE_MS)
+    const staleWrite = store.waitForPendingWrite()
+    await rename.started
+    store.updateUI({ sidebarWidth: 641 })
+    rename.resolve()
+    await staleWrite
+
+    expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(642)
+    await store.flushPendingOrThrowAsync({ drainToStableGeneration: false })
+    fsCalls.recording = false
+
+    expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(641)
   })
 
   it('the throwing async barrier drains mutations made during sidecar I/O', async () => {

@@ -3978,9 +3978,11 @@ export class Store {
           this.inFlightAsyncTmpFile = null
         }
       }
-      // Why re-check gen: a sync flush during the rename await may have written fresher state; don't record a stale hash over it.
+      // Why re-check gen: a mutation or sync flush during rename makes the installed hash ambiguous; invalidate the no-op guard.
       if (renamed && this.writeGeneration === gen) {
         this.lastWrittenStateHash = stateHash
+      } else if (renamed) {
+        this.lastWrittenStateHash = null
       }
       if (renamed) {
         this.lastDurableWriteGeneration = Math.max(this.lastDurableWriteGeneration, gen)
