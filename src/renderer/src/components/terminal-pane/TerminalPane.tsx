@@ -1069,14 +1069,6 @@ function TerminalPane(
     }
   }, [tabId, setTabLayout, worktreeId])
 
-  // Why: the dedupe cache mirrors what one host holds for one tab, so drop it when either changes or the pane unmounts.
-  useEffect(() => {
-    const pusher = remotePaneLayoutPusherRef.current
-    return () => {
-      pusher?.reset()
-    }
-  }, [tabId, worktreeId])
-
   const clearPaneScrollback = useCallback(
     (pane: ManagedPane): void => {
       clearedScrollbackLeafIdsRef.current.add(pane.leafId)

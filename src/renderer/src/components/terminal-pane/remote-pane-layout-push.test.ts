@@ -36,7 +36,7 @@ function makeLayout(overrides: Partial<TerminalLayoutSnapshot> = {}): TerminalLa
 
 describe('createRemotePaneLayoutPusher', () => {
   beforeEach(() => {
-    updateWebRuntimePaneLayout.mockClear()
+    updateWebRuntimePaneLayout.mockReset().mockResolvedValue(true)
   })
 
   it('pushes once across 100 persists of an unchanged layout', () => {
@@ -125,11 +125,33 @@ describe('createRemotePaneLayoutPusher', () => {
     expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(3)
   })
 
-  it('re-pushes after reset so a remount re-establishes host geometry', () => {
+  it('does not carry a cached layout across worktrees', () => {
     const pusher = createRemotePaneLayoutPusher()
     pusher.push({ worktreeId: 'wt-1', tabId: 'tab-1', layout: makeLayout() })
-    pusher.reset()
+    pusher.push({ worktreeId: 'wt-2', tabId: 'tab-1', layout: makeLayout() })
+    expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries an unchanged layout after a failed push', async () => {
+    updateWebRuntimePaneLayout.mockResolvedValueOnce(false)
+    const pusher = createRemotePaneLayoutPusher()
+    const input = { worktreeId: 'wt-1', tabId: 'tab-1', layout: makeLayout() }
+
+    pusher.push(input)
+    await Promise.resolve()
+    pusher.push(input)
+
+    expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-pushes after a remount re-establishes host geometry', () => {
+    const pusher = createRemotePaneLayoutPusher()
     pusher.push({ worktreeId: 'wt-1', tabId: 'tab-1', layout: makeLayout() })
+    createRemotePaneLayoutPusher().push({
+      worktreeId: 'wt-1',
+      tabId: 'tab-1',
+      layout: makeLayout()
+    })
     expect(updateWebRuntimePaneLayout).toHaveBeenCalledTimes(2)
   })
 })

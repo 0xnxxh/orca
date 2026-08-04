@@ -4,7 +4,6 @@ import { updateWebRuntimePaneLayout } from '@/runtime/web-runtime-session'
 
 export type RemotePaneLayoutPusher = {
   push: (input: { worktreeId: string; tabId: string; layout: TerminalLayoutSnapshot }) => void
-  reset: () => void
 }
 
 /**
@@ -13,23 +12,36 @@ export type RemotePaneLayoutPusher = {
  * Dedupe against the last push so unchanged layouts cost no remote round trip.
  */
 export function createRemotePaneLayoutPusher(): RemotePaneLayoutPusher {
-  let lastPushed: { tabId: string; snapshot: TerminalLayoutSnapshot } | null = null
+  let lastAttempt: {
+    id: number
+    worktreeId: string
+    tabId: string
+    snapshot: TerminalLayoutSnapshot
+  } | null = null
+  let nextAttemptId = 0
   return {
     push: ({ worktreeId, tabId, layout }) => {
-      if (lastPushed?.tabId === tabId && terminalLayoutEqual(lastPushed.snapshot, layout)) {
+      if (
+        lastAttempt?.worktreeId === worktreeId &&
+        lastAttempt.tabId === tabId &&
+        terminalLayoutEqual(lastAttempt.snapshot, layout)
+      ) {
         return
       }
-      lastPushed = { tabId, snapshot: layout }
+      const attempt = { id: ++nextAttemptId, worktreeId, tabId, snapshot: layout }
+      lastAttempt = attempt
       void updateWebRuntimePaneLayout({
         worktreeId,
         tabId,
         root: layout.root,
         expandedLeafId: layout.expandedLeafId,
         ...(layout.titlesByLeafId ? { titlesByLeafId: layout.titlesByLeafId } : {})
+      }).then((updated) => {
+        // Why: a disconnected or timed-out push carried no information, so the next persist must retry it.
+        if (!updated && lastAttempt?.id === attempt.id) {
+          lastAttempt = null
+        }
       })
-    },
-    reset: () => {
-      lastPushed = null
     }
   }
 }
