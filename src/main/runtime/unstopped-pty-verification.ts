@@ -1,5 +1,8 @@
 import type { IPtyProvider } from '../providers/types'
-import { UNSTOPPED_PTY_REMOVAL_PREFIX } from '../../shared/worktree-removal'
+import {
+  UNSTOPPED_PTY_LIVE_DETAIL_PREFIX,
+  UNSTOPPED_PTY_REMOVAL_PREFIX
+} from '../../shared/worktree-removal'
 import { settleBeforeDeadline } from './settle-before-deadline'
 
 // Floor for the verification window when the sweep ran on a very short budget.
@@ -60,7 +63,7 @@ export function describeUnstoppedPtys(
 ): string {
   const detail =
     verdict.status === 'live'
-      ? `still live: ${verdict.ptyIds.join(', ')}`
+      ? `${UNSTOPPED_PTY_LIVE_DETAIL_PREFIX} ${verdict.ptyIds.join(', ')}`
       : `could not verify these exited: ${failedPtyIds.join(', ')} (${verdict.reason})`
   return `${UNSTOPPED_PTY_REMOVAL_PREFIX} ${worktreeId} — ${detail}`
 }

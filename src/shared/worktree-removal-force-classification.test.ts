@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyWorktreeForceDeleteReason, WORKTREE_TEARDOWN_FORCE_HINT } from './worktree-removal'
+import {
+  classifyWorktreeForceDeleteReason,
+  WORKTREE_TEARDOWN_FORCE_HINT,
+  WORKTREE_TEARDOWN_TIMEOUT_PREFIX
+} from './worktree-removal'
 
 // Why (#11960): the desktop Force Delete button renders only when this classifier
 // returns a reason. The PTY-teardown error tells the user to force-delete, so an
@@ -27,6 +31,17 @@ describe('classifyWorktreeForceDeleteReason for unstopped PTYs', () => {
   it('does not re-offer force once the waiver itself was already used', () => {
     expect(classifyWorktreeForceDeleteReason(liveError, true, true)).toBeNull()
     expect(classifyWorktreeForceDeleteReason(liveError, false, true)).toBeNull()
+  })
+
+  // Why: a wedged provider rejects the sweep before any per-PTY verdict exists, so the
+  // failure arrives worded as a teardown timeout. The waiver clears it exactly like an
+  // unproven stop, so leaving it unclassified hid the button for the wedge #11960 targeted.
+  it('offers force when the teardown sweep itself timed out', () => {
+    expect(
+      classifyWorktreeForceDeleteReason(
+        `${WORKTREE_TEARDOWN_TIMEOUT_PREFIX} repo-1::/w. ${WORKTREE_TEARDOWN_FORCE_HINT}`
+      )
+    ).toBe('unstopped-pty')
   })
 
   it('leaves unrelated failures unclassified', () => {

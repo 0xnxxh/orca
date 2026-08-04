@@ -15,8 +15,26 @@ export type WorktreeForceDeleteReason =
   | 'missing-registration'
   | 'unstopped-pty'
 
+// Why: verification distinguishes a PTY it watched stay alive from one it could not reach,
+// and the delete toast must not flatten the two — a user waiving "we could not confirm" is
+// making a different decision than one killing a terminal Orca just saw running. The marker
+// and its matcher stay together for the same reason the force hint does.
+export const UNSTOPPED_PTY_LIVE_DETAIL_PREFIX = 'still live:'
+
+// Why (#11960): a sweep that never answers wedges removal exactly like a stop that could not
+// be proven, and the waiver clears both — but this error carries different words, so without
+// its own matcher the force affordance stayed hidden for the very case it was added for.
+export const WORKTREE_TEARDOWN_TIMEOUT_PREFIX = 'Timed out waiting for physical PTY teardown:'
+
 export function isUnstoppedPtyRemovalError(error: string): boolean {
-  return error.includes(UNSTOPPED_PTY_REMOVAL_PREFIX)
+  return (
+    error.includes(UNSTOPPED_PTY_REMOVAL_PREFIX) || error.includes(WORKTREE_TEARDOWN_TIMEOUT_PREFIX)
+  )
+}
+
+/** True only when verification positively observed the PTYs still running. */
+export function isProvenLivePtyRemovalError(error: string): boolean {
+  return isUnstoppedPtyRemovalError(error) && error.includes(UNSTOPPED_PTY_LIVE_DETAIL_PREFIX)
 }
 
 export function createLockedWorktreeRemovalError(lockReason?: string): Error {

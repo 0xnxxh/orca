@@ -17,7 +17,41 @@ describe('getDeleteWorktreeToastCopy', () => {
       getDeleteWorktreeToastCopy(
         'feature/foo',
         'unstopped-pty',
+        'Failed to physically stop every PTY for worktree: repo-1::/w — could not verify these exited: term_a (the process list timed out)'
+      )
+    ).toEqual({
+      title: 'Failed to delete workspace feature/foo',
+      description:
+        'Orca could not confirm every terminal in this workspace has exited, so it stopped before deleting any files. Use Force Delete to remove it anyway.',
+      isDestructive: false
+    })
+  })
+
+  // Why: Force Delete proceeds on a proven-live PTY too, so the copy must not describe
+  // that as an unconfirmed exit — the user is killing a terminal Orca watched running.
+  it('names the running terminals when verification proved they are still live', () => {
+    expect(
+      getDeleteWorktreeToastCopy(
+        'feature/foo',
+        'unstopped-pty',
         'Failed to physically stop every PTY for worktree: repo-1::/w — still live: term_a'
+      )
+    ).toEqual({
+      title: 'Failed to delete workspace feature/foo',
+      description:
+        'This workspace still has running terminals, so Orca stopped before deleting any files. Force Delete will kill them and discard any uncommitted work they hold.',
+      isDestructive: false
+    })
+  })
+
+  // Why: a sweep that never answered wedges removal the same way, and the waiver clears
+  // both — so it must reach the same force affordance instead of a dead end.
+  it('offers force delete when the teardown sweep itself timed out', () => {
+    expect(
+      getDeleteWorktreeToastCopy(
+        'feature/foo',
+        'unstopped-pty',
+        'Timed out waiting for physical PTY teardown: repo-1::/w. Retry with force delete (--force) to remove it anyway.'
       )
     ).toEqual({
       title: 'Failed to delete workspace feature/foo',

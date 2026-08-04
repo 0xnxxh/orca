@@ -4,7 +4,10 @@ import { listRegisteredPtys } from '../memory/pty-registry'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
 import { splitWorktreeId, splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { mapWithConcurrency } from '../../shared/map-with-concurrency'
-import { WORKTREE_TEARDOWN_FORCE_HINT } from '../../shared/worktree-removal'
+import {
+  WORKTREE_TEARDOWN_FORCE_HINT,
+  WORKTREE_TEARDOWN_TIMEOUT_PREFIX
+} from '../../shared/worktree-removal'
 import { settleBeforeDeadline } from './settle-before-deadline'
 import {
   describeError,
@@ -87,7 +90,9 @@ export async function killAllProcessesForWorktree(
 ): Promise<WorktreeTeardownResult> {
   const sweepBudgetMs = Math.max(1, deps.timeoutMs ?? WORKTREE_PROCESS_SWEEP_TIMEOUT_MS)
   const deadline = Date.now() + sweepBudgetMs
-  const deadlineError = new Error(`Timed out waiting for physical PTY teardown: ${worktreeId}`)
+  const deadlineError = new Error(
+    `${WORKTREE_TEARDOWN_TIMEOUT_PREFIX} ${worktreeId}. ${WORKTREE_TEARDOWN_FORCE_HINT}`
+  )
   const stopAttempts = new Map<string, Promise<boolean>>()
   const stopPty = (
     ptyId: string,
