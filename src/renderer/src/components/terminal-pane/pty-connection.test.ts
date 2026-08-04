@@ -18999,6 +18999,51 @@ describe('connectPanePty', () => {
       })
     })
 
+    it('rejects Command Code facts when Claude owns the pane', async () => {
+      enableMainAuthority()
+      const { connectPanePty } = await import('./pty-connection')
+      const handler = await import('./terminal-side-effect-facts-handler')
+      const transport = createMockTransport()
+      transportFactoryQueue.push(transport)
+      vi.useFakeTimers()
+      const paneKey = makePaneKey('tab-1', LEAF_1)
+      const claudeStatus = {
+        paneKey,
+        state: 'done' as const,
+        prompt: 'Previous Claude turn',
+        updatedAt: Date.now(),
+        stateStartedAt: Date.now(),
+        agentType: 'claude' as const,
+        stateHistory: []
+      }
+      mockStoreState.tabsByWorktree = {
+        'wt-1': [{ id: 'tab-1', ptyId: null, launchAgent: 'claude' }]
+      }
+      mockStoreState.agentStatusByPaneKey[paneKey] = claudeStatus
+      mockStoreState.paneForegroundAgentByPaneKey[paneKey] = {
+        agent: 'claude',
+        shellForeground: false
+      }
+
+      connectPanePty(createPane(1) as never, createManager(1) as never, createDeps() as never)
+      const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as (ptyId: string) => void
+      onPtySpawn('pty-fact-false-cc')
+      mockStoreState.setAgentStatus.mockClear()
+
+      handler._dispatchTerminalSideEffectBatchForTest({
+        ptyId: 'pty-fact-false-cc',
+        seq: 1,
+        facts: [
+          { kind: 'command-code-working', prompt: 'False prompt' },
+          { kind: 'command-code-done', prompt: 'False prompt' }
+        ]
+      })
+      vi.advanceTimersByTime(2000)
+
+      expect(mockStoreState.setAgentStatus).not.toHaveBeenCalled()
+      expect(mockStoreState.agentStatusByPaneKey[paneKey]).toBe(claudeStatus)
+    })
+
     it('keeps Command Code working when a working fact lands before the done settles', async () => {
       enableMainAuthority()
       const { connectPanePty } = await import('./pty-connection')

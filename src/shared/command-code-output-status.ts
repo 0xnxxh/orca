@@ -112,7 +112,7 @@ const ACTIVE_EXECUTION_STATUS_RE = new RegExp(
   `(?:^|[\\r\\n])\\s*(?:${COMMAND_CODE_STATUS_GLYPH_RE_SOURCE}\\s*)?(?:Executing:\\s+\\S|Running\\s*\\()`
 )
 const IDLE_PROMPT_RE = /(?:^|[\r\n])\s*[❯>]\s+Ask your question\.\.\./
-const COMMAND_CODE_BANNER_RE = /\bCommand Code\b/
+const COMMAND_CODE_BANNER_RE = /(?:^|[\r\n])\s*#\s*Command Code\s+v\d+(?:\.\d+){1,3}\b/
 
 function cleanPromptCandidate(value: string): string {
   return cleanCommandCodePromptCandidate(stripTerminalControl(value))

@@ -267,6 +267,7 @@ import {
   openCommandCodeDoneSettle,
   setCommandCodeDoneSettleExecutor
 } from './command-code-done-settle'
+import { canCommandCodeOutputOwnPane } from './command-code-output-ownership'
 import { isTerminalTabParked } from './terminal-parked-watcher-registry'
 import {
   getExecutionHostIdForWorktree,
@@ -2818,7 +2819,19 @@ export function connectPanePty(
       .setAgentStatus(cacheKey, statusPayload, terminalTitle, undefined, routing)
   }
 
+  const canApplyCommandCodeOutputStatus = (): boolean => {
+    const foreground = useAppStore.getState().paneForegroundAgentByPaneKey[cacheKey]
+    return canCommandCodeOutputOwnPane({
+      foregroundAgent: foreground?.agent,
+      shellForeground: foreground?.shellForeground,
+      paneOwnerAgent: getAuthoritativePaneAgent()
+    })
+  }
+
   const seedCommandCodeOutputWorkingStatus = (prompt: string): void => {
+    if (!canApplyCommandCodeOutputStatus()) {
+      return
+    }
     clearCommandCodeOutputDoneTimer()
     const routing = resolveCurrentAgentStatusRouting()
     if (!routing) {
@@ -2885,6 +2898,9 @@ export function connectPanePty(
   )
   const clearCommandCodeOutputDoneTimer = (): void => cancelCommandCodeDoneSettle(cacheKey)
   const scheduleCommandCodeOutputDoneStatus = (prompt: string): void => {
+    if (!canApplyCommandCodeOutputStatus()) {
+      return
+    }
     const normalizedPrompt = prompt.trim()
     if (!normalizedPrompt) {
       cancelCommandCodeDoneSettle(cacheKey)

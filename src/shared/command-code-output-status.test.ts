@@ -74,6 +74,19 @@ describe('createCommandCodeOutputStatusDetector', () => {
     expect(onWorking).not.toHaveBeenCalled()
   })
 
+  it('does not arm when another agent merely discusses Command Code', () => {
+    const onWorking = vi.fn()
+    const detector = createCommandCodeOutputStatusDetector({
+      startupCommand: null,
+      onWorking
+    })
+
+    expect(detector.observe('// Why: Command Code exposes transcript prompts')).toBe(false)
+    expect(detector.observe('\r\n✻ Thinking...')).toBe(false)
+
+    expect(onWorking).not.toHaveBeenCalled()
+  })
+
   it.each([
     'Pondering',
     'Contemplating',
