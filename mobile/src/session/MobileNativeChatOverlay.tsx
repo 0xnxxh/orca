@@ -49,6 +49,7 @@ export function MobileNativeChatOverlay({
         agent={controller.nativeChatAgent}
         agentWorking={controller.nativeChatAgentWorking}
         streamingText={controller.nativeChatStreamingText}
+        streamIdentity={controller.nativeChatStreamIdentity}
         onStop={controller.handleNativeChatStop}
         ask={controller.nativeChatAsk}
         onAnswerAsk={controller.handleNativeChatAnswerAsk}

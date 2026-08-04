@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 
 vi.mock('react-native', () => ({
@@ -58,6 +59,9 @@ vi.mock('./MobileNativeChatComposer', async () => {
 })
 
 type Overrides = {
+  messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
+  streamingText?: string
+  streamIdentity?: string
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
@@ -73,6 +77,23 @@ function suppressRendererWarning(): () => void {
     original(...args)
   })
   return () => spy.mockRestore()
+}
+
+function assistantTurn(id: string, text: string): NativeChatMessage {
+  return { id, role: 'assistant', blocks: [{ type: 'text', text }], timestamp: 0, source: 'hook' }
+}
+
+function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
+  return createElement(MobileNativeChatView, {
+    messages: [],
+    status: 'ready',
+    streamIdentity: 'test-stream',
+    onSend: vi.fn().mockResolvedValue(true),
+    pending: [],
+    composerText: '',
+    onComposerTextChange: vi.fn(),
+    ...overrides
+  })
 }
 
 describe('MobileNativeChatView send-error banner', () => {
@@ -91,21 +112,23 @@ describe('MobileNativeChatView send-error banner', () => {
     const restore = suppressRendererWarning()
     try {
       await act(async () => {
-        renderer = create(
-          createElement(MobileNativeChatView, {
-            messages: [],
-            status: 'ready',
-            onSend: overrides.onSend ?? vi.fn().mockResolvedValue(true),
-            pending: [],
-            composerText: '',
-            onComposerTextChange: vi.fn(),
-            ...overrides
-          })
-        )
+        renderer = create(chatViewElement(overrides))
       })
     } finally {
       restore()
     }
+  }
+
+  async function update(overrides: Overrides = {}): Promise<void> {
+    await act(async () => {
+      renderer?.update(chatViewElement(overrides))
+    })
+  }
+
+  /** Ids of the rows the list is currently rendering. */
+  function listIds(): string[] {
+    const list = renderer!.root.find((node) => node.type === 'FlatList')
+    return (list.props.data as { id: string }[]).map((row) => row.id)
   }
 
   function banners(): ReactTestInstance[] {
@@ -160,5 +183,38 @@ describe('MobileNativeChatView send-error banner', () => {
     await pressSend()
 
     expect(onClearSendError).toHaveBeenCalledOnce()
+  })
+
+  it('keeps streaming a reply that repeats the previous turn as a prefix', async () => {
+    const prior = [assistantTurn('a1', 'The tests pass.')]
+    await render({ messages: prior })
+    expect(listIds()).toEqual(['a1'])
+
+    await update({ messages: prior, streamingText: 'The tests' })
+
+    expect(listIds()).toEqual(['a1', 'streaming'])
+  })
+
+  it('drops the streaming bubble once the reply lands as its own turn', async () => {
+    const prior = [assistantTurn('a1', 'Done.')]
+    await render({ messages: prior })
+    await update({ messages: prior, streamingText: 'Done.' })
+    expect(listIds()).toEqual(['a1', 'streaming'])
+
+    await update({
+      messages: [...prior, assistantTurn('a2', 'Done.')],
+      streamingText: 'Done.'
+    })
+
+    expect(listIds()).toEqual(['a1', 'a2'])
+  })
+
+  it("does not carry one chat's baseline into another stream identity", async () => {
+    const prior = [assistantTurn('a1', 'Shared answer text')]
+    await render({ messages: prior, streamIdentity: 'tab-a' })
+
+    await update({ messages: prior, streamingText: 'Shared answer', streamIdentity: 'tab-b' })
+
+    expect(listIds()).toEqual(['a1'])
   })
 })

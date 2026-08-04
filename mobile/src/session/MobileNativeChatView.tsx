@@ -21,6 +21,7 @@ import {
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
 import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
+import { useMobileNativeChatStreamingBubble } from './use-mobile-native-chat-streaming-bubble'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -50,6 +51,8 @@ type Props = {
   /** Live partial assistant text while a turn is still streaming (from the agent
    *  status hook). Shown as an in-progress bubble until the transcript catches up. */
   streamingText?: string
+  /** Scopes streaming catch-up state to the active host/workspace/tab/session. */
+  streamIdentity: string
   hasMore?: boolean
   loadingEarlier?: boolean
   onLoadEarlier?: () => void
@@ -108,6 +111,7 @@ export function MobileNativeChatView({
   agentWorking,
   onStop,
   streamingText,
+  streamIdentity,
   hasMore,
   loadingEarlier,
   onLoadEarlier,
@@ -166,9 +170,14 @@ export function MobileNativeChatView({
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
   const foldedMessages = useMemo(() => foldMobileNativeChatMessages(messages), [messages])
+  const streaming = useMobileNativeChatStreamingBubble(
+    foldedMessages,
+    streamingText,
+    streamIdentity
+  )
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streamingText, pending }),
-    [foldedMessages, streamingText, pending]
+    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streaming, pending }),
+    [foldedMessages, streaming, pending]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above

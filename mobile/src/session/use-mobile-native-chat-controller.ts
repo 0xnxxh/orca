@@ -49,6 +49,8 @@ export type MobileNativeChatController = {
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   nativeChatAgentWorking: boolean
   nativeChatStreamingText?: string
+  /** Host/workspace/tab/session identity for stateful streaming suppression. */
+  nativeChatStreamIdentity: string
   nativeChatPermission: ReturnType<typeof detectAgentPermission>
   nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
   nativeChatAsk: ReturnType<typeof parseAskFromStatus>
@@ -273,6 +275,7 @@ export function useMobileNativeChatController(args: {
     nativeChatSession,
     nativeChatAgentWorking,
     nativeChatStreamingText,
+    nativeChatStreamIdentity: streamIdentity,
     nativeChatPermission,
     nativeChatQuestion,
     nativeChatAsk,
