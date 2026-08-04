@@ -88,7 +88,8 @@ class FakeRelaySession extends FakeSession implements MobileRelayRpcSession {
   ) {
     super(state)
   }
-  getLeaseExpiresAt = () => Date.now() + 120_000
+  getAttachDeadlineAt = () => Date.now() + 10_000
+  getResumeExpiresAt = () => Date.now() + 120_000
   getResumeConfirmation = () => null
   getFailure = () => this.failure
 }
