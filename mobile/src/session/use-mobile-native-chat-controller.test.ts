@@ -421,3 +421,83 @@ describe('useMobileNativeChatController launch-draft wiring', () => {
     expect(draftsArgs.at(-1)).toMatchObject({ launchDraft: null, chatActive: true })
   })
 })
+
+describe('useMobileNativeChatController streaming scope', () => {
+  let renderer: ReactTestRenderer | null = null
+  let controller: MobileNativeChatController | null = null
+  const clientStub = { sendRequest: vi.fn() }
+
+  const workingTab = {
+    type: 'terminal',
+    id: 'tab-1',
+    terminal: 'term-1',
+    launchAgent: 'claude',
+    agentStatus: {
+      state: 'working',
+      agentType: 'claude',
+      providerSession: { id: 'session-1' }
+    },
+    isActive: true
+  }
+
+  function Harness(): null {
+    controller = useMobileNativeChatController({
+      client: clientStub as unknown as RpcClient,
+      connState: 'connected',
+      hostId: 'h',
+      worktreeId: 'w',
+      activeSessionTab: workingTab as never,
+      activeSessionTabId: 'tab-1',
+      activeHandleRef: { current: 'term-1' },
+      deviceTokenRef: { current: null },
+      nativeChatTranscriptIsLocalReadable: true,
+      nativeChatInputLeaseReady: true,
+      onSendError: vi.fn(),
+      onSendResolved: vi.fn()
+    })
+    return null
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    viewMode.isTabChatView = () => true
+    const original = console.error
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
+      if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...a)
+    })
+    try {
+      act(() => {
+        renderer = create(createElement(Harness))
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    controller = null
+    viewMode.isTabChatView = () => true
+  })
+
+  it('holds the stream scope and liveness while the user peeks at the terminal', () => {
+    // Both feed the streaming gate, which lives above the chat view's mount and
+    // must not be reset by a view toggle.
+    expect(controller?.showNativeChat).toBe(true)
+    const scopeKey = controller?.nativeChatStreamScopeKey
+    expect(scopeKey).toContain('session-1')
+    expect(controller?.nativeChatStreamLive).toBe(true)
+
+    viewMode.isTabChatView = () => false
+    act(() => renderer?.update(createElement(Harness)))
+
+    expect(controller?.showNativeChat).toBe(false)
+    expect(controller?.nativeChatAgentWorking).toBe(false)
+    expect(controller?.nativeChatStreamScopeKey).toBe(scopeKey)
+    expect(controller?.nativeChatStreamLive).toBe(true)
+  })
+})

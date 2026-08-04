@@ -17,14 +17,16 @@ function assistant(id: string, text: string): NativeChatMessage {
 }
 
 /** Run a sequence of (folded, streamingText) ticks through one gate. */
-function run(ticks: { folded: NativeChatMessage[]; text?: string }[]): {
+function run(ticks: { folded: NativeChatMessage[]; text?: string; live?: boolean }[]): {
   gate: MobileNativeChatStreamingGate
   results: (string | null)[]
 } {
   let gate = createMobileNativeChatStreamingGate()
   const results: (string | null)[] = []
   for (const tick of ticks) {
-    const step = deriveMobileNativeChatStreaming(gate, tick.folded, tick.text)
+    const step = deriveMobileNativeChatStreaming(gate, tick.folded, tick.text, {
+      streamLive: tick.live
+    })
     gate = step.gate
     results.push(step.streaming)
   }
@@ -77,6 +79,43 @@ describe('deriveMobileNativeChatStreaming', () => {
     expect(results).toEqual([null, 'answer', null, null])
   })
 
+  it('keeps the segment baseline through textless ticks while the turn is live', () => {
+    // Chat is hidden mid-stream: the transcript unsubscribes and the status
+    // stops reaching the gate, but the turn has not ended.
+    const prior = [assistant('a1', 'Done.')]
+    const { results } = run([
+      { folded: prior },
+      { folded: prior, text: 'Done.', live: true },
+      { folded: [], live: true },
+      { folded: prior, text: 'Done.', live: true }
+    ])
+    expect(results).toEqual([null, 'Done.', null, 'Done.'])
+  })
+
+  it('still hides after a hidden gap once the reply landed as its own turn', () => {
+    const prior = [assistant('a1', 'Done.')]
+    const landed = [...prior, assistant('a2', 'Done.')]
+    const { results } = run([
+      { folded: prior },
+      { folded: prior, text: 'Done.', live: true },
+      { folded: [], live: true },
+      { folded: landed, text: 'Done.', live: true }
+    ])
+    expect(results).toEqual([null, 'Done.', null, null])
+  })
+
+  it('anchors on a textless tick once the turn ends', () => {
+    const prior = [assistant('a1', 'first answer')]
+    const landed = [...prior, assistant('a2', 'second answer')]
+    const { results } = run([
+      { folded: prior },
+      { folded: prior, text: 'second answer', live: true },
+      { folded: landed },
+      { folded: landed, text: 'second answer', live: true }
+    ])
+    expect(results).toEqual([null, 'second answer', null, 'second answer'])
+  })
+
   it('re-anchors when a new reply part replaces the stream mid-turn', () => {
     const prior = [assistant('a1', 'context')]
     const partOneLanded = [...prior, assistant('a2', 'part one full text')]
@@ -111,9 +150,11 @@ describe('deriveMobileNativeChatStreaming', () => {
     // scope resets to the mid-stream fallback rather than reusing its baseline.
     const repeatedId = [assistant('a1', 'new answer landed')]
     let gate = createMobileNativeChatStreamingGate('tab-a')
-    gate = deriveMobileNativeChatStreaming(gate, repeatedId, undefined, 'tab-a').gate
+    gate = deriveMobileNativeChatStreaming(gate, repeatedId, undefined, { scopeKey: 'tab-a' }).gate
 
-    const switched = deriveMobileNativeChatStreaming(gate, repeatedId, 'new answer', 'tab-b')
+    const switched = deriveMobileNativeChatStreaming(gate, repeatedId, 'new answer', {
+      scopeKey: 'tab-b'
+    })
 
     expect(switched.streaming).toBeNull()
     expect(switched.gate.scopeKey).toBe('tab-b')

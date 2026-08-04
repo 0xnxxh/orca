@@ -16,12 +16,10 @@ import { colors } from '../theme/mobile-theme'
 import { styles } from './mobile-native-chat-view-styles'
 import {
   buildMobileNativeChatTransientData,
-  foldMobileNativeChatMessages,
   mobileNativeChatEmptyState,
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
 import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
-import { useMobileNativeChatStreamingBubble } from './use-mobile-native-chat-streaming-bubble'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -40,7 +38,10 @@ import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
 export type MobileNativeChatInputLockReason = 'disconnected' | 'waiting'
 
 type Props = {
+  /** Raw transcript, only for telling "still loading" from "loaded and empty". */
   messages: NativeChatMessage[]
+  /** `messages` with noise stripped and tool turns folded in, from the overlay. */
+  folded: NativeChatMessage[]
   status: MobileNativeChatStatus
   error?: string
   /** Resolved agent for this chat; names the empty-state copy (desktop parity). */
@@ -48,11 +49,9 @@ type Props = {
   agentWorking?: boolean
   /** Interrupt the agent mid-turn (shown as a Stop button on the working bar). */
   onStop?: () => void
-  /** Live partial assistant text while a turn is still streaming (from the agent
-   *  status hook). Shown as an in-progress bubble until the transcript catches up. */
-  streamingText?: string
-  /** Scopes streaming catch-up state to the active host/workspace/tab/session. */
-  streamIdentity: string
+  /** Live partial assistant text to show as an in-progress bubble, already gated
+   *  by the overlay against the transcript catching up. */
+  streaming: string | null
   hasMore?: boolean
   loadingEarlier?: boolean
   onLoadEarlier?: () => void
@@ -105,13 +104,13 @@ type Props = {
 
 export function MobileNativeChatView({
   messages,
+  folded,
   status,
   error,
   agent,
   agentWorking,
   onStop,
-  streamingText,
-  streamIdentity,
+  streaming,
   hasMore,
   loadingEarlier,
   onLoadEarlier,
@@ -169,15 +168,9 @@ export function MobileNativeChatView({
   // `data` is the list source: folded transcript + synthetic streaming bubble +
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
-  const foldedMessages = useMemo(() => foldMobileNativeChatMessages(messages), [messages])
-  const streaming = useMobileNativeChatStreamingBubble(
-    foldedMessages,
-    streamingText,
-    streamIdentity
-  )
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streaming, pending }),
-    [foldedMessages, streaming, pending]
+    () => buildMobileNativeChatTransientData({ folded, streaming, pending }),
+    [folded, streaming, pending]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above

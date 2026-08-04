@@ -60,8 +60,8 @@ vi.mock('./MobileNativeChatComposer', async () => {
 
 type Overrides = {
   messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
-  streamingText?: string
-  streamIdentity?: string
+  folded?: Parameters<typeof MobileNativeChatView>[0]['folded']
+  streaming?: string | null
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
@@ -86,8 +86,9 @@ function assistantTurn(id: string, text: string): NativeChatMessage {
 function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
   return createElement(MobileNativeChatView, {
     messages: [],
+    folded: [],
     status: 'ready',
-    streamIdentity: 'test-stream',
+    streaming: null,
     onSend: vi.fn().mockResolvedValue(true),
     pending: [],
     composerText: '',
@@ -96,7 +97,7 @@ function chatViewElement(overrides: Overrides): ReturnType<typeof createElement>
   })
 }
 
-describe('MobileNativeChatView send-error banner', () => {
+describe('MobileNativeChatView', () => {
   let renderer: ReactTestRenderer | null = null
 
   beforeEach(() => {
@@ -185,36 +186,15 @@ describe('MobileNativeChatView send-error banner', () => {
     expect(onClearSendError).toHaveBeenCalledOnce()
   })
 
-  it('keeps streaming a reply that repeats the previous turn as a prefix', async () => {
-    const prior = [assistantTurn('a1', 'The tests pass.')]
-    await render({ messages: prior })
+  // The gate that decides `streaming` lives in MobileNativeChatOverlay, which
+  // outlives this view; see MobileNativeChatOverlay.test.ts.
+  it('appends the gated streaming bubble after the folded transcript', async () => {
+    const folded = [assistantTurn('a1', 'The tests pass.')]
+    await render({ folded })
     expect(listIds()).toEqual(['a1'])
 
-    await update({ messages: prior, streamingText: 'The tests' })
+    await update({ folded, streaming: 'The tests' })
 
     expect(listIds()).toEqual(['a1', 'streaming'])
-  })
-
-  it('drops the streaming bubble once the reply lands as its own turn', async () => {
-    const prior = [assistantTurn('a1', 'Done.')]
-    await render({ messages: prior })
-    await update({ messages: prior, streamingText: 'Done.' })
-    expect(listIds()).toEqual(['a1', 'streaming'])
-
-    await update({
-      messages: [...prior, assistantTurn('a2', 'Done.')],
-      streamingText: 'Done.'
-    })
-
-    expect(listIds()).toEqual(['a1', 'a2'])
-  })
-
-  it("does not carry one chat's baseline into another stream identity", async () => {
-    const prior = [assistantTurn('a1', 'Shared answer text')]
-    await render({ messages: prior, streamIdentity: 'tab-a' })
-
-    await update({ messages: prior, streamingText: 'Shared answer', streamIdentity: 'tab-b' })
-
-    expect(listIds()).toEqual(['a1'])
   })
 })

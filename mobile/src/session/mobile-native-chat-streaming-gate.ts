@@ -54,14 +54,26 @@ export function deriveMobileNativeChatStreaming(
   gate: MobileNativeChatStreamingGate,
   folded: readonly NativeChatMessage[],
   streamingText: string | undefined,
-  scopeKey: string | null = gate.scopeKey
+  options: {
+    scopeKey?: string | null
+    /** Whether the agent is still mid-turn. A textless tick then means "no
+     *  observation this render", not "the stream ended". */
+    streamLive?: boolean
+  } = {}
 ): { gate: MobileNativeChatStreamingGate; streaming: string | null } {
+  const scopeKey = options.scopeKey === undefined ? gate.scopeKey : options.scopeKey
   const scopedGate =
     gate.scopeKey === scopeKey ? gate : createMobileNativeChatStreamingGate(scopeKey)
   const text = streamingText?.trim() ?? ''
   const tail = folded.at(-1)
   const tailId = tail?.id ?? null
   if (!text) {
+    if (options.streamLive && scopedGate.prevText !== '') {
+      // A gap inside a live segment (chat hidden, transcript reloading, throttle
+      // not caught up): re-anchoring here would adopt the reply that just landed
+      // as pre-stream history and render it a second time as a bubble.
+      return { gate: scopedGate, streaming: null }
+    }
     // Idle: keep anchoring the baseline to the live tail so the next segment
     // knows which tail predates it.
     return { gate: advanceGate(scopedGate, '', tailId), streaming: null }
@@ -71,10 +83,9 @@ export function deriveMobileNativeChatStreaming(
   const segmentStart = scopedGate.prevText !== '' && !text.startsWith(scopedGate.prevText)
   const baselineTailId = segmentStart ? tailId : scopedGate.baselineTailId
   const tailLeadsWithStream = assistantTailText(tail).startsWith(text)
-  // baselineTailId === null: mounted mid-stream with no pre-stream observation —
-  // fall back to suppress-on-prefix (a duplicate bubble is worse than briefly
-  // hiding an improbable mount-coincident repeated reply).
-  const caughtUp = tailLeadsWithStream && (baselineTailId === null || tailId !== baselineTailId)
+  // A null baseline (mounted mid-stream, never saw an idle tick) is unequal to
+  // every real tail id, so this degrades to the legacy suppress-on-prefix rule.
+  const caughtUp = tailLeadsWithStream && tailId !== baselineTailId
   return {
     gate: advanceGate(scopedGate, text, baselineTailId),
     streaming: caughtUp ? null : text
