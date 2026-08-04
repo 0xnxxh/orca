@@ -41,8 +41,13 @@ describe('describeToolInput', () => {
 
   it('truncates an overlong path like any other preview', () => {
     const path = `/very/${'long/'.repeat(30)}file.ts`
-    expect(describeToolInput({ file_path: path }).length).toBeLessThanOrEqual(80)
-    expect(describeToolInput({ file_path: path })).toContain('…')
+    const label = describeToolInput({ file_path: path })
+    expect(label.length).toBeLessThanOrEqual(80)
+    expect(label).toContain('…')
+    // A bounded JSON preview also satisfies the two assertions above, so pin the
+    // label to the path itself or this passes with path-labelling deleted.
+    expect(label).not.toContain('file_path')
+    expect(label.endsWith('/file.ts')).toBe(true)
   })
 
   it('keeps the filename when trimming an overlong path', () => {
@@ -112,6 +117,17 @@ describe('Codex JSON-string tool arguments', () => {
     expect(isStructuredToolInput('just prose')).toBe(false)
     // A JSON scalar is not an argument object — keep the literal text.
     expect(formatToolInput('"quoted"')).toBe('"quoted"')
+  })
+})
+
+describe('isStructuredToolInput', () => {
+  it('does not offer an expander whose detail would repeat the row label', () => {
+    // `{}` formats back to `{}` — the label itself.
+    expect(isStructuredToolInput({})).toBe(false)
+    expect(isStructuredToolInput([])).toBe(false)
+    expect(isStructuredToolInput('{}')).toBe(false)
+    expect(isStructuredToolInput({ command: 'ls' })).toBe(true)
+    expect(isStructuredToolInput([1])).toBe(true)
   })
 })
 

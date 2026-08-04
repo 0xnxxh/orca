@@ -60,7 +60,12 @@ export function formatToolInput(input: unknown): string {
  *  the row label — i.e. whether expanding the row is worth offering. */
 export function isStructuredToolInput(input: unknown): boolean {
   const normalized = normalizeToolInput(input)
-  return normalized !== null && typeof normalized === 'object'
+  if (normalized === null || typeof normalized !== 'object') {
+    return false
+  }
+  // An empty object formats back to the row label verbatim, so offering the
+  // expander would promise detail and then repeat the row.
+  return Array.isArray(normalized) ? normalized.length > 0 : Object.keys(normalized).length > 0
 }
 
 export function toolFilePath(input: unknown): string | null {
