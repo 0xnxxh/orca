@@ -1952,6 +1952,9 @@ function App(): React.JSX.Element {
       const gesture = resolveImeModifierGesture(imeOwnedModifierGesture, e)
       imeOwnedModifierGesture = gesture.active
       if (gesture.owned || isImeOwnedKeyboardEvent(e)) {
+        if (gesture.preventDefault) {
+          e.preventDefault()
+        }
         doubleTapDetector.reset()
         return
       }

@@ -27,10 +27,11 @@ export function isImeOwnedKeyboardEvent(event: object): boolean {
 export function resolveImeModifierGesture(
   active: boolean,
   event: ImeModifierGestureEvent
-): { active: boolean; owned: boolean } {
+): { active: boolean; owned: boolean; preventDefault: boolean } {
   const hasModifier = Boolean(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
-  const owned = active || (hasModifier && isImeOwnedKeyboardEvent(event))
-  return { active: owned && hasModifier, owned }
+  const marked = isImeOwnedKeyboardEvent(event)
+  const owned = active || (hasModifier && marked)
+  return { active: owned && hasModifier, owned, preventDefault: active && !marked }
 }
 
 /**

@@ -17,10 +17,13 @@ export function nativeChatToggleShortcutLabel(isMac: boolean): string {
 /** True when the event is the native-chat toggle chord for the given platform.
  *  Pure so it can be unit-tested without a DOM. */
 export function matchesNativeChatToggleShortcut(
-  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
+  e: Pick<
+    KeyboardEvent,
+    'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'defaultPrevented'
+  >,
   isMac: boolean
 ): boolean {
-  if (e.altKey || !e.shiftKey) {
+  if (e.defaultPrevented || e.altKey || !e.shiftKey) {
     return false
   }
   // Primary modifier is Cmd on Mac, Ctrl on Linux/Windows — and must be the

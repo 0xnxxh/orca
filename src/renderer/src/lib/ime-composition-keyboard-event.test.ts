@@ -50,7 +50,7 @@ describe('isImeCompositionKeyDown', () => {
       ctrlKey: true,
       isComposing: true
     })
-    expect(gesture).toEqual({ active: true, owned: true })
+    expect(gesture).toEqual({ active: true, owned: true, preventDefault: false })
 
     gesture = resolveImeModifierGesture(gesture.active, {
       ctrlKey: true,
@@ -62,18 +62,18 @@ describe('isImeCompositionKeyDown', () => {
       shiftKey: true,
       isComposing: false
     })
-    expect(gesture).toEqual({ active: true, owned: true })
+    expect(gesture).toEqual({ active: true, owned: true, preventDefault: true })
 
     gesture = resolveImeModifierGesture(gesture.active, {
       isComposing: false
     })
-    expect(gesture).toEqual({ active: false, owned: true })
+    expect(gesture).toEqual({ active: false, owned: true, preventDefault: true })
     expect(
       resolveImeModifierGesture(false, {
         ctrlKey: true,
         shiftKey: true,
         isComposing: false
       })
-    ).toEqual({ active: false, owned: false })
+    ).toEqual({ active: false, owned: false, preventDefault: false })
   })
 })
