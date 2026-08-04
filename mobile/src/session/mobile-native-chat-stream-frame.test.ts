@@ -99,6 +99,27 @@ describe('applyMobileNativeChatStreamFrame', () => {
     })
   })
 
+  it('replaces a partially overlapping replay that no longer extends the retained tail', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['old-1', 'shared', 'old-tail'].map(message))
+
+    const replay = [message('shared'), message('compacted-summary'), message('old-tail')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: false, beforeOffset: 0 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: false,
+      beforeOffset: 0,
+      windowReplaced: true
+    })
+  })
+
   it('keeps the pagination cursor when an append does not trim history', () => {
     const merger = createNativeChatMerger()
     replaceList(merger, [message('a')])

@@ -451,4 +451,44 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
     releaseMobileNativeChatTerminalWrite('terminal')
   })
+
+  it('queues a superseding answer behind an in-flight terminal write', async () => {
+    let resolveFirst: (response: ReturnType<typeof acceptedResponse>) => void = () => undefined
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    const prompt: AskPrompt = {
+      questions: [
+        { question: 'q1', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'q2', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    }
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(prompt, [{ indices: [0] }, { indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveFirst(acceptedResponse())
+      await Promise.resolve()
+    })
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
 })

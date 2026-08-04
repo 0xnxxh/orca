@@ -36,6 +36,7 @@ describe('useMobileNativeChatSession', () => {
   function Harness({ client }: { client: RpcClient | null }): null {
     state = useMobileNativeChatSession({
       client,
+      sourceIdentity: 'host-a\0workspace-a',
       agent: 'claude',
       sessionId: 'session',
       transcriptPath: null
@@ -348,14 +349,17 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
   function Harness({
     client,
     sessionId,
-    agent = 'claude'
+    agent = 'claude',
+    sourceIdentity = 'host-a\0workspace-a'
   }: {
     client: RpcClient | null
     sessionId: string | null
     agent?: string | null
+    sourceIdentity?: string
   }): null {
     const session = useMobileNativeChatSession({
       client,
+      sourceIdentity,
       agent,
       sessionId,
       transcriptPath: null
@@ -463,6 +467,30 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       transcriptLoading: false,
       ids: ['a-1', 'a-2']
     })
+  })
+
+  it('never holds a cached list across a host/workspace source change', async () => {
+    const firstClient = {
+      subscribe: vi.fn((_method: string, _params: unknown, onData: (frame: unknown) => void) => {
+        onData({ type: 'snapshot', messages: [message('source-a')], hasMore: false })
+        return () => {}
+      })
+    } as unknown as RpcClient
+    await mountAt(firstClient, 'session-a')
+
+    const secondClient = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    renders.length = 0
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          client: secondClient,
+          sessionId: 'session-a',
+          sourceIdentity: 'host-b\0workspace-b'
+        })
+      )
+    )
+
+    expect(renders[0]).toMatchObject({ status: 'loading', ids: [] })
   })
 
   it('never hands out the previous session’s messages under the new session id', async () => {

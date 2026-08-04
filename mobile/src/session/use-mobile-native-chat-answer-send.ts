@@ -80,6 +80,8 @@ export function useMobileNativeChatAnswerSend(args: {
   // superseding answer inherits the cancelled chain's hold (it re-enters before
   // the old chain unwinds), and only the last chain out releases the lock.
   const writeHoldsRef = useRef(new Map<string, number>())
+  // Successors wait for the prior chain's active RPC before sharing its hold.
+  const writeTurnsRef = useRef(new Map<string, Promise<void>>())
   const delaysRef = useRef<
     Set<{ timer: ReturnType<typeof setTimeout>; resolve: (completed: boolean) => void }>
   >(new Set())
@@ -122,12 +124,22 @@ export function useMobileNativeChatAnswerSend(args: {
         return false
       }
       holds.set(handle, heldCount + 1)
+      const previousTurn = writeTurnsRef.current.get(handle) ?? Promise.resolve()
+      let finishTurn: () => void = () => undefined
+      const turn = new Promise<void>((resolve) => {
+        finishTurn = resolve
+      })
+      writeTurnsRef.current.set(handle, turn)
       // A new answer supersedes any still-pending keystroke writes.
       cancelPending()
       const generation = generationRef.current
       let sawUnknownOutcome = false
       let sawAcceptedGroup = false
       try {
+        await previousTurn
+        if (generationRef.current !== generation) {
+          return false
+        }
         // One budget for the whole answer instead of a fresh timeout per keystroke
         // group, which let an N-group selector hold the card for N × the send timeout.
         // It bounds transport time only: each deliberate pacing wait is credited back
@@ -162,8 +174,11 @@ export function useMobileNativeChatAnswerSend(args: {
           }
           return outcome === 'accepted'
         }
-        const wait = (ms: number): Promise<boolean> =>
-          new Promise((resolve) => {
+        const wait = (ms: number): Promise<boolean> => {
+          if (generationRef.current !== generation) {
+            return Promise.resolve(false)
+          }
+          return new Promise((resolve) => {
             const delay = {
               timer: setTimeout(() => {
                 delaysRef.current.delete(delay)
@@ -173,6 +188,7 @@ export function useMobileNativeChatAnswerSend(args: {
             }
             delaysRef.current.add(delay)
           })
+        }
         const fail = (): false => {
           // Why: keystrokes that may have landed (ack lost / path cutover) must
           // not read as a definite failure — a blind resend could double-step
@@ -246,6 +262,10 @@ export function useMobileNativeChatAnswerSend(args: {
         }
         return groups.length > 0
       } finally {
+        finishTurn()
+        if (writeTurnsRef.current.get(handle) === turn) {
+          writeTurnsRef.current.delete(handle)
+        }
         // Last chain out releases; a superseded chain unwinding late must not
         // free the lock out from under the successor sharing its hold.
         const remaining = (holds.get(handle) ?? 1) - 1

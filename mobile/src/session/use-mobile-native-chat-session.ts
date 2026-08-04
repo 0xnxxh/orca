@@ -49,13 +49,15 @@ type ReadSessionResult =
  *  an ordered tail); live appends merge by id so order stays stable. */
 export function useMobileNativeChatSession(args: {
   client: RpcClient | null
+  /** Stable host/workspace source; unlike `client`, it survives manual reconnect. */
+  sourceIdentity: string
   agent: string | null
   sessionId: string | null
   transcriptPath: string | null
 }): MobileNativeChatSession {
-  const { client, agent, sessionId, transcriptPath } = args
+  const { client, sourceIdentity, agent, sessionId, transcriptPath } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
-  const identity = `${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
+  const identity = `${sourceIdentity}\0${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
   // Pre-read status is a pure function of the props, so derive it rather than
   // letting the effect write it a commit later.
   const initialStatus: MobileNativeChatStatus =

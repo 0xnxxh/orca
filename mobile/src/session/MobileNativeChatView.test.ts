@@ -95,6 +95,7 @@ describe('MobileNativeChatView send-error banner', () => {
           createElement(MobileNativeChatView, {
             messages: [],
             status: 'ready',
+            streamIdentity: 'test-stream',
             onSend: overrides.onSend ?? vi.fn().mockResolvedValue(true),
             pending: [],
             composerText: '',

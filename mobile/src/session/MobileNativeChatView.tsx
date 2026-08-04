@@ -51,6 +51,8 @@ type Props = {
   /** Live partial assistant text while a turn is still streaming (from the agent
    *  status hook). Shown as an in-progress bubble until the transcript catches up. */
   streamingText?: string
+  /** Scopes streaming catch-up state to the active host/workspace/tab/session. */
+  streamIdentity: string
   hasMore?: boolean
   loadingEarlier?: boolean
   /** Last older-history page failed; shows an inline retry in the header row. */
@@ -116,6 +118,7 @@ export function MobileNativeChatView({
   agentWorking,
   onStop,
   streamingText,
+  streamIdentity,
   hasMore,
   loadingEarlier,
   loadEarlierError,
@@ -173,7 +176,11 @@ export function MobileNativeChatView({
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
   const foldedMessages = useMemo(() => foldMobileNativeChatMessages(messages), [messages])
-  const streaming = useMobileNativeChatStreamingBubble(foldedMessages, streamingText)
+  const streaming = useMobileNativeChatStreamingBubble(
+    foldedMessages,
+    streamingText,
+    streamIdentity
+  )
   const { data } = useMemo(
     () => buildMobileNativeChatTransientData({ folded: foldedMessages, streaming, pending }),
     [foldedMessages, streaming, pending]

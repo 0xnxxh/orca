@@ -94,6 +94,17 @@ describe('deriveMobileNativeChatStreaming', () => {
     expect(again.gate).toEqual(first.gate)
   })
 
+  it('drops a prior chat baseline when the stream identity changes', () => {
+    const repeatedId = [assistant('a1', 'new answer landed')]
+    let gate = createMobileNativeChatStreamingGate('tab-a')
+    gate = deriveMobileNativeChatStreaming(gate, repeatedId, undefined, 'tab-a').gate
+
+    const switched = deriveMobileNativeChatStreaming(gate, repeatedId, 'new answer', 'tab-b')
+
+    expect(switched.streaming).toBeNull()
+    expect(switched.gate.scopeKey).toBe('tab-b')
+  })
+
   it('returns null for empty or whitespace streaming text', () => {
     const prior = [assistant('a1', 'x')]
     expect(run([{ folded: prior, text: '   ' }]).results).toEqual([null])

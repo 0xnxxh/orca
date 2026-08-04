@@ -25,12 +25,35 @@ export type AppliedMobileNativeChatFrame =
       windowReplaced?: boolean
     }
 
+function replayExtendsRetainedTail(
+  merger: NativeChatMerger,
+  messages: readonly NativeChatMessage[]
+): boolean {
+  const firstIndex = messages[0] ? merger.indexById.get(messages[0].id) : undefined
+  if (firstIndex === undefined) {
+    return false
+  }
+  let expectedIndex = firstIndex
+  let sawNewMessage = false
+  for (const message of messages) {
+    const existingIndex = merger.indexById.get(message.id)
+    if (existingIndex === undefined) {
+      sawNewMessage = true
+    } else if (sawNewMessage || existingIndex !== expectedIndex) {
+      return false
+    } else {
+      expectedIndex += 1
+    }
+  }
+  return expectedIndex === merger.list.length
+}
+
 /** Applies runtime stream frames while preserving the initial-snapshot versus
  *  reconnect-replay distinction owned by the session hook. A replay snapshot
- *  that overlaps the retained list merges in by id — paged-in history survives
- *  a socket blip instead of collapsing to the replayed window. A disjoint
- *  replay (long outage, compaction while away) can't be stitched without a
- *  gap, so it falls back to replacing with the fresh authoritative window. */
+ *  that extends a contiguous retained tail merges in by id — paged-in history
+ *  survives a socket blip instead of collapsing to the replayed window. A
+ *  discontinuous replay (long outage, compaction while away) can't be stitched
+ *  without a gap, so it falls back to the fresh authoritative window. */
 export function applyMobileNativeChatStreamFrame(args: {
   merger: NativeChatMerger
   frame: MobileNativeChatStreamFrame
@@ -50,12 +73,12 @@ export function applyMobileNativeChatStreamFrame(args: {
   if (!Array.isArray(frame.messages)) {
     return { kind: 'ignored' }
   }
-  const replayOverlapsHistory =
+  const replayExtendsHistory =
     frame.type === 'snapshot' &&
     !replaceSnapshot &&
     merger.list.length > 0 &&
-    frame.messages.some((message) => merger.indexById.has(message.id))
-  if (frame.type === 'replacement' || (frame.type === 'snapshot' && !replayOverlapsHistory)) {
+    replayExtendsRetainedTail(merger, frame.messages)
+  if (frame.type === 'replacement' || (frame.type === 'snapshot' && !replayExtendsHistory)) {
     replaceList(merger, frame.messages)
     return {
       kind: 'messages',

@@ -8,6 +8,8 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
  *  hides only when the tail MOVED during the segment and leads with the
  *  streamed text (the real turn landed), never for an older identical turn. */
 export type MobileNativeChatStreamingGate = {
+  /** Chat/session identity this baseline belongs to. */
+  scopeKey: string | null
   /** Streamed text seen on the previous tick ('' while idle). */
   prevText: string
   /** Folded tail message id when the current segment began; null while the
@@ -16,8 +18,10 @@ export type MobileNativeChatStreamingGate = {
   baselineTailId: string | null
 }
 
-export function createMobileNativeChatStreamingGate(): MobileNativeChatStreamingGate {
-  return { prevText: '', baselineTailId: null }
+export function createMobileNativeChatStreamingGate(
+  scopeKey: string | null = null
+): MobileNativeChatStreamingGate {
+  return { scopeKey, prevText: '', baselineTailId: null }
 }
 
 function assistantTailText(tail: NativeChatMessage | undefined): string {
@@ -40,7 +44,7 @@ function advanceGate(
 ): MobileNativeChatStreamingGate {
   return gate.prevText === prevText && gate.baselineTailId === baselineTailId
     ? gate
-    : { prevText, baselineTailId }
+    : { ...gate, prevText, baselineTailId }
 }
 
 /** Advance the gate one tick and derive the visible streaming text (null hides
@@ -49,20 +53,23 @@ function advanceGate(
 export function deriveMobileNativeChatStreaming(
   gate: MobileNativeChatStreamingGate,
   folded: readonly NativeChatMessage[],
-  streamingText: string | undefined
+  streamingText: string | undefined,
+  scopeKey: string | null = gate.scopeKey
 ): { gate: MobileNativeChatStreamingGate; streaming: string | null } {
+  const scopedGate =
+    gate.scopeKey === scopeKey ? gate : createMobileNativeChatStreamingGate(scopeKey)
   const text = streamingText?.trim() ?? ''
   const tail = folded.at(-1)
   const tailId = tail?.id ?? null
   if (!text) {
     // Idle: keep anchoring the baseline to the live tail so the next segment
     // knows which tail predates it.
-    return { gate: advanceGate(gate, '', tailId), streaming: null }
+    return { gate: advanceGate(scopedGate, '', tailId), streaming: null }
   }
   // A stream that is not an extension of the previous tick is a new segment
   // (next reply part); re-anchor to the tail that predates it.
-  const segmentStart = gate.prevText !== '' && !text.startsWith(gate.prevText)
-  const baselineTailId = segmentStart ? tailId : gate.baselineTailId
+  const segmentStart = scopedGate.prevText !== '' && !text.startsWith(scopedGate.prevText)
+  const baselineTailId = segmentStart ? tailId : scopedGate.baselineTailId
   const tailText = assistantTailText(tail)
   const tailLeadsWithStream = tailText.startsWith(text)
   // baselineTailId === null: mounted mid-stream with no pre-stream observation —
@@ -70,7 +77,7 @@ export function deriveMobileNativeChatStreaming(
   // hiding an improbable mount-coincident repeated reply).
   const caughtUp = tailLeadsWithStream && (baselineTailId === null || tailId !== baselineTailId)
   return {
-    gate: advanceGate(gate, text, baselineTailId),
+    gate: advanceGate(scopedGate, text, baselineTailId),
     streaming: caughtUp ? null : text
   }
 }

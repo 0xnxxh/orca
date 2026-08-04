@@ -11,10 +11,13 @@ export function MobileAgentWorkingIndicator({
 }: {
   stale?: boolean
 }): React.JSX.Element {
+  const firstDot = useRef(new Animated.Value(0.3)).current
+  const secondDot = useRef(new Animated.Value(0.3)).current
+  const thirdDot = useRef(new Animated.Value(0.3)).current
   const dots = [
-    useRef(new Animated.Value(0.3)).current,
-    useRef(new Animated.Value(0.3)).current,
-    useRef(new Animated.Value(0.3)).current
+    { id: 'first', opacity: firstDot },
+    { id: 'second', opacity: secondDot },
+    { id: 'third', opacity: thirdDot }
   ]
 
   useEffect(() => {
@@ -25,8 +28,8 @@ export function MobileAgentWorkingIndicator({
       Animated.loop(
         Animated.sequence([
           Animated.delay(i * 160),
-          Animated.timing(dot, { toValue: 1, duration: 320, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.3, duration: 320, useNativeDriver: true })
+          Animated.timing(dot.opacity, { toValue: 1, duration: 320, useNativeDriver: true }),
+          Animated.timing(dot.opacity, { toValue: 0.3, duration: 320, useNativeDriver: true })
         ])
       )
     )
@@ -40,8 +43,8 @@ export function MobileAgentWorkingIndicator({
       <Text style={styles.label}>{stale ? 'Agent status stale' : 'Agent is working'}</Text>
       {stale ? null : (
         <View style={styles.dots}>
-          {dots.map((dot, i) => (
-            <Animated.View key={i} style={[styles.dot, { opacity: dot }]} />
+          {dots.map((dot) => (
+            <Animated.View key={dot.id} style={[styles.dot, { opacity: dot.opacity }]} />
           ))}
         </View>
       )}

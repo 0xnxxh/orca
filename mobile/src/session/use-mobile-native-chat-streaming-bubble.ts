@@ -10,10 +10,11 @@ import {
  *  the previous turn's prefix still shows while streaming. */
 export function useMobileNativeChatStreamingBubble(
   folded: readonly NativeChatMessage[],
-  streamingText: string | undefined
+  streamingText: string | undefined,
+  scopeKey: string
 ): string | null {
   const [gate, setGate] = useState(createMobileNativeChatStreamingGate)
-  const step = deriveMobileNativeChatStreaming(gate, folded, streamingText)
+  const step = deriveMobileNativeChatStreaming(gate, folded, streamingText, scopeKey)
   if (step.gate !== gate) {
     // Render-time state adjustment (derived-state pattern): the advance is
     // idempotent for a repeated (text, tail) pair, so this settles in one pass.
