@@ -172,6 +172,14 @@ describe('briefToolArg', () => {
     const blocks: NativeChatBlock[] = [{ type: 'tool-call', name: 'Bash', input: { command: '' } }]
     expect(summarizeToolRun(blocks)).toBe('Bash')
   })
+
+  it('still previews a primary argument that is populated but not a string', () => {
+    // Only a *blank* key means "no argument" — a mixed argv or a structured
+    // query is unrenderable as a label, not absent, so it keeps the preview.
+    expect(briefToolArg({ command: ['kill', '-9', 1234] })).toBe('{"command":["kill","-9",1234')
+    expect(briefToolArg({ command: 42 })).toBe('{"command":42}')
+    expect(briefToolArg({ query: { text: 'auth flow' } })).toBe('{"query":{"text":"auth flow"')
+  })
 })
 
 describe('summarizeToolRun', () => {

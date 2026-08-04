@@ -96,8 +96,9 @@ export function briefToolArg(input: unknown): string {
       return command.slice(0, 28)
     }
     // A blank primary key means the call has no brief argument; falling through
-    // would stand its raw JSON in for one in the run header.
-    if (BRIEF_ARG_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+    // would stand its raw JSON in for one in the run header. Reaching here with a
+    // string key means it was blank — a structured one still earns the preview.
+    if (BRIEF_ARG_KEYS.some((key) => typeof value[key] === 'string')) {
       return ''
     }
   }
