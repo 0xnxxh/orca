@@ -15721,7 +15721,9 @@ export class OrcaRuntimeService {
           return activeTerminal.terminal
         }
       }
-      const listed = await this.listTerminals(worktreeSelector)
+      const listed = await this.listTerminals(worktreeSelector, undefined, {
+        includeVisualLayouts: false
+      })
       const first = listed.terminals[0]?.handle
       if (first) {
         return first
@@ -15968,9 +15970,6 @@ export class OrcaRuntimeService {
       return {
         ...summary,
         preview,
-        // Why: mirrors terminal.send's PTY gate exactly (connected only —
-        // orphaned handles still accept writes and adoption re-attaches them).
-        writable: pty.pty.connected,
         tabId: pty.pty.tabId ?? pty.record.tabId,
         leafId: parsePaneKey(pty.pty.paneKey ?? '')?.leafId ?? pty.record.leafId,
         paneRuntimeId: -1,
@@ -15993,7 +15992,6 @@ export class OrcaRuntimeService {
     return {
       ...summary,
       preview,
-      writable: leaf.writable,
       paneRuntimeId: leaf.paneRuntimeId,
       ptyId: leaf.ptyId,
       rendererGraphEpoch: this.rendererGraphEpoch
@@ -30591,9 +30589,7 @@ export class OrcaRuntimeService {
       leafId: orphaned ? `pty:${pty.ptyId}` : pane.leafId,
       title: getLatestPtyTitle(pty),
       connected: pty.connected,
-      // Why: no `writable` — for a PTY record it would only restate `connected`,
-      // which is exactly what terminal.send gates on. Callers needing the claim
-      // use terminal.show.
+      writable: pty.connected,
       lastOutputAt: pty.lastOutputAt,
       preview: pty.preview
     }

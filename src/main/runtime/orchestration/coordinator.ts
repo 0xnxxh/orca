@@ -8,9 +8,10 @@ export type CoordinatorRuntime = {
   sendTerminalAgentPrompt(handle: string, prompt: string): Promise<unknown>
   listTerminals(
     worktreeSelector?: string,
-    limit?: number
+    limit?: number,
+    opts?: { includeVisualLayouts?: boolean }
   ): Promise<{
-    terminals: { handle: string; worktreeId: string; connected: boolean; writable?: boolean }[]
+    terminals: { handle: string; worktreeId: string; connected: boolean; writable: boolean }[]
   }>
   createTerminal(
     worktreeSelector?: string,
@@ -483,7 +484,9 @@ export class Coordinator {
 
   private async getAvailableTerminals(): Promise<string[]> {
     try {
-      const result = await this.runtime.listTerminals(this.opts.worktree)
+      const result = await this.runtime.listTerminals(this.opts.worktree, undefined, {
+        includeVisualLayouts: false
+      })
       const dispatched = this.db.listTasks({ status: 'dispatched' })
       const busyHandles = new Set<string>()
 
@@ -501,9 +504,7 @@ export class Coordinator {
             t.handle !== this.opts.coordinatorHandle &&
             !busyHandles.has(t.handle) &&
             t.connected &&
-            // Why: absent means the runtime makes no claim beyond `connected`
-            // (record-backed entry); only an explicit `false` disqualifies.
-            t.writable !== false
+            t.writable
         )
         .map((t) => t.handle)
     } catch {

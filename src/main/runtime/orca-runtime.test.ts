@@ -20759,7 +20759,7 @@ describe('OrcaRuntimeService', () => {
     ).rejects.toThrow('terminal_topology_conflict')
   })
 
-  it('never claims writable for an orphaned listing entry, and keeps show aligned with the send gate', async () => {
+  it('keeps orphaned list and show writability aligned with the send gate', async () => {
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
       ...getDefaultWorkspaceSession(),
       tabsByWorktree: { [TEST_WORKTREE_ID]: [] }
@@ -20790,12 +20790,8 @@ describe('OrcaRuntimeService', () => {
 
     const listed = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
     const entry = listed.terminals.find((terminal) => terminal.ptyId === 'pty-orphan')
-    expect(entry).toMatchObject({ orphaned: true, connected: true })
-    // The listing makes no writability claim it cannot back: `writable` would
-    // only restate `connected` here.
-    expect(entry?.writable).toBeUndefined()
+    expect(entry).toMatchObject({ orphaned: true, connected: true, writable: true })
 
-    // ...but the orphan is genuinely writable, so show and send must agree.
     const shown = await runtime.showTerminal(entry!.handle)
     expect(shown.writable).toBe(true)
     await expect(runtime.sendTerminal(entry!.handle, { text: 'hi' })).resolves.toMatchObject({
