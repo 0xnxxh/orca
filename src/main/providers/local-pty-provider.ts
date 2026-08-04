@@ -38,6 +38,7 @@ import type { ShellReadySignal } from './local-pty-shell-ready'
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
 import { stripInheritedBuildModeEnv } from '../pty/build-mode-env'
+import { resolvePathEnvKey } from '../pty/windows-environment-path'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { addWslEnvKeys } from '../wsl-env'
 import {
@@ -171,8 +172,9 @@ function promoteAgentTeamsShimPath(
   if (!shimDir) {
     return
   }
-  const currentParts = env.PATH?.split(pathDelimiter).filter(Boolean) ?? []
-  env.PATH = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(pathDelimiter)
+  const pathKey = resolvePathEnvKey(env, process.platform)
+  const currentParts = env[pathKey]?.split(pathDelimiter).filter(Boolean) ?? []
+  env[pathKey] = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(pathDelimiter)
 }
 
 /**
@@ -804,8 +806,12 @@ export class LocalPtyProvider implements IPtyProvider {
         shellReadyLaunch = args.command ? shellLaunch : null
       }
     }
+    const requestedEnv = args.env
     expandWindowsPathEnvironmentVariables(finalEnv)
-    promoteAgentTeamsShimPath(finalEnv, args.env?.PATH)
+    promoteAgentTeamsShimPath(
+      finalEnv,
+      requestedEnv ? requestedEnv[resolvePathEnvKey(requestedEnv, process.platform)] : undefined
+    )
 
     // Why: worktree-scoped HISTFILE — without it worktrees share one global history (terminal-history-scope-design §7–§10).
     const worktreeId = args.worktreeId
