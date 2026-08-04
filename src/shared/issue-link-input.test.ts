@@ -72,6 +72,12 @@ describe('parseIssueLinkInput', () => {
     it('rejects Linear identifiers', () => {
       expect(parseIssueLinkInput('STA-335', 'github')).toBeNull()
     })
+
+    // Past the safe-integer range every digit string parses to the same float,
+    // so an unbounded parse would link an arbitrary issue number.
+    it('rejects numbers beyond the safe-integer range', () => {
+      expect(parseIssueLinkInput('9'.repeat(400), 'github')).toBeNull()
+    })
   })
 
   describe('linear provider', () => {

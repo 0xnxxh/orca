@@ -4515,10 +4515,29 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
       const folderUpdates = getFolderWorkspaceMetaUpdates(updates)
-      if (Object.keys(folderUpdates).length > 0) {
-        await get().updateFolderWorkspace(workspaceScope.folderWorkspaceId, folderUpdates)
+      if (Object.keys(folderUpdates).length === 0) {
+        return { ok: true }
       }
-      return { ok: true }
+      try {
+        // Why: a rejected folder update reconciles the optimistic write away, so
+        // reporting ok would show the dialog a save that silently undid itself.
+        const updated = await get().updateFolderWorkspace(
+          workspaceScope.folderWorkspaceId,
+          folderUpdates
+        )
+        return updated
+          ? { ok: true }
+          : {
+              ok: false,
+              error: translate(
+                'auto.store.slices.worktrees.a17f4d2e93',
+                'Could not update this workspace.'
+              )
+            }
+      } catch (err) {
+        console.error('Failed to update folder workspace meta:', err)
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
     }
     const normalizedUpdates = existingWorktree
       ? clearOlderHostedReviewLinksForReplacement(updates, existingWorktree)

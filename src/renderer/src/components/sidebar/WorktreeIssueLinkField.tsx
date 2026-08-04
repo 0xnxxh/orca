@@ -240,8 +240,12 @@ export function WorktreeIssueLinkField(props: WorktreeIssueLinkFieldProps): Reac
       </div>
       {/* Why: two lines are reserved up front. The dialog is centered by
           transform, so a wrap-count change would shift the field being typed in. */}
+      {/* Why: the failure and displacement messages appear without focus moving
+          here, so only a live region announces them. */}
       <p
         id={helperId}
+        role="status"
+        aria-live="polite"
         className={cn(
           'min-h-[28px] text-[10px] leading-[14px]',
           (openIssueFailed || displacedLinkLabels?.length) && !isInvalid && !isReadOnly

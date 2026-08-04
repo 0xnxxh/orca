@@ -26,8 +26,11 @@ export type WorktreeMetaDraft = {
  *  background write move the baseline and make an untouched field "dirty". */
 export type WorktreeMetaSnapshot = {
   displayName: string
+  comment: string
   issueInput: string
   issueProvider: IssueLinkProvider
+  /** The stored Linear identifier, which decides whether a clear is real. */
+  linkedLinearIssue?: string | null
   linkedWorkItemProvider?: WorkspaceSourceProvider | null
   /** `linkedWorkItem` also describes PRs and MRs, which this row does not own. */
   linkedWorkItemType?: WorkspaceLinkedItem['type'] | null
@@ -69,6 +72,17 @@ function buildDisplayNameUpdate(
   return trimmed === current.displayName ? {} : { displayName: trimmed }
 }
 
+// Why: persistence bumps lastActivityAt whenever a `comment` key is present, so
+// re-emitting an unchanged note reorders the workspace under the time-decay
+// sidebar sort on a save that only touched the issue link.
+function buildCommentUpdate(
+  draft: WorktreeMetaDraft,
+  current: WorktreeMetaSnapshot
+): Partial<WorktreeMeta> {
+  const trimmed = draft.commentInput.trim()
+  return trimmed === current.comment ? {} : { comment: trimmed }
+}
+
 export function isIssueFieldDirty(
   draft: WorktreeMetaDraft,
   current: WorktreeMetaSnapshot
@@ -107,10 +121,17 @@ function buildIssueLinkUpdates(
       ? { linkedWorkItem: null, linkedTaskSourceContext: null }
       : {}
 
+  // Why: persistence gates the remote Linear capability on key presence, not
+  // value. A synthetic clear on a workspace that never held a Linear link would
+  // fail a GitHub-only save against an older runtime, citing Linear.
+  const displacedLinear: Partial<WorktreeMeta> = current.linkedLinearIssue
+    ? LINEAR_ISSUE_LINK_CLEARED
+    : {}
+
   if (trimmed === '') {
     return {
       linkedIssue: null,
-      ...LINEAR_ISSUE_LINK_CLEARED,
+      ...displacedLinear,
       ...displacedWorkItem
     }
   }
@@ -125,7 +146,7 @@ function buildIssueLinkUpdates(
   if (parsed.provider === 'github') {
     return {
       linkedIssue: parsed.number,
-      ...LINEAR_ISSUE_LINK_CLEARED,
+      ...displacedLinear,
       ...displacedWorkItem
     }
   }
@@ -134,6 +155,9 @@ function buildIssueLinkUpdates(
   return linearUpdates ? { linkedIssue: null, ...linearUpdates, ...displacedWorkItem } : {}
 }
 
+// Requires the dialog to seed `prInput` from the persisted `linkedPR`: the blank
+// input is written through as a clear, so an unseeded field drops the link on an
+// untouched save.
 function buildPrLinkUpdate(draft: WorktreeMetaDraft): Partial<WorktreeMeta> {
   const trimmed = draft.prInput.trim()
   if (trimmed === '') {
@@ -152,7 +176,7 @@ export function buildWorktreeMetaUpdates(
   current: WorktreeMetaSnapshot
 ): Partial<WorktreeMeta> {
   return {
-    comment: draft.commentInput.trim(),
+    ...buildCommentUpdate(draft, current),
     ...buildDisplayNameUpdate(draft, current),
     ...buildIssueLinkUpdates(draft, current),
     ...buildPrLinkUpdate(draft)

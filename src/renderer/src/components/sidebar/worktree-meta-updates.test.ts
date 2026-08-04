@@ -20,6 +20,7 @@ function makeDraft(overrides: Partial<WorktreeMetaDraft> = {}): WorktreeMetaDraf
 function makeSnapshot(overrides: Partial<WorktreeMetaSnapshot> = {}): WorktreeMetaSnapshot {
   return {
     displayName: 'Workspace',
+    comment: '',
     issueInput: '',
     issueProvider: 'github',
     ...overrides
@@ -64,8 +65,7 @@ describe('buildWorktreeMetaUpdates', () => {
   })
 
   it('writes a GitHub issue number and clears the Linear slots', () => {
-    expect(buildUpdates({ issueInput: '12' })).toEqual({
-      comment: '',
+    expect(buildUpdates({ issueInput: '12' }, { linkedLinearIssue: 'STA-335' })).toEqual({
       linkedIssue: 12,
       linkedLinearIssue: null,
       linkedLinearIssueWorkspaceId: null,
@@ -74,9 +74,19 @@ describe('buildWorktreeMetaUpdates', () => {
     })
   })
 
+  // Persistence gates the remote Linear capability on key presence, so a clear
+  // for a link that never existed fails a GitHub-only save on an older runtime.
+  it('emits no Linear clear when the workspace holds no Linear link', () => {
+    const updates = buildUpdates({ issueInput: '12' })
+
+    expect(updates).toEqual({ linkedIssue: 12, linkedPR: null })
+    for (const key of LINEAR_LINK_KEYS) {
+      expect(updates).not.toHaveProperty(key)
+    }
+  })
+
   it('writes a bare Linear identifier and clears the stored organization key', () => {
     expect(buildUpdates({ issueInput: 'sta-335', issueProvider: 'linear' })).toEqual({
-      comment: '',
       linkedIssue: null,
       linkedLinearIssue: 'STA-335',
       linkedLinearIssueWorkspaceId: null,
@@ -92,7 +102,6 @@ describe('buildWorktreeMetaUpdates', () => {
         issueProvider: 'linear'
       })
     ).toEqual({
-      comment: '',
       linkedIssue: null,
       linkedLinearIssue: 'STA-335',
       linkedLinearIssueWorkspaceId: null,
@@ -102,8 +111,9 @@ describe('buildWorktreeMetaUpdates', () => {
   })
 
   it('clears every provider slot when the issue field is emptied', () => {
-    expect(buildUpdates({ issueInput: '  ' }, { issueInput: '42' })).toEqual({
-      comment: '',
+    expect(
+      buildUpdates({ issueInput: '  ' }, { issueInput: '42', linkedLinearIssue: 'STA-335' })
+    ).toEqual({
       linkedIssue: null,
       linkedLinearIssue: null,
       linkedLinearIssueWorkspaceId: null,
@@ -144,6 +154,8 @@ describe('buildWorktreeMetaUpdates', () => {
     expect(updates).not.toHaveProperty('linkedTaskSourceContext')
   })
 
+  // The row cannot render a GitLab or Jira issue, so clearing one would destroy a
+  // link the user was never shown — and neither has another editor to restore it.
   it('leaves work items owned by other providers alone', () => {
     for (const provider of ['jira', 'gitlab'] as const) {
       const updates = buildUpdates(
@@ -154,15 +166,6 @@ describe('buildWorktreeMetaUpdates', () => {
       expect(updates).not.toHaveProperty('linkedWorkItem')
       expect(updates).not.toHaveProperty('linkedTaskSourceContext')
     }
-  })
-
-  // The row cannot render a GitLab or Jira issue, so clearing one would destroy a
-  // link the user was never shown — and neither has another editor to restore it.
-  it('leaves a GitLab issue attached', () => {
-    expect(buildUpdates({ issueInput: '12' })).not.toHaveProperty('linkedGitLabIssue')
-    expect(
-      buildUpdates({ issueInput: '12' }, { linkedWorkItemProvider: 'gitlab' })
-    ).not.toHaveProperty('linkedGitLabIssue')
   })
 
   it('ignores a provider switch on an empty field', () => {
@@ -204,21 +207,22 @@ describe('buildWorktreeMetaUpdates', () => {
   })
 
   it('rejects issue URLs in the PR input', () => {
-    expect(buildUpdates({ prInput: 'https://github.com/stablyai/orca/issues/6933' })).toEqual({
-      comment: ''
-    })
+    expect(buildUpdates({ prInput: 'https://github.com/stablyai/orca/issues/6933' })).toEqual({})
   })
 
   it('accepts PR URLs in the PR input', () => {
     expect(buildUpdates({ prInput: 'https://github.com/stablyai/orca/pull/6934' })).toEqual({
-      comment: '',
       linkedPR: 6934
     })
   })
 
   it('accepts issue URLs in the issue input', () => {
-    expect(buildUpdates({ issueInput: 'https://github.com/stablyai/orca/issues/6933' })).toEqual({
-      comment: '',
+    expect(
+      buildUpdates(
+        { issueInput: 'https://github.com/stablyai/orca/issues/6933' },
+        { linkedLinearIssue: 'STA-335' }
+      )
+    ).toEqual({
       linkedIssue: 6933,
       linkedLinearIssue: null,
       linkedLinearIssueWorkspaceId: null,
@@ -229,8 +233,23 @@ describe('buildWorktreeMetaUpdates', () => {
 
   it('rejects PR URLs in the issue input', () => {
     expect(buildUpdates({ issueInput: 'https://github.com/stablyai/orca/pull/6934' })).toEqual({
-      comment: '',
       linkedPR: null
     })
+  })
+
+  // Persistence stamps lastActivityAt on any comment write, so re-emitting an
+  // unchanged note reorders the workspace under the time-decay sidebar sort.
+  it('emits no comment when the note is unchanged', () => {
+    const updates = buildUpdates(
+      { issueInput: '12', commentInput: 'shipping today' },
+      { comment: 'shipping today' }
+    )
+
+    expect(updates).not.toHaveProperty('comment')
+    expect(updates.linkedIssue).toBe(12)
+  })
+
+  it('clears a comment with empty string, never a present-undefined key', () => {
+    expect(buildUpdates({ commentInput: '  ' }, { comment: 'old note' }).comment).toBe('')
   })
 })

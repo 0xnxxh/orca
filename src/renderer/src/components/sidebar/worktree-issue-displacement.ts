@@ -1,3 +1,4 @@
+import { translate } from '@/i18n/i18n'
 import type { IssueLinkProvider } from '../../../../shared/issue-link-input'
 import {
   isIssueFieldDirty,
@@ -6,7 +7,17 @@ import {
 } from './worktree-meta-updates'
 
 function formatLinkLabel(provider: IssueLinkProvider, value: string): string {
-  return provider === 'linear' ? `Linear ${value}` : `GitHub #${value}`
+  return provider === 'linear'
+    ? translate(
+        'auto.components.sidebar.worktreeIssueDisplacement.3f61c0a8d2',
+        'Linear {{value}}',
+        { value }
+      )
+    : translate(
+        'auto.components.sidebar.worktreeIssueDisplacement.9c4b7e1f60',
+        'GitHub #{{value}}',
+        { value }
+      )
 }
 
 /** Names the persisted links a save would drop. A workspace tracks one issue, so

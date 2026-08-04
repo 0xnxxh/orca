@@ -41,6 +41,7 @@ function resizeCommentTextarea(textarea: HTMLTextAreaElement): void {
 /** Only read before the first open, when nothing can be saved yet. */
 const EMPTY_SNAPSHOT: WorktreeMetaSnapshot = {
   displayName: '',
+  comment: '',
   issueInput: '',
   issueProvider: 'github'
 }
@@ -152,8 +153,10 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     // the next comment-only save would write the stale seed back over the new link.
     setSnapshot({
       displayName: currentDisplayName,
+      comment: currentComment,
       issueInput: currentIssue,
       issueProvider: currentProvider,
+      linkedLinearIssue,
       linkedWorkItemProvider: worktree?.linkedWorkItem?.provider ?? null,
       linkedWorkItemType: worktree?.linkedWorkItem?.type ?? null
     })
@@ -246,6 +249,9 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
       return
     }
     setSaving(true)
+    // Why: a stale failure from the previous attempt must not sit under the
+    // spinner for the whole in-flight save.
+    setSaveError(null)
     try {
       const updates = buildWorktreeMetaUpdates(draft, snapshot)
 

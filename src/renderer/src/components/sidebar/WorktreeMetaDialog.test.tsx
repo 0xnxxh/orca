@@ -237,6 +237,53 @@ describe('WorktreeMetaDialog issue link row', () => {
     ).toBeTruthy()
   })
 
+  // The warning above only promises the displacement — this asserts the payload
+  // that carries it out, which is where the one-issue-per-workspace rule lives.
+  it('clears the displaced GitHub link when a Linear value is saved', async () => {
+    openDialog({ worktree: { linkedIssue: 42 } })
+
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Linear' }))
+    fireEvent.change(issueInput(), { target: { value: 'STA-335' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+
+    await waitFor(() => expect(updateWorktreeMeta).toHaveBeenCalledTimes(1))
+    const updates = updateWorktreeMeta.mock.calls[0]?.[1] ?? {}
+    expect(updates.linkedLinearIssue).toBe('STA-335')
+    expect(updates.linkedIssue).toBeNull()
+  })
+
+  // A GitHub-only save must carry no Linear keys: persistence gates the remote
+  // Linear capability on key presence, so a synthetic clear fails the save.
+  it('sends no Linear keys when the workspace has no Linear link', async () => {
+    openDialog({ worktree: { linkedIssue: 42 } })
+
+    fireEvent.change(issueInput(), { target: { value: '99' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+
+    await waitFor(() => expect(updateWorktreeMeta).toHaveBeenCalledTimes(1))
+    const updates = updateWorktreeMeta.mock.calls[0]?.[1] ?? {}
+    expect(updates.linkedIssue).toBe(99)
+    expect(updates).not.toHaveProperty('linkedLinearIssue')
+  })
+
+  // updateWorktreeMeta stamps lastActivityAt on any comment write, which would
+  // reorder the workspace under the time-decay sidebar sort.
+  it('sends no comment when only the issue link changed', async () => {
+    openDialog({ worktree: { linkedLinearIssue: 'STA-335' } })
+
+    fireEvent.change(issueInput(), { target: { value: 'STA-999' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+
+    await waitFor(() => expect(updateWorktreeMeta).toHaveBeenCalledTimes(1))
+    expect(updateWorktreeMeta.mock.calls[0]?.[1] ?? {}).not.toHaveProperty('comment')
+  })
+
   // A failed save refetches and reverts the optimistic write, so closing here
   // would report success for an edit that silently undid itself.
   it('keeps the dialog open and reports why when the save fails', async () => {
