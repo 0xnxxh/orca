@@ -5,6 +5,8 @@ const MAX_PREVIEW_STRING_INPUT = 160
 const MAX_PREVIEW_COLLECTION_ITEMS = 8
 const MAX_PREVIEW_DEPTH = 2
 const MAX_TOOL_RUN_SUMMARY_PARTS = 3
+const PRIMARY_ARG_KEYS = ['command', 'cmd', 'query', 'pattern', 'url', 'description'] as const
+const BRIEF_ARG_KEYS = ['command', 'cmd', 'query', 'pattern'] as const
 
 export function summarizeToolInput(input: unknown): string {
   const collapsed = toRawPreview(input).replace(/\s+/g, ' ').trim()
@@ -20,16 +22,13 @@ export function describeToolInput(input: unknown): string {
   const normalized = normalizeToolInput(input)
   const path = toolFilePath(normalized)
   if (path) {
-    return summarizeToolInput(path)
+    return summarizeToolPath(path)
   }
   if (normalized && typeof normalized === 'object') {
-    const value = normalized as Record<string, unknown>
     // Concrete target/action first; prose `description` only as a last resort.
-    const primary =
-      value.command ?? value.cmd ?? value.query ?? value.pattern ?? value.url ?? value.description
-    const primarySummary = summarizePrimaryToolArg(primary)
-    if (primarySummary) {
-      return primarySummary
+    const primary = firstPrimaryToolArg(normalized as Record<string, unknown>, PRIMARY_ARG_KEYS)
+    if (primary) {
+      return primary
     }
   }
   return summarizeToolInput(normalized)
@@ -70,23 +69,24 @@ export function toolFilePath(input: unknown): string | null {
     return null
   }
   const value = normalized as Record<string, unknown>
-  const path = value.file_path ?? value.filePath ?? value.path ?? value.notebook_path
+  // A search call's `path` is the directory it scanned, not a file it opened —
+  // taking it would drop the pattern from the label and offer a link to a folder.
+  const directory = isSearchToolInput(value) ? undefined : value.path
+  const path = value.file_path ?? value.filePath ?? directory ?? value.notebook_path
   return typeof path === 'string' && path.length > 0 ? path : null
 }
 
 export function briefToolArg(input: unknown): string {
   const normalized = normalizeToolInput(input)
   if (normalized && typeof normalized === 'object') {
-    const value = normalized as Record<string, unknown>
-    const path = value.file_path ?? value.filePath ?? value.path ?? value.notebook_path
-    if (typeof path === 'string' && path.length > 0) {
+    const path = toolFilePath(normalized)
+    if (path) {
       const parts = path.split(/[\\/]/).filter(Boolean)
       return parts.at(-1) ?? path
     }
-    const command = value.command ?? value.cmd ?? value.query ?? value.pattern
-    const commandSummary = summarizePrimaryToolArg(command)
-    if (commandSummary) {
-      return commandSummary.slice(0, 28)
+    const command = firstPrimaryToolArg(normalized as Record<string, unknown>, BRIEF_ARG_KEYS)
+    if (command) {
+      return command.slice(0, 28)
     }
   }
   return summarizeToolInput(normalized).slice(0, 28)
@@ -108,6 +108,42 @@ function normalizeToolInput(input: unknown): unknown {
   } catch {
     return input
   }
+}
+
+/** A search call is named by what it looked for, so its `path` is a scan root
+ *  rather than a file target. */
+function isSearchToolInput(value: Record<string, unknown>): boolean {
+  return (
+    summarizePrimaryToolArg(value.query) !== null || summarizePrimaryToolArg(value.pattern) !== null
+  )
+}
+
+/** The first key that yields a label — a present-but-blank key must not swallow
+ *  the keys ranked after it. */
+function firstPrimaryToolArg(
+  value: Record<string, unknown>,
+  keys: readonly string[]
+): string | null {
+  for (const key of keys) {
+    const summary = summarizePrimaryToolArg(value[key])
+    if (summary) {
+      return summary
+    }
+  }
+  return null
+}
+
+/** A path is identified by its tail, so trim from the front: head-truncating an
+ *  absolute path drops the filename, the one part that tells two rows apart. */
+function summarizeToolPath(path: string): string {
+  const collapsed = path.replace(/\s+/g, ' ').trim()
+  if (collapsed.length <= MAX_PREVIEW_LENGTH) {
+    return collapsed
+  }
+  const tail = collapsed.slice(collapsed.length - (MAX_PREVIEW_LENGTH - 1))
+  // Start at a segment boundary so the label doesn't open mid-name.
+  const boundary = tail.search(/[\\/]/)
+  return `…${boundary > 0 ? tail.slice(boundary) : tail}`
 }
 
 /** A label-worthy primary argument: a non-blank string, or an argv array. */

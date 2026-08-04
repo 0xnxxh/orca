@@ -44,6 +44,48 @@ describe('describeToolInput', () => {
     expect(describeToolInput({ file_path: path }).length).toBeLessThanOrEqual(80)
     expect(describeToolInput({ file_path: path })).toContain('…')
   })
+
+  it('keeps the filename when trimming an overlong path', () => {
+    // Head-truncating an absolute path drops the basename — the one part that
+    // tells two rows apart — so the trim has to come off the front.
+    const path = `/Users/me/orca/workspaces/orca/sta-3333/src/shared/${'nested/'.repeat(4)}app.tsx`
+    const label = describeToolInput({ file_path: path, offset: 10 })
+    expect(label.length).toBeLessThanOrEqual(80)
+    expect(label.startsWith('…')).toBe(true)
+    expect(label.endsWith('/app.tsx')).toBe(true)
+  })
+
+  it('distinguishes two long paths that share a deep prefix', () => {
+    const base = '/Users/me/orca/workspaces/orca/sta-3333-tool-summary/src/session/native'
+    const a = describeToolInput({ file_path: `${base}/MobileNativeChatMessage.tsx` })
+    const b = describeToolInput({ file_path: `${base}/MobileNativeChatComposer.tsx` })
+    expect(a).not.toBe(b)
+  })
+
+  it('names a search call by its pattern, not the directory it scanned', () => {
+    // `path` on a Grep/Glob is the scan root; labelling with it loses the term.
+    expect(describeToolInput({ pattern: 'summarizeToolInput', path: 'src/shared' })).toBe(
+      'summarizeToolInput'
+    )
+    expect(describeToolInput({ pattern: '**/*.tsx', path: 'mobile/src' })).toBe('**/*.tsx')
+    expect(describeToolInput({ query: 'auth flow', path: 'src' })).toBe('auth flow')
+    // ...and offers no open-file link, since that path is a folder.
+    expect(toolFilePath({ pattern: 'x', path: 'src/shared' })).toBeNull()
+    expect(briefToolArg({ pattern: 'x', path: 'src/shared' })).toBe('x')
+  })
+
+  it('still treats an explicit file target as one alongside a search term', () => {
+    expect(toolFilePath({ pattern: 'x', file_path: 'src/a.ts' })).toBe('src/a.ts')
+    expect(toolFilePath({ path: 'src/c.ts' })).toBe('src/c.ts')
+  })
+
+  it('skips a present-but-blank key instead of falling through to raw JSON', () => {
+    expect(describeToolInput({ command: '', query: 'needle' })).toBe('needle')
+    expect(describeToolInput({ command: '   ', url: 'https://example.com' })).toBe(
+      'https://example.com'
+    )
+    expect(briefToolArg({ cmd: '', query: 'needle' })).toBe('needle')
+  })
 })
 
 describe('Codex JSON-string tool arguments', () => {
