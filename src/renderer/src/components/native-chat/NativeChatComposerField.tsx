@@ -99,7 +99,7 @@ export function NativeChatComposerField({
   sessionOptionsSnapshot
 }: NativeChatComposerFieldProps): React.JSX.Element {
   const compositionActiveRef = useRef(false)
-  const pendingCompositionEnterRef = useRef(false)
+  const pendingCompositionEnterRef = useRef<object | null>(null)
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -186,7 +186,7 @@ export function NativeChatComposerField({
                   ((event.key === 'Enter' && (event.keyCode === 13 || event.keyCode === 229)) ||
                     (event.key === 'Process' && event.keyCode === 229))
                 if (ownsCompositionEnter) {
-                  pendingCompositionEnterRef.current = true
+                  pendingCompositionEnterRef.current = {}
                   return
                 }
                 if (
@@ -195,7 +195,7 @@ export function NativeChatComposerField({
                   event.keyCode === 13 &&
                   !event.nativeEvent.isComposing
                 ) {
-                  pendingCompositionEnterRef.current = false
+                  pendingCompositionEnterRef.current = null
                   event.preventDefault()
                   return
                 }
@@ -203,7 +203,7 @@ export function NativeChatComposerField({
               }}
               onKeyUp={(event) => {
                 if (event.key === 'Process' && event.keyCode === 229) {
-                  pendingCompositionEnterRef.current = false
+                  pendingCompositionEnterRef.current = null
                   return
                 }
                 if (
@@ -211,14 +211,17 @@ export function NativeChatComposerField({
                   event.key === 'Enter' &&
                   event.keyCode === 13
                 ) {
+                  const pendingCompositionEnter = pendingCompositionEnterRef.current
                   requestAnimationFrame(() => {
-                    pendingCompositionEnterRef.current = false
+                    if (pendingCompositionEnterRef.current === pendingCompositionEnter) {
+                      pendingCompositionEnterRef.current = null
+                    }
                   })
                 }
               }}
               onBlur={() => {
                 compositionActiveRef.current = false
-                pendingCompositionEnterRef.current = false
+                pendingCompositionEnterRef.current = null
               }}
               onCompositionStart={(event) => {
                 compositionActiveRef.current = true

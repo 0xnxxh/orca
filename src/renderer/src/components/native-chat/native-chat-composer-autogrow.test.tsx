@@ -247,6 +247,40 @@ describe('native chat composer composition ownership', () => {
     animationFrame.mockRestore()
   })
 
+  it('does not let an older expiry clear a newer IME gesture', () => {
+    const onKeyDown = vi.fn()
+    const pendingFrames: FrameRequestCallback[] = []
+    const animationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        pendingFrames.push(callback)
+        return pendingFrames.length
+      })
+    render(composerField('가', { onKeyDown }))
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+
+    fireEvent.compositionStart(textarea)
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229, isComposing: true })
+    fireEvent.compositionEnd(textarea, { data: '가' })
+    fireEvent.keyUp(textarea, { key: 'Enter', keyCode: 13 })
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 13, isComposing: false })
+
+    fireEvent.compositionStart(textarea)
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229, isComposing: true })
+    fireEvent.compositionEnd(textarea, { data: '나' })
+    pendingFrames[0]?.(0)
+
+    const redispatchResult = fireEvent.keyDown(textarea, {
+      key: 'Enter',
+      keyCode: 13,
+      isComposing: false
+    })
+
+    expect(redispatchResult).toBe(false)
+    expect(onKeyDown).not.toHaveBeenCalled()
+    animationFrame.mockRestore()
+  })
+
   it('passes ordinary English Enter through without an IME gesture', () => {
     const onKeyDown = vi.fn()
     render(composerField('abc', { onKeyDown }))
