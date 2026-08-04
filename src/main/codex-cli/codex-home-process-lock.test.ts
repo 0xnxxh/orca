@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  CODEX_HOME_PROCESS_LOCK_MAX_HOLD_MS,
   resolveCodexHomeProcessLockKey,
   resolveCodexHomeProcessLockKeyForSpawnEnv,
   withCodexHomeProcessLock
@@ -68,6 +69,57 @@ describe('withCodexHomeProcessLock', () => {
     ).rejects.toThrow('boom')
 
     await expect(withCodexHomeProcessLock('home-a', async () => 'after')).resolves.toBe('after')
+  })
+
+  it('releases the lock when a hold never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const events: string[] = []
+      // A codex child whose surviving descendant keeps its stdio open never
+      // reports completion, so this hold never settles on its own.
+      void withCodexHomeProcessLock('home-wedged', () => new Promise<void>(() => {}))
+      const queued = withCodexHomeProcessLock('home-wedged', async () => {
+        events.push('queued:start')
+      })
+
+      await vi.advanceTimersByTimeAsync(CODEX_HOME_PROCESS_LOCK_MAX_HOLD_MS - 1)
+      expect(events).toEqual([])
+
+      await vi.advanceTimersByTimeAsync(1)
+      await queued
+      expect(events).toEqual(['queued:start'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('measures the release cap from when a run starts, not when it is queued', async () => {
+    vi.useFakeTimers()
+    try {
+      const events: string[] = []
+      const gate = deferred()
+      const first = withCodexHomeProcessLock('home-queued', async () => {
+        events.push('first:start')
+        await gate.promise
+      })
+      void withCodexHomeProcessLock('home-queued', () => new Promise<void>(() => {}))
+      const third = withCodexHomeProcessLock('home-queued', async () => {
+        events.push('third:start')
+      })
+
+      // Time spent waiting behind a healthy run must not burn the wedged run's cap.
+      await vi.advanceTimersByTimeAsync(CODEX_HOME_PROCESS_LOCK_MAX_HOLD_MS - 1_000)
+      gate.resolve()
+      await first
+      await vi.advanceTimersByTimeAsync(CODEX_HOME_PROCESS_LOCK_MAX_HOLD_MS - 1)
+      expect(events).toEqual(['first:start'])
+
+      await vi.advanceTimersByTimeAsync(1)
+      await third
+      expect(events).toEqual(['first:start', 'third:start'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keys explicit and default host homes consistently', () => {
