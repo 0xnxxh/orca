@@ -176,7 +176,7 @@ describe('buildDashboardSnapshot', () => {
           })
         },
         unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
-        settings: { experimentalNativeChat: true }
+        settings: { experimentalNativeChat: true } as never
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
@@ -199,7 +199,31 @@ describe('buildDashboardSnapshot', () => {
       NOW
     )
 
-    expect(snapshot.cards[0].viewMode).toBe('terminal')
+    expect(snapshot.cards[0].viewMode).toBeUndefined()
+  })
+
+  it('omits native-chat host and session payload from terminal-mode cards', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            providerSession: {
+              key: 'session_id',
+              id: 'terminal-session',
+              transcriptPath: '/tmp/terminal-session.jsonl'
+            }
+          })
+        },
+        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('terminal')] },
+        settings: { experimentalNativeChat: true }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+
+    expect(snapshot.cards[0]).not.toHaveProperty('hostKind')
+    expect(snapshot.cards[0]).not.toHaveProperty('viewMode')
+    expect(snapshot.cards[0]).not.toHaveProperty('sessionId')
+    expect(snapshot.cards[0]).not.toHaveProperty('transcriptPath')
   })
 
   it('marks SSH transcript paths as remote from the dashboard renderer', () => {
@@ -215,7 +239,9 @@ describe('buildDashboardSnapshot', () => {
             connectionId: 'staging'
           }
         ],
-        agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
+        agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
+        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
+        settings: { experimentalNativeChat: true } as never
       }),
       NOW
     )

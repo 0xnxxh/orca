@@ -14772,7 +14772,7 @@
     },
     "chat": {
       "empty": "No messages in this transcript yet.",
-      "remoteHost": "This agent runs on a remote host, so its transcript is not readable here.",
+      "remoteHost": "This agent's transcript is on another host, so it is not readable here.",
       "noSession": "This agent has not reported a session yet, so there is no transcript to read.",
       "pendingQuestion": "Pending question",
       "lastMessage": "Last message",
@@ -14780,6 +14780,7 @@
       "placeholder": "Reply to this agent",
       "send": "Send",
       "sendFailed": "The reply did not reach the agent. Open the terminal to check it.",
+      "submitFailed": "The reply is in the terminal but could not be submitted. Open the terminal to finish sending it.",
       "openTerminal": "Open terminal",
       "close": "Close chat"
     }

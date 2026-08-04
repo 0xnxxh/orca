@@ -6,7 +6,7 @@ export type AgentChatPanelMode =
 
 /** Remote transcript paths are not readable by the local dashboard renderer. */
 export function resolveAgentChatPanelMode(card: DashboardCard): AgentChatPanelMode {
-  if (card.hostKind === 'ssh' || card.hostKind === 'remote') {
+  if (card.hostKind === 'ssh' || card.hostKind === 'wsl' || card.hostKind === 'remote') {
     return { kind: 'degraded', reason: 'remote-host' }
   }
   if (!card.sessionId) {

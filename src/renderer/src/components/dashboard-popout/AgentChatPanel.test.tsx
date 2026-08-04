@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentChatPanel } from './AgentChatPanel'
@@ -55,6 +55,7 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
 }
 
 beforeEach(() => {
+  terminalInput.mockResolvedValue(true)
   liveSession.mockReturnValue({
     agent: 'claude',
     sessionId: 'session-1',
@@ -70,6 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.clearAllMocks()
 })
 
@@ -90,7 +92,8 @@ describe('AgentChatPanel', () => {
     expect(screen.getByText('Orca / chat-panel')).toBeInTheDocument()
   })
 
-  it('sends the body and the submit as separate pty writes', async () => {
+  it('delays the separate submit so the TUI finishes accepting the body', async () => {
+    vi.useFakeTimers()
     render(<AgentChatPanel card={card()} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Reply to this agent'), {
@@ -98,10 +101,40 @@ describe('AgentChatPanel', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
-    await waitFor(() => expect(terminalInput).toHaveBeenCalledTimes(2))
-    expect(terminalInput).toHaveBeenNthCalledWith(1, 'pty-1', 'ship it')
-    expect(terminalInput).toHaveBeenNthCalledWith(2, 'pty-1', '\r')
-    await waitFor(() => expect(screen.getByLabelText('Reply to this agent')).toHaveValue(''))
+    await act(async () => {})
+    expect(terminalInput).toHaveBeenCalledTimes(2)
+    expect(terminalInput).toHaveBeenNthCalledWith(1, 'pty-1', '\x15')
+    expect(terminalInput).toHaveBeenNthCalledWith(2, 'pty-1', 'ship it')
+
+    await act(async () => vi.advanceTimersByTimeAsync(499))
+    expect(terminalInput).toHaveBeenCalledTimes(2)
+
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(terminalInput).toHaveBeenCalledTimes(3)
+    expect(terminalInput).toHaveBeenNthCalledWith(3, 'pty-1', '\r')
+    expect(screen.getByLabelText('Reply to this agent')).toHaveValue('')
+  })
+
+  it('blocks retries after the body lands but its delayed submit is refused', async () => {
+    vi.useFakeTimers()
+    terminalInput
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    render(<AgentChatPanel card={card()} onClose={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Reply to this agent'), {
+      target: { value: 'ship it' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await act(async () => {})
+    expect(screen.getByLabelText('Reply to this agent')).toHaveValue('')
+
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(screen.getByText(/is in the terminal but could not be submitted/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Reply to this agent')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(terminalInput).toHaveBeenCalledTimes(3)
   })
 
   it('reports a refused write instead of pretending the reply landed', async () => {
@@ -152,7 +185,36 @@ describe('AgentChatPanel', () => {
     render(<AgentChatPanel card={card({ hostKind: 'ssh' })} onClose={vi.fn()} />)
 
     expect(liveSession).not.toHaveBeenCalled()
-    expect(screen.getByText(/runs on a remote host/)).toBeInTheDocument()
+    expect(screen.getByText(/transcript is on another host/)).toBeInTheDocument()
+  })
+
+  it('degrades on WSL instead of reading a Linux path through local IPC', () => {
+    render(<AgentChatPanel card={card({ hostKind: 'wsl' })} onClose={vi.fn()} />)
+
+    expect(liveSession).not.toHaveBeenCalled()
+    expect(screen.getByText(/transcript is on another host/)).toBeInTheDocument()
+  })
+
+  it('shows transcript loading and read failures instead of an empty conversation', () => {
+    liveSession.mockReturnValueOnce({
+      ...liveSession(),
+      messages: [],
+      status: 'loading',
+      readPhase: 'loading'
+    })
+    const { rerender } = render(<AgentChatPanel card={card()} onClose={vi.fn()} />)
+    expect(screen.getByText('Loading conversation…')).toBeInTheDocument()
+
+    liveSession.mockReturnValueOnce({
+      ...liveSession(),
+      messages: [],
+      status: 'error',
+      error: 'Transcript permission denied',
+      readPhase: 'error'
+    })
+    rerender(<AgentChatPanel card={card()} onClose={vi.fn()} />)
+    expect(screen.getByText('Transcript permission denied')).toBeInTheDocument()
+    expect(screen.queryByText('No messages in this transcript yet.')).not.toBeInTheDocument()
   })
 
   it('escalates to the terminal and closes on request', () => {

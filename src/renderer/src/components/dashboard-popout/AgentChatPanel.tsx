@@ -4,11 +4,15 @@ import { AgentStateDot } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeChatMessageList } from '@/components/native-chat/NativeChatMessageList'
+import { NativeChatEmptyState } from '@/components/native-chat/NativeChatEmptyState'
 import {
   buildNativeChatPasteBytes,
+  NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
   NATIVE_CHAT_SUBMIT
 } from '@/components/native-chat/native-chat-send'
 import { useNativeChatLiveSession } from '@/components/native-chat/use-native-chat-live-session'
+import { selectNativeChatViewState } from '@/components/native-chat/native-chat-view-state'
+import { NATIVE_CHAT_SUBMIT_DELAY_MS } from '../../../../shared/native-chat-answer-stepping'
 import { translate } from '@/i18n/i18n'
 import { formatAgentTypeLabel } from '@/lib/agent-status'
 import { cn } from '@/lib/utils'
@@ -42,7 +46,14 @@ function AgentChatTranscript({
     transcriptPath,
     runtimeEnvironmentId: null
   })
-  if (session.messages.length === 0 && session.readPhase !== 'loading') {
+  const viewState = selectNativeChatViewState(session)
+  if (viewState.kind === 'loading') {
+    return <NativeChatEmptyState kind="loading" />
+  }
+  if (viewState.kind === 'error') {
+    return <NativeChatEmptyState kind="error" message={viewState.message} />
+  }
+  if (session.messages.length === 0) {
     return (
       <p className="grid flex-1 place-items-center px-4 text-center text-xs text-muted-foreground">
         {translate('dashboardPopout.chat.empty', 'No messages in this transcript yet.')}
@@ -74,7 +85,7 @@ function AgentChatFallback({
         {reason === 'remote-host'
           ? translate(
               'dashboardPopout.chat.remoteHost',
-              'This agent runs on a remote host, so its transcript is not readable here.'
+              "This agent's transcript is on another host, so it is not readable here."
             )
           : translate(
               'dashboardPopout.chat.noSession',
@@ -104,7 +115,10 @@ function AgentChatFallback({
 function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [failedSend, setFailedSend] = useState<{
+    kind: 'body' | 'submit'
+    ptyId: string
+  } | null>(null)
   const ptyId = card.ptyId
 
   if (ptyId === null) {
@@ -117,6 +131,7 @@ function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element
       </p>
     )
   }
+  const failure = failedSend?.ptyId === ptyId ? failedSend.kind : null
 
   const send = async (): Promise<void> => {
     const message = draft.trim()
@@ -124,21 +139,35 @@ function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element
       return
     }
     setSending(true)
-    setFailed(false)
+    setFailedSend(null)
+    let bodyAccepted = false
     try {
+      const cleared = await window.api.terminalPreview.input(
+        ptyId,
+        NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT
+      )
+      if (!cleared) {
+        setFailedSend({ kind: 'body', ptyId })
+        return
+      }
       const bodySent = await window.api.terminalPreview.input(
         ptyId,
         buildNativeChatPasteBytes(message)
       )
-      const submitted =
-        bodySent && (await window.api.terminalPreview.input(ptyId, NATIVE_CHAT_SUBMIT))
-      if (!submitted) {
-        setFailed(true)
+      if (!bodySent) {
+        setFailedSend({ kind: 'body', ptyId })
         return
       }
+      bodyAccepted = true
+      // The accepted body is now in the TUI. Keep it out of retries even if Enter fails.
       setDraft('')
+      await new Promise((resolve) => setTimeout(resolve, NATIVE_CHAT_SUBMIT_DELAY_MS))
+      const submitted = await window.api.terminalPreview.input(ptyId, NATIVE_CHAT_SUBMIT)
+      if (!submitted) {
+        setFailedSend({ kind: 'submit', ptyId })
+      }
     } catch {
-      setFailed(true)
+      setFailedSend({ kind: bodyAccepted ? 'submit' : 'body', ptyId })
     } finally {
       setSending(false)
     }
@@ -149,14 +178,17 @@ function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element
       <div className="flex items-center gap-2">
         <Input
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            setFailedSend(null)
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
               void send()
             }
           }}
-          disabled={sending}
+          disabled={sending || failure === 'submit'}
           aria-label={translate('dashboardPopout.chat.placeholder', 'Reply to this agent')}
           placeholder={translate('dashboardPopout.chat.placeholder', 'Reply to this agent')}
           className="h-8 text-xs"
@@ -165,18 +197,23 @@ function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element
           type="button"
           size="sm"
           className="h-8"
-          disabled={sending || draft.trim().length === 0}
+          disabled={sending || failure === 'submit' || draft.trim().length === 0}
           onClick={() => void send()}
         >
           {translate('dashboardPopout.chat.send', 'Send')}
         </Button>
       </div>
-      {failed ? (
+      {failure ? (
         <p className="mt-1.5 text-[11px] text-destructive">
-          {translate(
-            'dashboardPopout.chat.sendFailed',
-            'The reply did not reach the agent. Open the terminal to check it.'
-          )}
+          {failure === 'submit'
+            ? translate(
+                'dashboardPopout.chat.submitFailed',
+                'The reply is in the terminal but could not be submitted. Open the terminal to finish sending it.'
+              )
+            : translate(
+                'dashboardPopout.chat.sendFailed',
+                'The reply did not reach the agent. Open the terminal to check it.'
+              )}
         </p>
       ) : null}
     </div>

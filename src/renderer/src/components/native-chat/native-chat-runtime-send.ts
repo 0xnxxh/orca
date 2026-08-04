@@ -17,6 +17,7 @@ import {
 import {
   buildNativeChatImagePasteBytes,
   buildNativeChatPasteBytes,
+  NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
   NATIVE_CHAT_SUBMIT
 } from './native-chat-send'
 import {
@@ -27,20 +28,10 @@ import {
 } from './native-chat-pty-send-queue'
 
 export { NATIVE_CHAT_ADVANCE_BUFFER_MS, NATIVE_CHAT_QUESTION_STEP_MS, NATIVE_CHAT_SUBMIT_DELAY_MS }
+export { NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT } from './native-chat-send'
 export { resetNativeChatPtySendQueuesForTests }
 
 export const NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS = 300
-
-// Why: agent TUI composers treat Ctrl+U as kill-to-start-of-line. Chat sends
-// start from an empty line so a prior cancelled paste cannot glue onto the next
-// prompt. Not used on verified option commands — model-switch confirmation
-// observes the PTY and Ctrl+U can miss confirmation markers.
-//
-// One Ctrl+U only ever clears ONE logical line. When the line may hold an
-// injected multi-line launch draft, callers pass `clearInput` built by
-// buildAgentTuiClearInputForText — see agent-tui-input-clear.ts for the measured
-// 2N-1 law and the sequences that do NOT work.
-export const NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT = '\x15'
 
 /** Gap before re-reading the agent's input line to confirm a clear landed. */
 export const NATIVE_CHAT_CLEAR_CONFIRM_MS = 140
@@ -69,6 +60,7 @@ export type NativeChatSendHandle = {
 
 type RuntimeSettings = ReturnType<typeof getSettingsForAgentTabRuntimeOwner>
 
+// One Ctrl+U clears one logical line; launch-draft callers supply the measured 2N-1 burst.
 function clearUnsubmittedAgentInput(
   settings: RuntimeSettings,
   ptyId: string,

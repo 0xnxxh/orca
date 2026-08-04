@@ -9,7 +9,6 @@ type DashboardCardNativeChatArgs = {
   ptyId: string | null
   terminalInput: DashboardCard['terminalInput']
   clientPlatform: NodeJS.Platform
-  chatMode: boolean
   providerSession: DashboardAgentRow['entry']['providerSession']
 }
 
@@ -19,7 +18,6 @@ export function dashboardCardNativeChatMetadata({
   ptyId,
   terminalInput,
   clientPlatform,
-  chatMode,
   providerSession
 }: DashboardCardNativeChatArgs): Pick<
   DashboardCard,
@@ -27,7 +25,7 @@ export function dashboardCardNativeChatMetadata({
 > {
   return {
     hostKind: dashboardCardHostKind(repo, worktree, ptyId, terminalInput, clientPlatform),
-    viewMode: chatMode ? 'chat' : 'terminal',
+    viewMode: 'chat',
     ...(providerSession?.id ? { sessionId: providerSession.id } : {}),
     ...(providerSession?.transcriptPath ? { transcriptPath: providerSession.transcriptPath } : {})
   }

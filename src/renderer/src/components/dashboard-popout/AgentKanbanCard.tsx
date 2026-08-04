@@ -76,6 +76,22 @@ function sameSubagents(a: DashboardCard['subagents'], b: DashboardCard['subagent
   return true
 }
 
+function sameTerminalInput(
+  a: DashboardCard['terminalInput'],
+  b: DashboardCard['terminalInput']
+): boolean {
+  return (
+    a === b ||
+    (a !== undefined &&
+      b !== undefined &&
+      a.hostPlatform === b.hostPlatform &&
+      a.localWindowsConpty === b.localWindowsConpty &&
+      a.osRelease === b.osRelease &&
+      a.windowsShiftEnterEncoding === b.windowsShiftEnterEncoding &&
+      a.kittyKeyboardAdvertised === b.kittyKeyboardAdvertised)
+  )
+}
+
 function sameCard(a: DashboardCard, b: DashboardCard): boolean {
   return (
     a.paneKey === b.paneKey &&
@@ -92,6 +108,11 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.leafId === b.leafId &&
     a.repoName === b.repoName &&
     a.worktreeName === b.worktreeName &&
+    a.hostKind === b.hostKind &&
+    a.viewMode === b.viewMode &&
+    a.sessionId === b.sessionId &&
+    a.transcriptPath === b.transcriptPath &&
+    sameTerminalInput(a.terminalInput, b.terminalInput) &&
     a.hasReview === b.hasReview &&
     a.review?.number === b.review?.number &&
     a.review?.state === b.review?.state &&

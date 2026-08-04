@@ -274,14 +274,13 @@ export function buildDashboardSnapshot(
         leafId,
         repoName: boundedDashboardCardLabel(repo.displayName),
         worktreeName: boundedDashboardCardLabel(worktree.displayName),
-        ...(includeCardDetails
+        ...(includeCardDetails && nativeChatTabIds?.has(tabId) === true
           ? dashboardCardNativeChatMetadata({
               repo,
               worktree,
               ptyId,
               terminalInput: terminalInput ?? undefined,
               clientPlatform: clientHost.platform,
-              chatMode: nativeChatTabIds?.has(tabId) === true,
               providerSession: row.entry.providerSession
             })
           : {}),
