@@ -45,13 +45,15 @@ type ReadSessionResult =
  *  an ordered tail); live appends merge by id so order stays stable. */
 export function useMobileNativeChatSession(args: {
   client: RpcClient | null
+  /** Stable host/workspace source; unlike `client`, it survives manual reconnect. */
+  sourceIdentity: string
   agent: string | null
   sessionId: string | null
   transcriptPath: string | null
 }): MobileNativeChatSession {
-  const { client, agent, sessionId, transcriptPath } = args
+  const { client, sourceIdentity, agent, sessionId, transcriptPath } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
-  const identity = `${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
+  const identity = `${sourceIdentity}\0${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
   // Pre-read status is a pure function of the props, so derive it rather than
   // letting the effect write it a commit later.
   const initialStatus: MobileNativeChatStatus =
@@ -92,6 +94,19 @@ export function useMobileNativeChatSession(args: {
   const sessionIdRef = useRef<string | null>(sessionId)
   sessionIdRef.current = sessionId
   const streamGenerationRef = useRef(0)
+  // Last list a settled read produced, keyed by the identity it belongs to. A
+  // manual reconnect swaps the client without moving the identity; keep
+  // rendering this while the swapped client's read is in flight instead of
+  // collapsing to a full-screen spinner.
+  const lastListRef = useRef<{ identity: string; messages: NativeChatMessage[] } | null>(null)
+  const settledReady = settled?.status === 'ready'
+  useEffect(() => {
+    // Post-commit capture: while a swap is re-reading, `settled` is null and
+    // the previous commit's capture keeps serving this identity.
+    if (settledReady) {
+      lastListRef.current = { identity, messages }
+    }
+  }, [settledReady, identity, messages])
 
   // Replace the base list (read results are an ordered tail). Resets the merger
   // cache so the index is rebuilt once over the new base.
@@ -246,10 +261,18 @@ export function useMobileNativeChatSession(args: {
     })()
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
+  // While the swapped-client read is in flight the previous settled list for
+  // this same identity keeps rendering; `transcriptLoading` still tells
+  // consumers not to trust it as settled history.
+  const heldMessages =
+    !settled && status === 'loading' && lastListRef.current?.identity === identity
+      ? lastListRef.current.messages
+      : EMPTY_MESSAGES
+
   return {
     // Withheld until the settled read belongs to this identity: the effect that
     // clears the previous tab's list is passive, so `messages` lags a commit.
-    messages: settled ? messages : EMPTY_MESSAGES,
+    messages: settled ? messages : heldMessages,
     status,
     transcriptLoading: status === 'loading',
     error,
