@@ -17,7 +17,9 @@ import { isRenderableImageUri } from './mobile-native-chat-image-preview'
 import { MAX_TOOL_RESULT_CHARS, styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
 import { nativeChatMessageText } from './mobile-native-chat-message-text'
 import {
-  summarizeToolInput,
+  describeToolInput,
+  formatToolInput,
+  isStructuredToolInput,
   summarizeToolRun,
   toolFilePath
 } from './mobile-native-chat-tool-summary'
@@ -46,6 +48,12 @@ function DiffView({ lines }: { lines: DiffLine[] }): React.JSX.Element {
   )
 }
 
+/** Cap a mono block at the same size as desktop's tool detail — native text
+ *  layout has no scroll container to absorb a runaway payload. */
+function boundedText(text: string): string {
+  return text.length > MAX_TOOL_RESULT_CHARS ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}…` : text
+}
+
 /** A single inline tool line — `▸ ToolName  preview` — that expands in place to
  *  show the call's diff/input or the result's body. Mirrors the reference design
  *  where tool calls read as flat lines in the conversation, not boxed blocks. */
@@ -63,11 +71,7 @@ function ResultBody({
   }
   return (
     <View style={[styles.toolResult, isError && styles.toolResultError]}>
-      <Text style={styles.mono}>
-        {output.length > MAX_TOOL_RESULT_CHARS
-          ? `${output.slice(0, MAX_TOOL_RESULT_CHARS)}…`
-          : output}
-      </Text>
+      <Text style={styles.mono}>{boundedText(output)}</Text>
     </View>
   )
 }
@@ -88,14 +92,23 @@ function ToolLine({
   const [expanded, setExpanded] = useState(defaultExpanded)
   const { call, result } = pair
   const name = call ? call.name : 'Result'
+  // The row label is a human summary (path / primary arg), never raw JSON; the
+  // expanded detail below carries the full formatted input.
   const preview = call
-    ? summarizeToolInput(call.input)
+    ? describeToolInput(call.input)
     : (result?.output.split('\n')[0]?.slice(0, 80) ?? '')
   // Why: collapsed tool rows are the common path; defer bounded diff parsing
-  // until the user asks to reveal the detail.
+  // and detail formatting until the user asks to reveal the detail.
   const callDiff = expanded && call ? diffFromToolCall(call.name, call.input, diffLineLimit) : null
   const resultDiff = expanded && result ? diffFromText(result.output, diffLineLimit) : null
-  const hasDetail = callDiff !== null || result !== undefined || preview.length > 40
+  // Bound before handing it to native text layout, like the result body.
+  const callDetail =
+    expanded && call && !callDiff ? boundedText(formatToolInput(call.input)) : undefined
+  const hasDetail =
+    callDiff !== null ||
+    result !== undefined ||
+    preview.length > 40 ||
+    (call !== undefined && isStructuredToolInput(call.input))
   // A tool that targets a file (Read/Edit/Write…) renders its preview as a
   // tappable link that opens the file, independent of the line's expand tap.
   const filePath = call ? toolFilePath(call.input) : null
@@ -127,7 +140,7 @@ function ToolLine({
       {expanded ? (
         <View style={styles.toolDetail}>
           {callDiff ? <DiffView lines={callDiff} /> : null}
-          {!callDiff && call && preview ? <Text style={styles.mono}>{preview}</Text> : null}
+          {callDetail ? <Text style={styles.mono}>{callDetail}</Text> : null}
           {result ? (
             <ResultBody output={result.output} isError={result.isError} diff={resultDiff} />
           ) : null}
