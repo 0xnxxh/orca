@@ -1497,13 +1497,14 @@ export class OrcaRuntimeRpcServer {
     this.transports = []
     this.metadataOwnershipWatch?.stop()
     this.metadataOwnershipWatch = null
-    this.deviceRegistry?.flushPendingLastSeen()
     this.mobileSocketWiring = null
     this.detachWebSocketWiring = null
-    if (transports.length === 0) {
-      return
+    try {
+      await Promise.all(transports.map((t) => t.stop()))
+    } finally {
+      // Why: before-quit fences relay input; direct auth can still refresh lastSeen while these transports close.
+      this.deviceRegistry?.flushPendingLastSeen()
     }
-    await Promise.all(transports.map((t) => t.stop()))
     // Why: leave the metadata file on shutdown — shared userData may host another live runtime whose bootstrap file we'd erase.
   }
 

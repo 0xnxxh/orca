@@ -300,5 +300,7 @@ export class DeviceRegistry {
 
   private save(devices: DeviceEntry[]): void {
     writeSecureJsonFile(this.registryPath, devices)
+    // Why: every registry save includes the latest in-memory timestamps, so a later timer would rewrite it.
+    this.cancelPendingLastSeenFlush()
   }
 }

@@ -191,4 +191,19 @@ describe('mobile auth critical path', () => {
     vi.advanceTimersByTime(250)
     expect(timeline.filter((entry) => entry === 'acl-spawn')).toHaveLength(2)
   })
+
+  it('cancels the deferred rewrite when another registry save persists the timestamp', () => {
+    vi.useFakeTimers()
+    const registry = new DeviceRegistry(userDataPath)
+    const device = registry.addDevice('Phone', 'runtime')
+    registry.updateLastSeen(device.deviceId)
+    timeline.length = 0
+
+    registry.updateLastSeenDeferred(device.deviceId)
+    registry.addDevice('Other client', 'runtime')
+    expect(timeline.filter((entry) => entry === 'acl-spawn')).toHaveLength(2)
+
+    vi.advanceTimersByTime(250)
+    expect(timeline.filter((entry) => entry === 'acl-spawn')).toHaveLength(2)
+  })
 })

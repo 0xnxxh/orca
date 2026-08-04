@@ -11,13 +11,12 @@ import { getDefaultUserDataPath, readMetadata } from './metadata'
 import { getCliStatus, resolveDesktopWindowStatus } from './status'
 import { sendRequest } from './transport'
 import { RuntimeClientError, RuntimeRpcFailureError, type RuntimeRpcSuccess } from './types'
-import type { sendWebSocketRequest } from './websocket-transport'
-import { resolveEnvironmentPairingOffer } from './environments'
-import { RemoteRuntimeCompatGate } from './remote-runtime-compat-gate'
+import { markEnvironmentUsed, resolveEnvironmentPairingOffer } from './environments'
 import {
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
   ORCHESTRATION_CONTRACT_VERSION
 } from '../../shared/protocol-version'
+import { RemoteRuntimeCompatGate } from './remote-runtime-compat-gate'
 import { createOrchestrationCompatibilityEnvelope } from './orchestration-compatibility-envelope'
 import { getTimeoutMsParam, isWaitingCheck } from './runtime-request-timeout'
 
@@ -32,8 +31,8 @@ const LONG_POLL_CLIENT_GRACE_MS = 10_000
 // Why: ws + tweetnacl + the remote-runtime frame stack only matter once a
 // request actually goes over a pairing offer, which local CLI calls never do.
 // Both call sites already await this, so deferring the load changes no ordering.
-async function loadSendWebSocketRequest(): Promise<typeof sendWebSocketRequest> {
-  return (await import('./websocket-transport.js')).sendWebSocketRequest
+async function loadWebSocketTransport() {
+  return await import('./websocket-transport.js')
 }
 
 export class RuntimeClient {
@@ -96,26 +95,28 @@ export class RuntimeClient {
       ...compatibilityEnvelope
     }
     if (this.remotePairing) {
-      const sendWebSocketRequest = await loadSendWebSocketRequest()
-      if (method !== 'status.get') {
-        await this.remoteCompat.ensure(this.remotePairing, effectiveTimeoutMs, sendWebSocketRequest)
-      }
+      const transport = await loadWebSocketTransport()
       let response
       try {
-        response = await sendWebSocketRequest<TResult>(
-          this.remotePairing,
+        response = await this.remoteCompat.send<TResult>({
+          transport,
+          pairing: this.remotePairing,
           method,
           params,
-          effectiveTimeoutMs,
+          timeoutMs: effectiveTimeoutMs,
           envelope
-        )
+        })
       } catch (error) {
         throw attachMutationRecovery(error, orchestrationRequestId)
       }
       if (response.ok === false) {
         throw new RuntimeRpcFailureError(response)
       }
-      this.remoteCompat.noteRespondingRuntimeId(response._meta.runtimeId)
+      if (this.environmentSelector) {
+        markEnvironmentUsed(this.userDataPath, this.environmentSelector, {
+          runtimeId: response._meta.runtimeId
+        })
+      }
       return response
     }
     const metadata = readMetadata(this.userDataPath)
@@ -152,7 +153,7 @@ export class RuntimeClient {
   async getCliStatus(): Promise<RuntimeRpcSuccess<CliStatusResult>> {
     if (this.remotePairing) {
       const response = await this.call<RuntimeStatus>('status.get')
-      this.remoteCompat.noteVerifiedStatus(response.result, response._meta.runtimeId)
+      this.remoteCompat.noteVerifiedStatus(response.result)
       const graphState = response.result.graphStatus
       return {
         id: response.id,
@@ -200,7 +201,7 @@ export class RuntimeClient {
   private async checkOrchestrationContractCompatibility(timeoutMs: number): Promise<void> {
     const response = await this.call<RuntimeStatus>('status.get', undefined, { timeoutMs })
     if (this.remotePairing) {
-      this.remoteCompat.noteVerifiedStatus(response.result, response._meta.runtimeId)
+      this.remoteCompat.noteVerifiedStatus(response.result)
     }
     if (!response.result.capabilities?.includes(ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY)) {
       throw new RuntimeClientError(
