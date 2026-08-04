@@ -1273,6 +1273,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       // The rejection is remembered, so later probes skip the round trip that cannot work.
       expect(request.mock.calls.filter(([type]) => type === 'getSize')).toHaveLength(1)
+      // Why pinned here: a wedged daemon holds its socket open, so an unbounded getSize would
+      // stall a pane mount for the client's 30s default instead of answering "unknown" in 2s.
+      expect(request).toHaveBeenCalledWith(
+        'getSize',
+        { sessionId: 'ambiguous-live' },
+        LIVENESS_PROBE_TIMEOUT_MS
+      )
 
       ambiguous.dispose()
     })

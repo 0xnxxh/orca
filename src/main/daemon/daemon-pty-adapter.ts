@@ -2442,8 +2442,6 @@ function notifyAuditListeners<T>(listeners: readonly ((value: T) => void)[], val
   }
 }
 
-// Why: syscall='connect' distinguishes a dead-socket ENOENT/ECONNREFUSED from token-file ENOENT (no syscall);
-// message strings incl. wedged-daemon "Hello response timed out" (#8689) also warrant a respawn.
 /**
  * Narrow on purpose: only the daemon's own reply for a request type it does not implement.
  * A transient failure must stay unproven rather than be mistaken for a missing capability.
@@ -2454,6 +2452,8 @@ function isUnknownRequestTypeError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('Unknown request type')
 }
 
+// Why: syscall='connect' distinguishes a dead-socket ENOENT/ECONNREFUSED from token-file ENOENT (no syscall);
+// message strings incl. wedged-daemon "Hello response timed out" (#8689) also warrant a respawn.
 function isDaemonGoneError(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false
