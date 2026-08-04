@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { buildNativeChatSubscriptionId } from '../../../src/shared/native-chat-stream-unsubscribe'
 import type { RpcClient } from '../transport/rpc-client'
@@ -93,9 +93,6 @@ export function useMobileNativeChatSession(args: {
   // base (read / loadEarlier ordered tails); `applyAppend` folds live frames in.
   const mergerRef = useRef(createNativeChatMerger())
   const limitRef = useRef(INITIAL_LIMIT)
-  // Tracks the live session so a late loadEarlier resolve can detect a swap.
-  const sessionIdRef = useRef<string | null>(sessionId)
-  sessionIdRef.current = sessionId
   const streamGenerationRef = useRef(0)
 
   // Replace the base list (read results are an ordered tail). Resets the merger
@@ -105,11 +102,14 @@ export function useMobileNativeChatSession(args: {
     setMessages(mergerRef.current.list)
   }, [])
 
+  // Invalidate pages during commit, before the passive subscription reset, for
+  // every source change — including same-session agent, path, or client swaps.
+  useLayoutEffect(() => {
+    streamGenerationRef.current += 1
+  }, [client, identity])
+
   useEffect(() => {
     let cancelled = false
-    // Why: disconnect/agent/session loss must invalidate a page request before
-    // the early idle/waiting return can clear the visible source.
-    streamGenerationRef.current += 1
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
     setLoadingEarlier(false)
@@ -193,9 +193,7 @@ export function useMobileNativeChatSession(args: {
     if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
       return
     }
-    // Capture the session this page belongs to; a swap underneath us must not
-    // apply this read's result onto the new session (mirrors desktop's guard).
-    const requestSessionId = sessionId
+    // Capture the source generation so a swap cannot apply this page to its replacement.
     const requestGeneration = streamGenerationRef.current
     const nextLimit = Math.min(limitRef.current + PAGE, MAX_MESSAGES)
     const pageLimit = nextLimit - limitRef.current
@@ -207,8 +205,7 @@ export function useMobileNativeChatSession(args: {
     loadingEarlierRef.current = true
     setLoadingEarlier(true)
     setLoadEarlierError(null)
-    const requestIsCurrent = (): boolean =>
-      sessionIdRef.current === requestSessionId && streamGenerationRef.current === requestGeneration
+    const requestIsCurrent = (): boolean => streamGenerationRef.current === requestGeneration
     void (async () => {
       try {
         const response = await client.sendRequest('nativeChat.readSession', {

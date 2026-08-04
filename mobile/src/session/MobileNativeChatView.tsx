@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   FlatList,
   type NativeScrollEvent,
@@ -149,6 +150,12 @@ export function MobileNativeChatView({
   const insets = useSafeAreaInsets()
   const listRef = useRef<FlatList<NativeChatMessage>>(null)
   const [toolsExpanded, setToolsExpanded] = useState(false)
+  const isLoadingEarlier = loadingEarlier === true
+  const loadEarlierAccessibilityLabel = isLoadingEarlier
+    ? 'Loading earlier messages'
+    : loadEarlierError
+      ? `${loadEarlierError}. Tap to retry`
+      : 'Load earlier messages'
   // Dismiss the question card as soon as it's answered; the live status lingers
   // briefly (the agent emits a post-tool event with the same prompt), so hide it
   // until a genuinely different question arrives.
@@ -167,6 +174,11 @@ export function MobileNativeChatView({
     },
     []
   )
+  useEffect(() => {
+    if (loadEarlierError && !isLoadingEarlier) {
+      AccessibilityInfo.announceForAccessibility(loadEarlierAccessibilityLabel)
+    }
+  }, [isLoadingEarlier, loadEarlierAccessibilityLabel, loadEarlierError])
 
   const pendingIds = useMemo(() => new Set(pending.map((p) => p.id)), [pending])
   // `data` is the list source: folded transcript + synthetic streaming bubble +
@@ -220,11 +232,11 @@ export function MobileNativeChatView({
       // Near the top — page in older history. A failed page stops this: the user
       // stays near the top, so every later scroll frame would re-fire the same
       // doomed request. Only the header's explicit retry clears it.
-      if (contentOffset.y < 60 && hasMore && !loadingEarlier && !loadEarlierError) {
+      if (contentOffset.y < 60 && hasMore && !isLoadingEarlier && !loadEarlierError) {
         onLoadEarlier?.()
       }
     },
-    [hasMore, loadingEarlier, loadEarlierError, onLoadEarlier]
+    [hasMore, isLoadingEarlier, loadEarlierError, onLoadEarlier]
   )
 
   // Align a single message's top to the top of the viewport.
@@ -307,15 +319,12 @@ export function MobileNativeChatView({
                   <Pressable
                     style={styles.loadEarlier}
                     onPress={onLoadEarlier}
-                    disabled={loadingEarlier}
+                    disabled={isLoadingEarlier}
                     accessibilityRole="button"
-                    accessibilityLabel={
-                      loadEarlierError
-                        ? `${loadEarlierError}. Tap to retry`
-                        : 'Load earlier messages'
-                    }
+                    accessibilityLabel={loadEarlierAccessibilityLabel}
+                    accessibilityState={{ busy: isLoadingEarlier, disabled: isLoadingEarlier }}
                   >
-                    {loadingEarlier ? (
+                    {isLoadingEarlier ? (
                       <ActivityIndicator size="small" color={colors.textMuted} />
                     ) : loadEarlierError ? (
                       <>

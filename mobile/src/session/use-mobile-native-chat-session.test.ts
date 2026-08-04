@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, useLayoutEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
@@ -25,10 +25,12 @@ describe('useMobileNativeChatSession', () => {
   let renderer: ReactTestRenderer | null = null
   let state: MobileNativeChatSession | null = null
   let emit: (frame: unknown) => void = () => {}
+  const renderedLoadEarlierErrors: Array<string | null> = []
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     state = null
+    renderedLoadEarlierErrors.length = 0
   })
 
   afterEach(() => {
@@ -36,17 +38,32 @@ describe('useMobileNativeChatSession', () => {
     renderer = null
   })
 
-  function Harness({ client }: { client: RpcClient | null }): null {
+  function Harness({
+    client,
+    agent = 'claude',
+    transcriptPath = null,
+    onLayout
+  }: {
+    client: RpcClient | null
+    agent?: string | null
+    transcriptPath?: string | null
+    onLayout?: () => void
+  }): null {
     state = useMobileNativeChatSession({
       client,
-      agent: 'claude',
+      agent,
       sessionId: 'session',
-      transcriptPath: null
+      transcriptPath
     })
+    renderedLoadEarlierErrors.push(state.loadEarlierError)
+    useLayoutEffect(() => onLayout?.(), [onLayout])
     return null
   }
 
-  async function mount(client: RpcClient): Promise<void> {
+  async function mount(
+    client: RpcClient,
+    options: { agent?: string | null; transcriptPath?: string | null } = {}
+  ): Promise<void> {
     const original = console.error
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
       if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
@@ -56,7 +73,7 @@ describe('useMobileNativeChatSession', () => {
     })
     try {
       await act(async () => {
-        renderer = create(createElement(Harness, { client }))
+        renderer = create(createElement(Harness, { client, ...options }))
       })
     } finally {
       consoleSpy.mockRestore()
@@ -126,6 +143,44 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.messages).toEqual([])
     expect(state?.status).toBe('idle')
     expect(state?.loadingEarlier).toBe(false)
+  })
+
+  it('drops a page settled during a same-session transcript source change', async () => {
+    const settle: PageSettle = { resolve: () => {}, reject: () => {} }
+    const sendRequest = vi.fn(
+      () =>
+        new Promise((resolve, reject) => {
+          settle.resolve = resolve
+          settle.reject = reject
+        })
+    ) as unknown as RpcClient['sendRequest']
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`old-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    const client = { sendRequest, subscribe } as unknown as RpcClient
+    await mount(client, { transcriptPath: '/old/transcript.jsonl' })
+    act(() => state?.loadEarlier())
+    renderedLoadEarlierErrors.length = 0
+
+    await act(async () => {
+      renderer?.update(
+        createElement(Harness, {
+          client,
+          transcriptPath: '/new/transcript.jsonl',
+          onLayout: () => settle.resolve({ ok: false, error: 'offline' })
+        })
+      )
+      await Promise.resolve()
+    })
+
+    expect(renderedLoadEarlierErrors).not.toContain('Couldn’t load earlier messages')
+    expect(state?.loadEarlierError).toBeNull()
   })
 
   it.each(['replacement', 'snapshot'] as const)(

@@ -1,10 +1,12 @@
 import { createElement, isValidElement, type ReactElement } from 'react'
+import { AccessibilityInfo } from 'react-native'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 
 vi.mock('react-native', () => ({
+  AccessibilityInfo: { announceForAccessibility: vi.fn() },
   ActivityIndicator: 'ActivityIndicator',
   FlatList: 'FlatList',
   Pressable: 'Pressable',
@@ -106,6 +108,7 @@ describe('MobileNativeChatView', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    vi.mocked(AccessibilityInfo.announceForAccessibility).mockClear()
   })
 
   afterEach(() => {
@@ -267,6 +270,10 @@ describe('MobileNativeChatView', () => {
     expect(headerText(header)).toContain('Couldn’t load earlier messages')
     expect(headerText(header)).toContain('Tap to retry')
     expect(header.props.accessibilityLabel).toBe('Couldn’t load earlier messages. Tap to retry')
+    expect(header.props.accessibilityState).toEqual({ busy: false, disabled: false })
+    expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledWith(
+      'Couldn’t load earlier messages. Tap to retry'
+    )
   })
 
   // An in-flight retry outranks the failure it is retrying, so the header shows
@@ -281,7 +288,10 @@ describe('MobileNativeChatView', () => {
 
     const header = loadEarlierHeader()
     expect(header.props.disabled).toBe(true)
+    expect(header.props.accessibilityLabel).toBe('Loading earlier messages')
+    expect(header.props.accessibilityState).toEqual({ busy: true, disabled: true })
     expect(headerText(header)).not.toContain('Couldn’t load earlier messages')
     expect(headerText(header)).not.toContain('Tap to retry')
+    expect(AccessibilityInfo.announceForAccessibility).not.toHaveBeenCalled()
   })
 })
