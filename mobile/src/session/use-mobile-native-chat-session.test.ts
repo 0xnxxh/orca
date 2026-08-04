@@ -350,6 +350,10 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       transcriptLoading: true,
       ids: ['a-1']
     })
+    // Every commit of the window, not just the first: the re-subscribe lands a
+    // commit after it, so clearing the cache there blanks the transcript the
+    // user actually sees while leaving a first-frame assertion green.
+    expect([...new Set(renders.map((entry) => entry.ids.join(',')))]).toEqual(['a-1'])
 
     // The fresh client's snapshot supersedes the held list.
     await act(async () =>
