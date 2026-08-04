@@ -741,11 +741,21 @@ export class CodexRuntimeHomeService {
     const authAbsence = this.credentialAbsenceGrace.assess(activeAuthPath)
     if (authAbsence.state !== 'present' && authAbsence.state !== 'incomplete') {
       if (!authAbsence.durable) {
-        // Why: mid-rotation reads look missing/unreadable for a moment; skip
-        // this sync without deselecting and let a settled read decide later.
+        if (this.sharedRuntimeAuthBelongsToAccount(activeAccount.id)) {
+          // Why: mid-rotation reads look missing/unreadable for a moment; skip
+          // this sync without deselecting and let a settled read decide later.
+          console.warn(
+            '[codex-runtime-home] Active managed account auth.json unavailable, keeping selection through grace window'
+          )
+          return
+        }
+        // Why: the runtime home still holds another account, so riding out the
+        // grace would launch that account under this selection. Not being able
+        // to read the selected account is no license to run a different one.
         console.warn(
-          '[codex-runtime-home] Active managed account auth.json unavailable, keeping selection through grace window'
+          '[codex-runtime-home] Active managed account auth.json unavailable while the runtime home holds another account, clearing runtime auth'
         )
+        this.clearRuntimeAuthForUnprovenSelection()
         return
       }
       console.warn(
@@ -918,6 +928,30 @@ export class CodexRuntimeHomeService {
       console.warn('[codex-runtime-home] Failed to recover missing managed auth:', error)
       return 'rejected'
     }
+  }
+
+  // Why: an unreadable managed auth.json says nothing about who the shared
+  // runtime home currently holds, so only Orca's own provenance can prove those
+  // bytes belong to the selected account. Pre-provenance installs have no record
+  // to consult and fall back to the in-memory sync state.
+  private sharedRuntimeAuthBelongsToAccount(accountId: string): boolean {
+    if (!existsSync(this.getRuntimeAuthPath())) {
+      return true
+    }
+    const status = this.resolveSharedRuntimeAuthProvenanceStatus()
+    if (status.kind === 'committed') {
+      return status.provenance.owner === 'managed' && status.provenance.accountId === accountId
+    }
+    return status.kind === 'missing' && this.lastSyncedAccountId === accountId
+  }
+
+  // Why: the absence may still heal, so keep the selection — but leave no other
+  // identity's credentials behind for the launch. Logged out beats logged in as
+  // someone else, and fencing stops later syncs adopting the removed bytes.
+  private clearRuntimeAuthForUnprovenSelection(): void {
+    rmSync(this.getRuntimeAuthPath(), { force: true })
+    this.lastWrittenAuthJson = null
+    this.persistSharedRuntimeAuthProvenance({ owner: 'fenced' })
   }
 
   private safeSyncForCurrentSelection(): void {
