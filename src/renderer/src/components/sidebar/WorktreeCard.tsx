@@ -901,7 +901,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const handleRenameTitle = useCallback(
-    (displayName: string) => updateWorktreeMeta(worktree.id, { displayName }),
+    // Inline rename has no surface for the failure; the store already logs and
+    // refetches, which reverts the optimistic title in place.
+    async (displayName: string): Promise<void> => {
+      await updateWorktreeMeta(worktree.id, { displayName })
+    },
     [updateWorktreeMeta, worktree.id]
   )
 

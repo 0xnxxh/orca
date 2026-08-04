@@ -50,7 +50,10 @@ import {
   isRuntimeScopeForbiddenError,
   RuntimeRpcCallError
 } from '../../runtime/runtime-rpc-client'
-import { WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import {
+  TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
+  WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY
+} from '../../../../shared/protocol-version'
 import { toRuntimeWorktreeSelector } from '../../runtime/runtime-worktree-selector'
 import { getHostedReviewCacheKey, refreshHostedReviewCard } from './hosted-review'
 import { routeListingBranchSwitchesThroughGitIdentity } from './worktree-listing-branch-switch'
@@ -1710,16 +1713,26 @@ async function persistWorktreeMeta(
     await window.api.worktrees.updateMeta({ worktreeId, updates })
     return
   }
-  // Why: same gate as worktree.create — an older paired runtime would drop the Jira link silently.
+  // Why: `worktree.set` parses in strip mode, so an older runtime drops the key
+  // and applies the rest. Both gates key off presence, not value — a dropped
+  // *clear* strands a stale link that the Issue row then hides.
   if (
     target.kind === 'environment' &&
-    (updates.linkedWorkItem?.provider === 'jira' ||
-      updates.linkedTaskSourceContext?.provider === 'jira')
+    ('linkedWorkItem' in updates || 'linkedTaskSourceContext' in updates)
   ) {
     await assertRuntimeEnvironmentCapability(
       target.environmentId,
       WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY,
-      'Update the remote runtime to link Jira'
+      'Update the remote runtime to change this workspace’s linked issue'
+    )
+  }
+  // task-source-context.v1 is a sound proxy for the Linear keys: #5322 added them
+  // to the schema and is an ancestor of the commit introducing that capability.
+  if (target.kind === 'environment' && 'linkedLinearIssue' in updates) {
+    await assertRuntimeEnvironmentCapability(
+      target.environmentId,
+      TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
+      'Update the remote runtime to link Linear issues'
     )
   }
   await callRuntimeRpc(
@@ -4497,7 +4510,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const shouldApplyUpdate = options?.shouldApply
     const existingWorktree = get().getKnownWorktreeById(worktreeId)
     if (shouldApplyUpdate && !shouldApplyUpdate(existingWorktree)) {
-      return
+      return { ok: true }
     }
     const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
@@ -4505,7 +4518,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       if (Object.keys(folderUpdates).length > 0) {
         await get().updateFolderWorkspace(workspaceScope.folderWorkspaceId, folderUpdates)
       }
-      return
+      return { ok: true }
     }
     const normalizedUpdates = existingWorktree
       ? clearOlderHostedReviewLinksForReplacement(updates, existingWorktree)
@@ -4540,7 +4553,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       existingHostedReviewPushTargetLookup.key !== nextHostedReviewPushTargetLookup?.key
     const worktreeForUpdate = get().getKnownWorktreeById(worktreeId)
     if (shouldApplyUpdate && !shouldApplyUpdate(worktreeForUpdate)) {
-      return
+      return { ok: true }
     }
     const shouldRefreshHostedReview =
       (normalizedUpdates.linkedPR === null && worktreeForUpdate?.linkedPR !== null) ||
@@ -4661,7 +4674,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       }
     })
     if (shouldApplyUpdate && !didApply) {
-      return
+      return { ok: true }
     }
     if (hasHostedReviewLinkUpdates(enriched)) {
       bumpHostedReviewLinkMutationGeneration(worktreeId)
@@ -4709,11 +4722,21 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     } catch (err) {
       if (isRuntimeSelectorNotFoundError(err)) {
         void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-        return
+        return {
+          ok: false,
+          error: translate(
+            'auto.store.slices.worktrees.c6cf133786',
+            'This workspace is no longer available.'
+          )
+        }
       }
       console.error('Failed to update worktree meta:', err)
       void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+      // Why: the refetch above reverts the optimistic write, so a caller that
+      // closes its surface on this path shows the user a save that undid itself.
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+    return { ok: true }
   },
 
   ensureHostedReviewPushTarget: async (worktreeId) => {
