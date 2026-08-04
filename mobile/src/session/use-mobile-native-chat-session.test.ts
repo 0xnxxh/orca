@@ -333,6 +333,38 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.hasMore).toBe(false)
   })
 
+  it('fences an in-flight older page when a merging replay re-cuts the byte cursor', async () => {
+    let resolveEarlier: (response: unknown) => void = () => {}
+    const sendRequest = vi.fn(
+      () => new Promise((resolve) => (resolveEarlier = resolve))
+    ) as unknown as RpcClient['sendRequest']
+    const retained = Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({ type: 'snapshot', messages: retained, hasMore: true, beforeOffset: 100 })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    act(() => state?.loadEarlier())
+
+    // The replay merges (same rows, no trim), but the host re-cut the file, so
+    // it carries a new cursor. The page already in flight was addressed with the
+    // old offset and would write that stale cursor back over the fresh one.
+    await act(async () =>
+      emit({ type: 'snapshot', messages: retained, hasMore: true, beforeOffset: 250 })
+    )
+    await act(async () => {
+      resolveEarlier({
+        ok: true,
+        result: { messages: [message('stale-page')], hasMore: true, beforeOffset: 40 }
+      })
+      await Promise.resolve()
+    })
+
+    expect(state?.messages.some((entry) => entry.id === 'stale-page')).toBe(false)
+    expect(state?.loadingEarlier).toBe(false)
+  })
+
   it('keeps the base snapshot authoritative when a live append arrives first', async () => {
     const sendRequest = vi.fn()
     const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
