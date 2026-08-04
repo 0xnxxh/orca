@@ -452,20 +452,41 @@ describe('OrcaRuntimeRpcServer', () => {
         pending = false
       })
     } as unknown as DeviceRegistry
+    let finishSecondStop: () => void = () => {}
+    const secondStop = new Promise<void>((resolve) => {
+      finishSecondStop = resolve
+    })
     server['activeTransports'] = [
       {
         start: vi.fn(async () => {}),
         stop: vi.fn(async () => {
-          timeline.push('transport-stop')
-          pending = true
+          timeline.push('failed-transport-stop')
           throw new Error('transport stop failed')
+        })
+      },
+      {
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {
+          timeline.push('second-transport-started')
+          await secondStop
+          timeline.push('second-transport-stopped')
+          pending = true
         })
       }
     ]
 
-    await expect(server.stop()).rejects.toThrow('transport stop failed')
+    const stopping = server.stop()
+    await vi.waitFor(() => expect(timeline).toContain('second-transport-started'))
+    expect(timeline).not.toContain('flush-empty')
+    finishSecondStop()
+    await expect(stopping).rejects.toThrow('transport stop failed')
 
-    expect(timeline).toEqual(['transport-stop', 'flush-pending'])
+    expect(timeline).toEqual([
+      'failed-transport-stop',
+      'second-transport-started',
+      'second-transport-stopped',
+      'flush-pending'
+    ])
     expect(pending).toBe(false)
   })
 
