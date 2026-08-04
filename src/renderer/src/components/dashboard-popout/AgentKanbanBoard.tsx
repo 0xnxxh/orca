@@ -4,7 +4,9 @@ import {
   DASHBOARD_BUCKET_ORDER,
   type DashboardBucket,
   type DashboardCard,
-  type DashboardSnapshot
+  type DashboardSleepWorkspaceArgs,
+  type DashboardSnapshot,
+  type DashboardSpawnAgentArgs
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { cn } from '@/lib/utils'
@@ -46,6 +48,18 @@ function ackAgentViaPopoutRelay(paneKey: string): void {
  *  both channels ship together, so a stale preload lacks both. */
 function revealAgentViaPopoutRelay(args: AgentRevealArgs): void {
   void window.api.dashboard.revealAgent?.(args)
+}
+
+/** Start an agent from the pop-out window: the main renderer owns the store and
+ *  the tab path, so the launch is relayed. Same `?.` HMR-skew guard. */
+function spawnAgentViaPopoutRelay(args: DashboardSpawnAgentArgs): void {
+  void window.api.dashboard.spawnAgent?.(args)
+}
+
+/** Sleep a workspace from the pop-out window: the main renderer runs the
+ *  teardown, which has to happen where the terminal panes live. */
+function sleepWorkspaceViaPopoutRelay(args: DashboardSleepWorkspaceArgs): void {
+  void window.api.dashboard.sleepWorkspace?.(args)
 }
 
 function bucketLabel(bucket: DashboardBucket): string {
@@ -137,6 +151,12 @@ type AgentKanbanBoardProps = {
   /** Focuses the agent's pane. Defaults to the pop-out IPC relay; the in-window
    *  host activates the worktree/pane locally and closes the overlay. */
   onRevealAgent?: (args: AgentRevealArgs) => void
+  /** Starts a new agent in a workspace. Defaults to the pop-out IPC relay; the
+   *  in-window host launches through its own store. */
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
+  /** Puts a workspace to sleep. Defaults to the pop-out IPC relay; the in-window
+   *  host already offers the full sidebar menu, so it opts out. */
+  onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
   /** When provided, renders a close control in the header (in-window mode). The
    *  pop-out relies on its native window controls, so it omits this. */
   onClose?: () => void
@@ -157,6 +177,8 @@ export function AgentKanbanBoard({
   containerClassName = 'h-screen w-screen',
   onAckAgent = ackAgentViaPopoutRelay,
   onRevealAgent = revealAgentViaPopoutRelay,
+  onSpawnAgent = spawnAgentViaPopoutRelay,
+  onSleepWorkspace = sleepWorkspaceViaPopoutRelay,
   onClose,
   headerActions,
   workspaceContextMenusEnabled = false,
@@ -367,9 +389,12 @@ export function AgentKanbanBoard({
                 }
                 compact={dialogCard !== null}
                 selectedPaneKey={dialogCard?.paneKey}
+                launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId}
                 workspaceContextMenusEnabled={workspaceContextMenusEnabled}
                 onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
                 onOpenTerminal={handleOpenAdjacentTerminal}
+                onSpawnAgent={onSpawnAgent}
+                onSleepWorkspace={onSleepWorkspace}
               />
             </Suspense>
             {dialogCard ? (

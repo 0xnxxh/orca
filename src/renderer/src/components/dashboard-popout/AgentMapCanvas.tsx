@@ -8,8 +8,13 @@ import {
   useState
 } from 'react'
 import { translate } from '@/i18n/i18n'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardSleepWorkspaceArgs,
+  DashboardSpawnAgentArgs
+} from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import type { TuiAgent } from '../../../../shared/types'
 import type { AgentMapAgentNode, AgentMapProjectRing, AgentMapLayout } from './agent-map-layout'
 import { AgentMapScene } from './AgentMapScene'
 import { AgentMapViewportControls } from './AgentMapViewportControls'
@@ -37,9 +42,12 @@ type AgentMapCanvasProps = {
   repoIconsByRepoId?: Record<string, RepoIcon | null>
   selectedPaneKey: string | null
   allowAggregation: boolean
+  launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
+  onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -53,9 +61,12 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       repoIconsByRepoId,
       selectedPaneKey,
       allowAggregation,
+      launchableAgentsByWorktreeId,
       workspaceContextMenusEnabled = false,
       onWorkspaceContextMenuOpenChange,
-      onSelectAgent
+      onSelectAgent,
+      onSpawnAgent,
+      onSleepWorkspace
     },
     forwardedRef
   ): React.JSX.Element {
@@ -83,7 +94,10 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const { contextMenus, onOpenProjectContextMenu, onOpenWorkspaceContextMenu } =
       useAgentMapContextMenus({
         enabled: workspaceContextMenusEnabled,
-        onOpenChange: onWorkspaceContextMenuOpenChange
+        launchableAgentsByWorktreeId,
+        onOpenChange: onWorkspaceContextMenuOpenChange,
+        onSpawnAgent,
+        onSleepWorkspace
       })
     const { center, zoom } = viewport
     const agents = useMemo(() => agentMapAgents(layout), [layout])
@@ -368,8 +382,10 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               mapScale={mapScale}
               selectedPaneKey={selectedPaneKey}
               allowAggregation={allowAggregation}
+              launchableAgentsByWorktreeId={launchableAgentsByWorktreeId}
               nodeRefs={nodeRefs}
               onSelectAgent={onSelectAgent}
+              onSpawnAgent={onSpawnAgent}
               onOpenProjectContextMenu={onOpenProjectContextMenu}
               onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
               onAgentKeyDown={handleAgentKeyDown}

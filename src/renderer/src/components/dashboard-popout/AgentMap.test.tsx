@@ -3,7 +3,12 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardSleepWorkspaceArgs,
+  DashboardSpawnAgentArgs
+} from '../../../../shared/dashboard-snapshot'
+import type { TuiAgent } from '../../../../shared/types'
 import { AgentMap } from './AgentMap'
 import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
 
@@ -40,12 +45,18 @@ function renderMap(
     onOpenTerminal = vi.fn(),
     selectedPaneKey = null,
     compact = false,
-    workspaceContextMenusEnabled = false
+    workspaceContextMenusEnabled = false,
+    launchableAgentsByWorktreeId,
+    onSpawnAgent,
+    onSleepWorkspace
   }: {
     onOpenTerminal?: (card: DashboardCard, side: 'left' | 'right') => void
     selectedPaneKey?: string | null
     compact?: boolean
     workspaceContextMenusEnabled?: boolean
+    launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
+    onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
+    onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
   } = {}
 ): ReturnType<typeof render> {
   return render(
@@ -56,6 +67,9 @@ function renderMap(
       selectedPaneKey={selectedPaneKey}
       compact={compact}
       workspaceContextMenusEnabled={workspaceContextMenusEnabled}
+      launchableAgentsByWorktreeId={launchableAgentsByWorktreeId}
+      onSpawnAgent={onSpawnAgent}
+      onSleepWorkspace={onSleepWorkspace}
     />
   )
 }
@@ -150,6 +164,45 @@ describe('AgentMap', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Agent alpha/ })[1])
     expect(onOpenTerminal).toHaveBeenCalledWith(running, 'right')
     expect(ring).not.toHaveClass('is-open')
+  })
+
+  it('starts a new agent from the worktree details picker', () => {
+    const onSpawnAgent = vi.fn()
+    renderMap([card()], {
+      onSpawnAgent,
+      launchableAgentsByWorktreeId: { 'worktree-1': ['claude', 'codex'] }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open Agent map worktree details' }))
+
+    expect(screen.getByText('Start a new agent')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Codex/ }))
+
+    // The raw worktree id, not the host-qualified map identity.
+    expect(onSpawnAgent).toHaveBeenCalledWith({ worktreeId: 'worktree-1', agent: 'codex' })
+  })
+
+  it('explains an empty picker rather than offering nothing', () => {
+    renderMap([card()], { onSpawnAgent: vi.fn() })
+    fireEvent.click(screen.getByRole('button', { name: 'Open Agent map worktree details' }))
+
+    expect(screen.getByText('No enabled agents detected.')).toBeInTheDocument()
+  })
+
+  it('offers sleep and launch on right-click where the store menu is unavailable', async () => {
+    const onSleepWorkspace = vi.fn()
+    renderMap([card()], {
+      onSleepWorkspace,
+      onSpawnAgent: vi.fn(),
+      launchableAgentsByWorktreeId: { 'worktree-1': ['claude'] }
+    })
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Open Agent map worktree details' }), {
+      clientX: 10,
+      clientY: 10
+    })
+
+    expect(await screen.findByText('Start a new agent')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Sleep'))
+    expect(onSleepWorkspace).toHaveBeenCalledWith({ worktreeId: 'worktree-1' })
   })
 
   it('toggles worktree details from the keyboard', () => {

@@ -1,6 +1,7 @@
 import {
   DASHBOARD_MAX_LABEL_LENGTH,
   type DashboardRevealAgentArgs,
+  type DashboardSleepWorkspaceArgs,
   type DashboardSnapshot
 } from '../../shared/dashboard-snapshot'
 import { BoundedMap } from '../../shared/bounded-map'
@@ -12,6 +13,8 @@ import {
   AGENT_STATUS_MAX_FIELD_LENGTH,
   AGENT_TYPE_MAX_LENGTH
 } from '../../shared/agent-status-types'
+import { isDashboardLaunchOptions } from './dashboard-agent-launch-validation'
+export { isDashboardSpawnAgentArgs } from './dashboard-agent-launch-validation'
 
 const MAX_DASHBOARD_CARDS = 1_000
 const MAX_DASHBOARD_SUBAGENTS = 100
@@ -79,6 +82,15 @@ export function isDashboardPaneKey(value: unknown): value is string {
   return isBoundedString(value, MAX_ID_LENGTH)
 }
 
+export function isDashboardSleepWorkspaceArgs(
+  value: unknown
+): value is DashboardSleepWorkspaceArgs {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  return isBoundedString((value as Record<string, unknown>).worktreeId, MAX_ID_LENGTH)
+}
+
 export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
@@ -91,6 +103,7 @@ export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot 
     snapshot.cards.every(isDashboardCard) &&
     (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean') &&
     isDashboardFilterOptions(snapshot.filterOptions) &&
+    isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) &&
     isDashboardRepoIcons(snapshot.repoIconsByRepoId)
   )
 }
@@ -119,6 +132,7 @@ export function admitDashboardSnapshot(value: unknown): DashboardSnapshotAdmissi
     snapshot.cards.length > MAX_DASHBOARD_CARDS ||
     (snapshot.showIdle !== undefined && typeof snapshot.showIdle !== 'boolean') ||
     !isDashboardFilterOptions(snapshot.filterOptions) ||
+    !isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) ||
     !isDashboardRepoIcons(snapshot.repoIconsByRepoId)
   ) {
     return null

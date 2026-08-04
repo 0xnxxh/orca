@@ -1,6 +1,7 @@
 import type { AgentType } from './agent-status-types'
 import type { ExecutionHostId } from './execution-host'
 import type { RepoIcon } from './repo-icon'
+import type { TuiAgent } from './types'
 
 /**
  * Serializable contract for the pop-out agent dashboard. The main renderer owns
@@ -24,6 +25,10 @@ export const DASHBOARD_BUCKET_ORDER: readonly DashboardBucket[] = [
  *  the main-process validator enforces it, so an unbounded name (a long
  *  `terminal rename`, an OSC title) cannot cost the card its place on the board. */
 export const DASHBOARD_MAX_LABEL_LENGTH = 1_024
+
+/** The validator drops a whole snapshot that exceeds this, so the builder caps
+ *  the launcher's entries rather than letting a huge fleet blank the pop-out. */
+export const DASHBOARD_MAX_LAUNCH_WORKTREES = 500
 
 /** Kept distinct from `bucket` so attention cards retain their precise dot state. */
 export type DashboardCardDotState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
@@ -149,6 +154,8 @@ export type DashboardSnapshot = {
   /** Available filter dimensions are store-derived so zero-card projects and
    *  statuses remain selectable. Optional for preload-version compatibility. */
   filterOptions?: DashboardFilterOptions
+  /** Launch choices resolved on each workspace's execution host. */
+  launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   /** Icons for the repos the cards belong to. Keyed by repoId rather than
    *  carried per card: image icons are data URLs up to 400KB, and the snapshot
    *  is republished several times a second. Optional so a pop-out running
@@ -160,6 +167,7 @@ export const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
   generatedAt: 0,
   cards: [],
   filterOptions: { projects: [], workspaceStatuses: [] },
+  launchableAgentsByWorktreeId: {},
   repoIconsByRepoId: {}
 }
 
@@ -172,4 +180,15 @@ export type DashboardRevealAgentArgs = {
   executionHostId?: ExecutionHostId
   tabId: string
   leafId: string | null
+}
+
+export type DashboardSpawnAgentArgs = {
+  worktreeId: string
+  agent: TuiAgent
+}
+
+/** Puts a workspace to sleep from the dashboard: the main renderer owns the
+ *  teardown sequence, so the pop-out only names the target. */
+export type DashboardSleepWorkspaceArgs = {
+  worktreeId: string
 }

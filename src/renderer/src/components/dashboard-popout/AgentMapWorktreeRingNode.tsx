@@ -1,10 +1,13 @@
 import { memo, useState, type MutableRefObject } from 'react'
+import { Plus } from 'lucide-react'
 import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
+import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { translate } from '@/i18n/i18n'
-import { AgentIcon } from '@/lib/agent-catalog'
+import { AgentIcon, getAgentLabel } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent } from '@/lib/agent-status'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardSpawnAgentArgs } from '../../../../shared/dashboard-snapshot'
+import type { TuiAgent } from '../../../../shared/types'
 import type {
   AgentMapAgentNode,
   AgentMapProjectRing,
@@ -20,8 +23,12 @@ type AgentMapWorktreeRingNodeProps = {
   mapScale: number
   selectedPaneKey: string | null
   allowAggregation: boolean
+  /** Decided by the scene's declutter pass so labels never stack on each other. */
+  labelVisible: boolean
+  launchableAgents?: readonly TuiAgent[]
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onOpenWorkspaceContextMenu?: (
     event: React.MouseEvent<SVGCircleElement>,
     worktree: AgentMapWorktreeRing
@@ -62,9 +69,14 @@ function agentName(card: DashboardCard): string {
 function WorktreeDetails({
   project,
   worktree,
+  launchableAgents,
   onSelectAgent,
+  onSpawnAgent,
   onDone
-}: Pick<AgentMapWorktreeRingNodeProps, 'project' | 'worktree' | 'onSelectAgent'> & {
+}: Pick<
+  AgentMapWorktreeRingNodeProps,
+  'project' | 'worktree' | 'launchableAgents' | 'onSelectAgent' | 'onSpawnAgent'
+> & {
   onDone: () => void
 }): React.JSX.Element {
   const activeCount =
@@ -89,7 +101,7 @@ function WorktreeDetails({
           )}
         </span>
       </header>
-      <section className="px-2 py-2">
+      <section className={onSpawnAgent ? 'border-b border-border px-2 py-2' : 'px-2 py-2'}>
         <h3 className="mb-1 px-1 text-[11px] font-semibold text-muted-foreground">
           {translate('dashboardPopout.map.runningAgents', 'Agents')}
         </h3>
@@ -118,6 +130,38 @@ function WorktreeDetails({
           ))}
         </div>
       </section>
+      {onSpawnAgent ? (
+        <section className="px-3 py-2.5">
+          <h3 className="mb-1.5 text-[11px] font-semibold text-muted-foreground">
+            {translate('dashboardPopout.map.spawnAgent', 'Start a new agent')}
+          </h3>
+          {launchableAgents && launchableAgents.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {launchableAgents.map((agent) => (
+                <Button
+                  key={agent}
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="gap-1.5"
+                  onClick={() => {
+                    onSpawnAgent({ worktreeId: worktree.worktreeId, agent })
+                    onDone()
+                  }}
+                >
+                  <Plus className="size-3" />
+                  <AgentIcon agent={agent} size={12} />
+                  {getAgentLabel(agent)}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              {translate('dashboardPopout.map.noLaunchableAgents', 'No enabled agents detected.')}
+            </p>
+          )}
+        </section>
+      ) : null}
     </PopoverContent>
   )
 }
@@ -130,8 +174,11 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   mapScale,
   selectedPaneKey,
   allowAggregation,
+  labelVisible,
+  launchableAgents,
   nodeRefs,
   onSelectAgent,
+  onSpawnAgent,
   onOpenWorkspaceContextMenu,
   onAgentKeyDown
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
@@ -140,8 +187,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
   const screenRadius = worktree.radius * mapScale
-  const showLabel = !worktree.quiet || screenRadius >= 56
-  const showCount = screenRadius >= 80
+  const showCount = labelVisible && screenRadius >= 80
 
   return (
     <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
@@ -186,7 +232,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
           />
         </PopoverTrigger>
         <g
-          className={`agent-map-worktree-label-group${showLabel ? ' is-visible' : ''}${showCount ? ' is-count-visible' : ''}`}
+          className={`agent-map-worktree-label-group${labelVisible ? ' is-visible' : ''}${showCount ? ' is-count-visible' : ''}`}
           transform={`translate(${worktree.x} ${worktree.y - worktree.radius}) scale(${labelScale})`}
         >
           <text className="agent-map-worktree-label" y={18}>
@@ -285,7 +331,9 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
       <WorktreeDetails
         project={project}
         worktree={worktree}
+        launchableAgents={launchableAgents}
         onSelectAgent={onSelectAgent}
+        onSpawnAgent={onSpawnAgent}
         onDone={() => setDetailsOpen(false)}
       />
     </Popover>

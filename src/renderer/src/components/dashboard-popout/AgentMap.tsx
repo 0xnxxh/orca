@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
-import type { DashboardCard, DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardCardHostKind,
+  DashboardSleepWorkspaceArgs,
+  DashboardSpawnAgentArgs
+} from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import type { TuiAgent } from '../../../../shared/types'
 import { AgentMapCanvas, type AgentMapCanvasHandle } from './AgentMapCanvas'
 import { AgentMapFilterRail } from './AgentMapFilterRail'
 import {
@@ -22,9 +28,12 @@ type AgentMapProps = {
   className?: string
   compact?: boolean
   selectedPaneKey?: string | null
+  launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
   onOpenTerminal: (card: DashboardCard, side: 'left' | 'right') => void
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
+  onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
 }
 
 const HOST_FILTERS: AgentMapHostFilter[] = ['all', 'local', 'ssh', 'wsl', 'remote']
@@ -52,9 +61,12 @@ export function AgentMap({
   className,
   compact = false,
   selectedPaneKey = null,
+  launchableAgentsByWorktreeId,
   workspaceContextMenusEnabled = false,
   onWorkspaceContextMenuOpenChange,
-  onOpenTerminal
+  onOpenTerminal,
+  onSpawnAgent,
+  onSleepWorkspace
 }: AgentMapProps): React.JSX.Element {
   const canvasRef = useRef<AgentMapCanvasHandle>(null)
   const layoutCacheRef = useRef<AgentMapLayoutCache | null>(null)
@@ -196,9 +208,12 @@ export function AgentMap({
           repoIconsByRepoId={repoIconsByRepoId}
           selectedPaneKey={selectedPaneKey}
           allowAggregation
+          launchableAgentsByWorktreeId={launchableAgentsByWorktreeId}
           workspaceContextMenusEnabled={workspaceContextMenusEnabled}
           onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
           onSelectAgent={onOpenTerminal}
+          onSpawnAgent={onSpawnAgent}
+          onSleepWorkspace={onSleepWorkspace}
         />
       </div>
     </section>

@@ -1,14 +1,16 @@
-import { memo, type MutableRefObject } from 'react'
+import { memo, useMemo, type MutableRefObject } from 'react'
 import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { translate } from '@/i18n/i18n'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardSpawnAgentArgs } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import type { TuiAgent } from '../../../../shared/types'
 import type {
   AgentMapAgentNode,
   AgentMapLayout,
   AgentMapProjectRing,
   AgentMapWorktreeRing
 } from './agent-map-layout'
+import { selectVisibleAgentMapLabels } from './agent-map-label-declutter'
 import { AgentMapWorktreeRingNode } from './AgentMapWorktreeRingNode'
 
 type AgentMapSceneProps = {
@@ -19,8 +21,10 @@ type AgentMapSceneProps = {
   mapScale: number
   selectedPaneKey: string | null
   allowAggregation: boolean
+  launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onOpenProjectContextMenu?: (
     event: React.MouseEvent<SVGCircleElement>,
     project: AgentMapProjectRing
@@ -48,12 +52,18 @@ export const AgentMapScene = memo(function AgentMapScene({
   mapScale,
   selectedPaneKey,
   allowAggregation,
+  launchableAgentsByWorktreeId,
   nodeRefs,
   onSelectAgent,
+  onSpawnAgent,
   onOpenProjectContextMenu,
   onOpenWorkspaceContextMenu,
   onAgentKeyDown
 }: AgentMapSceneProps): React.JSX.Element {
+  const visibleLabels = useMemo(
+    () => selectVisibleAgentMapLabels(layout, labelScale, mapScale),
+    [labelScale, layout, mapScale]
+  )
   return (
     <>
       {layout.projects.map((project) => {
@@ -95,13 +105,15 @@ export const AgentMapScene = memo(function AgentMapScene({
                   <span className="shrink-0">{project.name.toUpperCase()}</span>
                 </div>
               </foreignObject>
-              <text className="agent-map-project-count" y={32}>
-                {translate(
-                  'dashboardPopout.map.projectCount',
-                  '{{agents}} agents · {{workspaces}} workspaces',
-                  { agents: project.agentCount, workspaces: project.worktrees.length }
-                ).toUpperCase()}
-              </text>
+              {visibleLabels.projectCountIds.has(project.id) ? (
+                <text className="agent-map-project-count" y={32}>
+                  {translate(
+                    'dashboardPopout.map.projectCount',
+                    '{{agents}} agents · {{workspaces}} workspaces',
+                    { agents: project.agentCount, workspaces: project.worktrees.length }
+                  ).toUpperCase()}
+                </text>
+              ) : null}
             </g>
             <g className="agent-map-worktree-lineage-links" aria-hidden>
               {project.worktrees.map((child) => {
@@ -128,8 +140,11 @@ export const AgentMapScene = memo(function AgentMapScene({
                 mapScale={mapScale}
                 selectedPaneKey={selectedPaneKey}
                 allowAggregation={allowAggregation}
+                labelVisible={visibleLabels.worktreeIds.has(worktree.id)}
+                launchableAgents={launchableAgentsByWorktreeId?.[worktree.worktreeId]}
                 nodeRefs={nodeRefs}
                 onSelectAgent={onSelectAgent}
+                onSpawnAgent={onSpawnAgent}
                 onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
                 onAgentKeyDown={onAgentKeyDown}
               />
