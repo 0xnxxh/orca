@@ -543,6 +543,69 @@ describe('CodexRuntimeHomeService', () => {
     }
   )
 
+  it('preserves the mirrored refresh of the account the runtime home actually holds', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    writeFileSync(
+      getSystemCodexAuthPath(),
+      createCodexAuthJson('system@example.com', 'acct-system', 'system'),
+      'utf-8'
+    )
+    const authA = createCodexAuthJson('a@example.com', 'acct-a', 'a', 1)
+    const authARefreshed = createCodexAuthJson('a@example.com', 'acct-a', 'a-refreshed', 2)
+    const homeA = createManagedAuth(testState.userDataDir, 'account-a', authA)
+    const homeB = createManagedAuth(
+      testState.userDataDir,
+      'account-b',
+      createCodexAuthJson('b@example.com', 'acct-b', 'b')
+    )
+    // A crash left account A's refreshed tokens in the mirror while settings
+    // already select account B, whose auth.json was never written.
+    writeFileSync(runtimeAuthPath, authARefreshed, 'utf-8')
+    writeFileSync(
+      getSharedRuntimeAuthProvenancePath(),
+      `${JSON.stringify({ owner: 'managed', accountId: 'account-a' })}\n`,
+      'utf-8'
+    )
+    rmSync(join(homeB, 'auth.json'), { force: true })
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          {
+            id: 'account-a',
+            email: 'a@example.com',
+            managedHomePath: homeA,
+            providerAccountId: 'acct-a',
+            workspaceLabel: null,
+            workspaceAccountId: 'acct-a',
+            createdAt: 1,
+            updatedAt: 1,
+            lastAuthenticatedAt: 1
+          },
+          {
+            id: 'account-b',
+            email: 'b@example.com',
+            managedHomePath: homeB,
+            providerAccountId: 'acct-b',
+            workspaceLabel: null,
+            workspaceAccountId: 'acct-b',
+            createdAt: 2,
+            updatedAt: 2,
+            lastAuthenticatedAt: 2
+          }
+        ],
+        activeCodexManagedAccountId: 'account-b',
+        activeCodexManagedAccountIdsByRuntime: { host: 'account-b', wsl: {} }
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(existsSync(runtimeAuthPath)).toBe(false)
+    expect(readFileSync(join(homeA, 'auth.json'), 'utf-8')).toBe(authARefreshed)
+    expect(store.getSettings().activeCodexManagedAccountIdsByRuntime?.host).toBe('account-b')
+  })
+
   it('keeps the runtime auth through the grace window while the selected account rotates', async () => {
     const runtimeAuthPath = getRuntimeCodexAuthPath()
     const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system')

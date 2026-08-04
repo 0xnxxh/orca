@@ -949,6 +949,11 @@ export class CodexRuntimeHomeService {
   // identity's credentials behind for the launch. Logged out beats logged in as
   // someone else, and fencing stops later syncs adopting the removed bytes.
   private clearRuntimeAuthForUnprovenSelection(): void {
+    // Why: a refresh Codex wrote into the mirror belongs to whoever owns those
+    // bytes; persist it to that account's home before dropping them.
+    this.readBackRefreshedTokensFromPath(this.getRuntimeAuthPath(), {
+      updateLastWrittenAuthJson: false
+    })
     rmSync(this.getRuntimeAuthPath(), { force: true })
     this.lastWrittenAuthJson = null
     this.persistSharedRuntimeAuthProvenance({ owner: 'fenced' })
