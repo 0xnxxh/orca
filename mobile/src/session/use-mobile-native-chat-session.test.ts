@@ -281,6 +281,35 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.hasMore).toBe(false)
   })
 
+  it('clears a stale cursor when a replacement omits paging metadata', async () => {
+    const sendRequest = vi.fn()
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    await act(async () =>
+      emit({
+        type: 'replacement',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`new-${index}`))
+      })
+    )
+    act(() => state?.loadEarlier())
+
+    expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
+      agent: 'claude',
+      sessionId: 'session',
+      limit: 100
+    })
+  })
+
   it('surfaces a failed older-history page and clears it on a retry', async () => {
     const sendRequest = vi
       .fn()

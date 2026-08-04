@@ -161,6 +161,11 @@ export function MobileNativeChatView({
   const bottomPad = keyboardInset > 0 ? keyboardInset + insets.bottom : insets.bottom
   const [atBottom, setAtBottom] = useState(true)
   const sendScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const keepHistoryPositionRef = useRef(Boolean(loadingEarlier))
+  if (loadingEarlier) {
+    keepHistoryPositionRef.current = true
+  }
+  const keepHistoryPosition = keepHistoryPositionRef.current
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
   useEffect(
     () => () => {
@@ -191,12 +196,17 @@ export function MobileNativeChatView({
   // we don't yank the user away while they read history. (Also fires on keyboard
   // close, which is harmless while atBottom.)
   useEffect(() => {
-    if (data.length === 0 || !atBottom) {
+    if (data.length === 0 || !atBottom || keepHistoryPositionRef.current) {
       return
     }
     const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60)
     return () => clearTimeout(t)
   }, [data.length, atBottom, keyboardInset])
+  useEffect(() => {
+    if (!loadingEarlier) {
+      keepHistoryPositionRef.current = false
+    }
+  }, [loadingEarlier])
 
   const handleSend = useCallback(
     async (text: string): Promise<boolean> => {
@@ -297,7 +307,7 @@ export function MobileNativeChatView({
               // prepend grows the list upward instead of jumping the reader.
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={() => {
-                if (data.length > 0 && atBottom) {
+                if (data.length > 0 && atBottom && !keepHistoryPosition) {
                   listRef.current?.scrollToEnd({ animated: false })
                 }
               }}

@@ -187,12 +187,14 @@ export function useMobileNativeChatSession(args: {
           // Only a genuinely fresh window resets the grown read window — an
           // overlapping reconnect replay keeps the paged-in history and limit.
           limitRef.current = INITIAL_LIMIT
+          beforeOffsetRef.current = applied.beforeOffset ?? null
+          setHasMore(applied.hasMore ?? applied.messages.length >= INITIAL_LIMIT)
         }
         setMessages(applied.messages)
-        if (applied.hasMore != null) {
+        if (!applied.windowReplaced && applied.hasMore != null) {
           setHasMore(applied.hasMore)
         }
-        if (applied.beforeOffset != null) {
+        if (!applied.windowReplaced && applied.beforeOffset != null) {
           beforeOffsetRef.current = applied.beforeOffset
         }
         if (applied.cursorInvalidated) {

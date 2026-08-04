@@ -263,7 +263,9 @@ export function useMobileNativeChatAnswerSend(args: {
         }
         return groups.length > 0
       } finally {
-        finishTurn(predecessorSafe && !sawUnknownOutcome)
+        // Any accepted key changed the live selector, so a queued replacement
+        // cannot safely apply its from-scratch key plan to that new position.
+        finishTurn(predecessorSafe && !sawUnknownOutcome && !sawAcceptedGroup)
         if (writeTurnsRef.current.get(handle) === turn) {
           writeTurnsRef.current.delete(handle)
         }

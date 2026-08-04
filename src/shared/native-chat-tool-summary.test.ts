@@ -3,8 +3,10 @@ import type { NativeChatBlock } from './native-chat-types'
 import {
   briefToolArg,
   describeToolInput,
+  formatToolInput,
   summarizeToolInput,
-  summarizeToolRun
+  summarizeToolRun,
+  toolFilePath
 } from './native-chat-tool-summary'
 
 describe('describeToolInput', () => {
@@ -18,6 +20,16 @@ describe('describeToolInput', () => {
   it('labels a command-shaped call with the command text', () => {
     expect(describeToolInput({ command: 'pnpm test', description: 'Run tests' })).toBe('pnpm test')
     expect(describeToolInput({ pattern: 'foo.*bar', glob: '*.ts' })).toBe('foo.*bar')
+  })
+
+  it('normalizes Codex JSON-string arguments for labels, details, and file links', () => {
+    expect(describeToolInput('{"cmd":"git status --short"}')).toBe('git status --short')
+    expect(formatToolInput('{"cmd":"git status --short"}')).toBe(
+      '{\n  "cmd": "git status --short"\n}'
+    )
+    expect(toolFilePath('{"file_path":"src/index.ts"}')).toBe('src/index.ts')
+    expect(briefToolArg('{"cmd":"git status --short"}')).toBe('git status --short')
+    expect(describeToolInput('{"command":["bash","-lc","make"]}')).toBe('bash -lc make')
   })
 
   it('falls back to the bounded JSON preview for other shapes', () => {

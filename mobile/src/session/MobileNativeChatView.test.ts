@@ -3,14 +3,22 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MobileNativeChatView } from './MobileNativeChatView'
 
-vi.mock('react-native', () => ({
-  ActivityIndicator: 'ActivityIndicator',
-  FlatList: 'FlatList',
-  Pressable: 'Pressable',
-  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-  Text: 'Text',
-  View: 'View'
-}))
+const { scrollToEnd } = vi.hoisted(() => ({ scrollToEnd: vi.fn() }))
+
+vi.mock('react-native', async () => {
+  const React = await import('react')
+  return {
+    ActivityIndicator: 'ActivityIndicator',
+    FlatList: React.forwardRef((props: object, ref) => {
+      React.useImperativeHandle(ref, () => ({ scrollToEnd }))
+      return React.createElement('FlatList', props)
+    }),
+    Pressable: 'Pressable',
+    StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+    Text: 'Text',
+    View: 'View'
+  }
+})
 
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
@@ -58,6 +66,7 @@ vi.mock('./MobileNativeChatComposer', async () => {
 })
 
 type Overrides = {
+  messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
@@ -84,6 +93,7 @@ describe('MobileNativeChatView', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    scrollToEnd.mockClear()
   })
 
   afterEach(() => {
@@ -111,6 +121,23 @@ describe('MobileNativeChatView', () => {
     } finally {
       restore()
     }
+  }
+
+  async function update(overrides: Overrides = {}): Promise<void> {
+    await act(async () => {
+      renderer?.update(
+        createElement(MobileNativeChatView, {
+          messages: [],
+          status: 'ready',
+          streamIdentity: 'test-stream',
+          onSend: vi.fn().mockResolvedValue(true),
+          pending: [],
+          composerText: '',
+          onComposerTextChange: vi.fn(),
+          ...overrides
+        })
+      )
+    })
   }
 
   function banners(): ReactTestInstance[] {
@@ -189,5 +216,32 @@ describe('MobileNativeChatView', () => {
     expect(onLoadEarlier).not.toHaveBeenCalled()
     await act(async () => list.props.ListHeaderComponent.props.onLoadEarlier())
     expect(onLoadEarlier).toHaveBeenCalledOnce()
+  })
+
+  it('does not defeat prepend anchoring when a short list was also at bottom', async () => {
+    vi.useFakeTimers()
+    const current = {
+      id: 'current',
+      role: 'assistant' as const,
+      blocks: [{ type: 'text' as const, text: 'current' }],
+      timestamp: 0,
+      source: 'transcript' as const
+    }
+    const older = { ...current, id: 'older', blocks: [{ type: 'text' as const, text: 'older' }] }
+    try {
+      await render({ messages: [current], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      await update({ messages: [current], hasMore: true, loadingEarlier: true })
+      await update({ messages: [older, current], hasMore: false, loadingEarlier: false })
+      const list = renderer!.root.find((node) => node.type === 'FlatList')
+      act(() => list.props.onContentSizeChange())
+      await act(async () => vi.runAllTimersAsync())
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

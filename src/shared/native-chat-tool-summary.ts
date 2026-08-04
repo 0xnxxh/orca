@@ -20,64 +20,95 @@ function truncatePreview(collapsed: string): string {
  *  argument (command/query/…), else the bounded JSON preview. Keeps raw
  *  `{"file_path":…}` JSON out of the tappable row label. */
 export function describeToolInput(input: unknown): string {
-  const path = toolFilePath(input)
+  const normalized = normalizeToolInput(input)
+  const path = toolFilePath(normalized)
   if (path) {
     return truncatePreview(path)
   }
-  if (input && typeof input === 'object') {
-    const value = input as Record<string, unknown>
+  if (normalized && typeof normalized === 'object') {
+    const value = normalized as Record<string, unknown>
     const primary =
       value.command ?? value.cmd ?? value.query ?? value.pattern ?? value.description ?? value.url
-    if (typeof primary === 'string' && primary.trim()) {
-      return summarizeToolInput(primary)
+    const primarySummary = summarizePrimaryToolArg(primary)
+    if (primarySummary) {
+      return primarySummary
     }
   }
-  return summarizeToolInput(input)
+  return summarizeToolInput(normalized)
 }
 
-/** Full, pretty-printed tool-call input for the expanded detail view. Strings
- *  pass through as-is; objects/arrays print as indented JSON so a diff-less call
- *  (e.g. a question payload) reads cleanly instead of one long minified line. */
+/** Full, pretty-printed tool-call input for the expanded detail view. Structured
+ *  JSON strings and objects print as indented JSON; other strings pass through. */
 export function formatToolInput(input: unknown): string {
-  if (input === null || input === undefined) {
+  const normalized = normalizeToolInput(input)
+  if (normalized === null || normalized === undefined) {
     return ''
   }
-  if (typeof input === 'string') {
-    return input
+  if (typeof normalized === 'string') {
+    return normalized
   }
-  if (typeof input === 'number' || typeof input === 'boolean') {
-    return String(input)
+  if (typeof normalized === 'number' || typeof normalized === 'boolean') {
+    return String(normalized)
   }
   try {
-    return JSON.stringify(input, null, 2) ?? ''
+    return JSON.stringify(normalized, null, 2) ?? ''
   } catch {
     return ''
   }
 }
 
 export function toolFilePath(input: unknown): string | null {
-  if (!input || typeof input !== 'object') {
+  const normalized = normalizeToolInput(input)
+  if (!normalized || typeof normalized !== 'object') {
     return null
   }
-  const value = input as Record<string, unknown>
+  const value = normalized as Record<string, unknown>
   const path = value.file_path ?? value.filePath ?? value.path ?? value.notebook_path
   return typeof path === 'string' && path.length > 0 ? path : null
 }
 
 export function briefToolArg(input: unknown): string {
-  if (input && typeof input === 'object') {
-    const value = input as Record<string, unknown>
+  const normalized = normalizeToolInput(input)
+  if (normalized && typeof normalized === 'object') {
+    const value = normalized as Record<string, unknown>
     const path = value.file_path ?? value.filePath ?? value.path ?? value.notebook_path
     if (typeof path === 'string' && path.length > 0) {
       const parts = path.split(/[\\/]/).filter(Boolean)
       return parts.at(-1) ?? path
     }
     const command = value.command ?? value.cmd ?? value.query ?? value.pattern
-    if (typeof command === 'string') {
-      return summarizeToolInput(command).slice(0, 28)
+    const commandSummary = summarizePrimaryToolArg(command)
+    if (commandSummary) {
+      return commandSummary.slice(0, 28)
     }
   }
-  return summarizeToolInput(input).slice(0, 28)
+  return summarizeToolInput(normalized).slice(0, 28)
+}
+
+function normalizeToolInput(input: unknown): unknown {
+  if (typeof input !== 'string') {
+    return input
+  }
+  const first = input.trimStart()[0]
+  if (first !== '{' && first !== '[') {
+    return input
+  }
+  try {
+    const parsed: unknown = JSON.parse(input)
+    return parsed !== null && typeof parsed === 'object' ? parsed : input
+  } catch {
+    return input
+  }
+}
+
+function summarizePrimaryToolArg(input: unknown): string | null {
+  if (typeof input === 'string' && input.trim()) {
+    return summarizeToolInput(input)
+  }
+  if (Array.isArray(input) && input.length > 0 && input.every((part) => typeof part === 'string')) {
+    return summarizeToolInput(input.join(' '))
+  }
+  return null
 }
 
 export function summarizeToolRun(blocks: readonly NativeChatBlock[]): string {
