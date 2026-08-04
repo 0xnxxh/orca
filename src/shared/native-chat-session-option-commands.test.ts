@@ -148,6 +148,61 @@ describe('recordNativeChatSessionOptionCommand', () => {
     expect(record.valuesByModel.opus?.fastMode).toBeUndefined()
   })
 
+  it('rejects prose that merely starts with a command template', () => {
+    // The `/model ` prefix matches this, so an unvalidated parse tracked
+    // "is a weird word" as the current model — which then rendered as the pill
+    // label and, matching no catalog model, dropped every per-model option.
+    const record = claudeRecord('sonnet')
+    expect(
+      recordNativeChatSessionOptionCommand({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
+        record,
+        command: '/model is a weird word'
+      })
+    ).toEqual({ changed: false, opensAgentPicker: false })
+    expect(record.model).toEqual({ value: 'sonnet', source: 'dispatched' })
+  })
+
+  it('rejects an option value outside the catalog choices', () => {
+    const record = claudeRecord('sonnet')
+    recordNativeChatSessionOptionCommand({
+      catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      command: '/effort of will is required'
+    })
+    expect(record.valuesByModel.sonnet?.effort).toBeUndefined()
+  })
+
+  it('tracks nothing for a multi-line paste whose first line looks like a command', () => {
+    const record = claudeRecord('opus')
+    recordNativeChatSessionOptionCommand({
+      catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      command: '/model sonnet\nplease review this'
+    })
+    expect(record.model).toEqual({ value: 'opus', source: 'dispatched' })
+  })
+
+  it('still accepts an alias, a full provider id, and extra spacing', () => {
+    for (const [command, expected] of [
+      ['/model opus', 'opus'],
+      ['/model claude-sonnet-5', 'sonnet'],
+      ['/model  sonnet', 'sonnet']
+    ] as const) {
+      const record = claudeRecord()
+      recordNativeChatSessionOptionCommand({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
+        record,
+        command
+      })
+      expect(record.model).toEqual({ value: expected, source: 'dispatched' })
+    }
+  })
+
   it('ignores unrelated commands', () => {
     const record = claudeRecord('sonnet')
     expect(

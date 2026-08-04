@@ -106,7 +106,10 @@ export function MobileNativeChatComposer({
     }
     if (trigger.kind === 'slash') {
       const commands = agent ? getVerifiedNativeChatCommands(agent) : []
-      return rankSlashCommandSuggestions(commands, trigger.query).map((command) => ({
+      // Why: Codex's catalog is 45 commands and this list is a plain ScrollView
+      // (~5 rows visible), so an uncapped `/` would mount every row and
+      // re-reconcile them on each streaming tick right above the transcript.
+      return rankSlashCommandSuggestions(commands, trigger.query, 12).map((command) => ({
         kind: 'command' as const,
         command
       }))
@@ -192,7 +195,12 @@ export function MobileNativeChatComposer({
           ))}
         </ScrollView>
       ) : null}
-      {sessionOptions ? <MobileNativeChatSessionOptionPickers {...sessionOptions} /> : null}
+      {sessionOptions ? (
+        <MobileNativeChatSessionOptionPickers
+          {...sessionOptions}
+          sendInFlight={sending || isAttaching}
+        />
+      ) : null}
       <View style={styles.bar}>
         {onAttachImage ? (
           <Pressable

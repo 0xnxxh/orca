@@ -116,6 +116,74 @@ describe('MobileNativeChatComposer', () => {
     expect(onSend).toHaveBeenCalledWith(' /clear is prose')
   })
 
+  it('locks the option pickers while a composer send is in flight', async () => {
+    // The reverse of the test below. The host spaces a send's body and its Enter
+    // ~500ms apart, so an apply tapped inside that window would be submitted as
+    // part of the user's prompt instead of running as its own command.
+    let releaseSend: ((accepted: boolean) => void) | undefined
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseSend = resolve
+        })
+    )
+    const controller = {
+      snapshot: [
+        {
+          id: 'model',
+          label: 'Model',
+          category: 'model' as const,
+          kind: {
+            type: 'select' as const,
+            choices: [
+              { value: 'sonnet', label: 'Sonnet 5' },
+              { value: 'opus', label: 'Opus 4.8' }
+            ]
+          },
+          valueSource: 'unknown' as const,
+          settable: true
+        }
+      ],
+      pendingId: null,
+      setOption: vi.fn(),
+      invokeAction: vi.fn(),
+      recordCommand: vi.fn()
+    }
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: 'run the tests',
+            onChangeText: vi.fn(),
+            onSend,
+            sessionOptions: { isWorking: false, controller }
+          })
+        )
+      })
+      const modelPill = (): { props: { accessibilityState: { disabled: boolean } } } =>
+        renderer!.root.find(
+          (node) => node.type === 'Pressable' && node.props.accessibilityLabel === 'Model, Model'
+        ) as { props: { accessibilityState: { disabled: boolean } } }
+      expect(modelPill().props.accessibilityState).toMatchObject({ disabled: false })
+      // Start the send but don't await it — it stays in flight on purpose.
+      let pressed!: Promise<void>
+      await act(async () => {
+        pressed = sendButton().props.onPress()
+        await Promise.resolve()
+      })
+      expect(onSend).toHaveBeenCalled()
+      expect(modelPill().props.accessibilityState).toMatchObject({ disabled: true })
+      await act(async () => {
+        releaseSend?.(true)
+        await pressed
+      })
+      expect(modelPill().props.accessibilityState).toMatchObject({ disabled: false })
+    } finally {
+      restore()
+    }
+  })
+
   it('blocks composer submission while a session-option command is pending', async () => {
     const onSend = vi.fn().mockResolvedValue(true)
     const restore = suppressRendererWarning()

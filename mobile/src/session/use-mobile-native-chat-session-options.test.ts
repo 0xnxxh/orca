@@ -135,6 +135,28 @@ describe('useMobileNativeChatSessionOptions', () => {
     expect(effort!.kind).toMatchObject({ currentValue: 'low' })
   })
 
+  it('does not file an option under a model that changed mid-dispatch', async () => {
+    const resolvers: ((outcome: MobileNativeChatSendOutcome) => void)[] = []
+    dispatchCommand.mockImplementation(
+      () => new Promise<MobileNativeChatSendOutcome>((resolve) => resolvers.push(resolve))
+    )
+    mount({ reportedModel: 'claude-sonnet-5' })
+    let applied!: Promise<boolean>
+    await act(async () => {
+      applied = api!.setOption('effort', 'low')
+      await Promise.resolve()
+    })
+    // A report lands while `/effort low` is still in flight and moves the model.
+    update({ reportedModel: 'claude-opus-5' })
+    await act(async () => {
+      resolvers[0]!('accepted')
+      await applied
+    })
+    // The effort must not be recorded against Opus — it was sent for Sonnet.
+    const effort = api!.snapshot.find((descriptor) => descriptor.id === 'effort')
+    expect(effort?.kind).not.toMatchObject({ currentValue: 'low' })
+  })
+
   it('does not revive a stale session-start report over a newer local pick', async () => {
     mount({ reportedModel: 'claude-sonnet-5' })
     await act(async () => {

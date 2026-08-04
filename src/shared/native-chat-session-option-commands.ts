@@ -10,6 +10,7 @@ import {
   clearTrackedSessionOption,
   flattenNativeChatSessionOptionRecord,
   isFlipOnlyMidSession,
+  matchNativeChatCatalogModelId,
   type NativeChatSessionOptionRecord
 } from './native-chat-session-option-state'
 
@@ -84,9 +85,14 @@ function recordCommandApply(args: {
   optionId: string
   midSession: CatalogMidSessionApply | undefined
   command: string
+  /** Canonicalize a parsed value, or reject it. A template's prefix also matches
+   *  prose that merely starts with it (`/model` parses `is a weird word` out of
+   *  "/model is a weird word"), and tracking that renders raw prose as the
+   *  current value — and, for the model, drops every option the model owns. */
+  canonicalize: (value: string) => string | null
   persist?: PersistSessionOption
 }): boolean {
-  const { record, optionId, midSession, command, persist } = args
+  const { record, optionId, midSession, command, canonicalize, persist } = args
   if (!midSession || midSession.kind === 'unsupported') {
     return false
   }
@@ -102,7 +108,11 @@ function recordCommandApply(args: {
   if (midSession.kind !== 'command') {
     return false
   }
-  const value = parseBuiltSessionOptionCommand(midSession.build, command)
+  const parsed = parseBuiltSessionOptionCommand(midSession.build, command)
+  if (!parsed) {
+    return false
+  }
+  const value = canonicalize(parsed)
   if (!value) {
     return false
   }
@@ -143,6 +153,15 @@ export function recordNativeChatSessionOptionCommand(args: {
     optionId: 'model',
     midSession: catalog.modelApply.midSession,
     command,
+    // A typed model can be an alias or a full provider id, so reuse the same
+    // matcher the hook reports go through rather than demanding a catalog id.
+    // Whitespace means this was never a bare command — a multi-line paste whose
+    // first line happens to read `/model sonnet` is a prompt as far as we can
+    // tell, so track nothing rather than guess. Model ids never contain spaces.
+    canonicalize: (value) =>
+      /\s/.test(value)
+        ? null
+        : matchNativeChatCatalogModelId({ ...catalog, models: [...models] }, value),
     persist
   })
   const modelId = typeof record.model?.value === 'string' ? record.model.value : null
@@ -156,6 +175,11 @@ export function recordNativeChatSessionOptionCommand(args: {
         optionId: option.id,
         midSession: option.apply.midSession,
         command,
+        canonicalize: (value) =>
+          option.kind.type === 'select' &&
+          !option.kind.choices.some((choice) => choice.value === value)
+            ? null
+            : value,
         persist
       }) || changed
   }

@@ -222,9 +222,27 @@ export function useMobileNativeChatSessionOptions(args: {
         if (!command) {
           return false
         }
+        // Baseline for detecting a hook report or typed command that lands while
+        // the dispatch is in flight — the record is shared mutable state and the
+        // report effect is not on this queue.
+        const trackedBeforeDispatch =
+          id === 'model' ? undefined : getTrackedSessionOption(record, previousModelId, id)
         const outcome = await dispatchCommand(command)
         if (outcome === 'rejected') {
           return false
+        }
+        if (id !== 'model') {
+          // Why (desktop parity): `setTrackedSessionOption` resolves the owning
+          // model when it commits, not when the command was built. If the model
+          // moved during the dispatch, committing now would file this value under
+          // the NEW model — claiming an effort the agent was never asked for.
+          const modelStill = typeof record.model?.value === 'string' ? record.model.value : null
+          if (
+            modelStill !== previousModelId ||
+            getTrackedSessionOption(record, previousModelId, id) !== trackedBeforeDispatch
+          ) {
+            return true
+          }
         }
         if (id === 'model') {
           if (typeof value === 'string' && previousModelId !== value) {
