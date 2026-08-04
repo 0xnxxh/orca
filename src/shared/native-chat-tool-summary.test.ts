@@ -162,6 +162,16 @@ describe('briefToolArg', () => {
   it('falls back to the command preview when no path is present', () => {
     expect(briefToolArg({ command: 'git status --short' })).toBe('git status --short')
   })
+
+  it('keeps a blank primary argument out of the run header', () => {
+    // Skipping a blank key must not fall through to raw JSON — the row would
+    // read `Bash {"command":""}` where it used to read `Bash`.
+    expect(briefToolArg({ command: '' })).toBe('')
+    expect(briefToolArg({ cmd: '   ' })).toBe('')
+    expect(briefToolArg({ cmd: '', file_path: '' })).toBe('')
+    const blocks: NativeChatBlock[] = [{ type: 'tool-call', name: 'Bash', input: { command: '' } }]
+    expect(summarizeToolRun(blocks)).toBe('Bash')
+  })
 })
 
 describe('summarizeToolRun', () => {

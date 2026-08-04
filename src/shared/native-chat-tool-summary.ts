@@ -74,8 +74,9 @@ export function toolFilePath(input: unknown): string | null {
     return null
   }
   const value = normalized as Record<string, unknown>
-  // A search call's `path` is the directory it scanned, not a file it opened —
-  // taking it would drop the pattern from the label and offer a link to a folder.
+  // A search call's `path` is usually the directory it scanned, so taking it as a
+  // target would label the row with the scan root and link to a folder. Costs the
+  // link on a file-scoped search; a dead link on every other search is worse.
   const directory = isSearchToolInput(value) ? undefined : value.path
   const path = value.file_path ?? value.filePath ?? directory ?? value.notebook_path
   return typeof path === 'string' && path.length > 0 ? path : null
@@ -89,9 +90,15 @@ export function briefToolArg(input: unknown): string {
       const parts = path.split(/[\\/]/).filter(Boolean)
       return parts.at(-1) ?? path
     }
-    const command = firstPrimaryToolArg(normalized as Record<string, unknown>, BRIEF_ARG_KEYS)
+    const value = normalized as Record<string, unknown>
+    const command = firstPrimaryToolArg(value, BRIEF_ARG_KEYS)
     if (command) {
       return command.slice(0, 28)
+    }
+    // A blank primary key means the call has no brief argument; falling through
+    // would stand its raw JSON in for one in the run header.
+    if (BRIEF_ARG_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+      return ''
     }
   }
   return summarizeToolInput(normalized).slice(0, 28)
