@@ -50,6 +50,26 @@ export function codexAuthMatchesManagedAccount(
   )
 }
 
+// Why: an unreadable managed home cannot be compared byte-for-byte, so only the
+// account record itself can rule that home out as the credential's owner.
+export function codexAuthCouldBelongToManagedAccount(
+  runtimeAuthContents: string,
+  account: CodexManagedAccount
+): boolean {
+  const identity = readIdentityFromAuthContents(runtimeAuthContents)
+  if (!identity) {
+    return true
+  }
+  const accountEmail = normalizeField(account.email)
+  if (accountEmail && identity.email && accountEmail !== identity.email) {
+    return false
+  }
+  return (
+    identityFieldMatches(normalizeField(account.providerAccountId), identity.providerAccountId) &&
+    identityFieldMatches(normalizeField(account.workspaceAccountId), identity.workspaceAccountId)
+  )
+}
+
 // Why: the shared mirror may still hold managed credentials; only the same
 // positively identified system account may ever be read back to ~/.codex.
 export function codexAuthMatchesSystemDefaultIdentity(
