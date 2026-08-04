@@ -6,7 +6,10 @@ import type { RpcApplicationResponsiveness } from './rpc-application-responsiven
 import type { RpcClient } from './rpc-client'
 
 export type MobileRelayRpcSession = RpcClient & {
-  getLeaseExpiresAt(): number | null
+  // The cell's attach-reservation deadline (~10s). Diagnostics only — never
+  // schedule anything from it; rotation keys off getResumeExpiresAt().
+  getAttachDeadlineAt(): number | null
+  getResumeExpiresAt(): number | null
   getResumeConfirmation(): DeviceResumeConfirmed | null
   getFailure(): Error | null
 }

@@ -164,6 +164,7 @@ function createSupervisor(
       ),
     saveHost,
     onHostUpdated,
+    onLog,
     now: Date.now,
     randomBytes: ExpoCrypto.getRandomBytes,
     setTimer: setTimeout,

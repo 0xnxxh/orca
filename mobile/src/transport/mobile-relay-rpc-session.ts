@@ -48,7 +48,8 @@ export function connectMobileRelayRpcSession(
     onDemote: (error) => fail(asError(error))
   })
   let lastConnectedAt: number | null = null
-  let leaseExpiresAt: number | null = null
+  let attachDeadlineAt: number | null = null
+  let resumeExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
   let failure: Error | null = null
   let closed = false
@@ -74,7 +75,8 @@ export function connectMobileRelayRpcSession(
         fail(new Error('relay resume credential version mismatch'))
         return
       }
-      leaseExpiresAt = hello.leaseExpiresAt
+      attachDeadlineAt = hello.leaseExpiresAt
+      resumeExpiresAt = hello.resumeExpiresAt
       publishState('handshaking')
     },
     onAuthenticated: () => void confirmResume(),
@@ -126,7 +128,8 @@ export function connectMobileRelayRpcSession(
       streams.clear()
       publishState('disconnected')
     },
-    getLeaseExpiresAt: () => leaseExpiresAt,
+    getAttachDeadlineAt: () => attachDeadlineAt,
+    getResumeExpiresAt: () => resumeExpiresAt,
     getResumeConfirmation: () => resumeConfirmation,
     getFailure: () => failure
   }
@@ -148,6 +151,7 @@ export function connectMobileRelayRpcSession(
         throw new Error('relay resume confirmation missing')
       }
       resumeConfirmation = result.resumeConfirmation
+      resumeExpiresAt = result.resumeConfirmation.resumeExpiresAt
       lastConnectedAt = Date.now()
       publishState('connected')
       controlProbe.startTimer()

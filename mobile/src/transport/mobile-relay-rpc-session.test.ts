@@ -121,7 +121,7 @@ describe('mobile relay RPC session', () => {
     })
     expect(confirmationRequest.params).not.toHaveProperty('relayDeviceId')
     expect(confirmationRequest.params).not.toHaveProperty('acceptedCredentialVersion')
-    expect(session.getLeaseExpiresAt()).toEqual(expect.any(Number))
+    expect(session.getAttachDeadlineAt()).toEqual(expect.any(Number))
   })
 
   it('does not send a strict Relay request after its budget is exhausted', async () => {

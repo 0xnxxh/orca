@@ -167,7 +167,8 @@ export function HostScreen({
   const [filters, setFilters] = useState<FilterState>({
     filterRepoIds: new Set(),
     hideSleeping: false,
-    hideDefaultBranch: false
+    hideDefaultBranch: false,
+    alwaysShowDefaultBranch: true
   })
   const [groupMode, setGroupMode] = useState<MobileGroupMode>('repo')
   const [workspaceStatuses, setWorkspaceStatuses] = useState<readonly WorkspaceStatusDefinition[]>(
@@ -198,6 +199,7 @@ export function HostScreen({
     sortMode: 'recent',
     hideSleeping: false,
     hideDefaultBranch: false,
+    alwaysShowDefaultBranch: true,
     filterRepoIds: [],
     collapsedGroups: [],
     workspaceStatuses: DEFAULT_MOBILE_WORKSPACE_STATUSES
@@ -209,6 +211,7 @@ export function HostScreen({
       sortMode,
       hideSleeping: filters.hideSleeping,
       hideDefaultBranch: filters.hideDefaultBranch,
+      alwaysShowDefaultBranch: filters.alwaysShowDefaultBranch !== false,
       filterRepoIds: [...filters.filterRepoIds],
       collapsedGroups: [...collapsedGroups],
       workspaceStatuses
@@ -225,7 +228,8 @@ export function HostScreen({
     setFilters({
       filterRepoIds: new Set(next.filterRepoIds),
       hideSleeping: next.hideSleeping,
-      hideDefaultBranch: next.hideDefaultBranch
+      hideDefaultBranch: next.hideDefaultBranch,
+      alwaysShowDefaultBranch: next.alwaysShowDefaultBranch
     })
   }, [])
 
@@ -237,6 +241,9 @@ export function HostScreen({
       if (!client) {
         return
       }
+      // alwaysShowDefaultBranchWorkspace is deliberately absent: mobile reads it
+      // but has no toggle, so echoing its local default would silently revert a
+      // desktop opt-out on the first filter tap before ui.get lands (#8873).
       const payload: WorkspaceViewSettings = {
         groupBy: groupModeToDesktop(next.groupMode),
         sortBy: next.sortMode,
