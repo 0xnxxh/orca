@@ -54,19 +54,49 @@ function pointerEvent(type: string, init: { pointerId?: number; clientX?: number
 
 describe('TabGroupSplitLayout divider drag', () => {
   let container: HTMLDivElement
-  let root: Root
+  let root: Root | null
   let handle: HTMLElement
   let firstPane: HTMLElement
   let secondPane: HTMLElement
+  let containerRect: DOMRect
+  let resizeObserverCallback: ResizeObserverCallback | null
+  const resizeObserverDisconnectMock = vi.fn()
 
   beforeEach(async () => {
     setTabGroupSplitRatioMock.mockClear()
     recordFeatureInteractionMock.mockClear()
+    resizeObserverDisconnectMock.mockClear()
+    resizeObserverCallback = null
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly callback: ResizeObserverCallback
+        private tracksSplitContainer = false
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback
+        }
+
+        observe(target: Element): void {
+          if (target === handle?.parentElement) {
+            this.tracksSplitContainer = true
+            resizeObserverCallback = this.callback
+          }
+        }
+        unobserve(): void {}
+        disconnect(): void {
+          if (this.tracksSplitContainer) {
+            resizeObserverDisconnectMock()
+          }
+        }
+      }
+    )
     container = document.createElement('div')
     document.body.appendChild(container)
-    root = createRoot(container)
+    const mountedRoot = createRoot(container)
+    root = mountedRoot
     await act(async () => {
-      root.render(
+      mountedRoot.render(
         <TabGroupSplitLayout
           layout={{
             type: 'split',
@@ -85,24 +115,32 @@ describe('TabGroupSplitLayout divider drag', () => {
     expect(handle).not.toBeNull()
     firstPane = handle.previousElementSibling as HTMLElement
     secondPane = handle.nextElementSibling as HTMLElement
-    let captured = false
+    const capturedPointers = new Set<number>()
     Object.assign(handle, {
-      setPointerCapture: () => {
-        captured = true
+      setPointerCapture: (pointerId: number) => {
+        capturedPointers.add(pointerId)
       },
-      releasePointerCapture: () => {
-        captured = false
+      releasePointerCapture: (pointerId: number) => {
+        capturedPointers.delete(pointerId)
       },
-      hasPointerCapture: () => captured
+      hasPointerCapture: (pointerId: number) => capturedPointers.has(pointerId)
     })
     const splitContainer = handle.parentElement as HTMLElement
-    splitContainer.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1000, height: 500, right: 1000, bottom: 500 }) as DOMRect
+    containerRect = {
+      left: 0,
+      top: 0,
+      width: 1000,
+      height: 500,
+      right: 1000,
+      bottom: 500
+    } as DOMRect
+    splitContainer.getBoundingClientRect = vi.fn(() => containerRect)
   })
 
   afterEach(() => {
-    act(() => root.unmount())
+    act(() => root?.unmount())
     container.remove()
+    vi.unstubAllGlobals()
   })
 
   it('writes pane styles per move and commits the store once on release', async () => {
@@ -144,5 +182,65 @@ describe('TabGroupSplitLayout divider drag', () => {
     })
     expect(setTabGroupSplitRatioMock).toHaveBeenCalledTimes(1)
     expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.15)
+  })
+
+  it('refreshes drag geometry only when the split container resizes', async () => {
+    const getRectMock = handle.parentElement?.getBoundingClientRect as ReturnType<typeof vi.fn>
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 250 }))
+    })
+    expect(firstPane.style.flex).toBe('0.25 1 0%')
+    expect(getRectMock).toHaveBeenCalledOnce()
+
+    containerRect = { ...containerRect, width: 500, right: 500 } as DOMRect
+    resizeObserverCallback?.([], {} as ResizeObserver)
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 250 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 1 }))
+    })
+
+    expect(firstPane.style.flex).toBe('0.5 1 0%')
+    expect(getRectMock).toHaveBeenCalledTimes(2)
+    expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.5)
+    expect(resizeObserverDisconnectMock).toHaveBeenCalledOnce()
+  })
+
+  it('ignores events from pointers that do not own the drag', async () => {
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 2, clientX: 300 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 2 }))
+    })
+    expect(firstPane.style.flex).toBe('0.5 1 0%')
+    expect(setTabGroupSplitRatioMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 350 }))
+      handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 1 }))
+    })
+    expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.35)
+  })
+
+  it.each(['pointercancel', 'lostpointercapture'])('commits on %s', async (eventType) => {
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 400 }))
+      handle.dispatchEvent(pointerEvent(eventType, { pointerId: 1 }))
+    })
+    expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.4)
+    expect(resizeObserverDisconnectMock).toHaveBeenCalledOnce()
+  })
+
+  it('commits and releases drag resources on unmount', async () => {
+    await act(async () => {
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 450 }))
+    })
+    act(() => root?.unmount())
+    root = null
+
+    expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.45)
+    expect(resizeObserverDisconnectMock).toHaveBeenCalledOnce()
   })
 })

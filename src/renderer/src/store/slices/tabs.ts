@@ -1790,7 +1790,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
     set((state) => {
       const currentLayout = state.layoutByWorktree[worktreeId]
       if (!currentLayout) {
-        return {}
+        return state
       }
       // Why: an unchanged ratio must not mint fresh root state — every store
       // subscriber wakes on the new reference (STA-3328).
@@ -1801,12 +1801,8 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
             ? targetNode[segment]
             : undefined
       }
-      if (
-        targetNode &&
-        targetNode.type === 'split' &&
-        Math.abs((targetNode.ratio ?? 0.5) - ratio) < 0.0005
-      ) {
-        return {}
+      if (!targetNode || targetNode.type !== 'split' || (targetNode.ratio ?? 0.5) === ratio) {
+        return state
       }
       return {
         layoutByWorktree: {

@@ -48,13 +48,16 @@ function ResizeHandle({
       onResizeStart()
       setDragging(true)
       handle.setPointerCapture(event.pointerId)
-      // Why: measure once — the container can't resize mid-drag, and per-move
-      // getBoundingClientRect forces a reflow against freshly written styles.
-      const rect = container.getBoundingClientRect()
+      // Why: measure outside pointermove so pane writes never force a readback.
+      let rect = container.getBoundingClientRect()
+      const resizeObserver = new ResizeObserver(() => {
+        rect = container.getBoundingClientRect()
+      })
+      resizeObserver.observe(container)
       let draggedRatio: number | null = null
 
       const onPointerMove = (moveEvent: PointerEvent): void => {
-        if (!handle.hasPointerCapture(event.pointerId)) {
+        if (moveEvent.pointerId !== event.pointerId || !handle.hasPointerCapture(event.pointerId)) {
           return
         }
         const ratio = isHorizontal
@@ -75,6 +78,7 @@ function ResizeHandle({
           return
         }
         cleaned = true
+        resizeObserver.disconnect()
         if (draggedRatio !== null) {
           onRatioChange(draggedRatio)
         }
@@ -97,16 +101,22 @@ function ResizeHandle({
         }
       }
 
-      const onPointerUp = (): void => {
-        cleanup()
+      const onPointerUp = (upEvent: PointerEvent): void => {
+        if (upEvent.pointerId === event.pointerId) {
+          cleanup()
+        }
       }
 
-      const onPointerCancel = (): void => {
-        cleanup()
+      const onPointerCancel = (cancelEvent: PointerEvent): void => {
+        if (cancelEvent.pointerId === event.pointerId) {
+          cleanup()
+        }
       }
 
-      const onLostPointerCapture = (): void => {
-        cleanup()
+      const onLostPointerCapture = (lostEvent: PointerEvent): void => {
+        if (lostEvent.pointerId === event.pointerId) {
+          cleanup()
+        }
       }
 
       handle.addEventListener('pointermove', onPointerMove)

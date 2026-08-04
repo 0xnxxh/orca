@@ -962,18 +962,23 @@ describe('TabsSlice', () => {
           }
         }
       })
-      const before = store.getState().layoutByWorktree
+      const beforeState = store.getState()
+      const beforeLayout = beforeState.layoutByWorktree
+      const subscriber = vi.fn()
+      const unsubscribe = store.subscribe(subscriber)
 
       // Why: an unchanged commit must not mint fresh root state — every store
       // subscriber wakes on the new reference (STA-3328).
       store.getState().setTabGroupSplitRatio(WT, '', 0.5)
-      expect(store.getState().layoutByWorktree).toBe(before)
+      expect(store.getState()).toBe(beforeState)
+      expect(store.getState().layoutByWorktree).toBe(beforeLayout)
+      expect(subscriber).not.toHaveBeenCalled()
 
       store.getState().setTabGroupSplitRatio(WT, '', 0.5004)
-      expect(store.getState().layoutByWorktree).toBe(before)
-
-      store.getState().setTabGroupSplitRatio(WT, '', 0.7)
-      expect(store.getState().layoutByWorktree).not.toBe(before)
+      expect(store.getState().layoutByWorktree).not.toBe(beforeLayout)
+      expect(subscriber).toHaveBeenCalledOnce()
+      expect((store.getState().layoutByWorktree[WT] as { ratio: number }).ratio).toBe(0.5004)
+      unsubscribe()
     })
   })
 
