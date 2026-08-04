@@ -9,6 +9,7 @@ import {
   findGrokChatHistoryBySessionId,
   resolveGrokSessionsDir
 } from '../../shared/grok-session-paths'
+import { toHostReadableTranscriptPath, wslCodexSessionsDirs } from './host-readable-transcript-path'
 
 // Why: these mirror the path constants in ai-vault/session-scanner.ts. Reads
 // run in the main process against the runtime's own home directory; over SSH
@@ -24,11 +25,14 @@ function claudeProjectsDir(): string {
 // `<managed home>/sessions`, NOT `~/.codex/sessions`. Search the managed home
 // first (that's where this main process's Codex sessions actually live), then
 // fall back to CODEX_HOME/~/.codex so a non-Orca Codex transcript still resolves.
+// On Windows also search each WSL distro's managed + system Codex homes last, so
+// a WSL-hosted session still resolves when the hook path is Linux-only (#10326).
 // Duplicates are filtered so a managed-home symlink to ~/.codex isn't scanned twice.
-function codexSessionsDirs(): string[] {
+async function codexSessionsDirs(): Promise<string[]> {
   const candidates = [
     join(getOrcaManagedCodexHomePath(), 'sessions'),
-    join(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'), 'sessions')
+    join(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'), 'sessions'),
+    ...(await wslCodexSessionsDirs())
   ]
   return candidates.filter((dir, index) => candidates.indexOf(dir) === index)
 }
@@ -72,12 +76,15 @@ export async function resolveSessionFilePath(
     return null
   }
   // Why: the hook's transcript_path is the exact file the agent is writing, so it
-  // beats reconstructing a path from the session id. Guard with existsSync so a
-  // stale/remote path falls through to the id-based search rather than returning
-  // a non-existent file.
+  // beats reconstructing a path from the session id. Route it through the host
+  // readability check so a WSL guest path becomes an openable UNC on Windows;
+  // stale/missing paths fall through to the id-based search.
   const hookPath = options.transcriptPath?.trim()
-  if (hookPath && extname(hookPath) === '.jsonl' && existsSync(hookPath)) {
-    return hookPath
+  if (hookPath && extname(hookPath) === '.jsonl') {
+    const hostReadable = await toHostReadableTranscriptPath(hookPath)
+    if (hostReadable) {
+      return hostReadable
+    }
   }
 
   const trimmedId = sessionId.trim()
@@ -89,7 +96,10 @@ export async function resolveSessionFilePath(
     return resolveClaudeSessionFile(trimmedId, options.claudeProjectsDir ?? claudeProjectsDir())
   }
   if (transcriptAgent === 'codex') {
-    return resolveCodexSessionFile(trimmedId, options.codexSessionsDirs ?? codexSessionsDirs())
+    return resolveCodexSessionFile(
+      trimmedId,
+      options.codexSessionsDirs ?? (await codexSessionsDirs())
+    )
   }
   if (transcriptAgent === 'grok') {
     return resolveGrokSessionFile(trimmedId, options.grokSessionsDir ?? grokSessionsDir())
