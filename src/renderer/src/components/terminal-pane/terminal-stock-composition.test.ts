@@ -34,11 +34,41 @@ function keydown(
   textarea: HTMLTextAreaElement,
   key: string,
   keyCode: number,
-  isComposing = false
+  isComposing = false,
+  code = ''
 ): void {
-  const event = new KeyboardEvent('keydown', { bubbles: true, isComposing, key })
+  const event = new KeyboardEvent('keydown', { bubbles: true, code, isComposing, key })
   Object.defineProperty(event, 'keyCode', { value: keyCode })
   textarea.dispatchEvent(event)
+}
+
+function keyup(textarea: HTMLTextAreaElement, key: string, code: string, keyCode: number): void {
+  const event = new KeyboardEvent('keyup', { bubbles: true, code, key })
+  Object.defineProperty(event, 'keyCode', { value: keyCode })
+  textarea.dispatchEvent(event)
+}
+
+function compositionText(textarea: HTMLTextAreaElement, data: string): void {
+  textarea.setSelectionRange(0, textarea.value.length)
+  composition(textarea, 'compositionupdate', data)
+  textarea.dispatchEvent(
+    new InputEvent('beforeinput', {
+      bubbles: true,
+      data,
+      inputType: 'insertCompositionText',
+      isComposing: true
+    })
+  )
+  textarea.value = data
+  textarea.setSelectionRange(data.length, data.length)
+  textarea.dispatchEvent(
+    new InputEvent('input', {
+      bubbles: true,
+      data,
+      inputType: 'insertCompositionText',
+      isComposing: true
+    })
+  )
 }
 
 function nextTask(): Promise<void> {
@@ -80,9 +110,10 @@ describe('stock xterm composition ownership', () => {
     const { emitted, terminal, textarea } = openTerminal()
     keydown(textarea, 'a', 65)
     keydown(textarea, 'b', 66)
+    keydown(textarea, '1', 49, false, 'Digit1')
     keydown(textarea, 'Enter', 13)
 
-    expect(emitted.join('')).toBe('ab\r')
+    expect(emitted.join('')).toBe('ab1\r')
     terminal.dispose()
   })
 
@@ -233,6 +264,29 @@ describe('stock xterm composition ownership', () => {
     await nextTask()
 
     expect(emitted.join('')).toBe('한')
+    terminal.dispose()
+  })
+
+  it('keeps the recorded IBus number candidate', () => {
+    const { emitted, terminal, textarea } = openTerminal()
+    keydown(textarea, 'Process', 229, false, 'KeyZ')
+    composition(textarea, 'compositionstart')
+    compositionText(textarea, '在')
+    keydown(textarea, 'Process', 229, true, 'KeyH')
+    compositionText(textarea, '中')
+    keydown(textarea, 'Process', 229, true, 'KeyO')
+    compositionText(textarea, '中哦')
+    keydown(textarea, 'Process', 229, true, 'KeyN')
+    compositionText(textarea, '中')
+    keydown(textarea, 'Process', 229, true, 'KeyG')
+    keydown(textarea, 'Process', 229, true, 'Digit1')
+    compositionText(textarea, '中')
+    composition(textarea, 'compositionend', '中')
+    keyup(textarea, '1', 'Digit1', 49)
+    keydown(textarea, 'Enter', 13, false, 'Enter')
+    keyup(textarea, 'Enter', 'Enter', 13)
+
+    expect(emitted.join('')).toBe('中\r')
     terminal.dispose()
   })
 })
