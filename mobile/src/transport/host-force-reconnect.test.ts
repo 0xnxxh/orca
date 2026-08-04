@@ -51,7 +51,7 @@ describe('HostForceReconnectCoordinator', () => {
     await expect(reconnect).resolves.toBeUndefined()
   })
 
-  it('retires a replacement that fails RPC health verification', async () => {
+  it('keeps a replacement that fails RPC health verification', async () => {
     const close = vi.fn()
     const unsubState = vi.fn()
     const client = {
@@ -85,9 +85,11 @@ describe('HostForceReconnectCoordinator', () => {
       })
     ).rejects.toThrow('health failed')
 
-    expect(unsubState).toHaveBeenCalledOnce()
-    expect(close).toHaveBeenCalledOnce()
-    expect(removeEntry).toHaveBeenCalledWith(fresh)
-    expect(current).toBeUndefined()
+    // Regression: retiring the replacement left the host with no client and no
+    // retry loop, so a failed Force Reconnect was unrecoverable in-app.
+    expect(unsubState).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
+    expect(removeEntry).not.toHaveBeenCalledWith(fresh)
+    expect(current).toBe(fresh)
   })
 })

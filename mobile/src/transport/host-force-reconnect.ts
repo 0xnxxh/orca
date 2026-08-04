@@ -109,8 +109,10 @@ export class HostForceReconnectCoordinator {
     try {
       await verifyForceReconnectRpcHealth(fresh.client, deadline)
     } catch (error) {
+      // Why: report the unhealthy verdict but keep the replacement — retiring it
+      // strands the host with no client, no retry loop, and a 'Disconnected'
+      // verdict that hides the Reconnect button the user needs to try again.
       if (!this.wasCancelled(operation.hostId, generation)) {
-        this.retireCurrentEntry(operation, fresh)
         throw error
       }
     }

@@ -739,6 +739,32 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('keeps a live replacement bound when Force Reconnect reports it unhealthy', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connected')
+    fresh.sendRequest = vi.fn(async () => {
+      throw new Error('Application RPC channel is still not responding')
+    })
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    await act(async () => {
+      await expect(harness.forceReconnect(HOST.id)).rejects.toThrow(
+        'Application RPC channel is still not responding'
+      )
+    })
+
+    // Regression: a rejected health check used to close and drop the
+    // replacement, leaving a 'Disconnected' host with no retry loop and no
+    // Reconnect affordance — the failure had to stay recoverable in-app.
+    expect(fresh.closeMock).not.toHaveBeenCalled()
+    expect(harness.hook.client).toBe(fresh)
+    expect(harness.hook.state).toBe('connected')
+
+    harness.unmount()
+  })
+
   it('reports disconnected instead of hanging when the host id is unknown', async () => {
     loadHostsMock.mockResolvedValue([])
 
