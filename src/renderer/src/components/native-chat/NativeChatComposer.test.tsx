@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>
   } | null,
   createClaudeModelSwitchConfirmationObserver: vi.fn(),
+  discoverCommitMessageModels: vi.fn(),
   getMainBufferSnapshot: vi.fn(),
   sendHandle: { cancel: vi.fn(), settleAfterMs: 500 },
   sendNativeChatMessage: vi.fn(),
@@ -153,12 +154,36 @@ describe('NativeChatComposer', () => {
       return observer
     })
     mocks.getMainBufferSnapshot.mockResolvedValue(null)
+    mocks.discoverCommitMessageModels.mockResolvedValue({
+      success: true,
+      catalogOrigin: 'probe',
+      models: [
+        {
+          id: 'opus',
+          label: 'Opus',
+          thinkingLevels: [
+            { id: 'medium', label: 'Medium' },
+            { id: 'high', label: 'High' }
+          ]
+        },
+        {
+          id: 'sonnet',
+          label: 'Sonnet',
+          thinkingLevels: [
+            { id: 'medium', label: 'Medium' },
+            { id: 'high', label: 'High' }
+          ]
+        },
+        { id: 'fable', label: 'Fable' }
+      ]
+    })
     mocks.sendNativeChatMessage.mockReturnValue(mocks.sendHandle)
     mocks.sendNativeChatMessageVerified.mockResolvedValue(true)
     mocks.sendHandle.settleAfterMs = 500
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
+        git: { discoverCommitMessageModels: mocks.discoverCommitMessageModels },
         pty: { getMainBufferSnapshot: mocks.getMainBufferSnapshot },
         ui: { onFileDrop: () => vi.fn() }
       }

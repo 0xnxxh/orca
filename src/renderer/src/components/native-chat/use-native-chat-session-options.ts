@@ -54,12 +54,12 @@ export function useNativeChatSessionOptions(args: {
       agent,
       scopeKey,
       ...(targetPtyId ? { fallbackScopeKey: terminalTabId } : {}),
-      ...(discoveryContext
-        ? {
-            initialModels:
-              readNativeChatEnrichedModels(agent, discoveryContext.hostKey) ?? undefined
-          }
-        : {}),
+      initialModels: discoveryContext
+        ? (readNativeChatEnrichedModels(agent, discoveryContext.hostKey) ??
+          (agent === 'claude' ? [] : undefined))
+        : agent === 'claude'
+          ? []
+          : undefined,
       mode: targetPtyId ? 'live' : 'draft',
       reportedValues,
       dispatchCommand,

@@ -75,6 +75,7 @@ export type DiscoverCommitMessageModelsResult =
       capability: CommitMessageAgentCapability
       models: CommitMessageModelCapability[]
       defaultModelId: string
+      catalogOrigin: 'probe' | 'spec'
     }
   | { success: false; error: string }
 
@@ -229,7 +230,8 @@ function userFacingUnsafeWindowsBatchArgs(label: string): string {
 function toModelDiscoveryCapability(
   spec: NonNullable<ReturnType<typeof getCommitMessageAgentSpec>>,
   models = spec.models,
-  defaultModelId = spec.defaultModelId
+  defaultModelId = spec.defaultModelId,
+  catalogOrigin: 'probe' | 'spec' = 'spec'
 ): Extract<DiscoverCommitMessageModelsResult, { success: true }> {
   return {
     success: true,
@@ -241,7 +243,8 @@ function toModelDiscoveryCapability(
       models
     },
     models,
-    defaultModelId
+    defaultModelId,
+    catalogOrigin
   }
 }
 
@@ -281,7 +284,7 @@ function finalizeModelDiscoveryOutput(
   const defaultModelId = models.some((model) => model.id === spec.defaultModelId)
     ? spec.defaultModelId
     : models[0].id
-  return toModelDiscoveryCapability(spec, models, defaultModelId)
+  return toModelDiscoveryCapability(spec, models, defaultModelId, 'probe')
 }
 
 function planModelDiscovery(

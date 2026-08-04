@@ -311,6 +311,7 @@ describe('discoverCommitMessageModelsLocal', () => {
 
     expect(result).toMatchObject({
       success: true,
+      catalogOrigin: 'spec',
       defaultModelId: 'smart'
     })
     expect(spawnMock).not.toHaveBeenCalled()
@@ -390,6 +391,7 @@ describe('discoverCommitMessageModelsLocal', () => {
 
     await expect(pending).resolves.toMatchObject({
       success: true,
+      catalogOrigin: 'probe',
       defaultModelId: 'sonnet',
       models: [
         { id: 'opus[1m]', label: 'Opus (1M context)' },
@@ -429,6 +431,7 @@ describe('discoverCommitMessageModelsLocal', () => {
 
     await expect(pending).resolves.toMatchObject({
       success: true,
+      catalogOrigin: 'spec',
       defaultModelId: 'sonnet',
       models: [{ id: 'haiku' }, { id: 'sonnet' }, { id: 'opus' }]
     })

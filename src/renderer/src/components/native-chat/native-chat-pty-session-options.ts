@@ -69,7 +69,8 @@ export function createNativeChatPtySessionOptions(
     catalog,
     models,
     record,
-    mode: args.mode
+    mode: args.mode,
+    includeTrackedModelChoice: args.agent !== 'claude'
   })
   const listeners = new Set<(value: SessionOptionDescriptor[]) => void>()
 
@@ -79,7 +80,8 @@ export function createNativeChatPtySessionOptions(
       catalog,
       models,
       record,
-      mode: args.mode
+      mode: args.mode,
+      includeTrackedModelChoice: args.agent !== 'claude'
     })
     for (const listener of listeners) {
       listener(snapshot)

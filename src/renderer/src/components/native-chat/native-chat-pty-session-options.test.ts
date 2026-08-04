@@ -9,18 +9,15 @@ import { createNativeChatPtySessionOptions } from './native-chat-pty-session-opt
 describe('native chat PTY session options', () => {
   beforeEach(() => clearNativeChatSessionOptionCacheForTests())
 
-  it('starts attached sessions unknown and hides model-scoped options', () => {
+  it('hides the model picker until the host catalog is known', () => {
     const surface = createNativeChatPtySessionOptions({
       agent: 'claude',
       scopeKey: 'pty-1',
+      initialModels: [],
       mode: 'live',
       dispatchCommand: vi.fn()
     })!
-    expect(surface.getSnapshot()).toHaveLength(1)
-    expect(surface.getSnapshot()[0]).toMatchObject({
-      id: 'model',
-      valueSource: 'unknown'
-    })
+    expect(surface.getSnapshot()).toEqual([])
   })
 
   it('uses model and effort reported by the live Claude terminal', () => {
@@ -586,7 +583,7 @@ describe('native chat PTY session options', () => {
     expect(surface.getSnapshot()[0]).toMatchObject({ valueSource: 'unknown' })
   })
 
-  it('passes an unknown persisted model through as a literal choice', () => {
+  it('tracks an unavailable Claude model without advertising it as a choice', () => {
     seedNativeChatAppliedSessionOptions('pty-1', 'claude', {
       model: 'future-model'
     })
@@ -599,7 +596,7 @@ describe('native chat PTY session options', () => {
     const model = surface.getSnapshot()[0]
     expect(model.kind).toMatchObject({
       currentValue: 'future-model',
-      choices: expect.arrayContaining([{ value: 'future-model', label: 'future-model' }])
+      choices: expect.not.arrayContaining([{ value: 'future-model', label: 'future-model' }])
     })
   })
 

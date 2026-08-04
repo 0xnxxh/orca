@@ -73,7 +73,11 @@ export async function discoverNativeChatCatalogModels(
   context: RuntimeGitContext
 ): Promise<CatalogModel[] | null> {
   const result = await discoverRuntimeCommitMessageModels(context, agent)
-  if (!result.success || result.models.length === 0) {
+  if (
+    !result.success ||
+    result.models.length === 0 ||
+    (agent === 'claude' && result.catalogOrigin !== 'probe')
+  ) {
     return null
   }
   return result.models.map((model) => ({

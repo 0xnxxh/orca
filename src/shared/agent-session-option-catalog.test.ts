@@ -36,15 +36,6 @@ describe('agent session option catalog', () => {
     })
   })
 
-  it('can replace fallback options with discovered capabilities', () => {
-    const seed = getAgentSessionOptionCatalog('claude')!.models
-    const merged = mergeCatalogModels(seed, [{ id: 'sonnet', label: 'Sonnet', options: [] }], {
-      preferDiscoveredOptions: true
-    })
-
-    expect(merged.find((model) => model.id === 'sonnet')?.options).toEqual([])
-  })
-
   it('labels Claude seed models by alias family so no host is mislabeled', () => {
     const catalog = getAgentSessionOptionCatalog('claude')!
     expect(catalog.models.map(({ id, label }) => ({ id, label }))).toEqual([

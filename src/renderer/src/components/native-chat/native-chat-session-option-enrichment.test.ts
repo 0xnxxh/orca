@@ -97,9 +97,10 @@ describe('native chat session option enrichment', () => {
     )
   })
 
-  it('overlays discovered Claude variants on the alias seed per host', async () => {
+  it('uses only discovered Claude rows and capabilities per host', async () => {
     mocks.discoverRuntimeCommitMessageModels.mockResolvedValue({
       success: true,
+      catalogOrigin: 'probe',
       models: [
         {
           id: 'opus[1m]',
@@ -133,13 +134,13 @@ describe('native chat session option enrichment', () => {
     await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce())
 
     const models = readNativeChatEnrichedModels('claude', 'ssh:host')!
-    expect(models.map(({ id }) => id)).toEqual(['fable', 'opus', 'sonnet', 'haiku', 'opus[1m]'])
+    expect(models.map(({ id }) => id)).toEqual(['opus[1m]', 'sonnet'])
     const sonnetEffort = models.find(({ id }) => id === 'sonnet')?.options[0]
     expect(sonnetEffort?.kind).toMatchObject({
       type: 'select',
       choices: [{ value: 'medium', label: 'Medium' }]
     })
-    expect(models.at(-1)).toMatchObject({
+    expect(models.find(({ id }) => id === 'opus[1m]')).toMatchObject({
       id: 'opus[1m]',
       description: 'Opus 5 with 1M context',
       options: [
@@ -156,5 +157,21 @@ describe('native chat session option enrichment', () => {
       ]
     })
     expect(readNativeChatEnrichedModels('claude', 'local')).toBeNull()
+  })
+
+  it('does not advertise the Claude spec fallback when probing is unavailable', async () => {
+    mocks.discoverRuntimeCommitMessageModels.mockResolvedValue({
+      success: true,
+      catalogOrigin: 'spec',
+      models: [{ id: 'sonnet', label: 'Sonnet' }]
+    })
+
+    await expect(
+      discoverNativeChatCatalogModels('claude', {
+        settings: {},
+        worktreeId: 'repo::/worktree',
+        worktreePath: '/worktree'
+      })
+    ).resolves.toBeNull()
   })
 })
