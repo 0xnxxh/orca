@@ -151,6 +151,10 @@ export function MobileNativeChatView({
   const bottomPad = keyboardInset > 0 ? keyboardInset + insets.bottom : insets.bottom
   const [atBottom, setAtBottom] = useState(true)
   const sendScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // A short transcript leaves the reader both at the top and `atBottom`, so the
+  // tail-follow paths would scroll away the history that just paged in.
+  const keepHistoryPositionRef = useRef(Boolean(loadingEarlier))
+  const keepHistoryPosition = keepHistoryPositionRef.current
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
   useEffect(
     () => () => {
@@ -176,12 +180,17 @@ export function MobileNativeChatView({
   // we don't yank the user away while they read history. (Also fires on keyboard
   // close, which is harmless while atBottom.)
   useEffect(() => {
-    if (data.length === 0 || !atBottom) {
+    if (data.length === 0 || !atBottom || keepHistoryPositionRef.current) {
       return
     }
     const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60)
     return () => clearTimeout(t)
   }, [data.length, atBottom, keyboardInset])
+  // Must stay below the tail-follow effect: the prepend lands in the same commit
+  // that clears `loadingEarlier`, and that effect has to still see the hold.
+  useEffect(() => {
+    keepHistoryPositionRef.current = Boolean(loadingEarlier)
+  }, [loadingEarlier])
 
   const handleSend = useCallback(
     async (text: string): Promise<boolean> => {
@@ -274,8 +283,12 @@ export function MobileNativeChatView({
               contentContainerStyle={styles.listContent}
               onScroll={onScroll}
               scrollEventThrottle={32}
+              // Grow the list upward on a loadEarlier prepend instead of jumping
+              // the reader. Index 0 is the first message — FlatList accounts for
+              // the load-earlier header offset internally.
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={() => {
-                if (data.length > 0 && atBottom) {
+                if (data.length > 0 && atBottom && !keepHistoryPosition) {
                   listRef.current?.scrollToEnd({ animated: false })
                 }
               }}
