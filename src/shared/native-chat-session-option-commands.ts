@@ -161,7 +161,11 @@ export function recordNativeChatSessionOptionCommand(args: {
     canonicalize: (value) =>
       /\s/.test(value)
         ? null
-        : matchNativeChatCatalogModelId({ ...catalog, models: [...models] }, value),
+        : // Fall back to the seed: an alias this host's CLI no longer lists is
+          // still a legitimate thing to type, and callers reconcile it back into
+          // the list (withTrackedNativeChatModel) rather than blanking the row.
+          (matchNativeChatCatalogModelId({ ...catalog, models: [...models] }, value) ??
+          matchNativeChatCatalogModelId(catalog, value)),
     persist
   })
   const modelId = typeof record.model?.value === 'string' ? record.model.value : null

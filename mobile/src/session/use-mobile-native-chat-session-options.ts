@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
+import {
+  getAgentSessionOptionCatalog,
+  type AgentSessionOptionCatalog,
+  type CatalogModel
+} from '../../../src/shared/agent-session-option-catalog'
 import type {
   SessionOptionDescriptor,
   SessionOptionValue
@@ -9,7 +13,10 @@ import {
   buildNativeChatSessionOptionCommand,
   recordNativeChatSessionOptionCommand
 } from '../../../src/shared/native-chat-session-option-commands'
-import { buildNativeChatSessionOptionSnapshot } from '../../../src/shared/native-chat-session-option-snapshot'
+import {
+  buildNativeChatSessionOptionSnapshot,
+  withTrackedNativeChatModel
+} from '../../../src/shared/native-chat-session-option-snapshot'
 import {
   applyNativeChatReportedSessionOptions,
   clearNativeChatSessionModel,
@@ -72,6 +79,15 @@ export function clearMobileSessionOptionRecordsForTests(): void {
 }
 
 const EMPTY_SNAPSHOT: SessionOptionDescriptor[] = []
+
+/** The model list every consumer must see: the catalog's, plus the tracked model
+ *  when the catalog no longer lists it. Desktop reconciles identically. */
+function activeModels(
+  catalog: AgentSessionOptionCatalog,
+  record: NativeChatSessionOptionRecord
+): CatalogModel[] {
+  return withTrackedNativeChatModel(catalog, catalog.models, record)
+}
 
 export function useMobileNativeChatSessionOptions(args: {
   agent: string | null
@@ -137,10 +153,13 @@ export function useMobileNativeChatSessionOptions(args: {
     }
     // Why: `version` invalidates this memo after in-place record mutations.
     void version
+    const record = getScopedRecord(scopeKey, agent)
     return buildNativeChatSessionOptionSnapshot({
       catalog,
-      models: catalog.models,
-      record: getScopedRecord(scopeKey, agent),
+      // The snapshot no longer self-heals an unlisted tracked model; every caller
+      // reconciles it in, so a value the seed dropped keeps its row and options.
+      models: activeModels(catalog, record),
+      record,
       mode: 'live',
       modelLabel: 'Model'
     })
@@ -192,7 +211,7 @@ export function useMobileNativeChatSessionOptions(args: {
         const apply =
           id === 'model'
             ? catalog.modelApply
-            : catalog.models
+            : activeModels(catalog, record)
                 .find((model) => model.id === previousModelId)
                 ?.options.find((option) => option.id === id)?.apply
         if (!apply || apply.midSession?.kind === 'agent-picker') {
@@ -216,7 +235,7 @@ export function useMobileNativeChatSessionOptions(args: {
           apply,
           modelId: previousModelId,
           catalog,
-          models: catalog.models,
+          models: activeModels(catalog, record),
           record
         })
         if (!command) {
@@ -270,7 +289,7 @@ export function useMobileNativeChatSessionOptions(args: {
         const apply =
           id === 'model'
             ? catalog.modelApply
-            : catalog.models
+            : activeModels(catalog, record)
                 .find((model) => model.id === modelId)
                 ?.options.find((option) => option.id === id)?.apply
         const midSession = apply?.midSession
@@ -302,7 +321,7 @@ export function useMobileNativeChatSessionOptions(args: {
       const record = getScopedRecord(scopeKey, agent)
       const result = recordNativeChatSessionOptionCommand({
         catalog,
-        models: catalog.models,
+        models: activeModels(catalog, record),
         record,
         command
       })

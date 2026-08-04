@@ -17,7 +17,6 @@ import {
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
 import { detectAgentPermission } from './mobile-native-chat-permission'
 import { parseAgentQuestion } from './mobile-native-chat-question'
-import { openMobileNativeChatFile } from './mobile-native-chat-open-file'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
@@ -53,10 +52,13 @@ export type MobileNativeChatController = {
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   nativeChatAgentWorking: boolean
   nativeChatStreamingText?: string
+  /** Agent mid-turn, regardless of whether chat is the visible view. */
+  nativeChatStreamLive: boolean
+  /** Host/workspace/tab/session scope for stateful streaming suppression. */
+  nativeChatStreamScopeKey: string
   nativeChatPermission: ReturnType<typeof detectAgentPermission>
   nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
   nativeChatAsk: ReturnType<typeof parseAskFromStatus>
-  handleNativeChatOpenFile: (relativePath: string) => void
   handleNativeChatAnswerAsk: (
     prompt: AskPrompt,
     selections: AskAnswerSelection[]
@@ -134,7 +136,12 @@ export function useMobileNativeChatController(args: {
   }, [activeChatAgent, showNativeChat])
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
-  const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  const routeKey = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}`
+  const streamIdentity = `${routeKey}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  // Same chat, but keyed off the tab rather than the view-gated resolution:
+  // `streamIdentity` goes session-less the moment the user peeks at the terminal,
+  // and a scope that flips on a view toggle throws the gate's baseline away.
+  const streamScopeKey = `${routeKey}\0${activeSessionTab?.agentStatus?.providerSession?.id ?? ''}\0${activeHandleRef.current ?? ''}`
 
   const nativeChatSession = useMobileNativeChatSession({
     client,
@@ -170,6 +177,9 @@ export function useMobileNativeChatController(args: {
 
   const nativeChatStatus = activeChatResolution ? activeSessionTab?.agentStatus : null
   const nativeChatAgentWorking = nativeChatStatus?.state === 'working'
+  // Deliberately not gated on the chat view being visible: the streaming gate
+  // has to tell "hidden mid-turn" from "the turn ended".
+  const nativeChatStreamLive = activeSessionTab?.agentStatus?.state === 'working'
   // Throttle the streaming bubble: OpenCode emits a status frame per streamed
   // part, and each one re-renders and re-parses the whole accumulated markdown.
   const nativeChatStreamingText = useThrottledLatestValue(
@@ -185,21 +195,6 @@ export function useMobileNativeChatController(args: {
     status: nativeChatStatus,
     messages: nativeChatSession.messages
   })
-
-  const handleNativeChatOpenFile = useCallback(
-    (pathText: string) => {
-      if (!client) {
-        return
-      }
-      void openMobileNativeChatFile({
-        client,
-        worktreeId,
-        pathText,
-        terminal: activeHandleRef.current
-      })
-    },
-    [activeHandleRef, client, worktreeId]
-  )
 
   // Every chat write gates on both: the lease proves the input floor is ours, and
   // `connState` collapses a render before the lease does on disconnect.
@@ -310,10 +305,11 @@ export function useMobileNativeChatController(args: {
     nativeChatSession,
     nativeChatAgentWorking,
     nativeChatStreamingText,
+    nativeChatStreamLive,
+    nativeChatStreamScopeKey: streamScopeKey,
     nativeChatPermission,
     nativeChatQuestion,
     nativeChatAsk,
-    handleNativeChatOpenFile,
     handleNativeChatAnswerAsk: answerAsk,
     handleNativeChatCancelAsk: cancelAsk,
     handleNativeChatRespondPermission: respond,

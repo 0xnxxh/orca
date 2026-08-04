@@ -7,7 +7,10 @@ import {
   createNativeChatSessionOptionRecord,
   type NativeChatSessionOptionRecord
 } from './native-chat-session-option-state'
-import { buildNativeChatSessionOptionSnapshot } from './native-chat-session-option-snapshot'
+import {
+  buildNativeChatSessionOptionSnapshot,
+  withTrackedNativeChatModel
+} from './native-chat-session-option-snapshot'
 
 function claudeRecord(): NativeChatSessionOptionRecord {
   return createNativeChatSessionOptionRecord('claude')
@@ -48,7 +51,9 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     expect(snapshot[0]).toMatchObject({ valueSource: 'dispatched' })
   })
 
-  it('keeps an untracked reported model visible as an extra choice', () => {
+  it('renders exactly the models it is given, without self-healing the tracked one', () => {
+    // The builder no longer appends the tracked model itself — reconciling it is
+    // the caller's job (withTrackedNativeChatModel), so every row is a real choice.
     const record = claudeRecord()
     record.model = { value: 'experimental-model', source: 'reported' }
     const snapshot = buildNativeChatSessionOptionSnapshot({
@@ -62,10 +67,79 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     if (model.kind.type !== 'select') {
       throw new Error('model descriptor must be a select')
     }
-    expect(model.kind.currentValue).toBe('experimental-model')
-    expect(model.kind.choices.at(-1)).toEqual({
-      value: 'experimental-model',
-      label: 'experimental-model'
+    expect(model.kind.choices.map((choice) => choice.value)).toEqual(
+      CLAUDE_SESSION_OPTION_CATALOG.models.map((catalogModel) => catalogModel.id)
+    )
+  })
+
+  it('is empty when the model list is empty', () => {
+    expect(
+      buildNativeChatSessionOptionSnapshot({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: [],
+        record: claudeRecord(),
+        mode: 'live',
+        modelLabel: 'Model'
+      })
+    ).toEqual([])
+  })
+
+  describe('withTrackedNativeChatModel', () => {
+    it('keeps an unlisted tracked model as a choice, preferring the seed row', () => {
+      const record = claudeRecord()
+      record.model = { value: 'opus', source: 'reported' }
+      // A discovered list that dropped the `opus` alias this host no longer lists.
+      const discovered = CLAUDE_SESSION_OPTION_CATALOG.models.filter((model) => model.id !== 'opus')
+      const reconciled = withTrackedNativeChatModel(
+        CLAUDE_SESSION_OPTION_CATALOG,
+        discovered,
+        record
+      )
+      const restored = reconciled.find((model) => model.id === 'opus')
+      expect(restored).toBeDefined()
+      // The seed row carries the model's own options, so they don't vanish.
+      expect(restored!.options.length).toBeGreaterThan(0)
+      const snapshot = buildNativeChatSessionOptionSnapshot({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: reconciled,
+        record,
+        mode: 'live',
+        modelLabel: 'Model'
+      })
+      const model = snapshot[0]!
+      if (model.kind.type !== 'select') {
+        throw new Error('model descriptor must be a select')
+      }
+      expect(model.kind.currentValue).toBe('opus')
+      expect(model.kind.choices.some((choice) => choice.value === 'opus')).toBe(true)
+      expect(snapshot.length).toBeGreaterThan(1)
+    })
+
+    it('labels a wholly unknown tracked model by its id rather than dropping it', () => {
+      const record = claudeRecord()
+      record.model = { value: 'experimental-model', source: 'reported' }
+      const reconciled = withTrackedNativeChatModel(
+        CLAUDE_SESSION_OPTION_CATALOG,
+        CLAUDE_SESSION_OPTION_CATALOG.models,
+        record
+      )
+      expect(reconciled.at(-1)).toEqual({
+        id: 'experimental-model',
+        label: 'experimental-model',
+        options: []
+      })
+    })
+
+    it('leaves the list alone when the tracked model is already listed', () => {
+      const record = claudeRecord()
+      record.model = { value: 'sonnet', source: 'reported' }
+      expect(
+        withTrackedNativeChatModel(
+          CLAUDE_SESSION_OPTION_CATALOG,
+          CLAUDE_SESSION_OPTION_CATALOG.models,
+          record
+        )
+      ).toEqual([...CLAUDE_SESSION_OPTION_CATALOG.models])
     })
   })
 

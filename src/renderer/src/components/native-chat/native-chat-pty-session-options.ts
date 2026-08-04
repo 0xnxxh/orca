@@ -22,6 +22,7 @@ import {
 import { createSessionOptionAppliers } from './native-chat-session-option-apply'
 import {
   buildNativeChatSessionOptionSnapshot,
+  withTrackedNativeChatModel,
   type NativeChatSessionOptionMode
 } from './native-chat-session-option-snapshot'
 import type { NativeChatSessionOptionDispatchCommand } from './native-chat-session-option-command-dispatch'
@@ -69,9 +70,10 @@ export function createNativeChatPtySessionOptions(
   if (args.reportedValues && applyNativeChatReportedSessionOptions(record, args.reportedValues)) {
     writeNativeChatSessionOptionCache(args.scopeKey, record)
   }
+  const activeModels = (): CatalogModel[] => withTrackedNativeChatModel(catalog, models, record)
   let snapshot = buildNativeChatSessionOptionSnapshot({
     catalog,
-    models,
+    models: activeModels(),
     record,
     mode: args.mode
   })
@@ -81,7 +83,7 @@ export function createNativeChatPtySessionOptions(
     writeNativeChatSessionOptionCache(args.scopeKey, record)
     snapshot = buildNativeChatSessionOptionSnapshot({
       catalog,
-      models,
+      models: activeModels(),
       record,
       mode: args.mode
     })
@@ -110,7 +112,7 @@ export function createNativeChatPtySessionOptions(
   const appliers = createSessionOptionAppliers({
     mode: args.mode,
     catalog,
-    getModels: () => models,
+    getModels: activeModels,
     getRecord: () => record,
     dispatchCommand: args.dispatchCommand,
     onAgentPicker: args.onAgentPicker,
@@ -132,7 +134,7 @@ export function createNativeChatPtySessionOptions(
     recordOutgoingCommand: (command) => {
       const result = recordNativeChatSessionOptionCommand({
         catalog,
-        models,
+        models: activeModels(),
         record,
         command,
         persist

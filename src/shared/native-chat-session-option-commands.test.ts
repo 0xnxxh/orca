@@ -203,6 +203,20 @@ describe('recordNativeChatSessionOptionCommand', () => {
     }
   })
 
+  it('still tracks an alias the active model list no longer carries', () => {
+    // Per-host discovery can drop the `opus` alias; typing it is still valid and
+    // callers reconcile the row back, so rejecting it would lose the selection.
+    const record = claudeRecord('sonnet')
+    const discovered = CLAUDE_SESSION_OPTION_CATALOG.models.filter((model) => model.id !== 'opus')
+    recordNativeChatSessionOptionCommand({
+      catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: discovered,
+      record,
+      command: '/model opus'
+    })
+    expect(record.model).toEqual({ value: 'opus', source: 'dispatched' })
+  })
+
   it('ignores unrelated commands', () => {
     const record = claudeRecord('sonnet')
     expect(

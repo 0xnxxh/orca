@@ -8,6 +8,10 @@ import {
 } from './mobile-native-chat-send'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite
+} from './mobile-native-chat-terminal-write-lock'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
@@ -239,17 +243,46 @@ export function useMobileNativeChatMessageSend(args: {
     [sendWithOutcome]
   )
 
-  // A question answer is not composer text, so it never syncs the draft.
+  // A question answer is not composer text, so it never syncs the draft. It
+  // reaches this send directly (not through the image hook's locked path), so
+  // it takes the per-terminal write lock itself: an answer landing mid-flight
+  // in an image paste sequence would interleave bytes into the PTY.
   const answerQuestion = useCallback(
-    async (text: string): Promise<boolean> =>
-      (await sendMessage(text, undefined, false, true)) !== 'rejected',
-    [sendMessage]
+    async (text: string): Promise<boolean> => {
+      const terminal = handleRef.current
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        onSendError('Answer not sent')
+        return false
+      }
+      try {
+        return (await sendMessage(text, undefined, false, true)) !== 'rejected'
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [handleRef, onSendError, sendMessage]
   )
 
+  // A session-option apply writes to the same input line as a send, and the host
+  // spaces a send's body and its Enter ~500ms apart — so without this lock an
+  // apply lands between them and is submitted as part of the user's prompt.
   const dispatchCommand = useCallback(
-    (text: string): Promise<MobileNativeChatSendOutcome> =>
-      sendMessage(text, undefined, false, false),
-    [sendMessage]
+    async (text: string): Promise<MobileNativeChatSendOutcome> => {
+      const terminal = handleRef.current
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        return 'rejected'
+      }
+      try {
+        return await sendMessage(text, undefined, false, false)
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [handleRef, sendMessage]
   )
 
   return { send, sendWithOutcome, answerQuestion, dispatchCommand }

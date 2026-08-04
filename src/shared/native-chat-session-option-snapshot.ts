@@ -107,6 +107,25 @@ function optionDescriptor(args: {
   }
 }
 
+/**
+ * Why: the tracked model can sit outside the active list — a persisted default,
+ * or an alias this host's CLI no longer lists. Keeping a row for it preserves
+ * the labelled selection and the model's own options instead of blanking both.
+ * Shared so mobile satisfies the same caller contract the desktop surface does.
+ */
+export function withTrackedNativeChatModel(
+  catalog: AgentSessionOptionCatalog,
+  models: readonly CatalogModel[],
+  record: NativeChatSessionOptionRecord
+): CatalogModel[] {
+  const trackedId = typeof record.model?.value === 'string' ? record.model.value : null
+  if (!trackedId || models.some((model) => model.id === trackedId)) {
+    return [...models]
+  }
+  const seeded = catalog.models.find((model) => model.id === trackedId)
+  return [...models, seeded ?? { id: trackedId, label: trackedId, options: [] }]
+}
+
 export function buildNativeChatSessionOptionSnapshot(args: {
   catalog: AgentSessionOptionCatalog
   models: readonly CatalogModel[]
@@ -115,15 +134,18 @@ export function buildNativeChatSessionOptionSnapshot(args: {
   modelLabel: string
 }): SessionOptionDescriptor[] {
   const { catalog, models, record, mode, modelLabel } = args
+  if (models.length === 0) {
+    return []
+  }
   const modelTracked = record.model
-  const modelChoices = choiceWithCurrent(
-    models.map(({ id, label, description }) => ({
-      value: id,
-      label,
-      ...(description ? { description } : {})
-    })),
-    modelTracked
-  )
+  // Why: callers reconcile the tracked model into `models` (see
+  // withTrackedNativeChatModel), so every listed row is a real choice and the
+  // trigger never shows a value without one.
+  const modelChoices = models.map(({ id, label, description }) => ({
+    value: id,
+    label,
+    ...(description ? { description } : {})
+  }))
   const modelAction = actionForApply(catalog.modelApply, modelTracked, mode)
   const snapshot: SessionOptionDescriptor[] = [
     {

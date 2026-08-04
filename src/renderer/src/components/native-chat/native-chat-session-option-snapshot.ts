@@ -5,6 +5,7 @@ import type {
 import type { SessionOptionDescriptor } from '../../../../shared/native-chat-session-options'
 import {
   buildNativeChatSessionOptionSnapshot as buildSharedSnapshot,
+  withTrackedNativeChatModel,
   type NativeChatSessionOptionMode
 } from '../../../../shared/native-chat-session-option-snapshot'
 import {
@@ -14,7 +15,7 @@ import {
 import { translate } from '@/i18n/i18n'
 
 export type { NativeChatSessionOptionMode }
-export { flattenNativeChatSessionOptionRecord }
+export { flattenNativeChatSessionOptionRecord, withTrackedNativeChatModel }
 
 export function buildNativeChatSessionOptionSnapshot(args: {
   catalog: AgentSessionOptionCatalog
