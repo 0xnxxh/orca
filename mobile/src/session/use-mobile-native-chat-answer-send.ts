@@ -138,7 +138,17 @@ export function useMobileNativeChatAnswerSend(args: {
       let predecessorSafe = true
       try {
         predecessorSafe = await previousTurn
-        if (!predecessorSafe || generationRef.current !== generation) {
+        if (!predecessorSafe) {
+          // Fenced. Report it: the card re-enables on a false result, so silence
+          // here is indistinguishable from a dead button. "Check chat" rather than
+          // a bare "not sent" because the PREVIOUS answer's keys may have landed.
+          if (generationRef.current === generation) {
+            onSendError('Answer not sent — check chat before retrying')
+          }
+          return false
+        }
+        // Superseded by a newer answer, which owns the error surface from here.
+        if (generationRef.current !== generation) {
           return false
         }
         // One budget for the whole answer instead of a fresh timeout per keystroke

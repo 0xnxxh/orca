@@ -560,4 +560,84 @@ describe('useMobileNativeChatAnswerSend', () => {
     await expect(second).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
   })
+
+  it('tells the user when a queued answer is fenced instead of dropping it silently', async () => {
+    const onSendError = vi.fn()
+    let rejectFirst: (error: Error) => void = () => undefined
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      rejectFirst(markRpcDeliveryUnknown(new Error('Connection closed')))
+      await Promise.resolve()
+    })
+
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    // The card re-enables on a false result, so an unreported fence looks exactly
+    // like a dead button. The superseded chain stays quiet — the newest answer
+    // owns the error surface, and it is the one the user is waiting on.
+    expect(onSendError).toHaveBeenCalledTimes(1)
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
+  })
+
+  it('keeps the terminal locked while a queued successor writes', async () => {
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+
+    // Nothing landed, so the successor is cleared to write.
+    await act(async () => {
+      settle[0]!({ ...acceptedResponse(), result: { send: { accepted: false } } })
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    // The successor's key is on the wire. The superseded chain unwinding behind it
+    // must NOT free the terminal, or an image paste interleaves into this sequence.
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(false)
+
+    await act(async () => {
+      settle[1]!(acceptedResponse())
+      await Promise.resolve()
+    })
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(true)
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
+    releaseMobileNativeChatTerminalWrite('terminal')
+  })
 })
