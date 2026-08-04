@@ -195,7 +195,8 @@ async function runPairing(
     await publishHostProfileTransaction(
       baseHost(offer, hostId, hostName, now),
       null,
-      dependencies.saveHost
+      dependencies.saveHost,
+      'adopt-current'
     )
     return { hostId }
   }
@@ -220,7 +221,8 @@ async function runPairing(
     await publishHostProfileTransaction(
       baseHost(offer, hostId, hostName, now),
       null,
-      dependencies.saveHost
+      dependencies.saveHost,
+      'adopt-current'
     )
     await dependencies.clearJournal(journal.metadata.journalId)
     return { hostId }
@@ -246,7 +248,8 @@ async function runPairing(
       dependencies.writeCredentialBundle(
         promotePairingJournalCredential({ journal: committedJournal, installed })
       ),
-    dependencies.saveHost
+    dependencies.saveHost,
+    'adopt-current'
   )
   await dependencies.clearJournal(committedJournal.metadata.journalId)
   return { hostId }

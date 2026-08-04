@@ -2,6 +2,7 @@ import type { HostProfile } from './types'
 
 const pendingByHost = new Map<string, Promise<void>>()
 const revisionByHost = new Map<string, number>()
+const retirementRevisionByHost = new Map<string, number>()
 const endpointRevisionByHost = new Map<string, number>()
 const endpointGenerationByHost = new Map<string, number>()
 const publishedIdentityByHost = new Map<string, Pick<HostProfile, 'deviceToken' | 'publicKeyB64'>>()
@@ -40,6 +41,7 @@ export function recordDurableHostIdentity(
 }
 
 export function retireHostProfilePublication(hostId: string): Promise<void> | null {
+  retirementRevisionByHost.set(hostId, getRetirementRevision(hostId) + 1)
   recordHostEndpointMutation(hostId)
   endpointGenerationByHost.set(hostId, (endpointGenerationByHost.get(hostId) ?? 0) + 1)
   publishedIdentityByHost.delete(hostId)
@@ -91,18 +93,36 @@ export function publishHostProfileTransaction(
   host: HostProfile,
   beforeHostSave: (() => Promise<void>) | null,
   saveHost: (host: HostProfile) => Promise<void>,
-  publicationRevision = getHostProfilePublicationRevision(host.id)
+  requestedRevision: number | 'adopt-current' = getHostProfilePublicationRevision(host.id)
 ): Promise<void> {
+  const retirementRevision = getRetirementRevision(host.id)
   return serializeHostProfilePublication(host.id, async () => {
+    requireRetirementRevision(host.id, retirementRevision)
+    const publicationRevision =
+      requestedRevision === 'adopt-current'
+        ? getHostProfilePublicationRevision(host.id)
+        : requestedRevision
     requirePublicationRevision(host.id, publicationRevision)
     await beforeHostSave?.()
+    requireRetirementRevision(host.id, retirementRevision)
     requirePublicationRevision(host.id, publicationRevision)
     await saveHost(host)
+    requireRetirementRevision(host.id, retirementRevision)
     requirePublicationRevision(host.id, publicationRevision)
     revisionByHost.set(host.id, publicationRevision + 1)
     advanceHostEndpointRevision(host.id)
     recordDurableHostIdentity(host)
   })
+}
+
+function getRetirementRevision(hostId: string): number {
+  return retirementRevisionByHost.get(hostId) ?? 0
+}
+
+function requireRetirementRevision(hostId: string, expected: number): void {
+  if (getRetirementRevision(hostId) !== expected) {
+    throw new Error('host profile publication was retired')
+  }
 }
 
 function getHostEndpointRevision(hostId: string): number {
@@ -123,6 +143,7 @@ function requirePublicationRevision(hostId: string, expected: number): void {
 export function resetHostProfilePublicationForTests(): void {
   pendingByHost.clear()
   revisionByHost.clear()
+  retirementRevisionByHost.clear()
   endpointRevisionByHost.clear()
   endpointGenerationByHost.clear()
   publishedIdentityByHost.clear()
