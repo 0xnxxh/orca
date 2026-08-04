@@ -13,6 +13,7 @@ vi.mock('react-native', () => ({
   Text: 'Text',
   View: 'View'
 }))
+vi.mock('./pr-sidebar/MermaidDiagram', () => ({ MermaidDiagram: 'MermaidDiagram' }))
 
 function flattenText(node: ReactTestInstance): string {
   return node.children

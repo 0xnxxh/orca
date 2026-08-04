@@ -95,13 +95,17 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
   if (!shouldActivateOpenedMobileSessionTab(options.getActivationState(false))) {
     return
   }
+  const resolvedWorktreeId = resolved.worktree?.trim() || options.worktreeId
+  const resolvedWorktree = `id:${resolvedWorktreeId}`
+  const resolvedWorktreeName =
+    resolvedWorktreeId === options.worktreeId ? options.worktreeName : undefined
 
   if (resolved.openTarget?.kind === 'absolute-file') {
     options.triggerOpenFeedback()
     options.pushPreviewRoute(
       createMobileFilePreviewHref({
         hostId: options.hostId,
-        worktreeId: options.worktreeId,
+        worktreeId: resolvedWorktreeId,
         source: 'terminalArtifact',
         absolutePath: resolved.openTarget.absolutePath,
         grantId: resolved.openTarget.grantId,
@@ -113,7 +117,7 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
         name: displayNameFromPath(resolved.openTarget.absolutePath),
         ...(options.line !== null ? { line: String(options.line) } : {}),
         ...(options.column !== null ? { column: String(options.column) } : {}),
-        ...(options.worktreeName ? { worktreeName: options.worktreeName } : {})
+        ...(resolvedWorktreeName ? { worktreeName: resolvedWorktreeName } : {})
       })
     )
     return
@@ -128,17 +132,21 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
     return
   }
   options.triggerOpenFeedback()
-  if (options.line !== null || options.column !== null) {
+  if (
+    resolvedWorktreeId !== options.worktreeId ||
+    options.line !== null ||
+    options.column !== null
+  ) {
     options.pushPreviewRoute(
       createMobileFilePreviewHref({
         hostId: options.hostId,
-        worktreeId: options.worktreeId,
+        worktreeId: resolvedWorktreeId,
         source: 'worktree',
         relativePath: openedPath,
         name: displayNameFromPath(openedPath),
         ...(options.line !== null ? { line: String(options.line) } : {}),
         ...(options.column !== null ? { column: String(options.column) } : {}),
-        ...(options.worktreeName ? { worktreeName: options.worktreeName } : {})
+        ...(resolvedWorktreeName ? { worktreeName: resolvedWorktreeName } : {})
       })
     )
     return
@@ -153,7 +161,7 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
   }
   const openResponse = await options.client.sendRequest(
     'files.open',
-    { worktree, relativePath: openedPath },
+    { worktree: resolvedWorktree, relativePath: openedPath },
     { timeoutMs: 15_000 }
   )
   if (!openResponse.ok) {
