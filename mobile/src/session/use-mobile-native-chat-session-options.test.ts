@@ -136,7 +136,7 @@ describe('useMobileNativeChatSessionOptions', () => {
   })
 
   it('keeps the latest queued operation pending until it settles', async () => {
-    const resolvers: Array<(outcome: MobileNativeChatSendOutcome) => void> = []
+    const resolvers: ((outcome: MobileNativeChatSendOutcome) => void)[] = []
     dispatchCommand.mockImplementation(
       () =>
         new Promise<MobileNativeChatSendOutcome>((resolve) => {

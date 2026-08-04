@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useLayoutEffect,
   useRef,
   type Dispatch,
   type MutableRefObject,
@@ -125,9 +126,12 @@ export function useMobileNativeChatController(args: {
       : null
   const showNativeChat = activeChatResolution != null
   const showNativeChatRef = useRef(showNativeChat)
-  showNativeChatRef.current = showNativeChat
-  const activeChatAgentRef = useRef<string | null>(activeChatResolution?.agent ?? null)
-  activeChatAgentRef.current = activeChatResolution?.agent ?? null
+  const activeChatAgent = activeChatResolution?.agent ?? null
+  const activeChatAgentRef = useRef<string | null>(activeChatAgent)
+  useLayoutEffect(() => {
+    showNativeChatRef.current = showNativeChat
+    activeChatAgentRef.current = activeChatAgent
+  }, [activeChatAgent, showNativeChat])
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
   const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
@@ -286,7 +290,9 @@ export function useMobileNativeChatController(args: {
     dispatchCommand: handleNativeChatDispatchCommand,
     onAgentPicker: handleAgentPicker
   })
-  recordSessionOptionCommandRef.current = sessionOptions.recordCommand
+  useLayoutEffect(() => {
+    recordSessionOptionCommandRef.current = sessionOptions.recordCommand
+  }, [sessionOptions.recordCommand])
   // Card actions retire the route's held failure banner too, not just sends.
   const answerAsk = useNativeChatAcceptedAction(handleNativeChatAnswerAsk, onSendResolved)
   const cancelAsk = useNativeChatAcceptedAction(handleNativeChatCancelAsk, onSendResolved)

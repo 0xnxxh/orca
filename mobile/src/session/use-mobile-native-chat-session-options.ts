@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
 import type {
   SessionOptionDescriptor,
@@ -85,16 +85,15 @@ export function useMobileNativeChatSessionOptions(args: {
   const pendingId = identity ? (pendingByIdentity[identity]?.id ?? null) : null
   const bump = useCallback(() => setVersion((current) => current + 1), [])
   const activeIdentityRef = useRef(identity)
-  activeIdentityRef.current = identity
   const applyQueuesRef = useRef(new Map<string, Promise<void>>())
   const operationTokenRef = useRef(0)
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    activeIdentityRef.current = identity
+    return () => {
       activeIdentityRef.current = null
-    },
-    []
-  )
+    }
+  }, [identity])
 
   // Seed the current model from live agent status; hook reports are authority
   // over locally dispatched guesses (desktop 'reported' source parity).
