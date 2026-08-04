@@ -67,6 +67,10 @@ import { mergeGitConfigEnvProtocol } from '../../shared/git-credential-prompt-en
 import { PtyStartupIngress, type PtyIngressEmission } from '../../shared/pty-startup-ingress'
 import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
 import {
+  createPtySlaveEchoProbe,
+  readPtySlavePath
+} from '../../shared/pty-slave-line-discipline-echo'
+import {
   expandWindowsEnvironmentVariables,
   expandWindowsPathEnvironmentVariables
 } from '../../shared/windows-environment-expansion'
@@ -922,6 +926,7 @@ export class LocalPtyProvider implements IPtyProvider {
         )
       }
     }
+    const startupEchoProbe = createPtySlaveEchoProbe(readPtySlavePath(proc))
     const startupIngress = new PtyStartupIngress({
       ...(args.startupIngress ? { intent: args.startupIngress } : {}),
       ownerBackend: resolvePtyOwnerBackend({
@@ -930,7 +935,8 @@ export class LocalPtyProvider implements IPtyProvider {
         wslDistro: spawnedWslDistro
       }),
       write: (data) => proc.write(data),
-      onEmission: emitIngressData
+      onEmission: emitIngressData,
+      ...(startupEchoProbe ? { echoProbe: startupEchoProbe } : {})
     })
     startupIngressByPty.set(id, startupIngress)
 
