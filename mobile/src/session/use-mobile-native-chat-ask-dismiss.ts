@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AskPrompt } from './mobile-native-chat-ask'
 
 /** Track the answered-ask key so the lingering live status doesn't re-show the
@@ -9,6 +9,9 @@ import type { AskPrompt } from './mobile-native-chat-ask'
  *  chat↔terminal view toggle, and a dismissal must survive that round-trip. */
 export function useMobileNativeChatAskDismiss(args: {
   ask?: AskPrompt | null
+  /** Ungated prompt payload. A working/done status hides the card but does not
+   *  prove the sticky prompt itself cleared. */
+  detectedAsk?: AskPrompt | null
   /** Dismissals are scoped to the tab that showed the card, so one tab's
    *  dismissal can't hide an identical question on another tab. */
   scopeKey: string | null
@@ -21,18 +24,22 @@ export function useMobileNativeChatAskDismiss(args: {
   showAsk: boolean
   dismissAsk: () => void
 } {
-  const { ask, scopeKey, observing } = args
+  const { ask, detectedAsk = ask, scopeKey, observing } = args
   const askKey = ask ? JSON.stringify(ask.questions) : null
+  const detectedAskKey = detectedAsk ? JSON.stringify(detectedAsk.questions) : null
+  const detectedAskKeysRef = useRef(new Map<string | null, string | null>())
+  if (observing) {
+    detectedAskKeysRef.current.set(scopeKey, detectedAskKey)
+  }
   const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, string>>(
     () => new Map()
   )
-  // Once the prompt clears while observable (agent moved on), forget the
-  // dismissal so a later question — even an identical one — shows again.
-  const askPresent = ask != null
+  // A cleared or genuinely different detected prompt retires the old dismissal.
   useEffect(() => {
-    if (observing && !askPresent) {
+    if (observing) {
       setDismissedByScope((previous) => {
-        if (!previous.has(scopeKey)) {
+        const dismissedKey = previous.get(scopeKey)
+        if (dismissedKey === undefined || dismissedKey === detectedAskKey) {
           return previous
         }
         const next = new Map(previous)
@@ -40,10 +47,12 @@ export function useMobileNativeChatAskDismiss(args: {
         return next
       })
     }
-  }, [observing, askPresent, scopeKey])
-  const showAsk = askPresent && dismissedByScope.get(scopeKey) !== askKey
+  }, [observing, detectedAskKey, scopeKey])
+  const showAsk = askKey !== null && dismissedByScope.get(scopeKey) !== askKey
   const dismissAsk = (): void => {
-    if (askKey !== null) {
+    // An answer may settle after the prompt cleared or was replaced. Only the
+    // still-current prompt may install a lasting dismissal.
+    if (askKey !== null && detectedAskKeysRef.current.get(scopeKey) === askKey) {
       setDismissedByScope((previous) => new Map(previous).set(scopeKey, askKey))
     }
   }

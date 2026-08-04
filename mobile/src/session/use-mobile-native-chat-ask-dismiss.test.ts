@@ -20,14 +20,21 @@ describe('useMobileNativeChatAskDismiss', () => {
 
   function Harness({
     prompt,
+    detectedPrompt = prompt,
     scopeKey = 'tab-1',
     observing = true
   }: {
     prompt: AskPrompt | null
+    detectedPrompt?: AskPrompt | null
     scopeKey?: string | null
     observing?: boolean
   }): null {
-    state = useMobileNativeChatAskDismiss({ ask: prompt, scopeKey, observing })
+    state = useMobileNativeChatAskDismiss({
+      ask: prompt,
+      detectedAsk: detectedPrompt,
+      scopeKey,
+      observing
+    })
     return null
   }
 
@@ -72,15 +79,41 @@ describe('useMobileNativeChatAskDismiss', () => {
 
     await update({ prompt: replacement })
     expect(state?.showAsk).toBe(true)
+
+    await update({ prompt: first })
+    expect(state?.showAsk).toBe(true)
+  })
+
+  it('keeps a dismissal while status gating hides a still-detected prompt', async () => {
+    await mount({ prompt: first })
+    const acceptedDismiss = state!.dismissAsk
+
+    await update({ prompt: null, detectedPrompt: first })
+    act(() => acceptedDismiss())
+    await update({ prompt: first })
+
+    expect(state?.showAsk).toBe(false)
+  })
+
+  it('ignores an answer that settles after its prompt cleared', async () => {
+    await mount({ prompt: first })
+    const lateDismiss = state!.dismissAsk
+
+    await update({ prompt: null })
+    act(() => lateDismiss())
+    await update({ prompt: first })
+
+    expect(state?.showAsk).toBe(true)
   })
 
   it('keeps a dismissal across a chat→terminal→chat toggle', async () => {
     // While the chat surface is hidden the prompt derives to null; that null
     // proves nothing about the agent and must not reset the dismissal.
     await mount({ prompt: first })
-    act(() => state?.dismissAsk())
+    const acceptedDismiss = state!.dismissAsk
 
     await update({ prompt: null, observing: false })
+    act(() => acceptedDismiss())
     await update({ prompt: first, observing: true })
 
     expect(state?.showAsk).toBe(false)
@@ -112,6 +145,17 @@ describe('useMobileNativeChatAskDismiss', () => {
     expect(state?.showAsk).toBe(false)
 
     await update({ prompt: first, scopeKey: 'tab-2' })
+    expect(state?.showAsk).toBe(false)
+  })
+
+  it('records a settled answer against its originating tab', async () => {
+    await mount({ prompt: first, scopeKey: 'tab-1' })
+    const tabOneDismiss = state!.dismissAsk
+
+    await update({ prompt: replacement, scopeKey: 'tab-2' })
+    act(() => tabOneDismiss())
+    await update({ prompt: first, scopeKey: 'tab-1' })
+
     expect(state?.showAsk).toBe(false)
   })
 })

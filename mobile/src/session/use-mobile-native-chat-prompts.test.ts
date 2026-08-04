@@ -99,8 +99,13 @@ describe('useMobileNativeChatPrompts ask state gate', () => {
 
   it('renders no ask card from a sticky prompt while the agent is working or done', () => {
     // The prompt payload outlives its answer — same paused gate as permission.
-    expect(promptsFor({ state: 'working', interactivePrompt: ASK }).ask).toBeNull()
-    expect(promptsFor({ state: 'done', interactivePrompt: ASK }).ask).toBeNull()
+    const working = promptsFor({ state: 'working', interactivePrompt: ASK })
+    expect(working.ask).toBeNull()
+    expect(working.detectedAsk).not.toBeNull()
+
+    const done = promptsFor({ state: 'done', interactivePrompt: ASK })
+    expect(done.ask).toBeNull()
+    expect(done.detectedAsk).not.toBeNull()
   })
 
   it('gates the transcript-derived pending ask the same way', () => {

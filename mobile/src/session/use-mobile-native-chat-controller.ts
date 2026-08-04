@@ -180,6 +180,7 @@ export function useMobileNativeChatController(args: {
   const {
     permission: nativeChatPermission,
     question: nativeChatQuestion,
+    detectedAsk: nativeChatDetectedAsk,
     ask: nativeChatAskPrompt
   } = useMobileNativeChatPrompts({
     enabled: activeChatResolution != null,
@@ -192,6 +193,7 @@ export function useMobileNativeChatController(args: {
     dismissAsk: dismissNativeChatAsk
   } = useMobileNativeChatAskDismiss({
     ask: nativeChatAskPrompt,
+    detectedAsk: nativeChatDetectedAsk,
     scopeKey: activeSessionTabId,
     observing: showNativeChat
   })
