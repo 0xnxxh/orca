@@ -436,8 +436,9 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
   const PROMPT = { questions: [{ question: 'Which path?', multiSelect: false, options: [] }] }
 
   const chatTab = { type: 'terminal', id: 'tab-1', launchAgent: 'claude' }
-  /** Mutable so a test can move the user to another tab mid-render. */
-  const activeTab = { id: 'tab-1' }
+  /** Mutable so a test can move the user to another tab — or restart the agent
+   *  into a new provider session on the same tab — mid-render. */
+  const activeTab = { id: 'tab-1', sessionId: 'session-1' }
 
   function Harness(): null {
     controller = useMobileNativeChatController({
@@ -445,7 +446,11 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
       connState: 'connected',
       hostId: 'h',
       worktreeId: 'w',
-      activeSessionTab: { ...chatTab, id: activeTab.id } as never,
+      activeSessionTab: {
+        ...chatTab,
+        id: activeTab.id,
+        agentStatus: { agentType: 'claude', providerSession: { id: activeTab.sessionId } }
+      } as never,
       activeSessionTabId: activeTab.id,
       activeHandleRef: { current: 'term-1' },
       deviceTokenRef: { current: null },
@@ -507,6 +512,7 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     setTranscript('ready', 0)
     viewMode.isTabChatView = () => true
     activeTab.id = 'tab-1'
+    activeTab.sessionId = 'session-1'
   })
 
   it('scopes the dismissal to the tab it was taken on', () => {
@@ -516,6 +522,29 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     // Another tab's agent is parked on a byte-identical question; it is a
     // different pending prompt and tab 1's answer must not hide it.
     activeTab.id = 'tab-2'
+    step()
+
+    expect(controller?.nativeChatAsk).not.toBeNull()
+  })
+
+  it('shows a restarted session’s identical first question on the same tab', () => {
+    // A restart, `/clear`, or resume swaps the provider session inside one tab,
+    // and the next session's first question is often byte-identical — same repo,
+    // same prompt, same template. Keyed by tab alone the old answer hides it, so
+    // the live card never renders and the turn sits blocked with nothing to act on.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    // The restart re-subscribes the transcript, so the read is in flight for a beat.
+    activeTab.sessionId = 'session-2'
+    setTranscript('loading')
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    setTranscript('ready')
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
     step()
 
     expect(controller?.nativeChatAsk).not.toBeNull()

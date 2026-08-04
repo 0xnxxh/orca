@@ -14,8 +14,9 @@ export function useMobileNativeChatAskDismiss(args: {
    *  `ask`: reading the gated prompt as the detected one is the resurfacing bug
    *  this hook exists to close. */
   detectedAsk: AskPrompt | null
-  /** Dismissals are scoped to the tab that showed the card, so one tab's
-   *  dismissal can't hide an identical question on another tab. */
+  /** Dismissals are scoped to the tab *and* provider session that showed the
+   *  card, so neither another tab nor a restarted session in the same tab can
+   *  have an identical question hidden by an answer that was never about it. */
   scopeKey: string | null
   /** True while the chat surface can actually observe the prompt. A null ask it
    *  cannot see — off-chat, or before a re-subscribed transcript lands — proves

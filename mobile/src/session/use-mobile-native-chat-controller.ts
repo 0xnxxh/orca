@@ -206,6 +206,13 @@ export function useMobileNativeChatController(args: {
     (nativeChatSession.status === 'error' && nativeChatSession.messages.length > 0)
   const nativeChatAskObservable =
     showNativeChat && (nativeChatDetectedAsk != null || nativeChatTranscriptSettled)
+  // Scope the dismissal to the transcript the card was answered on, not the tab
+  // alone: a restart, `/clear`, or resume swaps the provider session inside one
+  // tab, and the new session's first question is often byte-identical (same repo,
+  // same prompt, same template). Keyed by tab, the old answer read as "already
+  // dismissed" and the live card never rendered. Same `\0` shape as
+  // `streamIdentity` above, which is the identity the transcript itself tracks.
+  const nativeChatAskScopeKey = `${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}`
   const {
     askKey: nativeChatAskKey,
     showAsk: showNativeChatAsk,
@@ -213,7 +220,7 @@ export function useMobileNativeChatController(args: {
   } = useMobileNativeChatAskDismiss({
     ask: nativeChatAskPrompt,
     detectedAsk: nativeChatDetectedAsk,
-    scopeKey: activeSessionTabId,
+    scopeKey: nativeChatAskScopeKey,
     observing: nativeChatAskObservable
   })
 
