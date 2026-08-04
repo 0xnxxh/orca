@@ -13,6 +13,39 @@ const DIFF_TRUNCATED_LINE: NativeChatDiffLine = {
   text: '… diff truncated …'
 }
 
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/
+// Lines that open a new file section, so any hunk before them has ended.
+const FILE_SECTION_START =
+  /^(?:diff |index |old mode |new mode |new file mode |deleted file mode |similarity index |dissimilarity index |rename |copy |Binary files )/
+
+/**
+ * Indices of the `--- <old>` / `+++ <new>` file headers. A bare `---`/`+++`
+ * prefix is not enough to spot one: a removed line whose content began with `--`
+ * (SQL/Lua `-- comment`, C `--i`) is emitted as `---<content>`. Real headers
+ * always come as an adjacent pair and never appear inside a hunk.
+ */
+function fileHeaderIndices(lines: string[]): Set<number> {
+  const indices = new Set<number>()
+  let inHunk = false
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? ''
+    if (line.startsWith('@@')) {
+      inHunk = true
+      continue
+    }
+    if (FILE_SECTION_START.test(line)) {
+      inHunk = false
+      continue
+    }
+    if (!inHunk && line.startsWith('--- ') && (lines[index + 1] ?? '').startsWith('+++ ')) {
+      indices.add(index)
+      indices.add(index + 1)
+      index += 1
+    }
+  }
+  return indices
+}
+
 function toLines(value: unknown, maxLines: number): { lines: string[]; truncated: boolean } {
   if (typeof value !== 'string') {
     return { lines: [], truncated: false }
@@ -62,23 +95,35 @@ export function diffFromText(
     return null
   }
   const bounded = toLines(text, maxLines)
+  const headers = fileHeaderIndices(bounded.lines)
   let added = 0
   let removed = 0
-  const lines = bounded.lines.map((line): NativeChatDiffLine => {
-    if (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ')) {
+  const lines = bounded.lines.map((line, index): NativeChatDiffLine => {
+    if (
+      headers.has(index) ||
+      line.startsWith('@@') ||
+      line.startsWith('diff ') ||
+      line.startsWith('index ')
+    ) {
       return { kind: 'meta', text: line }
     }
-    if (line.startsWith('+') && !line.startsWith('+++')) {
+    if (line.startsWith('+')) {
       added += 1
       return { kind: 'add', text: line.slice(1) }
     }
-    if (line.startsWith('-') && !line.startsWith('---')) {
+    if (line.startsWith('-')) {
       removed += 1
       return { kind: 'del', text: line.slice(1) }
     }
     return { kind: 'context', text: line }
   })
-  if (added + removed < 2) {
+  // A hunk header or `diff --git` proves this really is diff text, so a
+  // single-line change renders; without one, two markers guard against
+  // colouring prose that merely opens a line with `-`.
+  const isStructuredDiff = bounded.lines.some(
+    (line) => HUNK_HEADER.test(line) || line.startsWith('diff --git ')
+  )
+  if (added + removed < (isStructuredDiff ? 1 : 2)) {
     return null
   }
   return bounded.truncated ? [...lines.slice(0, maxLines - 1), DIFF_TRUNCATED_LINE] : lines
