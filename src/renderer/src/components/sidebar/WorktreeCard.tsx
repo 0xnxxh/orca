@@ -265,6 +265,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
       e.stopPropagation()
       openModal('edit-meta', {
         worktreeId: worktree.id,
+        // Why: the same workspace ID can exist under two hosts. Naming the owner
+        // keeps the dialog on the clicked row instead of the ambiguous lookup.
+        repoId: worktree.repoId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -280,6 +283,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       e.stopPropagation()
       openModal('edit-meta', {
         worktreeId: worktree.id,
+        repoId: worktree.repoId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -899,7 +903,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const handleRenameTitle = useCallback(
-    (displayName: string) => updateWorktreeMeta(worktree.id, { displayName }),
+    // Inline rename has no surface for the failure; the store already logs and
+    // refetches, which reverts the optimistic title in place.
+    async (displayName: string): Promise<void> => {
+      await updateWorktreeMeta(worktree.id, { displayName })
+    },
     [updateWorktreeMeta, worktree.id]
   )
 
@@ -913,6 +921,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       }
       openModal('edit-meta', {
         worktreeId: worktree.id,
+        repoId: worktree.repoId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -926,7 +935,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
       worktree.displayName,
       worktree.id,
       worktree.linkedIssue,
-      worktree.linkedPR
+      worktree.linkedPR,
+      worktree.repoId
     ]
   )
 
