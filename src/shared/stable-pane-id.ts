@@ -11,6 +11,9 @@ export type StablePaneId = string & { readonly [stablePaneIdBrand]: true }
 export type TerminalLeafId = StablePaneId & { readonly [terminalLeafIdBrand]: true }
 export type PaneKey = string & { readonly [paneKeyBrand]: true }
 
+/** Bound paneKey size (real keys are well under 200); caps per-pane caches and untrusted ingest against pathological input. Lives here so validators can cap before `parsePaneKey` without pulling in the hook-listener graph. */
+export const MAX_PANE_KEY_LEN = 200
+
 export function isStablePaneId(value: string): value is StablePaneId {
   return UUID_RE.test(value)
 }

@@ -1,5 +1,6 @@
 import { buildStartupCommandSubmission } from '../../shared/startup-command-submission'
 import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
+import { MAX_PANE_KEY_LEN, parsePaneKey } from '../../shared/stable-pane-id'
 import { getDaemonSessionResultMetadata } from './daemon-create-or-attach-result'
 import { normalizePtySize } from './daemon-pty-size'
 import { Session } from './session'
@@ -21,6 +22,16 @@ type TerminalHostSessionCreateDependencies = {
   onDeadSessionRemoved: (sessionId: string) => void
   onSessionCreated: (sessionId: string, generation: string | undefined, isAlive: boolean) => void
   onSessionExit: (sessionId: string, generation: string | undefined) => void
+}
+
+// Why: the spawn env is caller-supplied, so retain the pane key only when it
+// parses as one — an arbitrary string under `paneKey` would look authoritative
+// to every downstream reader.
+function resolvePaneKeyMetadata(value: string | undefined): string | undefined {
+  if (!value || value.length > MAX_PANE_KEY_LEN || parsePaneKey(value) === null) {
+    return undefined
+  }
+  return value
 }
 
 export async function createOrAttachTerminalSession(
@@ -99,6 +110,7 @@ export async function createOrAttachTerminalSession(
     cols: size.cols,
     rows: size.rows,
     terminalHandle: opts.env?.ORCA_TERMINAL_HANDLE,
+    paneKey: resolvePaneKeyMetadata(opts.env?.ORCA_PANE_KEY),
     launchAgent: opts.launchAgent,
     subprocess,
     ownerBackend: resolvePtyOwnerBackend({

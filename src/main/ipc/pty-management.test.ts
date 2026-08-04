@@ -184,6 +184,25 @@ describe('pty:management IPC handlers', () => {
       expect(result.sessions.map((s) => s.sessionId)).toEqual(['preserved-1'])
     })
 
+    // Why: paneKey ships as an additive optional field with no protocol bump, so
+    // the client parsing path must pass it through rather than shape-validate.
+    it('passes an unknown-to-older-clients paneKey through the client parsing path', async () => {
+      const paneKey = 'tab-1:1b8c2f10-4a3e-4b1c-9d2e-7f6a5b4c3d2e'
+      const current = makeAdapter(5, [makeSession('with-pane', { paneKey })])
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current))
+      registerDaemonManagementHandlers()
+
+      const handlers = buildHandlerMap()
+      const result = (await handlers['pty:management:listSessions']({})) as {
+        sessions: DaemonSessionInfo[]
+      }
+
+      expect(result.sessions).toHaveLength(1)
+      expect(result.sessions[0]).toMatchObject({ sessionId: 'with-pane', paneKey })
+      expect(result.sessions[0]?.protocolVersion).toBe(5)
+    })
+
     it('clears degraded mode after durable fresh-spawn routing recovers', async () => {
       const current = makeAdapter(5, [makeSession('preserved-1')])
       const provider = await makeDegradedProvider(current)

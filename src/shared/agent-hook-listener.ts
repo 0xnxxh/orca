@@ -59,7 +59,7 @@ import {
   extractAgentProviderSession,
   type AgentProviderSessionMetadata
 } from './agent-session-resume'
-import { parsePaneKey } from './stable-pane-id'
+import { MAX_PANE_KEY_LEN, parsePaneKey } from './stable-pane-id'
 import {
   isCompactContinuationUserTurnText,
   isKnownHarnessInjectedUserTurnText
@@ -104,8 +104,8 @@ function capOpenCodeHookText(text: string): string {
     : text
 }
 
-/** Bound paneKey size (real keys are well under 200); caps per-pane caches against pathological input. Exported so non-HTTP ingest (`ingestRemote`) applies the same cap as defense-in-depth. */
-export const MAX_PANE_KEY_LEN = 200
+// Re-exported so existing importers (`ingestRemote` and the hook server) keep one entry point.
+export { MAX_PANE_KEY_LEN }
 const CLAUDE_PROMPT_ID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 export function normalizeClaudePromptId(value: unknown): string | undefined {

@@ -80,6 +80,7 @@ export type SessionOptions = {
   cols: number
   rows: number
   terminalHandle?: string
+  paneKey?: string
   launchAgent?: TuiAgent
   subprocess: SubprocessHandle
   shellReadySupported: boolean
@@ -104,6 +105,8 @@ export class Session {
   readonly sessionId: string
   readonly incarnationId = randomUUID()
   readonly terminalHandle: string | null
+  /** Routing metadata for status bindings only — never an identity key, since pane keys are reusable across sessions. */
+  readonly paneKey: string | null
   readonly launchAgent: TuiAgent | null
   readonly wslDistro: string | null
   private _state: SessionState = 'running'
@@ -136,6 +139,7 @@ export class Session {
   constructor(opts: SessionOptions) {
     this.sessionId = opts.sessionId
     this.terminalHandle = opts.terminalHandle ?? null
+    this.paneKey = opts.paneKey ?? null
     this.launchAgent = opts.launchAgent ?? null
     this.wslDistro = opts.wslDistro ?? null
     this.subprocess = opts.subprocess
