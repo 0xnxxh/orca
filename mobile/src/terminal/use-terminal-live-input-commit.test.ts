@@ -29,6 +29,39 @@ const RECORDED_IOS_KANA_TRACE: readonly RecordedChange[] = [
   { text: 'あきカナ', isComposing: false, replacementText: '', start: 4, end: 5 }
 ]
 
+const RECORDED_IOS_7427_TRACE: readonly RecordedChange[] = [
+  { text: 'つ', isComposing: true, replacementText: 'つ', start: 0, end: 0 },
+  { text: 'っ', isComposing: true, replacementText: '゛', start: 1, end: 1 },
+  { text: 'っ', isComposing: true, replacementText: 'っ', start: 0, end: 1 },
+  { text: 'っ', isComposing: false, replacementText: 'っ', start: 0, end: 1 },
+  { text: 'っか', isComposing: true, replacementText: 'か', start: 1, end: 1 },
+  { text: 'っが', isComposing: true, replacementText: '゛', start: 2, end: 2 },
+  { text: 'っが', isComposing: true, replacementText: 'が', start: 1, end: 2 },
+  { text: 'っが', isComposing: false, replacementText: 'が', start: 1, end: 2 },
+  { text: 'っがは', isComposing: true, replacementText: 'は', start: 2, end: 2 },
+  { text: 'っがば', isComposing: true, replacementText: '゛', start: 3, end: 3 },
+  { text: 'っがぱ', isComposing: true, replacementText: '゛', start: 3, end: 3 },
+  { text: 'っがぱ', isComposing: true, replacementText: 'ぱ', start: 2, end: 3 },
+  { text: 'っがぱ', isComposing: false, replacementText: 'ぱ', start: 2, end: 3 },
+  { text: 'っがぱs', isComposing: true, replacementText: 's', start: 3, end: 3 },
+  { text: 'っがぱさ', isComposing: true, replacementText: 'a', start: 4, end: 4 },
+  { text: 'っがぱさ', isComposing: true, replacementText: 'さ', start: 3, end: 4 },
+  { text: 'っがぱさ', isComposing: false, replacementText: 'さ', start: 3, end: 4 },
+  { text: 'っがぱさk', isComposing: true, replacementText: 'k', start: 4, end: 4 },
+  { text: 'っがぱさか', isComposing: true, replacementText: 'a', start: 5, end: 5 },
+  { text: 'っがぱさかn', isComposing: true, replacementText: 'n', start: 5, end: 5 },
+  { text: 'っがぱさかんj', isComposing: true, replacementText: 'j', start: 6, end: 6 },
+  { text: 'っがぱさかんじ', isComposing: true, replacementText: 'i', start: 7, end: 7 },
+  { text: 'っがぱさ漢字', isComposing: true, replacementText: '漢字', start: 4, end: 7 },
+  { text: 'っがぱさ漢字', isComposing: false, replacementText: '漢字', start: 4, end: 7 },
+  { text: 'っがぱさ漢字k', isComposing: true, replacementText: 'k', start: 6, end: 6 },
+  { text: 'っがぱさ漢字か', isComposing: true, replacementText: 'a', start: 7, end: 7 },
+  { text: 'っがぱさ漢字かn', isComposing: true, replacementText: 'n', start: 7, end: 7 },
+  { text: 'っがぱさ漢字かな', isComposing: true, replacementText: 'a', start: 8, end: 8 },
+  { text: 'っがぱさ漢字かな', isComposing: true, replacementText: 'かな', start: 6, end: 8 },
+  { text: 'っがぱさ漢字かな', isComposing: false, replacementText: 'かな', start: 6, end: 8 }
+]
+
 const RECORDED_ANDROID_FCITX_HANGUL_TRACE: readonly RecordedChange[] = [
   { text: 'ㅎ', isComposing: true, replacementText: 'ㅎ', start: 0, end: 0 },
   { text: '하', isComposing: true, replacementText: '하', start: 0, end: 1 },
@@ -289,12 +322,6 @@ describe('terminal live input commit hook', () => {
     expect(captures).toEqual(['z', 'zh', 'zho', 'zhon', 'zhong', '中', '中'])
   })
 
-  it('keeps ordinary non-IME typing unchanged', async () => {
-    const { handlers, sent } = createHarness()
-    replay(handlers, ORDINARY_ABC_TRACE)
-    await vi.waitFor(() => expect(sent).toEqual(['a', 'b', 'c']))
-  })
-
   it('replays the recorded Gboard Backspace replacement exactly once', async () => {
     const { handlers, sent } = createHarness()
 
@@ -358,6 +385,17 @@ describe('terminal live input commit hook', () => {
     replay(handlers, RECORDED_IOS_ROMAJI_TRACE)
 
     await vi.waitFor(() => expect(sent).toEqual(['かな']))
+  })
+
+  it('replays the recorded iOS #7427 transforms, confirmation, and English control', async () => {
+    const japanese = createHarness()
+    replay(japanese.handlers, RECORDED_IOS_7427_TRACE)
+    await vi.waitFor(() => expect(japanese.sent).toEqual(['っ', 'が', 'ぱ', 'さ', '漢字', 'かな']))
+    expect(japanese.sent).not.toContain('\r')
+
+    const english = createHarness()
+    replay(english.handlers, ORDINARY_ABC_TRACE)
+    await vi.waitFor(() => expect(english.sent).toEqual(['a', 'b', 'c']))
   })
 
   it('emits nothing for the recorded Pinyin cancellation trace', () => {
