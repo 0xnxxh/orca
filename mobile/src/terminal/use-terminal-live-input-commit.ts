@@ -29,7 +29,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
   readonly activeSessionTabType: TTabType | null | undefined
   readonly activeSessionTabTypeRef: RefObject<TTabType | null>
   readonly connected: boolean
-  readonly liveInputRef: RefObject<TextInput | null>
+  readonly liveInputRef: RefObject<Pick<TextInput, 'setNativeProps'> | null>
   readonly liveInputTerminalHandles: ReadonlySet<string>
   readonly liveInputTerminalHandlesRef: RefObject<Set<string>>
   readonly sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender>

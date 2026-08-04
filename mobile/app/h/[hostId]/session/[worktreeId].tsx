@@ -115,7 +115,10 @@ import {
   loadTerminalAccessoryLayout
 } from '../../../../src/terminal/terminal-accessory-layout'
 import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/terminal-live-accessory-input'
-import { TerminalLiveInputField } from '../../../../src/terminal/terminal-live-input-field'
+import {
+  TerminalLiveInputField,
+  type TerminalLiveInputFieldHandle
+} from '../../../../src/terminal/terminal-live-input-field'
 import { sendTerminalLiveAccessoryRawBytes } from '../../../../src/terminal/terminal-live-accessory-raw-send'
 import {
   clearTerminalLiveInputFocusTimer,
@@ -1021,7 +1024,7 @@ export default function SessionScreen() {
   const viewportRef = useRef<{ cols: number; rows: number } | null>(null)
   const viewportMeasuredRef = useRef(false)
   const terminalRefs = useRef<Map<string, TerminalWebViewHandle>>(new Map())
-  const liveInputRef = useRef<TextInput>(null)
+  const liveInputRef = useRef<TerminalLiveInputFieldHandle>(null)
   const commandInputRef = useRef<TextInput>(null)
   const liveInputFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sendLiveTerminalInputRef = useRef<TerminalLiveInputSender>(async () => false)
