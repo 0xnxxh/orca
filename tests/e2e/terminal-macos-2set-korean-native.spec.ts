@@ -195,8 +195,9 @@ test.describe('Native macOS 2-Set Korean terminal input @headful', () => {
       testInfo,
       testRepoPath,
       electronApp.process().pid!,
-      [5, 40, 1, 15, 46, 3, 36],
-      '한글'
+      [5, 40, 1, 15, 46, 3],
+      '한글',
+      { committedText: '한', preeditText: '글' }
     )
   })
 
