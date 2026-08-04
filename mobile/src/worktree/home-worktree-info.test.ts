@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { markHomeWorktreeCatalogUnavailable, type HostWorktreeInfo } from './home-worktree-info'
+import {
+  homeHostWorktreeSummary,
+  markHomeWorktreeCatalogUnavailable,
+  type HostWorktreeInfo
+} from './home-worktree-info'
 
 describe('markHomeWorktreeCatalogUnavailable', () => {
   it('marks a host unavailable when no catalog has loaded', () => {
@@ -28,7 +32,8 @@ describe('markHomeWorktreeCatalogUnavailable', () => {
 
     expect(markHomeWorktreeCatalogUnavailable(current, 'host-1')).toEqual({
       ...current,
-      catalogUnavailable: true
+      catalogUnavailable: true,
+      staleCounts: true
     })
   })
 
@@ -42,5 +47,34 @@ describe('markHomeWorktreeCatalogUnavailable', () => {
     }
 
     expect(markHomeWorktreeCatalogUnavailable(current, 'host-1')).toBe(current)
+  })
+})
+
+describe('homeHostWorktreeSummary', () => {
+  const loaded: HostWorktreeInfo = {
+    hostId: 'host-1',
+    totalWorktrees: 12,
+    activeCount: 2,
+    lastActiveWorktree: null
+  }
+
+  it('summarizes a freshly loaded catalog', () => {
+    expect(homeHostWorktreeSummary(loaded)).toBe('12 worktrees · 2 active')
+    expect(homeHostWorktreeSummary({ ...loaded, totalWorktrees: 1, activeCount: 0 })).toBe(
+      '1 worktree'
+    )
+  })
+
+  it('keeps showing the last proven counts after a failed refresh', () => {
+    const afterFailure = markHomeWorktreeCatalogUnavailable(loaded, 'host-1')
+
+    expect(homeHostWorktreeSummary(afterFailure)).toBe('Last known: 12 worktrees · 2 active')
+  })
+
+  it('reports unavailable only when no catalog ever loaded', () => {
+    expect(homeHostWorktreeSummary(markHomeWorktreeCatalogUnavailable(undefined, 'host-1'))).toBe(
+      'Worktree list unavailable'
+    )
+    expect(homeHostWorktreeSummary(undefined)).toBeNull()
   })
 })
