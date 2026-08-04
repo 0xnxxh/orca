@@ -27,6 +27,7 @@ import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 import { canShowRightSidebarForView } from '@/lib/right-sidebar-visibility'
 import {
   isImeOwnedKeyboardEvent,
+  markImeOwnedShortcutEvent,
   resolveImeModifierGesture
 } from '@/lib/ime-composition-keyboard-event'
 import {
@@ -1952,8 +1953,8 @@ function App(): React.JSX.Element {
       const gesture = resolveImeModifierGesture(imeOwnedModifierGesture, e)
       imeOwnedModifierGesture = gesture.active
       if (gesture.owned || isImeOwnedKeyboardEvent(e)) {
-        if (gesture.preventDefault) {
-          e.preventDefault()
+        if (gesture.carried) {
+          markImeOwnedShortcutEvent(e)
         }
         doubleTapDetector.reset()
         return

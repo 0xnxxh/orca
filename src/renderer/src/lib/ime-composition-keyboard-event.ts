@@ -13,6 +13,8 @@ type ImeModifierGestureEvent = ImeKeyboardEvent & {
   shiftKey?: boolean
 }
 
+const IME_OWNED_SHORTCUT_EVENT = Symbol('imeOwnedShortcutEvent')
+
 /** True when the IME, rather than Orca, owns a keyboard event. */
 export function isImeOwnedKeyboardEvent(event: object): boolean {
   const candidate = event as ImeKeyboardEvent
@@ -27,11 +29,19 @@ export function isImeOwnedKeyboardEvent(event: object): boolean {
 export function resolveImeModifierGesture(
   active: boolean,
   event: ImeModifierGestureEvent
-): { active: boolean; owned: boolean; preventDefault: boolean } {
+): { active: boolean; carried: boolean; owned: boolean } {
   const hasModifier = Boolean(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
   const marked = isImeOwnedKeyboardEvent(event)
   const owned = active || (hasModifier && marked)
-  return { active: owned && hasModifier, owned, preventDefault: active && !marked }
+  return { active: owned && hasModifier, carried: active && !marked, owned }
+}
+
+export function markImeOwnedShortcutEvent(event: object): void {
+  Object.defineProperty(event, IME_OWNED_SHORTCUT_EVENT, { value: true })
+}
+
+export function isMarkedImeOwnedShortcutEvent(event: object): boolean {
+  return (event as { [IME_OWNED_SHORTCUT_EVENT]?: boolean })[IME_OWNED_SHORTCUT_EVENT] === true
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   matchesNativeChatToggleShortcut,
   nativeChatToggleShortcutLabel
 } from './native-chat-shortcut'
+import { markImeOwnedShortcutEvent } from '@/lib/ime-composition-keyboard-event'
 
 type Combo = Pick<
   KeyboardEvent,
@@ -67,6 +68,12 @@ describe('matchesNativeChatToggleShortcut', () => {
   })
 
   it('yields events already owned by the app dispatcher', () => {
+    const event = combo({ ctrlKey: true, shiftKey: true })
+    markImeOwnedShortcutEvent(event)
+    expect(matchesNativeChatToggleShortcut(event, false)).toBe(false)
+  })
+
+  it('yields ordinary shortcuts prevented by the app dispatcher', () => {
     expect(
       matchesNativeChatToggleShortcut(
         combo({ ctrlKey: true, shiftKey: true, defaultPrevented: true }),

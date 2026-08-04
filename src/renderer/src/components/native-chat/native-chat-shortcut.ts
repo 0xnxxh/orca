@@ -1,3 +1,5 @@
+import { isMarkedImeOwnedShortcutEvent } from '@/lib/ime-composition-keyboard-event'
+
 /** Platform-correct binding for the native-chat view toggle.
  *
  *  Key: Cmd/Ctrl + Shift + J. The primary modifier follows AGENTS.md — metaKey
@@ -23,7 +25,7 @@ export function matchesNativeChatToggleShortcut(
   >,
   isMac: boolean
 ): boolean {
-  if (e.defaultPrevented || e.altKey || !e.shiftKey) {
+  if (e.defaultPrevented || isMarkedImeOwnedShortcutEvent(e) || e.altKey || !e.shiftKey) {
     return false
   }
   // Primary modifier is Cmd on Mac, Ctrl on Linux/Windows — and must be the
