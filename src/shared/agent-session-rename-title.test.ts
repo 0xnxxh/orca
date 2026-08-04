@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  findClaudeSessionRenameRecord,
   isAgentRenamedTerminalTitle,
   readClaudeSessionRenamedTitle
 } from './agent-session-rename-title'
@@ -51,6 +52,23 @@ describe('readClaudeSessionRenamedTitle', () => {
       message: { role: 'user', content: 'what does "custom-title" mean?' }
     })
     expect(readClaudeSessionRenamedTitle([userTurn])).toBeNull()
+  })
+})
+
+describe('findClaudeSessionRenameRecord', () => {
+  it('tells a cleared rename apart from a range that holds no record', () => {
+    const cleared = JSON.stringify({ type: 'custom-title', customTitle: '' })
+    expect(findClaudeSessionRenameRecord([CUSTOM_TITLE_LINE, cleared])).toEqual({
+      customTitle: null
+    })
+    expect(findClaudeSessionRenameRecord([AI_TITLE_LINE])).toBeNull()
+  })
+
+  it('ignores neighbouring record types that also name the session', () => {
+    const agentName = JSON.stringify({ type: 'agent-name', agentName: 'billing-fix' })
+    const malformedTitle = JSON.stringify({ type: 'custom-title', customTitle: 42 })
+    expect(findClaudeSessionRenameRecord([agentName])).toBeNull()
+    expect(findClaudeSessionRenameRecord([malformedTitle])).toEqual({ customTitle: null })
   })
 })
 

@@ -106,6 +106,30 @@ describe('deliberate in-agent rename vs generated tab title', () => {
     )
   })
 
+  it('rescans for the newest title of a burst instead of dropping it', async () => {
+    const store = createTestStore()
+    const tabId = seedAgentTab(store)
+    let releaseFirstScan = (): void => {}
+    const firstScan = new Promise<string | null>((resolve) => {
+      releaseFirstScan = () => resolve(null)
+    })
+    getRenamedTitle.mockReturnValueOnce(firstScan).mockResolvedValue('billing-fix')
+
+    // Why: the rename can land while the previous frame's scan is still open.
+    // Dropping it would leave the tab on the generated title with no later title
+    // change to trigger a retry — Claude stops auto-titling once renamed.
+    store.getState().updateTabTitle(tabId, '✳ Answer simple arithmetic question')
+    store.getState().updateTabTitle(tabId, '✳ billing-fix')
+    releaseFirstScan()
+
+    await vi.waitFor(() =>
+      expect(store.getState().tabsByWorktree[WORKTREE_ID][0].agentRenamedTitle).toBe('billing-fix')
+    )
+    expect(resolveTerminalTabTitle(store.getState().tabsByWorktree[WORKTREE_ID][0], true)).toBe(
+      '✳ billing-fix'
+    )
+  })
+
   it('does not scan transcripts while generated titles are off', async () => {
     const store = createTestStore()
     const tabId = seedAgentTab(store)

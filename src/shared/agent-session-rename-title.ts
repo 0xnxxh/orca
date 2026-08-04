@@ -9,35 +9,52 @@ import { stripLeadingAgentTitleDecorationOrEmpty } from './agent-title-decoratio
 /** Cheap prefilter for transcript readers before they buffer or parse a line. */
 export const CLAUDE_CUSTOM_TITLE_RECORD_MARKER = '"custom-title"'
 
+/** The newest rename record in a range of transcript lines. `customTitle` is
+ *  null when the agent cleared the name — still a record, so callers must not
+ *  keep searching earlier ranges for an older one. */
+export type ClaudeSessionRenameRecord = { customTitle: string | null }
+
 /**
- * The session's current deliberate rename from Claude transcript lines, or null
- * when none survives. Later records win; an empty `customTitle` is Claude
- * clearing the name, which must fall back to Orca's generated title.
+ * The newest `custom-title` record among transcript lines, or null when the
+ * range holds none. Separating "no record here" from "the name was cleared"
+ * lets a reader scan a cheap tail first and only widen when nothing was found.
  */
-export function readClaudeSessionRenamedTitle(lines: Iterable<string>): string | null {
-  let renamedTitle: string | null = null
+export function findClaudeSessionRenameRecord(
+  lines: Iterable<string>
+): ClaudeSessionRenameRecord | null {
+  let record: ClaudeSessionRenameRecord | null = null
   for (const line of lines) {
     // Why: transcripts are mostly large message records; skip the JSON parse
     // unless the line can carry the marker.
     if (!line.includes(CLAUDE_CUSTOM_TITLE_RECORD_MARKER)) {
       continue
     }
-    let record: unknown
+    let parsed: unknown
     try {
-      record = JSON.parse(line)
+      // A tail scan starts mid-line; JSON.parse rejects that fragment on its own.
+      parsed = JSON.parse(line)
     } catch {
       continue
     }
-    if (!record || typeof record !== 'object') {
+    if (!parsed || typeof parsed !== 'object') {
       continue
     }
-    const { type, customTitle } = record as { type?: unknown; customTitle?: unknown }
+    const { type, customTitle } = parsed as { type?: unknown; customTitle?: unknown }
     if (type !== 'custom-title') {
       continue
     }
-    renamedTitle = typeof customTitle === 'string' ? customTitle.trim() || null : null
+    record = { customTitle: typeof customTitle === 'string' ? customTitle.trim() || null : null }
   }
-  return renamedTitle
+  return record
+}
+
+/**
+ * The session's current deliberate rename from Claude transcript lines, or null
+ * when none survives. Later records win; an empty `customTitle` is Claude
+ * clearing the name, which must fall back to Orca's generated title.
+ */
+export function readClaudeSessionRenamedTitle(lines: Iterable<string>): string | null {
+  return findClaudeSessionRenameRecord(lines)?.customTitle ?? null
 }
 
 /**
