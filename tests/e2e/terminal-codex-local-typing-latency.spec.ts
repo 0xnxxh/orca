@@ -399,7 +399,6 @@ test.describe('local Codex terminal typing latency', () => {
         `[codex-korean-ime] onData=${JSON.stringify(nativeTrace.onData.join(''))} ` +
           `screen=${JSON.stringify(nativeContent.slice(-500))}`
       )
-      await attachTerminalImeBoundaryEvidence(orcaPage, testInfo, 'native-macos-codex-korean')
       await testInfo.attach('native-macos-codex-korean.png', {
         body: await orcaPage.screenshot(),
         contentType: 'image/png'
@@ -420,6 +419,8 @@ test.describe('local Codex terminal typing latency', () => {
             .replaceAll('\n', '')
         )
         .toContain(`${committedKorean.trim()}abc`)
+
+      await attachTerminalImeBoundaryEvidence(orcaPage, testInfo, 'native-macos-codex-korean')
 
       expect(committedKorean).toBe(`${KOREAN_TUI_EXPECTED} `)
       expect(nativeContent).toContain(KOREAN_TUI_TEXT)
