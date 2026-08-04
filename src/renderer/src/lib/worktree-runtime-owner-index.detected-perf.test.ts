@@ -108,14 +108,15 @@ function measureSweeps(run: (sweep: number) => void): number {
 }
 
 describe('detected worktree index performance', () => {
-  it('answers repeated lookups without rescanning the detected catalog', () => {
+  it('answers repeated owner lookups without rescanning the detected catalog', () => {
     const counter = { reads: 0 }
     const catalog = buildDetectedCatalog(0, counter)
+    const state = buildOwnerState(catalog)
 
-    hasIndexedDetectedWorktree(catalog, 'repo-0::warm-the-index')
+    getExplicitRuntimeEnvironmentIdForWorktree(state, 'repo-0::warm-the-index')
     counter.reads = 0
     for (const probeId of PROBE_IDS) {
-      hasIndexedDetectedWorktree(catalog, probeId)
+      getExplicitRuntimeEnvironmentIdForWorktree(state, probeId)
     }
     const indexedReads = counter.reads
 
