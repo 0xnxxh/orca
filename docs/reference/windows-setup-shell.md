@@ -47,7 +47,9 @@ every platform. The `#!` line therefore does two things:
 - It declares the script is written for a POSIX shell, which is what selects the bash runner.
 - Its option flags are replayed with `set`, so `#!/usr/bin/env -S bash -euo pipefail` really does
   get `pipefail`. Without that replay the flags would be silently dropped, because `bash <runner>`
-  never parses the interpreter line.
+  never parses the interpreter line. Only the flags `set` itself accepts
+  (`[--abefhkmnptuvxBCHP] [-o option]`) are replayed; invocation-only ones such as `-l` are
+  dropped, because `set -l` exits 2 and would abort the runner before its first line.
 
 The interpreter name itself is not honored beyond "is this a POSIX shell": `#!/bin/sh` and
 `#!/bin/zsh` scripts run under bash, exactly as they already did on macOS and Linux.
@@ -74,6 +76,11 @@ interactively and the runner never executes (issue #6896). Those launches reuse 
 `ProcessStartInfo` launcher (`buildWindowsCmdRunnerDelayedLaunchCommand`), which carries the switch
 and the runner path outside the command line. `WorktreeSetupLaunch.shell` therefore describes the
 launching pane; the runner file's `.cmd`/`.sh` extension describes the format.
+
+The `wait-for-setup` gate follows the same split. The pane types the gate and already quoted the
+agent startup command for itself, so a `.cmd` runner launched from a Git Bash pane still gets the
+bash gate — PowerShell's `Invoke-Expression` cannot parse POSIX `'\''` escaping. The gate wraps the
+same `ProcessStartInfo` launcher, so the batch runner is never handed to bash.
 
 WSL worktrees and non-Windows platforms are unaffected: they always use the bash runner. SSH hosts
 choose their runner from the remote path format, never from local Windows preferences.

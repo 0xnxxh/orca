@@ -2,8 +2,13 @@
 // not of the user's terminal preference, so a `#!` line is how a project declares it.
 
 const POSIX_SHELL_BASENAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash'])
-// Why: `-e`, `+e`, `-euo`; `--norc` and interpreter arguments are not `set` options.
-const SHELL_OPTION_FLAG_PATTERN = /^[-+][a-zA-Z]+$/
+// Why: only the letters `set` itself accepts (`set [--abefhkmnptuvxBCHP] [-o option]`). An
+// invocation-only flag such as `-l` or `-r` makes `set` exit 2, which under the runner's `set -e`
+// aborts setup before its first line runs.
+const SET_OPTION_FLAG_PATTERN = /^[-+][abefhkmnptuvxBCHP]+$/
+// Why: `-o`/`-euo` name their option in the next token; a trailing `-o` with no name would make
+// `set` dump the whole shell-option table into the setup terminal instead.
+const SET_LONG_OPTION_FLAG_PATTERN = /^[-+][abefhkmnptuvxBCHP]*o$/
 const SHELL_OPTION_NAME_PATTERN = /^[a-z_]+$/
 
 export type SetupScriptShebang = {
@@ -68,15 +73,16 @@ function parseShellOptions(tokens: string[]): string[] {
   const options: string[] = []
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index]
-    if (!SHELL_OPTION_FLAG_PATTERN.test(token)) {
+    if (SET_LONG_OPTION_FLAG_PATTERN.test(token)) {
+      const optionName = tokens[index + 1]
+      if (optionName && SHELL_OPTION_NAME_PATTERN.test(optionName)) {
+        options.push(token, optionName)
+        index++
+      }
       continue
     }
-    options.push(token)
-    // Why: `-o`/`-euo` take the option name as a separate argument (`pipefail`).
-    const optionName = tokens[index + 1]
-    if (token.endsWith('o') && optionName && SHELL_OPTION_NAME_PATTERN.test(optionName)) {
-      options.push(optionName)
-      index++
+    if (SET_OPTION_FLAG_PATTERN.test(token)) {
+      options.push(token)
     }
   }
   return options

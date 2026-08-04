@@ -54,8 +54,22 @@ describe('parseSetupScriptShebang', () => {
   })
 
   it('ignores interpreter arguments that `set` cannot apply', () => {
+    // Regression: `set` rejects invocation-only flags with exit 2, and the runner's `set -e`
+    // turns that into an aborted setup before its first line runs.
     expect(parseSetupScriptShebang('#!/bin/bash --norc\nmake')?.shellOptions).toEqual([])
-    expect(parseSetupScriptShebang('#!/bin/bash -o\nmake')?.shellOptions).toEqual(['-o'])
+    expect(parseSetupScriptShebang('#!/bin/bash -l\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash -s\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash -i\nmake')?.shellOptions).toEqual([])
+    // Why: `-r` is accepted by `set` on some shells but silently restricts the rest of setup.
+    expect(parseSetupScriptShebang('#!/bin/bash -r\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash -ex -l\nmake')?.shellOptions).toEqual(['-ex'])
+    // Why: a bare `-o` would print the whole shell-option table into the setup terminal.
+    expect(parseSetupScriptShebang('#!/bin/bash -o\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash -euo\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash +o posix\nmake')?.shellOptions).toEqual([
+      '+o',
+      'posix'
+    ])
   })
 
   it('returns null without an interpreter line', () => {
