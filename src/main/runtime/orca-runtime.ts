@@ -19830,28 +19830,42 @@ export class OrcaRuntimeService {
   async checkRepoHooks(repoSelector: string) {
     const repo = await this.resolveRepoSelector(repoSelector)
     if (isFolderRepo(repo)) {
-      return { hasHooks: false, hooks: null, mayNeedUpdate: false }
+      return { status: 'ok' as const, hasHooks: false, hooks: null, mayNeedUpdate: false }
     }
 
     if (repo.connectionId) {
       const fsProvider = getSshFilesystemProvider(repo.connectionId)
+      // Why: callers cache "no hooks" as authoritative, so an unreadable repo must fail
+      // closed with an error status (mirrors the hooks:check IPC handler) instead of
+      // pinning a false "no setup script" verdict until the client remounts.
       if (!fsProvider) {
-        return { hasHooks: false, hooks: null, mayNeedUpdate: false }
+        return { status: 'error' as const, hasHooks: false, hooks: null, mayNeedUpdate: false }
       }
       try {
         const result = await fsProvider.readFile(joinWorktreeRelativePath(repo.path, 'orca.yaml'))
         if (result.isBinary) {
-          return { hasHooks: false, hooks: null, mayNeedUpdate: false }
+          return { status: 'ok' as const, hasHooks: false, hooks: null, mayNeedUpdate: false }
         }
-        return { hasHooks: true, hooks: parseOrcaYaml(result.content), mayNeedUpdate: false }
-      } catch {
-        return { hasHooks: false, hooks: null, mayNeedUpdate: false }
+        return {
+          status: 'ok' as const,
+          hasHooks: true,
+          hooks: parseOrcaYaml(result.content),
+          mayNeedUpdate: false
+        }
+      } catch (error) {
+        return {
+          status: isENOENT(error) ? ('ok' as const) : ('error' as const),
+          hasHooks: false,
+          hooks: null,
+          mayNeedUpdate: false
+        }
       }
     }
 
     const has = hasHooksFile(repo.path)
     const hooks = has ? loadHooks(repo.path) : null
     return {
+      status: 'ok' as const,
       hasHooks: has,
       hooks,
       mayNeedUpdate: has && !hooks && hasUnrecognizedOrcaYamlKeys(repo.path)
