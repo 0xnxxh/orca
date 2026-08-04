@@ -22,6 +22,7 @@ export function registerRendererRestartIpcRelays(
   })
   ipcRenderer.on('window:unload-prevented', () => {
     eventTarget.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+    eventTarget.dispatchEvent(new Event(ORCA_APP_RESTART_ABORTED_EVENT))
   })
 }
 
