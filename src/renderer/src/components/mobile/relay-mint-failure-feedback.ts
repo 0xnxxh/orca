@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { translate } from '@/i18n/i18n'
 import type { MobileRelayMintFailure } from '../../../../shared/mobile-relay-mint-failure'
@@ -26,20 +26,26 @@ export function buildRelayMintFailureFeedback(args: RelayMintFailureFeedbackArgs
   ].join('\n')
 }
 
-/** Why: without a direct send, users pasted these diagnostics into the crash dialog. */
-export function useSendRelayMintFailureFeedback(): (
-  args: RelayMintFailureFeedbackArgs
-) => Promise<void> {
-  // Why: the button has no busy state and the send is a `gh` subprocess plus an
-  // HTTPS post, so repeat clicks would file duplicate reports and queue extra
-  // spawns behind the shared gh concurrency limit.
-  const inFlightRef = useRef(false)
+export type RelayMintFailureFeedbackSender = {
+  send: (args: RelayMintFailureFeedbackArgs) => Promise<void>
+  /** Why: main allows the submit 10s, so the button must show progress or users re-click. */
+  sending: boolean
+}
 
-  return useCallback(async (args: RelayMintFailureFeedbackArgs): Promise<void> => {
+/** Why: without a direct send, users pasted these diagnostics into the crash dialog. */
+export function useSendRelayMintFailureFeedback(): RelayMintFailureFeedbackSender {
+  // Why: a `gh` subprocess plus an HTTPS post, so repeat clicks would file duplicate
+  // reports and queue extra spawns behind the shared gh concurrency limit. The ref
+  // rejects clicks landing before React has flushed `sending` to the disabled button.
+  const inFlightRef = useRef(false)
+  const [sending, setSending] = useState(false)
+
+  const send = useCallback(async (args: RelayMintFailureFeedbackArgs): Promise<void> => {
     if (inFlightRef.current) {
       return
     }
     inFlightRef.current = true
+    setSending(true)
     try {
       // Why: identity is best-effort; a missing gh session must not block the report.
       const viewer = await window.api.gh.viewer().catch(() => null)
@@ -68,6 +74,9 @@ export function useSendRelayMintFailureFeedback(): (
       console.error('Failed to send relay pairing diagnostics:', error)
     } finally {
       inFlightRef.current = false
+      setSending(false)
     }
   }, [])
+
+  return { send, sending }
 }

@@ -12086,7 +12086,8 @@
           "copyDiagnostics": "Copy diagnostics",
           "sendDiagnostics": "Send to Orca",
           "diagnosticsSent": "Diagnostics sent to Orca",
-          "diagnosticsSendFailed": "Failed to send diagnostics"
+          "diagnosticsSendFailed": "Failed to send diagnostics",
+          "sendingDiagnostics": "Sending…"
         }
       },
       "gitlab": {

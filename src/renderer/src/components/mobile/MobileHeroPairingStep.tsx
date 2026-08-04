@@ -107,7 +107,7 @@ export function MobileHeroPairingStep({
 }): React.JSX.Element {
   const copyPairingCodeRef = useRef<HTMLButtonElement | null>(null)
   const pairingWasReadyRef = useRef(pairingUrl != null && !pairLoading)
-  const sendRelayDiagnostics = useSendRelayMintFailureFeedback()
+  const relayDiagnostics = useSendRelayMintFailureFeedback()
   const emptyQrMessage =
     !pairLoading && pairQrDataUrl == null
       ? emptyPairingQrMessage({
@@ -164,11 +164,12 @@ export function MobileHeroPairingStep({
           onRetry={onRetryRelay}
           onCopyDiagnostics={onCopyRelayDiagnostics}
           onSendDiagnostics={() =>
-            void sendRelayDiagnostics({
+            void relayDiagnostics.send({
               failure: relayMintFailure,
               preferredConnectionMode: connectionMode
             })
           }
+          sendingDiagnostics={relayDiagnostics.sending}
           compact
           busy={pairLoading}
         />

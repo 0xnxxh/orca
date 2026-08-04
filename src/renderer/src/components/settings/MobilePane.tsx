@@ -288,7 +288,7 @@ export function MobilePane(): React.JSX.Element {
     ]
   )
 
-  const sendRelayDiagnostics = useSendRelayMintFailureFeedback()
+  const relayDiagnostics = useSendRelayMintFailureFeedback()
 
   const copyRelayDiagnostics = useCallback(async (): Promise<void> => {
     if (relayMintFailure == null) {
@@ -421,11 +421,12 @@ export function MobilePane(): React.JSX.Element {
           onRetry={() => void generateQR({ rotate: true })}
           onCopyDiagnostics={() => void copyRelayDiagnostics()}
           onSendDiagnostics={() =>
-            void sendRelayDiagnostics({
+            void relayDiagnostics.send({
               failure: relayMintFailure,
               preferredConnectionMode: connectionMode
             })
           }
+          sendingDiagnostics={relayDiagnostics.sending}
           busy={loading}
         />
       ) : null}
