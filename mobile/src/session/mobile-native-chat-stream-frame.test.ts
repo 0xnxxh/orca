@@ -32,7 +32,8 @@ describe('applyMobileNativeChatStreamFrame', () => {
       kind: 'messages',
       messages: [message('a'), message('b')],
       hasMore: true,
-      beforeOffset: 123
+      beforeOffset: 123,
+      windowReplaced: true
     })
   })
 
@@ -42,7 +43,12 @@ describe('applyMobileNativeChatStreamFrame', () => {
 
     const result = applyMobileNativeChatStreamFrame({
       merger,
-      frame: { type: 'snapshot', messages: [message('b'), message('c'), message('d')] },
+      frame: {
+        type: 'snapshot',
+        messages: [message('b'), message('c'), message('d')],
+        hasMore: true,
+        beforeOffset: 20
+      },
       limit: 3,
       replaceSnapshot: false
     })
@@ -50,7 +56,118 @@ describe('applyMobileNativeChatStreamFrame', () => {
     expect(result).toMatchObject({
       kind: 'messages',
       messages: [message('b'), message('c'), message('d')],
-      cursorInvalidated: true
+      cursorInvalidated: true,
+      hasMore: true
+    })
+  })
+
+  it('refreshes paging metadata when a replay still starts at the retained oldest row', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, [message('a'), message('b')])
+
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: {
+          type: 'snapshot',
+          messages: [message('a'), message('b')],
+          hasMore: false,
+          beforeOffset: 0
+        },
+        limit: 40,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: [message('a'), message('b')],
+      hasMore: false,
+      beforeOffset: 0
+    })
+  })
+
+  it('keeps paged-in history when a reconnect replay overlaps it', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['p1', 'p2', 'a', 'b'].map(message))
+
+    const result = applyMobileNativeChatStreamFrame({
+      merger,
+      // Replayed window: the retained tail plus what arrived while disconnected.
+      frame: { type: 'snapshot', messages: [message('a'), message('b'), message('c')] },
+      limit: 100,
+      replaceSnapshot: false
+    })
+
+    expect(result).toEqual({
+      kind: 'messages',
+      messages: ['p1', 'p2', 'a', 'b', 'c'].map(message)
+    })
+  })
+
+  it('replaces the window when a reconnect replay is disjoint from history', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, [message('old-1'), message('old-2')])
+
+    // A long outage (or compaction while away) cannot be stitched without a gap.
+    const result = applyMobileNativeChatStreamFrame({
+      merger,
+      frame: {
+        type: 'snapshot',
+        messages: [message('fresh-1'), message('fresh-2')],
+        hasMore: true,
+        beforeOffset: 900
+      },
+      limit: 100,
+      replaceSnapshot: false
+    })
+
+    expect(result).toEqual({
+      kind: 'messages',
+      messages: [message('fresh-1'), message('fresh-2')],
+      hasMore: true,
+      beforeOffset: 900,
+      windowReplaced: true
+    })
+  })
+
+  it('replaces a partially overlapping replay that no longer extends the retained tail', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['old-1', 'shared', 'old-tail'].map(message))
+
+    const replay = [message('shared'), message('compacted-summary'), message('old-tail')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: false, beforeOffset: 0 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: false,
+      beforeOffset: 0,
+      windowReplaced: true
+    })
+  })
+
+  it('replaces retained history when replay metadata says no earlier rows remain', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['removed-1', 'removed-2', 'a', 'b'].map(message))
+
+    const replay = [message('a'), message('b')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: false, beforeOffset: 0 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: false,
+      beforeOffset: 0,
+      windowReplaced: true
     })
   })
 
@@ -79,7 +196,12 @@ describe('applyMobileNativeChatStreamFrame', () => {
         limit: 40,
         replaceSnapshot: false
       })
-    ).toEqual({ kind: 'messages', messages: [message('new')], hasMore: false })
+    ).toEqual({
+      kind: 'messages',
+      messages: [message('new')],
+      hasMore: false,
+      windowReplaced: true
+    })
   })
 
   it('surfaces snapshot errors and ignores unrelated frames', () => {
