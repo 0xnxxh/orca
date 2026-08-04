@@ -1930,6 +1930,44 @@ describe('registerPtyHandlers', () => {
       expect(env.ORCA_CODEX_HOME).toBe('/managed/origin/home')
     })
 
+    it('blocks a shared-runtime resume when auth reconciliation fails', async () => {
+      const selectedHome = vi.fn(() => {
+        throw new Error('Cannot safely launch Codex while stale runtime auth remains.')
+      })
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        selectedHome,
+        undefined,
+        undefined,
+        undefined,
+        {
+          prepareCodexSessionResume: async () => ({
+            outcome: 'resume' as const,
+            codexHomePath: '/managed/shared-mirror/home',
+            reconcileSharedRuntimeAuth: true
+          })
+        }
+      )
+
+      await expect(
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          command: 'codex resume session-a',
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: 'session-a',
+            transcriptPath: '/managed/shared-mirror/home/sessions/2026/07/20/rollout-a.jsonl'
+          }
+        })
+      ).rejects.toThrow('Cannot safely launch Codex while stale runtime auth remains.')
+
+      expect(selectedHome).toHaveBeenCalledTimes(1)
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
     it('overrides an unmarked custom home when the resumed session originated in real home', async () => {
       const selectedHome = vi.fn(() => '/managed/current/home')
       const systemHome = '/Users/example/.codex'
@@ -16751,17 +16789,19 @@ describe('registerPtyHandlers', () => {
       codexManagedAccounts: [{ id: 'account-b', managedHomePath: '/managed/current/home' }]
     })
     handlers.clear()
+    const resolveHome = vi.fn(() => '/managed/shared-mirror/home')
     registerPtyHandlers(
       mainWindow as never,
       runtime as never,
-      vi.fn(() => '/managed/current/home'),
+      resolveHome,
       getSettings as never,
       undefined,
       undefined,
       {
         prepareCodexSessionResume: async () => ({
           outcome: 'resume' as const,
-          codexHomePath: '/managed/shared-mirror/home'
+          codexHomePath: '/managed/shared-mirror/home',
+          reconcileSharedRuntimeAuth: true
         })
       }
     )
@@ -16780,6 +16820,7 @@ describe('registerPtyHandlers', () => {
       }
     })
 
+    expect(resolveHome).toHaveBeenCalledTimes(1)
     expect(recordCodexPaneAccountMock).not.toHaveBeenCalled()
     expect(forgetCodexPaneAccountMock).toHaveBeenCalledWith('pty-runtime-resumed')
   })
