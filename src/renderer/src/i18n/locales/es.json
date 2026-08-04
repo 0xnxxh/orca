@@ -4227,7 +4227,9 @@
           "ee240a39eb": "Editar filtros",
           "automationCreated": "Ocultar creados por automatizaciones",
           "cliCreated": "Hide CLI-created",
-          "detachedHead": "Ocultar HEAD desacoplado"
+          "detachedHead": "Ocultar HEAD desacoplado",
+          "keepDefaultBranch": "Excepto la rama predeterminada",
+          "keepDefaultBranchAria": "Mantener visible la rama predeterminada al ocultar los espacios de trabajo en reposo"
         },
         "SidebarHeader": {
           "92154beb7e": "Nuevo espacio de trabajo",
@@ -4292,7 +4294,9 @@
           "82594419ba": "Filtros",
           "automationCreated": "Ocultar creados por automatizaciones",
           "cliCreated": "Hide CLI-created",
-          "detachedHead": "Ocultar HEAD desacoplado"
+          "detachedHead": "Ocultar HEAD desacoplado",
+          "keepDefaultBranch": "Excepto la rama predeterminada",
+          "keepDefaultBranchAria": "Mantener visible la rama predeterminada al ocultar los espacios de trabajo en reposo"
         },
         "SidebarWorkspaceOptionsMenu": {
           "95c9754653": "Diseño de actividad del Agent",
