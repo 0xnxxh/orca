@@ -87,6 +87,38 @@ describe('registerSpeechHandlers', () => {
       age: 0,
       availability: 'missing'
     })
+    hydrateOpenAiSpeechApiKeySnapshotMock.mockResolvedValue({
+      value: false,
+      stale: false,
+      age: 0,
+      availability: 'missing'
+    })
+  })
+
+  it('retries stale API-key status when the renderer requests model availability', async () => {
+    getOpenAiSpeechApiKeySnapshotMock.mockReturnValue({
+      value: false,
+      stale: true,
+      age: null,
+      availability: 'unavailable'
+    })
+    hydrateOpenAiSpeechApiKeySnapshotMock.mockResolvedValue({
+      value: true,
+      stale: false,
+      age: 0,
+      availability: 'ready'
+    })
+    registerSpeechHandlers({} as never)
+
+    await expect(
+      getHandler('speech:getOpenAiApiKeyStatus')({ sender: { id: 7 } })
+    ).resolves.toEqual({
+      value: true,
+      configured: true,
+      stale: false,
+      age: 0,
+      availability: 'ready'
+    })
   })
 
   it('clears the model download progress callback after completion', async () => {

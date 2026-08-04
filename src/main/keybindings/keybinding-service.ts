@@ -1,18 +1,15 @@
-import {
-  LEGACY_TAB_SWITCH_BINDINGS,
-  type KeybindingActionId,
-  type KeybindingFileSnapshot,
-  type KeybindingOverrides
+import type {
+  KeybindingActionId,
+  KeybindingFileSnapshot,
+  KeybindingOverrides
 } from '../../shared/keybindings'
 import {
   ensureKeybindingFile,
   getUserKeybindingsPath,
-  migrateLegacyKeybindings,
   parseKeybindingFileContents,
-  seedLegacyTabSwitchBindings,
   writeKeybindingOverride
 } from './keybinding-file'
-import { readKeybindingsThroughFilesystemHost } from '../filesystem-host/filesystem-host-read-authority'
+import { prepareKeybindingsThroughFilesystemHost } from '../filesystem-host/filesystem-host-read-authority'
 
 export type KeybindingServiceOptions = {
   homePath: string
@@ -34,31 +31,16 @@ export class KeybindingService {
   private readonly platform: NodeJS.Platform
   private snapshot: KeybindingFileSnapshot
   private generation = 0
+  private hydrationRetryNeeded = true
+  private readonly getLegacyOverrides: KeybindingServiceOptions['getLegacyOverrides']
+  private readonly legacyTabSwitchSeed: KeybindingServiceOptions['legacyTabSwitchSeed']
 
   constructor(options: KeybindingServiceOptions) {
     this.configPath = getUserKeybindingsPath(options.homePath)
     this.platform = options.platform ?? process.platform
+    this.getLegacyOverrides = options.getLegacyOverrides
+    this.legacyTabSwitchSeed = options.legacyTabSwitchSeed
     this.snapshot = parseKeybindingFileContents(this.configPath, null, this.platform)
-    // Why: older builds persisted custom shortcuts inside global settings.
-    // Once a keybindings file exists, it is the sole source of truth.
-    migrateLegacyKeybindings(this.configPath, this.platform, options.getLegacyOverrides?.())
-    // Why: pre-existing installs keep the old tab-switch chords. Only mark the
-    // one-shot done on success so a transient IO failure retries next launch
-    // instead of silently dropping the pin.
-    if (options.legacyTabSwitchSeed?.isPending()) {
-      try {
-        // Why: the seed already read the file to build its snapshot — prime the
-        // lazy cache with it instead of re-reading on the first getSnapshot().
-        this.snapshot = seedLegacyTabSwitchBindings(
-          this.configPath,
-          this.platform,
-          LEGACY_TAB_SWITCH_BINDINGS
-        ).snapshot
-        options.legacyTabSwitchSeed.markSeeded()
-      } catch (error) {
-        console.error('Failed to seed legacy tab-switch keybindings:', error)
-      }
-    }
   }
 
   getPath(): string {
@@ -73,13 +55,23 @@ export class KeybindingService {
     const generation = this.generation
     let contents: string | null
     try {
-      contents = await readKeybindingsThroughFilesystemHost(this.configPath)
+      const prepared = await prepareKeybindingsThroughFilesystemHost(
+        this.configPath,
+        this.platform,
+        this.getLegacyOverrides?.(),
+        this.legacyTabSwitchSeed?.isPending() ?? false
+      )
+      contents = prepared.contents
+      if (prepared.seedCompleted) {
+        this.legacyTabSwitchSeed?.markSeeded()
+      }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | null)?.code
       if (code === 'ENOENT' || code === 'ENOTDIR') {
         contents = null
       } else {
         if (generation === this.generation) {
+          this.hydrationRetryNeeded = true
           this.snapshot = {
             ...this.snapshot,
             diagnostics: [
@@ -100,8 +92,13 @@ export class KeybindingService {
     }
     if (generation === this.generation) {
       this.snapshot = parseKeybindingFileContents(this.configPath, contents, this.platform)
+      this.hydrationRetryNeeded = false
     }
     return this.snapshot
+  }
+
+  needsHydrationRetry(): boolean {
+    return this.hydrationRetryNeeded
   }
 
   reload(): Promise<KeybindingFileSnapshot> {
@@ -124,6 +121,7 @@ export class KeybindingService {
   ): KeybindingFileSnapshot {
     this.snapshot = writeKeybindingOverride(this.configPath, this.platform, actionId, bindings)
     this.generation += 1
+    this.hydrationRetryNeeded = false
     return this.snapshot
   }
 }

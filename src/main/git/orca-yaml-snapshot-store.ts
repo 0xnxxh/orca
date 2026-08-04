@@ -234,6 +234,10 @@ export function readLocalOrcaYamlSnapshot(repoPath: string): OrcaYamlSnapshot {
   return snapshot
 }
 
+export async function readFreshLocalOrcaYamlSnapshot(repoPath: string): Promise<OrcaYamlSnapshot> {
+  return await refreshLocalOrcaYamlSnapshot(repoPath)
+}
+
 export function seedLocalOrcaYamlSnapshot(
   repo: Pick<Repo, 'connectionId' | 'executionHostId' | 'kind' | 'path'>
 ): void {

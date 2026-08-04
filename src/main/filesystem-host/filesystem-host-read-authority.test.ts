@@ -4,6 +4,7 @@ import {
   FilesystemHostReadAuthority,
   setFilesystemHostReadClientForTests
 } from './filesystem-host-read-authority'
+import { FilesystemHostSupervisor } from './filesystem-host-supervisor'
 import { FilesystemHostSupervisorError } from './filesystem-host-supervisor-error'
 import { resolveCliCommandThroughFilesystemHost } from './filesystem-host-rate-limit-client'
 
@@ -132,6 +133,38 @@ describe('FilesystemHostReadAuthority', () => {
     )
   })
 
+  it('runs keybinding migration and cohort seeding inside the filesystem child', async () => {
+    const dispatch = vi.fn(async () => ({
+      kind: 'prepare-keybindings' as const,
+      contents: '{"version":1}',
+      seedCompleted: true
+    }))
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor: createSupervisor(dispatch)
+    })
+
+    await expect(
+      authority.prepareKeybindings(
+        '/home/alice/.orca/keybindings.json',
+        'linux',
+        { 'tab.nextAllTypes': ['Mod+K'] },
+        true
+      )
+    ).resolves.toEqual({ contents: '{"version":1}', seedCompleted: true })
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: expect.objectContaining({
+          kind: 'prepare-keybindings',
+          platform: 'linux',
+          seedLegacyTabSwitchBindings: true
+        }),
+        storageClass: 'home',
+        admission: 'foreground'
+      })
+    )
+  })
+
   it('routes snapshot files and PTY cwd preparation through bounded typed operations', async () => {
     const dispatch = vi.fn(async (input) =>
       input.operation.kind === 'read-snapshot-file'
@@ -218,6 +251,73 @@ describe('FilesystemHostReadAuthority', () => {
 
     await vi.waitFor(() => expect(publishFailureDomain).toHaveBeenCalledTimes(100))
     expect(dispatch).toHaveBeenCalledTimes(100)
+  })
+
+  it('classifies a startup repo burst while prior classifier children are still exiting', async () => {
+    const startProcess = vi.fn(async (options: { onPhysicalExit?: () => void }) => ({
+      invoke: async (operation: { kind: string }) =>
+        operation.kind === 'classify-path'
+          ? ({ kind: 'classify-path', deviceId: 'device-7' } as const)
+          : ({ kind: 'read-orca-yaml', contents: 'scripts: {}\n' } as const),
+      retire: async () =>
+        await new Promise<boolean>((resolve) => {
+          setTimeout(() => {
+            options.onPhysicalExit?.()
+            resolve(true)
+          }, 20)
+        })
+    }))
+    const supervisor = new FilesystemHostSupervisor({
+      entryPath: '/unused',
+      maximumChildren: 8,
+      startProcess
+    })
+    const publishFailureDomain = vi.spyOn(supervisor, 'publishFailureDomain')
+    const authority = new FilesystemHostReadAuthority({ entryPath: '/unused', supervisor })
+    const repoPaths = Array.from({ length: 30 }, (_, index) => `/repo-${index}`)
+
+    authority.hydrateFailureDomains(['/home', '/user-data'])
+    authority.reconcileFailureDomains(repoPaths)
+    const reads = await Promise.allSettled(
+      repoPaths.map((path) => authority.readOrcaYaml(`${path}/orca.yaml`))
+    )
+
+    expect(reads.every((result) => result.status === 'fulfilled')).toBe(true)
+    await vi.waitFor(() => expect(publishFailureDomain).toHaveBeenCalledTimes(32))
+    await authority.dispose()
+  })
+
+  it('retries catalog classification after transient child capacity exhaustion', async () => {
+    const dispatch = vi
+      .fn()
+      .mockRejectedValueOnce(new FilesystemHostSupervisorError('capacity', 'full'))
+      .mockResolvedValueOnce({ kind: 'classify-path' as const, deviceId: 'device-7' })
+    const supervisor = createSupervisor(dispatch)
+    const authority = new FilesystemHostReadAuthority({ entryPath: '/unused', supervisor })
+
+    authority.reconcileFailureDomains(['/repo'])
+
+    await vi.waitFor(() => expect(supervisor.publishFailureDomain).toHaveBeenCalledOnce())
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    await authority.dispose()
+  })
+
+  it('does not recreate capacity retries after disposal', async () => {
+    const dispatch = vi.fn(async () => {
+      await Promise.resolve()
+      throw new FilesystemHostSupervisorError('capacity', 'full')
+    })
+    const authority = new FilesystemHostReadAuthority({
+      entryPath: '/unused',
+      supervisor: createSupervisor(dispatch)
+    })
+
+    authority.reconcileFailureDomains(['/repo'])
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+    await authority.dispose()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(dispatch).toHaveBeenCalledOnce()
   })
 
   it('cancels obsolete queued classifications when the catalog is replaced', async () => {
@@ -331,7 +431,8 @@ describe('FilesystemHostReadAuthority', () => {
       expect.objectContaining({
         operation: expect.objectContaining({ kind: 'write-rate-limit-credential' }),
         storageClass: 'home',
-        admission: 'background'
+        admission: 'background',
+        deadlineMs: 20_000
       })
     )
   })

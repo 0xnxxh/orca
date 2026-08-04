@@ -14,6 +14,7 @@ vi.mock('../filesystem-host/filesystem-host-read-authority', () => ({
 import {
   orcaYamlSnapshots,
   OrcaYamlSnapshotStore,
+  readFreshLocalOrcaYamlSnapshot,
   readLocalOrcaYamlSnapshot,
   reconcileLocalOrcaYamlSnapshots,
   refreshLocalOrcaYamlSnapshot,
@@ -211,6 +212,18 @@ describe('OrcaYamlSnapshotStore', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('revalidates trust snapshots even when the cached value is recent', async () => {
+    readOrcaYamlMock
+      .mockResolvedValueOnce('scripts:\n  archive: old\n')
+      .mockResolvedValueOnce('scripts:\n  archive: current\n')
+    await refreshLocalOrcaYamlSnapshot('/repo')
+
+    await expect(readFreshLocalOrcaYamlSnapshot('/repo')).resolves.toMatchObject({
+      stale: false,
+      value: { hooks: { scripts: { archive: 'current' } } }
+    })
   })
 
   it('marks only valid unknown-key-only content as needing an update', () => {

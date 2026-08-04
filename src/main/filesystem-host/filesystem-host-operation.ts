@@ -1,6 +1,7 @@
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   mkdirSync,
   openSync,
@@ -18,6 +19,11 @@ import type {
   FilesystemSnapshotFileKind
 } from '../../shared/filesystem-host-protocol'
 import { FILESYSTEM_HOST_MAX_TEXT_BYTES } from '../../shared/filesystem-host-protocol'
+import { LEGACY_TAB_SWITCH_BINDINGS, type KeybindingOverrides } from '../../shared/keybindings'
+import {
+  migrateLegacyKeybindings,
+  seedLegacyTabSwitchBindings
+} from '../keybindings/keybinding-file'
 
 export class FilesystemHostOperationError extends Error {
   constructor(
@@ -108,6 +114,37 @@ function readBoundedTextFile(
     if (descriptor !== null) {
       closeSync(descriptor)
     }
+  }
+}
+
+function prepareKeybindings(
+  operation: Extract<FilesystemHostOperation, { kind: 'prepare-keybindings' }>
+): FilesystemHostResult {
+  migrateLegacyKeybindings(
+    operation.path,
+    operation.platform,
+    operation.legacyOverrides as KeybindingOverrides | undefined
+  )
+  if (operation.seedLegacyTabSwitchBindings) {
+    seedLegacyTabSwitchBindings(operation.path, operation.platform, LEGACY_TAB_SWITCH_BINDINGS)
+  }
+  if (!existsSync(operation.path)) {
+    return {
+      kind: 'prepare-keybindings',
+      contents: null,
+      seedCompleted: operation.seedLegacyTabSwitchBindings
+    }
+  }
+  const result = readBoundedTextFile(
+    operation.path,
+    FILESYSTEM_HOST_MAX_TEXT_BYTES,
+    'keybindings.json',
+    'read-keybindings'
+  )
+  return {
+    kind: 'prepare-keybindings',
+    contents: result.kind === 'read-keybindings' ? result.contents : null,
+    seedCompleted: operation.seedLegacyTabSwitchBindings
   }
 }
 
@@ -203,7 +240,10 @@ function writeRateLimitCredential(
       throw new FilesystemHostOperationError('invalid', 'Invalid Gemini OAuth credentials')
     }
   }
-  writeSecureFile(operation.path, operation.contents)
+  writeSecureFile(operation.path, operation.contents, {
+    // Why: OpenCode owns this shared provider directory; only Orca's credential file is ours to harden.
+    hardenParentDirectory: operation.fileKind !== 'opencode-auth'
+  })
   return { kind: 'write-rate-limit-credential' }
 }
 
@@ -231,6 +271,8 @@ export function executeFilesystemHostOperation(
           'keybindings.json',
           operation.kind
         )
+      case 'prepare-keybindings':
+        return prepareKeybindings(operation)
       case 'read-snapshot-file':
         return readBoundedSnapshotFile(operation.path, operation.fileKind)
       case 'prepare-rate-limit-pty-cwd':

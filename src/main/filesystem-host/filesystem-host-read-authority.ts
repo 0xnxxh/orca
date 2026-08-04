@@ -6,13 +6,17 @@ import type {
   FilesystemSnapshotFileKind,
   RateLimitCredentialFileKind
 } from '../../shared/filesystem-host-protocol'
+import type { KeybindingOverrides } from '../../shared/keybindings'
 import { FilesystemHostBackgroundQueue } from './filesystem-host-background-queue'
 import { FilesystemHostFailureDomainHydrator } from './filesystem-host-failure-domain-hydrator'
 import { writeFilesystemHostRateLimitCredential } from './filesystem-host-rate-limit-credential-client'
 import { resolveFilesystemHostCliCommand } from './filesystem-host-cli-command-client'
 import { FilesystemHostSupervisor } from './filesystem-host-supervisor'
 import { routeFilesystemHostPath } from './filesystem-host-path-route'
-import type { FilesystemStorageClass } from './filesystem-host-telemetry'
+import type {
+  FilesystemHostTelemetryEvent,
+  FilesystemStorageClass
+} from './filesystem-host-telemetry'
 import {
   FilesystemHostReadError,
   filesystemHostReadFailureReason,
@@ -23,9 +27,23 @@ export {
   FilesystemHostReadError,
   type FilesystemHostReadFailureReason
 } from './filesystem-host-read-result'
+export {
+  canonicalizePathThroughFilesystemHost,
+  configureFilesystemHostReadAuthority,
+  hydrateFilesystemHostFailureDomains,
+  prepareKeybindingsThroughFilesystemHost,
+  prepareRateLimitPtyCwdThroughFilesystemHost,
+  readKeybindingsThroughFilesystemHost,
+  readOrcaYamlThroughFilesystemHost,
+  readSnapshotFileThroughFilesystemHost,
+  reconcileFilesystemHostFailureDomains,
+  requireFilesystemHostReadClient,
+  setFilesystemHostReadClientForTests
+} from './filesystem-host-read-client'
 
 const AUTHORIZATION_DEADLINE_MS = 2_000
 const BACKGROUND_READ_DEADLINE_MS = 5_000
+const CREDENTIAL_WRITE_DEADLINE_MS = 20_000
 const BACKGROUND_OPERATION_CONCURRENCY = 4
 
 type Dispatch = FilesystemHostSupervisor['dispatch']
@@ -35,6 +53,12 @@ export type FilesystemHostReadClient = {
   canonicalizePath(path: string, storageClass?: FilesystemStorageClass): Promise<string>
   readOrcaYaml(path: string): Promise<string>
   readKeybindings(path: string): Promise<string>
+  prepareKeybindings?(
+    path: string,
+    platform: NodeJS.Platform,
+    legacyOverrides: KeybindingOverrides | undefined,
+    seedLegacyTabSwitchBindings: boolean
+  ): Promise<{ contents: string | null; seedCompleted: boolean }>
   readSnapshotFile(path: string, fileKind: FilesystemSnapshotFileKind): Promise<Buffer>
   prepareRateLimitPtyCwd(path: string): Promise<string>
   resolveCliCommand?(commandName: FilesystemCliCommandName): Promise<string>
@@ -48,6 +72,7 @@ export type FilesystemHostReadClient = {
 export type FilesystemHostReadAuthorityOptions = {
   entryPath: string
   platform?: NodeJS.Platform
+  onTelemetry?: (event: FilesystemHostTelemetryEvent) => void
   supervisor?: {
     dispatch: Dispatch
     publishFailureDomain: PublishFailureDomain
@@ -67,7 +92,11 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   constructor(options: FilesystemHostReadAuthorityOptions) {
     this.platform = options.platform ?? process.platform
     this.supervisor =
-      options.supervisor ?? new FilesystemHostSupervisor({ entryPath: options.entryPath })
+      options.supervisor ??
+      new FilesystemHostSupervisor({
+        entryPath: options.entryPath,
+        onTelemetry: options.onTelemetry
+      })
     this.failureDomains = new FilesystemHostFailureDomainHydrator(
       this.supervisor,
       this.backgroundQueue,
@@ -129,6 +158,40 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
         deadlineMs: BACKGROUND_READ_DEADLINE_MS
       })
       return requireFilesystemHostResult(result, 'read-keybindings').contents
+    } catch (error) {
+      throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
+    }
+  }
+
+  async prepareKeybindings(
+    path: string,
+    platform: NodeJS.Platform,
+    legacyOverrides: KeybindingOverrides | undefined,
+    seedLegacyTabSwitchBindings: boolean
+  ): Promise<{ contents: string | null; seedCompleted: boolean }> {
+    const route = routeFilesystemHostPath(path, 'home', this.platform)
+    try {
+      const result = await this.supervisor.dispatch({
+        operationId: randomUUID(),
+        operation: {
+          kind: 'prepare-keybindings',
+          path,
+          platform: platform === 'darwin' || platform === 'win32' ? platform : 'linux',
+          legacyOverrides: legacyOverrides
+            ? Object.fromEntries(
+                Object.entries(legacyOverrides).filter((entry): entry is [string, string[]] =>
+                  Array.isArray(entry[1])
+                )
+              )
+            : undefined,
+          seedLegacyTabSwitchBindings
+        },
+        ...route,
+        admission: 'foreground',
+        deadlineMs: BACKGROUND_READ_DEADLINE_MS
+      })
+      const prepared = requireFilesystemHostResult(result, 'prepare-keybindings')
+      return { contents: prepared.contents, seedCompleted: prepared.seedCompleted }
     } catch (error) {
       throw new FilesystemHostReadError(filesystemHostReadFailureReason(error))
     }
@@ -201,7 +264,7 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
         fileKind,
         contents,
         route: routeFilesystemHostPath(path, 'home', this.platform),
-        deadlineMs: BACKGROUND_READ_DEADLINE_MS,
+        deadlineMs: CREDENTIAL_WRITE_DEADLINE_MS,
         queue: this.backgroundQueue,
         dispatch: (input) => this.supervisor.dispatch(input)
       })
@@ -219,80 +282,8 @@ export class FilesystemHostReadAuthority implements FilesystemHostReadClient {
   }
 
   dispose(): Promise<void> {
+    this.failureDomains.dispose()
     this.backgroundQueue.dispose()
     return this.supervisor.dispose()
   }
-}
-
-const READ_AUTHORITY_STATE_KEY = '__orcaFilesystemHostReadAuthorityState'
-
-type FilesystemHostReadAuthorityState = {
-  client: FilesystemHostReadClient | null
-  authority: FilesystemHostReadAuthority | null
-}
-
-function getReadAuthorityState(): FilesystemHostReadAuthorityState {
-  const scope = globalThis as unknown as Record<string, unknown>
-  let state = scope[READ_AUTHORITY_STATE_KEY] as FilesystemHostReadAuthorityState | undefined
-  if (!state) {
-    state = { client: null, authority: null }
-    scope[READ_AUTHORITY_STATE_KEY] = state
-  }
-  return state
-}
-
-export function configureFilesystemHostReadAuthority(authority: FilesystemHostReadAuthority): void {
-  const state = getReadAuthorityState()
-  state.client = authority
-  state.authority = authority
-}
-
-export function setFilesystemHostReadClientForTests(client: FilesystemHostReadClient | null): void {
-  const state = getReadAuthorityState()
-  state.client = client
-  state.authority = null
-}
-
-export function hydrateFilesystemHostFailureDomains(paths: readonly string[]): void {
-  getReadAuthorityState().authority?.hydrateFailureDomains(paths)
-}
-
-export function reconcileFilesystemHostFailureDomains(paths: readonly string[]): void {
-  getReadAuthorityState().authority?.reconcileFailureDomains(paths)
-}
-
-export function requireFilesystemHostReadClient(): FilesystemHostReadClient {
-  const client = getReadAuthorityState().client
-  if (!client) {
-    throw new FilesystemHostReadError('unavailable')
-  }
-  return client
-}
-
-const requireClient = requireFilesystemHostReadClient
-
-export async function canonicalizePathThroughFilesystemHost(
-  path: string,
-  storageClass?: FilesystemStorageClass
-): Promise<string> {
-  return await requireClient().canonicalizePath(path, storageClass)
-}
-
-export async function readOrcaYamlThroughFilesystemHost(path: string): Promise<string> {
-  return await requireClient().readOrcaYaml(path)
-}
-
-export async function readKeybindingsThroughFilesystemHost(path: string): Promise<string> {
-  return await requireClient().readKeybindings(path)
-}
-
-export async function readSnapshotFileThroughFilesystemHost(
-  path: string,
-  fileKind: FilesystemSnapshotFileKind
-): Promise<Buffer> {
-  return await requireClient().readSnapshotFile(path, fileKind)
-}
-
-export async function prepareRateLimitPtyCwdThroughFilesystemHost(path: string): Promise<string> {
-  return await requireClient().prepareRateLimitPtyCwd(path)
 }

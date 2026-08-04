@@ -1988,7 +1988,28 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
 
 void app.whenReady().then(async () => {
   filesystemHostReadAuthority = new FilesystemHostReadAuthority({
-    entryPath: resolveFilesystemHostEntryPath(app.getAppPath(), app.isPackaged)
+    entryPath: resolveFilesystemHostEntryPath(app.getAppPath(), app.isPackaged),
+    onTelemetry: (event) => {
+      if (event.result === 'success' || event.result === 'domain-error') {
+        return
+      }
+      track('filesystem_host_operation', {
+        operation: event.operation,
+        storage_class: event.storageClass,
+        result: event.result,
+        duration: event.duration,
+        breaker: event.breaker,
+        abandoned_children: event.abandonedChildren
+      })
+      recordDurableCrashBreadcrumb('filesystem_host_operation', {
+        operation: event.operation,
+        storageClass: event.storageClass,
+        result: event.result,
+        duration: event.duration,
+        breaker: event.breaker,
+        abandonedChildren: event.abandonedChildren
+      })
+    }
   })
   configureFilesystemHostReadAuthority(filesystemHostReadAuthority)
   logStartupMilestone('app-ready')
@@ -2055,6 +2076,8 @@ void app.whenReady().then(async () => {
 
   const activeOrcaProfile = ensureActiveOrcaProfile()
   store = new Store({ dataFile: activeOrcaProfile.dataFile })
+  // Why: filesystem classification starts immediately below, so initialize its sink before startup reads.
+  initTelemetry(store)
   filesystemHostReadAuthority.hydrateFailureDomains([
     app.getPath('home'),
     getCanonicalUserDataPath()
@@ -2135,8 +2158,6 @@ void app.whenReady().then(async () => {
     unsubscribeStatusChanges()
     unsubscribeProviderSessionChanges()
   }
-  // Why: telemetry must init before any IPC handler/renderer can call track(); it's a no-op in dev and while TELEMETRY_ENABLED is false, so it's safe early.
-  initTelemetry(store)
   // Why: the breadcrumb alone never leaves the machine — it rides crash reports, and a hang is not
   // a crash (the app is force-quit, so no report is ever generated). Without this the incidence
   // number the watchdog exists to produce would sit unread on the user's disk. Must run after
@@ -2261,9 +2282,6 @@ void app.whenReady().then(async () => {
       }
     }
   })
-  void keybindings
-    .hydrate()
-    .catch((error) => console.warn('[keybindings] Initial snapshot hydration failed:', error))
   browserManager.setSettingsResolver(() => ({ keybindings: keybindings?.getOverrides() }))
   rateLimits.setInactiveClaudeAccountsResolver(() => {
     const settings = store!.getSettings()

@@ -10,7 +10,12 @@ import {
   type KeybindingActionId,
   type KeybindingInput
 } from '../../shared/keybindings'
-import { getUserKeybindingsPath, writeKeybindingOverride } from './keybinding-file'
+import {
+  getUserKeybindingsPath,
+  migrateLegacyKeybindings,
+  seedLegacyTabSwitchBindings,
+  writeKeybindingOverride
+} from './keybinding-file'
 import { KeybindingService } from './keybinding-service'
 import { setFilesystemHostReadClientForTests } from '../filesystem-host/filesystem-host-read-authority'
 
@@ -79,6 +84,20 @@ describe('KeybindingService tab-switch cohort seeding', () => {
         throw new Error('unused')
       },
       readKeybindings: (path) => readFile(path, 'utf8'),
+      prepareKeybindings: async (path, platform, legacyOverrides, shouldSeed) => {
+        migrateLegacyKeybindings(path, platform, legacyOverrides)
+        if (shouldSeed) {
+          seedLegacyTabSwitchBindings(path, platform, LEGACY_TAB_SWITCH_BINDINGS)
+        }
+        try {
+          return { contents: await readFile(path, 'utf8'), seedCompleted: shouldSeed }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return { contents: null, seedCompleted: shouldSeed }
+          }
+          throw error
+        }
+      },
       readSnapshotFile: async () => Buffer.from(''),
       prepareRateLimitPtyCwd: async (path) => path
     })
@@ -182,6 +201,7 @@ describe('KeybindingService tab-switch cohort seeding', () => {
       ])
     })
     expect(service.getOverrides()).toEqual(hydrated.overrides)
+    expect(service.needsHydrationRetry()).toBe(true)
   })
 
   it('does not overwrite a newer mutation with an older hydration result', async () => {
@@ -209,13 +229,14 @@ describe('KeybindingService tab-switch cohort seeding', () => {
 
   it.each(PLATFORMS)(
     'existing install (%s) keeps the pre-swap chords exactly, on a clean profile',
-    (platform) => {
+    async (platform) => {
       const cohort = makeCohort(true)
       const service = new KeybindingService({
         homePath: home,
         platform,
         legacyTabSwitchSeed: cohort.controller
       })
+      await service.hydrate()
 
       expect(cohort.seeded()).toBe(true)
       const overrides = service.getOverrides()
@@ -247,7 +268,7 @@ describe('KeybindingService tab-switch cohort seeding', () => {
     }
   )
 
-  it('existing install keeps a rebound action AND pins the pre-swap default on the rest', () => {
+  it('existing install keeps a rebound action AND pins the pre-swap default on the rest', async () => {
     const platform: NodeJS.Platform = 'darwin'
     // The user had rebound just one action before upgrading.
     writeKeybindingOverride(getUserKeybindingsPath(home), platform, 'tab.nextSameType', ['Mod+K'])
@@ -258,6 +279,7 @@ describe('KeybindingService tab-switch cohort seeding', () => {
       platform,
       legacyTabSwitchSeed: cohort.controller
     })
+    await service.hydrate()
     const overrides = service.getOverrides()
 
     // Their custom binding is untouched...
@@ -285,6 +307,7 @@ describe('KeybindingService tab-switch cohort seeding', () => {
       platform,
       legacyTabSwitchSeed: cohort.controller
     })
+    await first.hydrate()
     const afterFirst = first.getOverrides()
 
     // Same cohort controller: markSeeded flipped it to not-pending, mirroring the
@@ -303,21 +326,19 @@ describe('KeybindingService tab-switch cohort seeding', () => {
     }
   })
 
-  it('leaves the cohort pending when the seed write fails (retries next launch)', () => {
+  it('leaves the cohort pending when the seed write fails (retries next launch)', async () => {
     // homePath is a regular file, so creating `<home>/.orca/` throws. The service
     // must swallow the error and NOT mark the one-shot done.
     const fileHome = join(home, 'not-a-dir')
     writeFileSync(fileHome, 'x', 'utf8')
     const cohort = makeCohort(true)
 
-    expect(
-      () =>
-        new KeybindingService({
-          homePath: fileHome,
-          platform: 'darwin',
-          legacyTabSwitchSeed: cohort.controller
-        })
-    ).not.toThrow()
+    const service = new KeybindingService({
+      homePath: fileHome,
+      platform: 'darwin',
+      legacyTabSwitchSeed: cohort.controller
+    })
+    await expect(service.hydrate()).resolves.toBeDefined()
     expect(cohort.seeded()).toBe(false)
     expect(cohort.controller.isPending()).toBe(true)
   })

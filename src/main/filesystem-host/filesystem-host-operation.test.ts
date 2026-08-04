@@ -1,4 +1,12 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -66,6 +74,25 @@ describe('executeFilesystemHostOperation', () => {
         maxBytes: 1_024
       })
     ).toThrowError(expect.objectContaining({ code: 'invalid' }))
+  })
+
+  it('prepares legacy keybindings inside the filesystem child', () => {
+    const root = createRoot()
+    const path = join(root, '.orca', 'keybindings.json')
+
+    const result = executeFilesystemHostOperation({
+      kind: 'prepare-keybindings',
+      path,
+      platform: 'linux',
+      legacyOverrides: { 'tab.nextAllTypes': ['Mod+K'] },
+      seedLegacyTabSwitchBindings: false
+    })
+
+    expect(result).toMatchObject({
+      kind: 'prepare-keybindings',
+      seedCompleted: false,
+      contents: expect.stringContaining('Mod+K')
+    })
   })
 
   it('reads only declared snapshot files and preserves raw bytes', () => {
@@ -169,6 +196,26 @@ describe('executeFilesystemHostOperation', () => {
       expiry_date: 123
     })
     if (process.platform !== 'win32') {
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
+  })
+
+  it('hardens an OpenCode credential without changing its third-party directory mode', () => {
+    const root = createRoot()
+    const path = join(root, 'auth.json')
+    if (process.platform !== 'win32') {
+      chmodSync(root, 0o755)
+    }
+
+    executeFilesystemHostOperation({
+      kind: 'write-rate-limit-credential',
+      path,
+      fileKind: 'opencode-auth',
+      contents: '{"google":{"type":"oauth"}}'
+    })
+
+    if (process.platform !== 'win32') {
+      expect(statSync(root).mode & 0o777).toBe(0o755)
       expect(statSync(path).mode & 0o777).toBe(0o600)
     }
   })

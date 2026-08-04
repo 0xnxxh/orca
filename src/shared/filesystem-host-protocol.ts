@@ -6,6 +6,9 @@ const FILESYSTEM_HOST_MAX_BASE64_BYTES = Math.ceil((FILESYSTEM_HOST_MAX_TEXT_BYT
 
 const filesystemPathSchema = z.string().min(1).max(32_768)
 const filesystemPathEnvironmentSchema = z.string().max(131_072)
+const keybindingOverridesSchema = z
+  .record(z.string().min(1).max(256), z.array(z.string().max(512)).max(16))
+  .refine((value) => Object.keys(value).length <= 512)
 
 export const filesystemCliCommandNameSchema = z.enum(['claude', 'codex'])
 export const rateLimitCredentialFileKindSchema = z.enum([
@@ -42,6 +45,13 @@ export const filesystemHostOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('read-keybindings'),
     path: filesystemPathSchema,
     maxBytes: z.number().int().positive().max(FILESYSTEM_HOST_MAX_TEXT_BYTES)
+  }),
+  z.object({
+    kind: z.literal('prepare-keybindings'),
+    path: filesystemPathSchema,
+    platform: z.enum(['darwin', 'linux', 'win32']),
+    legacyOverrides: keybindingOverridesSchema.optional(),
+    seedLegacyTabSwitchBindings: z.boolean()
   }),
   z.object({
     kind: z.literal('read-snapshot-file'),
@@ -87,6 +97,11 @@ const filesystemHostResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('read-keybindings'),
     contents: z.string().max(FILESYSTEM_HOST_MAX_TEXT_BYTES)
+  }),
+  z.object({
+    kind: z.literal('prepare-keybindings'),
+    contents: z.string().max(FILESYSTEM_HOST_MAX_TEXT_BYTES).nullable(),
+    seedCompleted: z.boolean()
   }),
   z.object({
     kind: z.literal('read-snapshot-file'),

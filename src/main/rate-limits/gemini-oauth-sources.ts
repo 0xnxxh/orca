@@ -97,10 +97,15 @@ export async function saveGeminiCredentials(creds: GeminiCredentials): Promise<v
 }
 
 export async function saveAuthJsonSource(source: AuthJsonSource): Promise<void> {
+  const raw = await readSnapshotFileThroughFilesystemHost(source.path, 'gemini-auth')
+  const latest = JSON.parse(raw.toString('utf8')) as unknown
+  if (!latest || typeof latest !== 'object' || Array.isArray(latest)) {
+    throw new Error('OpenCode auth.json must contain a JSON object')
+  }
   await writeRateLimitCredentialThroughFilesystemHost(
     source.path,
     'opencode-auth',
-    JSON.stringify(source.value, null, 2)
+    JSON.stringify({ ...(latest as AuthJson), google: source.value.google }, null, 2)
   )
 }
 

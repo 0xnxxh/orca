@@ -833,10 +833,10 @@ import {
   createSetupRunnerScript,
   getDefaultTabCommandTrustContent,
   getDefaultTabsLaunch,
-  getEffectiveHooks,
+  getEffectiveHooksThroughFilesystemHost,
   getEffectiveHooksFromConfig,
   getEffectiveSetupRunPolicy,
-  loadHooks,
+  loadHooksThroughFilesystemHost,
   parseOrcaYaml,
   readIssueCommand,
   resolveSetupRunnerShell,
@@ -845,7 +845,7 @@ import {
   writeIssueCommand
 } from '../hooks'
 import {
-  readLocalOrcaYamlSnapshot,
+  readFreshLocalOrcaYamlSnapshot,
   reconcileLocalOrcaYamlSnapshots
 } from '../git/orca-yaml-snapshot-store'
 import {
@@ -19687,8 +19687,8 @@ export class OrcaRuntimeService {
         }
       }
     }
-    const snapshot = readLocalOrcaYamlSnapshot(repo.path)
-    const snapshotValue = snapshot.value
+    const snapshot = await readFreshLocalOrcaYamlSnapshot(repo.path)
+    const snapshotValue = snapshot.stale ? null : snapshot.value
     const hasFile = snapshotValue !== null && snapshotValue.contentState !== 'missing'
     const sharedHooks = snapshotValue?.hooks ?? null
     const hooks = getEffectiveHooksFromConfig(repo, sharedHooks)
@@ -19732,12 +19732,13 @@ export class OrcaRuntimeService {
       }
     }
 
-    const snapshot = readLocalOrcaYamlSnapshot(repo.path)
-    const value = snapshot.value
+    const snapshot = await readFreshLocalOrcaYamlSnapshot(repo.path)
+    const value = snapshot.stale ? null : snapshot.value
     return {
       status:
-        value === null &&
-        (snapshot.availability === 'denied' || snapshot.availability === 'unavailable')
+        snapshot.stale ||
+        (value === null &&
+          (snapshot.availability === 'denied' || snapshot.availability === 'unavailable'))
           ? 'error'
           : 'ok',
       hasHooks: value !== null && value.contentState !== 'missing',
@@ -21559,8 +21560,8 @@ export class OrcaRuntimeService {
     // Why: CLI-created worktrees do not have a renderer preview to mismatch
     // against. Trust is granted by the direct CLI invocation (`--run-hooks`),
     // so loading the setup hook from the created worktree is intentional here.
-    const yamlHooks = loadHooks(worktreePath)
-    const hooks = getEffectiveHooks(repo, worktreePath)
+    const yamlHooks = await loadHooksThroughFilesystemHost(worktreePath)
+    const hooks = await getEffectiveHooksThroughFilesystemHost(repo, worktreePath)
     // Why: setupDecision lets mobile/CLI callers control whether the setup
     // script runs. 'skip' suppresses it, 'run' forces it, 'inherit' (default)
     // defers to the repo's orca.yaml setupRunPolicy. runHooks === true maps
@@ -21611,7 +21612,8 @@ export class OrcaRuntimeService {
           worktreePath,
           repo,
           worktreePath,
-          this.getLocalGitExecutionOptionArgs(repo)[0]
+          this.getLocalGitExecutionOptionArgs(repo)[0],
+          hooks.scripts.setup
         ).then((result) => {
           if (!result.success) {
             console.error(`[hooks] setup hook failed for ${worktreePath}:`, result.output)
@@ -23711,7 +23713,7 @@ export class OrcaRuntimeService {
           return removalResult ?? {}
         }
 
-        const hooks = getEffectiveHooks(repo)
+        const hooks = await getEffectiveHooksThroughFilesystemHost(repo)
         let warning: string | undefined
         if (hooks?.scripts.archive && runHooks) {
           const result = await runHook(
@@ -23719,7 +23721,8 @@ export class OrcaRuntimeService {
             canonicalWorktreePath,
             repo,
             undefined,
-            hasLocalWorktreeGitOptions ? localWorktreeGitOptions : undefined
+            hasLocalWorktreeGitOptions ? localWorktreeGitOptions : undefined,
+            hooks.scripts.archive
           )
           if (!result.success) {
             console.error(

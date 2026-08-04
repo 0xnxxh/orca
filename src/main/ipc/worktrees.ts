@@ -85,7 +85,6 @@ import { getSshGitProvider, requireSshGitProvider } from '../providers/ssh-git-d
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   createIssueCommandRunnerScript,
-  getEffectiveHooks,
   getEffectiveHooksFromConfig,
   getSetupRunnerEnvVars,
   parseOrcaYaml,
@@ -122,7 +121,7 @@ import { killAllProcessesForWorktree } from '../runtime/worktree-teardown'
 import { clearProviderPtyState, getLocalPtyProvider, getSshPtyProvider } from './pty'
 import { findExistingWorktreeSymlinkPaths, removeWorktreeLinkedPaths } from './worktree-symlinks'
 import { resolveWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
-import { readLocalOrcaYamlSnapshot } from '../git/orca-yaml-snapshot-store'
+import { readFreshLocalOrcaYamlSnapshot } from '../git/orca-yaml-snapshot-store'
 import { track } from '../telemetry/client'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import { workspaceSourceSchema, type WorkspaceSource } from '../../shared/telemetry-events'
@@ -442,7 +441,15 @@ function getWorktreeRemovalInFlightKey(worktreeId: string, hostId?: ExecutionHos
 
 async function getArchiveHooksForRemoval(repo: Repo): Promise<OrcaHooks | null> {
   if (!repo.connectionId) {
-    return getEffectiveHooks(repo)
+    try {
+      const snapshot = await readFreshLocalOrcaYamlSnapshot(repo.path)
+      return getEffectiveHooksFromConfig(
+        repo,
+        snapshot.stale ? null : (snapshot.value?.hooks ?? null)
+      )
+    } catch {
+      return getEffectiveHooksFromConfig(repo, null)
+    }
   }
 
   const fsProvider = getSshFilesystemProvider(repo.connectionId)
@@ -2561,7 +2568,8 @@ export function registerWorktreeHandlers(
                       canonicalWorktreePath,
                       repo,
                       undefined,
-                      localWorktreeGitOptions
+                      localWorktreeGitOptions,
+                      archiveScript
                     )
                 if (!result.success) {
                   console.error(
@@ -3109,12 +3117,13 @@ export function registerWorktreeHandlers(
         }
       }
 
-      const snapshot = readLocalOrcaYamlSnapshot(repo.path)
-      const value = snapshot.value
+      const snapshot = await readFreshLocalOrcaYamlSnapshot(repo.path)
+      const value = snapshot.stale ? null : snapshot.value
       return {
         status:
-          value === null &&
-          (snapshot.availability === 'denied' || snapshot.availability === 'unavailable')
+          snapshot.stale ||
+          (value === null &&
+            (snapshot.availability === 'denied' || snapshot.availability === 'unavailable'))
             ? 'error'
             : 'ok',
         hasHooks: value !== null && value.contentState !== 'missing',

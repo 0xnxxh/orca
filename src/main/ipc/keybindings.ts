@@ -4,6 +4,18 @@ import type { KeybindingService } from '../keybindings/keybinding-service'
 import { rebuildAppMenu } from '../menu/register-app-menu'
 import { authorizeExternalPath } from './filesystem-auth'
 
+const HYDRATION_RETRY_BASE_DELAY_MS = 100
+const HYDRATION_RETRY_MAX_DELAY_MS = 30_000
+
+type HydrationRetryState = {
+  attempt: number
+  running: boolean
+  timer: ReturnType<typeof setTimeout> | null
+  onChanged: (() => void) | undefined
+}
+
+const hydrationRetryByService = new WeakMap<KeybindingService, HydrationRetryState>()
+
 function broadcastKeybindingsChanged(snapshot: KeybindingFileSnapshot): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
@@ -11,6 +23,53 @@ function broadcastKeybindingsChanged(snapshot: KeybindingFileSnapshot): void {
     }
   }
   rebuildAppMenu()
+}
+
+function scheduleKeybindingHydrationRetry(
+  service: KeybindingService,
+  state: HydrationRetryState
+): void {
+  const delay = Math.min(
+    HYDRATION_RETRY_BASE_DELAY_MS * 2 ** Math.min(state.attempt, 8),
+    HYDRATION_RETRY_MAX_DELAY_MS
+  )
+  state.attempt += 1
+  state.timer = setTimeout(() => {
+    state.timer = null
+    hydrateKeybindingsUntilReady(service, state.onChanged)
+  }, delay)
+  state.timer.unref?.()
+}
+
+function hydrateKeybindingsUntilReady(
+  service: KeybindingService,
+  onChanged: (() => void) | undefined
+): void {
+  const existing = hydrationRetryByService.get(service)
+  const state = existing ?? { attempt: 0, running: false, timer: null, onChanged }
+  state.onChanged = onChanged
+  hydrationRetryByService.set(service, state)
+  if (state.running || state.timer) {
+    return
+  }
+  state.running = true
+  void service
+    .hydrate()
+    .then((snapshot) => {
+      state.running = false
+      if (!service.needsHydrationRetry()) {
+        hydrationRetryByService.delete(service)
+        broadcastKeybindingsChanged(snapshot)
+        state.onChanged?.()
+        return
+      }
+      scheduleKeybindingHydrationRetry(service, state)
+    })
+    .catch((error) => {
+      state.running = false
+      console.warn('[keybindings] Snapshot hydration failed:', error)
+      scheduleKeybindingHydrationRetry(service, state)
+    })
 }
 
 export function registerKeybindingHandlers(
@@ -62,4 +121,12 @@ export function registerKeybindingHandlers(
     shell.showItemInFolder(snapshot.path)
     return snapshot
   })
+
+  const hydrationService = service as Partial<KeybindingService>
+  if (
+    typeof hydrationService.hydrate === 'function' &&
+    typeof hydrationService.needsHydrationRetry === 'function'
+  ) {
+    hydrateKeybindingsUntilReady(service, onChanged)
+  }
 }

@@ -20,12 +20,22 @@ type RoutePath = (path: string) => {
   storageClass: FilesystemStorageClass
 }
 
+const CAPACITY_RETRY_BASE_DELAY_MS = 25
+const CAPACITY_RETRY_MAX_DELAY_MS = 30_000
+
+function isCapacityFailure(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 'capacity'
+}
+
 export class FilesystemHostFailureDomainHydrator {
   private readonly classifiedPaths = new Set<string>()
   private readonly flights = new Map<string, Promise<void>>()
   private readonly persistentPaths = new Set<string>()
   private catalogPaths = new Set<string>()
   private readonly readLeases = new Map<string, number>()
+  private readonly retryAttempts = new Map<string, number>()
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private disposed = false
 
   constructor(
     private readonly supervisor: FailureDomainSupervisor,
@@ -127,13 +137,30 @@ export class FilesystemHostFailureDomainHydrator {
   }
 
   private scheduleClassification(path: string): void {
+    if (this.disposed) {
+      return
+    }
     void this.classify(path)
       .then(() => {
+        this.clearRetry(path)
         if (this.isOwned(path) && !this.classifiedPaths.has(path)) {
-          void this.classify(path).catch(() => {})
+          this.scheduleClassification(path)
         }
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        if (!this.disposed && this.isOwned(path) && isCapacityFailure(error)) {
+          this.scheduleCapacityRetry(path)
+        }
+      })
+  }
+
+  dispose(): void {
+    this.disposed = true
+    for (const timer of this.retryTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.retryTimers.clear()
+    this.retryAttempts.clear()
   }
 
   private isOwned(path: string, catalogPaths: ReadonlySet<string> = this.catalogPaths): boolean {
@@ -151,8 +178,38 @@ export class FilesystemHostFailureDomainHydrator {
     if (this.queue.cancel(path)) {
       this.flights.delete(path)
     }
+    this.clearRetry(path)
     this.classifiedPaths.delete(path)
     const route = this.routePath(path)
     this.supervisor.removeFailureDomain({ executionHost: route.executionHost, prefix: path })
+  }
+
+  private scheduleCapacityRetry(path: string): void {
+    if (this.disposed || this.retryTimers.has(path)) {
+      return
+    }
+    const attempt = (this.retryAttempts.get(path) ?? 0) + 1
+    this.retryAttempts.set(path, attempt)
+    const delay = Math.min(
+      CAPACITY_RETRY_BASE_DELAY_MS * 2 ** Math.min(attempt - 1, 10),
+      CAPACITY_RETRY_MAX_DELAY_MS
+    )
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(path)
+      if (!this.disposed && this.isOwned(path)) {
+        this.scheduleClassification(path)
+      }
+    }, delay)
+    timer.unref?.()
+    this.retryTimers.set(path, timer)
+  }
+
+  private clearRetry(path: string): void {
+    const timer = this.retryTimers.get(path)
+    if (timer) {
+      clearTimeout(timer)
+      this.retryTimers.delete(path)
+    }
+    this.retryAttempts.delete(path)
   }
 }

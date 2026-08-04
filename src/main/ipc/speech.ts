@@ -14,9 +14,16 @@ import {
 import type { Store } from '../persistence'
 import type { OpenAiSpeechApiKeyStatus } from '../../shared/speech-types'
 
-function getOpenAiApiKeyStatus(): OpenAiSpeechApiKeyStatus {
-  const snapshot = getOpenAiSpeechApiKeySnapshot()
+function apiKeyStatusFromSnapshot(
+  snapshot: ReturnType<typeof getOpenAiSpeechApiKeySnapshot>
+): OpenAiSpeechApiKeyStatus {
   return { ...snapshot, configured: snapshot.value === true }
+}
+
+async function getOpenAiApiKeyStatus(): Promise<OpenAiSpeechApiKeyStatus> {
+  const current = getOpenAiSpeechApiKeySnapshot()
+  const snapshot = current.stale ? await hydrateOpenAiSpeechApiKeySnapshot() : current
+  return apiKeyStatusFromSnapshot(snapshot)
 }
 
 export function registerSpeechHandlers(store: Store): void {
@@ -30,17 +37,17 @@ export function registerSpeechHandlers(store: Store): void {
   })
 
   ipcMain.handle('speech:getOpenAiApiKeyStatus', async () => {
-    return getOpenAiApiKeyStatus()
+    return await getOpenAiApiKeyStatus()
   })
 
   ipcMain.handle('speech:saveOpenAiApiKey', (_event, apiKey: string) => {
     saveOpenAiSpeechApiKey(apiKey)
-    return getOpenAiApiKeyStatus()
+    return apiKeyStatusFromSnapshot(getOpenAiSpeechApiKeySnapshot())
   })
 
   ipcMain.handle('speech:clearOpenAiApiKey', () => {
     clearOpenAiSpeechApiKey()
-    return getOpenAiApiKeyStatus()
+    return apiKeyStatusFromSnapshot(getOpenAiSpeechApiKeySnapshot())
   })
 
   ipcMain.handle('speech:downloadModel', async (event, modelId: string) => {

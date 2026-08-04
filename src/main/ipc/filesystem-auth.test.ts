@@ -200,6 +200,7 @@ describe('filesystem auth worktree roots', () => {
       }
     ])
     await staleRebuild
+    expect(listRepoWorktrees).toHaveBeenCalledTimes(2)
 
     await expect(resolveRegisteredWorktreePath(removedWorktreePath, store)).rejects.toThrow(
       'Access denied'
@@ -207,7 +208,6 @@ describe('filesystem auth worktree roots', () => {
     await expect(resolveRegisteredWorktreePath(addedWorktreePath, store)).resolves.toBe(
       resolve(addedWorktreePath)
     )
-    expect(listRepoWorktrees).toHaveBeenCalledTimes(2)
   })
 })
 

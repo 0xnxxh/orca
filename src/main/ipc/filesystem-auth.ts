@@ -270,15 +270,14 @@ export function registerWorktreeRootsForRepo(
 }
 
 export async function ensureAuthorizedRootsCache(store: Store): Promise<void> {
-  if (!registeredWorktreeRootsDirty) {
-    return
+  while (registeredWorktreeRootsDirty) {
+    if (!registeredWorktreeRootsRefresh) {
+      registeredWorktreeRootsRefresh = rebuildAuthorizedRootsCache(store).finally(() => {
+        registeredWorktreeRootsRefresh = null
+      })
+    }
+    await registeredWorktreeRootsRefresh
   }
-  if (!registeredWorktreeRootsRefresh) {
-    registeredWorktreeRootsRefresh = rebuildAuthorizedRootsCache(store).finally(() => {
-      registeredWorktreeRootsRefresh = null
-    })
-  }
-  await registeredWorktreeRootsRefresh
 }
 
 /**

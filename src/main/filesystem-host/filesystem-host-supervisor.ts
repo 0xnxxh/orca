@@ -262,6 +262,14 @@ export class FilesystemHostSupervisor {
       })
       release = this.capacity.reserve(admission)
     }
+    while (!release) {
+      const retirement = this.retirement.waitForRetirement()
+      if (!retirement) {
+        break
+      }
+      await retirement
+      release = this.capacity.reserve(admission)
+    }
     if (!release) {
       throw new FilesystemHostSupervisorError(
         'capacity',

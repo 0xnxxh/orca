@@ -65,6 +65,18 @@ describe('filesystem host protocol', () => {
         type: 'request',
         requestId: 'request-1',
         operation: {
+          kind: 'prepare-keybindings',
+          path: '/home/alice/.orca/keybindings.json',
+          platform: 'linux',
+          seedLegacyTabSwitchBindings: true
+        }
+      }).success
+    ).toBe(true)
+    expect(
+      filesystemHostParentMessageSchema.safeParse({
+        type: 'request',
+        requestId: 'request-1',
+        operation: {
           kind: 'write-rate-limit-credential',
           path: '/home/alice/.gemini/oauth_creds.json',
           fileKind: 'arbitrary-credential',

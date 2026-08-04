@@ -16,6 +16,7 @@ let apiKeyStatusObservedAt: number | null = null
 let apiKeyStatusValue = false
 let apiKeyStatusAvailability: SnapshotAvailability = 'unavailable'
 let apiKeyStatusStale = true
+let apiKeyStatusHydration: Promise<MemorySnapshot<boolean>> | null = null
 
 function getOrcaDir(): string {
   return join(homedir(), '.orca')
@@ -54,6 +55,19 @@ export function getOpenAiSpeechApiKeySnapshot(): MemorySnapshot<boolean> {
 }
 
 export async function hydrateOpenAiSpeechApiKeySnapshot(): Promise<MemorySnapshot<boolean>> {
+  if (apiKeyStatusHydration) {
+    return await apiKeyStatusHydration
+  }
+  const hydration = hydrateOpenAiSpeechApiKeySnapshotNow().finally(() => {
+    if (apiKeyStatusHydration === hydration) {
+      apiKeyStatusHydration = null
+    }
+  })
+  apiKeyStatusHydration = hydration
+  return await hydration
+}
+
+async function hydrateOpenAiSpeechApiKeySnapshotNow(): Promise<MemorySnapshot<boolean>> {
   const generation = apiKeyStatusGeneration
   try {
     await readSnapshotFileThroughFilesystemHost(getOpenAiKeyPath(), 'openai-speech-key')
