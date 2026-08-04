@@ -289,6 +289,21 @@ export async function resolveLinuxPackageInstallInstructions(
   }
 }
 
+/**
+ * Re-proves the retained package immediately before the privileged installer consumes it.
+ *
+ * The cache path is user-writable, so a digest checked when the recovery card rendered says
+ * nothing about the bytes `dpkg -i` will read minutes later. Re-hashing here does not close
+ * the race — only an immutable handoff would — but it shrinks the window from "since the card
+ * appeared" to "since this call", and it catches the artifact being swapped or deleted outright.
+ */
+export async function revalidateLinuxPackageForInstall(
+  recovery: LinuxPackageInstallRecovery
+): Promise<{ ok: true } | { ok: false; reason: LinuxPackageRecoveryUnavailableReason }> {
+  const validation = await validateTrackedArtifact(recovery)
+  return validation.ok ? { ok: true } : { ok: false, reason: validation.reason }
+}
+
 export async function revealLinuxPackage(
   recovery: LinuxPackageInstallRecovery
 ): Promise<LinuxPackageRevealResult> {

@@ -1,6 +1,32 @@
 /* eslint-disable max-lines */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type * as UpdaterModule from './updater'
+
+/**
+ * Stages a real package inside a real updater cache so the pre-install digest re-proof has
+ * something to prove. Returns the path and its actual digest for the download event.
+ */
+function stageRetainedLinuxPackage(fileName: string): {
+  cacheRoot: string
+  packagePath: string
+  sha512: string
+} {
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'orca-updater-cache-'))
+  const pendingDir = join(cacheRoot, 'orca-updater', 'pending')
+  mkdirSync(pendingDir, { recursive: true })
+  const packagePath = join(pendingDir, fileName)
+  const bytes = Buffer.from(`orca test package ${fileName}`)
+  writeFileSync(packagePath, bytes)
+  return {
+    cacheRoot,
+    packagePath,
+    sha512: createHash('sha512').update(bytes).digest('base64')
+  }
+}
 
 const {
   appMock,
@@ -1780,8 +1806,12 @@ describe('updater', () => {
       'updater:status',
       expect.objectContaining({
         state: 'error',
-        // Why: a pre-commit install failure is not fixed by restarting, so the copy must not suggest it.
-        message: 'Could not start the update installer. Orca remains open.'
+        // Why: a pre-commit install failure is not fixed by restarting, so the copy must not
+        // suggest it — except on macOS, where quitting does re-stage a Squirrel update.
+        message:
+          process.platform === 'darwin'
+            ? 'Could not restart to install the update. Quit and reopen Orca, then try again.'
+            : 'Could not start the update installer. Orca remains open.'
       })
     )
   })
@@ -3794,6 +3824,27 @@ describe('updater', () => {
   })
 
   describe('linux root package install recovery', () => {
+    const stagedCacheRoots: string[] = []
+    let restoreCacheHome: (() => void) | null = null
+
+    // Why: the pre-install digest re-proof streams the package off real disk, and fake timers
+    // do not advance libuv. Interleave timer advances with real event-loop turns so the read
+    // actually completes before the assertions run.
+    const settleRetainedPackageRevalidation = async (): Promise<void> => {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await vi.advanceTimersByTimeAsync(100)
+        await new Promise((resolve) => process.nextTick(resolve))
+      }
+    }
+
+    afterEach(() => {
+      restoreCacheHome?.()
+      restoreCacheHome = null
+      for (const root of stagedCacheRoots.splice(0)) {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
     // Real 64-byte SHA-512 values; capture rejects a digest that cannot decode to one.
     const DEB_SHA512 =
       'LHlL7dKoqg98gS2nfQv878dK+UoktbAkm4M20/hoJ2Qr0Kqsa3MSL4VmWy/Lll/MYjQFkpvOxduQ/vswentozA=='
@@ -4041,16 +4092,35 @@ describe('updater', () => {
     })
 
     it('retries the automatic install without redownloading the package', async () => {
+      // Why: the retry re-proves the digest before handing the path to a root installer, so
+      // this needs a genuinely valid retained package rather than a path that never existed.
+      const staged = stageRetainedLinuxPackage('orca-ide_1.0.61_amd64.deb')
+      const previousCacheHome = process.env.XDG_CACHE_HOME
+      process.env.XDG_CACHE_HOME = staged.cacheRoot
+      stagedCacheRoots.push(staged.cacheRoot)
+      restoreCacheHome = (): void => {
+        if (previousCacheHome === undefined) {
+          delete process.env.XDG_CACHE_HOME
+        } else {
+          process.env.XDG_CACHE_HOME = previousCacheHome
+        }
+      }
       const { send, updater } = await startUpdater('deb')
-      await reachDownloaded(updater, downloadedEvent())
+      await reachDownloaded(
+        updater,
+        downloadedEvent({
+          downloadedFile: staged.packagePath,
+          files: [{ url: 'orca-ide_1.0.61_amd64.deb', sha512: staged.sha512 }]
+        })
+      )
       autoUpdaterMock.quitAndInstall.mockImplementation(() => {
         autoUpdaterMock.emit('error', new Error(EXIT_127))
       })
 
       updater.quitAndInstall()
-      await vi.advanceTimersByTimeAsync(100)
+      await settleRetainedPackageRevalidation()
       updater.quitAndInstall()
-      await vi.advanceTimersByTimeAsync(100)
+      await settleRetainedPackageRevalidation()
 
       // Why: a retry usually fails identically; a deduped status would strand the preload restart relay.
       expect(
@@ -4067,6 +4137,60 @@ describe('updater', () => {
         packageType: 'deb',
         version: '1.0.61'
       })
+    })
+
+    // Why: the cache path is user-writable, so the bytes verified when the recovery card
+    // rendered are not necessarily the bytes a root package manager would read on retry.
+    it('aborts the retry when the retained package no longer matches its digest', async () => {
+      const staged = stageRetainedLinuxPackage('orca-ide_1.0.61_amd64.deb')
+      const previousCacheHome = process.env.XDG_CACHE_HOME
+      process.env.XDG_CACHE_HOME = staged.cacheRoot
+      stagedCacheRoots.push(staged.cacheRoot)
+      restoreCacheHome = (): void => {
+        if (previousCacheHome === undefined) {
+          delete process.env.XDG_CACHE_HOME
+        } else {
+          process.env.XDG_CACHE_HOME = previousCacheHome
+        }
+      }
+      const { send, updater } = await startUpdater('deb')
+      await reachDownloaded(
+        updater,
+        downloadedEvent({
+          downloadedFile: staged.packagePath,
+          files: [{ url: 'orca-ide_1.0.61_amd64.deb', sha512: staged.sha512 }]
+        })
+      )
+
+      // The escalation fails, which is what puts the recovery card (and its retry) on screen.
+      autoUpdaterMock.quitAndInstall.mockImplementation(() => {
+        autoUpdaterMock.emit('error', new Error(EXIT_127))
+      })
+      updater.quitAndInstall()
+      await settleRetainedPackageRevalidation()
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+
+      // A local process swaps the verified package for its own between failure and retry.
+      writeFileSync(staged.packagePath, Buffer.from('attacker supplied package'))
+      send.mockClear()
+      killAllPtyMock.mockClear()
+
+      updater.quitAndInstall()
+      await settleRetainedPackageRevalidation()
+
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+      expect(killAllPtyMock).not.toHaveBeenCalled()
+      expect(updater.isQuittingForUpdate()).toBe(false)
+      expect(send).toHaveBeenCalledWith('updater:status', {
+        state: 'error',
+        message:
+          'The downloaded update package no longer matches the release it was verified against, so Orca did not install it. Download the update again.'
+      })
+      expect(recordUpdaterLifecycleMock).toHaveBeenCalledWith(
+        'linux_package_recovery_revalidation_failed',
+        expect.objectContaining({ reason: 'hash-mismatch' }),
+        expect.anything()
+      )
     })
 
     it('records classification-only lifecycle data for a package install failure', async () => {

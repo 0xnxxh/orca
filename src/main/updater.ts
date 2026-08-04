@@ -45,6 +45,7 @@ import {
   clearTrackedLinuxPackageArtifact,
   getTrackedLinuxPackageArtifact,
   resolveLinuxPackageInstallInstructions,
+  revalidateLinuxPackageForInstall,
   revealLinuxPackage,
   type LinuxPackageRecoveryUnavailableReason
 } from './linux-package-update-recovery'
@@ -1880,8 +1881,47 @@ export function quitAndInstall(): void {
 
   // Why: defer the quit a tick so the renderer can flush dismissals/state before windows start closing.
   pendingQuitAndInstallTimer = setTimeout(() => {
-    void performQuitAndInstall()
+    void (async () => {
+      // Why: a retry hands a user-writable cache path to a root package manager, and the
+      // digest behind the recovery card was proven when the card rendered — possibly minutes
+      // and one swap ago. Re-prove it here, before performQuitAndInstall starts tearing the
+      // app down, so a replaced or vanished package aborts instead of being installed as root.
+      if (retriedRecovery) {
+        const revalidated = await revalidateLinuxPackageForInstall(retriedRecovery)
+        if (!revalidated.ok) {
+          if (pendingQuitAndInstallTimer) {
+            clearTimeout(pendingQuitAndInstallTimer)
+            pendingQuitAndInstallTimer = null
+          }
+          recordUpdaterLifecycle(
+            'linux_package_recovery_revalidation_failed',
+            {
+              action: 'retry-automatic',
+              packageType: retriedRecovery.packageType,
+              version: retriedRecovery.version,
+              reason: revalidated.reason
+            },
+            { level: 'warn', message: 'Retained update package no longer matches its digest' }
+          )
+          sendInstallFailureStatus({
+            state: 'error',
+            message: getLinuxPackageRevalidationFailureMessage(revalidated.reason)
+          })
+          return
+        }
+      }
+      await performQuitAndInstall()
+    })()
   }, QUIT_AND_INSTALL_DELAY_MS)
+}
+
+/** The retained package changed under us; never advise retrying the same file. */
+function getLinuxPackageRevalidationFailureMessage(
+  reason: LinuxPackageRecoveryUnavailableReason
+): string {
+  return reason === 'missing'
+    ? 'The downloaded update package is no longer on disk. Download the update again.'
+    : 'The downloaded update package no longer matches the release it was verified against, so Orca did not install it. Download the update again.'
 }
 
 async function checkForUpdateNudge(): Promise<void> {
