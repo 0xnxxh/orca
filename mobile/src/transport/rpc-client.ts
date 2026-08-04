@@ -116,7 +116,13 @@ export function connect(
     registerPendingProbe: (id, entry) => pending.set(id, entry),
     removePendingProbe: (id) => pending.delete(id),
     sendProbe: (id) => sendEncrypted({ id, deviceToken, method: 'status.get' }),
-    demote: (socket) => forceSocketReconnect(socket)
+    demote: (socket) => {
+      // Why: the recycle beats every application request to its own timeout, so
+      // without this a wedged host re-authenticates forever behind a bare
+      // 'Connected' with the reconnect counter reset each time (issue #10385).
+      applicationResponseTracker.recordControlPlaneFailure('status.get')
+      forceSocketReconnect(socket)
+    }
   })
   let intentionallyClosed = false
   // Consecutive auth rejections; tolerate up to AUTH_RETRY_BUDGET (issue #5200) before latching to avoid a needless re-pair.

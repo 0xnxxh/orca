@@ -45,7 +45,12 @@ export function connectMobileRelayRpcSession(
     sendProbe: () => sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS, false, false),
     getControlResponseSequence: () => controlResponseSequence,
     getInboundActivitySequence: () => inboundActivitySequence,
-    onDemote: (error) => fail(asError(error))
+    onDemote: (error) => {
+      // Why: the replacement session inherits this latch, so a wedged desktop cannot
+      // present each freshly authenticated relay session as healthy (issue #10385).
+      applicationResponseTracker.recordControlPlaneFailure('status.get')
+      fail(asError(error))
+    }
   })
   let lastConnectedAt: number | null = null
   let attachDeadlineAt: number | null = null

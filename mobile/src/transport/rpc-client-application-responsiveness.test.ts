@@ -161,4 +161,60 @@ describe('direct RPC application responsiveness', () => {
     expect(client.getState()).toBe('connected')
     client.close()
   })
+
+  it('keeps the unresponsive verdict across a socket the control probe recycled', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    sockets[0]!.openAndAuthenticate()
+    const stalled = client.sendRequest('worktree.ps', {}).catch((error: unknown) => error)
+
+    // 20s probe interval + 8s probe timeout, with no inbound frame to extend it —
+    // the recycle lands before the 30s request timeout that would otherwise latch.
+    await vi.advanceTimersByTimeAsync(28_000)
+    await expect(stalled).resolves.toBeInstanceOf(Error)
+    expect(client.getState()).toBe('reconnecting')
+
+    // The replacement handshake succeeds while the desktop is still wedged.
+    await vi.advanceTimersByTimeAsync(600)
+    sockets[1]!.openAndAuthenticate()
+    expect(client.getState()).toBe('connected')
+
+    const rpcUnresponsiveSince = client.getRpcUnresponsiveSince?.()
+    expect(rpcUnresponsiveSince).not.toBeNull()
+    expect(
+      classifyConnection({
+        state: client.getState(),
+        reconnectAttempts: client.getReconnectAttempt(),
+        lastConnectedAt: client.getLastConnectedAt(),
+        rpcUnresponsiveSince
+      })
+    ).toMatchObject({ kind: 'warning', label: 'Connected, not responding' })
+    client.close()
+  })
+
+  it('clears the recycled-socket verdict once the replacement answers a request', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    sockets[0]!.openAndAuthenticate()
+    await vi.advanceTimersByTimeAsync(28_000)
+    await vi.advanceTimersByTimeAsync(600)
+    const replacement = sockets[1]!
+    replacement.openAndAuthenticate()
+    expect(client.getRpcUnresponsiveSince?.()).not.toBeNull()
+
+    const recovered = client.sendRequest('worktree.ps', {})
+    await vi.advanceTimersByTimeAsync(0)
+    const request = sentRequest(replacement, 'worktree.ps')
+    replacement.receive(`encrypted:${JSON.stringify({ id: request.id, ok: true, result: {} })}`)
+    await expect(recovered).resolves.toMatchObject({ ok: true })
+
+    expect(client.getRpcUnresponsiveSince?.()).toBeNull()
+    expect(
+      classifyConnection({
+        state: client.getState(),
+        reconnectAttempts: client.getReconnectAttempt(),
+        lastConnectedAt: client.getLastConnectedAt(),
+        rpcUnresponsiveSince: client.getRpcUnresponsiveSince?.()
+      })
+    ).toMatchObject({ kind: 'normal', label: 'Connected' })
+    client.close()
+  })
 })

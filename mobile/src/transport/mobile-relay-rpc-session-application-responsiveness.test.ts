@@ -21,6 +21,7 @@ vi.mock('./mobile-relay-e2ee-link', () => ({
 }))
 
 import { connectMobileRelayRpcSession } from './mobile-relay-rpc-session'
+import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
 
 const relay = {
   v: 1 as const,
@@ -31,7 +32,11 @@ const relay = {
   e2eeFraming: 2 as const
 }
 
-async function authenticateSession() {
+async function authenticateSession(options?: {
+  applicationResponsiveness?: RpcApplicationResponsiveness
+  // Fake timers stop vi.waitFor from settling, so let those cases drain microtasks instead.
+  tick?: () => Promise<void>
+}) {
   const session = connectMobileRelayRpcSession({
     relay,
     resumeToken: 'resume-secret',
@@ -39,8 +44,12 @@ async function authenticateSession() {
     resumeConfirmReqId: 'confirm-1',
     deviceToken: 'device-token',
     desktopPublicKeyB64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-    requestTimeoutMs: 1000
+    requestTimeoutMs: 1000,
+    ...(options?.applicationResponsiveness
+      ? { applicationResponsiveness: options.applicationResponsiveness }
+      : {})
   })
+  const settle = options?.tick
   fakes.linkOptions!.onHello({
     type: 'relay-hello',
     ok: true,
@@ -51,7 +60,7 @@ async function authenticateSession() {
     resumeExpiresAt: Date.now() + 300_000
   })
   fakes.linkOptions!.onAuthenticated()
-  await vi.waitFor(() => expect(fakes.sendText).toHaveBeenCalledOnce())
+  await (settle?.() ?? vi.waitFor(() => expect(fakes.sendText).toHaveBeenCalledOnce()))
   const request = JSON.parse(fakes.sendText.mock.calls[0]![0] as string) as { id: string }
   fakes.linkOptions!.onText(
     JSON.stringify({
@@ -72,7 +81,8 @@ async function authenticateSession() {
       _meta: { runtimeId: 'runtime-1' }
     })
   )
-  await vi.waitFor(() => expect(session.getState()).toBe('connected'))
+  await (settle?.() ?? vi.waitFor(() => expect(session.getState()).toBe('connected')))
+  expect(session.getState()).toBe('connected')
   fakes.sendText.mockClear()
   return session
 }
@@ -124,6 +134,26 @@ describe('mobile relay subscription application responsiveness', () => {
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {
       session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('latches the shared verdict when the control probe demotes a wedged session', async () => {
+    vi.useFakeTimers()
+    const responsiveness = new RpcApplicationResponsiveness()
+    try {
+      const session = await authenticateSession({
+        applicationResponsiveness: responsiveness,
+        tick: () => vi.advanceTimersByTimeAsync(0)
+      })
+      // 20s probe interval + 8s probe timeout, with no inbound frame to extend it.
+      await vi.advanceTimersByTimeAsync(28_000)
+      expect(session.getState()).toBe('disconnected')
+      // The supervisor's replacement session inherits this instance, so the next
+      // authenticated relay session cannot report a bare 'Connected'.
+      expect(responsiveness.getUnresponsiveSince()).not.toBeNull()
+      session.close()
+    } finally {
       vi.useRealTimers()
     }
   })

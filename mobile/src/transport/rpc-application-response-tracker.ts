@@ -23,6 +23,12 @@ export class RpcApplicationResponseTracker {
     return result.recycle
   }
 
+  recordControlPlaneFailure(probeMethod: string): void {
+    if (this.responsiveness.recordControlPlaneFailure()) {
+      this.hooks.onLatched?.(probeMethod)
+    }
+  }
+
   recordResponse(method: string): void {
     if (this.responsiveness.recordResponse(method)) {
       this.hooks.onRecovered?.()

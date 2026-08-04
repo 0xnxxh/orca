@@ -29,6 +29,18 @@ export class RpcApplicationResponsiveness {
     return recovered
   }
 
+  // Why: the liveness probe recycles a wedged socket ~2s before an application
+  // request can reach its own 30s timeout, so the demote is the only evidence that
+  // the next successful handshake is still not a usable RPC channel (issue #10385).
+  recordControlPlaneFailure(now = Date.now()): boolean {
+    const latched = this.unresponsiveSince === null
+    this.unresponsiveSince ??= now
+    if (latched) {
+      this.notifyChanged()
+    }
+    return latched
+  }
+
   recordTimeout(method: string, now = Date.now()): { latched: boolean; recycle: boolean } {
     if (isRpcHealthProbeMethod(method)) {
       return { latched: false, recycle: false }
