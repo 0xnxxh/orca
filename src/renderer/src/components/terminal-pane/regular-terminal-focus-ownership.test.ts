@@ -149,7 +149,6 @@ describe('regular terminal focus ownership', () => {
       activeElement: document.activeElement,
       syncFocused,
       releasedHelper,
-      isMac: false,
       scheduleRefocus: (callback) => scheduled.push(callback)
     })
 
@@ -192,7 +191,6 @@ describe('regular terminal focus ownership', () => {
       activeElement: document.activeElement,
       syncFocused,
       releasedHelper,
-      isMac: false,
       scheduleRefocus: (callback) => scheduled.push(callback)
     })
     for (const run of scheduled) {
@@ -225,7 +223,6 @@ describe('regular terminal focus ownership', () => {
       activeElement: document.activeElement,
       syncFocused,
       releasedHelper,
-      isMac: false,
       scheduleRefocus: (callback) => scheduled.push(callback)
     })
     for (const run of scheduled) {
@@ -263,7 +260,6 @@ describe('regular terminal focus ownership', () => {
       activeElement: document.activeElement,
       syncFocused,
       releasedHelper,
-      isMac: false,
       scheduleRefocus: (callback) => scheduled.push(callback)
     })
     // User clicks into another field before the deferred reclaim runs.
@@ -299,7 +295,6 @@ describe('regular terminal focus ownership', () => {
       activeElement: document.activeElement,
       syncFocused,
       releasedHelper,
-      isMac: false,
       scheduleRefocus: (callback) => scheduled.push(callback)
     })
     newerHelper.focus()
@@ -330,8 +325,7 @@ describe('regular terminal focus ownership', () => {
       container: pane,
       activeElement: document.activeElement,
       syncFocused,
-      releasedHelper,
-      isMac: false
+      releasedHelper
     })
 
     expect(synced).toBe(false)
@@ -347,8 +341,7 @@ describe('regular terminal focus ownership', () => {
       container: pane,
       activeElement: document.activeElement,
       syncFocused,
-      releasedHelper: null,
-      isMac: false
+      releasedHelper: null
     })
 
     expect(synced).toBe(false)
@@ -364,8 +357,7 @@ describe('regular terminal focus ownership', () => {
     const synced = resyncTerminalFocusForWindowFocus({
       container: pane,
       activeElement: document.activeElement,
-      syncFocused,
-      isMac: false
+      syncFocused
     })
 
     expect(synced).toBe(true)

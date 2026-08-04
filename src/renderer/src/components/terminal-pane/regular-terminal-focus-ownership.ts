@@ -82,8 +82,6 @@ export function resyncTerminalFocusForWindowFocus(args: {
    * helper rather than whichever helper is first in the DOM.
    */
   releasedHelper?: HTMLElement | null
-  /** Override the macOS check (tests). Defaults to the navigator user agent. */
-  isMac?: boolean
   /** Override the refocus scheduler (tests). Defaults to requestAnimationFrame. */
   scheduleRefocus?: RefocusScheduler
 }): boolean {
@@ -112,8 +110,7 @@ export function resyncTerminalFocusForWindowFocus(args: {
   // Why: defer the reclaim refocus to the next frame and only take focus if
   // nothing newer grabbed it — so a click into the sidebar/dialog/rename input
   // during reactivation isn't yanked back into the terminal. Applies on every
-  // platform (the reporter's bug is Linux); macOS additionally needs the blur
-  // first to rebuild a stale NSTextInputContext (see below).
+  // platform (the reporter's bug is Linux).
   if (needsProgrammaticFocus) {
     const schedule = args.scheduleRefocus ?? scheduleNextFrame
     schedule(() => {
