@@ -1508,6 +1508,12 @@ function sendOpenCrashReport(targetWindow?: BrowserWindow | null): void {
   webContents?.send('ui:openCrashReport')
 }
 
+function sendOpenFeedback(targetWindow?: BrowserWindow | null): void {
+  const webContents =
+    targetWindow && !targetWindow.isDestroyed() ? targetWindow.webContents : mainWindow?.webContents
+  webContents?.send('ui:openFeedback')
+}
+
 // Why: on renderer crash-loop the breaker stops auto-reloading and the window goes blank, so a main-process dialog is the only retry/quit surface.
 async function presentRendererRecoveryPrompt(recentRecoveryCount: number): Promise<void> {
   if (isQuitting) {
@@ -2661,6 +2667,11 @@ void app.whenReady().then(async () => {
       recordCrashBreadcrumb('crash_report_opened')
       const targetBrowserWindow = targetWindow instanceof BrowserWindow ? targetWindow : null
       sendOpenCrashReport(targetBrowserWindow)
+    },
+    onOpenFeedback: (targetWindow) => {
+      recordCrashBreadcrumb('feedback_opened')
+      const targetBrowserWindow = targetWindow instanceof BrowserWindow ? targetWindow : null
+      sendOpenFeedback(targetBrowserWindow)
     },
     onOpenFeatureTour: (targetWindow) => {
       recordCrashBreadcrumb('feature_tour_opened')

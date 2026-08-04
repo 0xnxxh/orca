@@ -84,6 +84,7 @@ import { requestScrollToCurrentWorkspaceRevealAndRename } from '@/lib/scroll-to-
 import { OPEN_WORKSPACE_BOARD_EVENT } from './components/sidebar/useWorkspaceBoardPanel'
 import { WorkspacePortScanner } from './components/ports/WorkspacePortScanner'
 import { CrashReportDialog } from './components/crash-report/CrashReportDialog'
+import { SidebarFeedbackDialog } from './components/sidebar/SidebarFeedbackDialog'
 import NewWorkspaceComposerModal from './components/NewWorkspaceComposerModal'
 import { RecoverableRenderErrorBoundary } from './components/error-boundaries/RecoverableRenderErrorBoundary'
 import { ConfirmationDialogProvider } from './components/confirmation-dialog'
@@ -498,6 +499,8 @@ function App(): React.JSX.Element {
 
   const activeView = useAppStore((s) => s.activeView)
   const activeModal = useAppStore((s) => s.activeModal)
+  const feedbackDialogOpen = useAppStore((s) => s.feedbackDialogOpen)
+  const setFeedbackDialogOpen = useAppStore((s) => s.setFeedbackDialogOpen)
   const featureTipsSeenIds = useAppStore((s) => s.featureTipsSeenIds)
   const featureInteractions = useAppStore((s) => s.featureInteractions)
   const contextualToursAutoEligible = useAppStore((s) => s.contextualToursAutoEligible)
@@ -2729,6 +2732,18 @@ function App(): React.JSX.Element {
             >
               <CrashReportDialog />
             </RecoverableRenderErrorBoundary>
+            {/* Why: mounted at the root, not in the sidebar toolbar, so Help > Send Feedback still works with the sidebar collapsed or on Settings/Activity. */}
+            {feedbackDialogOpen ? (
+              <RecoverableRenderErrorBoundary
+                boundaryId="modal.feedback"
+                surface="modal"
+                reportAsCrash={false}
+                resetKey={activeModal}
+                compact
+              >
+                <SidebarFeedbackDialog open onOpenChange={setFeedbackDialogOpen} />
+              </RecoverableRenderErrorBoundary>
+            ) : null}
             {onboarding && shouldRenderOnboarding && !onboardingSettingsDetourActive ? (
               <Suspense fallback={null}>
                 <RecoverableRenderErrorBoundary
