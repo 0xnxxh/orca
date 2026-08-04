@@ -288,6 +288,11 @@ export { resolveZoomTarget } from './resolve-zoom-target'
 const PENDING_AGENT_STATUS_RETRY_MS = 100
 const PENDING_AGENT_STATUS_TTL_MS = 15_000
 const MAX_PENDING_AGENT_STATUS_EVENTS = 100
+// Why: each live status event is its own IPC task, so a multi-agent burst pays
+// one full render pass per event; same-task commits batch to ONE pass (React
+// flushes external-store updates at the microtask boundary). One frame of
+// buffering collapses a burst; the leading event still applies immediately.
+const LIVE_AGENT_STATUS_BURST_WINDOW_MS = 33
 // Why: mobile driver hydration is async; cap replay so a stuck IPC snapshot can't retain an unbounded startup buffer.
 const MAX_PENDING_MOBILE_STATE_EVENTS = 300
 // Why: a rename's event burst lags the on-disk move; shield both ids from the deletion diff for a grace window.
@@ -758,6 +763,9 @@ export function useIpcEvents(): void {
     let pendingAgentStatusRetryTimer: ReturnType<typeof setTimeout> | null = null
     // Why: setAgentStatus notifies synchronously and re-enters this flush mid-drain; guard re-entrancy (crash 9fc89529).
     let isFlushingAgentStatuses = false
+    const liveAgentStatusBurstQueue: AgentStatusIpcPayload[] = []
+    let liveAgentStatusBurstTimer: ReturnType<typeof setTimeout> | null = null
+    let lastLiveAgentStatusApplyAt = 0
 
     unsubs.push(attachMobileMarkdownBridge())
 
@@ -3337,9 +3345,50 @@ export function useIpcEvents(): void {
         })
     }
 
+    function flushLiveAgentStatusBurst(): void {
+      liveAgentStatusBurstTimer = null
+      lastLiveAgentStatusApplyAt = Date.now()
+      // Why: splice before applying — applyAgentStatus can synchronously
+      // re-enter the queue via subscribers, and it must not see this batch.
+      const batch = liveAgentStatusBurstQueue.splice(0)
+      let anyApplied = false
+      for (const data of batch) {
+        if (applyAgentStatus(data) === 'applied') {
+          anyApplied = true
+        }
+      }
+      if (!anyApplied) {
+        lastLiveAgentStatusApplyAt = 0
+      }
+    }
+
+    function enqueueLiveAgentStatus(data: AgentStatusIpcPayload): void {
+      const now = Date.now()
+      if (
+        liveAgentStatusBurstTimer === null &&
+        now - lastLiveAgentStatusApplyAt >= LIVE_AGENT_STATUS_BURST_WINDOW_MS
+      ) {
+        lastLiveAgentStatusApplyAt = now
+        // Why: only an applied event commits state and costs a render pass —
+        // a dropped/pending leading edge must not make its successor pay
+        // burst latency (startup replay and unmounted panes stay immediate).
+        if (applyAgentStatus(data) !== 'applied') {
+          lastLiveAgentStatusApplyAt = 0
+        }
+        return
+      }
+      liveAgentStatusBurstQueue.push(data)
+      if (liveAgentStatusBurstTimer === null) {
+        liveAgentStatusBurstTimer = globalThis.setTimeout(
+          flushLiveAgentStatusBurst,
+          LIVE_AGENT_STATUS_BURST_WINDOW_MS
+        )
+      }
+    }
+
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
-        applyAgentStatus(data)
+        enqueueLiveAgentStatus(data)
       })
     )
     const unsubscribeAgentStatusClear = window.api.agentStatus.onClear?.(
@@ -3368,11 +3417,27 @@ export function useIpcEvents(): void {
               pendingAgentStatusEvents.splice(index, 1)
             }
           }
+          for (let index = liveAgentStatusBurstQueue.length - 1; index >= 0; index -= 1) {
+            const queued = liveAgentStatusBurstQueue[index]
+            if (
+              queued.connectionId === data.connectionId &&
+              queued.receivedAt <= effectiveWatermark
+            ) {
+              liveAgentStatusBurstQueue.splice(index, 1)
+            }
+          }
           useAppStore.getState().clearTransientAgentStatuses(data.connectionId, effectiveWatermark)
           return
         }
         if (!('paneKey' in data) || typeof data.paneKey !== 'string') {
           return
+        }
+        // Why: a queued burst event flushing after this clear would resurrect
+        // the removed status — drop the pane's unflushed sets first.
+        for (let index = liveAgentStatusBurstQueue.length - 1; index >= 0; index -= 1) {
+          if (liveAgentStatusBurstQueue[index].paneKey === data.paneKey) {
+            liveAgentStatusBurstQueue.splice(index, 1)
+          }
         }
         const store = useAppStore.getState()
         if (store.agentStatusByPaneKey[data.paneKey]?.state === 'done') {
@@ -3565,6 +3630,11 @@ export function useIpcEvents(): void {
         globalThis.clearTimeout(pendingAgentStatusRetryTimer)
       }
       pendingAgentStatusEvents.length = 0
+      if (liveAgentStatusBurstTimer !== null) {
+        globalThis.clearTimeout(liveAgentStatusBurstTimer)
+        liveAgentStatusBurstTimer = null
+      }
+      liveAgentStatusBurstQueue.length = 0
       mobileStateHydrationDisposed = true
       pendingMobileStateEvents.length = 0
       unsubscribeRuntimeEnvironmentStore()
