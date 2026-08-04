@@ -951,11 +951,13 @@ export class CodexRuntimeHomeService {
       }
     }
     const status = this.resolveSharedRuntimeAuthProvenanceStatus()
-    return (
-      status.kind === 'committed' &&
-      status.provenance.owner === 'managed' &&
-      status.provenance.accountId === account.id
-    )
+    if (status.kind === 'committed') {
+      return status.provenance.owner === 'managed' && status.provenance.accountId === account.id
+    }
+    // Why: with no committed record left, only claims that contradict this
+    // account prove the mirror is somebody else's. Deleting bytes nothing can
+    // attribute logs the user out over the very absence the grace window covers.
+    return runtimeAuth !== null && codexAuthCouldBelongToManagedAccount(runtimeAuth, account)
   }
 
   // Why: the absence may still heal, so keep the selection — but leave no other
@@ -964,19 +966,24 @@ export class CodexRuntimeHomeService {
   private clearRuntimeAuthForUnprovenSelection(): void {
     const runtimeAuthPath = this.getRuntimeAuthPath()
     try {
-      // Why: a refresh Codex wrote into the mirror belongs to whoever owns those
-      // bytes; persist it to that owner's home — managed or ~/.codex — first.
-      const readBackResult = this.readBackRefreshedTokensFromPath(runtimeAuthPath, {
-        updateLastWrittenAuthJson: false
-      })
-      if (readBackResult === 'rejected') {
-        this.readBackRefreshedSystemDefaultAuth()
+      try {
+        // Why: a refresh Codex wrote into the mirror belongs to whoever owns
+        // those bytes; persist it to that owner's home — managed or ~/.codex —
+        // first, then fence so a delete the OS refuses (Windows AV lock, EBUSY)
+        // still leaves the surviving bytes marked untrusted.
+        const readBackResult = this.readBackRefreshedTokensFromPath(runtimeAuthPath, {
+          updateLastWrittenAuthJson: false
+        })
+        if (readBackResult === 'rejected') {
+          this.readBackRefreshedSystemDefaultAuth()
+        }
+        this.persistSharedRuntimeAuthProvenance({ owner: 'fenced' })
+      } finally {
+        // Why: neither the rescue nor the fence may cancel the delete — leaving
+        // another identity's credentials for the launch is the defect itself.
+        this.lastWrittenAuthJson = null
+        rmSync(runtimeAuthPath, { force: true })
       }
-      // Why: fence before deleting so a delete the OS refuses (Windows AV lock,
-      // EBUSY) still leaves the surviving bytes marked untrusted.
-      this.persistSharedRuntimeAuthProvenance({ owner: 'fenced' })
-      this.lastWrittenAuthJson = null
-      rmSync(runtimeAuthPath, { force: true })
     } catch (error) {
       // Why: this branch only runs because the filesystem already refused a
       // read; a second failure must not throw out of launch preparation.

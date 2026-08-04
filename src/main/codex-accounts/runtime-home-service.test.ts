@@ -889,6 +889,154 @@ describe('CodexRuntimeHomeService', () => {
     expect(readFileSync(join(homeX2, 'auth.json'), 'utf-8')).toBe(authX)
   })
 
+  it('drops another account from the mirror even when the fence write fails', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    writeFileSync(
+      getSystemCodexAuthPath(),
+      createCodexAuthJson('system@example.com', 'acct-system', 'system'),
+      'utf-8'
+    )
+    const authA = createCodexAuthJson('a@example.com', 'acct-a', 'a')
+    const homeA = createManagedAuth(testState.userDataDir, 'account-a', authA)
+    const homeB = createManagedAuth(
+      testState.userDataDir,
+      'account-b',
+      createCodexAuthJson('b@example.com', 'acct-b', 'b')
+    )
+    // Stands in for a Windows AV lock on the provenance file: the fence cannot
+    // be written, while auth.json itself is perfectly deletable.
+    mkdirSync(getRuntimeCodexHomePath(), { recursive: true })
+    writeFileSync(runtimeAuthPath, authA, 'utf-8')
+    rmSync(getSharedRuntimeAuthProvenancePath(), { force: true })
+    mkdirSync(getSharedRuntimeAuthProvenancePath(), { recursive: true })
+    rmSync(join(homeB, 'auth.json'), { force: true })
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          createCodexAccountRecord('account-a', 'a@example.com', 'acct-a', homeA),
+          createCodexAccountRecord('account-b', 'b@example.com', 'acct-b', homeB)
+        ],
+        activeCodexManagedAccountId: 'account-b',
+        activeCodexManagedAccountIdsByRuntime: { host: 'account-b', wsl: {} }
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+
+    expect(service.prepareForCodexLaunch()).toBe(getRuntimeCodexHomePath())
+    expect(existsSync(runtimeAuthPath) ? readFileSync(runtimeAuthPath, 'utf-8') : null).not.toBe(
+      authA
+    )
+  })
+
+  it('keeps a mirrored api-key credential no identity claim can attribute', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    writeFileSync(
+      getSystemCodexAuthPath(),
+      createCodexAuthJson('system@example.com', 'acct-system', 'system'),
+      'utf-8'
+    )
+    const apiKeyAuth = `${JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-managed' })}\n`
+    const managedHomePath = createManagedAuth(testState.userDataDir, 'account-1', apiKeyAuth)
+    // Pre-provenance install, cold start: the mirror holds the selected account's
+    // own api-key credential — bytes carrying no id_token to identify — while its
+    // auth.json reads torn mid-rotation.
+    mkdirSync(getRuntimeCodexHomePath(), { recursive: true })
+    writeFileSync(runtimeAuthPath, apiKeyAuth, 'utf-8')
+    rmSync(getSharedRuntimeAuthProvenancePath(), { force: true })
+    writeFileSync(join(managedHomePath, 'auth.json'), '{"OPENAI_API_K', 'utf-8')
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          createCodexAccountRecord('account-1', 'user@example.com', 'acct-user', managedHomePath)
+        ],
+        activeCodexManagedAccountId: 'account-1',
+        activeCodexManagedAccountIdsByRuntime: { host: 'account-1', wsl: {} }
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(apiKeyAuth)
+    expect(store.getSettings().activeCodexManagedAccountIdsByRuntime?.host).toBe('account-1')
+  })
+
+  it('reads a renamed account refresh back into its own home despite a stale record email', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    writeFileSync(
+      getSystemCodexAuthPath(),
+      createCodexAuthJson('system@example.com', 'acct-system', 'system'),
+      'utf-8'
+    )
+    const authA = createCodexAuthJson('new@example.com', 'acct-a', 'a', 1)
+    const authARefreshed = createCodexAuthJson('new@example.com', 'acct-a', 'a-refreshed', 2)
+    const homeA = createManagedAuth(testState.userDataDir, 'account-a', authA)
+    const homeB = createManagedAuth(
+      testState.userDataDir,
+      'account-b',
+      createCodexAuthJson('b@example.com', 'acct-b', 'b')
+    )
+    // Account A was renamed on the ChatGPT side after it was added, so its record
+    // email is stale while the mirrored refresh carries the new one.
+    writeFileSync(runtimeAuthPath, authARefreshed, 'utf-8')
+    writeFileSync(
+      getSharedRuntimeAuthProvenancePath(),
+      `${JSON.stringify({ owner: 'managed', accountId: 'account-a' })}\n`,
+      'utf-8'
+    )
+    rmSync(join(homeB, 'auth.json'), { force: true })
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          createCodexAccountRecord('account-a', 'old@example.com', 'acct-a', homeA),
+          createCodexAccountRecord('account-b', 'b@example.com', 'acct-b', homeB)
+        ],
+        activeCodexManagedAccountId: 'account-b',
+        activeCodexManagedAccountIdsByRuntime: { host: 'account-b', wsl: {} }
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(join(homeA, 'auth.json'), 'utf-8')).toBe(authARefreshed)
+    expect(existsSync(runtimeAuthPath)).toBe(false)
+  })
+
+  it('keeps the mirror of a renamed account whose record email is stale', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    writeFileSync(
+      getSystemCodexAuthPath(),
+      createCodexAuthJson('system@example.com', 'acct-system', 'system'),
+      'utf-8'
+    )
+    const renamedAuth = createCodexAuthJson('new@example.com', 'acct-user', 'managed')
+    const managedHomePath = createManagedAuth(testState.userDataDir, 'account-1', renamedAuth)
+    // Torn provenance can no longer vouch for the mirror, and the only remaining
+    // evidence is a credential whose email no longer matches the record.
+    mkdirSync(getRuntimeCodexHomePath(), { recursive: true })
+    writeFileSync(runtimeAuthPath, renamedAuth, 'utf-8')
+    writeFileSync(getSharedRuntimeAuthProvenancePath(), 'not-json', 'utf-8')
+    writeFileSync(join(managedHomePath, 'auth.json'), '{"tokens":{"acc', 'utf-8')
+    const store = createStore(
+      createSettings({
+        codexManagedAccounts: [
+          createCodexAccountRecord('account-1', 'old@example.com', 'acct-user', managedHomePath)
+        ],
+        activeCodexManagedAccountId: 'account-1',
+        activeCodexManagedAccountIdsByRuntime: { host: 'account-1', wsl: {} }
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(renamedAuth)
+    expect(store.getSettings().activeCodexManagedAccountIdsByRuntime?.host).toBe('account-1')
+  })
+
   it('repoints legacy active host CODEX_HOME to the shared runtime home on startup', async () => {
     const legacyLaunchHomePath = join(
       testState.userDataDir,
