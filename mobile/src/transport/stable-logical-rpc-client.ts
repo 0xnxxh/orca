@@ -15,11 +15,13 @@ export class LogicalClientCutoverError extends RecoverableRpcError {
   }
 }
 
+// Why: errors can cross bundle boundaries where instanceof and local fields are lost.
 export function isLogicalClientCutoverError(error: unknown): boolean {
   return (
     error instanceof LogicalClientCutoverError ||
     (error instanceof Error &&
-      (error as { rpcErrorCode?: unknown }).rpcErrorCode === LOGICAL_CLIENT_CUTOVER_ERROR_CODE)
+      ((error as { rpcErrorCode?: unknown }).rpcErrorCode === LOGICAL_CLIENT_CUTOVER_ERROR_CODE ||
+        error.message === 'RPC interrupted by connection migration'))
   )
 }
 
