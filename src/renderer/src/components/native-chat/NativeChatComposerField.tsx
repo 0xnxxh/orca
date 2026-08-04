@@ -4,6 +4,7 @@ import type {
   KeyboardEventHandler,
   RefObject
 } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { Image as ImageIcon, ImageOff, X } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -97,6 +98,17 @@ export function NativeChatComposerField({
   sessionOptionsSurface,
   sessionOptionsSnapshot
 }: NativeChatComposerFieldProps): React.JSX.Element {
+  const compositionActiveRef = useRef(false)
+  const pendingCompositionEnterRef = useRef(false)
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea || compositionActiveRef.current || textarea.value === draft) {
+      return
+    }
+    textarea.value = draft
+  }, [draft, textareaRef])
+
   return (
     <div className="shrink-0 bg-background">
       {/* Extra bottom padding keeps the input box off the window rim. */}
@@ -164,13 +176,50 @@ export function NativeChatComposerField({
             ) : null}
             <textarea
               ref={textareaRef}
-              value={draft}
+              defaultValue={draft}
               disabled={disabled}
               rows={2}
               onChange={(e) => onDraftChange(e.target.value, e.currentTarget)}
-              onKeyDown={onKeyDown}
-              onCompositionStart={onCompositionStart}
-              onCompositionEnd={onCompositionEnd}
+              onKeyDown={(event) => {
+                const ownsCompositionEnter =
+                  event.nativeEvent.isComposing &&
+                  ((event.key === 'Enter' && event.keyCode === 13) ||
+                    (event.key === 'Process' && event.keyCode === 229))
+                if (ownsCompositionEnter) {
+                  pendingCompositionEnterRef.current = true
+                  return
+                }
+                if (
+                  pendingCompositionEnterRef.current &&
+                  event.key === 'Enter' &&
+                  event.keyCode === 13 &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault()
+                  return
+                }
+                onKeyDown(event)
+              }}
+              onKeyUp={(event) => {
+                if (
+                  (event.key === 'Enter' && event.keyCode === 13) ||
+                  (event.key === 'Process' && event.keyCode === 229)
+                ) {
+                  pendingCompositionEnterRef.current = false
+                }
+              }}
+              onBlur={() => {
+                compositionActiveRef.current = false
+                pendingCompositionEnterRef.current = false
+              }}
+              onCompositionStart={(event) => {
+                compositionActiveRef.current = true
+                onCompositionStart(event)
+              }}
+              onCompositionEnd={(event) => {
+                compositionActiveRef.current = false
+                onCompositionEnd(event)
+              }}
               onPaste={onPaste}
               onSelect={(e) => onTextareaSelect(e.currentTarget)}
               aria-expanded={autocomplete.mode === 'slash' || autocomplete.mode === 'skill'}
