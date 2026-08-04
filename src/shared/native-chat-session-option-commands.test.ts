@@ -2,16 +2,16 @@ import { describe, expect, it } from 'vitest'
 import {
   CLAUDE_SESSION_OPTION_CATALOG,
   CODEX_SESSION_OPTION_CATALOG
-} from '../../../src/shared/agent-session-option-catalog-claude-codex'
+} from './agent-session-option-catalog-claude-codex'
 import {
   buildNativeChatSessionOptionCommand,
   parseBuiltSessionOptionCommand,
   recordNativeChatSessionOptionCommand
-} from '../../../src/shared/native-chat-session-option-commands'
+} from './native-chat-session-option-commands'
 import {
   createNativeChatSessionOptionRecord,
   type NativeChatSessionOptionRecord
-} from '../../../src/shared/native-chat-session-option-state'
+} from './native-chat-session-option-state'
 
 function claudeRecord(model?: string): NativeChatSessionOptionRecord {
   const record = createNativeChatSessionOptionRecord('claude')

@@ -58,6 +58,8 @@ function actionForApply(
   if (apply.midSession?.kind === 'agent-picker') {
     return { type: 'agent-picker' }
   }
+  // Why: only unknown flip-only options are actions; once we have a tracked
+  // baseline the UI can show absolute On/Off without inventing a start state.
   return isFlipOnlyMidSession(apply.midSession) && !tracked ? { type: 'toggle-command' } : undefined
 }
 

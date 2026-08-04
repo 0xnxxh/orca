@@ -42,18 +42,21 @@ const recordsByScope = new Map<string, NativeChatSessionOptionRecord>()
 
 function getScopedRecord(scopeKey: string, agent: string): NativeChatSessionOptionRecord {
   const existing = recordsByScope.get(scopeKey)
-  if (existing && existing.agent === agent) {
-    return existing
-  }
-  const created = createNativeChatSessionOptionRecord(agent)
-  if (!recordsByScope.has(scopeKey) && recordsByScope.size >= MOBILE_SESSION_OPTION_RECORD_CAP) {
+  const record =
+    existing && existing.agent === agent ? existing : createNativeChatSessionOptionRecord(agent)
+  // Why: delete-then-set on every read makes the touched scope most-recent, so
+  // eviction only sheds the oldest UNTOUCHED tab. Insertion order alone would let
+  // a long-lived active tab be the oldest key and lose its tracked model.
+  recordsByScope.delete(scopeKey)
+  recordsByScope.set(scopeKey, record)
+  while (recordsByScope.size > MOBILE_SESSION_OPTION_RECORD_CAP) {
     const oldest = recordsByScope.keys().next().value
-    if (oldest !== undefined) {
-      recordsByScope.delete(oldest)
+    if (oldest === undefined) {
+      break
     }
+    recordsByScope.delete(oldest)
   }
-  recordsByScope.set(scopeKey, created)
-  return created
+  return record
 }
 
 export function clearMobileSessionOptionRecordsForTests(): void {

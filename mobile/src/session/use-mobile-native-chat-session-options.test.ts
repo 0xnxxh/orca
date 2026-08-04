@@ -135,6 +135,21 @@ describe('useMobileNativeChatSessionOptions', () => {
     expect(effort!.kind).toMatchObject({ currentValue: 'low' })
   })
 
+  it('keeps the live tab’s tracked model when other tabs overflow the record cap', async () => {
+    mount()
+    await act(async () => {
+      await api!.setOption('model', 'opus')
+    })
+    // Far more scopes than the cap, revisiting the live tab in between the way a
+    // chat↔terminal flip does — insertion-order eviction would shed it.
+    for (let index = 0; index < 40; index += 1) {
+      update({ scopeKey: `host\0worktree\0overflow-${index}` })
+      update({ scopeKey: 'host\0worktree\0tab' })
+    }
+    expect(api!.snapshot[0]).toMatchObject({ valueSource: 'dispatched' })
+    expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'opus' })
+  })
+
   it('keeps the latest queued operation pending until it settles', async () => {
     const resolvers: ((outcome: MobileNativeChatSendOutcome) => void)[] = []
     dispatchCommand.mockImplementation(

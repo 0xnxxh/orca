@@ -109,6 +109,8 @@ function recordCommandApply(args: {
   const previousModelId = typeof record.model?.value === 'string' ? record.model.value : null
   if (optionId === 'model') {
     if (previousModelId !== value) {
+      // Why: a model command can reset model-scoped state, so an older value
+      // from a prior visit is no longer evidence about this live session.
       delete record.valuesByModel[value]
     }
     record.model = { value, source: 'dispatched' }

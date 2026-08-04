@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   CLAUDE_SESSION_OPTION_CATALOG,
   CODEX_SESSION_OPTION_CATALOG
-} from '../../../src/shared/agent-session-option-catalog-claude-codex'
+} from './agent-session-option-catalog-claude-codex'
 import {
-  applyNativeChatReportedSessionOptions,
   createNativeChatSessionOptionRecord,
-  matchNativeChatCatalogModelId,
   type NativeChatSessionOptionRecord
-} from '../../../src/shared/native-chat-session-option-state'
-import { buildNativeChatSessionOptionSnapshot } from '../../../src/shared/native-chat-session-option-snapshot'
+} from './native-chat-session-option-state'
+import { buildNativeChatSessionOptionSnapshot } from './native-chat-session-option-snapshot'
 
 function claudeRecord(): NativeChatSessionOptionRecord {
   return createNativeChatSessionOptionRecord('claude')
@@ -94,39 +92,5 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     })
     const fastMode = snapshot.find((descriptor) => descriptor.id === 'fastMode')
     expect(fastMode).toMatchObject({ action: { type: 'toggle-command' } })
-  })
-})
-
-describe('applyNativeChatReportedSessionOptions', () => {
-  it('reports become authority and reset stale per-model values on a model change', () => {
-    const record = claudeRecord()
-    record.model = { value: 'sonnet', source: 'dispatched' }
-    record.valuesByModel.opus = { effort: { value: 'high', source: 'dispatched' } }
-    expect(applyNativeChatReportedSessionOptions(record, { model: 'opus' })).toBe(true)
-    expect(record.model).toEqual({ value: 'opus', source: 'reported' })
-    // A model change invalidates previously tracked values for the destination.
-    expect(record.valuesByModel.opus).toEqual({})
-  })
-
-  it('is a no-op when the report matches tracked state', () => {
-    const record = claudeRecord()
-    record.model = { value: 'sonnet', source: 'reported' }
-    expect(applyNativeChatReportedSessionOptions(record, { model: 'sonnet' })).toBe(false)
-  })
-})
-
-describe('matchNativeChatCatalogModelId', () => {
-  it('matches exact ids, labels, and provider-id containment', () => {
-    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'sonnet')).toBe('sonnet')
-    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'Sonnet 5')).toBe('sonnet')
-    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'claude-sonnet-5')).toBe(
-      'sonnet'
-    )
-    expect(matchNativeChatCatalogModelId(CODEX_SESSION_OPTION_CATALOG, 'gpt-5.5')).toBe('gpt-5.5')
-  })
-
-  it('returns null for unrecognized reports', () => {
-    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, 'mystery-model')).toBeNull()
-    expect(matchNativeChatCatalogModelId(CLAUDE_SESSION_OPTION_CATALOG, '')).toBeNull()
   })
 })
