@@ -301,12 +301,11 @@ export function useActivityTerminalPortalStatus(
     paneKey: null,
     status: 'loading'
   })
-  // Why: the swap effect churns target and paneKey, so a latch owned by this effect would restart
-  // its flip budget on every oscillation step; only the tab id is stable across that churn.
-  const readinessLatchRef = useRef<{ tabId: string | null; latch: ActivityPortalReadinessLatch }>({
-    tabId: null,
-    latch: createActivityPortalReadinessLatch()
-  })
+  // Why a ref, not an effect-local latch: a slot swap rewrites target, pane key and tab id together,
+  // so a latch scoped to the subscription restarts its budget on the very churn it must bound. The
+  // budget only counts flips arriving in a burst too fast to click, so hopping between threads by
+  // hand cannot spend it and leave a later, healthy pane latched.
+  const readinessLatchRef = useRef<ActivityPortalReadinessLatch | null>(null)
 
   useLayoutEffect(() => {
     let disposed = false
@@ -354,11 +353,7 @@ export function useActivityTerminalPortalStatus(
       return disposeFrame
     }
 
-    const tabId = parsePaneKey(paneKey)?.tabId ?? null
-    if (readinessLatchRef.current.tabId !== tabId) {
-      readinessLatchRef.current = { tabId, latch: createActivityPortalReadinessLatch() }
-    }
-    const readinessLatch = readinessLatchRef.current.latch
+    const readinessLatch = (readinessLatchRef.current ??= createActivityPortalReadinessLatch())
 
     const updateReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
       scheduleReadiness(readinessLatch.next(status))
@@ -1600,6 +1595,9 @@ export default function ActivityPrototypePage(): React.JSX.Element {
     visibleThread
   ])
 
+  // Why no swap budget here: `swap-staged` sets displayedPaneKey to selectedThread.paneKey, which makes
+  // displayedThread === selectedThread, so reconcile returns no stagedThread on the next commit. The
+  // branch cannot resolve twice without a new selection (see activity-portal-thread-reconciliation.test).
   useLayoutEffect(() => {
     const swap = resolveActivityPortalSwap({
       selectedThread,
