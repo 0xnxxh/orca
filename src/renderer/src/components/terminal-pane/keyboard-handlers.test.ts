@@ -16,6 +16,8 @@ function makeKeyEvent(
     shiftKey: boolean
     altKey: boolean
     repeat: boolean
+    isComposing: boolean
+    keyCode: number
   }>
 ): Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'repeat'> {
   return {
@@ -109,6 +111,25 @@ describe('resolveTerminalKeyboardShortcutAction', () => {
         () => true
       )
     ).toEqual({ type: 'sendInput', data: '\x1b\r' })
+  })
+
+  it('refuses a marked real Enter before shortcut resolution', () => {
+    const event = makeKeyEvent({ key: 'Enter', shiftKey: true, isComposing: true, keyCode: 13 })
+    expect(
+      resolveTerminalKeyboardShortcutAction(
+        event,
+        true,
+        'false',
+        0,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => 'alt-enter',
+        () => true
+      )
+    ).toBeNull()
   })
 })
 
