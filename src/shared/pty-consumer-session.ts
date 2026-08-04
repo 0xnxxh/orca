@@ -229,7 +229,6 @@ export class PtyConsumerSession {
       return null
     }
     const recoveryMatches =
-      hello.resume.ownerGeneration === current.generation &&
       hello.resume.ownerLease === current.lease &&
       hello.clientInstanceId === current.clientInstanceId &&
       authentication.principal === current.principal
@@ -284,7 +283,7 @@ export class PtyConsumerSession {
     authentication: PtyConsumerAuthentication,
     replaces: OwnerRecord | null
   ): OwnerRecord {
-    const lease = this.createLease()
+    const lease = replaces?.lease ?? this.createLease()
     assertNonEmptyString(lease, 'ownerLease')
     return {
       connectionId: authentication.connectionId,

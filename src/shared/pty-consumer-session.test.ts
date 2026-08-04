@@ -122,7 +122,7 @@ describe('PtyConsumerSession', () => {
     ).toThrow('authentication required')
   })
 
-  it('rotates the lease and increments owner generation on valid recovery', () => {
+  it('keeps the lease stable and increments owner generation on valid recovery', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))
     first.commitPublication()
@@ -142,7 +142,7 @@ describe('PtyConsumerSession', () => {
     expect(recovered.grant).toMatchObject({
       role: 'session-owner',
       ownerGeneration: 2,
-      ownerLease: 'lease-2'
+      ownerLease: 'lease-1'
     })
   })
 
@@ -251,6 +251,56 @@ describe('PtyConsumerSession', () => {
     )
   })
 
+  it('retries overlapping recovery against the stable lease after publication commits', () => {
+    const session = createSession()
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    first.commitPublication()
+    const resume = {
+      ownerGeneration: first.grant.ownerGeneration!,
+      ownerLease: first.grant.ownerLease!
+    }
+    const replacement = session.admit(ownerHello({ resume }), auth('connection-2'))
+
+    expect(() => session.admit(ownerHello({ resume }), auth('connection-3'))).toThrow(
+      expect.objectContaining({ code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR })
+    )
+
+    replacement.commitPublication()
+    const retry = session.admit(ownerHello({ resume }), auth('connection-3'))
+
+    expect(retry.grant).toMatchObject({
+      role: 'session-owner',
+      ownerGeneration: 3,
+      ownerLease: first.grant.ownerLease
+    })
+    expect(retry.displacedOwner?.connectionId).toBe('connection-2')
+  })
+
+  it('retries overlapping recovery against the incumbent after publication rolls back', () => {
+    const session = createSession()
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    first.commitPublication()
+    const resume = {
+      ownerGeneration: first.grant.ownerGeneration!,
+      ownerLease: first.grant.ownerLease!
+    }
+    const replacement = session.admit(ownerHello({ resume }), auth('connection-2'))
+
+    expect(() => session.admit(ownerHello({ resume }), auth('connection-3'))).toThrow(
+      expect.objectContaining({ code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR })
+    )
+
+    replacement.rollbackPublication()
+    const retry = session.admit(ownerHello({ resume }), auth('connection-3'))
+
+    expect(retry.grant).toMatchObject({
+      role: 'session-owner',
+      ownerGeneration: 3,
+      ownerLease: first.grant.ownerLease
+    })
+    expect(retry.displacedOwner?.connectionId).toBe('connection-1')
+  })
+
   it('types mismatched recovery without disturbing principal or lease ownership', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))
@@ -289,7 +339,7 @@ describe('PtyConsumerSession', () => {
     expect(recovered.grant).toMatchObject({
       role: 'session-owner',
       ownerGeneration: 2,
-      ownerLease: 'lease-2'
+      ownerLease: 'lease-1'
     })
   })
 

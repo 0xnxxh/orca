@@ -6,6 +6,7 @@ import {
 } from './dispatcher'
 import { encodeJsonRpcFrame, MessageType } from './protocol'
 import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
+import { PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR } from '../shared/pty-consumer-session'
 
 const endpointIdentity: RelayClientSessionIdentity = {
   principal: 'endpoint-principal',
@@ -271,5 +272,79 @@ describe('relay PTY consumer owner displacement', () => {
     })
     expect(adapter.deliveryMode(1)).toBe('subscriber')
     expect(detached).toContain(1)
+  })
+
+  it('serializes overlapping reconnect grants without invalidating the original proof', async () => {
+    const incumbentWrites: Buffer[] = []
+    dispatcher = new RelayDispatcher(
+      (data, settle) => {
+        incumbentWrites.push(Buffer.from(data))
+        settle({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a')
+
+    dispatcher.feed(requestFrame(1, 'pty.openClient', ownerHelloParams()))
+    await flushRequests()
+    const incumbentGrant = response(incumbentWrites, 1)!.result as Record<string, unknown>
+    const resume = {
+      ownerGeneration: incumbentGrant.ownerGeneration,
+      ownerLease: incumbentGrant.ownerLease
+    }
+
+    let firstReconnectSettlement: ((result: SinkWriteSettlement) => void) | undefined
+    const firstReconnectWrites: Buffer[] = []
+    const firstReconnectClientId = dispatcher.attachClient(
+      (data, settle) => {
+        firstReconnectWrites.push(Buffer.from(data))
+        firstReconnectSettlement = settle
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    dispatcher.feedClient(
+      firstReconnectClientId,
+      requestFrame(2, 'pty.openClient', ownerHelloParams(resume))
+    )
+    await flushRequests()
+
+    const retryWrites: Buffer[] = []
+    const retryClientId = dispatcher.attachClient(
+      (data, settle) => {
+        retryWrites.push(Buffer.from(data))
+        settle({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    dispatcher.feedClient(
+      retryClientId,
+      requestFrame(3, 'pty.openClient', ownerHelloParams(resume))
+    )
+    await flushRequests()
+
+    expect(response(retryWrites, 3)!.error).toMatchObject({
+      code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
+    })
+
+    firstReconnectSettlement!({ ok: true })
+    dispatcher.feedClient(
+      retryClientId,
+      requestFrame(4, 'pty.openClient', ownerHelloParams(resume))
+    )
+    await flushRequests()
+
+    expect(response(retryWrites, 4)!.result).toMatchObject({
+      role: 'session-owner',
+      ownerGeneration: 3,
+      ownerLease: incumbentGrant.ownerLease
+    })
+    expect(adapter.deliveryMode(firstReconnectClientId)).toBe('subscriber')
+    expect(adapter.deliveryMode(retryClientId)).toBe('source-owner')
   })
 })
