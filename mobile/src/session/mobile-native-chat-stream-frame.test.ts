@@ -103,6 +103,27 @@ describe('applyMobileNativeChatStreamFrame', () => {
     })
   })
 
+  it('ignores replay paging metadata that describes a row other than our oldest', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['p1', 'p2', 'a', 'b'].map(message))
+
+    // `beforeOffset` here points before 'a', not before 'p1'. Adopting it would
+    // make the next loadEarlier re-fetch 'p1'/'p2' and prepend them twice.
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: {
+          type: 'snapshot',
+          messages: [message('a'), message('b')],
+          hasMore: true,
+          beforeOffset: 500
+        },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({ kind: 'messages', messages: ['p1', 'p2', 'a', 'b'].map(message) })
+  })
+
   it('replaces the window when a reconnect replay is disjoint from history', () => {
     const merger = createNativeChatMerger()
     replaceList(merger, [message('old-1'), message('old-2')])
@@ -245,6 +266,33 @@ describe('applyMobileNativeChatStreamFrame', () => {
       kind: 'messages',
       messages: [message('new')],
       hasMore: false,
+      windowReplaced: true
+    })
+  })
+
+  it('still treats the base snapshot as authoritative after a replacement frame', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['a', 'b'].map(message))
+
+    // A replacement is not this subscription's base snapshot, so the first real
+    // snapshot still replaces — merging would keep 'a', which it does not carry.
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: {
+          type: 'snapshot',
+          messages: [message('b'), message('c')],
+          hasMore: true,
+          beforeOffset: 77
+        },
+        limit: 100,
+        replaceSnapshot: true
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: [message('b'), message('c')],
+      hasMore: true,
+      beforeOffset: 77,
       windowReplaced: true
     })
   })
