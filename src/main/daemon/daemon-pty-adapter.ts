@@ -921,9 +921,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
       // Why: a daemon without `getSize` would otherwise answer `null` forever, and one `null`
       // makes the whole owner fan-out unprovable — a dead pane could then never be retired.
-      // listSessions is the inventory legacy discovery already routes by, requested directly
-      // (not via listProcesses, which swallows errors into an empty list) so a dead socket
-      // still rejects rather than reading as absence.
+      // `listSessions` is the same inventory legacy discovery routes by, and has existed since
+      // the first daemon protocol. Requested directly rather than through `listProcesses` so a
+      // liveness probe does not publish inventory audit observations as a side effect; both
+      // rethrow on failure, so either way a dead socket stays `null` instead of reading absent.
       const { sessions } = await this.client.request<ListSessionsResult>('listSessions', undefined)
       return sessions.some((session) => session.sessionId === id && session.isAlive)
     } catch {
