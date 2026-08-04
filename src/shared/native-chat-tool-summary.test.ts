@@ -84,6 +84,15 @@ describe('describeToolInput', () => {
     expect(toolFilePath({ path: 'src/c.ts' })).toBe('src/c.ts')
   })
 
+  it('does not count a blank search key as a search', () => {
+    // A whitespace-only `query` is no search term, but treating it as one
+    // suppresses `path` — costing the row its label, its link and its header
+    // argument all at once, and putting raw JSON back in the label.
+    expect(toolFilePath({ query: '   ', path: 'src/a.ts' })).toBe('src/a.ts')
+    expect(describeToolInput({ query: '   ', path: 'src/a.ts' })).toBe('src/a.ts')
+    expect(briefToolArg({ query: '   ', path: 'src/a.ts' })).toBe('a.ts')
+  })
+
   it('skips a present-but-blank key instead of falling through to raw JSON', () => {
     expect(describeToolInput({ command: '', query: 'needle' })).toBe('needle')
     expect(describeToolInput({ command: '   ', url: 'https://example.com' })).toBe(
