@@ -274,8 +274,8 @@ describe('MobileNativeChatView', () => {
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      // A failed/empty page clears `loadingEarlier` without prepending, so no
-      // layout pass arrives to consume the hold. It must expire on its own.
+      // A failed/empty page clears `loadingEarlier` without prepending, so the
+      // hold has to lapse on its own or tail-follow is disabled for good.
       await update({ messages: [message], hasMore: true, loadingEarlier: true })
       await update({ messages: [message], hasMore: true, loadingEarlier: false })
       await act(async () => vi.runAllTimersAsync())
@@ -293,20 +293,110 @@ describe('MobileNativeChatView', () => {
     }
   })
 
+  it('keeps holding across the later layout passes a page settles through', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      // One prepend emits several content-size events as its cells measure and
+      // the list revises its spacer estimates, so a hold that any single pass
+      // could retire would let the next one scroll to the bottom.
+      const list = renderer!.root.find((node) => node.type === 'FlatList')
+      act(() => list.props.onContentSizeChange())
+      await act(async () => vi.advanceTimersByTimeAsync(120))
+      act(() => list.props.onContentSizeChange())
+      act(() => list.props.onContentSizeChange())
+      await act(async () => vi.advanceTimersByTimeAsync(120))
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-holds when the page outlives the first hold', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      // A slow round trip outlasts the hold armed at tap time, so delivery has
+      // to arm its own — otherwise the prepend lands unprotected.
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await act(async () => vi.advanceTimersByTimeAsync(600))
+      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      const list = renderer!.root.find((node) => node.type === 'FlatList')
+      act(() => list.props.onContentSizeChange())
+      await act(async () => vi.advanceTimersByTimeAsync(100))
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('measures the hold from delivery rather than from the tap', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      // The tap's own hold must not clip the delivery hold short: the layout
+      // passes that matter start when the page lands, not when it was asked for.
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await act(async () => vi.advanceTimersByTimeAsync(200))
+      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      await act(async () => vi.advanceTimersByTimeAsync(350))
+      const list = renderer!.root.find((node) => node.type === 'FlatList')
+      act(() => list.props.onContentSizeChange())
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not scroll to a message that arrived while the reader was held', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      // The agent speaks late in the hold. Arming the tail-follow anyway would
+      // let it fire just after the hold lapses and yank the reader off the
+      // history they asked for.
+      await act(async () => vi.advanceTimersByTimeAsync(470))
+      const appended = { ...message, id: 'appended' }
+      await update({ messages: [older, message, appended], hasMore: false })
+      await act(async () => vi.advanceTimersByTimeAsync(100))
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('still follows the tail once the history page has settled', async () => {
     vi.useFakeTimers()
     try {
       await render({ messages: [message], hasMore: true })
       await act(async () => vi.runAllTimersAsync())
-      // Drive a real paging cycle first: a hold that never releases would leave
+      // Drive a real paging cycle first: a hold that never lapses would leave
       // the chat permanently unable to follow the agent.
       await update({ messages: [message], hasMore: true, loadingEarlier: true })
       await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
       const settled = renderer!.root.find((node) => node.type === 'FlatList')
       act(() => settled.props.onContentSizeChange())
-      // Stay well inside the hold's expiry so this proves the page's own layout
-      // pass released it, not the never-latch safety net.
-      await act(async () => vi.advanceTimersByTimeAsync(100))
+      await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
       const appended = { ...message, id: 'appended' }

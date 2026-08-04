@@ -154,8 +154,7 @@ export function MobileNativeChatView({
   const sendScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // A short transcript leaves the reader both at the top and `atBottom`, so the
   // tail-follow paths would scroll away the history that just paged in.
-  const { isHeld: isHistoryHeld, release: releaseHistoryHold } =
-    useMobileNativeChatHistoryHold(loadingEarlier)
+  const { isHeld: isHistoryHeld } = useMobileNativeChatHistoryHold(loadingEarlier)
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
   useEffect(
     () => () => {
@@ -290,14 +289,10 @@ export function MobileNativeChatView({
               // the load-earlier header offset internally.
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               onContentSizeChange={() => {
-                // The prepend's own layout pass consumes the hold. Reading the
-                // latch (not a render snapshot) is what makes this survive a
-                // streaming tick landing before the native event.
-                if (isHistoryHeld()) {
-                  releaseHistoryHold()
-                  return
-                }
-                if (data.length > 0 && atBottom) {
+                // Reading the live hold, not a render snapshot, is what makes
+                // this survive a streaming tick landing between the prepend and
+                // this event — and a page settles over several of these.
+                if (data.length > 0 && atBottom && !isHistoryHeld()) {
                   listRef.current?.scrollToEnd({ animated: false })
                 }
               }}
