@@ -8,10 +8,12 @@ import type { AskPrompt } from './mobile-native-chat-ask'
  *  Owned by the controller, not the chat subtree: the overlay unmounts on a
  *  chat↔terminal view toggle, and a dismissal must survive that round-trip. */
 export function useMobileNativeChatAskDismiss(args: {
-  ask?: AskPrompt | null
+  ask: AskPrompt | null
   /** Ungated prompt payload. A working/done status hides the card but does not
-   *  prove the sticky prompt itself cleared. */
-  detectedAsk?: AskPrompt | null
+   *  prove the sticky prompt itself cleared. Required, and never defaulted to
+   *  `ask`: reading the gated prompt as the detected one is the resurfacing bug
+   *  this hook exists to close. */
+  detectedAsk: AskPrompt | null
   /** Dismissals are scoped to the tab that showed the card, so one tab's
    *  dismissal can't hide an identical question on another tab. */
   scopeKey: string | null
@@ -24,7 +26,7 @@ export function useMobileNativeChatAskDismiss(args: {
   showAsk: boolean
   dismissAsk: () => void
 } {
-  const { ask, detectedAsk = ask, scopeKey, observing } = args
+  const { ask, detectedAsk, scopeKey, observing } = args
   const askKey = ask ? JSON.stringify(ask.questions) : null
   const detectedAskKey = detectedAsk ? JSON.stringify(detectedAsk.questions) : null
   const detectedAskKeysRef = useRef(new Map<string | null, string | null>())

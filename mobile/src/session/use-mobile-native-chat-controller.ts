@@ -194,8 +194,16 @@ export function useMobileNativeChatController(args: {
   // `messages` when the client is gone ('idle') or the tab has not reported a
   // provider session yet ('waiting-session') — both of which leave the flag false
   // over an empty list that was never read.
+  //
+  // 'error' only qualifies while rows survive from an earlier read. The host's
+  // initial-drain error frame carries an empty list and is not terminal (a real
+  // snapshot follows once the read recovers), so an error before any read leaves
+  // `messages` never populated — exactly the never-read case this guard exists
+  // to reject. Rows can only be present once a read landed, so requiring them is
+  // never wrong in the resurfacing direction.
   const nativeChatTranscriptSettled =
-    nativeChatSession.status === 'ready' || nativeChatSession.status === 'error'
+    nativeChatSession.status === 'ready' ||
+    (nativeChatSession.status === 'error' && nativeChatSession.messages.length > 0)
   const nativeChatAskObservable =
     showNativeChat && (nativeChatDetectedAsk != null || nativeChatTranscriptSettled)
   const {

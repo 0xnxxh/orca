@@ -464,12 +464,16 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     })
   }
 
-  /** Drive the transcript stand-in the way the real hook couples the two fields
-   *  (`transcriptLoading` is exactly `status === 'loading'`), so these tests can
-   *  only express states the session hook can actually reach. */
-  function setTranscript(status: MobileNativeChatStatus): void {
+  /** Drive the transcript stand-in the way the real hook couples its fields, so
+   *  these tests can only express states the session hook can actually reach:
+   *  `transcriptLoading` is exactly `status === 'loading'`, and `messages` is
+   *  withheld until a read lands. `rows` is what the last landed read left
+   *  behind — 0 means no read has ever landed for this identity. */
+  function setTranscript(status: MobileNativeChatStatus, rows = 1): void {
     sessionState.status = status
     sessionState.transcriptLoading = status === 'loading'
+    sessionState.messages =
+      status === 'ready' || status === 'error' ? Array.from({ length: rows }, () => ({})) : []
   }
 
   beforeEach(() => {
@@ -500,7 +504,7 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     controller = null
     promptsState.ask = null
     promptsState.detectedAsk = null
-    setTranscript('ready')
+    setTranscript('ready', 0)
     viewMode.isTabChatView = () => true
     activeTab.id = 'tab-1'
   })
@@ -617,11 +621,35 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     expect(controller?.nativeChatAsk).toBeNull()
   })
 
+  it('keeps the dismissal when the first read of a transcript errors', () => {
+    // The host forwards an initial-drain failure as an error frame carrying an
+    // EMPTY list, and that frame is not terminal — a real snapshot follows once
+    // the read recovers. Judging the prompt from that never-populated list
+    // retires the dismissal, and the recovered read brings the answered card
+    // back over the composer.
+    act(() => controller?.dismissNativeChatAsk())
+    expect(controller?.nativeChatAsk).toBeNull()
+
+    setTranscript('error', 0)
+    promptsState.ask = null
+    promptsState.detectedAsk = null
+    step()
+
+    // The read recovers with the same question still pending.
+    setTranscript('ready')
+    promptsState.ask = PROMPT
+    promptsState.detectedAsk = PROMPT
+    step()
+
+    expect(controller?.nativeChatAsk).toBeNull()
+  })
+
   it('retires the dismissal when a failed read still reports the last transcript', () => {
-    // A read error leaves the last successful read in `messages`, so a prompt
-    // that clears under it is real evidence — unlike the never-read empty list
-    // of 'idle'/'waiting-session'. Treating 'error' as unobservable would freeze
-    // the dismissal and hide the next identical question for good.
+    // A read error that lands on top of rows from an earlier read leaves those
+    // rows in `messages`, so a prompt that clears under it is real evidence —
+    // unlike the never-read empty list of 'idle'/'waiting-session'. Treating
+    // every error as unobservable would freeze the dismissal and hide the next
+    // identical question for good.
     act(() => controller?.dismissNativeChatAsk())
     expect(controller?.nativeChatAsk).toBeNull()
 
