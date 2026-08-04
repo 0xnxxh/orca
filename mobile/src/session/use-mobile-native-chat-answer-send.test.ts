@@ -11,6 +11,11 @@ import {
   markMobileNativeChatInputStale,
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite,
+  resetMobileNativeChatTerminalWritesForTests
+} from './mobile-native-chat-terminal-write-lock'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 
 type AnswerSend = ReturnType<typeof useMobileNativeChatAnswerSend>
@@ -45,6 +50,7 @@ describe('useMobileNativeChatAnswerSend', () => {
     vi.useFakeTimers()
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     resetMobileNativeChatStaleInputForTests()
+    resetMobileNativeChatTerminalWritesForTests()
   })
 
   afterEach(() => {
@@ -394,6 +400,164 @@ describe('useMobileNativeChatAnswerSend', () => {
     await act(async () => vi.runAllTimersAsync())
 
     await expect(result).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an answer while another composed write holds the terminal', async () => {
+    const onSendError = vi.fn()
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    // An image paste sequence is mid-flight into the same PTY.
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(false)
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Answer not sent')
+
+    // Once that sequence releases, answers flow again.
+    releaseMobileNativeChatTerminalWrite('terminal')
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
+  })
+
+  it('fences a superseding answer after the cancelled chain moved the selector', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    const prompt: AskPrompt = {
+      questions: [
+        { question: 'q1', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'q2', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    }
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(prompt, [{ indices: [0] }, { indices: [0] }])
+    })
+    // The first digit already advanced Claude to q2. Replaying a from-q1 key
+    // plan now would answer the wrong question.
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+    })
+    await act(async () => vi.runAllTimersAsync())
+
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    // Both chains unwound: the terminal is free for the next composed write.
+    expect(acquireMobileNativeChatTerminalWrite('terminal')).toBe(true)
+    releaseMobileNativeChatTerminalWrite('terminal')
+  })
+
+  it('does not write a successor after the prior in-flight key is accepted', async () => {
+    let resolveFirst: (response: unknown) => void = () => undefined
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    const prompt: AskPrompt = {
+      questions: [
+        { question: 'q1', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'q2', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    }
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(prompt, [{ indices: [0] }, { indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+
+    // The successor is queued behind the in-flight key, not racing it.
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolveFirst(acceptedResponse())
+      await Promise.resolve()
+    })
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a queued successor continue after the prior key is definitely rejected', async () => {
+    let resolveFirst: (response: unknown) => void = () => undefined
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      resolveFirst({
+        ...acceptedResponse(),
+        result: { send: { accepted: false } }
+      })
+      await Promise.resolve()
+    })
+
+    // Nothing landed, so the selector never moved — the successor is safe.
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not write a successor after the prior delivery becomes ambiguous', async () => {
+    let rejectFirst: (error: Error) => void = () => undefined
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject
+          })
+      )
+      .mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn())
+
+    let first: Promise<boolean> | undefined
+    let second: Promise<boolean> | undefined
+    await act(async () => {
+      first = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [0] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      second = answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      rejectFirst(markRpcDeliveryUnknown(new Error('Connection closed')))
+      await Promise.resolve()
+    })
+
+    // The key may have landed; a blind successor could double-step the selector.
+    await expect(first).resolves.toBe(false)
+    await expect(second).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
   })
 })
