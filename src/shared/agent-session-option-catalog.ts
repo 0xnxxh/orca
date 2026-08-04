@@ -51,11 +51,11 @@ export function findCatalogOption(
   return model?.options.find((option) => option.id === optionId)
 }
 
-/** Merge live rows over the static seed while retaining only option shapes Orca
- * can actually map. Newly discovered ids remain model-only until cataloged. */
+/** Merge live rows over the static seed while retaining cataloged option mappings by default. */
 export function mergeCatalogModels(
   seed: readonly CatalogModel[],
-  discovered: readonly CatalogModel[]
+  discovered: readonly CatalogModel[],
+  options: { preferDiscoveredOptions?: boolean } = {}
 ): CatalogModel[] {
   const discoveredById = new Map(discovered.map((model) => [model.id, model]))
   const merged = seed.map((model) => {
@@ -64,7 +64,11 @@ export function mergeCatalogModels(
       return model
     }
     discoveredById.delete(model.id)
-    return { ...model, ...live, options: model.options }
+    return {
+      ...model,
+      ...live,
+      options: options.preferDiscoveredOptions ? live.options : model.options
+    }
   })
   return [...merged, ...discoveredById.values()]
 }

@@ -112,7 +112,11 @@ describe('native chat session option enrichment', () => {
           defaultThinkingLevel: 'low',
           supportsFastMode: true
         },
-        { id: 'sonnet', label: 'Sonnet' }
+        {
+          id: 'sonnet',
+          label: 'Sonnet',
+          thinkingLevels: [{ id: 'medium', label: 'Medium' }]
+        }
       ]
     })
     const discover = vi.fn(() =>
@@ -130,10 +134,11 @@ describe('native chat session option enrichment', () => {
 
     const models = readNativeChatEnrichedModels('claude', 'ssh:host')!
     expect(models.map(({ id }) => id)).toEqual(['fable', 'opus', 'sonnet', 'haiku', 'opus[1m]'])
-    // Why: matched seed entries must keep their cataloged effort/fast options.
-    expect(models.find(({ id }) => id === 'sonnet')?.options.map(({ id }) => id)).toEqual([
-      'effort'
-    ])
+    const sonnetEffort = models.find(({ id }) => id === 'sonnet')?.options[0]
+    expect(sonnetEffort?.kind).toMatchObject({
+      type: 'select',
+      choices: [{ value: 'medium', label: 'Medium' }]
+    })
     expect(models.at(-1)).toMatchObject({
       id: 'opus[1m]',
       description: 'Opus 5 with 1M context',
