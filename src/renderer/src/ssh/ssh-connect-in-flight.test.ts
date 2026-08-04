@@ -112,6 +112,30 @@ describe('ssh connect in-flight registry', () => {
         vi.useRealTimers()
       }
     })
+
+    // A tracked request outlives whatever dropped its lock — a reset between specs, or an
+    // explicit end. Its release must not unlock a later connect on the same target.
+    it('ignores a settle whose lock was already cleared, so a later connect keeps its lock', async () => {
+      let settleAbandoned: (value: string) => void = () => {}
+      const abandoned = trackSshConnect(
+        'ssh-a',
+        new Promise<string>((resolve) => {
+          settleAbandoned = resolve
+        })
+      )
+      resetSshConnectInFlightForTests()
+
+      const listener = vi.fn()
+      subscribeSshConnectInFlight(listener)
+      beginSshConnect('ssh-a')
+
+      settleAbandoned('connected')
+      await abandoned
+      await Promise.resolve()
+
+      expect(isSshConnectInFlight('ssh-a')).toBe(true)
+      expect(listener).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('stops notifying after unsubscribe, so unmounted sidebar rows do not leak', () => {

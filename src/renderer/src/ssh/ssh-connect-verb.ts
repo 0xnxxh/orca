@@ -11,7 +11,13 @@ export function sshConnectVerb(status: SshConnectionStatus | null | undefined): 
     case 'error':
     case 'reconnection-failed':
       return translate('auto.ssh.sshConnectVerb.retry', 'Retry')
-    default:
+    case null:
+    case undefined:
+    case 'connected':
+    case 'connecting':
+    case 'deploying-relay':
+    case 'disconnected':
+    case 'reconnecting':
       return translate('auto.ssh.sshConnectVerb.connect', 'Connect')
   }
 }
