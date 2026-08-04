@@ -274,9 +274,8 @@ describe('remote runtime pty latched-pane retention', () => {
   it('does not stack listeners, registry entries or timers across repeated revive cycles', async () => {
     vi.useFakeTimers()
     try {
-      const { retryAllRemoteRuntimePtyRecoveriesNow } = await import(
-        './remote-runtime-pty-recovery-state'
-      )
+      const { retryAllRemoteRuntimePtyRecoveriesNow } =
+        await import('./remote-runtime-pty-recovery-state')
       const transport = await attachStalePane(0)
       await vi.advanceTimersByTimeAsync(66_000)
       expect(transport.getRecoveryState?.().phase).toBe('disconnected')
