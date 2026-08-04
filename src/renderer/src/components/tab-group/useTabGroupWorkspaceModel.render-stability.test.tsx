@@ -5,7 +5,7 @@
 // zustand store — they pin subscription and referential-stability behavior
 // (STA-3328: a global layout subscription + per-render commands literal made
 // every PTY layout write reconcile every mounted tab strip).
-import React, { act } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
