@@ -311,6 +311,28 @@ describe('useMobileNativeChatSession', () => {
     })
   })
 
+  it('clears hasMore when a replaced window is shorter than the initial page', async () => {
+    // A replaced window without paging metadata is judged by its own length:
+    // shorter than a full page means the whole transcript is on screen.
+    const sendRequest = vi.fn()
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({
+        type: 'snapshot',
+        messages: Array.from({ length: 40 }, (_unused, index) => message(`win-${index}`)),
+        hasMore: true,
+        beforeOffset: 100
+      })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+    expect(state?.hasMore).toBe(true)
+
+    await act(async () => emit({ type: 'replacement', messages: [message('only')] }))
+
+    expect(state?.hasMore).toBe(false)
+  })
+
   it('rejects a cursor page invalidated by live trim and retries with a growing tail', async () => {
     let resolveCursorPage: (response: unknown) => void = () => {}
     const sendRequest = vi

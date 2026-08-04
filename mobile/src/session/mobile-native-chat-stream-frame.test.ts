@@ -133,19 +133,64 @@ describe('applyMobileNativeChatStreamFrame', () => {
     const merger = createNativeChatMerger()
     replaceList(merger, ['old-1', 'shared', 'old-tail'].map(message))
 
+    // `hasMore: true` so the authoritative-removal rule can't short-circuit —
+    // the contiguity scan itself must reject the interleaved new message.
     const replay = [message('shared'), message('compacted-summary'), message('old-tail')]
     expect(
       applyMobileNativeChatStreamFrame({
         merger,
-        frame: { type: 'snapshot', messages: replay, hasMore: false, beforeOffset: 0 },
+        frame: { type: 'snapshot', messages: replay, hasMore: true, beforeOffset: 9 },
         limit: 100,
         replaceSnapshot: false
       })
     ).toEqual({
       kind: 'messages',
       messages: replay,
-      hasMore: false,
-      beforeOffset: 0,
+      hasMore: true,
+      beforeOffset: 9,
+      windowReplaced: true
+    })
+  })
+
+  it('replaces a replay that repeats retained ids out of order', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['a', 'b', 'c'].map(message))
+
+    const replay = [message('a'), message('c'), message('b')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: true, beforeOffset: 4 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: true,
+      beforeOffset: 4,
+      windowReplaced: true
+    })
+  })
+
+  it('replaces a replay that stops short of the retained newest row', () => {
+    const merger = createNativeChatMerger()
+    replaceList(merger, ['a', 'b', 'c'].map(message))
+
+    // Merging would keep 'c', a row the replayed window no longer carries.
+    const replay = [message('a'), message('b')]
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: replay, hasMore: true, beforeOffset: 1 },
+        limit: 100,
+        replaceSnapshot: false
+      })
+    ).toEqual({
+      kind: 'messages',
+      messages: replay,
+      hasMore: true,
+      beforeOffset: 1,
       windowReplaced: true
     })
   })
