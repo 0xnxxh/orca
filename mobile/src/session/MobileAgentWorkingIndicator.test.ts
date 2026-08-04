@@ -69,12 +69,19 @@ describe('MobileAgentWorkingIndicator', () => {
     return renderer!.root.findAll((node) => node.type === 'AnimatedView').length
   }
 
+  function liveRegion(): unknown {
+    return renderer!.root.find((node) => node.type === 'View').props.accessibilityLiveRegion
+  }
+
   it('animates a live working row', async () => {
     await render(false)
 
     expect(label()).toBe('Agent is working')
     expect(dots()).toBe(3)
     expect(mocks.start).toHaveBeenCalledTimes(3)
+    // Constant across both states by design: Android drops the announcement if
+    // the mode is switched on in the same commit as the content change.
+    expect(liveRegion()).toBe('polite')
   })
 
   it('mutes the row and stops the animation while the status is stale', async () => {
@@ -84,6 +91,7 @@ describe('MobileAgentWorkingIndicator', () => {
     // Dots are the "live activity" signal — they must not survive a disconnect.
     expect(dots()).toBe(0)
     expect(mocks.start).not.toHaveBeenCalled()
+    expect(liveRegion()).toBe('polite')
   })
 
   it('stops the running animation when a live row goes stale', async () => {
