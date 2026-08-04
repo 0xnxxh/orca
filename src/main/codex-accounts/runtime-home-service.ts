@@ -1281,7 +1281,15 @@ export class CodexRuntimeHomeService {
       if (!existsSync(managedAuthPath)) {
         continue
       }
-      const managedAuthContents = readFileSync(managedAuthPath, 'utf-8')
+      let managedAuthContents: string
+      try {
+        managedAuthContents = readFileSync(managedAuthPath, 'utf-8')
+      } catch {
+        // Why: an unreadable home can never be the match, but letting the read
+        // throw abandons the scan for every other account — dropping a refresh
+        // the runtime home holds for one of them.
+        continue
+      }
       if (codexAuthMatchesManagedAccount(runtimeAuthContents, account, managedAuthContents)) {
         matches.push({ account, managedAuthPath, managedAuthContents })
       }
