@@ -227,11 +227,11 @@ export function MobileNativeChatView({
       const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
       setAtBottom(distanceFromBottom < 80)
       // Near the top — page in older history.
-      if (contentOffset.y < 60 && hasMore && !loadingEarlier) {
+      if (contentOffset.y < 60 && hasMore && !loadingEarlier && !loadEarlierError) {
         onLoadEarlier?.()
       }
     },
-    [hasMore, loadingEarlier, onLoadEarlier]
+    [hasMore, loadingEarlier, loadEarlierError, onLoadEarlier]
   )
 
   // Align a single message's top to the top of the viewport.

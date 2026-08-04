@@ -61,6 +61,10 @@ type Overrides = {
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
+  hasMore?: boolean
+  loadingEarlier?: boolean
+  loadEarlierError?: string | null
+  onLoadEarlier?: () => void
   onSend?: (text: string) => Promise<boolean>
 }
 
@@ -75,7 +79,7 @@ function suppressRendererWarning(): () => void {
   return () => spy.mockRestore()
 }
 
-describe('MobileNativeChatView send-error banner', () => {
+describe('MobileNativeChatView', () => {
   let renderer: ReactTestRenderer | null = null
 
   beforeEach(() => {
@@ -161,5 +165,29 @@ describe('MobileNativeChatView send-error banner', () => {
     await pressSend()
 
     expect(onClearSendError).toHaveBeenCalledOnce()
+  })
+
+  it('blocks automatic paging but keeps explicit retry after loading earlier fails', async () => {
+    const onLoadEarlier = vi.fn()
+    await render({
+      hasMore: true,
+      loadEarlierError: 'Couldn’t load earlier messages',
+      onLoadEarlier
+    })
+    const list = renderer!.root.find((node) => node.type === 'FlatList')
+
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 0 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 400 }
+        }
+      })
+    })
+
+    expect(onLoadEarlier).not.toHaveBeenCalled()
+    await act(async () => list.props.ListHeaderComponent.props.onLoadEarlier())
+    expect(onLoadEarlier).toHaveBeenCalledOnce()
   })
 })
