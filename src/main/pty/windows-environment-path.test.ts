@@ -243,6 +243,18 @@ describe('readPersistedWindowsPathSegments', () => {
 })
 
 describe('mergePersistedWindowsPath', () => {
+  it('expands variables already present in the inherited PATH', () => {
+    const execFileSync = vi.fn().mockReturnValue('    Path    REG_SZ    \r\n')
+    const env = {
+      ORCA_PATH_ROOT: 'C:\\Users\\orca\\AppData\\Local',
+      Path: '%orca_path_root%\\agy\\bin;C:\\Windows'
+    }
+
+    mergePersistedWindowsPath(env, { platform: 'win32', execFileSync, env })
+
+    expect(env.Path).toBe('C:\\Users\\orca\\AppData\\Local\\agy\\bin;C:\\Windows')
+  })
+
   it('appends missing persisted segments without reordering the inherited PATH', () => {
     const execFileSync = vi
       .fn()
@@ -298,12 +310,30 @@ describe('mergePersistedWindowsPath', () => {
 
     expect(env).toEqual({ Path: 'C:\\Inherited;C:\\Machine;C:\\User' })
   })
+
+  it('reads the live host spelling when a path-less env inherits duplicate keys', () => {
+    const execFileSync = vi
+      .fn()
+      .mockReturnValueOnce('    Path    REG_SZ    C:\\Machine\r\n')
+      .mockReturnValueOnce('    Path    REG_SZ    C:\\User\r\n')
+    const env: Record<string, string> = {}
+
+    mergePersistedWindowsPath(env, {
+      platform: 'win32',
+      execFileSync,
+      env: { ROOT: 'C:\\Root', Path: '%ROOT%\\Live', PATH: 'C:\\Shadowed' }
+    })
+
+    expect(env).toEqual({ Path: 'C:\\Root\\Live;C:\\Machine;C:\\User' })
+  })
 })
 
 describe('resolvePathEnvKey', () => {
   it('uses whichever Windows spelling is present on the env', () => {
     expect(resolvePathEnvKey({ Path: 'C:\\Windows' }, 'win32')).toBe('Path')
     expect(resolvePathEnvKey({ PATH: 'C:\\Windows' }, 'win32')).toBe('PATH')
+    expect(resolvePathEnvKey({ path: 'C:\\Windows' }, 'win32')).toBe('path')
+    expect(resolvePathEnvKey({ PaTh: 'C:\\Windows' }, 'win32')).toBe('PaTh')
   })
 
   // Why: Win32 returns the first case-insensitive match in the block, so a dual-cased env is

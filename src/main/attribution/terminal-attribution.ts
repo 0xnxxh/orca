@@ -75,7 +75,7 @@ export function applyTerminalAttributionEnv(
 
   const pathDelimiter = platform === 'win32' ? ';' : ':'
   const pathKey = resolvePathEnvKey(baseEnv, platform)
-  const basePath = baseEnv[pathKey] ?? process.env.PATH ?? ''
+  const basePath = baseEnv[pathKey] ?? process.env[pathKey] ?? ''
   // Why: resolve real Windows commands before prepending shims so cmd wrappers
   // cannot recursively point ORCA_REAL_* at themselves.
   const resolvedGit = platform === 'win32' ? resolveWindowsExecutable('git', basePath) : null

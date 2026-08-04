@@ -42,9 +42,8 @@ internal static class OrcaCliLauncher
 
             // Why: launching without cmd.exe preserves embedded newlines while matching the
             // packaged batch launcher's Electron-as-Node environment contract.
-            // Why: reading ProcessStartInfo.EnvironmentVariables copies the process block into a
-            // case-insensitive dictionary and throws when it holds both PATH and Path
-            // (stablyai/orca#12046); mutating our own env leaves the child inheriting it verbatim.
+            // Why: ProcessStartInfo's env copy rejects duplicate PATH/Path keys; mutating this
+            // short-lived process preserves the native block for child inheritance (#12046).
             MoveEnvironmentVariable("NODE_OPTIONS", "ORCA_NODE_OPTIONS");
             MoveEnvironmentVariable("NODE_REPL_EXTERNAL_MODULE", "ORCA_NODE_REPL_EXTERNAL_MODULE");
             Environment.SetEnvironmentVariable("ELECTRON_RUN_AS_NODE", "1");

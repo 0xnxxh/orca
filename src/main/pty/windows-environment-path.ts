@@ -1,4 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process'
+import {
+  expandWindowsEnvironmentVariables,
+  expandWindowsPathEnvironmentVariables
+} from '../../shared/windows-environment-expansion'
 import { getRegExePath } from '../win32-utils'
 
 type ExecFile = typeof execFile
@@ -42,14 +46,6 @@ function parseRegistryPathValue(output: string, valueName: string): string | nul
     }
   }
   return null
-}
-
-function expandWindowsEnvironmentVariables(value: string, env: NodeJS.ProcessEnv): string {
-  return value.replace(/%([^%]+)%/g, (match, rawName: string) => {
-    const name = rawName.toLowerCase()
-    const envKey = Object.keys(env).find((key) => key.toLowerCase() === name)
-    return envKey && env[envKey] ? env[envKey] : match
-  })
 }
 
 function getPathDelimiter(platform: NodeJS.Platform): string {
@@ -240,18 +236,12 @@ export function __resetPersistedWindowsPathCacheForTests(): void {
   pendingPersistedWindowsPathRefresh = undefined
 }
 
-/**
- * Resolves which PATH spelling an env object should be read from and written to.
- *
- * Why: Windows env blocks are case-insensitive but plain JS objects are not, so writing
- * `PATH` onto an env that inherited `Path` mints a duplicate the .NET CLI launcher rejects
- * with "Item has already been added. Key in dictionary: 'PATH'" (stablyai/orca#12046).
- */
+/** Resolves the first PATH key a Windows child reads from an env block. */
 export function resolvePathEnvKey(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   platform: NodeJS.Platform,
   hostEnv: NodeJS.ProcessEnv = process.env
-): 'PATH' | 'Path' {
+): string {
   if (platform !== 'win32') {
     return 'PATH'
   }
@@ -260,19 +250,12 @@ export function resolvePathEnvKey(
   return firstWindowsPathEnvKey(env) ?? firstWindowsPathEnvKey(hostEnv) ?? 'Path'
 }
 
-/**
- * Reads the path spelling a Windows child would actually resolve out of this block.
- *
- * Why: `RtlQueryEnvironmentVariable` scans the block linearly and returns the first
- * case-insensitive match, so position — not casing — decides the winner. Object key order is
- * that block order: Node enumerates `process.env` in block order and node-pty emits
- * `Object.keys(env)` verbatim without sorting.
- */
+// Why: Win32 resolves the first case-insensitive key, and object order preserves block order.
 function firstWindowsPathEnvKey(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>
-): 'PATH' | 'Path' | undefined {
+): string | undefined {
   for (const key of Object.keys(env)) {
-    if ((key === 'PATH' || key === 'Path') && env[key] !== undefined) {
+    if (key.toLowerCase() === 'path' && env[key] !== undefined) {
       return key
     }
   }
@@ -285,9 +268,11 @@ function mergeWindowsPathSegments(
   platform: NodeJS.Platform,
   sourceEnv: NodeJS.ProcessEnv
 ): void {
+  expandWindowsPathEnvironmentVariables(env, platform)
   const pathKey = resolvePathEnvKey(env, platform, sourceEnv)
   const pathDelimiter = getPathDelimiter(platform)
-  const currentPath = env[pathKey] ?? sourceEnv.PATH ?? sourceEnv.Path ?? ''
+  const currentPath =
+    env[pathKey] ?? expandWindowsEnvironmentVariables(sourceEnv[pathKey] ?? '', sourceEnv)
   const currentSegments = splitPathSegments(currentPath, pathDelimiter)
   const existing = new Set(currentSegments.map((segment) => segment.toLowerCase()))
   const missing = persistedSegments.filter((segment) => {

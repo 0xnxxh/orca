@@ -66,6 +66,10 @@ import { getAgentForegroundContextPaths } from '../providers/agent-foreground-co
 import { assertSafeAgentStartupCwd, resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { ORCA_HERMES_STARTUP_QUERY_ENV } from '../../shared/hermes-startup-query'
 import type { TuiAgent } from '../../shared/types'
+import {
+  expandWindowsEnvironmentVariables,
+  expandWindowsPathEnvironmentVariables
+} from '../../shared/windows-environment-expansion'
 import { forceKillPosixPtyProcessGroups } from '../pty/posix-pty-process-groups'
 
 const PANE_IDENTITY_ENV_KEYS = [
@@ -163,13 +167,7 @@ function removeUnspecifiedPaneIdentityEnv(
   }
 }
 
-/**
- * Collapses the duplicate Windows path spelling this daemon's own env merge can mint.
- *
- * Why: main sends a sparse env patch, so `{...process.env, ...opts.env}` can pair the daemon
- * block's spelling with the patch's; a Windows child inheriting both crashes the packaged CLI
- * launcher with "Item has already been added. Key in dictionary: 'PATH'" (stablyai/orca#12046).
- */
+/** Removes the second PATH key only when the daemon's env merge created it. */
 function collapseWindowsPathEnvKeys(
   env: Record<string, string>,
   requestedEnv: Record<string, string> | undefined
@@ -181,11 +179,17 @@ function collapseWindowsPathEnvKeys(
   if (pathKeys.length < 2) {
     return
   }
-  // Why: main already shaped the patch's spelling (attribution, CLI shims), so its value wins.
-  const requestedKey = requestedEnv
-    ? Object.keys(requestedEnv).find((key) => WINDOWS_PATH_ENV_KEY_RE.test(key))
-    : undefined
-  const survivingKey = requestedKey && env[requestedKey] !== undefined ? requestedKey : pathKeys[0]
+  // Why: a one-key main patch is authoritative; zero or two keys came from inherited state.
+  const requestedKeys = requestedEnv
+    ? Object.keys(requestedEnv).filter((key) => WINDOWS_PATH_ENV_KEY_RE.test(key))
+    : []
+  if (requestedKeys.length !== 1) {
+    return
+  }
+  const survivingKey = requestedKeys[0]
+  if (!survivingKey || env[survivingKey] === undefined) {
+    return
+  }
   for (const key of pathKeys) {
     if (key !== survivingKey) {
       delete env[key]
@@ -203,13 +207,18 @@ function promoteAgentTeamsShimPath(
   if (!env.ORCA_AGENT_TEAMS_TEAM_ID || !requestedPath) {
     return
   }
-  const shimDir = requestedPath.split(delimiter)[0]
+  const normalizedRequestedPath =
+    process.platform === 'win32'
+      ? expandWindowsEnvironmentVariables(requestedPath, env)
+      : requestedPath
+  const pathDelimiter = process.platform === 'win32' ? ';' : delimiter
+  const shimDir = normalizedRequestedPath.split(pathDelimiter)[0]
   if (!shimDir) {
     return
   }
   const pathKey = resolvePathEnvKey(env, process.platform)
-  const currentParts = env[pathKey]?.split(delimiter).filter(Boolean) ?? []
-  env[pathKey] = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(delimiter)
+  const currentParts = env[pathKey]?.split(pathDelimiter).filter(Boolean) ?? []
+  env[pathKey] = [shimDir, ...currentParts.filter((part) => part !== shimDir)].join(pathDelimiter)
 }
 
 /**
@@ -615,7 +624,6 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   removeInheritedNoColor(env)
 
   env.LANG ??= 'en_US.UTF-8'
-
   // Why: shellOverride must win over env.COMSPEC, or Windows always resolves to cmd.exe/PowerShell regardless of the user's pick.
   const resolvedWslContext = resolveWslSessionContext(opts)
   // Why: older persisted tabs can carry a PowerShell/cmd shellOverride; ignore it so WSL reconnects still enter the distro.
@@ -802,6 +810,7 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     addWslEnvKeys(env, [POWERLEVEL10K_WIZARD_DISABLE_ENV])
   }
   const requestedEnv = opts.env
+  expandWindowsPathEnvironmentVariables(env)
   // Why: collapse before promoting so the shim lands on the spelling the child actually inherits.
   collapseWindowsPathEnvKeys(env, requestedEnv)
   const requestedPath = requestedEnv
