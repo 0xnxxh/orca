@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MobileNativeChatView } from './MobileNativeChatView'
+import { styles } from './mobile-native-chat-view-styles'
 
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
@@ -61,6 +62,8 @@ type Overrides = {
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
+  agentWorking?: boolean
+  onStop?: () => void
   onSend?: (text: string) => Promise<boolean>
 }
 
@@ -75,7 +78,7 @@ function suppressRendererWarning(): () => void {
   return () => spy.mockRestore()
 }
 
-describe('MobileNativeChatView send-error banner', () => {
+describe('MobileNativeChatView', () => {
   let renderer: ReactTestRenderer | null = null
 
   beforeEach(() => {
@@ -85,6 +88,7 @@ describe('MobileNativeChatView send-error banner', () => {
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
+    vi.useRealTimers()
   })
 
   async function render(overrides: Overrides = {}): Promise<void> {
@@ -160,5 +164,81 @@ describe('MobileNativeChatView send-error banner', () => {
     await pressSend()
 
     expect(onClearSendError).toHaveBeenCalledOnce()
+  })
+
+  function workingIndicator(): ReactTestInstance {
+    return renderer!.root.find((node) => node.type === 'WorkingIndicator')
+  }
+
+  function stopButton(): ReactTestInstance {
+    return renderer!.root.find((node) => node.props.accessibilityLabel === 'Stop the agent')
+  }
+
+  async function settleLockDebounce(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600)
+    })
+  }
+
+  it('marks the working row stale and blocks Stop once a disconnect settles', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'disconnected' })
+
+    // Debounced with the composer lock: a blip must not flicker the row.
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(false)
+
+    await settleLockDebounce()
+
+    expect(workingIndicator().props.stale).toBe(true)
+    expect(stopButton().props.disabled).toBe(true)
+  })
+
+  it('does not fire Stop while the status is stale', async () => {
+    vi.useFakeTimers()
+    const onStop = vi.fn()
+    await render({ agentWorking: true, inputLockReason: 'disconnected', onStop })
+    await settleLockDebounce()
+
+    const stop = stopButton()
+    expect(stop.props.disabled).toBe(true)
+    // Pressable swallows the press itself; assert the handler stays unreachable.
+    expect(stop.props.style({ pressed: false })).toContainEqual(styles.stopDisabled)
+    expect(onStop).not.toHaveBeenCalled()
+  })
+
+  it('keeps the row live when the agent is merely waiting on a lease', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'waiting' })
+    await settleLockDebounce()
+
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(false)
+  })
+
+  it('restores a live Stop as soon as the transport reconnects', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'disconnected' })
+    await settleLockDebounce()
+    expect(stopButton().props.disabled).toBe(true)
+
+    await act(async () => {
+      renderer?.update(
+        createElement(MobileNativeChatView, {
+          messages: [],
+          status: 'ready',
+          agentWorking: true,
+          inputLockReason: null,
+          onSend: vi.fn().mockResolvedValue(true),
+          pending: [],
+          composerText: '',
+          onComposerTextChange: vi.fn()
+        })
+      )
+    })
+
+    // Unlock is immediate (no debounce on the way out), so Stop comes straight back.
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(false)
   })
 })

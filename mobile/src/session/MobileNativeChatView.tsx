@@ -256,6 +256,10 @@ export function MobileNativeChatView({
     return () => clearTimeout(timer)
   }, [rawLockReason])
   const lockReason = lockHeld ? rawLockReason : null
+  // Everything derived from agent status is pre-disconnect data while the
+  // transport is down: mute the working row and disable Stop (a tap could not
+  // reach the PTY anyway). Shares the lock's debounce so blips don't flicker it.
+  const statusStale = lockReason === 'disconnected'
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
@@ -370,7 +374,7 @@ export function MobileNativeChatView({
           tool-calls expand/collapse toggle on the left, Stop in the far corner. */}
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
-          {agentWorking ? <MobileAgentWorkingIndicator /> : null}
+          {agentWorking ? <MobileAgentWorkingIndicator stale={statusStale} /> : null}
           <Pressable
             style={({ pressed }) => [styles.chromeToggle, pressed && styles.pressed]}
             onPress={() => setToolsExpanded((v) => !v)}
@@ -386,8 +390,13 @@ export function MobileNativeChatView({
         </View>
         {agentWorking ? (
           <Pressable
-            style={({ pressed }) => [styles.stopButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.stopButton,
+              pressed && styles.pressed,
+              statusStale && styles.stopDisabled
+            ]}
             onPress={onStop}
+            disabled={statusStale}
             hitSlop={8}
             accessibilityLabel="Stop the agent"
           >
