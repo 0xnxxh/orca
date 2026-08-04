@@ -247,10 +247,13 @@ export function useMobileNativeChatAnswerSend(args: {
           if (generationRef.current !== generation) {
             return false
           }
-          // A superseded chain must not report success either: an accepted answer
-          // retires the shared send-error banner, wiping the successor's fence.
+          // A chain a successor took over from must not report success either: an
+          // accepted answer retires the shared send-error banner, wiping the
+          // successor's fence. Test the turn slot, not the generation counter —
+          // Stop, ask-cancel and a dropped lease all bump the generation with no
+          // successor, and there a landed answer IS a success.
           const sent = (await sendTerminal(formatAskAnswer(prompt, selections), true)) || fail()
-          return sent && generationRef.current === generation
+          return sent && writeTurnsRef.current.get(handle) === turn
         }
         const groups =
           resolveNativeChatTranscriptAgent(agentRef.current) === 'codex'
@@ -273,8 +276,8 @@ export function useMobileNativeChatAnswerSend(args: {
             deadline += MOBILE_NATIVE_CHAT_QUESTION_STEP_MS
           }
         }
-        // Superseded on the last key: same as above, the successor owns the surface.
-        return groups.length > 0 && generationRef.current === generation
+        // Taken over on the last key: same as above, the successor owns the surface.
+        return groups.length > 0 && writeTurnsRef.current.get(handle) === turn
       } finally {
         // Any accepted key changed the live selector, so a queued replacement
         // cannot safely apply its from-scratch key plan to that new position.

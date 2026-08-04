@@ -720,6 +720,67 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(onSendError).toHaveBeenCalledWith('Answer not sent — check chat before retrying')
   })
 
+  it('reports a landed answer that Stop cancelled with no successor waiting', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError)
+
+    let first: Promise<boolean> | undefined
+    await act(async () => {
+      first = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    // Stop, an ask cancel, and a dropped input lease all bump the generation with
+    // NO successor chain behind them.
+    await act(async () => {
+      answerSend?.cancelPending()
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+
+    // The key is on the PTY and nobody else owns the surface. Calling that a
+    // non-send leaves the card up and silent (fail() never runs on an accepted
+    // write), and the retry double-steps the selector this key already moved.
+    await expect(first).resolves.toBe(true)
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+    expect(onSendError).not.toHaveBeenCalled()
+  })
+
+  it('reports a landed pasted answer that Stop cancelled with no successor', async () => {
+    const onSendError = vi.fn()
+    const settle: Array<(response: unknown) => void> = []
+    const sendRequest = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle.push(resolve)
+        })
+    )
+    await mount({ sendRequest } as unknown as RpcClient, onSendError, 'grok')
+
+    let first: Promise<boolean> | undefined
+    await act(async () => {
+      first = acceptedAnswerAsk?.(TABS_OR_SPACES, [{ indices: [1] }])
+      await Promise.resolve()
+    })
+    await act(async () => {
+      answerSend?.cancelPending()
+      settle[0]!(acceptedResponse())
+      await Promise.resolve()
+    })
+
+    // The pasted shape already committed with Enter, so suppressing the success
+    // strands an answered card the user is invited to submit a second time.
+    await expect(first).resolves.toBe(true)
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+    expect(onSendError).not.toHaveBeenCalled()
+  })
+
   it('fences a third answer behind an already-fenced successor, reporting once', async () => {
     const onSendError = vi.fn()
     const settle: Array<(response: unknown) => void> = []
