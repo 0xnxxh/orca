@@ -203,6 +203,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sleepRestoreSessionIds.delete(sessionId)
   })
   private activeSessionIds = new Set<string>()
+  // Set only once this daemon has rejected `getSize` as unknown; its protocol number cannot prove it.
+  private getSizeUnsupported = false
   // A replacement daemon has none of the old PTYs; only createOrAttach can make their bindings writable again.
   private sessionsAwaitingDaemonRecovery = new Set<string>()
   private sessionIncarnations = new Map<string, string>()
@@ -899,23 +901,31 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   async probePtyLiveness(id: string): Promise<boolean | null> {
     try {
-      if (this.protocolVersion < GET_SIZE_PROTOCOL_VERSION) {
-        // Why: a pre-v18 daemon rejects `getSize` as unknown, so it would answer `null` forever
-        // and one `null` makes the whole owner fan-out unprovable — a dead pane could then never
-        // be retired. listSessions is the same inventory legacy discovery already routes by, and
-        // is requested directly (not via listProcesses, which swallows errors into an empty list)
-        // so a dead socket still rejects rather than reading as absence.
-        const { sessions } = await this.client.request<ListSessionsResult>(
-          'listSessions',
-          undefined
-        )
-        return sessions.some((session) => session.sessionId === id && session.isAlive)
+      if (!this.getSizeUnsupported && this.protocolVersion >= GET_SIZE_PROTOCOL_VERSION) {
+        try {
+          const result = await this.client.request<{ size: { cols: number; rows: number } | null }>(
+            'getSize',
+            { sessionId: id }
+          )
+          return result.size !== null
+        } catch (error) {
+          // Why the capability probe rather than the version alone: `getSize` shipped into an
+          // already-released protocol without a bump, so a daemon can report a version that
+          // implies support and still reject the request. Ask what it can do, not what its
+          // number implies — and remember the answer so later probes skip the dead round trip.
+          if (!isUnknownRequestTypeError(error)) {
+            throw error
+          }
+          this.getSizeUnsupported = true
+        }
       }
-      const result = await this.client.request<{ size: { cols: number; rows: number } | null }>(
-        'getSize',
-        { sessionId: id }
-      )
-      return result.size !== null
+      // Why: a daemon without `getSize` would otherwise answer `null` forever, and one `null`
+      // makes the whole owner fan-out unprovable — a dead pane could then never be retired.
+      // listSessions is the inventory legacy discovery already routes by, requested directly
+      // (not via listProcesses, which swallows errors into an empty list) so a dead socket
+      // still rejects rather than reading as absence.
+      const { sessions } = await this.client.request<ListSessionsResult>('listSessions', undefined)
+      return sessions.some((session) => session.sessionId === id && session.isAlive)
     } catch {
       return null
     }
@@ -2422,6 +2432,16 @@ function notifyAuditListeners<T>(listeners: readonly ((value: T) => void)[], val
 
 // Why: syscall='connect' distinguishes a dead-socket ENOENT/ECONNREFUSED from token-file ENOENT (no syscall);
 // message strings incl. wedged-daemon "Hello response timed out" (#8689) also warrant a respawn.
+/**
+ * Narrow on purpose: only the daemon's own reply for a request type it does not implement.
+ * A transient failure must stay unproven rather than be mistaken for a missing capability.
+ * The server throws `Unknown request type: <type>`; the client rejects with that text, which
+ * `addNodePtyRecoveryHint` only ever prepends to.
+ */
+function isUnknownRequestTypeError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('Unknown request type')
+}
+
 function isDaemonGoneError(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false

@@ -1255,6 +1255,44 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       legacy.dispose()
     })
+
+    // Why: `getSize` shipped into an already-released protocol without a version bump, so a
+    // daemon can report a version that implies support and still reject the request. Gating on
+    // the number alone left those daemons permanently unprovable — the same wedge, narrowed.
+    it('falls back when a daemon rejects getSize despite reporting a version that has it', async () => {
+      const request = vi.fn(async (type: string) => {
+        if (type === 'getSize') {
+          throw new Error(`Unknown request type: ${type}`)
+        }
+        return { sessions: [{ sessionId: 'ambiguous-live', isAlive: true }] }
+      })
+      const ambiguous = createProbeAdapter(GET_SIZE_PROTOCOL_VERSION, request)
+
+      await expect(ambiguous.probePtyLiveness('ambiguous-live')).resolves.toBe(true)
+      await expect(ambiguous.probePtyLiveness('never-existed')).resolves.toBe(false)
+
+      // The rejection is remembered, so later probes skip the round trip that cannot work.
+      expect(request.mock.calls.filter(([type]) => type === 'getSize')).toHaveLength(1)
+
+      ambiguous.dispose()
+    })
+
+    // The safety direction: only the daemon's own "I do not implement that" may switch strategy.
+    // A transient failure must stay unproven rather than be retried as a capability question.
+    it('keeps a transient getSize failure unproven instead of treating it as unsupported', async () => {
+      const request = vi.fn(async (type: string) => {
+        if (type === 'getSize') {
+          throw new Error('Connection lost')
+        }
+        return { sessions: [] }
+      })
+      const flaky = createProbeAdapter(GET_SIZE_PROTOCOL_VERSION, request)
+
+      await expect(flaky.probePtyLiveness('live-elsewhere')).resolves.toBeNull()
+      expect(request).not.toHaveBeenCalledWith('listSessions', undefined)
+
+      flaky.dispose()
+    })
   })
 
   describe('getBufferSnapshot', () => {
