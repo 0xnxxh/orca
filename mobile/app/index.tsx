@@ -16,7 +16,7 @@ import {
 } from '../src/components/AccountUsage'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
-import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
+import { useOpenMobileHostEdit } from '../src/transport/use-open-mobile-host-edit'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { fetchHomeHostWorktreeInfo } from '../src/worktree/home-host-worktree-fetch'
 import { totalHomeStats, type HomeStatsSummary } from '../src/stats/home-stats-total'
@@ -206,6 +206,7 @@ function repoColor(name: string): string {
 
 export default function HomeScreen() {
   const router = useRouter()
+  const openMobileHostEdit = useOpenMobileHostEdit()
   const openMobileTasks = useOpenMobileTasks()
   const insets = useSafeAreaInsets()
   // Why: cap/center content on wide/tablet canvases so cards don't stretch edge-to-edge on iPad.
@@ -906,7 +907,7 @@ export default function HomeScreen() {
           onDismiss: () => setActionTarget(null),
           onReconnect: (hostId) => void forceReconnectHost(hostId),
           onDisconnect: closeHostClient,
-          onEdit: (hostId) => navigateToMobileHostEdit(router, hostId),
+          onEdit: openMobileHostEdit,
           onRemove: setConfirmRemove
         })}
         onClose={() => setActionTarget(null)}
