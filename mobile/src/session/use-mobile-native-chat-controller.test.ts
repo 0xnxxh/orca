@@ -521,6 +521,22 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     expect(controller?.nativeChatAsk).toBeNull()
   })
 
+  it('accepts an answer taken while the first transcript read is still in flight', () => {
+    // A status-derived ask renders before any transcript lands, so the load window
+    // must stay observable whenever a prompt is actually on screen — otherwise the
+    // dismissal is silently dropped and the answered card never goes away.
+    act(() => renderer?.unmount())
+    sessionState.transcriptLoading = true
+    act(() => {
+      renderer = create(createElement(Harness))
+    })
+
+    expect(controller?.nativeChatAsk).not.toBeNull()
+    act(() => controller?.dismissNativeChatAsk())
+
+    expect(controller?.nativeChatAsk).toBeNull()
+  })
+
   it('still retires the dismissal once a settled transcript reports no prompt', () => {
     // The load-window guard must not swallow the genuine reset: a prompt that
     // clears with the read settled means the agent moved on.

@@ -49,9 +49,11 @@ export function useMobileNativeChatPrompts(args: {
     permission,
     question,
     detectedAsk: enabled ? detectedAsk : null,
-    // Ask cards sit inside the same paused gate as the approval envelope above:
-    // the prompt payload outlives its answer, so only a waiting/blocked agent
-    // may surface one — never a working or done one.
-    ask: enabled && blocked ? detectedAsk : null
+    // Only the status payload needs the paused gate the approval envelope uses:
+    // it outlives its answer, so a working/done agent must not surface one. The
+    // transcript fallback clears itself when the tool result lands, and it is the
+    // only source left once the hook row goes stale and projects to `done` with
+    // no interactivePrompt — gating it too strands a genuinely pending question.
+    ask: enabled ? ((blocked ? askFromStatus : null) ?? askFromMessages) : null
   }
 }

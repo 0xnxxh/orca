@@ -108,9 +108,28 @@ describe('useMobileNativeChatPrompts ask state gate', () => {
     expect(done.detectedAsk).not.toBeNull()
   })
 
-  it('gates the transcript-derived pending ask the same way', () => {
+  it('keeps the transcript-derived pending ask outside the paused gate', () => {
+    // A hook row idle past AGENT_STATUS_STALE_AFTER_MS projects to `done` with no
+    // interactivePrompt, so gating this too would make a still-pending question
+    // unanswerable from mobile. `extractPendingAsk` clears on the tool result.
     expect(promptsFor({ state: 'waiting' }, askMessages).ask).not.toBeNull()
-    expect(promptsFor({ state: 'working' }, askMessages).ask).toBeNull()
-    expect(promptsFor(null, askMessages).ask).toBeNull()
+    expect(promptsFor({ state: 'done' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor({ state: 'working' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor(null, askMessages).ask).not.toBeNull()
+  })
+
+  it('still refuses an unpaused sticky status prompt that the transcript does not back', () => {
+    const answered: NativeChatMessage[] = [
+      ...askMessages,
+      {
+        id: 'm2',
+        role: 'tool',
+        blocks: [{ type: 'tool-result', output: 'fast' }],
+        timestamp: 1,
+        source: 'transcript'
+      }
+    ]
+    expect(promptsFor({ state: 'done', interactivePrompt: ASK }, answered).ask).toBeNull()
+    expect(promptsFor({ state: 'done' }, answered).ask).toBeNull()
   })
 })
