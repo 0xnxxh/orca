@@ -1797,7 +1797,8 @@ function Terminal(): React.JSX.Element | null {
         ) {
           if (unifiedTab.contentType === 'terminal') {
             // Why: paired-host bulk close must revoke renderer resume and hook authority, not just remove the host session tab.
-            closeTerminalTab(unifiedTab.entityId)
+            // No running-process prompt: "Close Others" over N busy tabs would be a modal storm.
+            closeTerminalTab(unifiedTab.entityId, { skipRunningProcessConfirm: true })
           } else {
             void closeWebRuntimeSessionTab({
               worktreeId: activeWorktreeId,
