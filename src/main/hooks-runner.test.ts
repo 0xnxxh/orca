@@ -113,7 +113,7 @@ describe('createSetupRunnerScript', () => {
       })
       expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledWith(
         'C:\\repo\\.git\\worktrees\\feature\\orca\\setup-runner.sh',
-        '#!/usr/bin/env bash\nset -e\n#!/usr/bin/env bash\npnpm install\n',
+        '#!/usr/bin/env bash\nset -e\npnpm install\n',
         'utf-8'
       )
       // Why: chmod over a native Windows path is meaningless; only the WSL branch sets the bit.
@@ -186,15 +186,28 @@ describe('createSetupRunnerScript', () => {
     expect(runner).toContain('call echo hello!world!')
   })
 
-  it('drops a leading shebang instead of calling it as a batch command', async () => {
+  it('refuses to run a shebang script as a batch command', async () => {
     const { buildWindowsRunnerScript } = await import('./hooks')
 
-    // Why: a shebang script falls back here when Git Bash is unavailable; `call #!/...`
-    // would abort on errorlevel before any real setup line ran.
-    const runner = buildWindowsRunnerScript('#!/usr/bin/env bash\npnpm install')
+    // Regression: a POSIX script reaching the cmd runner (no Git Bash terminal, or an SSH
+    // Windows host) must not have its interpreter-agnostic prefix executed under cmd —
+    // `pnpm install` would run and only a later bash-only line would fail, leaving the
+    // worktree half set up.
+    const runner = buildWindowsRunnerScript('#!/usr/bin/env bash\npnpm install\nsource .env')
 
-    expect(runner).not.toContain('#!')
-    expect(runner).toContain('call pnpm install')
+    expect(runner).not.toContain('call pnpm install')
+    expect(runner).not.toContain('call source .env')
+    expect(runner).toContain('needs a POSIX shell')
+    expect(runner).toContain('exit /b 1')
+  })
+
+  it('keeps a `#` comment that is not an interpreter line', async () => {
+    const { buildWindowsRunnerScript } = await import('./hooks')
+
+    const runner = buildWindowsRunnerScript('# not a shebang\nrem still batch')
+
+    expect(runner).toContain('call # not a shebang')
+    expect(runner).toContain('call rem still batch')
   })
 
   it('derives ORCA_WORKSPACE_NAME from a POSIX worktree path', async () => {

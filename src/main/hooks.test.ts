@@ -1282,7 +1282,7 @@ describe('createSetupRunnerScript', () => {
       )
       expect(writeFileSyncMock).toHaveBeenCalledWith(
         'C:\\repo\\.git\\orca\\setup-runner.sh',
-        '#!/usr/bin/env bash\nset -e\n#!/usr/bin/env bash\npnpm install\nnpm run build\n',
+        '#!/usr/bin/env bash\nset -e\npnpm install\nnpm run build\n',
         'utf-8'
       )
       expect(chmodSyncMock).not.toHaveBeenCalled()
@@ -1327,8 +1327,71 @@ describe('createSetupRunnerScript', () => {
       )
       expect(result).toMatchObject({
         runnerScriptPath: 'C:\\repo\\.git\\orca\\setup-runner.cmd',
-        shell: { family: 'cmd' }
+        // Why: `shell` is the pane that types the launch command — still Git Bash here. The
+        // runner's own .cmd extension is what says the file is batch.
+        shell: { family: 'posix' }
       })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
+  it('hands a Git Bash pane a launch command MSYS cannot rewrite for a cmd runner', async () => {
+    // Regression (#6896): `cmd.exe /c "C:\...\setup-runner.cmd"` typed into Git Bash has its
+    // `/c` switch rewritten into a drive path, so cmd opens interactively and setup never runs.
+    gitExecFileSyncMock.mockReset()
+    gitExecFileSyncMock.mockReturnValue('C:\\repo\\.git\\orca\\setup-runner.cmd\n')
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      const { createSetupRunnerScript } = await import('./hooks')
+      const { buildSetupRunnerCommand } = await import('../shared/setup-runner-command')
+      const result = createSetupRunnerScript(
+        makeRepo(),
+        'C:\\repo-worktree',
+        'copy .env.example .env',
+        undefined,
+        { family: 'posix' }
+      )
+
+      const command = buildSetupRunnerCommand(result.runnerScriptPath, 'windows', result.shell)
+
+      expect(command).not.toContain('cmd.exe /c')
+      // Why: the batch runner must never be handed to bash either.
+      expect(command).not.toContain('bash ')
+      expect(command).toContain('powershell.exe')
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
+  it('replays interpreter flags declared on the shebang line', async () => {
+    // Regression: the runner is launched as `bash <path>`, so `-euo pipefail` on the script's
+    // own `#!` line never reaches the interpreter unless the runner re-applies it.
+    gitExecFileSyncMock.mockReset()
+    gitExecFileSyncMock.mockReturnValue('C:\\repo\\.git\\orca\\setup-runner.sh\n')
+    const fs = await import('node:fs')
+    const writeFileSyncMock = vi.mocked(fs.writeFileSync)
+    writeFileSyncMock.mockClear()
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      const { createSetupRunnerScript } = await import('./hooks')
+      createSetupRunnerScript(
+        makeRepo(),
+        'C:\\repo-worktree',
+        '#!/usr/bin/env -S bash -euo pipefail\nmake build | tee build.log',
+        undefined,
+        { family: 'posix' }
+      )
+
+      expect(writeFileSyncMock).toHaveBeenCalledWith(
+        'C:\\repo\\.git\\orca\\setup-runner.sh',
+        '#!/usr/bin/env bash\nset -e\nset -euo pipefail\nmake build | tee build.log\n',
+        'utf-8'
+      )
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }
@@ -1473,7 +1536,7 @@ describe('createIssueCommandRunnerScript', () => {
       )
       expect(writeFileSyncMock).toHaveBeenCalledWith(
         'C:\\repo\\.git\\orca\\issue-command-runner.sh',
-        '#!/usr/bin/env bash\nset -e\n#!/usr/bin/env bash\ngh issue view 42\n',
+        '#!/usr/bin/env bash\nset -e\ngh issue view 42\n',
         'utf-8'
       )
       expect(result.shell).toEqual({ family: 'posix' })
@@ -1502,7 +1565,8 @@ describe('createIssueCommandRunnerScript', () => {
         ['rev-parse', '--git-path', 'orca/issue-command-runner.cmd'],
         { cwd: 'C:\\repo-worktree' }
       )
-      expect(result.shell).toEqual({ family: 'cmd' })
+      // Why: the runner file is batch (.cmd) while the pane that launches it is still Git Bash.
+      expect(result.shell).toEqual({ family: 'posix' })
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { isShebangLine, scriptDeclaresPosixShell } from './setup-script-shebang'
+import {
+  isShebangLine,
+  parseSetupScriptShebang,
+  scriptDeclaresPosixShell,
+  stripLeadingShebangLine
+} from './setup-script-shebang'
 
 describe('scriptDeclaresPosixShell', () => {
   it('accepts the common env and absolute-path forms', () => {
@@ -27,6 +32,46 @@ describe('scriptDeclaresPosixShell', () => {
   it('tolerates CRLF and Windows-style interpreter paths', () => {
     expect(scriptDeclaresPosixShell('#!/usr/bin/env bash\r\npnpm install')).toBe(true)
     expect(scriptDeclaresPosixShell('#!C:\\tools\\git\\bin\\bash.exe\r\npnpm install')).toBe(true)
+  })
+})
+
+describe('parseSetupScriptShebang', () => {
+  it('keeps the interpreter flags a script declares', () => {
+    // Regression: the runner is launched as `bash <path>`, so flags survive only if they are
+    // parsed out here and replayed with `set` — otherwise `pipefail` is silently lost.
+    expect(parseSetupScriptShebang('#!/usr/bin/env -S bash -euo pipefail\nmake')).toEqual({
+      interpreter: 'bash',
+      shellOptions: ['-euo', 'pipefail']
+    })
+    expect(parseSetupScriptShebang('#!/bin/bash -e -x\nmake')).toEqual({
+      interpreter: 'bash',
+      shellOptions: ['-e', '-x']
+    })
+    expect(parseSetupScriptShebang('#!/bin/sh\nmake')).toEqual({
+      interpreter: 'sh',
+      shellOptions: []
+    })
+  })
+
+  it('ignores interpreter arguments that `set` cannot apply', () => {
+    expect(parseSetupScriptShebang('#!/bin/bash --norc\nmake')?.shellOptions).toEqual([])
+    expect(parseSetupScriptShebang('#!/bin/bash -o\nmake')?.shellOptions).toEqual(['-o'])
+  })
+
+  it('returns null without an interpreter line', () => {
+    expect(parseSetupScriptShebang('pnpm install')).toBeNull()
+    expect(parseSetupScriptShebang('#!/usr/bin/env')).toBeNull()
+  })
+})
+
+describe('stripLeadingShebangLine', () => {
+  it('removes only a leading interpreter line', () => {
+    expect(stripLeadingShebangLine('#!/usr/bin/env bash\npnpm install\n')).toBe('pnpm install\n')
+    expect(stripLeadingShebangLine('#!/usr/bin/env bash\r\npnpm install')).toBe('pnpm install')
+    expect(stripLeadingShebangLine('pnpm install\n#!/usr/bin/env bash')).toBe(
+      'pnpm install\n#!/usr/bin/env bash'
+    )
+    expect(stripLeadingShebangLine('#!/usr/bin/env bash')).toBe('')
   })
 })
 

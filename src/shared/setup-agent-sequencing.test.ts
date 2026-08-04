@@ -218,6 +218,26 @@ describe('createSequencedSetupAgentCommands', () => {
     })
   })
 
+  it('keeps the cmd gate for a batch runner launched from a Git Bash pane', () => {
+    // Regression (#6896): a Git Bash terminal with a batch setup script still gets a .cmd
+    // runner, and the wait-for-setup gate must not try to run it under bash.
+    const result = createSequencedSetupAgentCommands({
+      runnerScriptPath: 'C:\\repo\\.git\\orca\\setup-runner.cmd',
+      startupCommand: 'claude',
+      platform: 'windows',
+      shell: { family: 'posix' },
+      nonce: 'nonce-gitbash-cmd'
+    })
+
+    expect(result.setupCommand).toContain(
+      'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand'
+    )
+    expect(result.setupCommand).not.toContain('bash -lc')
+    expect(decodePowerShellScript(result.setupCommand)).toContain(
+      "$runner = 'C:\\repo\\.git\\orca\\setup-runner.cmd'"
+    )
+  })
+
   it.skipIf(process.platform !== 'win32')(
     'executes the native Windows setup-to-agent sequence through cmd.exe',
     async () => {
