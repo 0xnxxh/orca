@@ -256,8 +256,10 @@ export function registerBrowserHandlers(): void {
     // with a new webContentsId. The bridge must destroy the old session's
     // proxy (its webContents is gone) and let the next command recreate it.
     const previousWcId = browserManager.getGuestWebContentsId(args.browserPageId)
+    const profile = browserSessionRegistry.getProfile(args.sessionProfileId ?? 'default')
     const registered = browserManager.registerGuest({
       ...args,
+      userAgentMode: profile?.userAgentMode,
       rendererWebContentsId: event.sender.id
     })
     if (!registered) {

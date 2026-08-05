@@ -16,7 +16,6 @@ import { ORCA_BROWSER_PARTITION } from '../../shared/constants'
 import {
   DEFAULT_LOCAL_ORCA_PROFILE_ID,
   getOrcaProfileBrowserDefaultPartition,
-  getOrcaProfileBrowserPartitionSegment,
   getOrcaProfileBrowserSessionPartition
 } from '../../shared/orca-profiles'
 import type {
@@ -50,8 +49,8 @@ export type BrowserSessionRegistryProfileOptions = {
 }
 
 const BROWSER_SESSION_META_FILE_NAME = 'browser-session-meta.json'
-const LEGACY_BROWSER_SESSION_PARTITION_RE =
-  /^persist:orca-browser-session-[\da-f-]{8}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{12}$/
+const BROWSER_SESSION_PROFILE_ID_RE =
+  /^[\da-f-]{8}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{12}$/
 
 // Why: source of truth for valid partitions; will-attach-webview consults it so a compromised renderer can't smuggle in an arbitrary partition.
 
@@ -489,25 +488,15 @@ class BrowserSessionRegistry {
       (candidate.userAgentMode === undefined ||
         candidate.userAgentMode === 'clean' ||
         candidate.userAgentMode === 'native') &&
-      this.isProfileOwnedSessionPartition(candidate.partition)
+      this.isProfileOwnedSessionPartition(candidate.id, candidate.partition)
     )
   }
 
-  private isProfileOwnedSessionPartition(partition: string): boolean {
-    if (
-      this.activeOrcaProfileId === DEFAULT_LOCAL_ORCA_PROFILE_ID &&
-      LEGACY_BROWSER_SESSION_PARTITION_RE.test(partition)
-    ) {
-      return true
-    }
-
-    const segment = getOrcaProfileBrowserPartitionSegment(this.activeOrcaProfileId)
-    const prefix = `persist:orca-profile-${segment}-browser-session-`
-    if (!partition.startsWith(prefix)) {
-      return false
-    }
-    const profileId = partition.slice(prefix.length)
-    return /^[\da-f-]{8}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{4}-[\da-f-]{12}$/.test(profileId)
+  private isProfileOwnedSessionPartition(profileId: string, partition: string): boolean {
+    return (
+      BROWSER_SESSION_PROFILE_ID_RE.test(profileId) &&
+      partition === getOrcaProfileBrowserSessionPartition(this.activeOrcaProfileId, profileId)
+    )
   }
 
   hydrateFromPersisted(profiles: BrowserSessionProfile[]): void {
