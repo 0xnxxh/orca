@@ -2,6 +2,7 @@
 import type { RuntimeRpcResponse } from '../../../../shared/runtime-rpc-envelope'
 import {
   isRecoverableRemoteRuntimeConnectionError,
+  isRuntimeRpcQueueOverloadError,
   toRemoteRuntimeClientErrorLike
 } from '../../../../shared/remote-runtime-client-error-classification'
 import type {
@@ -181,6 +182,7 @@ export function createRemoteRuntimePtyTransport(
   let desiredOutputPaused = false
   let desiredViewport: { cols: number; rows: number } | null = null
   let storedCallbacks: Parameters<PtyTransport['connect']>[0]['callbacks'] = {}
+  let lastSurfacedErrorMessage: string | null = null
   let resubscribeEpoch: number | null = null
   let resubscribeRequestedHandle: string | null = null
   let resubscribeRequestedReplacementPolicy: HostHandleReplacementPolicy = 'reuse'
@@ -433,6 +435,19 @@ export function createRemoteRuntimePtyTransport(
     }
     lastRecoveryStateKey = key
     storedCallbacks.onRecoveryStateChange?.(state)
+  }
+
+  function surfaceErrorMessage(message: string): void {
+    if (message === lastSurfacedErrorMessage) {
+      return
+    }
+    lastSurfacedErrorMessage = message
+    storedCallbacks.onError?.(message)
+  }
+
+  function markRecoveryHealthy(): void {
+    lastSurfacedErrorMessage = null
+    recovery.markHealthy()
   }
 
   function hostSnapshotOwnsLaunch(
@@ -761,12 +776,12 @@ export function createRemoteRuntimePtyTransport(
       return undefined
     }
     if (hostHandle === null) {
-      storedCallbacks.onError?.('Remote terminal was closed.')
+      surfaceErrorMessage('Remote terminal was closed.')
       return undefined
     }
     if (!hostHandle || !isCurrent()) {
       if (isCurrent()) {
-        storedCallbacks.onError?.('Remote terminal was closed.')
+        surfaceErrorMessage('Remote terminal was closed.')
       }
       return undefined
     }
@@ -1144,7 +1159,7 @@ export function createRemoteRuntimePtyTransport(
       })
       .catch((error) => {
         if (!destroyed && handle === expiredHandle) {
-          storedCallbacks.onError?.(runtimeTerminalErrorMessage(error))
+          surfaceErrorMessage(runtimeTerminalErrorMessage(error))
         }
       })
       .finally(() => {
@@ -1438,14 +1453,19 @@ export function createRemoteRuntimePtyTransport(
       recoverExpiredHostPane()
       return
     }
-    if (isRecoverableRemoteRuntimeConnectionError(toRemoteRuntimeClientErrorLike(error))) {
+    const clientError = toRemoteRuntimeClientErrorLike(error)
+    if (isRuntimeRpcQueueOverloadError(clientError)) {
+      scheduleCapacityPressureRetry()
+      return
+    }
+    if (isRecoverableRemoteRuntimeConnectionError(clientError)) {
       // Why: a partition is attachment state, not a terminal failure; keep the red error surface for actionable fatal errors.
       scheduleResubscribeAfterTransportClose()
       return
     }
     connecting = false
     emitRecoveryState()
-    storedCallbacks.onError?.(message)
+    surfaceErrorMessage(message)
   }
 
   function recoverAfterSubscribeFailure(
@@ -1627,7 +1647,9 @@ export function createRemoteRuntimePtyTransport(
               scheduleResubscribeAfterTransportClose(currentReplacementPolicy, nextEpoch)
             })
           } else {
-            recovery.cancel()
+            recovery.markDisconnected()
+            // Why: stale/gone/SSH-expired handling lives in handleRemoteTerminalError; its
+            // fallthrough surfaces the message, so routing here keeps those recoveries alive.
             handleRemoteTerminalError(error)
           }
         }
@@ -1743,7 +1765,7 @@ export function createRemoteRuntimePtyTransport(
           setAttachmentReady(true)
           connecting = false
           resetRecoveryReplacementPolicy()
-          recovery.markHealthy()
+          markRecoveryHealthy()
           emitRecoveryState()
           storedCallbacks.onConnect?.()
           storedCallbacks.onStatus?.('shell')
@@ -1844,7 +1866,7 @@ export function createRemoteRuntimePtyTransport(
     setAttachmentReady(subscriptionAttached)
     if (subscriptionAttached) {
       resetRecoveryReplacementPolicy()
-      recovery.markHealthy()
+      markRecoveryHealthy()
     }
     // Why: a viewport change during the subscribe round-trip hit the no-op one-shot fallback; replay the latest viewport so the PTY isn't stuck at subscribe-time size.
     if (pendingViewportClaim && desiredViewport) {
@@ -1875,6 +1897,7 @@ export function createRemoteRuntimePtyTransport(
       const createEnvironmentId = currentRuntimeEnvironmentId
       lastConnectOptions = options
       lastAttachOptions = null
+      lastSurfacedErrorMessage = null
       storedCallbacks = options.callbacks
       resetRecoveryReplacementPolicy()
       resetSameHandleEndReuse()
@@ -2082,13 +2105,18 @@ export function createRemoteRuntimePtyTransport(
       } catch (error) {
         if (!destroyed && lifecycleEpoch === connectLifecycleEpoch) {
           connecting = false
-          recovery.cancel()
           const message = runtimeTerminalErrorMessage(error)
           if (isRemoteTerminalGoneMessage(message)) {
+            recovery.cancel()
             handleRemoteTerminalError(error)
+          } else if (
+            isRecoverableRemoteRuntimeConnectionError(toRemoteRuntimeClientErrorLike(error))
+          ) {
+            recovery.markDisconnected()
           } else {
+            recovery.cancel()
             emitRecoveryState()
-            storedCallbacks.onError?.(message)
+            surfaceErrorMessage(message)
           }
         }
         return undefined
@@ -2104,6 +2132,7 @@ export function createRemoteRuntimePtyTransport(
       resetSameHandleEndReuse()
       clearPublishedHandleWait()
       lastAttachOptions = options
+      lastSurfacedErrorMessage = null
       storedCallbacks = options.callbacks
       terminalEnded = false
       connecting = true
@@ -2128,7 +2157,7 @@ export function createRemoteRuntimePtyTransport(
         handle = null
         connecting = false
         emitRecoveryState()
-        storedCallbacks.onError?.('Remote runtime terminal id is invalid.')
+        surfaceErrorMessage('Remote runtime terminal id is invalid.')
         return
       }
       const persistedHandle = nextHandle
@@ -2176,7 +2205,7 @@ export function createRemoteRuntimePtyTransport(
           return
         }
         if (!resolved) {
-          storedCallbacks.onError?.('Remote terminal was closed.')
+          surfaceErrorMessage('Remote terminal was closed.')
           return
         }
         await adoptResolvedHostPane(resolved, options, false, generation)
@@ -2351,6 +2380,11 @@ export function createRemoteRuntimePtyTransport(
     },
 
     getRecoveryState,
+
+    // Why: dedup exists to stop one outage spamming the surface; once the user dismisses it, the next occurrence is new information again.
+    notifyErrorSurfaceDismissed() {
+      lastSurfacedErrorMessage = null
+    },
 
     retryRecovery() {
       if (
