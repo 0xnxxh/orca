@@ -5,6 +5,18 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveOption } from './tab-create-entry-active-option'
 
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => (
+    <div data-tooltip-root="">{children}</div>
+  ),
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <div data-tooltip-content="">{children}</div>
+  ),
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
+    <div data-tooltip-trigger="">{children}</div>
+  )
+}))
+
 import { EntryActionRow } from './TabBarCreateEntryRow'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -40,7 +52,7 @@ afterEach(() => {
 })
 
 describe('EntryActionRow', () => {
-  it('puts the filename before the truncated parent path and exposes the full path in a native tooltip', () => {
+  it('puts the filename before the truncated parent path and exposes the full path in a tooltip', () => {
     act(() => {
       root.render(
         createElement(EntryActionRow, {
@@ -55,7 +67,7 @@ describe('EntryActionRow', () => {
     const button = container.querySelector('button')
     const text = button?.textContent ?? ''
     expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('app/src/components/'))
-    expect(button?.getAttribute('title')).toBe(filePath)
+    expect(container.querySelector('[data-tooltip-content]')?.textContent).toBe(filePath)
   })
 
   it('does not duplicate the root separator for absolute root-level files', () => {
