@@ -16610,20 +16610,42 @@ export class OrcaRuntimeService {
           }
       )
     }
-    const entry: PtyForegroundProcessReadEntry = {
+    const unavailable: PtyForegroundProcessRead = {
       controller,
-      startedAfterTitleObservation: afterTitleObservation,
-      promise: Promise.resolve({ controller, process: null, available: false })
+      process: null,
+      available: false
     }
-    entry.promise = controller
-      .getForegroundProcess(ptyId)
+    let processRead: Promise<string | null>
+    try {
+      processRead = Promise.resolve(controller.getForegroundProcess(ptyId))
+    } catch {
+      const entry: PtyForegroundProcessReadEntry = {
+        controller,
+        startedAfterTitleObservation: afterTitleObservation,
+        promise: Promise.resolve(unavailable)
+      }
+      entry.promise = entry.promise.finally(() => {
+        if (this.ptyForegroundProcessReads.get(ptyId) === entry) {
+          this.ptyForegroundProcessReads.delete(ptyId)
+        }
+      })
+      this.ptyForegroundProcessReads.set(ptyId, entry)
+      return entry.promise
+    }
+    let entry: PtyForegroundProcessReadEntry
+    const promise = processRead
       .then((process) => ({ controller, process, available: true }))
-      .catch(() => ({ controller, process: null, available: false }))
+      .catch(() => unavailable)
       .finally(() => {
         if (this.ptyForegroundProcessReads.get(ptyId) === entry) {
           this.ptyForegroundProcessReads.delete(ptyId)
         }
       })
+    entry = {
+      controller,
+      startedAfterTitleObservation: afterTitleObservation,
+      promise
+    }
     this.ptyForegroundProcessReads.set(ptyId, entry)
     return entry.promise
   }
