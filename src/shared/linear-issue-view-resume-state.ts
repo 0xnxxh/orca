@@ -4,6 +4,7 @@
 // Persisted values are untrusted input: normalize before use, never assume shape.
 
 import {
+  boundLinearIssueAttributeFilter,
   canonicalizeLinearIssueAttributeFilter,
   emptyLinearIssueAttributeFilter,
   isEmptyLinearIssueAttributeFilter,
@@ -96,6 +97,7 @@ function normalizeFiltersByWorkspaceId(value: unknown): Record<string, LinearIss
     return {}
   }
   const next: Record<string, LinearIssueAttributeFilter> = {}
+  const order: string[] = []
   for (const [workspaceId, filter] of Object.entries(value)) {
     if (!isSafeWorkspaceKey(workspaceId)) {
       continue
@@ -111,19 +113,31 @@ function normalizeFiltersByWorkspaceId(value: unknown): Record<string, LinearIss
       continue
     }
     next[workspaceId] = parsed
+    order.push(workspaceId)
   }
-  return trimToMostRecentWorkspaces(next)
+  return trimToMostRecentWorkspaces(next, order)
 }
 
-// Why: writes append newly filtered workspaces, so the tail is the most recent.
+/**
+ * Keeps the newest workspaces, newest last. Recency is taken from `order` rather
+ * than object key order: array-index-like keys enumerate first regardless of when
+ * they were inserted, so `Object.keys` would evict the entry a write just added.
+ */
 function trimToMostRecentWorkspaces(
-  filters: Record<string, LinearIssueAttributeFilter>
+  filters: Record<string, LinearIssueAttributeFilter>,
+  order: readonly string[]
 ): Record<string, LinearIssueAttributeFilter> {
-  const entries = Object.entries(filters)
-  if (entries.length <= LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES) {
+  const kept = order.filter((workspaceId) =>
+    Object.prototype.hasOwnProperty.call(filters, workspaceId)
+  )
+  if (kept.length <= LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES) {
     return filters
   }
-  return Object.fromEntries(entries.slice(-LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES))
+  const next: Record<string, LinearIssueAttributeFilter> = {}
+  for (const workspaceId of kept.slice(-LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES)) {
+    next[workspaceId] = filters[workspaceId] as LinearIssueAttributeFilter
+  }
+  return next
 }
 
 /** Validates untrusted persisted state; returns undefined when nothing worth restoring survives. */
@@ -177,11 +191,18 @@ export function serializeLinearIssueViewResumeState(
   view: LinearIssueViewSelection
 ): LinearIssueViewResumeState {
   const filtersByWorkspaceId: Record<string, LinearIssueAttributeFilter> = {}
+  const order: string[] = []
   for (const [workspaceId, filter] of Object.entries(view.filtersByWorkspaceId)) {
     if (!isSafeWorkspaceKey(workspaceId) || isEmptyLinearIssueAttributeFilter(filter)) {
       continue
     }
-    filtersByWorkspaceId[workspaceId] = canonicalizeLinearIssueAttributeFilter(filter)
+    // Why: canonicalize dedupes but does not bound; only the throwing parser does, and
+    // an over-length facet list here is rejected by `ui.set` and drops the WHOLE
+    // taskResumeState for paired clients on every subsequent write.
+    filtersByWorkspaceId[workspaceId] = boundLinearIssueAttributeFilter(
+      canonicalizeLinearIssueAttributeFilter(filter)
+    )
+    order.push(workspaceId)
   }
   return {
     viewMode: view.viewMode,
@@ -189,7 +210,7 @@ export function serializeLinearIssueViewResumeState(
     orderBy: view.orderBy,
     displayProperties: orderLinearDisplayProperties(view.displayProperties),
     teamPropertyTouched: view.teamPropertyTouched,
-    filtersByWorkspaceId: trimToMostRecentWorkspaces(filtersByWorkspaceId)
+    filtersByWorkspaceId: trimToMostRecentWorkspaces(filtersByWorkspaceId, order)
   }
 }
 
@@ -228,10 +249,14 @@ export function setLinearWorkspaceIssueFilter(
     return filters
   }
   const next = { ...filters }
+  delete next[workspaceId]
   if (isEmptyLinearIssueAttributeFilter(filter)) {
-    delete next[workspaceId]
     return next
   }
+  // Why: re-touching a workspace makes it the most recent, so it must be the last
+  // to be evicted — not the first, which reassigning in place would leave it.
   next[workspaceId] = canonicalizeLinearIssueAttributeFilter(filter)
-  return trimToMostRecentWorkspaces(next)
+  const order = Object.keys(filters).filter((key) => key !== workspaceId)
+  order.push(workspaceId)
+  return trimToMostRecentWorkspaces(next, order)
 }

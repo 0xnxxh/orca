@@ -133,6 +133,39 @@ describe('normalizeLinearIssueViewResumeState', () => {
   })
 })
 
+describe('isDefaultLinearIssueViewResumeState', () => {
+  // Why: this is the sole reason normalize returns undefined, which is what actually
+  // clears a persisted view when the user puts every setting back to its default.
+  it('drops a serialized default view so reverting a setting clears what was stored', () => {
+    expect(
+      normalizeLinearIssueViewResumeState(
+        serializeLinearIssueViewResumeState(defaultLinearIssueViewResumeState())
+      )
+    ).toBeUndefined()
+  })
+
+  it.each([
+    ['viewMode', { viewMode: 'board' as const }],
+    ['groupBy', { groupBy: 'status' as const }],
+    ['orderBy', { orderBy: 'updated' as const }],
+    ['teamPropertyTouched', { teamPropertyTouched: true }],
+    ['displayProperties', { displayProperties: ['state' as const] }],
+    [
+      'filtersByWorkspaceId',
+      { filtersByWorkspaceId: { 'workspace-1': filter({ priorities: [1] }) } }
+    ]
+  ])('keeps a view that differs from the default in %s', (_label, overrides) => {
+    expect(
+      normalizeLinearIssueViewResumeState(
+        serializeLinearIssueViewResumeState({
+          ...defaultLinearIssueViewResumeState(),
+          ...overrides
+        })
+      )
+    ).toBeDefined()
+  })
+})
+
 describe('serializeLinearIssueViewResumeState', () => {
   it('round-trips a restored view unchanged', () => {
     const restored = resolveLinearIssueViewResumeState({
@@ -215,6 +248,44 @@ describe('setLinearWorkspaceIssueFilter', () => {
 
     expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-a')).toEqual(FILTER_A)
     expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-b')).toEqual(FILTER_B)
+  })
+
+  // Why: re-filtering an existing workspace used to reassign the key in place, leaving
+  // the workspace you just used at the head — first in line to be evicted.
+  it('evicts the least recently used workspace, not the one just re-filtered', () => {
+    let filters: Record<string, LinearIssueAttributeFilter> = {}
+    for (let index = 0; index < LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES; index += 1) {
+      filters = setLinearWorkspaceIssueFilter(
+        filters,
+        `workspace-${index}`,
+        filter({ stateIds: [`state-${index}`] })
+      )
+    }
+    filters = setLinearWorkspaceIssueFilter(filters, 'workspace-0', FILTER_A)
+    filters = setLinearWorkspaceIssueFilter(filters, 'workspace-fresh', FILTER_B)
+
+    expect(Object.keys(filters)).toHaveLength(LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES)
+    expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-0')).toEqual(FILTER_A)
+    expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-1')).toEqual(
+      emptyLinearIssueAttributeFilter()
+    )
+  })
+
+  // Why: array-index-like keys enumerate before string keys regardless of insertion
+  // order, so key order alone would evict the entry this very write just added.
+  it('keeps an integer-like workspace key that the write just added', () => {
+    let filters: Record<string, LinearIssueAttributeFilter> = {}
+    for (let index = 0; index < LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES; index += 1) {
+      filters = setLinearWorkspaceIssueFilter(
+        filters,
+        `workspace-${index}`,
+        filter({ stateIds: [`state-${index}`] })
+      )
+    }
+
+    filters = setLinearWorkspaceIssueFilter(filters, '42', FILTER_A)
+
+    expect(selectLinearWorkspaceIssueFilter(filters, '42')).toEqual(FILTER_A)
   })
 
   it('returns the same record when the canonical filter is unchanged', () => {

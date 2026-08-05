@@ -32,6 +32,8 @@ type Props = {
   /** Selected Linear team ids (All teams / multi-select). Empty → primary fallback. */
   selectedTeamIds: readonly string[]
   availableTeams: readonly LinearTeam[]
+  /** False while `availableTeams` is still the issue-scraped fallback, not the real fetch. */
+  teamsSettled: boolean
   settings?: RuntimeLinearSettings
 }
 
@@ -71,6 +73,7 @@ export default function LinearIssueAttributeFilterDropdowns({
   primaryTeam,
   selectedTeamIds,
   availableTeams,
+  teamsSettled,
   settings
 }: Props): React.JSX.Element {
   const [popoverOpen, setPopoverOpen] = useState(false)
@@ -111,6 +114,12 @@ export default function LinearIssueAttributeFilterDropdowns({
     if (activeTeamIds.length === 0 || !concreteWorkspaceId) {
       return
     }
+    // Why: restored filters make this run at startup, when availableTeams may still be
+    // the issue-scraped subset. Metadata complete for a partial team set looks valid,
+    // so pruning there would permanently delete facets from another team (R12).
+    if (!teamsSettled) {
+      return
+    }
     if (states.loading || labels.loading || members.loading) {
       return
     }
@@ -143,6 +152,7 @@ export default function LinearIssueAttributeFilterDropdowns({
   }, [
     activeTeamIds,
     concreteWorkspaceId,
+    teamsSettled,
     states.loading,
     states.error,
     states.data,

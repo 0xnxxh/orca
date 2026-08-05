@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { getDefaultUIState } from '../../../../shared/constants'
-import { LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH } from '../../../../shared/linear-issue-attribute-filter'
+import {
+  LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH,
+  LINEAR_ISSUE_ATTRIBUTE_FILTER_MAX_LABEL_IDS
+} from '../../../../shared/linear-issue-attribute-filter'
+import {
+  defaultLinearIssueViewResumeState,
+  serializeLinearIssueViewResumeState
+} from '../../../../shared/linear-issue-view-resume-state'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { RpcRequest } from '../core'
 import { RpcDispatcher } from '../dispatcher'
@@ -98,16 +105,58 @@ describe('ui.set Linear issue view resume state', () => {
         }
       }
     ]
-  ])('refuses to persist a view with %s', async (_label, linearIssueView) => {
+  ])('drops only the view when it has %s', async (_label, linearIssueView) => {
     const { dispatcher, updateUIState } = makeDispatcher()
 
     const response = await dispatcher.dispatch(
-      makeRequest({ sidebarWidth: 280, taskResumeState: { linearIssueView } })
+      makeRequest({
+        sidebarWidth: 280,
+        taskResumeState: { linearQuery: 'label:bug', jiraPreset: 'reported', linearIssueView }
+      })
     )
 
-    // Why: taskResumeState rides the value-tolerant wrapper, so an invalid view is
-    // dropped from the batch rather than written — the rest of the payload lands.
+    // Why: value tolerance stops at the top level, so without the schema's own `.catch`
+    // one bad view value would drop every other resume field too — and keep doing so on
+    // every subsequent write, since the renderer resends the whole merged object.
     expect(response).toMatchObject({ ok: true })
-    expect(updateUIState).toHaveBeenCalledWith({ sidebarWidth: 280 })
+    expect(updateUIState).toHaveBeenCalledWith({
+      sidebarWidth: 280,
+      taskResumeState: {
+        linearQuery: 'label:bug',
+        jiraPreset: 'reported',
+        linearIssueView: undefined
+      }
+    })
+  })
+
+  // Why: hand-written fixtures can't catch renderer/schema drift — only the renderer's
+  // own output can. An over-limit filter here stops ALL resume state from persisting.
+  it.each([
+    [
+      'a filter at the facet-count limit',
+      Array.from(
+        { length: LINEAR_ISSUE_ATTRIBUTE_FILTER_MAX_LABEL_IDS + 1 },
+        (_, index) => `label-${String(index).padStart(4, '0')}`
+      )
+    ],
+    [
+      'a filter with an over-long facet id',
+      ['x'.repeat(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH + 1)]
+    ]
+  ])('accepts serializer output for %s', async (_label, labelIds) => {
+    const { dispatcher, updateUIState } = makeDispatcher()
+    const linearIssueView = serializeLinearIssueViewResumeState({
+      ...defaultLinearIssueViewResumeState(),
+      filtersByWorkspaceId: {
+        'workspace-1': { stateIds: [], priorities: [], assignee: null, labelIds }
+      }
+    })
+
+    const response = await dispatcher.dispatch(
+      makeRequest({ taskResumeState: { linearIssueView } })
+    )
+
+    expect(response).toMatchObject({ ok: true })
+    expect(updateUIState).toHaveBeenCalledWith({ taskResumeState: { linearIssueView } })
   })
 })

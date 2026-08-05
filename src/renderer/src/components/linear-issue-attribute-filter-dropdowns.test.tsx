@@ -99,6 +99,7 @@ describe('LinearIssueAttributeFilterDropdowns', () => {
           primaryTeam={team}
           selectedTeamIds={[]}
           availableTeams={[team]}
+          teamsSettled
         />
       )
     })
@@ -130,6 +131,7 @@ describe('LinearIssueAttributeFilterDropdowns', () => {
           primaryTeam={team}
           selectedTeamIds={[]}
           availableTeams={[team]}
+          teamsSettled
         />
       )
     })
@@ -163,6 +165,7 @@ describe('LinearIssueAttributeFilterDropdowns', () => {
             primaryTeam={team}
             selectedTeamIds={[]}
             availableTeams={[team]}
+            teamsSettled
           />
         )
       })

@@ -53,7 +53,10 @@ export const TaskResumeState = z
       })
       .strict()
       .optional(),
-    linearIssueView: LinearIssueViewResumeState.optional(),
+    // Why: value tolerance stops at the top level, so without `.catch` one bad view
+    // value drops the whole taskResumeState — github/jira/linear query included —
+    // for paired clients on every subsequent write, not just this one.
+    linearIssueView: LinearIssueViewResumeState.optional().catch(undefined),
     jiraPreset: z.enum(['assigned', 'reported', 'all', 'done']).optional(),
     jiraQuery: z.string().optional()
   })
@@ -64,3 +67,11 @@ const _taskResumeStateParity: AssertNoMissingKeys<
   z.infer<typeof TaskResumeState>
 > = true
 void _taskResumeStateParity
+
+// Why: the top-level assertion only compares TaskResumeState's own keys, so a field
+// added one level down stays invisible to it — and `.strict()` rejects exactly that.
+const _linearIssueViewParity: AssertNoMissingKeys<
+  NonNullable<TaskResumeStateType['linearIssueView']>,
+  z.infer<typeof LinearIssueViewResumeState>
+> = true
+void _linearIssueViewParity

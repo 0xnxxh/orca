@@ -54,10 +54,13 @@ export function buildLinearIssueListRequestSignature(options: {
   return `${sourceScope}::${workspace}::list::${options.filter ?? 'all'}::${options.limit}::${signature}`
 }
 
+/** The last list read's filter, scoped to the workspace it was read for. */
+export type LinearIssueListFilterRead = { workspaceId: string | null; signature: string }
+
 export function shouldForceLinearIssueListRead(options: {
   /** `null` until this session's first list read; a restored filter is a baseline, not a change. */
-  previousFilterSignature: string | null
-  nextFilterSignature: string
+  previousFilterRead: LinearIssueListFilterRead | null
+  nextFilterRead: LinearIssueListFilterRead
   refreshForced: boolean
 }): boolean {
   if (options.refreshForced) {
@@ -65,12 +68,29 @@ export function shouldForceLinearIssueListRead(options: {
   }
   // Why: forcing the very first read would bypass warm cache and show the blocking
   // spinner on every cold start that restores a persisted filter.
-  if (options.previousFilterSignature === null) {
+  if (options.previousFilterRead === null) {
+    return false
+  }
+  // Why: the list cache is keyed by workspace, so each workspace's filter is its own
+  // baseline — switching restores a different filter, which is not a filter *change*.
+  if (options.previousFilterRead.workspaceId !== options.nextFilterRead.workspaceId) {
     return false
   }
   // Why: filter signature changes always need a current server read, even when
   // returning to a previously cached signature that is still warm.
-  return options.previousFilterSignature !== options.nextFilterSignature
+  return options.previousFilterRead.signature !== options.nextFilterRead.signature
+}
+
+/**
+ * The persist effect must skip its first pass after hydration: that pass carries the
+ * values just restored, so writing them back is a no-op at best and, before the
+ * restore lands, a default-state stomp.
+ */
+export function shouldPersistLinearIssueView(options: {
+  taskResumeApplied: boolean
+  persistReady: boolean
+}): boolean {
+  return options.taskResumeApplied && options.persistReady
 }
 
 /** Where a primary team was observed; the team catalog is Linear-workspace scoped. */

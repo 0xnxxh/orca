@@ -5,6 +5,7 @@ import {
   isLinearIssueSearchActive,
   shouldClearTeamDerivedFacets,
   shouldForceLinearIssueListRead,
+  shouldPersistLinearIssueView,
   teamDerivedFacetsForPrimaryTeamChange
 } from './task-page-linear-issue-request'
 import type { LinearIssueAttributeFilter } from '../../../shared/linear-issue-attribute-filter'
@@ -50,18 +51,18 @@ describe('task-page-linear-issue-request', () => {
     expect(signature).toContain('"stateIds":["s1"]')
   })
 
-  it('forces a read when the filter signature changes', () => {
+  it('forces a read when the filter signature changes within one workspace', () => {
     expect(
       shouldForceLinearIssueListRead({
-        previousFilterSignature: 'a',
-        nextFilterSignature: 'b',
+        previousFilterRead: { workspaceId: 'ws-1', signature: 'a' },
+        nextFilterRead: { workspaceId: 'ws-1', signature: 'b' },
         refreshForced: false
       })
     ).toBe(true)
     expect(
       shouldForceLinearIssueListRead({
-        previousFilterSignature: 'a',
-        nextFilterSignature: 'a',
+        previousFilterRead: { workspaceId: 'ws-1', signature: 'a' },
+        nextFilterRead: { workspaceId: 'ws-1', signature: 'a' },
         refreshForced: false
       })
     ).toBe(false)
@@ -70,18 +71,44 @@ describe('task-page-linear-issue-request', () => {
   it('does not force the first read of a session, so a restored filter serves warm cache', () => {
     expect(
       shouldForceLinearIssueListRead({
-        previousFilterSignature: null,
-        nextFilterSignature: 'restored',
+        previousFilterRead: null,
+        nextFilterRead: { workspaceId: 'ws-1', signature: 'restored' },
         refreshForced: false
       })
     ).toBe(false)
     expect(
       shouldForceLinearIssueListRead({
-        previousFilterSignature: null,
-        nextFilterSignature: 'restored',
+        previousFilterRead: null,
+        nextFilterRead: { workspaceId: 'ws-1', signature: 'restored' },
         refreshForced: true
       })
     ).toBe(true)
+  })
+
+  // Why: the list cache is workspace-keyed, so B's warm entry is already correct —
+  // forcing would mean a round trip behind a blocking spinner on every switch.
+  it('does not force on a workspace switch, even when each workspace has its own filter', () => {
+    expect(
+      shouldForceLinearIssueListRead({
+        previousFilterRead: { workspaceId: 'ws-1', signature: 'filter-a' },
+        nextFilterRead: { workspaceId: 'ws-2', signature: 'filter-b' },
+        refreshForced: false
+      })
+    ).toBe(false)
+  })
+
+  it('persists the Linear view only after hydration has taken its first pass', () => {
+    expect(shouldPersistLinearIssueView({ taskResumeApplied: false, persistReady: false })).toBe(
+      false
+    )
+    // Why: the first pass after hydration carries the restored values, not a user change.
+    expect(shouldPersistLinearIssueView({ taskResumeApplied: true, persistReady: false })).toBe(
+      false
+    )
+    expect(shouldPersistLinearIssueView({ taskResumeApplied: true, persistReady: true })).toBe(true)
+    expect(shouldPersistLinearIssueView({ taskResumeApplied: false, persistReady: true })).toBe(
+      false
+    )
   })
 
   it('clears team-derived facets only when the primary team changes within one workspace', () => {

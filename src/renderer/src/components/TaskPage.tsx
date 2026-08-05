@@ -231,7 +231,9 @@ import {
   isLinearIssueSearchActive,
   shouldClearTeamDerivedFacets,
   shouldForceLinearIssueListRead,
+  shouldPersistLinearIssueView,
   teamDerivedFacetsForPrimaryTeamChange,
+  type LinearIssueListFilterRead,
   type LinearPrimaryTeamObservation
 } from '@/components/task-page-linear-issue-request'
 import {
@@ -4400,7 +4402,7 @@ export default function TaskPage(): React.JSX.Element {
     [linearAttributeFilterWorkspaceId, linearIssueFiltersByWorkspaceId]
   )
   // Why: null until the first list read, so a restored filter isn't mistaken for a change.
-  const linearAttributeFilterSignatureRef = useRef<string | null>(null)
+  const linearAttributeFilterReadRef = useRef<LinearIssueListFilterRead | null>(null)
   const linearPrimaryTeamRef = useRef<LinearPrimaryTeamObservation | null>(null)
   const [linearViewMode, setLinearViewMode] = useState<LinearViewMode>(DEFAULT_LINEAR_VIEW_MODE)
   const [linearGroupBy, setLinearGroupBy] = useState<LinearGroupBy>(DEFAULT_LINEAR_GROUP_BY)
@@ -7413,12 +7415,11 @@ export default function TaskPage(): React.JSX.Element {
   // primary-team facet reset) persist too. The payload is workspace-independent,
   // so selecting a workspace mid-startup can't write a half-restored state.
   useEffect(() => {
-    if (!taskResumeApplied) {
-      return
-    }
-    if (!linearViewPersistReadyRef.current) {
-      // Why: the first pass after hydration carries the restored values; echoing them back is a no-op at best and a default-state stomp at worst.
+    const persistReady = linearViewPersistReadyRef.current
+    if (taskResumeApplied) {
       linearViewPersistReadyRef.current = true
+    }
+    if (!shouldPersistLinearIssueView({ taskResumeApplied, persistReady })) {
       return
     }
     setTaskResumeState({
@@ -7500,12 +7501,15 @@ export default function TaskPage(): React.JSX.Element {
       )
     }
 
-    const nextFilterSignature = linearIssueAttributeFilterSignature(linearAttributeFilter)
-    const previousFilterSignature = linearAttributeFilterSignatureRef.current
-    linearAttributeFilterSignatureRef.current = nextFilterSignature
+    const nextFilterRead: LinearIssueListFilterRead = {
+      workspaceId: linearAttributeFilterWorkspaceId,
+      signature: linearIssueAttributeFilterSignature(linearAttributeFilter)
+    }
+    const previousFilterRead = linearAttributeFilterReadRef.current
+    linearAttributeFilterReadRef.current = nextFilterRead
     const filterForce = shouldForceLinearIssueListRead({
-      previousFilterSignature,
-      nextFilterSignature,
+      previousFilterRead,
+      nextFilterRead,
       refreshForced: false
     })
 
@@ -9010,6 +9014,7 @@ export default function TaskPage(): React.JSX.Element {
                             primaryTeam={linearAttributePrimaryTeam}
                             selectedTeamIds={[...linearTeamSelection]}
                             availableTeams={linearTeamOptions}
+                            teamsSettled={availableTeams.length > 0}
                             settings={linearTaskSourceContext ?? settings}
                           />
                         ) : null}
