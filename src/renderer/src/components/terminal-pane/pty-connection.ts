@@ -3750,10 +3750,18 @@ export function connectPanePty(
     // Takeover must never fire from the onData fallback below: it mixes in auto-replies.
     reportWorkerTerminalUserInput(cacheKey, runtimeEnvironmentId)
   }
-  const userInputActivityDisposable = subscribeToTerminalUserInput(
-    pane.terminal,
-    recordRealUserTerminalInput
-  )
+  let pendingRealUserInputToken = 0
+  let nextRealUserInputToken = 0
+  const userInputActivityDisposable = subscribeToTerminalUserInput(pane.terminal, () => {
+    recordRealUserTerminalInput()
+    const token = ++nextRealUserInputToken
+    pendingRealUserInputToken = token
+    queueMicrotask(() => {
+      if (pendingRealUserInputToken === token) {
+        pendingRealUserInputToken = 0
+      }
+    })
+  })
   const recordTerminalInputForHibernationFallback = (): void => {
     if (userInputActivityDisposable === null) {
       recordTerminalInputForHibernation()
@@ -4054,6 +4062,8 @@ export function connectPanePty(
   )
 
   const onDataDisposable = pane.terminal.onData((data) => {
+    const isRealUserInput = pendingRealUserInputToken !== 0
+    pendingRealUserInputToken = 0
     // Why: xterm auto-replies to embedded query sequences (DA1, DECRQM,
     // OSC 10/11, focus, CPR) via onData. When we replay recorded PTY bytes
     // into xterm for scrollback/cold-restore/snapshot, those queries would
@@ -4061,7 +4071,7 @@ export function connectPanePty(
     // ("?1;2c", "2026;2$y", OSC color fragments, ...). The replay sites
     // engage the guard via replayIntoTerminal; here we drop everything
     // xterm emits while the guard is active. See replay-guard.ts.
-    if (isPaneReplaying(deps.replayingPanesRef, pane.id)) {
+    if (isPaneReplaying(deps.replayingPanesRef, pane.id) && !isRealUserInput) {
       return
     }
     const currentPtyId = transport.getPtyId()

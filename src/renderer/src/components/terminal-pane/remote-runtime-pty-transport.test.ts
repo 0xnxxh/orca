@@ -837,6 +837,91 @@ describe('createRemoteRuntimePtyTransport', () => {
     )
   })
 
+  it('queues typed input and Enter until a web mirror handle is authoritative', async () => {
+    const healthyRuntimeCall = runtimeCall.getMockImplementation()
+    let releaseActivation = (): void => {}
+    const activationGate = new Promise<void>((resolve) => {
+      releaseActivation = resolve
+    })
+    runtimeCall.mockImplementation((request: { method: string; params?: unknown }) => {
+      if (request.method === 'session.tabs.activate') {
+        return activationGate.then(() => healthyRuntimeCall?.(request))
+      }
+      if (request.method === 'terminal.send') {
+        return Promise.resolve({ ok: true, result: { send: { accepted: true } } })
+      }
+      return healthyRuntimeCall?.(request)
+    })
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const transport = createRemoteRuntimePtyTransport('env-1', {
+      worktreeId: 'wt-1',
+      tabId: 'web-terminal-host-tab-1',
+      leafId: 'pane:1'
+    })
+
+    expect(transport.sendInput('typed-before-connect\r')).toBe(true)
+    const connect = transport.connect({ url: '', cols: 100, rows: 30, callbacks: {} })
+    await vi.waitFor(() =>
+      expect(runtimeCall).toHaveBeenCalledWith(
+        expect.objectContaining({ method: 'session.tabs.activate' })
+      )
+    )
+    expect(transport.sendInput('typed-before-attach\r')).toBe(true)
+    const enterAccepted = transport.sendInputAccepted?.('accepted-enter\r')
+    expect(latestFrameForOpcode(TerminalStreamOpcode.Input)).toBeUndefined()
+
+    releaseActivation()
+    await connect
+    expect(transport.sendInput('typed-after-handle\r')).toBe(true)
+    expect(latestFrameForOpcode(TerminalStreamOpcode.Input)).toBeUndefined()
+    emitSnapshot(latestSubscribePayload().streamId, 'authoritative state')
+    await vi.waitFor(() =>
+      expect(runtimeCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'terminal.send',
+          params: expect.objectContaining({
+            text: 'typed-before-connect\rtyped-before-attach\raccepted-enter\rtyped-after-handle\r'
+          })
+        })
+      )
+    )
+    await expect(enterAccepted).resolves.toBe(true)
+    transport.destroy?.()
+  })
+
+  it('drops pre-connect web mirror input when attach takes ownership', async () => {
+    const healthyRuntimeCall = runtimeCall.getMockImplementation()
+    let releasePaneAuthority = (): void => {}
+    const paneAuthorityGate = new Promise<void>((resolve) => {
+      releasePaneAuthority = resolve
+    })
+    runtimeCall.mockImplementation((request: { method: string; params?: unknown }) => {
+      if (request.method === 'terminal.resolvePane') {
+        return paneAuthorityGate.then(() => healthyRuntimeCall?.(request))
+      }
+      return healthyRuntimeCall?.(request)
+    })
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const transport = createRemoteRuntimePtyTransport('env-1', {
+      worktreeId: 'wt-1',
+      tabId: 'web-terminal-host-tab-1',
+      leafId: 'pane:1'
+    })
+
+    expect(transport.sendInput('stale typed input')).toBe(true)
+    const staleAcceptedInput = transport.sendInputAccepted?.('stale Enter\r')
+    transport.attach({
+      existingPtyId: 'remote:env-1@@terminal-1',
+      callbacks: {}
+    })
+
+    await expect(staleAcceptedInput).resolves.toBe(false)
+    expect(transport.sendInput('input before attach authority')).toBe(false)
+    expect(latestFrameForOpcode(TerminalStreamOpcode.Input)).toBeUndefined()
+    releasePaneAuthority()
+    transport.destroy?.()
+  })
+
   it('retries initial web mirror inventory after a transient runtime close', async () => {
     const healthyRuntimeCall = runtimeCall.getMockImplementation()
     let activateAttempts = 0

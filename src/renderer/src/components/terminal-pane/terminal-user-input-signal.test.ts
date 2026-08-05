@@ -20,20 +20,23 @@ describe('subscribeToTerminalUserInput', () => {
     const listener = vi.fn()
     const subscription = subscribeToTerminalUserInput(terminal, listener)
     expect(subscription).not.toBeNull()
+    const eventOrder: string[] = []
+    const onData = vi.fn(() => eventOrder.push('data'))
+    terminal.onData(onData)
+    listener.mockImplementation(() => eventOrder.push('user-input'))
 
     const coreService = (terminal as unknown as CoreServiceAccess)._core.coreService
     // Keyboard/IME/paste/mouse paths mark their data as user input.
     coreService.triggerDataEvent('a', true)
     expect(listener).toHaveBeenCalledTimes(1)
+    expect(eventOrder).toEqual(['user-input', 'data'])
 
     // Parser-generated replies (focus reports, DA/DSR/CPR responses) are not
     // user input and must not fire the signal, while still flowing to onData.
-    const onData = vi.fn()
-    terminal.onData(onData)
     coreService.triggerDataEvent('\x1b[O', false)
     coreService.triggerDataEvent('\x1b[?1;2c')
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(onData).toHaveBeenCalledTimes(2)
+    expect(onData).toHaveBeenCalledTimes(3)
 
     subscription?.dispose()
     coreService.triggerDataEvent('b', true)

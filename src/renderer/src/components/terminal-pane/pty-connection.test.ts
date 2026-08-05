@@ -20622,14 +20622,22 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).toHaveBeenCalledWith('a')
   })
 
-  // Why: xterm auto-replies during replay must not count as user interaction, or a BELed pane would self-dismiss unseen.
-  it('does not clear unread when onData fires during replay', async () => {
+  it('drops parser replies but forwards real user input during replay', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transportFactoryQueue.push(transport)
 
     const pane = createPane(1)
     let onDataHandler: ((data: string) => void) | null = null
+    let userInputListener: (() => void) | null = null
+    ;(pane.terminal as unknown as { _core: unknown })._core = {
+      coreService: {
+        onUserInput: vi.fn((listener: () => void) => {
+          userInputListener = listener
+          return { dispose: vi.fn() }
+        })
+      }
+    }
     pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
       onDataHandler = handler
       return { dispose: vi.fn() }
@@ -20640,13 +20648,24 @@ describe('connectPanePty', () => {
 
     connectPanePty(pane as never, manager as never, deps as never)
 
-    if (!onDataHandler) {
-      throw new Error('expected onData handler to be registered')
+    if (!onDataHandler || !userInputListener) {
+      throw new Error('expected terminal input handlers to be registered')
     }
     ;(onDataHandler as (data: string) => void)('\x1b[?1;2c')
 
+    expect(transport.sendInput).not.toHaveBeenCalled()
     expect(deps.clearTerminalTabUnread).not.toHaveBeenCalled()
     expect(deps.clearWorktreeUnread).not.toHaveBeenCalled()
+
+    ;(userInputListener as () => void)()
+    await Promise.resolve()
+    ;(onDataHandler as (data: string) => void)('\x1b[?6c')
+    expect(transport.sendInput).not.toHaveBeenCalled()
+
+    ;(userInputListener as () => void)()
+    ;(onDataHandler as (data: string) => void)('a')
+
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
   })
 
   // Why: on a stale-codex pane (pending account-switch restart), onData bytes must not count as user interaction; production also blocks sendInput here.
