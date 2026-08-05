@@ -24,13 +24,13 @@ export function createCodexSessionMigrationScheduler(args: {
   let activeRunStopObserved = false
   let rerunRequested = false
 
-  const requestRun = (): void => {
+  const requestRun = (rerunIfActive = false): void => {
     if (args.isQuitting() || !args.isEligible()) {
       return
     }
     if (migrationTask) {
-      // Why: an account transition can re-enable migration while the prior run is still stopping.
-      rerunRequested ||= activeRunStopObserved
+      // Why: delayed launches and resumed account transitions must survive an older active pass.
+      rerunRequested ||= rerunIfActive || activeRunStopObserved
       return
     }
     activeRunStopObserved = false
@@ -69,20 +69,28 @@ export function createCodexSessionMigrationScheduler(args: {
     })
   }
 
-  const scheduleRun = (): void => {
-    if (scheduledTimer) {
-      return
-    }
+  const armScheduledRun = (): void => {
     scheduledTimer = setTimeout(() => {
       scheduledTimer = null
-      requestRun()
+      // Why: a launch can invalidate the marker while a long index-heal pass is active.
+      requestRun(true)
     }, args.initialDelayMs ?? 15_000)
   }
 
   return {
-    scheduleInitialRun: scheduleRun,
-    scheduleRun,
-    requestRun
+    scheduleInitialRun(): void {
+      if (!scheduledTimer) {
+        armScheduledRun()
+      }
+    },
+    scheduleRun(): void {
+      // Why: delay from the latest launch so Codex has time to create its rollout.
+      if (scheduledTimer) {
+        clearTimeout(scheduledTimer)
+      }
+      armScheduledRun()
+    },
+    requestRun: () => requestRun()
   }
 }
 

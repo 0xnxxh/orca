@@ -50,6 +50,63 @@ describe('createCodexSessionMigrationScheduler', () => {
     expect(startBackfill).toHaveBeenCalledOnce()
   })
 
+  it('delays the startup run from the latest shared-home launch', async () => {
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const startIndexHeal = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal,
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleInitialRun()
+    await vi.advanceTimersByTimeAsync(999)
+    scheduler.scheduleRun()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(startBackfill).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(999)
+    await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
+    expect(startBackfill).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a delayed launch rerun while an earlier migration is active', async () => {
+    let releaseFirstIndexHeal: (() => void) | undefined
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const startIndexHeal = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFirstIndexHeal = resolve
+          })
+      )
+      .mockResolvedValueOnce(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal,
+      initialDelayMs: 1_000
+    })
+
+    scheduler.requestRun()
+    await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
+
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(startBackfill).toHaveBeenCalledOnce()
+
+    releaseFirstIndexHeal?.()
+    await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledTimes(2))
+  })
+
   it('coalesces concurrent run requests and stops before index heal after opt-out', async () => {
     let eligible = true
     let releaseBackfill: (() => void) | undefined
