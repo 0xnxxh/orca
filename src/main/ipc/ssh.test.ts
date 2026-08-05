@@ -421,6 +421,7 @@ describe('SSH IPC handlers', () => {
               role: 'session-owner',
               ownerGeneration: 1,
               ownerLease: 'ipc-test-owner',
+              resumed: false,
               capabilities: {
                 outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
               }
