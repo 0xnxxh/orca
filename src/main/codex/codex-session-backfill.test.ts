@@ -460,6 +460,33 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(summary).toMatchObject({ scannedFiles: 0 })
     expect(existsSync(getSystemSessionsRoot())).toBe(false)
   })
+
+  it('bounds a launch pass to its rollout date directories', async () => {
+    const oldRelativePath = join('2025', '12', '31', 'rollout-old.jsonl')
+    const launchRelativePath = join('2026', '08', '05', 'rollout-launch.jsonl')
+    writeManagedSession(oldRelativePath, 'old\n')
+    writeManagedSession(launchRelativePath, 'launch\n')
+
+    const summary = await backfillManagedCodexSessionsIntoSystemHome(
+      resolveCodexSessionBackfillPaths(),
+      { scanDates: [['2026', '08', '05']] }
+    )
+
+    expect(summary).toMatchObject({ scannedFiles: 1, linkedFiles: 1, failedDirectories: 0 })
+    expect(existsSync(join(getSystemSessionsRoot(), launchRelativePath))).toBe(true)
+    expect(existsSync(join(getSystemSessionsRoot(), oldRelativePath))).toBe(false)
+  })
+
+  it('treats a not-yet-created launch date as an empty bounded pass', async () => {
+    writeManagedSession(join('2025', '12', '31', 'rollout-old.jsonl'), 'old\n')
+
+    const summary = await backfillManagedCodexSessionsIntoSystemHome(
+      resolveCodexSessionBackfillPaths(),
+      { scanDates: [['2026', '08', '05']] }
+    )
+
+    expect(summary).toMatchObject({ scannedFiles: 0, linkedFiles: 0, failedDirectories: 0 })
+  })
 })
 
 describe('startCodexSessionBackfillInBackground', () => {

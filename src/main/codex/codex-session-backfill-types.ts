@@ -24,4 +24,8 @@ export type CodexSessionBackfillPaths = {
 export type CodexSessionBackfillOptions = CodexSessionBridgeIncrementalOptions & {
   /** Polled before each target mutation; true stops with progress preserved. */
   shouldStop?: () => boolean
+  /** Limits a launch-triggered pass to the date directories that can contain its rollouts. */
+  scanDates?: readonly CodexSessionBackfillDate[]
 }
+
+export type CodexSessionBackfillDate = readonly [year: string, month: string, day: string]

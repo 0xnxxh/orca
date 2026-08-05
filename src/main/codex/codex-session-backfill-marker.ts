@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { writeFileAtomically } from '../codex-accounts/fs-utils'
 import type { CodexSessionBackfillSummary } from './codex-session-backfill-types'
 
@@ -14,8 +14,7 @@ export function captureCodexSessionBackfillMarkerGeneration(): number {
 
 export function hasCompletedCodexSessionBackfillMarker(
   markerPath: string,
-  systemSessionsRoot: string,
-  managedSessionsRoot: string
+  systemSessionsRoot: string
 ): boolean {
   try {
     const parsed: unknown = JSON.parse(readFileSync(markerPath, 'utf-8'))
@@ -35,46 +34,11 @@ export function hasCompletedCodexSessionBackfillMarker(
     if (!markerMatchesTarget) {
       return false
     }
-    // Why: an empty source can become populated after an early migration run.
-    return marker.summary?.scannedFiles !== 0 || !managedSessionsRootHasRollout(managedSessionsRoot)
+    // Why: an empty source can become populated after an early migration run;
+    // let the incremental async walk verify it without blocking the main thread.
+    return marker.summary?.scannedFiles !== 0
   } catch {
     return false
-  }
-}
-
-function managedSessionsRootHasRollout(managedSessionsRoot: string): boolean {
-  try {
-    for (const year of readdirSync(managedSessionsRoot, { withFileTypes: true })) {
-      if (!year.isDirectory() || !/^\d{4}$/.test(year.name)) {
-        continue
-      }
-      const yearPath = join(managedSessionsRoot, year.name)
-      for (const month of readdirSync(yearPath, { withFileTypes: true })) {
-        if (!month.isDirectory() || !/^\d{2}$/.test(month.name)) {
-          continue
-        }
-        const monthPath = join(yearPath, month.name)
-        for (const day of readdirSync(monthPath, { withFileTypes: true })) {
-          if (!day.isDirectory() || !/^\d{2}$/.test(day.name)) {
-            continue
-          }
-          const dayPath = join(monthPath, day.name)
-          if (
-            readdirSync(dayPath, { withFileTypes: true }).some(
-              (entry) => entry.isFile() && /^rollout-.+\.jsonl$/.test(entry.name)
-            )
-          ) {
-            return true
-          }
-        }
-      }
-    }
-    return false
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-      return false
-    }
-    throw error
   }
 }
 

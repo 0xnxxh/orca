@@ -32,6 +32,7 @@ describe('createCodexSessionMigrationScheduler', () => {
   })
 
   it('schedules a delayed rerun after a shared-home launch', async () => {
+    vi.setSystemTime(new Date(2026, 7, 5, 10, 0, 0))
     const prepareScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi.fn().mockResolvedValue(null)
@@ -53,7 +54,57 @@ describe('createCodexSessionMigrationScheduler', () => {
     await vi.advanceTimersByTimeAsync(1)
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
     expect(startBackfill).toHaveBeenCalledOnce()
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({ scanDates: [['2026', '08', '05']] }),
+      undefined
+    )
     expect(prepareScheduledRun).toHaveBeenCalledOnce()
+  })
+
+  it('covers both launch and run dates when a delayed pass crosses midnight', async () => {
+    vi.setSystemTime(new Date(2026, 7, 5, 23, 59, 59, 500))
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanDates: [
+          ['2026', '08', '05'],
+          ['2026', '08', '06']
+        ]
+      }),
+      undefined
+    )
+  })
+
+  it('keeps launch passes full when no completed baseline can cover older failures', async () => {
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({ scanDates: undefined }),
+      undefined
+    )
   })
 
   it('delays the startup run from the latest shared-home launch', async () => {

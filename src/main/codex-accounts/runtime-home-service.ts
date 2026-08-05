@@ -41,7 +41,6 @@ import {
 import {
   getOrcaManagedCodexHomePath,
   getOrcaUserDataPath,
-  getCodexSessionBackfillStateDirPath,
   getSystemCodexHomePath,
   resolveOrcaManagedCodexHomePath,
   syncCodexGlobalInstructionsIntoManagedHome,
@@ -68,7 +67,11 @@ import {
 } from './runtime-selection'
 import { getDefaultWslDistro, getWslHome } from '../wsl'
 import { hasCustomCodexHomeOverrideForLaunch } from '../codex/codex-real-home-path'
-import { invalidateCodexSessionBackfillMarker } from '../codex/codex-session-backfill-marker'
+import {
+  hasCompletedCodexSessionBackfillMarker,
+  invalidateCodexSessionBackfillMarker
+} from '../codex/codex-session-backfill-marker'
+import { resolveCodexSessionBackfillPaths } from '../codex/codex-session-backfill'
 import { assertOwnedHostCodexManagedHomePath } from './host-codex-managed-home-ownership'
 import {
   codexAuthCouldBelongToManagedAccount,
@@ -181,7 +184,7 @@ export class CodexRuntimeHomeService {
   private sharedAuthRefreshBlockedByManagedTransition = false
   // Why: transient auth.json read/parse failures must not deselect an account.
   private readonly credentialAbsenceGrace = new CodexCredentialAbsenceGrace()
-  private scheduleHostSystemDefaultSessionMigration: () => void = () => {}
+  private scheduleHostSystemDefaultSessionMigration: (fullScanRequired: boolean) => void = () => {}
 
   constructor(private readonly store: Store) {
     this.safeRecoverInterruptedRuntimeAuthOperation()
@@ -242,7 +245,7 @@ export class CodexRuntimeHomeService {
       this.reconcileLegacySharedHomeForRetainedPanes()
       return null
     }
-    const shouldScheduleSessionMigration =
+    const sessionMigrationFullScanRequired =
       this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
     this.syncForCurrentSelection(target, launchEnv)
     syncSystemCodexResourcesIntoManagedHome()
@@ -252,13 +255,15 @@ export class CodexRuntimeHomeService {
       {},
       resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
-    if (shouldScheduleSessionMigration) {
-      this.scheduleHostSystemDefaultSessionMigration()
+    if (sessionMigrationFullScanRequired !== null) {
+      this.scheduleHostSystemDefaultSessionMigration(sessionMigrationFullScanRequired)
     }
     return this.getRuntimeHomePath()
   }
 
-  setHostSystemDefaultSessionMigrationScheduler(schedule: () => void): void {
+  setHostSystemDefaultSessionMigrationScheduler(
+    schedule: (fullScanRequired: boolean) => void
+  ): void {
     this.scheduleHostSystemDefaultSessionMigration = schedule
   }
 
@@ -269,10 +274,16 @@ export class CodexRuntimeHomeService {
     )
   }
 
-  prepareHostSystemDefaultSessionMigrationPass(): void {
-    invalidateCodexSessionBackfillMarker(
-      join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
+  prepareHostSystemDefaultSessionMigrationPass(): boolean {
+    const paths = resolveCodexSessionBackfillPaths(
+      resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
+    const fullScanRequired = !hasCompletedCodexSessionBackfillMarker(
+      paths.markerPath,
+      paths.systemSessionsRoot
+    )
+    invalidateCodexSessionBackfillMarker(paths.markerPath)
+    return fullScanRequired
   }
 
   // Why: a managed HOST account runs against its own self-contained CODEX_HOME
@@ -428,16 +439,15 @@ export class CodexRuntimeHomeService {
 
   private invalidateBackfillAfterManagedSystemDefaultLaunch(
     launchEnv?: NodeJS.ProcessEnv
-  ): boolean {
+  ): boolean | null {
     const settings = this.store.getSettings()
     if (
       normalizeCodexRuntimeSelection(settings).host !== null ||
       hasCustomCodexHomeOverrideForLaunch(launchEnv)
     ) {
-      return false
+      return null
     }
-    this.prepareHostSystemDefaultSessionMigrationPass()
-    return true
+    return this.prepareHostSystemDefaultSessionMigrationPass()
   }
 
   private startWslSessionBridgeForLaunch(

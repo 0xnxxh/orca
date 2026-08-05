@@ -15,7 +15,7 @@ import {
   copySessionFileWithoutOverwrite,
   isAtomicNoReplaceUnsupportedError
 } from './codex-session-backfill-copy'
-import { listCodexSessionJsonlFilesIncrementally } from './codex-session-file-listing'
+import { listCodexSessionBackfillFilesForDates } from './codex-session-backfill-date'
 import {
   captureCodexSessionBackfillMarkerGeneration,
   hasCompletedCodexSessionBackfillMarker,
@@ -89,13 +89,7 @@ async function runCodexSessionBackfillOncePerHost(
 ): Promise<CodexSessionBackfillSummary | null> {
   const paths = resolveCodexSessionBackfillPaths(systemCodexHomePathOverride)
   const markerGeneration = captureCodexSessionBackfillMarkerGeneration()
-  if (
-    hasCompletedCodexSessionBackfillMarker(
-      paths.markerPath,
-      paths.systemSessionsRoot,
-      paths.managedSessionsRoot
-    )
-  ) {
+  if (hasCompletedCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot)) {
     return null
   }
   const summary = await backfillManagedCodexSessionsIntoSystemHome(paths, options)
@@ -141,7 +135,7 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
   const ensuredTargetDirectories = new Set<string>()
   const managedSessionsRootExists = await checkManagedSessionsRoot(paths, summary, auditPass)
   if (managedSessionsRootExists) {
-    for await (const managedSessionFilePath of listCodexSessionJsonlFilesIncrementally(
+    for await (const managedSessionFilePath of listCodexSessionBackfillFilesForDates(
       paths.managedSessionsRoot,
       options,
       async (directoryPath, error) => {

@@ -1010,6 +1010,18 @@ describe('CodexRuntimeHomeService', () => {
     expect(service.prepareForCodexLaunch()).toBe(getRuntimeCodexHomePath())
     expect(existsSync(markerPath)).toBe(false)
     expect(scheduleSessionMigration).toHaveBeenCalledOnce()
+    expect(scheduleSessionMigration).toHaveBeenCalledWith(true)
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({
+        version: 3,
+        systemSessionsRoot: join(getSystemCodexHomePath(), 'sessions'),
+        summary: { scannedFiles: 1 }
+      })}\n`,
+      'utf-8'
+    )
+    service.prepareForCodexLaunch()
+    expect(scheduleSessionMigration).toHaveBeenLastCalledWith(false)
     expect(service.prepareForRateLimitFetch()).toBe(getRuntimeCodexHomePath())
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([getRuntimeCodexHomePath()])
     expect(existsSync(getRuntimeCodexHomePath())).toBe(true)
