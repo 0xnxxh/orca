@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { link, lstat, mkdir, readFile, readlink, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -10,6 +10,16 @@ const runtimeProcessIdentity = `runtime:${randomUUID()}`
 let hostIdentityPromise: Promise<string> | undefined
 let bootIdentityPromise: Promise<string | undefined> | undefined
 const HOST_TOKEN_PATTERN = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i
+
+function getWindowsPowerShellPath(): string {
+  return win32.join(
+    process.env.SystemRoot ?? 'C:\\Windows',
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe'
+  )
+}
 
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code
@@ -100,6 +110,24 @@ async function readHostIdentity(): Promise<string> {
     // but a later process gets a different identity and cannot steal its residue.
     return runtimeHostIdentity
   }
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execFileAsync(
+        getWindowsPowerShellPath(),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "[string](Get-ItemPropertyValue -Path 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid)"
+        ],
+        { encoding: 'utf8', timeout: 1_000, windowsHide: true }
+      )
+      const machineGuid = stdout.trim()
+      return machineGuid ? `win32:${machineGuid.toLowerCase()}` : runtimeHostIdentity
+    } catch {
+      return runtimeHostIdentity
+    }
+  }
   if (process.platform === 'darwin') {
     try {
       const { stdout } = await execFileAsync('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], {
@@ -176,6 +204,33 @@ export async function readManagedHookProcessIdentity(
         return null
       }
       return pid === process.pid ? runtimeProcessIdentity : undefined
+    }
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execFileAsync(
+        getWindowsPowerShellPath(),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'; ` +
+            `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; ` +
+            `if (!$p) { 'missing'; exit 0 }; ` +
+            `[string]([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds()`
+        ],
+        { encoding: 'utf8', timeout: 1_000, windowsHide: true }
+      )
+      const startedAt = stdout.trim()
+      return startedAt === 'missing' ? null : startedAt ? `win32:${pid}:${startedAt}` : undefined
+    } catch {
+      try {
+        process.kill(pid, 0)
+        return pid === process.pid ? runtimeProcessIdentity : undefined
+      } catch (error) {
+        return hasCode(error, 'ESRCH') ? null : undefined
+      }
     }
   }
 

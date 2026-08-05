@@ -64,7 +64,8 @@ const {
   clearMigrationUnsupportedPtysForPaneKeyMock,
   clearPaneKeyAliasesForPtyMock,
   recordCodexPaneAccountMock,
-  forgetCodexPaneAccountMock
+  forgetCodexPaneAccountMock,
+  ensureCodexBackfillRecoveryMock
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
   onMock: vi.fn(),
@@ -98,7 +99,8 @@ const {
   clearMigrationUnsupportedPtysForPaneKeyMock: vi.fn(),
   clearPaneKeyAliasesForPtyMock: vi.fn(),
   recordCodexPaneAccountMock: vi.fn(),
-  forgetCodexPaneAccountMock: vi.fn()
+  forgetCodexPaneAccountMock: vi.fn(),
+  ensureCodexBackfillRecoveryMock: vi.fn(() => Promise.resolve())
 }))
 
 vi.mock('electron', () => ({
@@ -207,6 +209,10 @@ vi.mock('../agent-hooks/migration-unsupported-pty-state', () => ({
 vi.mock('../codex/codex-pane-account-registry', () => ({
   recordCodexPaneAccount: recordCodexPaneAccountMock,
   forgetCodexPaneAccount: forgetCodexPaneAccountMock
+}))
+
+vi.mock('../codex/codex-state-db-backfill-recovery', () => ({
+  ensureCodexStateDbBackfillRecoveryStarted: ensureCodexBackfillRecoveryMock
 }))
 import {
   LocalPtyProvider,
@@ -382,6 +388,8 @@ describe('registerPtyHandlers', () => {
     clearPaneKeyAliasesForPtyMock.mockReset()
     recordCodexPaneAccountMock.mockReset()
     forgetCodexPaneAccountMock.mockReset()
+    ensureCodexBackfillRecoveryMock.mockReset()
+    ensureCodexBackfillRecoveryMock.mockResolvedValue(undefined)
     mainWindow.webContents.on.mockReset()
     mainWindow.webContents.send.mockReset()
     mainWindow.webContents.removeListener.mockReset()
@@ -3054,6 +3062,38 @@ describe('registerPtyHandlers', () => {
         CODEX_HOME: TEST_CODEX_HOME,
         ORCA_CODEX_HOME: TEST_CODEX_HOME
       })
+    })
+
+    it('arbitrates the exact backfill owner before spawning Codex', async () => {
+      let releaseRecovery!: () => void
+      ensureCodexBackfillRecoveryMock.mockReturnValue(
+        new Promise<void>((resolve) => (releaseRecovery = resolve))
+      )
+      readFileSyncMock.mockReturnValue(TEST_CODEX_AUTH_JSON)
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, undefined, () => TEST_CODEX_HOME, (() => ({
+        codexManagedAccounts: [
+          {
+            id: 'account-1',
+            managedHomePath: TEST_CODEX_HOME,
+            managedHomeRuntime: 'host'
+          }
+        ]
+      })) as never)
+
+      const spawnPromise = handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        launchAgent: 'codex'
+      })
+      await vi.waitFor(() =>
+        expect(ensureCodexBackfillRecoveryMock).toHaveBeenCalledWith(TEST_CODEX_HOME)
+      )
+      expect(spawnMock).not.toHaveBeenCalled()
+
+      releaseRecovery()
+      await spawnPromise
+      expect(spawnMock).toHaveBeenCalledTimes(1)
     })
 
     it('does not gate a bare local shell on managed Codex auth', async () => {

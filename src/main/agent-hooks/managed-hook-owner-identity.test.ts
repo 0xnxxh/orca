@@ -67,6 +67,17 @@ async function loadLinuxIdentity(fixture: LinuxIdentityFixture) {
   return { identity: await import('./managed-hook-owner-identity'), readFile }
 }
 
+async function loadWindowsIdentity() {
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  const execFileAsync = vi.fn(async (_file: string, args: string[]) => ({
+    stdout: args.join(' ').includes('MachineGuid')
+      ? 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE\r\n'
+      : '1777777777000\r\n'
+  }))
+  vi.doMock('node:util', () => ({ promisify: () => execFileAsync }))
+  return { identity: await import('./managed-hook-owner-identity'), execFileAsync }
+}
+
 afterEach(() => {
   Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
   if (originalGetuidDescriptor) {
@@ -76,6 +87,8 @@ afterEach(() => {
   }
   vi.unstubAllEnvs()
   vi.doUnmock('node:fs/promises')
+  vi.doUnmock('node:child_process')
+  vi.doUnmock('node:util')
   vi.resetModules()
 })
 
@@ -176,6 +189,17 @@ describe('managed hook owner identity', () => {
     )
     await expect(identity.readManagedHookProcessIdentity(123)).resolves.toBe(
       'linux:pid:[4026533001]:current-boot-id:4242'
+    )
+  })
+
+  it('uses machine and process creation identities on Windows', async () => {
+    const { identity } = await loadWindowsIdentity()
+
+    await expect(identity.readManagedHookHostIdentity()).resolves.toBe(
+      'win32:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    )
+    await expect(identity.readManagedHookProcessIdentity(123)).resolves.toBe(
+      'win32:123:1777777777000'
     )
   })
 })
