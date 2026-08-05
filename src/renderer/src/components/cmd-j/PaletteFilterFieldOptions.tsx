@@ -96,15 +96,19 @@ export function PaletteFilterFieldOptions({
   // listener has to re-attach to the node that replaces it.
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const [highlightIndex, setHighlightIndex] = useState(0)
-
-  // Why not the ranked list identity: a toggle re-ranks, so that would yank the
-  // cursor back to the top mid multi-select. Only a new query or field moves it.
-  useEffect(() => {
-    setHighlightIndex(0)
-  }, [normalizedQuery, group.field])
+  // Why the field/query are stored alongside the index instead of reset in an
+  // effect: a stale row would stay active for one paint. Why not key off the
+  // ranked list identity: a toggle re-ranks, so that would yank the cursor back
+  // to the top mid multi-select.
+  const [highlight, setHighlight] = useState(() => ({
+    field: group.field,
+    query: normalizedQuery,
+    index: 0
+  }))
+  const storedIndex =
+    highlight.field === group.field && highlight.query === normalizedQuery ? highlight.index : 0
   // The stored index can outlive the rows it pointed at when the list shrinks.
-  const activeIndex = Math.min(highlightIndex, Math.max(0, ranked.ordered.length - 1))
+  const activeIndex = Math.min(storedIndex, Math.max(0, ranked.ordered.length - 1))
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -142,9 +146,9 @@ export function PaletteFilterFieldOptions({
       }
       const next = Math.max(0, Math.min(ranked.ordered.length - 1, activeIndex + delta))
       virtualizer.scrollToIndex(next, { align: 'auto' })
-      setHighlightIndex(next)
+      setHighlight({ field: group.field, query: normalizedQuery, index: next })
     },
-    [activeIndex, ranked.ordered.length, virtualizer]
+    [activeIndex, group.field, normalizedQuery, ranked.ordered.length, virtualizer]
   )
 
   const handleListKeyDown = useCallback(
