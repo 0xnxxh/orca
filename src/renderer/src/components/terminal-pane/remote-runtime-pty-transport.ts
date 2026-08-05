@@ -2061,7 +2061,7 @@ export function createRemoteRuntimePtyTransport(
             undefined,
             connectLifecycleEpoch
           )
-          if (!result) {
+          if (!result && lifecycleEpoch === connectLifecycleEpoch) {
             clearInputQueuedWhileConnecting()
           }
           return result
@@ -2274,7 +2274,9 @@ export function createRemoteRuntimePtyTransport(
             surfaceErrorMessage(message)
           }
         }
-        clearInputQueuedWhileConnecting()
+        if (lifecycleEpoch === connectLifecycleEpoch) {
+          clearInputQueuedWhileConnecting()
+        }
         return undefined
       }
     },

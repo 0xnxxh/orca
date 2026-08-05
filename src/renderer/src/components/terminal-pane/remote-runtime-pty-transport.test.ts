@@ -889,6 +889,54 @@ describe('createRemoteRuntimePtyTransport', () => {
     transport.destroy?.()
   })
 
+  it('keeps the current mirror input queue when an older connect settles', async () => {
+    const healthyRuntimeCall = runtimeCall.getMockImplementation()
+    let releaseFirstActivation = (): void => {}
+    const firstActivationGate = new Promise<void>((resolve) => {
+      releaseFirstActivation = resolve
+    })
+    let activationCalls = 0
+    runtimeCall.mockImplementation((request: { method: string; params?: unknown }) => {
+      if (request.method === 'session.tabs.activate' && activationCalls++ === 0) {
+        return firstActivationGate.then(() => healthyRuntimeCall?.(request))
+      }
+      if (request.method === 'terminal.send') {
+        return Promise.resolve({ ok: true, result: { send: { accepted: true } } })
+      }
+      return healthyRuntimeCall?.(request)
+    })
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const transport = createRemoteRuntimePtyTransport('env-1', {
+      worktreeId: 'wt-1',
+      tabId: 'web-terminal-host-tab-1',
+      leafId: 'pane:1'
+    })
+
+    const staleConnect = transport.connect({ url: '', cols: 100, rows: 30, callbacks: {} })
+    await vi.waitFor(() => expect(activationCalls).toBe(1))
+    await transport.connect({ url: '', cols: 100, rows: 30, callbacks: {} })
+    expect(transport.sendInput('typed-for-current-connect\r')).toBe(true)
+    const acceptedInput = transport.sendInputAccepted?.('accepted-for-current-connect\r')
+
+    releaseFirstActivation()
+    await staleConnect
+    expect(transport.sendInput('typed-after-stale-connect\r')).toBe(true)
+    emitSnapshot(latestSubscribePayload().streamId, 'authoritative state')
+
+    await vi.waitFor(() =>
+      expect(runtimeCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'terminal.send',
+          params: expect.objectContaining({
+            text: 'typed-for-current-connect\raccepted-for-current-connect\rtyped-after-stale-connect\r'
+          })
+        })
+      )
+    )
+    await expect(acceptedInput).resolves.toBe(true)
+    transport.destroy?.()
+  })
+
   it('drops pre-connect web mirror input when attach takes ownership', async () => {
     const healthyRuntimeCall = runtimeCall.getMockImplementation()
     let releasePaneAuthority = (): void => {}
