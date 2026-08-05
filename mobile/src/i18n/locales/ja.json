@@ -1174,7 +1174,7 @@
   },
   "mobileNativeChatAsk": {
     "next": "次へ",
-    "send": "回答を送信する",
+    "send": "送信",
     "cancel": "キャンセル",
     "type": "答えを入力してください",
     "other": "他の…",

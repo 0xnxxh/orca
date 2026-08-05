@@ -1174,7 +1174,7 @@
   },
   "mobileNativeChatAsk": {
     "next": "下一步",
-    "send": "发送回答",
+    "send": "提交",
     "cancel": "取消",
     "type": "输入你的回答",
     "other": "其他…",

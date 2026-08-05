@@ -1150,7 +1150,7 @@
   },
   "mobileNativeChatAsk": {
     "next": "Siguiente",
-    "send": "Enviar respuesta",
+    "send": "Enviar",
     "cancel": "Cancelar",
     "type": "Escribe tu respuesta",
     "other": "Otro…",

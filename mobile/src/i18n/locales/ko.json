@@ -1169,7 +1169,7 @@
   },
   "mobileNativeChatAsk": {
     "next": "다음",
-    "send": "답변 보내기",
+    "send": "제출",
     "cancel": "취소",
     "type": "답변을 입력하세요",
     "other": "다른…",
