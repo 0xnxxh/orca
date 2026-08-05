@@ -296,6 +296,7 @@ import {
 } from './source-control-hosted-review-push-target'
 import { buildSourceControlManualReviewUrlFromContext } from './source-control-manual-review-url'
 import { parseRemoteRepo } from './source-control-remote-repo'
+import { setBranchLineTotalMergeBase } from './branch-line-total-request-gate'
 export { HostedReviewHeaderLink } from './hosted-review-header-chrome'
 import {
   createRunningCommitMessageGenerationRecord,
@@ -835,6 +836,15 @@ function SourceControlInner(): React.JSX.Element {
   const branchSummary = useAppStore((s) =>
     activeWorktreeId ? (s.gitBranchCompareSummaryByWorktree[activeWorktreeId] ?? null) : null
   )
+  const publishedBranchLineTotal = useAppStore((s) =>
+    activeWorktreeId ? (s.gitBranchLineTotalByWorktree?.[activeWorktreeId] ?? null) : null
+  )
+  // Why: status and branch compare refresh on different cadences, so a total can
+  // outlive the fork point it measured. Drop it rather than render a stale number.
+  const branchLineTotal =
+    publishedBranchLineTotal && publishedBranchLineTotal.mergeBase === branchSummary?.mergeBase
+      ? publishedBranchLineTotal
+      : null
   const conflictOperation = useAppStore((s) =>
     activeWorktreeId ? (s.gitConflictOperationByWorktree[activeWorktreeId] ?? 'unknown') : 'unknown'
   )
@@ -1251,6 +1261,22 @@ function SourceControlInner(): React.JSX.Element {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   // Why: the sidebar stays mounted when closed, so gate polling on tab AND open or branchCompare/PR fetch would run with no visible consumer.
   const isBranchVisible = rightSidebarTab === 'source-control' && rightSidebarOpen
+
+  // Why: the merge base IS the request gate — no OID on the status request means
+  // the host runs no ranged diff, so a hidden chip costs a background worktree nothing.
+  const requestedBranchLineTotalMergeBase =
+    isBranchVisible && !isFolder && branchSummary?.status === 'ready'
+      ? branchSummary.mergeBase
+      : null
+  useEffect(() => {
+    if (!activeWorktreeId) {
+      return
+    }
+    setBranchLineTotalMergeBase(activeWorktreeId, requestedBranchLineTotalMergeBase)
+    return () => {
+      setBranchLineTotalMergeBase(activeWorktreeId, null)
+    }
+  }, [activeWorktreeId, requestedBranchLineTotalMergeBase])
 
   const refreshActiveGitStatus = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
@@ -5549,6 +5575,7 @@ function SourceControlInner(): React.JSX.Element {
           diffCommentCount={diffCommentCount}
           onExpandNotes={() => setDiffCommentsExpanded(true)}
           branchSummary={branchSummary}
+          branchLineTotal={branchLineTotal}
           compareBaseRef={compareBaseRef}
           headDisplay={gitIdentityDisplay}
           upstreamStatus={remoteStatus}

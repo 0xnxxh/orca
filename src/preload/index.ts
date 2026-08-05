@@ -3230,6 +3230,7 @@ const api = {
       includeIgnored?: boolean
       bypassEffectiveUpstreamNegativeCache?: boolean
       reuseLineStats?: boolean
+      branchLineTotalMergeBase?: string
       requestToken?: string
     }): Promise<unknown> => ipcRenderer.invoke('git:status', args),
     cancelStatus: (args: { requestToken: string }): Promise<void> =>
