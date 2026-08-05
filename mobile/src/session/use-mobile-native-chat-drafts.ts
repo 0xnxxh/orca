@@ -6,6 +6,7 @@ import {
   findLandedImagePreviewEchoes,
   findLandedUnconfirmedSends,
   mergeLandedImagePreviewEchoes,
+  migrateImagePreviewMessageIds,
   normalizedUserText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
@@ -259,9 +260,7 @@ export function useMobileNativeChatDrafts(args: {
     const landedSet = new Set(landed)
     unconfirmedRef.current = unconfirmedRef.current.filter((entry) => !landedSet.has(entry))
     for (const entry of landed) {
-      if (entry.deadline !== null) {
-        clearTimeout(entry.deadline)
-      }
+      clearTimeout(entry.deadline ?? undefined)
     }
   }, [messages, draftKey, pendingKey])
 
@@ -270,9 +269,7 @@ export function useMobileNativeChatDrafts(args: {
     return () => {
       mountedRef.current = false
       for (const entry of unconfirmedRef.current) {
-        if (entry.deadline !== null) {
-          clearTimeout(entry.deadline)
-        }
+        clearTimeout(entry.deadline ?? undefined)
       }
       unconfirmedRef.current = []
     }
@@ -282,7 +279,13 @@ export function useMobileNativeChatDrafts(args: {
     ? (pendingBySession[pendingKey] ?? NO_PENDING_MESSAGES)
     : NO_PENDING_MESSAGES
   useEffect(() => {
-    if (!pendingKey || pending.length === 0) {
+    if (!pendingKey) {
+      return
+    }
+    setImagePreviewsBySession((previous) =>
+      migrateImagePreviewMessageIds(previous, pendingKey, messages)
+    )
+    if (pending.length === 0) {
       return
     }
     const landedImagePreviews = findLandedImagePreviewEchoes(messages, pending)

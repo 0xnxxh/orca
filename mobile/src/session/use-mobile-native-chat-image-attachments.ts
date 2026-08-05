@@ -9,6 +9,7 @@ import {
   type MobileImageSource
 } from './mobile-image-source-picker'
 import {
+  appendPendingNativeChatImages,
   uploadMobileNativeChatImages,
   type PendingNativeChatImage
 } from './mobile-native-chat-image-attachment'
@@ -142,38 +143,45 @@ export function useMobileNativeChatImageAttachments({
       // pick or pre-upload error never ran `onUploadStart`, so decrementing the
       // shared counter would clear a concurrent upload's in-flight flag early.
       let started = false
+      const uploadedImages: Omit<PendingNativeChatImage, 'id'>[] = []
+      let uploadError: unknown = null
       try {
-        const uploaded = await uploadMobileNativeChatImages(source, {
+        await uploadMobileNativeChatImages(source, {
           client,
           getConnectionId: getActiveWorktreeConnectionId,
           pickImages: pickMobileImages,
+          onImageUploaded: (image) => uploadedImages.push(image),
           onUploadStart: () => {
             started = true
             attachingCount.current += 1
             setIsAttaching(true)
           }
         })
-        // Cancelled picker: no error, no toast.
-        if (uploaded.length === 0) {
-          return
+      } catch (error) {
+        uploadError = error
+      } finally {
+        if (started) {
+          attachingCount.current -= 1
+          if (attachingCount.current === 0) {
+            setIsAttaching(false)
+          }
         }
-        const chips = uploaded.map((image) => {
-          idCounter.current += 1
-          return { id: `img-${idCounter.current}`, ...image }
-        })
+      }
+      if (uploadedImages.length > 0) {
         setAttachmentsByScope((prev) => ({
           ...prev,
-          [scope]: [...(prev[scope] ?? []), ...chips]
+          [scope]: appendPendingNativeChatImages(prev[scope] ?? [], uploadedImages, idCounter)
         }))
         onAttachSuccess?.()
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+      }
+      if (uploadError !== null) {
+        const message = uploadError instanceof Error ? uploadError.message : String(uploadError)
         onError?.()
         if (connStateRef.current !== 'connected') {
           showToast('Attach failed (disconnected)', 1500)
           return
         }
-        if (error instanceof ImageLibraryPermissionError) {
+        if (uploadError instanceof ImageLibraryPermissionError) {
           showToast('Photo permission denied', 1500)
           return
         }
@@ -182,14 +190,6 @@ export function useMobileNativeChatImageAttachments({
           return
         }
         showToast('Attach failed', 1500)
-      } finally {
-        if (started) {
-          attachingCount.current -= 1
-          if (attachingCount.current <= 0) {
-            attachingCount.current = 0
-            setIsAttaching(false)
-          }
-        }
       }
     },
     [

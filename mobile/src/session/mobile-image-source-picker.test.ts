@@ -15,13 +15,24 @@ vi.mock('expo-file-system', () => ({
 import {
   ImageLibraryPermissionError,
   pickMobileImage,
-  pickMobileImages
+  pickMobileImages,
+  type PickedMobileImage
 } from './mobile-image-source-picker'
 
 const granted = { granted: true } as Awaited<
   ReturnType<typeof import('expo-image-picker').requestMediaLibraryPermissionsAsync>
 >
 const denied = { granted: false } as typeof granted
+
+async function collectImages(
+  images: AsyncIterable<PickedMobileImage>
+): Promise<PickedMobileImage[]> {
+  const collected: PickedMobileImage[] = []
+  for await (const image of images) {
+    collected.push(image)
+  }
+  return collected
+}
 
 function fileFactory(
   bytes: Uint8Array,
@@ -101,11 +112,13 @@ describe('pickMobileImage', () => {
       assets: [...bytesByUri].map(([uri, bytes]) => ({ uri, fileSize: bytes.length }))
     })
 
-    const result = await pickMobileImages('library', {
-      requestLibraryPermission: vi.fn().mockResolvedValue(granted),
-      launchLibrary,
-      createFile
-    })
+    const result = await collectImages(
+      pickMobileImages('library', {
+        requestLibraryPermission: vi.fn().mockResolvedValue(granted),
+        launchLibrary,
+        createFile
+      })
+    )
 
     expect(result.map((image) => image.uri)).toEqual([
       'file:///a.jpg',
@@ -113,7 +126,11 @@ describe('pickMobileImage', () => {
       'file:///c.jpg'
     ])
     expect(launchLibrary).toHaveBeenCalledWith(
-      expect.objectContaining({ allowsMultipleSelection: true, selectionLimit: 0 })
+      expect.objectContaining({
+        allowsMultipleSelection: true,
+        orderedSelection: true,
+        selectionLimit: 0
+      })
     )
   })
 

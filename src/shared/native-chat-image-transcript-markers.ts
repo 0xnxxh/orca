@@ -84,9 +84,8 @@ export function normalizeImageTranscriptMessages(
       }
       normalized.push({
         ...message,
-        blocks: imagePaths.map((path) => ({ type: 'image-ref' as const, path }))
+        blocks: [{ type: 'image-ref', path: imagePath }]
       })
-      index = nextIndex - 1
       continue
     }
     normalized.push({

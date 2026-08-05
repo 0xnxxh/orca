@@ -101,6 +101,60 @@ export function mergeLandedImagePreviewEchoes(
   return next
 }
 
+function imagePreviewReplacementMessageId(
+  messages: readonly NativeChatMessage[],
+  sourceIndex: number
+): string | null {
+  const source = messages[sourceIndex]
+  if (!source || !isImageSourceUserTurn(source)) {
+    return null
+  }
+  let nextIndex = sourceIndex + 1
+  while (
+    messages[nextIndex]?.source === source.source &&
+    isImageSourceUserTurn(messages[nextIndex]!)
+  ) {
+    nextIndex++
+  }
+  const prompt = messages[nextIndex]
+  const firstText = prompt?.blocks.find((block) => block.type === 'text')
+  return prompt?.role === 'user' &&
+    prompt.source === source.source &&
+    firstText?.type === 'text' &&
+    stripImagePromptMarker(firstText.text) !== firstText.text
+    ? prompt.id
+    : null
+}
+
+/** Moves previews forward when a progressive source-only transcript frame later
+ *  folds into the marker-prefixed prompt with a different authoritative id. */
+export function migrateImagePreviewMessageIds(
+  previous: Record<string, Record<string, string[]>>,
+  sessionKey: string,
+  messages: readonly NativeChatMessage[]
+): Record<string, Record<string, string[]>> {
+  const sessionPreviews = previous[sessionKey]
+  if (!sessionPreviews) {
+    return previous
+  }
+  const messageIndexById = new Map(messages.map((message, index) => [message.id, index]))
+  let nextSession: Record<string, string[]> | null = null
+  for (const [messageId, images] of Object.entries(sessionPreviews)) {
+    const sourceIndex = messageIndexById.get(messageId)
+    if (sourceIndex === undefined) {
+      continue
+    }
+    const replacementId = imagePreviewReplacementMessageId(messages, sourceIndex)
+    if (!replacementId) {
+      continue
+    }
+    nextSession ??= { ...sessionPreviews }
+    delete nextSession[messageId]
+    nextSession[replacementId] = [...(nextSession[replacementId] ?? []), ...images]
+  }
+  return nextSession ? { ...previous, [sessionKey]: nextSession } : previous
+}
+
 /** Binds local preview URIs to the authoritative transcript turn that replaced
  *  the optimistic bubble. Host paths and marker-only Codex turns cannot render
  *  the phone-local photo without this handoff. */
@@ -125,7 +179,8 @@ export function findLandedImagePreviewEchoes(
       if (targetText) {
         return normalizedUserText(message) === targetText
       }
-      return message.blocks.length === 0 || message.blocks.some(isImageRefBlock)
+      const imageCount = message.blocks.filter(isImageRefBlock).length
+      return message.blocks.length === 0 || imageCount >= entry.images!.length
     })
     const tailIndex = entry.baselineTailMessageId
       ? messageIndexById.get(entry.baselineTailMessageId)

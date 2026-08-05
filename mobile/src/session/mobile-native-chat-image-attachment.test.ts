@@ -16,6 +16,10 @@ function methodNotFound(id: string): RpcResponse {
   }
 }
 
+function failed(id: string, message: string): RpcResponse {
+  return { id, ok: false, error: { code: 'failed', message }, _meta: { runtimeId: 'r' } }
+}
+
 function clientWithResponses(responses: RpcResponse[]): Pick<RpcClient, 'sendRequest'> & {
   calls: { method: string; params: unknown }[]
 } {
@@ -63,20 +67,36 @@ describe('uploadMobileNativeChatImages', () => {
       ok('save-c', '/tmp/c.png')
     ])
 
-    const result = await uploadMobileNativeChatImages('library', {
-      client,
-      getConnectionId: async () => 'conn-7',
-      pickImages: vi.fn().mockResolvedValue([
+    const order: string[] = []
+    async function* pickImages() {
+      for (const image of [
         { base64: 'AAAA', uri: 'file:///a.jpg' },
         { base64: 'BBBB', uri: 'file:///b.jpg' },
         { base64: 'CCCC', uri: 'file:///c.jpg' }
-      ])
+      ]) {
+        order.push(`read:${image.uri}`)
+        yield image
+      }
+    }
+    const result = await uploadMobileNativeChatImages('library', {
+      client,
+      getConnectionId: async () => 'conn-7',
+      pickImages,
+      onImageUploaded: (image) => order.push(`uploaded:${image.previewUri}`)
     })
 
     expect(result).toEqual([
       { path: '/tmp/a.png', previewUri: 'file:///a.jpg' },
       { path: '/tmp/b.png', previewUri: 'file:///b.jpg' },
       { path: '/tmp/c.png', previewUri: 'file:///c.jpg' }
+    ])
+    expect(order).toEqual([
+      'read:file:///a.jpg',
+      'uploaded:file:///a.jpg',
+      'read:file:///b.jpg',
+      'uploaded:file:///b.jpg',
+      'read:file:///c.jpg',
+      'uploaded:file:///c.jpg'
     ])
   })
 
@@ -91,6 +111,33 @@ describe('uploadMobileNativeChatImages', () => {
 
     expect(result).toEqual([])
     expect(client.calls).toEqual([])
+  })
+
+  it('reports completed uploads before a later image fails', async () => {
+    const client = clientWithResponses([
+      methodNotFound('start-a'),
+      ok('save-a', '/tmp/a.png'),
+      methodNotFound('start-b'),
+      failed('save-b', 'upload failed')
+    ])
+    const onImageUploaded = vi.fn()
+
+    await expect(
+      uploadMobileNativeChatImages('library', {
+        client,
+        getConnectionId: async () => null,
+        pickImages: vi.fn().mockResolvedValue([
+          { base64: 'AAAA', uri: 'file:///a.jpg' },
+          { base64: 'BBBB', uri: 'file:///b.jpg' }
+        ]),
+        onImageUploaded
+      })
+    ).rejects.toThrow('upload failed')
+    expect(onImageUploaded).toHaveBeenCalledOnce()
+    expect(onImageUploaded).toHaveBeenCalledWith({
+      path: '/tmp/a.png',
+      previewUri: 'file:///a.jpg'
+    })
   })
 
   it('falls back to an inline data uri for the preview when the picker omits a uri', async () => {

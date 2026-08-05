@@ -67,6 +67,20 @@ describe('normalizeImageTranscriptMessages', () => {
     ])
   })
 
+  it('preserves adjacent standalone image turns without a prompt marker', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('a', '[Image: source: /tmp/a.png]'),
+      userText('b', '[Image: source: /tmp/b.png]')
+    ])
+
+    expect(out).toHaveLength(2)
+    expect(out.map((message) => message.id)).toEqual(['a', 'b'])
+    expect(out.map((message) => message.blocks)).toEqual([
+      [{ type: 'image-ref', path: '/tmp/a.png' }],
+      [{ type: 'image-ref', path: '/tmp/b.png' }]
+    ])
+  })
+
   it('leaves ordinary user text untouched', () => {
     const out = normalizeImageTranscriptMessages([userText('a', 'how about this')])
     expect(out[0]!.blocks).toEqual([{ type: 'text', text: 'how about this' }])
