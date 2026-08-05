@@ -383,6 +383,7 @@ type RemotePaneDrive = {
   deps: ReturnType<typeof createDeps>
   disposable: { dispose: () => void }
   deliver: (data: string, seq: number) => void
+  setOutputPaused: (paused: boolean) => void
   writtenChunks: () => string[]
 }
 
@@ -397,8 +398,12 @@ async function connectHiddenRemoteAgentPane(
   const capturedDataCallback: {
     current: ((data: string, meta?: { seq?: number; rawLength?: number }) => void) | null
   } = { current: null }
+  const capturedOutputPauseCallback: {
+    current: ((paused: boolean, supported: boolean) => void) | null
+  } = { current: null }
   transport.connect.mockImplementation(async ({ callbacks }: { callbacks?: ConnectCallbacks }) => {
     capturedDataCallback.current = callbacks?.onData ?? null
+    capturedOutputPauseCallback.current = callbacks?.onOutputPauseChanged ?? null
     return REMOTE_PTY_ID
   })
   transportFactoryQueue.push(transport)
@@ -414,6 +419,7 @@ async function connectHiddenRemoteAgentPane(
     deps,
     disposable,
     deliver: (data, seq) => capturedDataCallback.current?.(data, { seq, rawLength: data.length }),
+    setOutputPaused: (paused) => capturedOutputPauseCallback.current?.(paused, true),
     writtenChunks: () => pane.terminal.write.mock.calls.map(([data]) => String(data))
   }
 }
@@ -661,10 +667,10 @@ describe('remote hidden-output restore outcomes', () => {
     drive.disposable.dispose()
   })
 
-  it('[modern] banners on the seventh retry-worthy answer and never sends an eighth request', async () => {
+  it('[modern] banners on the seventh retry-worthy host answer and never sends an eighth request', async () => {
     const serializeBuffer = vi.fn()
     const serializeBufferOutcome = vi.fn().mockResolvedValue({
-      availability: { kind: 'retry-worthy', cause: 'resync-in-flight' },
+      availability: { kind: 'retry-worthy', cause: 'host-pending-output-overflowed' },
       snapshot: null
     })
     const drive = await connectHiddenRemoteAgentPane(serializeBuffer, serializeBufferOutcome)
@@ -683,6 +689,62 @@ describe('remote hidden-output restore outcomes', () => {
     expect(serializeBufferOutcome).toHaveBeenCalledTimes(7)
     expect(drive.writtenChunks().filter((data) => data.includes(BANNER_FRAGMENT))).toHaveLength(1)
     expect(serializeBuffer).not.toHaveBeenCalled()
+    drive.disposable.dispose()
+  })
+
+  // Regression: these causes are returned before any frame leaves the client, so the host
+  // declined nothing. Charging them to its budget banners a healthy pane at ~12s — the very
+  // elapsed-time guess this change removes.
+  it('[modern] does not spend the host answer budget on locally-gated retries', async () => {
+    const serializeBuffer = vi.fn()
+    const serializeBufferOutcome = vi.fn().mockResolvedValue({
+      availability: { kind: 'retry-worthy', cause: 'resync-in-flight' },
+      snapshot: null
+    })
+    const drive = await connectHiddenRemoteAgentPane(serializeBuffer, serializeBufferOutcome)
+    vi.useFakeTimers()
+    driveHiddenBacklogThenReveal(drive)
+    await flushAsyncTicks(20)
+
+    // Well past the 7-answer host budget: a stuck local gate must not be mistaken for host refusals.
+    for (let expectedRequests = 2; expectedRequests <= 12; expectedRequests += 1) {
+      await advanceModernRetryProbe()
+      expect(serializeBufferOutcome).toHaveBeenCalledTimes(expectedRequests)
+      expect(drive.writtenChunks().join('')).not.toContain(BANNER_FRAGMENT)
+    }
+
+    // The gate clears: the pane recovers the hidden bytes it would otherwise have declared lost.
+    serializeBufferOutcome.mockResolvedValue({
+      availability: { kind: 'snapshot' },
+      snapshot: HOST_SNAPSHOT
+    })
+    await advanceModernRetryProbe()
+    expect(drive.writtenChunks().join('')).toContain(HOST_SNAPSHOT_MARKER)
+    expect(drive.writtenChunks().join('')).not.toContain(BANNER_FRAGMENT)
+    expect(serializeBuffer).not.toHaveBeenCalled()
+    drive.disposable.dispose()
+  })
+
+  it('[modern] still bounds locally-gated retries at their own cap', async () => {
+    const serializeBuffer = vi.fn()
+    const serializeBufferOutcome = vi.fn().mockResolvedValue({
+      availability: { kind: 'retry-worthy', cause: 'connection-not-ready' },
+      snapshot: null
+    })
+    const drive = await connectHiddenRemoteAgentPane(serializeBuffer, serializeBufferOutcome)
+    vi.useFakeTimers()
+    driveHiddenBacklogThenReveal(drive)
+    await flushAsyncTicks(20)
+
+    for (let expectedRequests = 2; expectedRequests <= 30; expectedRequests += 1) {
+      await advanceModernRetryProbe()
+      expect(serializeBufferOutcome).toHaveBeenCalledTimes(expectedRequests)
+      expect(drive.writtenChunks().join('').includes(BANNER_FRAGMENT)).toBe(expectedRequests === 30)
+    }
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushAsyncTicks(20)
+    expect(serializeBufferOutcome).toHaveBeenCalledTimes(30)
+    expect(drive.writtenChunks().filter((data) => data.includes(BANNER_FRAGMENT))).toHaveLength(1)
     drive.disposable.dispose()
   })
 
@@ -708,6 +770,41 @@ describe('remote hidden-output restore outcomes', () => {
     await flushAsyncTicks(20)
     expect(serializeBufferOutcome).toHaveBeenCalledTimes(1)
     expect(serializeBuffer).not.toHaveBeenCalled()
+    drive.disposable.dispose()
+  })
+
+  it('[modern] cancels a live flood repaint when it declares the output unrecoverable', async () => {
+    const serializeBuffer = vi.fn()
+    const serializeBufferOutcome = vi
+      .fn()
+      .mockResolvedValueOnce({
+        availability: { kind: 'retry-worthy', cause: 'host-no-serializable-buffer' },
+        snapshot: null
+      })
+      .mockResolvedValue({
+        availability: { kind: 'permanently-unavailable', reason: 'exceeds-client-replay-limit' },
+        snapshot: null
+      })
+    const drive = await connectHiddenRemoteAgentPane(serializeBuffer, serializeBufferOutcome)
+    vi.useFakeTimers()
+    driveHiddenBacklogThenReveal(drive)
+    await flushAsyncTicks(20)
+    expect(serializeBufferOutcome).toHaveBeenCalledTimes(1)
+
+    // The retry answer arms a post-flood repaint 2s out; interrupt it partway with an
+    // ungated re-arm (remote output unpause) whose answer is permanently unavailable.
+    await vi.advanceTimersByTimeAsync(1_000)
+    drive.setOutputPaused(true)
+    drive.setOutputPaused(false)
+    await flushAsyncTicks(20)
+    expect(serializeBufferOutcome).toHaveBeenCalledTimes(2)
+    expect(drive.writtenChunks().filter((data) => data.includes(BANNER_FRAGMENT))).toHaveLength(1)
+
+    // The still-armed repaint must not resurrect recovery the pane already declared dead.
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushAsyncTicks(20)
+    expect(drive.writtenChunks().filter((data) => data.includes(BANNER_FRAGMENT))).toHaveLength(1)
+    expect(serializeBufferOutcome).toHaveBeenCalledTimes(2)
     drive.disposable.dispose()
   })
 

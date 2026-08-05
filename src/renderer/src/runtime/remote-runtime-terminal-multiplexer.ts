@@ -85,15 +85,35 @@ export type RemoteRuntimeSnapshotImage = {
   pendingEscapeTailAnsi?: string
 }
 
-/** Transient causes: the same request may succeed later, so an absent buffer proves nothing about the pane. */
-export type RemoteRuntimeSnapshotRetryCause =
+/** Transient causes the host itself reported: a request reached it and it declined to serialize now. */
+export type RemoteRuntimeSnapshotHostRetryCause =
   | 'host-pending-output-overflowed'
   | 'host-no-serializable-buffer'
+
+/** Transient causes decided entirely client-side: no request frame ever reached the host, so it answered nothing. */
+export type RemoteRuntimeSnapshotLocalRetryCause =
   | 'resync-in-flight'
   | 'stream-detached'
   | 'connection-not-ready'
   | 'request-already-in-flight'
   | 'request-frame-not-sent'
+
+/** Transient causes: the same request may succeed later, so an absent buffer proves nothing about the pane. */
+export type RemoteRuntimeSnapshotRetryCause =
+  | RemoteRuntimeSnapshotHostRetryCause
+  | RemoteRuntimeSnapshotLocalRetryCause
+
+const HOST_ANSWERED_SNAPSHOT_RETRY_CAUSES = new Set<RemoteRuntimeSnapshotRetryCause>([
+  'host-pending-output-overflowed',
+  'host-no-serializable-buffer'
+])
+
+/** Callers budget host answers separately from local gates; only the former cost the host a request. */
+export function isHostAnsweredSnapshotRetryCause(
+  cause: RemoteRuntimeSnapshotRetryCause
+): cause is RemoteRuntimeSnapshotHostRetryCause {
+  return HOST_ANSWERED_SNAPSHOT_RETRY_CAUSES.has(cause)
+}
 
 /** Final causes: the host answered and repeating this exact request cannot produce the buffer. */
 export type RemoteRuntimeSnapshotPermanentReason = 'exceeds-client-replay-limit'

@@ -147,6 +147,7 @@ import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspec
 // actually attached — nothing is inspectable while the session hydrates.
 import { notifyCodexPaneBoundForStaleSweep } from '@/lib/codex-stale-pane-sweep'
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
+import { isHostAnsweredSnapshotRetryCause } from '@/runtime/remote-runtime-terminal-multiplexer'
 import {
   discardTerminalOutput,
   flushTerminalOutput,
@@ -366,8 +367,15 @@ const HIDDEN_OUTPUT_RESTORE_MAX_LOOP_ITERATIONS = 3
 // multiplexer resync window and the remote snapshot request timeout (10s);
 // past that the host really is unreachable and the loss banner is honest.
 const HIDDEN_OUTPUT_RESTORE_REMOTE_REARM_MAX = 5
-// Why: probes through 12s outlast the 10s resync and occupied-request windows without unbounded host pressure.
+// Why: the host declined seven separate times; each one cost it a real serialize attempt, so stop asking.
 const HIDDEN_OUTPUT_RESTORE_REMOTE_OUTCOME_MAX_ATTEMPTS = 7
+// Why separate and larger: these causes are decided before any frame leaves the
+// client (resync gate, occupied request lane, detached stream), so the host
+// declined nothing and charging them to its budget would banner a healthy pane —
+// the exact elapsed-time guess this change removes. They cost zero host traffic,
+// so the only job of this cap is termination. At the ~2s post-abandon re-arm
+// cadence, 30 outlasts several full 10s resync watchdog cycles.
+const HIDDEN_OUTPUT_RESTORE_LOCAL_GATE_MAX_ATTEMPTS = 30
 const TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS = 256
 const SYNCHRONIZED_OUTPUT_START_SEQUENCE = '\x1b[?2026h'
 const SYNCHRONIZED_OUTPUT_END_SEQUENCE = '\x1b[?2026l'
@@ -5850,6 +5858,7 @@ export function connectPanePty(
     let hiddenOutputRestoreForegroundDeadlineTimer: ReturnType<typeof setTimeout> | null = null
     let hiddenOutputRestoreDeferredRetryAttempts = 0
     let hiddenOutputRestoreRemoteOutcomeAttempts = 0
+    let hiddenOutputRestoreLocalGateAttempts = 0
     let hiddenOutputRestoreLegacyPtyId: string | null = null
     // Bounded remote re-arms spent instead of the loss banner (per PTY stream).
     let hiddenOutputRestoreRemoteAbandonCycles = 0
@@ -5958,7 +5967,8 @@ export function connectPanePty(
 
     type HiddenOutputSnapshotResult =
       | { kind: 'snapshot'; snapshot: PtyBufferSnapshot }
-      | { kind: 'retry-worthy' }
+      // `source` picks the budget: only 'host' answers cost the host a serialize attempt.
+      | { kind: 'retry-worthy'; source: 'host' | 'local' }
       | { kind: 'permanently-unavailable' }
       | { kind: 'unknown-legacy-host' }
       | { kind: 'unavailable' }
@@ -5989,19 +5999,24 @@ export function connectPanePty(
       try {
         const outcome = await transport.serializeBufferOutcome(opts)
         if (outcome.availability.kind === 'snapshot') {
+          // A success frame with no image is still the host's own answer to a request it received.
           return outcome.snapshot
             ? { kind: 'snapshot', snapshot: outcome.snapshot }
-            : { kind: 'retry-worthy' }
+            : { kind: 'retry-worthy', source: 'host' }
         }
         if (outcome.availability.kind === 'retry-worthy') {
-          return { kind: 'retry-worthy' }
+          return {
+            kind: 'retry-worthy',
+            source: isHostAnsweredSnapshotRetryCause(outcome.availability.cause) ? 'host' : 'local'
+          }
         }
         if (outcome.availability.kind === 'permanently-unavailable') {
           return { kind: 'permanently-unavailable' }
         }
         return { kind: 'unknown-legacy-host' }
       } catch {
-        return { kind: 'retry-worthy' }
+        // Why 'host': the reject path is the request timeout — the frame went out and the host stayed silent.
+        return { kind: 'retry-worthy', source: 'host' }
       }
     }
 
@@ -7055,6 +7070,9 @@ export function connectPanePty(
 
       // Why quiet: flood cuts abandon deliberately and repaint post-flood, so the "restore unavailable" warning would be noise the repaint wipes.
       if (!opts.quiet && !rearmedRemoteRestore) {
+        // Why: this abandon declares the bytes unrecoverable, so a repaint armed by earlier live
+        // backpressure must not outlive it — it would re-open recovery and banner a second time.
+        clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
       }
       if (hadPendingOverflow) {
@@ -7116,6 +7134,7 @@ export function connectPanePty(
       // Re-arm budget is per PTY stream, like the rest of this state.
       hiddenOutputRestoreRemoteAbandonCycles = 0
       hiddenOutputRestoreRemoteOutcomeAttempts = 0
+      hiddenOutputRestoreLocalGateAttempts = 0
       hiddenStartupRendererQueryPending = ''
       hiddenRendererStateDirty = false
       resetHiddenRendererRiskState()
@@ -7455,7 +7474,8 @@ export function connectPanePty(
               hiddenOutputRestoreLegacyPtyId === currentPtyId ||
               typeof transport.serializeBufferOutcome !== 'function'
                 ? { kind: 'unavailable' }
-                : { kind: 'retry-worthy' }
+                : // Why 'host': the only reject here is the request timeout — the frame went out and the host stayed silent.
+                  { kind: 'retry-worthy', source: 'host' }
           }
           if (disposed) {
             return
@@ -7471,11 +7491,19 @@ export function connectPanePty(
             return
           }
           if (snapshotResult.kind === 'retry-worthy') {
-            hiddenOutputRestoreRemoteOutcomeAttempts += 1
-            if (
-              hiddenOutputRestoreRemoteOutcomeAttempts >=
-              HIDDEN_OUTPUT_RESTORE_REMOTE_OUTCOME_MAX_ATTEMPTS
-            ) {
+            let budgetExhausted: boolean
+            if (snapshotResult.source === 'host') {
+              hiddenOutputRestoreRemoteOutcomeAttempts += 1
+              budgetExhausted =
+                hiddenOutputRestoreRemoteOutcomeAttempts >=
+                HIDDEN_OUTPUT_RESTORE_REMOTE_OUTCOME_MAX_ATTEMPTS
+            } else {
+              hiddenOutputRestoreLocalGateAttempts += 1
+              budgetExhausted =
+                hiddenOutputRestoreLocalGateAttempts >=
+                HIDDEN_OUTPUT_RESTORE_LOCAL_GATE_MAX_ATTEMPTS
+            }
+            if (budgetExhausted) {
               abandonHiddenOutputRestoreAndDrainPendingForeground(currentPtyId, {
                 rearmRemote: false
               })
@@ -7508,6 +7536,7 @@ export function connectPanePty(
           hiddenOutputRestoreDeferredRetryAttempts = 0
           hiddenOutputRestoreRemoteAbandonCycles = 0
           hiddenOutputRestoreRemoteOutcomeAttempts = 0
+          hiddenOutputRestoreLocalGateAttempts = 0
           restoreIterations += 1
           await applyMainBufferSnapshot(snapshot)
           if (
