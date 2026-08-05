@@ -2183,6 +2183,7 @@ export function connectPanePty(
     // as a hint, but revoke bytes until one current provider confirmation lands.
     useAppStore.getState().setPaneForegroundAgent(cacheKey, {
       agent: foreground.agent,
+      routingRevoked: true,
       shellForeground: false
     })
     visibleForegroundSamplePending = false
