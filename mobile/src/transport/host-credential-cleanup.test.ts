@@ -4,6 +4,7 @@ import {
   cancelPendingHostCredentialCleanup,
   loadPendingHostCredentialCleanup,
   loadPendingHostCredentialCleanupIds,
+  recordHostCredentialCleanupIntent,
   resetHostCredentialCleanupForTests,
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup,
@@ -65,6 +66,12 @@ describe('host credential cleanup', () => {
       await expect(loadPendingHostCredentialCleanupIds()).resolves.toEqual([])
     })
     expect(deleteCredential).toHaveBeenCalledOnce()
+  })
+
+  it('records cleanup intent without starting native deletion', async () => {
+    await recordHostCredentialCleanupIntent('host-1')
+
+    await expect(loadPendingHostCredentialCleanupIds()).resolves.toEqual(['host-1'])
   })
 
   it('persists cleanup intent before a rejected delete for manual retry', async () => {

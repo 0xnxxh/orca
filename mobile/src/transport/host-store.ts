@@ -1,11 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import {
-  HostProfileSchema,
-  StoredHostProfileSchema,
-  type HostCatalogEntry,
-  type HostProfile,
-  type StoredHostProfile
-} from './types'
+import { HostProfileSchema, StoredHostProfileSchema } from './types'
+import type { HostCatalogEntry, HostProfile, StoredHostProfile } from './types'
 import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
 import { joinHostCatalogCredentials } from './host-catalog-credential-join'
@@ -13,6 +8,7 @@ import { resetPairingKeychainForTests } from './pairing-keychain'
 import { readHostDeviceToken, writeHostDeviceToken } from './host-device-token-store'
 import {
   cancelPendingHostCredentialCleanup,
+  recordHostCredentialCleanupIntent,
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
 } from './host-credential-cleanup'
@@ -153,6 +149,17 @@ function scheduleUnpairedHostCredentialCleanup(hostId: string): Promise<void> {
   )
 }
 
+function cancelCleanupForStoredHost(hostId: string): void {
+  const cancellation = hostListMutation.then(async () => {
+    const hosts = await readStoredHostsForMutation()
+    if (hosts.some(({ id }) => id === hostId)) {
+      // Register before later removals enqueue their intent, without blocking host loads on cleanup storage.
+      void cancelPendingHostCredentialCleanup(hostId).catch(() => undefined)
+    }
+  })
+  hostListMutation = cancellation.catch(() => {})
+}
+
 async function mutateStoredHosts(
   update: (hosts: StoredHostProfile[]) => StoredHostProfile[] | Promise<StoredHostProfile[]>
 ): Promise<void> {
@@ -178,19 +185,17 @@ function toStored(host: HostProfile): StoredHostProfile {
 
 export class MobileRelayUpgradeHostRemovedError extends Error {}
 
-export async function saveHost(host: HostProfile): Promise<void> {
-  await persistHost(host, false)
-}
+export const saveHost = (host: HostProfile): Promise<void> => persistHost(host, false)
 
-export async function saveExistingHostRelayUpgrade(host: HostProfile): Promise<void> {
-  await persistHost(host, true)
-}
+export const saveExistingHostRelayUpgrade = (host: HostProfile): Promise<void> =>
+  persistHost(host, true)
 
 async function persistHost(host: HostProfile, requireExisting: boolean): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   const stored = toStored(validated)
   const duplicateHostIds = new Set<string>()
   let updatedExistingHost = false
+  let cleanupIntentRecordedBeforeMetadata = false
   let tokenCommittedBeforeMetadata = false
   try {
     await mutateStoredHosts(async (hosts) => {
@@ -214,6 +219,11 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
         next = [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
       }
       if (duplicateHostIds.size > 0) {
+        if (index < 0) {
+          // Why: process death between the early token write and metadata publication must leave cleanup discoverable.
+          await recordHostCredentialCleanupIntent(stored.id)
+          cleanupIntentRecordedBeforeMetadata = true
+        }
         // Why: never remove the only usable same-key row until its replacement credential is durable.
         await commitDeviceToken(stored.id, validated.deviceToken)
         tokenCommittedBeforeMetadata = true
@@ -221,11 +231,11 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
       return next
     })
   } catch (error) {
-    if (tokenCommittedBeforeMetadata && !updatedExistingHost) {
+    if (cleanupIntentRecordedBeforeMetadata) {
       try {
         await scheduleUnpairedHostCredentialCleanup(stored.id)
       } catch {
-        // The replacement remains recoverable through the session cache.
+        // The write-ahead cleanup intent remains available for retry.
       }
     }
     throw error
@@ -234,8 +244,8 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
     // Why: the catalog can now surface a failed token write for recovery instead of losing the host.
     await commitDeviceToken(stored.id, validated.deviceToken)
   }
-  // Why: publication supersedes stale removal intent; clearing it must not delay pairing.
-  void cancelPendingHostCredentialCleanup(stored.id).catch(() => undefined)
+  // Why: a later removal owns its cleanup intent; cancel only while this publication remains authoritative.
+  cancelCleanupForStoredHost(stored.id)
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
       v: 2,

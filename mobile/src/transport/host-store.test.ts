@@ -15,6 +15,7 @@ const secureStoreMock = vi.hoisted(() => ({
 
 const scheduleCleanupMock = vi.hoisted(() => vi.fn())
 const cancelCleanupMock = vi.hoisted(() => vi.fn())
+const recordCleanupIntentMock = vi.hoisted(() => vi.fn())
 const platformMock = vi.hoisted(() => ({ OS: 'ios' }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -32,6 +33,7 @@ vi.mock('react-native', () => ({
 
 vi.mock('./host-credential-cleanup', () => ({
   cancelPendingHostCredentialCleanup: (...args: unknown[]) => cancelCleanupMock(...args),
+  recordHostCredentialCleanupIntent: (...args: unknown[]) => recordCleanupIntentMock(...args),
   scheduleHostCredentialCleanup: (...args: unknown[]) => scheduleCleanupMock(...args),
   retryPendingHostCredentialCleanups: vi.fn()
 }))
@@ -92,6 +94,8 @@ describe('host-store list mutations', () => {
     scheduleCleanupMock.mockResolvedValue(undefined)
     cancelCleanupMock.mockReset()
     cancelCleanupMock.mockResolvedValue(undefined)
+    recordCleanupIntentMock.mockReset()
+    recordCleanupIntentMock.mockResolvedValue(undefined)
     storedHostsRaw = JSON.stringify([HOST_ONE, HOST_TWO])
     storedOverlayRaw = null
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
@@ -253,6 +257,10 @@ describe('host-store list mutations', () => {
     await expect(saveHost(replacement)).rejects.toThrow('metadata write failed')
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, HOST_TWO])
+    expect(recordCleanupIntentMock).toHaveBeenCalledWith(replacement.id)
+    expect(recordCleanupIntentMock.mock.invocationCallOrder[0]).toBeLessThan(
+      secureStoreMock.setItemAsync.mock.invocationCallOrder[0]!
+    )
     expect(scheduleCleanupMock).toHaveBeenCalledWith(replacement.id, expect.any(Function))
   })
 
@@ -440,6 +448,41 @@ describe('host-store list mutations', () => {
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
     expect(scheduleCleanupMock).toHaveBeenCalledWith(HOST_ONE.id, expect.any(Function))
+  })
+
+  it('does not cancel cleanup from a removal committed during a stalled save', async () => {
+    let releaseTokenWrite: () => void = () => {}
+    secureStoreMock.setItemAsync.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releaseTokenWrite = resolve
+      })
+    )
+
+    const save = saveHost({ ...HOST_ONE, deviceToken: 'replacement-token' })
+    await vi.waitFor(() => expect(secureStoreMock.setItemAsync).toHaveBeenCalledOnce())
+    await removeHost(HOST_ONE.id)
+    releaseTokenWrite()
+    await save
+    await loadHostCatalog()
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
+    expect(scheduleCleanupMock).toHaveBeenCalledWith(HOST_ONE.id, expect.any(Function))
+    expect(cancelCleanupMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses an early same-key token write without durable cleanup intent', async () => {
+    const replacement = {
+      ...HOST_TWO,
+      id: 'host-replacement',
+      publicKeyB64: HOST_ONE.publicKeyB64,
+      deviceToken: 'replacement-token'
+    }
+    recordCleanupIntentMock.mockRejectedValueOnce(new Error('intent storage unavailable'))
+
+    await expect(saveHost(replacement)).rejects.toThrow('intent storage unavailable')
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, HOST_TWO])
+    expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
   })
 
   it('deletes an unpaired credential when cleanup runs without a newer write', async () => {
@@ -771,6 +814,8 @@ describe('host-store pairing save after an Android encryption rejection', () => 
     scheduleCleanupMock.mockResolvedValue(undefined)
     cancelCleanupMock.mockReset()
     cancelCleanupMock.mockResolvedValue(undefined)
+    recordCleanupIntentMock.mockReset()
+    recordCleanupIntentMock.mockResolvedValue(undefined)
     storedHostsRaw = '[]'
     storedGenerationRaw = null
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {

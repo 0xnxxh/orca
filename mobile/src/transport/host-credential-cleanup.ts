@@ -155,11 +155,15 @@ function startOrJoinDelete(hostId: string, deleteCredential: DeleteHostCredentia
 
 async function recordCleanupIntent(hostId: string): Promise<boolean> {
   try {
-    await addPendingId(hostId)
+    await recordHostCredentialCleanupIntent(hostId)
     return true
   } catch {
     return false
   }
+}
+
+export async function recordHostCredentialCleanupIntent(hostId: string): Promise<void> {
+  await addPendingId(hostId)
 }
 
 async function confirmNativeCleanup(
