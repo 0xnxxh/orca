@@ -135,7 +135,6 @@ type TerminalMultiplexStream = {
   ackInFlightBytes: number
   ackWindowBytes: number
   supportsOutputPause: boolean
-  supportsOutputSpan: boolean
   supportsWriteUnavailable: boolean
   outputPaused: boolean
   supportsDesktopViewportClaims: boolean
@@ -571,10 +570,9 @@ function* iterateTerminalStreamTextPayloads(data: string): Generator<Uint8Array<
   if (!data) {
     return
   }
-  // Text-only payloads (no meta), so the span branch cannot fire; the caller
-  // discards opcodes anyway.
+  // Text-only payloads (no meta), so no run is transformed and neither mode can fire.
   for (const chunk of iterateTerminalOutputFrameChunks(data, undefined, {
-    supportsOutputSpan: false
+    transformedRuns: 'span'
   })) {
     yield chunk.bytes
   }
@@ -1057,7 +1055,10 @@ const TerminalMultiplexSubscribeFrame = TerminalHandle.extend({
       ackOutputSourceRanges: z.literal(1).optional(),
       desktopViewportClaims: z.literal(1).optional(),
       outputPause: z.literal(1).optional(),
-      outputSpan: z.literal(1).optional(),
+      // No `outputSpan` here on purpose: OutputSpan is unconditional on multiplex.
+      // Opcode 15 (v1.4.147, 2026-07-19) predates every capability a peer could declare
+      // to prove it, so absence proves nothing and would read the installed base as
+      // incapable. See docs/reference/remote-wire-compatibility.md.
       writeUnavailable: z.literal(1).optional()
     })
     .optional()
@@ -2511,7 +2512,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           ackInFlightBytes: 0,
           ackWindowBytes: TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
           supportsOutputPause: request.capabilities?.outputPause === 1,
-          supportsOutputSpan: request.capabilities?.outputSpan === 1,
           supportsWriteUnavailable: request.capabilities?.writeUnavailable === 1,
           outputPaused: false,
           supportsDesktopViewportClaims: request.capabilities?.desktopViewportClaims === 1,
@@ -2539,8 +2539,13 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
                 meta.seq
               )
             }
+            // Why always spans: multiplex peers are desktops, which track output `seq`
+            // and run the ack/source-range ledger. Downgrading a transformed run to plain
+            // Output would strip the raw high-water mark the ledger and the client's
+            // gap detector both depend on. OutputSpan has also shipped unconditionally on
+            // this path since v1.4.147, so there is no peer a downgrade would help.
             for (const chunk of iterateTerminalOutputFrameChunks(data, meta, {
-              supportsOutputSpan: stream.supportsOutputSpan
+              transformedRuns: 'span'
             })) {
               queueOrSendOutput(stream, chunk)
             }
@@ -3160,7 +3165,10 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           )
         }
         for (const chunk of iterateTerminalOutputFrameChunks(data, meta, {
-          supportsOutputSpan
+          // Mobile is this path's only client and it ignores Output `seq` entirely, so
+          // folding a transformed run into text frames loses nothing a phone can observe —
+          // whereas an undecodable OutputSpan loses the output itself (STA-3482).
+          transformedRuns: supportsOutputSpan ? 'span' : 'downgrade-to-text'
         })) {
           sendFrame(chunk.opcode ?? TerminalStreamOpcode.Output, chunk.bytes, chunk.seq)
         }

@@ -278,7 +278,6 @@ describe('createRemoteRuntimePtyTransport', () => {
         ackOutputSourceRanges: 1,
         desktopViewportClaims: 1,
         outputPause: 1,
-        outputSpan: 1,
         writeUnavailable: 1
       })
     )

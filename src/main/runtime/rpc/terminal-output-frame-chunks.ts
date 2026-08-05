@@ -51,9 +51,18 @@ export function exceedsTerminalStreamChunkBytes(data: string): boolean {
 }
 
 export type TerminalOutputFrameChunkOptions = {
-  // Required, not defaulted: the caller owns the peer's negotiated capability, and a
-  // default would silently re-introduce ungated spans at the next call site.
-  supportsOutputSpan: boolean
+  /**
+   * How to frame a transformed run, where `rawLength !== data.length`.
+   *
+   * `'downgrade-to-text'` folds the run into plain `Output` frames for a peer that cannot
+   * decode `OutputSpan`. That is lossy by construction: an `Output` frame carries only
+   * `(data, seq)`, so the receiver can only derive the run start as `seq - data.length`.
+   * It is therefore legal ONLY for a peer that ignores `seq` outright — today just the
+   * mobile `terminal.subscribe` client. A seq-tracking peer must always get `'span'`.
+   *
+   * Required, not defaulted: the choice is a wire-compatibility decision per call site.
+   */
+  transformedRuns: 'span' | 'downgrade-to-text'
 }
 
 export function* iterateTerminalOutputFrameChunks(
@@ -62,7 +71,7 @@ export function* iterateTerminalOutputFrameChunks(
   options: TerminalOutputFrameChunkOptions
 ): Generator<TerminalOutputFrameChunk> {
   const rawLength = meta?.rawLength ?? data.length
-  if (options.supportsOutputSpan && (meta?.transformed || rawLength !== data.length)) {
+  if (options.transformedRuns === 'span' && (meta?.transformed || rawLength !== data.length)) {
     yield {
       opcode: TerminalStreamOpcode.OutputSpan,
       bytes: encodeTerminalStreamJson({ data, rawLength, transformed: true }),
@@ -82,9 +91,8 @@ export function* iterateTerminalOutputFrameChunks(
     return
   }
   const canPreserveChunkSeq = typeof meta?.seq === 'number' && rawLength === data.length
-  // This is the downgrade path for a peer without `outputSpan`: it carries the raw
-  // high-water mark on the final frame only, because a transformed run's seq cannot
-  // map back to UTF-16 chunk offsets. Matches what hosts sent before OutputSpan existed.
+  // Only reachable under `'downgrade-to-text'`: a transformed run's seq is a raw high-water
+  // mark that cannot map back to UTF-16 chunk offsets, so no intermediate frame may claim one.
   const shouldDelayFinalSeq = !canPreserveChunkSeq && typeof meta?.seq === 'number'
   const startSeq = canPreserveChunkSeq ? meta.seq! - rawLength : undefined
   let chunkStart = 0

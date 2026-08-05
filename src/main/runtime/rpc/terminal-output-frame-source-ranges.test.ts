@@ -55,7 +55,7 @@ describe('terminal output frame source ranges', () => {
             })
           ]
         },
-        { supportsOutputSpan: true }
+        { transformedRuns: 'span' }
       )
     )
 
@@ -96,7 +96,7 @@ describe('terminal output frame source ranges', () => {
         transformed: true,
         sourceRanges: [sourceRange]
       },
-      { supportsOutputSpan: true }
+      { transformedRuns: 'span' }
     )
 
     expect(frame?.sourceRanges).toEqual([sourceRange])

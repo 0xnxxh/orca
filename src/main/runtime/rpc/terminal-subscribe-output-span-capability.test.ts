@@ -5,10 +5,9 @@ import type { RuntimeTerminalWait } from '../../../shared/runtime-types'
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
-  decodeTerminalStreamText,
-  encodeTerminalStreamFrame,
-  encodeTerminalStreamJson
+  decodeTerminalStreamText
 } from '../../../shared/terminal-stream-protocol'
+import { TERMINAL_STREAM_CHUNK_BYTES } from '../../../shared/terminal-multiplex-flow-control'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import type { RpcRequest } from './core'
 import { RpcDispatcher } from './dispatcher'
@@ -28,9 +27,18 @@ type LegacyStreamHarness = {
   cleanup: () => void
 }
 
-// Why parsed from mobile's source instead of hard-coded: mobile vendors its own
-// copy of the opcode table (separate pnpm workspace, so it cannot be imported).
-// Reading the real file is what makes this test fail when the two drift.
+function sharedOpcodes(): Set<number> {
+  return new Set(
+    Object.values(TerminalStreamOpcode).filter(
+      (value): value is number => typeof value === 'number'
+    )
+  )
+}
+
+// Why parsed from mobile's source instead of hard-coded: mobile is a separate pnpm
+// workspace, so its transport module cannot be imported from here. Reading the real
+// file is what makes this test fail when the two tables drift. A mobile build that
+// re-exports the shared table cannot drift at all, so it inherits every opcode.
 function mobileDecodableOpcodes(): Set<number> {
   const source = readFileSync(
     join(process.cwd(), 'mobile/src/transport/terminal-stream-protocol.ts'),
@@ -38,7 +46,10 @@ function mobileDecodableOpcodes(): Set<number> {
   )
   const body = /enum TerminalStreamOpcode \{([\s\S]*?)\}/.exec(source)?.[1]
   if (!body) {
-    throw new Error('mobile vendored TerminalStreamOpcode enum not found')
+    if (/TerminalStreamOpcode[\s\S]*?['"][^'"]*shared\/terminal-stream-protocol['"]/.test(source)) {
+      return sharedOpcodes()
+    }
+    throw new Error('mobile TerminalStreamOpcode is neither a vendored enum nor a shared re-export')
   }
   const opcodes = new Set<number>()
   for (const match of body.matchAll(/^\s*\w+\s*=\s*(\d+)/gm)) {
@@ -190,142 +201,59 @@ describe('terminal.subscribe OutputSpan capability gate', () => {
     capable.cleanup()
     await capable.dispatchPromise
   })
-})
 
-async function multiplexStream(capabilities: Record<string, 1>): Promise<{
-  binaryFrames: Uint8Array<ArrayBufferLike>[]
-  emit: (data: string, meta?: TerminalDataMeta) => void
-  cleanup: () => void
-  dispatchPromise: Promise<unknown>
-}> {
-  const binaryFrames: Uint8Array<ArrayBufferLike>[] = []
-  const cleanups = new Map<string, () => void>()
-  const handlers = new Map<
-    number,
-    (frame: NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>) => void
-  >()
-  let onData: ((data: string, meta?: TerminalDataMeta) => void) | undefined
-  const runtime = {
-    getRuntimeId: () => 'test-runtime',
-    // The multiplex subscribe path resolves handles via resolveLiveLeafForHandle.
-    resolveLiveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-mux-span' }),
-    resolveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-mux-span' }),
-    requestRendererTerminalTabMount: vi.fn().mockReturnValue(true),
-    updateRemoteDesktopViewer: vi.fn().mockResolvedValue(true),
-    unregisterRemoteDesktopViewers: vi.fn().mockResolvedValue(true),
-    isPtyResizeDrivenRemotely: vi.fn().mockReturnValue(false),
-    getRemoteDesktopFitHold: vi.fn().mockReturnValue({ mode: 'desktop-fit', cols: 120, rows: 40 }),
-    isRemoteDesktopViewerOwner: vi.fn().mockReturnValue(false),
-    readTerminal: vi.fn().mockResolvedValue({ tail: [], truncated: false }),
-    serializeAuthoritativeTerminalBuffer: vi
-      .fn()
-      .mockResolvedValue({ data: 'snap', cols: 120, rows: 40 }),
-    serializeTerminalBuffer: vi.fn().mockResolvedValue({ data: 'snap', cols: 120, rows: 40 }),
-    getTerminalSize: vi.fn().mockReturnValue({ cols: 120, rows: 40 }),
-    getMobileDisplayMode: vi.fn().mockReturnValue('auto'),
-    getLayout: vi.fn().mockReturnValue({ seq: 1 }),
-    getDriver: vi.fn().mockReturnValue({ kind: 'idle' }),
-    getTerminalFitOverride: vi.fn().mockReturnValue(null),
-    getPtyOutputSequence: vi.fn(() => 0),
-    subscribeToTerminalData: vi.fn((_ptyId: string, listener: typeof onData) => {
-      onData = listener
-      return vi.fn()
-    }),
-    registerRemoteTerminalViewSubscriber: vi.fn(() => vi.fn()),
-    unregisterRemoteDesktopViewer: vi.fn(),
-    subscribeToTerminalResize: vi.fn().mockReturnValue(vi.fn()),
-    subscribeToFitOverrideChanges: vi.fn().mockReturnValue(vi.fn()),
-    subscribeToDriverChanges: vi.fn().mockReturnValue(vi.fn()),
-    updateDesktopViewport: vi.fn().mockResolvedValue(true),
-    registerSubscriptionCleanup: vi.fn((id: string, cleanup: () => void) => {
-      cleanups.set(id, cleanup)
-    }),
-    cleanupSubscription: vi.fn((id: string) => cleanups.get(id)?.()),
-    waitForTerminal: vi.fn(() => new Promise<RuntimeTerminalWait>(() => {}))
-  } as unknown as OrcaRuntimeService
-  const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
-  const request: RpcRequest = {
-    id: 'req-mux-span',
-    authToken: 'tok',
-    method: 'terminal.multiplex',
-    params: {}
-  }
-  const dispatchPromise = dispatcher.dispatchStreaming(request, vi.fn(), {
-    connectionId: 'conn-mux-span',
-    sendBinary: (bytes) => {
-      binaryFrames.push(bytes)
-    },
-    registerBinaryStreamHandler: (streamId, handler) => {
-      handlers.set(streamId, handler)
-      return () => handlers.delete(streamId)
-    }
-  })
-  await vi.waitFor(() => expect(handlers.has(0)).toBe(true))
-  handlers.get(0)!(
-    decodeTerminalStreamFrame(
-      encodeTerminalStreamFrame({
-        opcode: TerminalStreamOpcode.Subscribe,
-        streamId: 0,
-        seq: 1,
-        payload: encodeTerminalStreamJson({
-          streamId: 7,
-          terminal: 'terminal-span',
-          client: { id: 'desktop-mux', type: 'desktop' },
-          capabilities,
-          viewport: { cols: 120, rows: 40 }
-        })
-      })
-    )!
-  )
-  await vi.waitFor(() => expect(onData).toBeTypeOf('function'))
-  binaryFrames.splice(0)
-  return {
-    binaryFrames,
-    emit: (data, meta) => onData?.(data, meta),
-    cleanup: () => runtime.cleanupSubscription('terminal-multiplex:conn-mux-span'),
-    dispatchPromise
-  }
-}
-
-describe('terminal.multiplex OutputSpan capability gate', () => {
-  it('downgrades to Output for a desktop build that predates the capability', async () => {
-    const old = await multiplexStream({ ackOutput: 1, desktopViewportClaims: 1 })
-
-    old.emit('visible output', TRANSFORMED_META)
-    await vi.waitFor(() => expect(outputTextIn(old.binaryFrames)).toBe('visible output'))
-
-    const opcodes = old.binaryFrames.map((bytes) => decodeTerminalStreamFrame(bytes)!.opcode)
-    expect(opcodes).not.toContain(TerminalStreamOpcode.OutputSpan)
-
-    old.cleanup()
-    await old.dispatchPromise
-  })
-
-  it('keeps sending OutputSpan to a desktop build that negotiates it', async () => {
-    const current = await multiplexStream({
-      ackOutput: 1,
-      desktopViewportClaims: 1,
-      outputSpan: 1
-    })
-
-    current.emit('visible output', TRANSFORMED_META)
-    await vi.waitFor(() =>
-      expect(
-        current.binaryFrames.some(
-          (bytes) => decodeTerminalStreamFrame(bytes)?.opcode === TerminalStreamOpcode.OutputSpan
-        )
-      ).toBe(true)
+  // The downgrade's multi-frame arm. Every fixture in this suite used to be a
+  // 14-character string, so the chunk loop never ran and a deleted yield here —
+  // 48 KiB of silently dropped user output — passed every test in the repo.
+  it('delivers a transformed emission larger than one chunk, whole and in order', async () => {
+    const legacy = await subscribeLegacyBinaryStream(
+      { id: 'mobile-large', type: 'mobile' },
+      { terminalBinaryStream: 1 }
     )
 
-    current.cleanup()
-    await current.dispatchPromise
+    const data = `${'a'.repeat(TERMINAL_STREAM_CHUNK_BYTES)}MIDDLE${'b'.repeat(TERMINAL_STREAM_CHUNK_BYTES)}TAIL`
+    legacy.emit(data, { seq: data.length * 3, rawLength: data.length * 3, transformed: true })
+    await vi.waitFor(() => expect(outputTextIn(legacy.binaryFrames)).toHaveLength(data.length))
+
+    // Anti-vacuous: prove the multi-chunk arm ran rather than the single-frame arm.
+    const outputs = legacy.binaryFrames
+      .map((bytes) => decodeTerminalStreamFrame(bytes))
+      .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+    expect(outputs.length).toBeGreaterThan(2)
+    for (const frame of outputs) {
+      expect(frame!.payload.byteLength).toBeLessThanOrEqual(TERMINAL_STREAM_CHUNK_BYTES)
+    }
+    expect(outputTextIn(legacy.binaryFrames)).toBe(data)
+    // Only the last frame may carry the raw high-water mark; the others cannot map it.
+    expect(outputs.at(-1)!.seq).toBe(data.length * 3)
+
+    legacy.cleanup()
+    await legacy.dispatchPromise
+  })
+
+  it('keeps delivering after an absorbed zero-byte transformed emission', async () => {
+    const legacy = await subscribeLegacyBinaryStream(
+      { id: 'mobile-absorbed', type: 'mobile' },
+      { terminalBinaryStream: 1 }
+    )
+
+    // The absorbed-query shape: raw units consumed, nothing to display.
+    legacy.emit('', { seq: 9, rawLength: 9, transformed: true })
+    legacy.emit('after', { seq: 14, rawLength: 5 })
+    await vi.waitFor(() => expect(outputTextIn(legacy.binaryFrames)).toBe('after'))
+
+    const opcodes = legacy.binaryFrames.map((bytes) => decodeTerminalStreamFrame(bytes)!.opcode)
+    expect(opcodes).not.toContain(TerminalStreamOpcode.OutputSpan)
+
+    legacy.cleanup()
+    await legacy.dispatchPromise
   })
 
   it('forces a mobile decision for every opcode in the shared table', () => {
-    // The drift guard. mobile/ is a separate workspace with a hand-copied enum, so
-    // adding an opcode to the shared table changes nothing on the phone and nothing
-    // fails. Each opcode must be classified here on purpose; a new one is neither
-    // "decodable" nor "gated" until someone says which, and this test says so.
+    // The drift guard. While mobile hand-copies the enum, adding an opcode to the
+    // shared table changes nothing on the phone and nothing fails. Each opcode must be
+    // classified on purpose; a new one is neither "decodable" nor "gated" until someone
+    // says which, and this test is where they say it.
     const decodableByMobile = mobileDecodableOpcodes()
     // Opcodes a host may never send to a mobile stream unless it negotiated them,
     // or that only ever travel client -> host.
@@ -347,16 +275,5 @@ describe('terminal.multiplex OutputSpan capability gate', () => {
       .filter((opcode) => !decodableByMobile.has(opcode))
       .filter((opcode) => !notSentUnnegotiatedToMobile.has(opcode))
     expect(unclassified).toEqual([])
-  })
-
-  it('has the shipping desktop multiplexer declare the capability', () => {
-    // Guards the other half of the gate: if the renderer stops advertising
-    // outputSpan, the host silently downgrades every desktop stream.
-    const source = readFileSync(
-      join(process.cwd(), 'src/renderer/src/runtime/remote-runtime-terminal-multiplexer.ts'),
-      'utf8'
-    )
-    const capabilities = /capabilities: \{([\s\S]*?)\}/.exec(source)?.[1]
-    expect(capabilities).toContain('outputSpan: 1')
   })
 })
