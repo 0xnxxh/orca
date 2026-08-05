@@ -53,6 +53,13 @@ async function seedPaletteFilterFixture(page: Page): Promise<PaletteFilterFixtur
 
       const sshTargetLabels = new Map(state.sshTargetLabels)
       sshTargetLabels.set(remoteConnectionId, remoteHost)
+      // Filter options use project.displayName when a Project entity exists;
+      // renaming only the repo leaves the option labeled with the path basename.
+      const projects = state.projects.map((project) =>
+        project.sourceRepoIds.includes(sourceRepo.id)
+          ? { ...project, displayName: localProject }
+          : project
+      )
       store.setState({
         repos: [
           ...state.repos.map((repo) =>
@@ -60,6 +67,7 @@ async function seedPaletteFilterFixture(page: Page): Promise<PaletteFilterFixtur
           ),
           remoteRepo
         ],
+        projects,
         sshTargetLabels,
         worktreesByRepo: {
           ...state.worktreesByRepo,
