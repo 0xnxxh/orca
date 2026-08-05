@@ -94,6 +94,9 @@ export function useMobileNativeChatSession(args: {
   const mergerRef = useRef(createNativeChatMerger())
   const limitRef = useRef(INITIAL_LIMIT)
   const streamGenerationRef = useRef(0)
+  // Whether this subscription already delivered its base snapshot; later
+  // snapshots on the same subscription are reconnect replays, not fresh bases.
+  const snapshotSeenRef = useRef(false)
 
   // Replace the base list (read results are an ordered tail). Resets the merger
   // cache so the index is rebuilt once over the new base.
@@ -112,6 +115,7 @@ export function useMobileNativeChatSession(args: {
     let cancelled = false
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
+    snapshotSeenRef.current = false
     setLoadingEarlier(false)
     setLoadEarlierError(null)
     setList([])
@@ -139,22 +143,11 @@ export function useMobileNativeChatSession(args: {
           return
         }
         const frame = raw as MobileNativeChatStreamFrame
-        if (frame.type === 'replacement' || frame.type === 'snapshot') {
-          // Why: replacement and reconnect snapshots are authoritative windows;
-          // stale page limits/results must not constrain the fresh generation.
-          streamGenerationRef.current += 1
-          limitRef.current = INITIAL_LIMIT
-          loadingEarlierRef.current = false
-          setLoadingEarlier(false)
-          // The fresh window supersedes the failed page, so stop blocking paging.
-          setLoadEarlierError(null)
-        }
-        const replaceSnapshot = frame.type === 'snapshot'
         const applied = applyMobileNativeChatStreamFrame({
           merger: mergerRef.current,
           frame,
           limit: limitRef.current,
-          replaceSnapshot
+          replaceSnapshot: !snapshotSeenRef.current
         })
         if (applied.kind === 'ignored') {
           return
@@ -164,11 +157,30 @@ export function useMobileNativeChatSession(args: {
           setError(applied.error)
           return
         }
+        if (frame.type === 'snapshot') {
+          snapshotSeenRef.current = true
+        }
+        if (applied.windowReplaced || frame.type === 'snapshot') {
+          // Why: any authoritative window (and any replay merge) invalidates an
+          // in-flight older-page request; stale results must not land on it.
+          streamGenerationRef.current += 1
+          loadingEarlierRef.current = false
+          setLoadingEarlier(false)
+          // The fresh window supersedes the failed page, so stop blocking paging.
+          setLoadEarlierError(null)
+        }
+        if (applied.windowReplaced) {
+          // Only a genuinely fresh window resets the grown read window — an
+          // overlapping reconnect replay keeps the paged-in history and limit.
+          limitRef.current = INITIAL_LIMIT
+          beforeOffsetRef.current = applied.beforeOffset ?? null
+          setHasMore(applied.hasMore ?? applied.messages.length >= INITIAL_LIMIT)
+        }
         setMessages(applied.messages)
-        if (applied.hasMore != null) {
+        if (!applied.windowReplaced && applied.hasMore != null) {
           setHasMore(applied.hasMore)
         }
-        if (applied.beforeOffset != null) {
+        if (!applied.windowReplaced && applied.beforeOffset != null) {
           beforeOffsetRef.current = applied.beforeOffset
         }
         if (applied.cursorInvalidated) {
