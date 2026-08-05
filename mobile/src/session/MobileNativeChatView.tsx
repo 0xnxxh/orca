@@ -269,8 +269,8 @@ export function MobileNativeChatView({
   // `lockReason` stays latched across reason changes, so stale status needs its own hold.
   const statusStale = useDelayedActivation(rawLockReason === 'disconnected')
   const canStopAgent = canStopNativeChatAgent({
-    // Match desktop: an unreachable target disables Stop immediately.
-    targetWritable: rawLockReason !== 'disconnected',
+    // Match the controller's write gate: Stop also needs an acknowledged input lease.
+    targetWritable: rawLockReason === null,
     stopCommandAvailable: onStop !== undefined
   })
 

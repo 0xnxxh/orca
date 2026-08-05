@@ -245,13 +245,13 @@ describe('MobileNativeChatView', () => {
     expect(stop.props.onPress).toBe(onStop)
   })
 
-  it('keeps the row live when the agent is merely waiting on a lease', async () => {
+  it('keeps the row live but blocks Stop while waiting on a lease', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'waiting' })
     await settleLockDebounce()
 
     expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
   })
 
   // The composer lock latches on the first non-null reason and never unlatches
@@ -284,10 +284,10 @@ describe('MobileNativeChatView', () => {
 
     // A surviving timer would mute a row whose transport is already back.
     expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
   })
 
-  it('restores a live Stop as soon as the transport reconnects', async () => {
+  it('clears stale feedback on reconnect and restores Stop once the lease is ready', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
     await settleLockDebounce()
@@ -297,7 +297,12 @@ describe('MobileNativeChatView', () => {
     // handles on disconnect, so it has to be re-acked before the lock clears.
     await relock('waiting')
 
-    // Unlock is immediate (no debounce on the way out), so Stop comes straight back.
+    // The stale label clears immediately, but the action stays blocked until its write gate opens.
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
+
+    await relock(null)
+
     expect(workingIndicator().props.stale).toBe(false)
     expect(stopButton().props.disabled).toBe(false)
   })
