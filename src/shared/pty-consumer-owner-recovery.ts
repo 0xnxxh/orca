@@ -19,6 +19,23 @@ function throwRecoveryError(message: string, code: number): never {
   throw Object.assign(new Error(message), { code })
 }
 
+// Why identity excludes ownerGeneration: the generation fences the data path, but a reconnecting
+// owner legitimately arrives holding whatever generation it last persisted. Matching on the logical
+// triple is what lets one claim survive reconnects.
+export function matchesPtyConsumerOwnerClaim(
+  hello: PtyConsumerSessionHello,
+  authentication: PtyConsumerAuthentication,
+  current: IncumbentOwner
+): boolean {
+  const resume = hello.resume
+  return (
+    resume !== undefined &&
+    resume.ownerLease === current.lease &&
+    hello.clientInstanceId === current.clientInstanceId &&
+    authentication.principal === current.principal
+  )
+}
+
 export function assertPtyConsumerOwnerRecovery(
   hello: PtyConsumerSessionHello,
   authentication: PtyConsumerAuthentication,
@@ -28,11 +45,7 @@ export function assertPtyConsumerOwnerRecovery(
   if (!resume) {
     throw new Error('Owner recovery proof is required')
   }
-  if (
-    resume.ownerLease !== current.lease ||
-    hello.clientInstanceId !== current.clientInstanceId ||
-    authentication.principal !== current.principal
-  ) {
+  if (!matchesPtyConsumerOwnerClaim(hello, authentication, current)) {
     throwRecoveryError(
       'Owner recovery lease is stale or belongs to another principal',
       PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR

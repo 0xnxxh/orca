@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PTY_CONSUMER_OWNER_GRACE_MS } from '../shared/pty-consumer-session'
+import {
+  PTY_CONSUMER_OWNER_GRACE_MS,
+  PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
+} from '../shared/pty-consumer-session'
 import { RelayDispatcher, type RelayClientSessionIdentity } from './dispatcher'
 import { encodeJsonRpcFrame, MessageType } from './protocol'
 import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
@@ -29,10 +32,18 @@ function openFrame(id: number, overrides: Record<string, unknown> = {}): Buffer 
   )
 }
 
-function responseResult(buffer: Buffer): Record<string, unknown> {
+function responsePayload(buffer: Buffer): Record<string, unknown> {
   expect(buffer[0]).toBe(MessageType.Regular)
   const length = buffer.readUInt32BE(9)
-  return JSON.parse(buffer.subarray(13, 13 + length).toString('utf8')).result
+  return JSON.parse(buffer.subarray(13, 13 + length).toString('utf8'))
+}
+
+function responseResult(buffer: Buffer): Record<string, unknown> {
+  return responsePayload(buffer).result as Record<string, unknown>
+}
+
+function responseError(buffer: Buffer): Record<string, unknown> {
+  return responsePayload(buffer).error as Record<string, unknown>
 }
 
 async function flushRequests(): Promise<void> {
@@ -80,9 +91,14 @@ describe('SshPtyConsumerSessionAdapter', () => {
 
     expect(responseResult(firstWrites[0])).toMatchObject({
       role: 'session-owner',
-      ownerGeneration: 1
+      ownerGeneration: 1,
+      resumed: false
     })
-    expect(responseResult(secondWrites[0])).toMatchObject({ role: 'subscriber' })
+    // Why a coded refusal reaches the wire: the dispatcher transports code and message only, so the
+    // competitor has to be able to tell "still settling" from "held" without parsing prose.
+    expect(responseError(secondWrites[0])).toMatchObject({
+      code: PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
+    })
     firstSettlements[0]({ ok: true })
   })
 

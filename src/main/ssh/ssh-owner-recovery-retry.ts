@@ -1,16 +1,46 @@
 import {
+  PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR,
+  PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
 } from '../../shared/pty-consumer-session'
 
 // Why: bound polling when publication is settling or a superseded attempt is closing its transport.
 export const SSH_OWNER_RECOVERY_WAIT_MS = 3_000
+// Why separate and longer than the relay's grace floor: a disconnected incumbent releases admission
+// only after that floor elapses, so this budget must outlast it without borrowing the pending budget.
+export const SSH_OWNER_HELD_DISCONNECTED_WAIT_MS = 2_000
+
+export type SshOwnerRecoveryRetryReason = 'publication-pending' | 'disconnected-holder'
+
+// Why exported: an attached holder is a decision, not a transport fault, so callers must be able to
+// report it as blocked instead of feeding it to reconnect classification as an unexplained failure.
+export function isSshOwnerAdmissionBlocked(error: unknown): boolean {
+  return (
+    (error as { code?: unknown } | null | undefined)?.code ===
+    PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR
+  )
+}
+
+function retryReasonFor(error: unknown): SshOwnerRecoveryRetryReason | null {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  if (
+    code === PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR ||
+    code === PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
+  ) {
+    return 'publication-pending'
+  }
+  // Why an attached holder is deliberately absent: it is blocked, not transient — retrying cannot
+  // change the answer while another connection is live on the claim.
+  return code === PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR ? 'disconnected-holder' : null
+}
 const SSH_OWNER_RECOVERY_INITIAL_DELAY_MS = 25
 const SSH_OWNER_RECOVERY_MAX_DELAY_MS = 250
 
 type SshOwnerRecoveryRetryGate = {
   isCurrent: () => boolean
   onClosed: (listener: () => void) => () => void
+  onRetryExhausted?: (reason: SshOwnerRecoveryRetryReason) => void
 }
 
 function waitForRetry(delayMs: number, gate: SshOwnerRecoveryRetryGate): Promise<void> {
@@ -41,22 +71,22 @@ export async function retrySshOwnerRecoveryWhileBlocked<T>(
   gate: SshOwnerRecoveryRetryGate,
   waitMs: number = SSH_OWNER_RECOVERY_WAIT_MS
 ): Promise<T> {
-  const deadline = Date.now() + waitMs
+  const deadlineByReason: Record<SshOwnerRecoveryRetryReason, number> = {
+    'publication-pending': Date.now() + waitMs,
+    'disconnected-holder': Date.now() + SSH_OWNER_HELD_DISCONNECTED_WAIT_MS
+  }
   let delayMs = SSH_OWNER_RECOVERY_INITIAL_DELAY_MS
   while (true) {
     try {
       return await attempt()
     } catch (error) {
-      const code = (error as { code?: unknown } | null | undefined)?.code
-      if (
-        (code !== PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR &&
-          code !== PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR) ||
-        !gate.isCurrent()
-      ) {
+      const reason = retryReasonFor(error)
+      if (reason === null || !gate.isCurrent()) {
         throw error
       }
-      const remainingMs = deadline - Date.now()
+      const remainingMs = deadlineByReason[reason] - Date.now()
       if (remainingMs <= 0) {
+        gate.onRetryExhausted?.(reason)
         throw error
       }
       await waitForRetry(Math.min(delayMs, remainingMs), gate)
