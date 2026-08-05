@@ -4279,7 +4279,9 @@
           "83a820fa71": "筛选项目...",
           "5a273fbfce": "添加项目...",
           "4815c70605": "没有匹配的项目",
-          "bbbc6e8e3b": "没有匹配的未选择项目"
+          "bbbc6e8e3b": "没有匹配的未选择项目",
+          "allProjects": "所有项目",
+          "selectedProjectsCount": "{{value0}} 个项目"
         },
         "SidebarSettingsHelpMenu": {
           "ad3d3ed7f1": "重启 Orca",
@@ -4357,6 +4359,7 @@
           "680043342f": "紧凑",
           "c7591b6014": "仓库",
           "hosts": "主机",
+          "showSection": "显示",
           "allHostsDetail": "显示所有主机",
           "configuredSshHost": "已配置 SSH",
           "projectSshHost": "项目 SSH",
