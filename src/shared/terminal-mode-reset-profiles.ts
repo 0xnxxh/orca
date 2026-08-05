@@ -3,8 +3,6 @@
 // into an xterm) and the daemon (seeding a cold-restored session) must clear
 // the same mode bits, and duplicating the literals drifted them apart (#12101).
 
-import { scanReplayedMouseModeRearm } from './terminal-mouse-mode-sequences'
-
 // Why: SerializeAddon replays mode bits assuming reattach to a live TUI, but Orca restores against a fresh shell with none, so stale bits (e.g. focus reporting rings the bell on click) must be reset.
 export const RESET_TERMINAL_CURSOR_STYLE = '\x1b[0 q'
 export const RESET_KITTY_KEYBOARD_PROTOCOL = '\x1b[<99u\x1b[=0u'
@@ -20,18 +18,10 @@ export const POST_REPLAY_LIVE_SNAPSHOT_RESET = `${RESET_TERMINAL_CURSOR_STYLE}\x
 // Why: daemon reattach hits a live session, so skip the full reset; still clear cursor/focus/mouse/Kitty bits harmful to a plain shell after a bad TUI exit — safe for live TUIs since the post-reattach SIGWINCH repaints the cursor.
 export const POST_REPLAY_REATTACH_RESET = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l`
 
-// Why: the reattach reset must not outlive the daemon's authoritative mode mirror — an
-// alternate-screen TUI's mouse protocol/encoding and RESET_MOUSE_REPORTING would disarm it one
-// write later, re-enabling xterm's row-wise selection over the TUI (#8291). Normal-buffer
-// snapshots intentionally stay disarmed so stale modes cannot reach a shell.
-// A TUI that died leaving modes armed is still cleaned up by the confirmed-shell-foreground
-// reset in pty-connection, so this only preserves modes the replayed payload really left on.
-export function buildReattachMouseModeRearm(
-  payload: string,
-  options: { isAlternateScreen?: boolean } = {}
-): string {
-  return scanReplayedMouseModeRearm(payload, options)
-}
+// Why: an alt-screen reattach replays the daemon's rehydrateSequences, which re-arm the live TUI's
+// mouse modes; wiping them one write later hands drags back to xterm's row selection (#8291).
+// Normal-buffer panes keep RESET_MOUSE_REPORTING so a dead TUI's stale modes never reach a shell (#7893).
+export const POST_REPLAY_REATTACH_RESET_KEEP_MOUSE = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h\x1b[?1004l`
 
 // Why: a live agent owns focus reporting; resetting ?1004h suppresses the focus-in it needs to re-anchor its cursor (IME).
 export const POST_REPLAY_LIVE_AGENT_REATTACH_RESET = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h`

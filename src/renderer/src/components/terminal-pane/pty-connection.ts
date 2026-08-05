@@ -117,11 +117,11 @@ import {
 } from '@/lib/pane-manager/pane-pty-resize-hold'
 import {
   buildPostReplayLiveAgentReattachReset,
-  buildReattachMouseModeRearm,
   POST_REPLAY_LIVE_AGENT_SNAPSHOT_RESET,
   POST_REPLAY_LIVE_SNAPSHOT_RESET,
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
+  POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -5509,13 +5509,11 @@ export function connectPanePty(
       if (shouldPreserveAgentReattachModes()) {
         return buildPostReplayLiveAgentReattachReset(payload)
       }
-      // Why the re-arm: a third-party alternate-screen TUI Orca does not recognise as an
-      // agent is still live, and the daemon snapshot just rehydrated its mouse modes; wiping
-      // them re-enables xterm's row-wise selection over the TUI (#8291). Normal-buffer
-      // snapshots keep the reset so a dead TUI's stale modes cannot reach a shell.
-      return `${POST_REPLAY_REATTACH_RESET}${buildReattachMouseModeRearm(payload, {
-        isAlternateScreen
-      })}`
+      // Why: an alt-screen pane is a live TUI Orca just does not recognise as an agent, and the
+      // replay already re-armed its mouse modes — keep them instead of wiping them (#8291).
+      return (isAlternateScreen ?? kittyKeyboardModes.isAlternateScreen)
+        ? POST_REPLAY_REATTACH_RESET_KEEP_MOUSE
+        : POST_REPLAY_REATTACH_RESET
     }
 
     const consumeRestoredViewportBlankingMarker = (): boolean => {

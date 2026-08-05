@@ -1,24 +1,7 @@
 /**
- * Regression proof for #8291 — a live TUI loses mouse tracking after a
- * daemon reattach (the "drag selection appeared after an in-app update
- * restart" report).
- *
- * Shape of the bug: on reattach the renderer replayed the daemon snapshot
- * (which rehydrates the session's DECSET mouse modes) and then immediately
- * wrote POST_REPLAY_REATTACH_RESET, whose RESET_MOUSE_REPORTING wiped the
- * modes the snapshot had just restored. xterm then believed the still-running
- * TUI had no mouse tracking, so it re-enabled its own row-wise drag selection
- * over the TUI and stopped forwarding wheel gestures to it.
- *
- * What this spec drives, all through the rendered surface:
- *   1. Start a real alt-screen TUI (the shared visible-tui fixture) that arms
- *      ?1003h + ?1006h, in a daemon-backed pane.
- *   2. Quit Orca and relaunch against the same userDataDir — the daemon and
- *      the TUI process survive, so the second launch warm-reattaches.
- *   3. After the reattach replay has been parsed, drag the mouse across three
- *      TUI rows and scroll the wheel over the pane, then assert on what the
- *      terminal renders: no row selection over the TUI, and the TUI's own
- *      `offset=` row advancing because the wheel reached it as mouse reports.
+ * Regression proof for #8291: a real alt-screen TUI survives an Orca quit/relaunch, and after the
+ * warm reattach a drag over it must still go to the TUI as mouse reports, not to xterm's row
+ * selection. Drives the rendered surface only — no mocks, no direct mode assertions.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -42,21 +25,14 @@ const VISIBLE_TUI_FIXTURE_PATH = path.join(
   'tests/e2e/fixtures/visible-tui-scroll-fixture.cjs'
 )
 
-// One SGR wheel-down report, as the fixture's stdin parser expects it. Used as
-// a settle beacon: the TUI can only repaint `offset=1` from bytes produced
-// after the relaunch, so seeing it proves the reattach replay already landed.
+// One SGR wheel-down report, as the fixture's stdin parser expects it. Doubles as a settle beacon:
+// only post-relaunch bytes can repaint `offset=1`, so seeing it proves the reattach replay landed.
 const WHEEL_DOWN_REPORT = '\x1b[<65;10;10M'
 
-/**
- * Why not the shared seeded repo: this spec spans a quit/relaunch cycle, and
- * globalTeardown of any concurrently running e2e process deletes whatever repo
- * the machine-global pointer file names — which can be this test's repo, mid
- * restart. A private repo that no pointer file references cannot be collected
- * out from under the second launch.
- */
+// Why not the shared seeded repo: a concurrent e2e globalTeardown deletes whatever repo the
+// machine-global pointer file names, which could be this one mid-restart.
 function createIsolatedProofRepo(): string {
-  // Why realpathSync: macOS os.tmpdir() symlinks through /private, and Orca
-  // canonicalizes repo.path on add, so the store would not match otherwise.
+  // Why realpathSync: macOS tmpdir symlinks through /private and Orca canonicalizes repo.path.
   const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'orca-mouse-reattach-repo-')))
   const git = (...args: string[]): void => {
     execFileSync('git', args, { cwd: repoDir, stdio: 'pipe' })
@@ -79,8 +55,8 @@ type TerminalSurface = {
   screen: { left: number; top: number; width: number; height: number; cellHeight: number }
 }
 
-// Why one evaluate for everything: it flushes xterm's write queue first, so a
-// caller can never sample the mode/selection state mid-replay.
+// Why one evaluate for everything: it flushes xterm's write queue first, so a caller can never
+// sample mode/selection state mid-replay.
 async function readTerminalSurface(page: Page): Promise<TerminalSurface | null> {
   return page.evaluate(async () => {
     const state = window.__store?.getState()
@@ -98,8 +74,8 @@ async function readTerminalSurface(page: Page): Promise<TerminalSurface | null> 
     if (!pane || !element || !screenElement) {
       return null
     }
-    // Why a zero-length write: xterm parses writes off a FIFO queue, so this
-    // callback fires only after every earlier replay/reset write was parsed.
+    // Why a zero-length write: xterm's write queue is FIFO, so this callback fires only after
+    // every earlier replay/reset write was parsed.
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 3000)
       pane.terminal.write('', () => {
