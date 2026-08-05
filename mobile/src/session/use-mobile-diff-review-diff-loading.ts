@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import { loadMobileDiffReviewDiff } from './mobile-diff-review-loaders'
@@ -20,9 +20,16 @@ type DiffLoadingInput = {
 export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewDiffState {
   const { client, connState, worktreeId, currentItem, screenState, setActiveHunkIndex } = input
   const [diffState, setDiffState] = useState<ReviewDiffState>({ kind: 'idle' })
+  const hunkResetKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    setActiveHunkIndex(null)
+    // Why (F10): a connection blip re-runs this effect; the reader's hunk position must
+    // survive it and reset only when the reviewed item actually changes.
+    const hunkKey = currentItem?.key ?? null
+    if (hunkResetKeyRef.current !== hunkKey) {
+      hunkResetKeyRef.current = hunkKey
+      setActiveHunkIndex(null)
+    }
     if (!currentItem || screenState.kind !== 'ready') {
       setDiffState({ kind: 'idle' })
       return

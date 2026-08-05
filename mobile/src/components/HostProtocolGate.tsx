@@ -56,7 +56,14 @@ export function HostProtocolGate({ hostId, children }: Props) {
   return (
     <HostStatusGatesContext.Provider value={gates}>
       <View style={styles.host}>
-        {children}
+        <View
+          style={styles.host}
+          // Why: the overlay blocks in-tree touches but TalkBack can still walk the covered
+          // stack; hide it while pending (Android counterpart of the overlay's iOS modal flag).
+          importantForAccessibility={pending ? 'no-hide-descendants' : 'auto'}
+        >
+          {children}
+        </View>
         {pending ? (
           // Why: once the stack is mounted, unmounting it for a pending status.get destroys
           // in-flight nested navigation, so cover it instead. Mount effects underneath still
@@ -64,7 +71,8 @@ export function HostProtocolGate({ hostId, children }: Props) {
           // re-probes status.get itself, so nothing newer than the baseline fires here.
           <View
             style={styles.pendingOverlay}
-            // Why: an opaque absolute fill owns the hit test, so taps never reach the stack.
+            // Why: the fill owns the hit test for in-tree views only — native-Modal-hosted
+            // surfaces (bottom drawers) present in a separate window above it and stay live.
             pointerEvents="auto"
             accessibilityViewIsModal
           >
