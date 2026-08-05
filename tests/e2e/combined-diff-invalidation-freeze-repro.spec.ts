@@ -207,7 +207,7 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
       expect(opened.editorCount).toBeGreaterThan(0)
 
       const measurement = await orcaPage.evaluate(
-        async ({ wId, repoPath, relativePaths }) => {
+        async ({ wId, repoPath, relativePaths, burstDurationMs }) => {
           const intervalMs = 50
           type LagWindow = { maxLagMs: number; p95LagMs: number; sampleCount: number }
           const startLagMeter = (): (() => LagWindow) => {
@@ -245,27 +245,30 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
           }
           const settle = { ...stopSettle(), settleWindows }
 
+          // Why: settling still leaves occasional multi-hundred-ms stalls from the 8 mounted
+          // 15k-line Monaco editors. Measure an identical idle window so the burst is judged
+          // against this machine's floor rather than a fixed number.
+          const stopBaseline = startLagMeter()
+          await new Promise((resolve) => window.setTimeout(resolve, burstDurationMs))
+          const baseline = stopBaseline()
+
           const stopBurst = startLagMeter()
           const startedAt = performance.now()
-          try {
-            // Why: a rebase rewrites the worktree in bursts. The watcher debounces per
-            // path, so each notification lands in its OWN task — never batched together.
-            for (let round = 0; round < 3; round += 1) {
-              for (const relativePath of relativePaths) {
-                window.setTimeout(() => {
-                  window.dispatchEvent(
-                    new CustomEvent('orca:editor-external-file-change', {
-                      detail: { worktreeId: wId, worktreePath: repoPath, relativePath }
-                    })
-                  )
-                }, 0)
-              }
-              await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+          // Why: a rebase rewrites the worktree in bursts. The watcher debounces per
+          // path, so each notification lands in its OWN task — never batched together.
+          for (let round = 0; round < 3; round += 1) {
+            for (const relativePath of relativePaths) {
+              window.setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent('orca:editor-external-file-change', {
+                    detail: { worktreeId: wId, worktreePath: repoPath, relativePath }
+                  })
+                )
+              }, 0)
             }
-            await new Promise((resolve) => window.setTimeout(resolve, 15_000))
-          } finally {
-            // no-op: burst meter stopped below so its window covers the awaits above
+            await new Promise((resolve) => window.setTimeout(resolve, 1_000))
           }
+          await new Promise((resolve) => window.setTimeout(resolve, burstDurationMs - 3_000))
           const burst = stopBurst()
 
           const rows = Array.from(
@@ -274,7 +277,9 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
           return {
             elapsedMs: performance.now() - startedAt,
             settle,
+            baseline,
             burst,
+            expectedSampleCount: Math.floor(burstDurationMs / intervalMs),
             editorCount: document.querySelectorAll('.monaco-diff-editor').length,
             sectionRowCount: rows.length,
             stuckLoadingRowCount: rows.filter((row) => row.textContent?.includes('Loading diff'))
@@ -284,14 +289,22 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
         {
           wId: worktreeId,
           repoPath: fixture.repoPath,
-          relativePaths: fixture.relativePaths
+          relativePaths: fixture.relativePaths,
+          burstDurationMs: 18_000
         }
       )
 
       console.log(`external-change burst measurement ${JSON.stringify(measurement)}`)
       expect(measurement.stuckLoadingRowCount).toBe(0)
       expect(measurement.editorCount).toBeGreaterThan(0)
-      expect(measurement.burst.maxLagMs).toBeLessThan(1_000)
+      // Why: before the fix this window blocked continuously — p95 3963ms, 16 samples in 23s.
+      expect(measurement.burst.p95LagMs).toBeLessThan(100)
+      expect(measurement.burst.sampleCount).toBeGreaterThan(measurement.expectedSampleCount * 0.85)
+      // Why: peak lag tracks the idle floor of this fixture, not invalidation; only a regression
+      // that adds a full extra second of blocking on top of that floor is this bug returning.
+      expect(measurement.burst.maxLagMs).toBeLessThan(
+        Math.max(measurement.baseline.maxLagMs, 100) + 1_000
+      )
     } finally {
       rmSync(fixture.repoPath, { recursive: true, force: true })
     }
