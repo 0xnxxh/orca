@@ -345,10 +345,10 @@ describe('scrubDiagnosticText', () => {
     expect(scrubbed).toContain('[redacted:pem]')
   })
 
-  it('caps at 512 characters after redacting', () => {
+  it('caps at MAX_FREE_TEXT_CHARS after redacting', () => {
     const scrubbed = scrubDiagnosticText('x'.repeat(4096))
 
-    expect(scrubbed.length).toBe(512)
+    expect(scrubbed.length).toBe(MAX_FREE_TEXT_CHARS)
     expect(scrubbed.endsWith('…')).toBe(true)
   })
 
@@ -506,20 +506,21 @@ describe('scrubDiagnosticText', () => {
 
   // Live `state.error` is not record-capped; scrub must bound the regex input
   // itself so a multi-100KB system-SSH stderr cannot stall the copy click.
+  // Asserted on the dropped span rather than on elapsed time: a shared runner's
+  // wall clock fails without a regression, and passes with one on a fast box.
   it('bounds regex work to MAX_SCRUB_INPUT_CHARS before redacting', () => {
     const secretTail = 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-    // Secret lives past the input bound — must not appear, and must not force
-    // a full-string scan of the unbounded prefix.
-    const raw = `${'x'.repeat(MAX_SCRUB_INPUT_CHARS + 2_000)}${secretTail}`
-    const start = performance.now()
+    // The head is one collapsible path, so redaction shrinks it to `<path>` and
+    // an unbounded pass would pull `middle-only` into the 512-char output. Only
+    // the input bound — which keeps the head and tail and drops the middle —
+    // can keep it out.
+    const raw = `/Users/alice/${'a'.repeat(MAX_SCRUB_INPUT_CHARS)} middle-only ${'z'.repeat(2_000)} ${secretTail}`
     const scrubbed = scrubDiagnosticText(raw)
-    const elapsedMs = performance.now() - start
 
     expect(scrubbed.length).toBe(MAX_FREE_TEXT_CHARS)
+    expect(scrubbed).not.toContain('middle-only')
     expect(scrubbed).not.toContain('sk-ant-')
     expect(scrubbed).not.toContain(secretTail)
-    // Pathological without the bound was hundreds of ms; keep a soft ceiling.
-    expect(elapsedMs).toBeLessThan(100)
   })
 
   it('is idempotent', () => {

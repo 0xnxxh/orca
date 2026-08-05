@@ -21,9 +21,12 @@ import { redactString } from '../../../shared/observability-redactor'
 
 /** Free text is redacted first, then cut — see `scrubDiagnosticText`. */
 export const MAX_FREE_TEXT_CHARS = 512
-// Same bound as the timeline's record-time cap: large enough that a typical PEM
-// still carries its `-----END` for the secrets scrubber, small enough that a
-// pathological system-SSH stderr cannot make the copy click O(stderr length).
+// A ceiling ABOVE the timeline's record-time cap (`RAW_ERROR_CHARS`), never
+// equal to it: a recorded error must reach the regex passes uncut, while a live
+// `state.error` — which is not record-capped — is cut here. Large enough that a
+// typical PEM still carries its `-----END` for the secrets scrubber, small
+// enough that a pathological system-SSH stderr cannot make the copy click
+// O(stderr length). The `<=` direction is pinned in ssh-status-timeline.test.ts.
 export const MAX_SCRUB_INPUT_CHARS = 4096
 
 const PATH_PLACEHOLDER = '<path>'
@@ -416,8 +419,8 @@ function truncateFreeText(text: string): string {
  * redactor rules match a whole span and the PEM rule is anchored on its
  * `-----END` terminator, so truncating first would strand the head of a key.
  * Input is bounded to {@link MAX_SCRUB_INPUT_CHARS} before any regex pass so a
- * multi-100KB live `state.error` cannot stall the copy click; that bound is
- * the same one the timeline applies at record time.
+ * multi-100KB live `state.error` cannot stall the copy click; that bound sits
+ * above the timeline's record-time cap, so a recorded error passes through uncut.
  */
 export function scrubDiagnosticText(input: string): string {
   const bounded = boundPreservingEnds(input, MAX_SCRUB_INPUT_CHARS)

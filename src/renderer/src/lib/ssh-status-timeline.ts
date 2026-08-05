@@ -18,8 +18,10 @@ export const MAX_TARGETS = 128
 const RING_CAPACITY = 100
 // Record-time cap only; capture redacts BEFORE truncating to 512 (§7). Bounded
 // through `boundPreservingEnds`, so a key blob keeps the `-----END` the PEM rule
-// anchors on even when the cut lands mid-block.
-const RAW_ERROR_CHARS = 2048
+// anchors on even when the cut lands mid-block. Exported so a test can pin it
+// under the scrub's own input bound — a second cut there would strand that
+// terminator.
+export const RAW_ERROR_CHARS = 2048
 
 export type SshStatusTimelineOrigin =
   | 'push'

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { getHeapSnapshot } from 'node:v8'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SshConnectionState, SshConnectionStatus } from '../../../shared/ssh-types'
+import { MAX_SCRUB_INPUT_CHARS } from './ssh-diagnostic-text-scrub'
 import type * as SshStatusTimelineModule from './ssh-status-timeline'
 
 type TimelineModule = typeof SshStatusTimelineModule
@@ -144,6 +145,13 @@ describe('ssh status timeline', () => {
     expect(timeline.snapshotSshStatusTimeline('target-1')[0].error).toHaveLength(2_048)
   })
 
+  // Nothing else couples the two bounds. If the record cap ever exceeds the
+  // scrub's input bound, capture cuts an already-cut error a second time and
+  // the `-----END` this cap preserves is stranded after all.
+  it('records inside the scrub input bound', () => {
+    expect(timeline.RAW_ERROR_CHARS).toBeLessThanOrEqual(MAX_SCRUB_INPUT_CHARS)
+  })
+
   // Head-only truncation strands the head of a key: the PEM rule is anchored on
   // `-----END`, so a preamble long enough to push the terminator past the cap
   // would leave the whole block for the capture-side scrub to miss.
@@ -163,16 +171,20 @@ describe('ssh status timeline', () => {
   // The cap above bounds the reported LENGTH either way: `.slice()` hands back a
   // V8 SlicedString that keeps the whole parent error alive, so a value
   // assertion passes with every byte of the original still retained.
-  it('does not retain the parent of the error it caps', async () => {
+  // Explicit timeout: two full heap walks are legitimately slow, and the default
+  // 5s makes a slow-but-passing run read as an intermittent failure.
+  it('does not retain the parent of the error it caps', { timeout: 60_000 }, async () => {
     vi.useRealTimers()
     const PARENT_CHARS = 400_000
     const ARRIVALS = 40
 
     // getHeapSnapshot runs a full GC before it walks, so this needs no --expose-gc.
     const heapUsedAfterGc = async (): Promise<number> => {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         const stream = getHeapSnapshot()
         stream.on('data', () => {})
+        // Reject rather than hang: a failed walk never emits `end`.
+        stream.on('error', reject)
         stream.on('end', () => resolve())
       })
       return process.memoryUsage().heapUsed
