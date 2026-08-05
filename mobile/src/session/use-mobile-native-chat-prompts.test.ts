@@ -9,21 +9,33 @@ const APPROVAL = JSON.stringify({
   approval: { tool: 'Bash', summary: 'pnpm build > build.log 2>&1' }
 })
 
-function permissionFor(status: Partial<AgentStatusEntry> | null): unknown {
-  let captured: unknown
+const ASK = JSON.stringify({
+  questions: [{ question: 'Which path?', options: ['fast', 'safe'] }]
+})
+
+function promptsFor(
+  status: Partial<AgentStatusEntry> | null,
+  messages: NativeChatMessage[] = [],
+  transcriptLoading = false
+): ReturnType<typeof useMobileNativeChatPrompts> {
+  let captured: ReturnType<typeof useMobileNativeChatPrompts> | undefined
   function Probe(): null {
     captured = useMobileNativeChatPrompts({
       enabled: true,
       status: status as AgentStatusEntry | null,
-      messages: [],
-      transcriptLoading: false
-    }).permission
+      messages,
+      transcriptLoading
+    })
     return null
   }
   TestRenderer.act(() => {
     TestRenderer.create(createElement(Probe))
   })
-  return captured
+  return captured!
+}
+
+function permissionFor(status: Partial<AgentStatusEntry> | null): unknown {
+  return promptsFor(status).permission
 }
 
 describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
@@ -63,65 +75,85 @@ describe('useMobileNativeChatPrompts approval-envelope state gate', () => {
   })
 })
 
-const ASK_INPUT = {
-  questions: [
-    { question: 'Pick one', header: 'Choice', multiSelect: false, options: [{ label: 'A' }] }
+describe('useMobileNativeChatPrompts ask state gate', () => {
+  const askMessages: NativeChatMessage[] = [
+    {
+      id: 'm1',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool-call',
+          name: 'AskUserQuestion',
+          input: { questions: [{ question: 'Which path?', options: ['fast', 'safe'] }] }
+        }
+      ],
+      timestamp: 0,
+      source: 'transcript'
+    }
   ]
-}
 
-const PENDING_ASK_MESSAGES: NativeChatMessage[] = [
-  {
-    id: 'm1',
-    role: 'assistant',
-    blocks: [{ type: 'tool-call', name: 'AskUserQuestion', input: ASK_INPUT }],
-    timestamp: 0,
-    source: 'transcript'
-  }
-]
-
-function askFor(args: {
-  status: Partial<AgentStatusEntry> | null
-  transcriptLoading: boolean
-}): unknown {
-  let captured: unknown
-  function Probe(): null {
-    captured = useMobileNativeChatPrompts({
-      enabled: true,
-      status: args.status as AgentStatusEntry | null,
-      messages: PENDING_ASK_MESSAGES,
-      transcriptLoading: args.transcriptLoading
-    }).ask
-    return null
-  }
-  TestRenderer.act(() => {
-    TestRenderer.create(createElement(Probe))
-  })
-  return captured
-}
-
-describe('useMobileNativeChatPrompts held-transcript ask gate', () => {
-  it('renders the transcript ask once the read has settled', () => {
-    expect(askFor({ status: { state: 'done' }, transcriptLoading: false })).toMatchObject({
-      questions: [{ question: 'Pick one' }]
+  it('renders the ask card only while the agent is waiting or blocked', () => {
+    expect(promptsFor({ state: 'waiting', interactivePrompt: ASK }).ask).toMatchObject({
+      questions: [{ question: 'Which path?' }]
     })
+    expect(promptsFor({ state: 'blocked', interactivePrompt: ASK }).ask).not.toBeNull()
   })
 
-  it('withholds the transcript ask while the read is unsettled', () => {
-    // The reconnect cache keeps this list rendered across a client swap, so the
-    // card would otherwise resurrect after the ask was answered on the terminal
-    // — and it stays tappable, writing stray keystrokes to the agent's TUI.
-    expect(askFor({ status: { state: 'done' }, transcriptLoading: true })).toBeNull()
+  it('renders no ask card from a sticky prompt while the agent is working or done', () => {
+    // The prompt payload outlives its answer — same paused gate as permission.
+    const working = promptsFor({ state: 'working', interactivePrompt: ASK })
+    expect(working.ask).toBeNull()
+    expect(working.detectedAsk).not.toBeNull()
+
+    const done = promptsFor({ state: 'done', interactivePrompt: ASK })
+    expect(done.ask).toBeNull()
+    expect(done.detectedAsk).not.toBeNull()
   })
 
-  it('still renders a live status ask while the read is unsettled', () => {
-    const ask = askFor({
-      status: {
-        state: 'waiting',
-        toolName: 'AskUserQuestion',
-        interactivePrompt: JSON.stringify(ASK_INPUT)
-      },
-      transcriptLoading: true
-    })
-    expect(ask).toMatchObject({ questions: [{ question: 'Pick one' }] })
+  it('keeps the transcript-derived pending ask outside the paused gate', () => {
+    // A hook row idle past AGENT_STATUS_STALE_AFTER_MS projects to `done` with no
+    // interactivePrompt, so gating this too would make a still-pending question
+    // unanswerable from mobile. `extractPendingAsk` clears on the tool result.
+    expect(promptsFor({ state: 'waiting' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor({ state: 'done' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor({ state: 'working' }, askMessages).ask).not.toBeNull()
+    expect(promptsFor(null, askMessages).ask).not.toBeNull()
+  })
+
+  it('withholds retained transcript asks while the replacement read is unsettled', () => {
+    const prompts = promptsFor({ state: 'done' }, askMessages, true)
+    expect(prompts.ask).toBeNull()
+    expect(prompts.detectedAsk).toBeNull()
+  })
+
+  it('keeps a paused live status ask authoritative while the read is unsettled', () => {
+    const prompts = promptsFor({ state: 'waiting', interactivePrompt: ASK }, askMessages, true)
+    expect(prompts.ask).toMatchObject({ questions: [{ question: 'Which path?' }] })
+    expect(prompts.detectedAsk).not.toBeNull()
+  })
+
+  it('does not leak a paused-out sticky status prompt through the transcript fallback', () => {
+    // The post-answer window: the status still carries the prompt while flipping
+    // to `working`, and the transcript's tool-result row has not landed yet, so
+    // both sources still describe the answered question. The paused gate only
+    // holds because a status prompt suppresses the transcript fallback outright.
+    const working = promptsFor({ state: 'working', interactivePrompt: ASK }, askMessages)
+    expect(working.ask).toBeNull()
+    expect(working.detectedAsk).not.toBeNull()
+  })
+
+  it('still refuses an unpaused sticky status prompt that the transcript does not back', () => {
+    const answered: NativeChatMessage[] = [
+      ...askMessages,
+      {
+        id: 'm2',
+        role: 'tool',
+        blocks: [{ type: 'tool-result', output: 'fast' }],
+        timestamp: 1,
+        source: 'transcript'
+      }
+    ]
+    expect(promptsFor({ state: 'done', interactivePrompt: ASK }, answered).ask).toBeNull()
+    expect(promptsFor({ state: 'done' }, answered).ask).toBeNull()
   })
 })
