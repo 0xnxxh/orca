@@ -3653,7 +3653,7 @@ export class Store {
             if (discardedDuplicates.length > 0) {
               const now = Date.now()
               for (const lease of discardedDuplicates) {
-                lease.state = 'terminated'
+                lease.state = 'expired'
                 lease.updatedAt = now
               }
               this.loadNeedsSave = true
@@ -6646,6 +6646,63 @@ export class Store {
     return this.state.repos.find((repo) => repo.id === repoId)?.connectionId ?? null
   }
 
+  resolveExistingSshPtyBinding(args: {
+    targetId: string
+    ptyId: string
+    worktreeId?: string
+    tabId?: string
+    leafId?: string
+  }): { worktreeId: string; tabId: string; leafId: string } | null {
+    const session = this.getWorkspaceSession(toSshExecutionHostId(args.targetId))
+    const requestedLeafId =
+      typeof args.leafId === 'string' && isTerminalLeafId(args.leafId) ? args.leafId : undefined
+    if (args.worktreeId && args.tabId && requestedLeafId) {
+      const tab = session.tabsByWorktree?.[args.worktreeId]?.find(
+        (candidate) => candidate.id === args.tabId
+      )
+      const layout = session.terminalLayoutsByTabId?.[args.tabId]
+      return tab && layoutContainsLeafId(layout?.root ?? null, requestedLeafId)
+        ? { worktreeId: args.worktreeId, tabId: args.tabId, leafId: requestedLeafId }
+        : null
+    }
+
+    const relayPtyId = this.getRelayPtyIdForSshLeaseComparison(args.targetId, args.ptyId)
+    const matches: { worktreeId: string; tabId: string; leafId: string }[] = []
+    for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
+      if (args.worktreeId && args.worktreeId !== worktreeId) {
+        continue
+      }
+      for (const tab of tabs) {
+        if (args.tabId && args.tabId !== tab.id) {
+          continue
+        }
+        const layout = session.terminalLayoutsByTabId?.[tab.id]
+        const leafIds = this.getTerminalLayoutLeafIds(layout?.root ?? null)
+        for (const leafId of leafIds) {
+          if (requestedLeafId && requestedLeafId !== leafId) {
+            continue
+          }
+          const boundPtyId = layout?.ptyIdsByLeafId?.[leafId]
+          const singleLeafTabPtyId = leafIds.size === 1 ? tab.ptyId : null
+          if (
+            ![boundPtyId, singleLeafTabPtyId].some(
+              (ptyId) =>
+                typeof ptyId === 'string' &&
+                this.getRelayPtyIdForSshLeaseComparison(args.targetId, ptyId) === relayPtyId
+            )
+          ) {
+            continue
+          }
+          matches.push({ worktreeId, tabId: tab.id, leafId })
+          if (matches.length > 1) {
+            return null
+          }
+        }
+      }
+    }
+    return matches[0] ?? null
+  }
+
   // Why: sync-flush the pty binding before pty:spawn returns to close the spawn/persist SIGKILL race (Issue #217).
   // Reattach uses mayCreate:false because an absent durable pane never authorizes creating UI.
   persistPtyBinding(
@@ -6658,10 +6715,9 @@ export class Store {
       startupCwd?: string
     },
     hostId?: string | null,
-    options?: { mayCreate?: boolean; dryRun?: boolean }
+    options?: { mayCreate?: boolean }
   ): 'bound' | 'refused' {
     const mayCreate = options?.mayCreate ?? true
-    const dryRun = options?.dryRun ?? false
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
@@ -6738,10 +6794,6 @@ export class Store {
         restoreSession()
         return 'refused'
       }
-      if (dryRun) {
-        restoreSession()
-        return 'bound'
-      }
       advanceTopologyAfterMembershipChange()
       try {
         this.flushOrThrow()
@@ -6793,10 +6845,6 @@ export class Store {
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
       return 'refused'
-    }
-    if (dryRun) {
-      restoreSession()
-      return 'bound'
     }
     advanceTopologyAfterMembershipChange()
     try {
@@ -7084,7 +7132,7 @@ export class Store {
     return leases.filter((lease) => targetId === undefined || lease.targetId === targetId)
   }
 
-  excludeDuplicateSshRemotePtyLeases(targetId: string, ptyIds: readonly string[]): void {
+  quarantineSshRemotePtyLeases(targetId: string, ptyIds: readonly string[]): void {
     const relayPtyIds = new Set(
       ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
     )
@@ -7094,12 +7142,12 @@ export class Store {
       if (
         lease.targetId !== targetId ||
         !relayPtyIds.has(lease.ptyId) ||
-        !canAdvanceSshRemotePtyLeaseState(lease.state, 'terminated') ||
-        lease.state === 'terminated'
+        !canAdvanceSshRemotePtyLeaseState(lease.state, 'expired') ||
+        lease.state === 'expired'
       ) {
         continue
       }
-      lease.state = 'terminated'
+      lease.state = 'expired'
       lease.updatedAt = now
       changed = true
     }
