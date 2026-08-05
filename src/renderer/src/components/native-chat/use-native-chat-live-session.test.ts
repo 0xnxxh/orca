@@ -51,7 +51,8 @@ const { transportFactory, getMockTransport, resetMockTransports } = vi.hoisted((
   }
 })
 
-vi.mock('./native-chat-session-transport', () => ({
+vi.mock('./native-chat-session-transport', async (importOriginal) => ({
+  ...(await importOriginal()),
   getNativeChatSessionTransport: transportFactory
 }))
 

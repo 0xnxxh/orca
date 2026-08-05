@@ -25,12 +25,16 @@ import {
 import { mergeNativeChatLiveSession } from './native-chat-live-status'
 import { getVerifiedNativeChatCommands } from '../../../../shared/native-chat-agent-profiles'
 import { surfaceSkillInvocationUserTurns } from '../../../../shared/native-chat-command-envelope'
+import { createNativeChatNotFoundRetryTimer } from './native-chat-not-found-retry-timer'
 import {
   hasMoreNativeChatHistory,
   NATIVE_CHAT_INITIAL_LIMIT,
   nextNativeChatLimit
 } from './native-chat-pagination'
-import { getNativeChatSessionTransport } from './native-chat-session-transport'
+import {
+  getNativeChatSessionTransport,
+  openNativeChatSessionSubscription
+} from './native-chat-session-transport'
 import { useNativeChatTranscriptLifecycle } from './use-native-chat-transcript-lifecycle'
 import { useNativeChatHookStatus } from './use-native-chat-hook-status'
 
@@ -144,6 +148,7 @@ export function useNativeChatLiveSession(
   useEffect(() => {
     setLoadEarlierState(NATIVE_CHAT_LOAD_EARLIER_IDLE)
     transcriptLifecycleControl.reset()
+
     if (!sessionId) {
       // No session id yet: surface live hook state on an empty transcript; backfills once the id arrives.
       setRead({ phase: 'ready', messages: [] })
@@ -156,8 +161,8 @@ export function useNativeChatLiveSession(
     let cancelled = false
     // Set by the first authoritative frame so the readSession seed below can't clobber a live snapshot.
     let frameArrived = false
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
     const retryStartedAt = Date.now()
+    const retryTimer = createNativeChatNotFoundRetryTimer()
     // Re-bound as a const: TS drops the `!sessionId` narrowing inside the hoisted nested function.
     const activeSessionId = sessionId
     limitRef.current = NATIVE_CHAT_INITIAL_LIMIT
@@ -180,8 +185,7 @@ export function useNativeChatLiveSession(
           if (result && 'error' in result) {
             // A not-yet-flushed transcript: stay in 'loading' and retry with backoff instead of a permanent error (#8401).
             if (result.notFound && Date.now() - retryStartedAt < NOTFOUND_RETRY_WINDOW_MS) {
-              retryTimer = setTimeout(() => {
-                retryTimer = null
+              retryTimer.schedule(() => {
                 loadSession(attempt + 1)
               }, notFoundRetryDelayMs(attempt))
               return
@@ -204,7 +208,8 @@ export function useNativeChatLiveSession(
     loadSession(0)
 
     const subscriptionId = nextSubscriptionId()
-    const unsubscribe = transport.subscribe(
+    const unsubscribe = openNativeChatSessionSubscription(
+      transport,
       {
         subscriptionId,
         agent,
@@ -239,21 +244,8 @@ export function useNativeChatLiveSession(
 
     return () => {
       cancelled = true
-      if (retryTimer) {
-        clearTimeout(retryTimer)
-        retryTimer = null
-      }
-      // Web RPC bridge returns a Promise (not the desktop sync unsubscribe fn); calling it as a function crashed the view, so resolve first.
-      const teardown = unsubscribe as unknown
-      if (typeof teardown === 'function') {
-        ;(teardown as () => void)()
-      } else if (teardown && typeof (teardown as { then?: unknown }).then === 'function') {
-        void (teardown as Promise<unknown>).then((fn) => {
-          if (typeof fn === 'function') {
-            ;(fn as () => void)()
-          }
-        })
-      }
+      retryTimer.cancel()
+      unsubscribe()
     }
     // `transport` identity changes on an owner flip, re-running this effect to re-subscribe against the new host.
   }, [
