@@ -5664,6 +5664,8 @@ export function connectPanePty(
       generation: number
       streamGeneration: number
       pendingEscapeTailAnsi?: string
+      snapshotCols?: number
+      snapshotRows?: number
     }
 
     let pendingReplayData: PendingReplayData | null = null
@@ -5671,7 +5673,8 @@ export function connectPanePty(
     let replayDrainQueued = false
     const drainReplayDataQueue = async (
       expectedPtyId: string | null,
-      expectedStreamGeneration: number
+      expectedStreamGeneration: number,
+      noteSnapshotGridReplay: () => void
     ): Promise<boolean> => {
       let appliedCurrentPayload = false
       while (pendingReplayData !== null) {
@@ -5698,6 +5701,24 @@ export function connectPanePty(
           transport.getPtyId() === payload.ptyId
         if (!isCurrentPayload()) {
           continue
+        }
+        const snapshotDimensions = resolvePositiveTerminalDimensions(
+          payload.snapshotCols,
+          payload.snapshotRows
+        )
+        if (
+          snapshotDimensions &&
+          (pane.terminal.cols !== snapshotDimensions.cols ||
+            pane.terminal.rows !== snapshotDimensions.rows)
+        ) {
+          // Why: remote snapshots carry cursor/wrap state from the host grid; parse there, then fit back after the replay transaction.
+          noteSnapshotGridReplay()
+          suppressStructuralReplayPtyResize = true
+          try {
+            pane.terminal.resize(snapshotDimensions.cols, snapshotDimensions.rows)
+          } finally {
+            suppressStructuralReplayPtyResize = false
+          }
         }
         // Relay replay buffers may overlap with content already rendered in
         // xterm. Local eager replay decides this earlier so metadata-only frames
@@ -5762,6 +5783,7 @@ export function connectPanePty(
         pendingReplayData?.streamGeneration ?? transportStreamGeneration
       beginReattachLiveDataDeferral(scheduledStreamGeneration)
       let replayCompleted = false
+      let replayUsedSnapshotGrid = false
       replayWriteQueue = replayWriteQueue
         .catch(() => undefined)
         .then(() =>
@@ -5769,14 +5791,45 @@ export function connectPanePty(
             async () => {
               replayCompleted = await drainReplayDataQueue(
                 scheduledPtyId,
-                scheduledStreamGeneration
+                scheduledStreamGeneration,
+                () => {
+                  replayUsedSnapshotGrid = true
+                }
               )
             },
             {
               shouldRestore: () =>
                 !disposed &&
                 transport.getPtyId() === scheduledPtyId &&
-                transportStreamGeneration === scheduledStreamGeneration
+                transportStreamGeneration === scheduledStreamGeneration,
+              afterRestore: async () => {
+                if (!replayUsedSnapshotGrid) {
+                  return
+                }
+                const isCurrentReplay = (): boolean =>
+                  !disposed &&
+                  transport.getPtyId() === scheduledPtyId &&
+                  transportStreamGeneration === scheduledStreamGeneration
+                const fit = safeFitAndThen(
+                  pane,
+                  'remote-snapshot-destination-grid',
+                  () => {
+                    if (!isCurrentReplay()) {
+                      return
+                    }
+                    transport.resize(pane.terminal.cols, pane.terminal.rows)
+                  },
+                  { shouldContinue: isCurrentReplay, retryIfUnmeasurable: true }
+                )
+                pendingReattachFit = fit
+                try {
+                  await fit.completion
+                } finally {
+                  if (pendingReattachFit === fit) {
+                    pendingReattachFit = null
+                  }
+                }
+              }
             }
           )
         )
@@ -5795,7 +5848,12 @@ export function connectPanePty(
     }
     const replayDataCallback = (
       data: string,
-      meta: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string } = {},
+      meta: {
+        clearBeforeReplay?: boolean
+        pendingEscapeTailAnsi?: string
+        snapshotCols?: number
+        snapshotRows?: number
+      } = {},
       streamGeneration = transportStreamGeneration
     ): void => {
       pendingReplayData = {
@@ -5804,6 +5862,8 @@ export function connectPanePty(
         ptyId: transport.getPtyId(),
         generation: (replayPayloadGeneration += 1),
         streamGeneration,
+        ...(meta.snapshotCols !== undefined ? { snapshotCols: meta.snapshotCols } : {}),
+        ...(meta.snapshotRows !== undefined ? { snapshotRows: meta.snapshotRows } : {}),
         ...(meta.pendingEscapeTailAnsi ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi } : {})
       }
       scheduleReplayDataDrain()
@@ -5838,7 +5898,12 @@ export function connectPanePty(
           },
           onReplayData: (
             data: string,
-            meta?: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string }
+            meta?: {
+              clearBeforeReplay?: boolean
+              pendingEscapeTailAnsi?: string
+              snapshotCols?: number
+              snapshotRows?: number
+            }
           ): void => {
             if (isCurrent()) {
               replayDataCallback(data, meta, generation)

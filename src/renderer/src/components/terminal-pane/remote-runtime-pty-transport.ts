@@ -1866,6 +1866,8 @@ export function createRemoteRuntimePtyTransport(
             outputProcessor.processData(data, storedCallbacks, {
               replayingBufferedData: true,
               suppressAttentionEvents: true,
+              ...(meta?.cols !== undefined ? { snapshotCols: meta.cols } : {}),
+              ...(meta?.rows !== undefined ? { snapshotRows: meta.rows } : {}),
               ...(meta?.pendingEscapeTailAnsi
                 ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi }
                 : {})

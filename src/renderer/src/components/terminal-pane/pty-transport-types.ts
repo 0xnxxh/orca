@@ -80,7 +80,12 @@ type PtyCallbacks = {
   onData?: (data: string, meta?: PtyDataMeta) => void
   onReplayData?: (
     data: string,
-    meta?: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string }
+    meta?: {
+      clearBeforeReplay?: boolean
+      pendingEscapeTailAnsi?: string
+      snapshotCols?: number
+      snapshotRows?: number
+    }
   ) => void
   onStatus?: (shell: string) => void
   onError?: (message: string, errors?: string[]) => void

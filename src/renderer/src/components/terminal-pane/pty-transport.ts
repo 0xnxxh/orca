@@ -96,6 +96,8 @@ type ProcessPtyOutputOptions = {
   replayingBufferedData?: boolean
   suppressAttentionEvents?: boolean
   clearBeforeReplay?: boolean
+  snapshotCols?: number
+  snapshotRows?: number
   // Why: a mid-escape tail; the replay consumer writes it LAST (after the post-replay reset) so the next live chunk completes it, not renders it literally (#7329).
   pendingEscapeTailAnsi?: string
 }
@@ -463,6 +465,8 @@ export function createPtyOutputProcessor({
     if (options.replayingBufferedData && callbacks.onReplayData) {
       const replayMeta = {
         ...(options.clearBeforeReplay === false ? { clearBeforeReplay: false } : {}),
+        ...(options.snapshotCols !== undefined ? { snapshotCols: options.snapshotCols } : {}),
+        ...(options.snapshotRows !== undefined ? { snapshotRows: options.snapshotRows } : {}),
         ...(options.pendingEscapeTailAnsi
           ? { pendingEscapeTailAnsi: options.pendingEscapeTailAnsi }
           : {})

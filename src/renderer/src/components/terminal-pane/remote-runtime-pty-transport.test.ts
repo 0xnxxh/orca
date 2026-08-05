@@ -124,13 +124,17 @@ describe('createRemoteRuntimePtyTransport', () => {
     )
   }
 
-  function emitSnapshot(streamId: number, data: string): void {
+  function emitSnapshot(
+    streamId: number,
+    data: string,
+    info: { cols?: number; rows?: number } = {}
+  ): void {
     subscriptionCallbacks?.onBinary?.(
       encodeTerminalStreamFrame({
         opcode: TerminalStreamOpcode.SnapshotStart,
         streamId,
         seq: 1,
-        payload: encodeTerminalStreamJson({ kind: 'scrollback' })
+        payload: encodeTerminalStreamJson({ kind: 'scrollback', ...info })
       })
     )
     subscriptionCallbacks?.onBinary?.(
@@ -900,11 +904,11 @@ describe('createRemoteRuntimePtyTransport', () => {
 
     const connect = transport.connect({ url: '', callbacks: { onReplayData } })
     await vi.waitFor(() => expect(subscriptionSendBinary).toHaveBeenCalled())
-    emitSnapshot(latestSubscribePayload().streamId, '')
+    emitSnapshot(latestSubscribePayload().streamId, '', { cols: 132, rows: 43 })
     await connect
 
     expect(onReplayData).toHaveBeenCalledOnce()
-    expect(onReplayData).toHaveBeenCalledWith('')
+    expect(onReplayData).toHaveBeenCalledWith('', { snapshotCols: 132, snapshotRows: 43 })
     transport.destroy?.()
   })
 

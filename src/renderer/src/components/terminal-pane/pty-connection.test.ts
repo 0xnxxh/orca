@@ -306,7 +306,10 @@ type ConnectCallbacks = {
     data: string,
     meta?: { seq?: number; rawLength?: number; background?: boolean; droppedOutput?: boolean }
   ) => void
-  onReplayData?: (data: string, meta?: { clearBeforeReplay?: boolean }) => void
+  onReplayData?: (
+    data: string,
+    meta?: { clearBeforeReplay?: boolean; snapshotCols?: number; snapshotRows?: number }
+  ) => void
   onError?: (msg: string) => void
   onWriteUnavailable?: () => void
   onOutputPauseChanged?: (paused: boolean, supported: boolean) => void
@@ -8532,7 +8535,9 @@ describe('connectPanePty', () => {
     enableActiveRuntimeEnvironment()
     const remotePtyId = 'remote:env-1@@terminal-1'
     const transport = createMockTransport(remotePtyId)
-    const replayCallback: { current: ((data: string) => void) | null } = { current: null }
+    const replayCallback: { current: ConnectCallbacks['onReplayData'] | null } = {
+      current: null
+    }
     transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
       replayCallback.current = callbacks.onReplayData ?? null
       return { id: remotePtyId, replay: '' }
@@ -8541,16 +8546,30 @@ describe('connectPanePty', () => {
 
     const pane = createPane(1)
     pane.container.dataset.parkedViewportFrame = 'true'
-    pane.terminal.write = vi.fn((_data: string, callback?: () => void) => {
+    pane.terminal.resize.mockImplementation((cols: number, rows: number) => {
+      pane.terminal.cols = cols
+      pane.terminal.rows = rows
+    })
+    pane.fitAddon.proposeDimensions.mockReturnValue({ cols: 120, rows: 40 })
+    pane.fitAddon.fit.mockImplementation(() => pane.terminal.resize(120, 40))
+    const writeGrids: { data: string; cols: number; rows: number }[] = []
+    pane.terminal.write = vi.fn((data: string, callback?: () => void) => {
+      writeGrids.push({ data, cols: pane.terminal.cols, rows: pane.terminal.rows })
       callback?.()
     })
 
     const binding = connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
     await flushAsyncTicks(6)
-    replayCallback.current?.('authoritative snapshot')
+    replayCallback.current?.('authoritative snapshot', { snapshotCols: 80, snapshotRows: 24 })
     await flushAsyncTicks(12)
 
     const writes = pane.terminal.write.mock.calls.map(([data]) => data)
+    expect(pane.terminal.resize.mock.calls).toContainEqual([80, 24])
+    expect(pane.terminal.resize.mock.calls.at(-1)).toEqual([120, 40])
+    expect(writeGrids.find((write) => write.data === 'authoritative snapshot')).toMatchObject({
+      cols: 80,
+      rows: 24
+    })
     expect(writes.indexOf('\x1bc')).toBeGreaterThanOrEqual(0)
     expect(writes.indexOf('\x1bc')).toBeLessThan(writes.indexOf('authoritative snapshot'))
     expect(writes).not.toContain('\x1b[2J\x1b[3J\x1b[H')
