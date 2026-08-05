@@ -3,11 +3,13 @@ import { Platform } from 'react-native'
 import {
   HostProfileSchema,
   StoredHostProfileSchema,
+  type HostCatalogEntry,
   type HostProfile,
   type StoredHostProfile
 } from './types'
 import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
+import { joinHostCatalogCredentials } from './host-catalog-credential-join'
 import {
   deletePairingKeychainItem,
   readPairingKeychainItem,
@@ -99,17 +101,25 @@ function parseStoredHosts(raw: string | null): StoredHostProfile[] | null {
 }
 
 export async function loadHosts(): Promise<HostProfile[]> {
+  return (await loadHostListSnapshot()).profiles
+}
+
+export async function loadHostCatalog(): Promise<HostCatalogEntry[]> {
+  return (await loadHostListSnapshot()).catalog
+}
+
+async function loadHostListSnapshot(): Promise<hostListLoads.HostListSnapshot> {
   // Why: writers hold the mutation chain across their full RMW; wait so a load doesn't race a half-written list.
   await hostListMutation
   // Why: deduplicate concurrent loadHosts() calls so simultaneously mounting screens share one Keychain read pass.
-  return hostListLoads.shareHostListLoad(doLoadHosts)
+  return hostListLoads.shareHostListLoad(doLoadHostListSnapshot)
 }
 
-async function doLoadHosts(): Promise<HostProfile[]> {
+async function doLoadHostListSnapshot(): Promise<hostListLoads.HostListSnapshot> {
   const raw = await AsyncStorage.getItem(STORAGE_KEY)
   const storedHosts = parseStoredHosts(raw)
   if (!storedHosts) {
-    return []
+    return { catalog: [], profiles: [] }
   }
   const overlayState = await loadMobileRelayHostOverlayState(
     new Set(storedHosts.map(({ id }) => id))
@@ -118,43 +128,13 @@ async function doLoadHosts(): Promise<HostProfile[]> {
     hostIds: overlayState.orphanHostIds,
     deleteCredential: deleteHostCredentials
   })
-  const overlays = overlayState.overlays
-
-  const out: HostProfile[] = []
-  for (const stored of storedHosts) {
-    let token = tokenCache.get(stored.id)
-    if (!token) {
-      const readRevision = hostListLoads.getHostListLoadRevision()
-      let fetched: string | null
-      try {
-        fetched = await readDeviceToken(stored.id)
-      } catch {
-        // Why: a transient Keychain failure for one entry (e.g. errSecInteractionNotAllowed while locked) must not blank the whole host list; skip it.
-        continue
-      }
-      if (!fetched) {
-        // Why: orphaned metadata with no matching keychain entry; skip rather than surface a half-broken host.
-        continue
-      }
-      token = fetched
-      if (readRevision === hostListLoads.getHostListLoadRevision()) {
-        tokenCache.set(stored.id, token)
-      }
-    }
-    const overlay = overlays.get(stored.id)
-    out.push({
-      ...stored,
-      deviceToken: token,
-      ...(overlay
-        ? {
-            endpoints: overlay.endpoints,
-            relayHostId: overlay.relayHostId,
-            relay: overlay.relay
-          }
-        : {})
-    })
-  }
-  return out
+  return joinHostCatalogCredentials({
+    storedHosts,
+    overlays: overlayState.overlays,
+    tokenCache,
+    readToken: readDeviceToken,
+    getRevision: hostListLoads.getHostListLoadRevision
+  })
 }
 
 export async function resolvePairingHostIdentity(
@@ -187,11 +167,11 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
 }
 
 async function mutateStoredHosts(
-  update: (hosts: StoredHostProfile[]) => StoredHostProfile[]
+  update: (hosts: StoredHostProfile[]) => StoredHostProfile[] | Promise<StoredHostProfile[]>
 ): Promise<void> {
   const mutation = hostListMutation.then(async () => {
     const current = await readStoredHostsForMutation()
-    const next = update(current)
+    const next = await update(current)
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
     hostListLoads.dropSharedHostListLoad()
   })
@@ -224,28 +204,38 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   const stored = toStored(validated)
   const duplicateHostIds = new Set<string>()
   let updatedExistingHost = false
-  await mutateStoredHosts((hosts) => {
+  let tokenCommittedBeforeMetadata = false
+  await mutateStoredHosts(async (hosts) => {
     const index = hosts.findIndex((h) => h.id === stored.id)
     for (const candidate of hosts) {
       if (candidate.id !== stored.id && candidate.publicKeyB64 === stored.publicKeyB64) {
         duplicateHostIds.add(candidate.id)
       }
     }
+    let next: StoredHostProfile[]
     if (index >= 0) {
       updatedExistingHost = true
       // Why: an authoritative save is the safe point to collapse pre-existing duplicate rows to the preserved host id.
-      return hosts
+      next = hosts
         .filter(({ id }) => !duplicateHostIds.has(id))
         .map((candidate) => (candidate.id === stored.id ? stored : candidate))
-    }
-    if (requireExisting) {
+    } else if (requireExisting) {
       // Why: an in-flight relay upgrade must not resurrect a host the user removed.
       throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
+    } else {
+      next = [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
     }
-    return [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
+    if (duplicateHostIds.size > 0) {
+      // Why: never remove the only usable same-key row until its replacement credential is durable.
+      await writeDeviceToken(stored.id, validated.deviceToken)
+      tokenCommittedBeforeMetadata = true
+    }
+    return next
   })
-  // Why: write metadata before the keychain token so a crash leaves recoverable orphaned metadata, not an orphaned token that persists forever.
-  await writeDeviceToken(stored.id, validated.deviceToken)
+  if (!tokenCommittedBeforeMetadata) {
+    // Why: the catalog can now surface a failed token write for recovery instead of losing the host.
+    await writeDeviceToken(stored.id, validated.deviceToken)
+  }
   tokenCache.set(stored.id, validated.deviceToken)
   hostListLoads.dropSharedHostListLoad()
   if (validated.endpoints) {

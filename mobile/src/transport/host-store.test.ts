@@ -35,6 +35,7 @@ vi.mock('./host-credential-cleanup', () => ({
 }))
 
 import {
+  loadHostCatalog,
   loadHosts,
   MobileRelayUpgradeHostRemovedError,
   removeHost,
@@ -93,6 +94,7 @@ describe('host-store list mutations', () => {
         storedOverlayRaw = raw
       }
     })
+    secureStoreMock.setItemAsync.mockResolvedValue(undefined)
     secureStoreMock.getItemAsync.mockImplementation(async (key: string) =>
       key.endsWith(HOST_ONE.id) || key.endsWith(HOST_TWO.id) ? `token-${key.at(-1)}` : null
     )
@@ -112,6 +114,55 @@ describe('host-store list mutations', () => {
       name: 'Host 3'
     })
     expect(asyncStorageMock.getItem).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a host visible when its credential read temporarily fails', async () => {
+    secureStoreMock.getItemAsync.mockImplementation(async (key: string) => {
+      if (key.endsWith(HOST_ONE.id)) {
+        throw new Error('keychain locked')
+      }
+      return key.endsWith(HOST_TWO.id) ? 'token-2' : null
+    })
+
+    const catalog = await loadHostCatalog()
+    const profiles = await loadHosts()
+
+    expect(catalog.map(({ id }) => id)).toEqual([HOST_ONE.id, HOST_TWO.id])
+    expect(catalog.find(({ id }) => id === HOST_ONE.id)).toMatchObject({
+      credentialStatus: 'temporarily-unavailable',
+      profile: null
+    })
+    expect(profiles.map(({ id }) => id)).toEqual([HOST_TWO.id])
+  })
+
+  it('keeps orphaned metadata visible when its credential is missing', async () => {
+    secureStoreMock.getItemAsync.mockImplementation(async (key: string) =>
+      key.endsWith(HOST_TWO.id) ? 'token-2' : null
+    )
+
+    const catalog = await loadHostCatalog()
+
+    expect(catalog.find(({ id }) => id === HOST_ONE.id)).toMatchObject({
+      credentialStatus: 'missing',
+      profile: null
+    })
+  })
+
+  it('keeps existing metadata when pairing a distinct host', async () => {
+    await saveHost({
+      id: 'host-new',
+      name: 'Host 3',
+      endpoint: 'ws://127.0.0.1:3',
+      publicKeyB64: 'key-new',
+      deviceToken: 'token-new',
+      lastConnected: 0
+    })
+
+    expect(JSON.parse(storedHostsRaw).map(({ id }: { id: string }) => id)).toEqual([
+      HOST_ONE.id,
+      HOST_TWO.id,
+      'host-new'
+    ])
   })
 
   it('fails closed when durable host identity storage is unreadable', async () => {
@@ -135,6 +186,23 @@ describe('host-store list mutations', () => {
 
     expect(JSON.parse(storedHostsRaw)).toEqual([{ ...HOST_ONE, endpoint: 'ws://127.0.0.1:3' }])
     expect(scheduleCleanupMock).toHaveBeenCalledWith('host-duplicate', expect.any(Function))
+  })
+
+  it('does not remove same-key metadata when the replacement credential write fails', async () => {
+    const duplicate = {
+      ...HOST_TWO,
+      id: 'host-duplicate',
+      publicKeyB64: HOST_ONE.publicKeyB64
+    }
+    storedHostsRaw = JSON.stringify([HOST_ONE, duplicate])
+    secureStoreMock.setItemAsync.mockRejectedValue(new Error('keychain write failed'))
+
+    await expect(
+      saveHost({ ...HOST_ONE, endpoint: 'ws://127.0.0.1:3', deviceToken: 'replacement-token' })
+    ).rejects.toThrow('keychain write failed')
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, duplicate])
+    expect(scheduleCleanupMock).not.toHaveBeenCalled()
   })
 
   it('clears stale relay state when an existing host is re-paired direct-only', async () => {
