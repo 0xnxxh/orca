@@ -1251,8 +1251,15 @@ export function createRemoteRuntimePtyTransport(
     }
   }
 
+  function notifyWriteUnavailable(): void {
+    if (!destroyed) {
+      storedCallbacks.onWriteUnavailable?.()
+    }
+  }
+
   const inputBatcher = createRemoteRuntimePtyTextBatcher(REMOTE_TERMINAL_INPUT_FLUSH_MS, (text) => {
     const targetHandle = handle
+    const targetLifecycleEpoch = lifecycleEpoch
     if (!connected || !targetHandle || recoveryBlocksIo()) {
       return
     }
@@ -1265,16 +1272,32 @@ export function createRemoteRuntimePtyTransport(
       pendingClaimInput += text
       return
     }
-    void callRuntime('terminal.send', {
+    void callRuntime<{ send: RuntimeTerminalSend }>('terminal.send', {
       terminal: targetHandle,
       text,
       client: { id: clientId, type: 'desktop' },
       ...(desiredViewport ? { viewport: desiredViewport, claimViewport: true as const } : {})
-    }).catch((error) => {
-      if (handle === targetHandle) {
-        handleRemoteTerminalError(error)
-      }
     })
+      .then((result) => {
+        if (
+          connected &&
+          lifecycleEpoch === targetLifecycleEpoch &&
+          handle === targetHandle &&
+          result.send.accepted !== true
+        ) {
+          notifyWriteUnavailable()
+        }
+      })
+      .catch((error) => {
+        if (lifecycleEpoch !== targetLifecycleEpoch || handle !== targetHandle) {
+          return
+        }
+        if (runtimeTerminalErrorMessage(error).includes('terminal_not_writable')) {
+          notifyWriteUnavailable()
+        } else {
+          handleRemoteTerminalError(error)
+        }
+      })
   })
 
   function sendViewportUpdate(cols: number, rows: number, claim = false): void {
@@ -1823,6 +1846,11 @@ export function createRemoteRuntimePtyTransport(
         onDriverChanged: (driver) => {
           if (isCurrentSubscription() && subscribedPtyId) {
             setDriverForPty(subscribedPtyId, driver)
+          }
+        },
+        onWriteUnavailable: () => {
+          if (isCurrentSubscription()) {
+            notifyWriteUnavailable()
           }
         },
         onTransportClose: ({ recoverable, retryWithBackoff }) => {

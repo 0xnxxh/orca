@@ -6067,6 +6067,120 @@
       "demotionRule": "Cannot promote if provider failure can close panes or if the oracle is screenshot-only."
     },
     {
+      "id": "terminal-input.remote-write-rejection-recovery",
+      "title": "Rejected paired-runtime terminal input remounts the pane",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-runtime",
+      "layer": "paired-runtime-stream-contract",
+      "surfaces": [
+        "terminal multiplex input",
+        "legacy binary terminal input",
+        "one-shot terminal.send fallback",
+        "pane recovery",
+        "pty:hasPty liveness routing"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["paired-runtime"],
+      "coverageNotes": "One end-to-end contract runs the real dispatcher, renderer multiplexer, remote transport, and pty-connection together and requires the tab remount, so the signal is proven past the transport callback it used to die behind. Focused contracts cover capability negotiation, legacy binary subscriptions, stream-id reuse, pane lifecycle reuse, the one-shot JSON fallback, and main refusing to answer liveness for a `remote:` id. Live headed/headless paired-runtime and mixed installed releases remain uncollected.",
+      "motivatingLinks": [
+        "https://linear.app/stably/issue/STA-2830",
+        "https://github.com/stablyai/orca/issues/11124"
+      ],
+      "invariant": "When a paired-runtime client accepts terminal input locally but the authoritative host rejects the PTY write, a capability-compatible stream must notify only that current pane generation and that notification must end in an actual tab remount — no local liveness probe may veto it, because main owns no registry entry for a `remote:` id and must answer unknown for one. A host must never send the new opcode to a legacy or un-negotiated client, and a late rejection must never recover a replacement stream or pane lifecycle.",
+      "oracle": "Wire the real dispatcher to the real renderer multiplexer, remote transport, and pty-connection over one bridged subscription; type into the pane, reject the authoritative runtime send before any process write, and require both the WriteUnavailable frame and a remountTerminalTabForRecovery call — repeated for every answer main can produce for a `remote:` id (fabricated dead, unknown, thrown). Separately: require one frame only for a capability-declaring client by driving an un-negotiated legacy binary subscriber first and a capable one second on the same runtime, so the capable frame proves the rejection had already been processed for both. Reuse the stream id before releasing a held rejection and require no signal; replace the stream or detach and reattach the same handle before releasing held failures and require no stale recovery. Require pty:hasPty to answer null for a `remote:` id without consulting the local provider.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/renderer/src/runtime/runtime-terminal-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts tests/e2e/paired-runtime-rejected-input-remount.unit.test.ts src/renderer/src/components/terminal-pane/terminal-pane-recovery.test.ts src/main/ipc/pty.test.ts --reporter=dot"
+      ],
+      "testFiles": [
+        "src/main/runtime/rpc/terminal-multiplex.test.ts",
+        "src/renderer/src/runtime/runtime-terminal-stream.test.ts",
+        "src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
+        "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+        "tests/e2e/paired-runtime-rejected-input-remount.unit.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-pane-recovery.test.ts",
+        "src/main/ipc/pty.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/runtime/rpc/terminal-multiplex.test.ts",
+          "assertions": [
+            "rejected authoritative input emits WriteUnavailable only for capable multiplex and legacy binary clients",
+            "an un-negotiated legacy binary subscriber never receives the rejection opcode",
+            "a late rejection cannot target a replacement stream with the same id"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+          "assertions": [
+            "WriteUnavailable reaches the current pane recovery callback without a fatal error",
+            "superseded streams and same-handle pane lifecycles ignore delayed rejections",
+            "a rejected one-shot runtime fallback invokes pane recovery"
+          ]
+        },
+        {
+          "file": "tests/e2e/paired-runtime-rejected-input-remount.unit.test.ts",
+          "assertions": [
+            "a host-rejected write travels dispatcher to multiplexer to transport to pty-connection and remounts the tab",
+            "no answer the local liveness probe can give for a `remote:` id blocks that remount"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-pane-recovery.test.ts",
+          "assertions": [
+            "input-rejected-by-host recovery consults no liveness probe",
+            "input-rejected-by-host still coalesces under the shared recovery cooldown"
+          ]
+        },
+        {
+          "file": "src/main/ipc/pty.test.ts",
+          "assertions": [
+            "pty:hasPty answers unknown for a paired-runtime handle instead of the local provider's fabricated dead"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-05",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/renderer/src/runtime/runtime-terminal-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts tests/e2e/paired-runtime-rejected-input-remount.unit.test.ts src/renderer/src/components/terminal-pane/terminal-pane-recovery.test.ts src/main/ipc/pty.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 15,
+          "summary": "678 passed / 0 failed with the end-to-end remount contract, the un-negotiated legacy binary gate, and the pty:hasPty liveness-routing contract added."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 45,
+        "scope": "focused paired-runtime host and renderer contracts plus the end-to-end remount chain"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Deterministic controlled-promise tests pass locally; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "On origin/main e5f49e0e1d, the test-only dispatcher oracle subscribed, accepted client input, invoked the authoritative host send once, recorded no process write, and failed only because no WriteUnavailable frame returned. The end-to-end contract was then red at the last hop on the delivery-only implementation — the host frame arrived and no remount followed — for all three liveness answers (3 failed / 0 passed), and green after the recovery routing fix (3 passed). Deleting the legacy-binary capability gate makes terminal-multiplex red (1 failed / 62 passed); deleting the pty:hasPty `remote:` guard makes the main contract red with the fabricated `false`; reverting either half of the renderer routing makes the end-to-end contract red (3 failed). Every mutation was restored by re-applying the edit and re-verified green."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The change adds one optional capability field, one constant-time outcome classification per existing write, and one rejection-only frame/callback. The recovery routing adds one string comparison per rejection and removes an IPC round-trip on that path; the pty:hasPty guard is a prefix test that short-circuits a provider lookup. It adds no polling, timer, provider listing, subprocess, retained payload, or cross-pane fanout."
+      },
+      "promotionCriteria": [
+        "Collect headed and headless paired-runtime journeys with a rejected host write.",
+        "Collect mixed installed-release evidence in both client/server directions.",
+        "Collect CI soak history with no unexplained flakes."
+      ],
+      "knownGaps": [
+        "Live headed and headless paired-runtime journeys are not collected.",
+        "Linux, Windows, mobile, and mixed installed-release runs are not collected.",
+        "Dead-record connected-state correction remains tracked separately in STA-2896."
+      ],
+      "demotionRule": "Keep experimental or demote if rejected input can remain silent, the signal stops short of a remount, a legacy or un-negotiated client receives an unknown opcode, a liveness probe fabricates an answer for a `remote:` id, a stale failure recovers a replacement pane, or the deterministic contract flakes without an identified product or harness bug."
+    },
+    {
       "id": "terminal-provider.wsl-restore-contract",
       "title": "WSL terminals preserve launch identity, liveness, and restore boundaries",
       "maturity": "experimental",

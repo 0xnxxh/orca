@@ -4007,10 +4007,17 @@ export function connectPanePty(
     }
     const storePtyId = useAppStore.getState().ptyIdsByTabId?.[deps.tabId]?.[0] ?? null
     const undeliverablePtyId = transport.getPtyId() ?? storePtyId
+    // Why the split: for a local (daemon/app-SSH) id main's registry can answer,
+    // and a `false` there means the shell really died — the dead-session
+    // reconcile owns that teardown and a remount would race it. For a `remote:`
+    // id main owns no registry entry, so `pty:hasPty` routes to the local
+    // provider and fabricates "dead"; that answer blocked every recovery this
+    // signal exists to trigger (STA-2830). The host's own rejection replaces it.
+    const hostRejectedRemoteInput = providerRejected && isRemoteRuntimePtyId(undeliverablePtyId)
     void requestTerminalPaneRecovery({
       tabId: deps.tabId,
       ptyId: undeliverablePtyId,
-      reason: 'input-undeliverable',
+      reason: hostRejectedRemoteInput ? 'input-rejected-by-host' : 'input-undeliverable',
       terminalRecoveryGeneration,
       terminalRecoveryInstanceId: terminalRecoveryInstance.id,
       // Why: pty:hasPty answers null for ids the local registry doesn't own,
