@@ -23,6 +23,7 @@ import {
   TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS,
   terminalOutputBacklogCapChars
 } from '../../../../shared/terminal-scrollback-policy'
+import { isDenseTerminalSgr } from '../../../../shared/terminal-sgr-load'
 
 type TerminalOutputTarget = ForegroundTerminalOutputTarget
 
@@ -49,6 +50,7 @@ type WriteTerminalOutputOptions = {
 
 type QueueChunk = {
   data: string
+  denseSgr: boolean
   foreground: boolean
   forceForegroundRefresh: boolean
   followupForegroundRefresh: boolean
@@ -78,6 +80,7 @@ type QueueEntry = {
   queuedChars: number
   onBackgroundBacklogDropped?: () => void
   backgroundBacklogDropped: boolean
+  denseSgrQueuedChars: number
   highPriority: boolean
   foregroundHold: boolean
   foregroundHoldSafetyDelayMs: number
@@ -91,12 +94,14 @@ const BACKGROUND_FLUSH_DELAY_MS = 50
 const BACKGROUND_DRAIN_INTERVAL_MS = 16
 const HIGH_PRIORITY_DRAIN_INTERVAL_MS = 4
 const BACKGROUND_CHUNK_CHARS = 16 * 1024
+const DENSE_SGR_CHUNK_CHARS = 4 * 1024
 const MAX_WRITES_PER_DRAIN = 2
 // Why 8: per-tick volume (8 x 16KB = 128KB ≈ 1.3ms parse) sets the sustained ceiling (~30MB/s) within DRAIN_TIME_BUDGET_MS; at 2 it was only 8MB/s against a ~100MB/s parser (see throughput bench).
 const HIGH_PRIORITY_MAX_WRITES_PER_DRAIN = 8
 const DRAIN_TIME_BUDGET_MS = 8
 const LARGE_BACKLOG_CHARS = 512 * 1024
 const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024
+const INPUT_ECHO_DENSE_BACKLOG_CHARS = 32 * 1024
 // Why mutable: the cap scales with the user's scrollback setting (terminalOutputBacklogCapChars), configured when settings apply; the chunk-count cap stays fixed.
 let maxQueueChars = TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096
@@ -122,6 +127,7 @@ const FOREGROUND_BACKLOG_WARNING =
 const ALWAYS_REFRESH_FOREGROUND_SYNCHRONOUSLY = (): boolean => true
 
 const queuedByTerminal = new Map<TerminalOutputTarget, QueueEntry>()
+const denseParseBlockedTerminals = new WeakSet<TerminalOutputTarget>()
 const backlogRecoveryByTerminal = new WeakMap<
   TerminalOutputTarget,
   TerminalBacklogRecoveryRequest
@@ -317,6 +323,7 @@ function createQueueEntry(
     queuedChars: 0,
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
     backgroundBacklogDropped: false,
+    denseSgrQueuedChars: 0,
     highPriority: true,
     foregroundHold: false,
     foregroundHoldSafetyDelayMs: FOREGROUND_HOLD_SAFETY_DELAY_MS,
@@ -380,7 +387,11 @@ function scheduleForegroundCoalesceRelease(
 }
 
 function isEntryDrainable(entry: QueueEntry): boolean {
-  return !entry.foregroundHold && !entry.foregroundCoalesce
+  return (
+    !entry.foregroundHold &&
+    !entry.foregroundCoalesce &&
+    !denseParseBlockedTerminals.has(entry.terminal)
+  )
 }
 
 function findCursorPositionSequenceEnd(
@@ -591,6 +602,9 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       data += chunk.data
       remaining -= chunk.data.length
       entry.queuedChars -= chunk.data.length
+      if (chunk.denseSgr) {
+        entry.denseSgrQueuedChars -= chunk.data.length
+      }
       entry.chunkIndex += 1
       if (chunk.onParsed) {
         parsedCallbacks.push(chunk.onParsed)
@@ -607,6 +621,9 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       data: chunk.data.slice(remaining)
     }
     entry.queuedChars -= remaining
+    if (chunk.denseSgr) {
+      entry.denseSgrQueuedChars -= remaining
+    }
     remaining = 0
   }
 
@@ -614,6 +631,7 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
   if (entry.queuedChars < 0) {
     entry.queuedChars = 0
   }
+  entry.denseSgrQueuedChars = Math.max(0, entry.denseSgrQueuedChars)
   recordQueueDebugPressure()
   return data
     ? {
@@ -679,8 +697,10 @@ function enqueueChunk(
     ackCredit?: () => void
   }
 ): void {
+  const denseSgr = isDenseTerminalSgr(data)
   entry.chunks.push({
     data,
+    denseSgr,
     foreground: options?.foreground === true,
     forceForegroundRefresh: options?.forceForegroundRefresh === true,
     followupForegroundRefresh: options?.followupForegroundRefresh === true,
@@ -692,6 +712,9 @@ function enqueueChunk(
     ackCredit: options?.ackCredit
   })
   entry.queuedChars += data.length
+  if (denseSgr) {
+    entry.denseSgrQueuedChars += data.length
+  }
   recordQueueDebugPressure()
 }
 
@@ -707,6 +730,7 @@ function discardDetachedQueueEntry(entry: QueueEntry): void {
   entry.chunks.length = 0
   entry.chunkIndex = 0
   entry.queuedChars = 0
+  entry.denseSgrQueuedChars = 0
   entry.highPriority = false
   clearForegroundHoldSafety(entry)
   clearForegroundCoalesce(entry)
@@ -744,6 +768,7 @@ function replaceBacklogWithWarning(
   entry.chunks = [
     {
       data: warning,
+      denseSgr: false,
       foreground: false,
       forceForegroundRefresh: false,
       followupForegroundRefresh: false,
@@ -755,6 +780,7 @@ function replaceBacklogWithWarning(
   entry.chunkIndex = 0
   entry.queuedChars = warning.length
   entry.backgroundBacklogDropped = true
+  entry.denseSgrQueuedChars = 0
   entry.highPriority = true
   entry.foregroundHold = false
   if (debugEnabled && shouldNotify) {
@@ -765,6 +791,36 @@ function replaceBacklogWithWarning(
   if (shouldNotify) {
     entry.onBackgroundBacklogDropped?.()
   }
+}
+
+function dropDenseSgrChunksForInput(entry: QueueEntry): void {
+  const retained: QueueChunk[] = []
+  let droppedChars = 0
+  for (let index = entry.chunkIndex; index < entry.chunks.length; index += 1) {
+    const chunk = entry.chunks[index]
+    if (chunk.denseSgr) {
+      droppedChars += chunk.data.length
+      chunk.ackCredit?.()
+    } else {
+      retained.push(chunk)
+    }
+  }
+  recordRendererCrashBreadcrumb('terminal_input_dense_backlog_dropped', {
+    droppedChars,
+    retainedChars: entry.queuedChars - droppedChars
+  })
+  clearForegroundHoldSafety(entry)
+  clearForegroundCoalesce(entry)
+  entry.chunks = retained
+  entry.chunkIndex = 0
+  entry.queuedChars = Math.max(0, entry.queuedChars - droppedChars)
+  entry.denseSgrQueuedChars = 0
+  entry.highPriority = retained.length > 0
+  entry.foregroundHold = false
+  if (debugEnabled) {
+    debugState.droppedBacklogCount++
+  }
+  recordQueueDebugPressure()
 }
 
 function hasQueuedChunks(entry: QueueEntry): boolean {
@@ -850,9 +906,15 @@ function takeNextDrainableEntry(): QueueEntry | null {
 }
 
 // Why: re-arm a zero-delay drain once xterm confirms the previous high-priority batch parsed; the fixed 4/16ms cadence otherwise drips far below xterm's ~100 MB/s parse. Only visible panes are pacer-clocked; background keeps the fixed cadence to protect the focused terminal.
-function makeParseClockPacer(): () => void {
+function makeParseClockPacer(
+  terminal: TerminalOutputTarget,
+  releaseDenseParseBlock: boolean
+): () => void {
   return () => {
     try {
+      if (releaseDenseParseBlock) {
+        denseParseBlockedTerminals.delete(terminal)
+      }
       if (queuedByTerminal.size > 0 && hasHighPriorityBacklog()) {
         scheduleDrain(0)
       }
@@ -882,13 +944,15 @@ function composeParsedCallback(
 
 function composeWriteFailureCallback(
   terminal: TerminalOutputTarget,
-  ackCreditsParsed: (() => void) | undefined
+  ackCreditsParsed: (() => void) | undefined,
+  pacer?: () => void
 ): () => void {
   return () => {
     try {
       // A rejected write still consumed the main-owned delivery window.
       ackCreditsParsed?.()
     } finally {
+      pacer?.()
       // Why: a synchronous rejection proves undeliverability but nothing about parse progress; recover without extending replay guards.
       failTerminalWriteStallWatch(terminal)
     }
@@ -902,11 +966,18 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     discardTerminalOutput(entry.terminal)
     return null
   }
-  const queuedWrite = takeQueuedChunk(entry, BACKGROUND_CHUNK_CHARS)
+  const paceByParse = entry.denseSgrQueuedChars > 0
+  const queuedWrite = takeQueuedChunk(
+    entry,
+    paceByParse ? DENSE_SGR_CHUNK_CHARS : BACKGROUND_CHUNK_CHARS
+  )
   if (!queuedWrite) {
     return null
   }
-  const pacer = entry.highPriority ? makeParseClockPacer() : undefined
+  const pacer = entry.highPriority ? makeParseClockPacer(entry.terminal, paceByParse) : undefined
+  if (paceByParse) {
+    denseParseBlockedTerminals.add(entry.terminal)
+  }
   const ackCreditsParsed = registerTerminalOutputAckCredits(entry.terminal, queuedWrite.ackCredits)
   // Why armed BEFORE the write: a wedged WriteBuffer (issue #2836) or disposed xterm (6.1.0-beta.287) never runs the parsed callback, so the watch must be live first to catch it.
   armTerminalWriteStallWatch(entry.terminal, {
@@ -930,14 +1001,14 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
               ackCreditsParsed,
               pacer
             ),
-            onWriteFailure: composeWriteFailureCallback(entry.terminal, ackCreditsParsed)
+            onWriteFailure: composeWriteFailureCallback(entry.terminal, ackCreditsParsed, pacer)
           }
         )
       : writeBackgroundTerminalChunk(
           entry.terminal,
           queuedWrite.data,
           composeParsedCallback(entry.terminal, queuedWrite.onParsed, ackCreditsParsed, pacer),
-          composeWriteFailureCallback(entry.terminal, ackCreditsParsed)
+          composeWriteFailureCallback(entry.terminal, ackCreditsParsed, pacer)
         )
     if (!writeAccepted) {
       // Why: the failure callback credited the submitted chunk; credit and abandon the detached tail so the drain can't retry a certified-dead xterm.
@@ -945,6 +1016,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
       entry.chunks.length = 0
       entry.chunkIndex = 0
       entry.queuedChars = 0
+      entry.denseSgrQueuedChars = 0
       clearForegroundHoldSafety(entry)
       clearForegroundCoalesce(entry)
       recordQueueDebugPressure()
@@ -953,11 +1025,13 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
   } catch {
     // Why: beforeWrite or write setup can fail before xterm owns the bytes; cancel the armed watch without claiming parser failure.
     cancelTerminalWriteStallWatch(entry.terminal)
+    denseParseBlockedTerminals.delete(entry.terminal)
     ackCreditsParsed?.()
     fireQueuedAckCredits(entry)
     entry.chunks.length = 0
     entry.chunkIndex = 0
     entry.queuedChars = 0
+    entry.denseSgrQueuedChars = 0
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
     recordQueueDebugPressure()
@@ -1047,7 +1121,12 @@ export function writeTerminalOutput(
 
   if (options.foreground) {
     const entry = queuedByTerminal.get(terminal)
-    if (entry?.highPriority || options.coalesceForeground || options.holdForeground) {
+    if (
+      entry?.highPriority ||
+      denseParseBlockedTerminals.has(terminal) ||
+      options.coalesceForeground ||
+      options.holdForeground
+    ) {
       const queued = entry ?? createQueueEntry(terminal, options)
       queued.onBackgroundBacklogDropped = options.onBackgroundBacklogDropped
       queued.highPriority = true
@@ -1231,6 +1310,16 @@ export function writeTerminalOutput(
   )
 }
 
+export function prioritizeTerminalInput(terminal: TerminalOutputTarget): boolean {
+  const entry = queuedByTerminal.get(terminal)
+  if (!entry || entry.denseSgrQueuedChars <= INPUT_ECHO_DENSE_BACKLOG_CHARS) {
+    return false
+  }
+  dropDenseSgrChunksForInput(entry)
+  scheduleDrain(0)
+  return true
+}
+
 export function flushTerminalOutput(
   terminal: TerminalOutputTarget,
   options?: { maxChars?: number }
@@ -1255,6 +1344,7 @@ export function flushTerminalOutput(
     entry.chunks.length = 0
     entry.chunkIndex = 0
     entry.queuedChars = 0
+    entry.denseSgrQueuedChars = 0
     entry.highPriority = false
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
@@ -1403,6 +1493,7 @@ export function discardTerminalOutput(terminal: TerminalOutputTarget): void {
     fireQueuedAckCredits(entry)
   }
   discardInFlightTerminalOutputAckCredits(terminal)
+  denseParseBlockedTerminals.delete(terminal)
   queuedByTerminal.delete(terminal)
   discardForegroundRenderSettle(terminal)
   // Why: cancel the watch without masquerading as parse progress; replay guards use real completions to tell slow from wedged.
