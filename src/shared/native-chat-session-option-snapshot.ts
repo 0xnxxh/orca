@@ -107,6 +107,27 @@ function optionDescriptor(args: {
   }
 }
 
+// Effort before model config before modes; anything uncategorized sorts last.
+const CATEGORY_ORDER: Record<string, number> = {
+  thought_level: 0,
+  model_config: 1,
+  mode: 2
+}
+
+/** The snapshot's non-model descriptors in display order. Shared so the two
+ *  platforms' option pills can never disagree about ordering. */
+export function sortNativeChatSessionOptions(
+  snapshot: readonly SessionOptionDescriptor[]
+): SessionOptionDescriptor[] {
+  return snapshot
+    .filter((descriptor) => descriptor.category !== 'model')
+    .sort((left, right) => {
+      const leftOrder = CATEGORY_ORDER[left.category ?? ''] ?? 3
+      const rightOrder = CATEGORY_ORDER[right.category ?? ''] ?? 3
+      return leftOrder - rightOrder
+    })
+}
+
 /**
  * Why: the tracked model can sit outside the active list — a persisted default,
  * or an alias this host's CLI no longer lists. Keeping a row for it preserves

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { SessionOptionDescriptor } from './native-chat-session-options'
 import {
   CLAUDE_SESSION_OPTION_CATALOG,
   CODEX_SESSION_OPTION_CATALOG
@@ -9,6 +10,7 @@ import {
 } from './native-chat-session-option-state'
 import {
   buildNativeChatSessionOptionSnapshot,
+  sortNativeChatSessionOptions,
   withTrackedNativeChatModel
 } from './native-chat-session-option-snapshot'
 
@@ -82,6 +84,33 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
         modelLabel: 'Model'
       })
     ).toEqual([])
+  })
+
+  describe('sortNativeChatSessionOptions', () => {
+    it('drops the model row and orders effort before model config before modes', () => {
+      const descriptor = (id: string, category?: string): SessionOptionDescriptor =>
+        ({
+          id,
+          label: id,
+          ...(category ? { category } : {}),
+          kind: { type: 'boolean' },
+          valueSource: 'unknown',
+          settable: true
+        }) as SessionOptionDescriptor
+      const sorted = sortNativeChatSessionOptions([
+        descriptor('model', 'model'),
+        descriptor('uncategorized'),
+        descriptor('vim', 'mode'),
+        descriptor('fastMode', 'model_config'),
+        descriptor('effort', 'thought_level')
+      ])
+      expect(sorted.map((entry) => entry.id)).toEqual([
+        'effort',
+        'fastMode',
+        'vim',
+        'uncategorized'
+      ])
+    })
   })
 
   describe('withTrackedNativeChatModel', () => {

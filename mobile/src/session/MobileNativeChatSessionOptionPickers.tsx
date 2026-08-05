@@ -10,10 +10,10 @@ import {
   mobileModelPillLabel,
   mobileOptionsPillLabel,
   mobileOptionsPillTitle,
-  mobileSessionOptionDisabledReason,
-  sortedMobileSessionOptions
+  mobileSessionOptionDisabledReason
 } from './mobile-native-chat-session-option-labels'
 import { DescriptorRows, Pill, SessionOptionCaption } from './MobileNativeChatSessionOptionRows'
+import { sortNativeChatSessionOptions } from '../../../src/shared/native-chat-session-option-snapshot'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 
 export type MobileNativeChatSessionOptionPickersProps = {
@@ -38,7 +38,7 @@ export function MobileNativeChatSessionOptionPickers({
   const [open, setOpen] = useState<'model' | 'options' | null>(null)
   const { snapshot, pendingId } = controller
   const model = snapshot.find((descriptor) => descriptor.category === 'model')
-  const options = sortedMobileSessionOptions(snapshot)
+  const options = sortNativeChatSessionOptions(snapshot)
   if (!model) {
     return null
   }

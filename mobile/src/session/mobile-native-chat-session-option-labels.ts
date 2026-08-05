@@ -8,25 +8,6 @@ import type {
   SessionOptionSelectChoice
 } from '../../../src/shared/native-chat-session-options'
 
-const CATEGORY_ORDER: Record<string, number> = {
-  thought_level: 0,
-  model_config: 1,
-  mode: 2
-}
-
-/** Non-model descriptors in display order (effort before modes, desktop parity). */
-export function sortedMobileSessionOptions(
-  snapshot: readonly SessionOptionDescriptor[]
-): SessionOptionDescriptor[] {
-  return snapshot
-    .filter((descriptor) => descriptor.category !== 'model')
-    .sort((left, right) => {
-      const leftOrder = CATEGORY_ORDER[left.category ?? ''] ?? 3
-      const rightOrder = CATEGORY_ORDER[right.category ?? ''] ?? 3
-      return leftOrder - rightOrder
-    })
-}
-
 export function mobileSessionOptionDisabledReason(
   reason: SessionOptionDisabledReason | undefined
 ): string | null {
