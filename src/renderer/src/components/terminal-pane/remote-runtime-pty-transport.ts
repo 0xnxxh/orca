@@ -10,6 +10,7 @@ import type {
   RuntimeEnsureAgentSessionResult
 } from '../../../../shared/agent-session-host-authority'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
+import type { TabActivationIntent } from '../../../../shared/tab-activation-intent'
 import type {
   RuntimeMobileSessionTerminalClientTab,
   RuntimeMobileSessionTabsResult,
@@ -518,6 +519,7 @@ export function createRemoteRuntimePtyTransport(
   function activateHostSessionSurface(
     hostTabId: string,
     worktree: string,
+    intent: TabActivationIntent,
     timeoutMs?: number
   ): Promise<RuntimeMobileSessionTabsResult> {
     return callRuntime<RuntimeMobileSessionTabsResult>(
@@ -527,7 +529,8 @@ export function createRemoteRuntimePtyTransport(
         tabId: hostTabId,
         ...(leafId ? { leafId } : {}),
         notifyClients: false,
-        navigation: 'caller'
+        navigation: 'caller',
+        intent
       },
       timeoutMs
     )
@@ -548,7 +551,8 @@ export function createRemoteRuntimePtyTransport(
     const worktree = toRuntimeWorktreeSelector(worktreeId)
     let activated: RuntimeMobileSessionTabsResult
     try {
-      activated = await activateHostSessionSurface(hostTabId, worktree)
+      // Why: this runs when the pane itself is opened/attached — the user's wake gesture.
+      activated = await activateHostSessionSurface(hostTabId, worktree, 'user')
     } catch (error) {
       if (isMissingHostSessionSurfaceError(error)) {
         return null
@@ -714,7 +718,9 @@ export function createRemoteRuntimePtyTransport(
                     requestRemainingMs
                   )
               })
-            : await activateHostSessionSurface(hostTabId, worktree, requestRemainingMs)
+            : // Why: reconnect recovery, not a user gesture — a pane the user slept
+              // must stay slept even though it publishes the same pending status.
+              await activateHostSessionSurface(hostTabId, worktree, 'automatic', requestRemainingMs)
         lastRequestError = null
         const nextHandle = findReadyHostSessionHandle(listed, hostTabId)
         if (nextHandle) {

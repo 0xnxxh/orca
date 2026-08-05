@@ -730,8 +730,13 @@ describe('createRemoteRuntimePtyTransport', () => {
       terminal: 'terminal-1',
       viewport: { cols: 100, rows: 30 }
     })
+    // Why: opening the pane is the user's wake gesture for a slept pane, so it
+    // must not be labelled like the reconnect probe (STA-3465).
     expect(runtimeCall).toHaveBeenCalledWith(
-      expect.objectContaining({ method: 'session.tabs.activate' })
+      expect.objectContaining({
+        method: 'session.tabs.activate',
+        params: expect.objectContaining({ intent: 'user' })
+      })
     )
     expect(runtimeCall).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4082,7 +4087,8 @@ describe('createRemoteRuntimePtyTransport', () => {
           tabId: 'host-tab-1',
           leafId: 'leaf-1',
           notifyClients: false,
-          navigation: 'caller'
+          navigation: 'caller',
+          intent: 'user'
         }
       })
     )
@@ -4233,7 +4239,8 @@ describe('createRemoteRuntimePtyTransport', () => {
           tabId: 'host-tab-1',
           leafId: 'leaf-2',
           notifyClients: false,
-          navigation: 'caller'
+          navigation: 'caller',
+          intent: 'user'
         }
       })
     )
