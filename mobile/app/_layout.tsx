@@ -97,7 +97,10 @@ export default function RootLayout() {
     async function getNavigationTarget(data: unknown) {
       const hosts = await loadHostCatalog().catch(() => null)
       return getNotificationNavigationTarget(data, {
-        knownHostIds: hosts ? new Set(hosts.map((host) => host.id)) : undefined
+        knownHostIds: hosts ? new Set(hosts.map((host) => host.id)) : undefined,
+        credentialStatusByHostId: hosts
+          ? new Map(hosts.map((host) => [host.id, host.credentialStatus]))
+          : undefined
       })
     }
 

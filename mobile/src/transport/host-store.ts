@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { Platform } from 'react-native'
 import {
   HostProfileSchema,
   StoredHostProfileSchema,
@@ -10,12 +9,12 @@ import {
 import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
 import { joinHostCatalogCredentials } from './host-catalog-credential-join'
+import { resetPairingKeychainForTests } from './pairing-keychain'
 import {
-  deletePairingKeychainItem,
-  readPairingKeychainItem,
-  resetPairingKeychainForTests,
-  writePairingKeychainItem
-} from './pairing-keychain'
+  deleteHostDeviceToken,
+  readHostDeviceToken,
+  writeHostDeviceToken
+} from './host-device-token-store'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -31,50 +30,23 @@ import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upg
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
 
 const STORAGE_KEY = 'orca:hosts'
-// Why: SecureStore keys must match [A-Za-z0-9._-] (colons rejected), so use dots as the separator.
-const TOKEN_KEY_PREFIX = 'orca.host-token.'
-const WEB_TOKEN_KEY_PREFIX = 'orca:web-host-token:'
 
-function tokenKey(hostId: string): string {
-  return `${TOKEN_KEY_PREFIX}${hostId}`
-}
-
-function webTokenKey(hostId: string): string {
-  return `${WEB_TOKEN_KEY_PREFIX}${hostId}`
-}
-
-async function readDeviceToken(hostId: string): Promise<string | null> {
-  // Why: Expo SecureStore has no working web backend; fall back to AsyncStorage only on web so native still uses the keychain.
-  if (Platform.OS === 'web') {
-    return AsyncStorage.getItem(webTokenKey(hostId))
-  }
-  return readPairingKeychainItem(tokenKey(hostId))
-}
-
-async function writeDeviceToken(hostId: string, token: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await AsyncStorage.setItem(webTokenKey(hostId), token)
-    return
-  }
-  await writePairingKeychainItem(tokenKey(hostId), token)
-}
-
-async function deleteDeviceToken(hostId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await AsyncStorage.removeItem(webTokenKey(hostId))
-    return
-  }
-  await deletePairingKeychainItem(tokenKey(hostId))
+async function commitDeviceToken(hostId: string, token: string): Promise<void> {
+  credentialWriteRevisions.set(hostId, (credentialWriteRevisions.get(hostId) ?? 0) + 1)
+  await writeHostDeviceToken(hostId, token)
+  tokenCache.set(hostId, token)
+  hostListLoads.dropSharedHostListLoad()
 }
 
 async function deleteHostCredentials(hostId: string): Promise<void> {
-  await deleteDeviceToken(hostId)
+  await deleteHostDeviceToken(hostId)
   await deleteMobileRelayCredentialBundle(hostId)
   await deleteMobileRelayDirectUpgradeJournal(hostId)
 }
 
 // Why: Keychain reads are slow (50-200ms) and loadHosts() runs on every screen mount; cache per-hostId in memory, invalidate on save/remove.
 const tokenCache = new Map<string, string>()
+const credentialWriteRevisions = new Map<string, number>()
 // Why: serialize RMW of the shared hosts JSON; without a queue concurrent writers drop writes (resurrect a removed host, drop a rename).
 let hostListMutation: Promise<void> = Promise.resolve()
 
@@ -132,7 +104,7 @@ async function doLoadHostListSnapshot(): Promise<hostListLoads.HostListSnapshot>
     storedHosts,
     overlays: overlayState.overlays,
     tokenCache,
-    readToken: readDeviceToken,
+    readToken: readHostDeviceToken,
     getRevision: hostListLoads.getHostListLoadRevision
   })
 }
@@ -164,6 +136,21 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
     }
     throw new Error('host list storage unreadable')
   }
+}
+
+async function deleteUnpairedHostCredentials(hostId: string): Promise<void> {
+  const writeRevision = credentialWriteRevisions.get(hostId) ?? 0
+  await hostListMutation
+  const hosts = await readStoredHostsForMutation()
+  if (
+    (credentialWriteRevisions.get(hostId) ?? 0) !== writeRevision ||
+    hosts.some(({ id }) => id === hostId)
+  ) {
+    return
+  }
+  await deleteHostCredentials(hostId)
+  tokenCache.delete(hostId)
+  hostListLoads.dropSharedHostListLoad()
 }
 
 async function mutateStoredHosts(
@@ -205,39 +192,48 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   const duplicateHostIds = new Set<string>()
   let updatedExistingHost = false
   let tokenCommittedBeforeMetadata = false
-  await mutateStoredHosts(async (hosts) => {
-    const index = hosts.findIndex((h) => h.id === stored.id)
-    for (const candidate of hosts) {
-      if (candidate.id !== stored.id && candidate.publicKeyB64 === stored.publicKeyB64) {
-        duplicateHostIds.add(candidate.id)
+  try {
+    await mutateStoredHosts(async (hosts) => {
+      const index = hosts.findIndex((h) => h.id === stored.id)
+      for (const candidate of hosts) {
+        if (candidate.id !== stored.id && candidate.publicKeyB64 === stored.publicKeyB64) {
+          duplicateHostIds.add(candidate.id)
+        }
+      }
+      let next: StoredHostProfile[]
+      if (index >= 0) {
+        updatedExistingHost = true
+        // Why: an authoritative save is the safe point to collapse pre-existing duplicate rows to the preserved host id.
+        next = hosts
+          .filter(({ id }) => !duplicateHostIds.has(id))
+          .map((candidate) => (candidate.id === stored.id ? stored : candidate))
+      } else if (requireExisting) {
+        // Why: an in-flight relay upgrade must not resurrect a host the user removed.
+        throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
+      } else {
+        next = [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
+      }
+      if (duplicateHostIds.size > 0) {
+        // Why: never remove the only usable same-key row until its replacement credential is durable.
+        await commitDeviceToken(stored.id, validated.deviceToken)
+        tokenCommittedBeforeMetadata = true
+      }
+      return next
+    })
+  } catch (error) {
+    if (tokenCommittedBeforeMetadata && !updatedExistingHost) {
+      try {
+        await scheduleHostCredentialCleanup(stored.id, deleteUnpairedHostCredentials)
+      } catch {
+        // The replacement remains recoverable through the session cache.
       }
     }
-    let next: StoredHostProfile[]
-    if (index >= 0) {
-      updatedExistingHost = true
-      // Why: an authoritative save is the safe point to collapse pre-existing duplicate rows to the preserved host id.
-      next = hosts
-        .filter(({ id }) => !duplicateHostIds.has(id))
-        .map((candidate) => (candidate.id === stored.id ? stored : candidate))
-    } else if (requireExisting) {
-      // Why: an in-flight relay upgrade must not resurrect a host the user removed.
-      throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
-    } else {
-      next = [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
-    }
-    if (duplicateHostIds.size > 0) {
-      // Why: never remove the only usable same-key row until its replacement credential is durable.
-      await writeDeviceToken(stored.id, validated.deviceToken)
-      tokenCommittedBeforeMetadata = true
-    }
-    return next
-  })
+    throw error
+  }
   if (!tokenCommittedBeforeMetadata) {
     // Why: the catalog can now surface a failed token write for recovery instead of losing the host.
-    await writeDeviceToken(stored.id, validated.deviceToken)
+    await commitDeviceToken(stored.id, validated.deviceToken)
   }
-  tokenCache.set(stored.id, validated.deviceToken)
-  hostListLoads.dropSharedHostListLoad()
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
       v: 2,
@@ -258,9 +254,8 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
     hostListLoads.dropSharedHostListLoad()
   }
   for (const duplicateHostId of duplicateHostIds) {
-    tokenCache.delete(duplicateHostId)
     try {
-      await scheduleHostCredentialCleanup(duplicateHostId, deleteHostCredentials)
+      await scheduleHostCredentialCleanup(duplicateHostId, deleteUnpairedHostCredentials)
     } catch {
       // Metadata is already deduplicated; orphan-token recovery is best-effort.
     }
@@ -278,7 +273,7 @@ export async function removeHost(hostId: string): Promise<void> {
   }
   // Why: keychain delete can stall/reject; await only the durable cleanup intent so removeHost can't freeze the UI.
   try {
-    await scheduleHostCredentialCleanup(hostId, deleteHostCredentials)
+    await scheduleHostCredentialCleanup(hostId, deleteUnpairedHostCredentials)
   } catch {
     // Metadata is already committed; orphan-token recovery is best-effort.
   }
@@ -289,7 +284,7 @@ export async function retryPendingHostCredentialCleanup(): Promise<{
   remainingIds: string[]
   storageUnreadable: boolean
 }> {
-  return retryPendingHostCredentialCleanups(deleteHostCredentials)
+  return retryPendingHostCredentialCleanups(deleteUnpairedHostCredentials)
 }
 
 // Why: single mutation pass commits name + endpoint atomically so a mid-save failure can't persist one without the other.
@@ -332,6 +327,7 @@ export async function updateLastConnected(hostId: string): Promise<void> {
 export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
+  credentialWriteRevisions.clear()
   hostListLoads.dropSharedHostListLoad()
   resetPairingKeychainForTests()
 }

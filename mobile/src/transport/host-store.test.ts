@@ -205,6 +205,60 @@ describe('host-store list mutations', () => {
     expect(scheduleCleanupMock).not.toHaveBeenCalled()
   })
 
+  it('serves a committed replacement token when same-key metadata persistence fails', async () => {
+    const duplicate = {
+      ...HOST_TWO,
+      id: 'host-duplicate',
+      publicKeyB64: HOST_ONE.publicKeyB64
+    }
+    storedHostsRaw = JSON.stringify([HOST_ONE, duplicate])
+    await loadHosts()
+    asyncStorageMock.setItem.mockRejectedValueOnce(new Error('metadata write failed'))
+
+    await expect(
+      saveHost({ ...HOST_ONE, endpoint: 'ws://127.0.0.1:3', deviceToken: 'replacement-token' })
+    ).rejects.toThrow('metadata write failed')
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, duplicate])
+    await expect(
+      loadHosts().then((hosts) => hosts.find(({ id }) => id === HOST_ONE.id)?.deviceToken)
+    ).resolves.toBe('replacement-token')
+  })
+
+  it('records cleanup when new same-key metadata fails after its credential commits', async () => {
+    const replacement = {
+      ...HOST_TWO,
+      id: 'host-replacement',
+      publicKeyB64: HOST_ONE.publicKeyB64,
+      deviceToken: 'replacement-token'
+    }
+    asyncStorageMock.setItem.mockRejectedValueOnce(new Error('metadata write failed'))
+
+    await expect(saveHost(replacement)).rejects.toThrow('metadata write failed')
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, HOST_TWO])
+    expect(scheduleCleanupMock).toHaveBeenCalledWith(replacement.id, expect.any(Function))
+  })
+
+  it('does not clean a duplicate id that a later same-key save made authoritative', async () => {
+    const duplicate = {
+      ...HOST_TWO,
+      id: 'host-duplicate',
+      publicKeyB64: HOST_ONE.publicKeyB64
+    }
+    storedHostsRaw = JSON.stringify([HOST_ONE, duplicate])
+    await saveHost({ ...HOST_ONE, deviceToken: 'token-a' })
+    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === duplicate.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+
+    await saveHost({ ...duplicate, deviceToken: 'token-b' })
+    await staleCleanup?.(duplicate.id)
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([duplicate])
+    expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
   it('clears stale relay state when an existing host is re-paired direct-only', async () => {
     const overlay: MobileRelayHostOverlay = {
       v: 2,
@@ -275,6 +329,20 @@ describe('host-store list mutations', () => {
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
     expect(scheduleCleanupMock).toHaveBeenCalledWith(HOST_ONE.id, expect.any(Function))
+  })
+
+  it('deletes an unpaired credential when cleanup runs without a newer write', async () => {
+    await removeHost(HOST_ONE.id)
+    const cleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+
+    await cleanup?.(HOST_ONE.id)
+
+    expect(secureStoreMock.deleteItemAsync).toHaveBeenCalledWith(
+      'orca.host-token.host-1',
+      expect.anything()
+    )
   })
 
   it('merges v2 endpoints only onto an existing legacy base host', async () => {
