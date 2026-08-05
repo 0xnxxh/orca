@@ -9254,6 +9254,51 @@ describe('Store', () => {
     expect(session.terminalTopologyRevisionByRepoId?.wt1).toBe(1)
   })
 
+  // The pre-attach gate asks "would this bind be refused?" before touching the relay; a dry run
+  // must answer through the same predicate while writing nothing in either verdict.
+  it('answers bound under dryRun without writing when the pane exists', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {
+        wt1: [makeTerminalTab({ id: 'tab1', worktreeId: 'wt1', ptyId: 'pty-1' })]
+      },
+      terminalLayoutsByTabId: {
+        tab1: {
+          root: { type: 'leaf', leafId: TEST_LEAF_1 },
+          activeLeafId: TEST_LEAF_1,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [TEST_LEAF_1]: 'pty-1' }
+        }
+      }
+    })
+    const before = structuredClone(store.getWorkspaceSession())
+
+    const outcome = store.persistPtyBinding(
+      { worktreeId: 'wt1', tabId: 'tab1', leafId: TEST_LEAF_1, ptyId: 'pty-rebound' },
+      undefined,
+      { mayCreate: false, dryRun: true }
+    )
+
+    expect(outcome).toBe('bound')
+    expect(store.getWorkspaceSession()).toEqual(before)
+  })
+
+  it('answers refused under dryRun without writing when the pane is absent', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession(getDefaultWorkspaceSession())
+    const before = structuredClone(store.getWorkspaceSession())
+
+    const outcome = store.persistPtyBinding(
+      { worktreeId: 'wt1', tabId: 'tab-missing', leafId: TEST_LEAF_2, ptyId: 'pty-2' },
+      undefined,
+      { mayCreate: false, dryRun: true }
+    )
+
+    expect(outcome).toBe('refused')
+    expect(store.getWorkspaceSession()).toEqual(before)
+  })
+
   it('guards the legacy non-terminal-leafId flush point under mayCreate:false', async () => {
     const legacyLeafId = 'pane-legacy-1'
     const boundStore = await createStore()

@@ -50,7 +50,9 @@ import {
 } from './helpers/terminal'
 
 const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
-const RECONNECT_SAMPLE_WINDOW_MS = 20_000
+// Why 25s: the bounded reattach RPC deadline is ~10s with one retry (see the freeze helper's
+// comment), so a graft landing at the tail of a full retry cycle must still fall inside the window.
+const RECONNECT_SAMPLE_WINDOW_MS = 25_000
 const RECONNECT_SAMPLE_INTERVAL_MS = 2_000
 
 type SshLease = {
@@ -162,9 +164,10 @@ test.describe('SSH reconnect: closed panes stay closed', () => {
       // The pty.shutdown mux request has a live provider to send on but no responsive
       // peer, so it hangs until the mux timeout instead of taking the tombstone path.
       await closeActiveTerminalPane(orcaPage)
+      // Why wait THEN flush THEN read immediately: the renderer's session patch is debounced,
+      // so flushing first (or waiting after the flush) lets a late change miss the read.
       await orcaPage.waitForTimeout(1_500)
       await orcaPage.evaluate(() => window.api.session.flush()).catch(() => {})
-      await orcaPage.waitForTimeout(500)
 
       const afterClose = await readFullState(terminalTabId)
 
@@ -240,8 +243,9 @@ test.describe('SSH reconnect: closed panes stay closed', () => {
         await orcaPage.waitForTimeout(RECONNECT_SAMPLE_INTERVAL_MS)
       }
 
+      // Same ordering rule as the post-close read: settle, flush, read immediately.
+      await orcaPage.waitForTimeout(1_500)
       await orcaPage.evaluate(() => window.api.session.flush())
-      await orcaPage.waitForTimeout(500)
       const afterReconnect = await readFullState(terminalTabId)
 
       const evidence = {
@@ -294,6 +298,24 @@ test.describe('SSH reconnect: closed panes stay closed', () => {
         Object.values(afterReconnect.layout!.ptyIdsByLeafId),
         'the closed pty must not be bound to any leaf after reconnect settles'
       ).not.toContain(closedPtyId)
+      // Final-state guards: the timeline only covers its sample window, so a graft landing
+      // after it must still fail here, on the converged durable state.
+      expect(
+        afterReconnect.panes.count,
+        'visible pane count must settle at (or below) the post-close count'
+      ).toBeLessThanOrEqual(afterClose.panes.count)
+      const leafCountAfterClose = Object.keys(afterClose.layout?.ptyIdsByLeafId ?? {}).length
+      expect(
+        Object.keys(afterReconnect.layout!.ptyIdsByLeafId).length,
+        'RC3 signature: reconnect must not graft leaves into the durable layout'
+      ).toBeLessThanOrEqual(leafCountAfterClose)
+      const rootTypeAfterClose = (afterClose.layout?.root as { type?: string } | null)?.type
+      if (rootTypeAfterClose === 'leaf') {
+        expect(
+          (afterReconnect.layout!.root as { type?: string } | null)?.type,
+          'RC3 signature: the durable root must not flip leaf -> split across a reconnect'
+        ).toBe('leaf')
+      }
     } finally {
       cleanupDockerSshRelayTarget(target)
     }

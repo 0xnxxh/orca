@@ -15,17 +15,16 @@
 // ... detached" / "Ignoring stale PTY" log lines across the whole run, loss
 // completing ~27ms after ssh.connect() resolves), so nothing retires the old
 // leases or scrubs their bindings. Two invariants should hold regardless:
-//   1. leases minted before the relay died must end up non-restorable
-//      (state 'expired'/'terminated', not 'attached'/'detached' --
-//      'attached'/'detached' is exactly the reattachKnownPtys eligibility
-//      filter, ssh-relay-session.ts:1852-1854).
-//   2. no pane still visible after the app settles may display a ptyId bound
-//      to one of those pre-drop leases. Because the fresh relay resets its
-//      pty-id counter, a *new* legitimate pty can collide on the exact same
-//      composite id (`ssh:<targetId>@@pty-1`) as the destroyed one -- so a
-//      raw id match isn't proof of staleness. `createdAt` disambiguates: a
-//      newly-minted lease gets a fresh `createdAt` after the redeploy, while
-//      a stale binding is the literal pre-drop lease row, unmoved.
+//   1. every lease still in a reattach-eligible state ('attached'/'detached'
+//      -- exactly the reattachKnownPtys eligibility filter) after the app
+//      settles must back a currently-visible pane. NOT keyed on `createdAt`:
+//      the fresh relay resets its pty-id counter, and upsert deliberately
+//      preserves `existing.createdAt` when a re-minted id lands on a retired
+//      row, so "unchanged createdAt" flags legitimate fresh leases as stale.
+//   2. no visible pane may display a binding whose lease is not live -- that
+//      binding points at a shell that no longer exists.
+// Ground truth (D7): the durably recorded relay incarnation must change
+// across the kill, proving the redeploy really produced a new generation.
 //
 // Empirical hit rate (4 runs, see project-sta3077-ssh-pane-duplication
 // memory): all 3 pre-drop SSH panes were lost every run (4/4). The specific
@@ -55,7 +54,7 @@ import {
   readPersistedTerminalLayout,
   type PersistedTerminalLayout
 } from './helpers/persisted-terminal-layout'
-import { toAppSshPtyId } from '../../src/shared/ssh-pty-id'
+import { parseAppSshPtyId, toAppSshPtyId } from '../../src/shared/ssh-pty-id'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import {
   countVisibleTerminalPanes,
@@ -121,6 +120,14 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
       }
       const readLayout = (tabId: string | undefined): PersistedTerminalLayout | null =>
         tabId === undefined ? null : readPersistedTerminalLayout(dataFile, tabId)
+      const readIncarnation = (): { targetId: string; pid: number; token?: string } | null => {
+        const raw = JSON.parse(readFileSync(dataFile, 'utf8'))
+        return (
+          (raw.sshRelayIncarnations ?? []).find(
+            (entry: { targetId: string }) => entry.targetId === remote.targetId
+          ) ?? null
+        )
+      }
       const readPaneState = async (): Promise<{
         count: number
         ptyIds: (string | undefined)[]
@@ -143,11 +150,12 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
         'the tab must have a persisted layout in some workspace-session partition'
       ).not.toBeNull()
       const leafCountBefore = Object.keys(layoutBefore?.ptyIdsByLeafId ?? {}).length
-      // Keyed by "targetId::ptyId" (relay form) -> createdAt, so a post-drop
-      // lease can be told apart from a freshly-reminted one sharing the same id.
-      const createdAtBeforeByLeaseKey = new Map(
-        leasesBefore.map((l) => [`${l.targetId}::${l.ptyId}`, l.createdAt])
-      )
+      // D7 records the incarnation synchronously at connect, so it is already on disk here.
+      const incarnationBefore = readIncarnation()
+      expect(
+        incarnationBefore,
+        'the connect must durably record the relay incarnation it attached to'
+      ).not.toBeNull()
 
       const beforeSnapshot = readDockerSshRelayProcessSnapshot(target)
       if (!beforeSnapshot) {
@@ -180,13 +188,25 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
         await orcaPage.waitForTimeout(SETTLE_SAMPLE_INTERVAL_MS)
       }
 
+      // Why wait THEN flush: the renderer's session patch is debounced (~150ms) and main
+      // re-debounces its disk write; flushing first and waiting after would let a change
+      // produced at the end of the sampling loop reach disk only after the read below.
+      await orcaPage.waitForTimeout(1_500)
       await orcaPage.evaluate(() => window.api.session.flush())
-      await orcaPage.waitForTimeout(500)
 
       const finalState = await readPaneState()
+      // The per-connection relay watcher comes and goes independently of the persistent
+      // relay, and the snapshot helper needs both — poll instead of sampling once.
+      await expect
+        .poll(() => readDockerSshRelayProcessSnapshot(target!)?.relayPid ?? null, {
+          timeout: 30_000,
+          message: 'relay must redeploy after SIGTERM'
+        })
+        .not.toBeNull()
       const afterSnapshot = readDockerSshRelayProcessSnapshot(target)
       const leasesAfter = readLeases()
       const layoutAfter = readLayout(tabIdBefore)
+      const incarnationAfter = readIncarnation()
 
       const evidence = {
         remoteTargetId: remote.targetId,
@@ -199,7 +219,9 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
         finalState,
         afterSnapshot,
         leasesAfter,
-        layoutAfter
+        layoutAfter,
+        incarnationBefore,
+        incarnationAfter
       }
       console.log(`[ssh-relay-redeploy-stale-pty-binding] ${JSON.stringify(evidence, null, 2)}`)
       testInfo.annotations.push({
@@ -214,44 +236,58 @@ test.describe('SSH relay redeploy: stale PTY bindings', () => {
         afterSnapshot!.relayPid,
         'redeployed relay must be a different process, not a respawn of the same pid'
       ).not.toBe(beforeSnapshot.relayPid)
-
-      // Invariant 1: every pre-drop lease that was never re-minted by the
-      // fresh relay generation (same createdAt as before the kill) must be
-      // non-restorable. 'attached'/'detached' is exactly the eligibility
-      // filter reattachKnownPtys uses (ssh-relay-session.ts:1852-1854); a
-      // lease left in either state after its relay generation is destroyed
-      // stays forever eligible for a doomed reattach.
-      const stillRestorableStaleLeases = leasesAfter.filter((lease) => {
-        const key = `${lease.targetId}::${lease.ptyId}`
-        const beforeCreatedAt = createdAtBeforeByLeaseKey.get(key)
-        return (
-          beforeCreatedAt !== undefined &&
-          lease.createdAt === beforeCreatedAt &&
-          (lease.state === 'attached' || lease.state === 'detached')
-        )
-      })
+      // D7 ground truth: the reconnect must have recorded the fresh generation, or every
+      // lease assertion below would be testing the pre-D7 code path.
       expect(
-        stillRestorableStaleLeases,
-        'leases from the destroyed relay generation must be retired (expired/terminated), not left attached/detached'
+        incarnationAfter,
+        'the reconnect must durably record the fresh relay incarnation'
+      ).not.toBeNull()
+      if (incarnationBefore!.token !== undefined && incarnationAfter!.token !== undefined) {
+        expect(
+          incarnationAfter!.token,
+          'the recorded incarnation token must change across the relay kill'
+        ).not.toBe(incarnationBefore!.token)
+      } else {
+        expect(
+          incarnationAfter!.pid,
+          'the recorded incarnation pid must change across the relay kill'
+        ).not.toBe(incarnationBefore!.pid)
+      }
+
+      // Invariant 1: 'attached'/'detached' is exactly the eligibility filter
+      // reattachKnownPtys uses, so any lease still in either state after the
+      // settle must back a currently-visible pane. NOT keyed on createdAt --
+      // upsert preserves `existing.createdAt` when the fresh relay's reset
+      // counter re-mints an id, so unchanged createdAt cannot separate a
+      // stale row from a legitimate fresh lease.
+      const visiblePtyIds = new Set(finalState.ptyIds.filter((id): id is string => Boolean(id)))
+      const danglingRestorableLeases = leasesAfter.filter(
+        (lease) =>
+          (lease.state === 'attached' || lease.state === 'detached') &&
+          // Derive the composite id through the main process's own encoder: hardcoding the
+          // format would make this filter silently empty if the format ever changed.
+          !visiblePtyIds.has(toAppSshPtyId(lease.targetId, lease.ptyId))
+      )
+      expect(
+        danglingRestorableLeases,
+        'every lease still eligible for reattach must back a visible pane; the rest must be retired (expired/terminated)'
       ).toEqual([])
 
-      // Invariant 2: no currently-visible pane may display a ptyId bound to a
-      // pre-drop (never-reminted) lease -- that binding points at a shell
-      // that no longer exists.
-      const visiblePtyIds = new Set(finalState.ptyIds.filter((id): id is string => Boolean(id)))
-      const staleVisibleLeaseKeys = leasesAfter
-        .filter((lease) => {
-          const key = `${lease.targetId}::${lease.ptyId}`
-          const beforeCreatedAt = createdAtBeforeByLeaseKey.get(key)
-          return beforeCreatedAt !== undefined && lease.createdAt === beforeCreatedAt
-        })
-        // Derive the composite id through the main process's own encoder: hardcoding the
-        // format would make this filter silently empty if the format ever changed.
-        .map((lease) => toAppSshPtyId(lease.targetId, lease.ptyId))
-        .filter((compositeId) => visiblePtyIds.has(compositeId))
+      // Invariant 2: no currently-visible pane may display a binding whose
+      // lease is not live -- that binding points at a shell that no longer
+      // exists on the redeployed relay.
+      const attachedCompositeIds = new Set(
+        leasesAfter
+          .filter((lease) => lease.state === 'attached')
+          .map((lease) => toAppSshPtyId(lease.targetId, lease.ptyId))
+      )
+      const zombieVisibleBindings = [...visiblePtyIds].filter(
+        (id) =>
+          parseAppSshPtyId(id)?.connectionId === remote.targetId && !attachedCompositeIds.has(id)
+      )
       expect(
-        staleVisibleLeaseKeys,
-        'no visible pane may still display a binding minted before the relay was destroyed'
+        zombieVisibleBindings,
+        'no visible pane may display a binding without a live (attached) lease behind it'
       ).toEqual([])
 
       // Durable layout guard: the leaf/pty binding table must not gain extra

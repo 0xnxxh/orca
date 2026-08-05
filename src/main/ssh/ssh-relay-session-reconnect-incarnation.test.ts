@@ -437,8 +437,9 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
   // STA-3077 I2: a pane the durable layout no longer holds must not be grafted back by reattach.
   it('leaves the lease detached and publishes no surface when the durable bind is refused', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const attachForReconnect = vi.fn().mockResolvedValue({ incarnationId: 'incarnation-refused' })
     vi.mocked(getSshPtyProvider).mockReturnValue({
-      attachForReconnect: vi.fn().mockResolvedValue({ incarnationId: 'incarnation-refused' }),
+      attachForReconnect,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
     vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
@@ -458,6 +459,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     expect(runtime.registerPty).not.toHaveBeenCalled()
     expect(runtime.onPtySpawned).not.toHaveBeenCalled()
+    // The dry run refuses before the relay is touched, so the PTY is never pinned attached.
+    expect(attachForReconnect).not.toHaveBeenCalled()
     // Detached, not retired: an absent pane is not evidence the remote PTY is gone.
     expect(mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
   })
@@ -504,7 +507,10 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(runtime.registerPty).not.toHaveBeenCalled()
     expect(restorePtyIncarnation).toHaveBeenCalledWith(APP_PTY_ID, incarnationId)
     expect(setPtyOwnership).not.toHaveBeenCalled()
-    expect(mockStore.persistPtyBinding).not.toHaveBeenCalled()
+    // Only the pre-attach dry run may have fired; nothing durable was written.
+    expect(
+      vi.mocked(mockStore.persistPtyBinding).mock.calls.filter(([, , options]) => !options?.dryRun)
+    ).toHaveLength(0)
     expect(sourceActivationLease.rollback).toHaveBeenCalledOnce()
     expect(sourceActivationLease.commit).not.toHaveBeenCalled()
     expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
@@ -584,7 +590,11 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
       typeof mockStore.getSshRemotePtyLeases
     >)
-    vi.mocked(mockStore.persistPtyBinding).mockImplementationOnce(() => {
+    vi.mocked(mockStore.persistPtyBinding).mockImplementation((_args, _hostId, options) => {
+      // The pre-attach dry run writes nothing, so it must not consume the failure; only the real bind does.
+      if (options?.dryRun) {
+        return 'bound'
+      }
       throw new Error('disk full')
     })
     const runtime = { onPtySpawned: vi.fn(), registerPty: vi.fn() }

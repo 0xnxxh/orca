@@ -7518,8 +7518,13 @@ describe('registerPtyHandlers', () => {
 
     expect(localShutdown).not.toHaveBeenCalled()
     expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
-    // D4 — the tombstone fast-path makes no RPC, so it needs no pre-RPC intent and must not double-write.
-    expect(store.retireLeaseAndReap).not.toHaveBeenCalled()
+    // D4 — no RPC can reach the relay here, so the flag is the only path to killing the remote
+    // shell; the flag must survive (no clear), or the next connect's drain has nothing to honour.
+    expect(store.retireLeaseAndReap).toHaveBeenCalledWith(
+      'ssh-1',
+      'relay-pty',
+      'pty kill requested while disconnected'
+    )
     expect(store.clearSshRemotePtyLeaseReapFlag).not.toHaveBeenCalled()
   })
 

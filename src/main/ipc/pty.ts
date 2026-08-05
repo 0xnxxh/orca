@@ -7048,6 +7048,13 @@ export function registerPtyHandlers(
       // Why: detached SSH PTYs intentionally keep ownership after their
       // provider is unregistered; hydrated app-scoped ids can also arrive
       // before ownership is rebuilt. Tombstone instead of falling back local.
+      // D4 — no RPC can reach the relay here, so the reap flag is the only way this close
+      // ever kills the remote shell: the drain honours it at the next proven-same-incarnation connect.
+      store?.retireLeaseAndReap(
+        connectionId,
+        getRelayPtyId(connectionId, args.id),
+        'pty kill requested while disconnected'
+      )
       const incarnationId = finishPtyShutdown(args.id, connectionId, store)
       runtime?.onPtyExit(args.id, -1, incarnationId)
       rememberSyntheticKillExit(args.id)

@@ -2176,6 +2176,34 @@ export class SshRelaySession {
       shouldContinue
     } = args
     const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+    // Why: decide before attaching. A bind that would be refused used to be discovered only after the
+    // relay attach succeeded, leaving the PTY attached with no consumer — re-pinned on every reconnect,
+    // streaming into the void, and holding a source-credit slot. Refusing here spares all of that; the
+    // lease stays detached and is re-evaluated next reconnect, same as the post-attach refusal.
+    const lease = args.activeLeaseByPtyId.get(ptyId)
+    if (lease?.worktreeId && lease.tabId && lease.leafId) {
+      let bindVerdict: 'bound' | 'refused' = 'bound'
+      try {
+        bindVerdict = this.store.persistPtyBinding(
+          {
+            worktreeId: lease.worktreeId,
+            tabId: lease.tabId,
+            leafId: lease.leafId,
+            ptyId: appPtyId
+          },
+          undefined,
+          { mayCreate: false, dryRun: true }
+        )
+      } catch {
+        // A dry run writes nothing, so an error proves nothing about the pane — fail open to the attach.
+      }
+      if (bindVerdict === 'refused') {
+        console.log(
+          `[ssh-relay-session] Skipping reattach for ${appPtyId}: pane ${lease.tabId}:${lease.leafId} is not in durable layout; leaving lease detached`
+        )
+        return
+      }
+    }
     const pendingReattach: PendingPtyReattach = {
       mux,
       providerGeneration,

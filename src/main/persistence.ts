@@ -6765,9 +6765,12 @@ export class Store {
       startupCwd?: string
     },
     hostId?: string | null,
-    options?: { mayCreate?: boolean }
+    // dryRun answers "would this bind be refused?" through the same code path — a parallel
+    // pane-existence read would drift from the creating branches that define the answer.
+    options?: { mayCreate?: boolean; dryRun?: boolean }
   ): 'bound' | 'refused' {
     const mayCreate = options?.mayCreate ?? true
+    const dryRun = options?.dryRun ?? false
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
@@ -6846,6 +6849,10 @@ export class Store {
         restoreSession()
         return 'refused'
       }
+      if (dryRun) {
+        restoreSession()
+        return 'bound'
+      }
       advanceTopologyAfterMembershipChange()
       try {
         this.flushOrThrow()
@@ -6899,6 +6906,10 @@ export class Store {
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
       return 'refused'
+    }
+    if (dryRun) {
+      restoreSession()
+      return 'bound'
     }
     advanceTopologyAfterMembershipChange()
     try {
