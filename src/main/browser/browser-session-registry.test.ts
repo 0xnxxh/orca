@@ -85,6 +85,13 @@ describe('BrowserSessionRegistry', () => {
     expect(profile).toBeNull()
   })
 
+  it('rejects invalid user-agent modes at the registry boundary', () => {
+    const profile = browserSessionRegistry.createProfile('isolated', 'Invalid UA', {
+      userAgentMode: 'rotating' as never
+    })
+    expect(profile).toBeNull()
+  })
+
   it('allows created profile partitions', () => {
     const profile = browserSessionRegistry.createProfile('isolated', 'Allowed')
     expect(profile).not.toBeNull()

@@ -26,6 +26,7 @@ import type {
   BrowserCookieImportResult,
   BrowserCertificateProceedResult,
   BrowserSessionProfile,
+  BrowserSessionProfileCreateOptions,
   BrowserSessionProfileScope,
   BrowserViewportOverride
 } from '../../shared/types'
@@ -584,12 +585,17 @@ export function registerBrowserHandlers(): void {
     'browser:session:createProfile',
     (
       event,
-      args: { scope: BrowserSessionProfileScope; label: string }
+      args: {
+        scope: BrowserSessionProfileScope
+        label: string
+      } & BrowserSessionProfileCreateOptions
     ): BrowserSessionProfile | null => {
       if (!isTrustedBrowserRenderer(event.sender)) {
         return null
       }
-      return browserSessionRegistry.createProfile(args.scope, args.label)
+      return browserSessionRegistry.createProfile(args.scope, args.label, {
+        userAgentMode: args.userAgentMode
+      })
     }
   )
 
