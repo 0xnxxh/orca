@@ -4,6 +4,7 @@ import {
   unregisterLivePaneManager
 } from '@/lib/pane-manager/pane-manager-registry'
 import {
+  resetTerminalWebglAtlasRecoveryBudgetForTesting,
   scheduleImagePasteWebglAtlasRecovery,
   scheduleTabRevealWebglAtlasRecovery,
   scheduleTerminalWebglAtlasRecovery,
@@ -16,10 +17,12 @@ describe('terminal WebGL atlas recovery', () => {
   function registerManager(): {
     resetWebglTextureAtlases: Mock<() => void>
     refreshAllPanes: Mock<() => void>
+    scheduleRevealPresent: Mock<() => void>
   } {
     const manager = {
       resetWebglTextureAtlases: vi.fn<() => void>(),
-      refreshAllPanes: vi.fn<() => void>()
+      refreshAllPanes: vi.fn<() => void>(),
+      scheduleRevealPresent: vi.fn<() => void>()
     }
     registerLivePaneManager(manager)
     registeredManagers.push(manager)
@@ -36,6 +39,7 @@ describe('terminal WebGL atlas recovery', () => {
     vi.clearAllTimers()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    resetTerminalWebglAtlasRecoveryBudgetForTesting()
   })
 
   it('clears atlases and refreshes panes through the post-paste redraw window', () => {
