@@ -889,6 +889,25 @@ describe('createRemoteRuntimePtyTransport', () => {
     transport.destroy?.()
   })
 
+  it('forwards an empty authoritative snapshot so a cached parked viewport clears', async () => {
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const onReplayData = vi.fn()
+    const transport = createRemoteRuntimePtyTransport('env-1', {
+      worktreeId: 'wt-1',
+      tabId: 'web-terminal-host-tab-1',
+      leafId: 'pane:1'
+    })
+
+    const connect = transport.connect({ url: '', callbacks: { onReplayData } })
+    await vi.waitFor(() => expect(subscriptionSendBinary).toHaveBeenCalled())
+    emitSnapshot(latestSubscribePayload().streamId, '')
+    await connect
+
+    expect(onReplayData).toHaveBeenCalledOnce()
+    expect(onReplayData).toHaveBeenCalledWith('')
+    transport.destroy?.()
+  })
+
   it('keeps the current mirror input queue when an older connect settles', async () => {
     const healthyRuntimeCall = runtimeCall.getMockImplementation()
     let releaseFirstActivation = (): void => {}

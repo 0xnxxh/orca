@@ -1858,8 +1858,8 @@ export function createRemoteRuntimePtyTransport(
           }
         },
         onSnapshot: (data, meta) => {
-          // Why: an empty snapshot can still carry a pending mid-escape tail that must replay so the next live chunk completes it.
-          if ((data || meta?.pendingEscapeTailAnsi) && isCurrentSubscription()) {
+          // Why: an empty snapshot is still authoritative and must clear a cached parked viewport.
+          if (isCurrentSubscription()) {
             if (subscribedPtyId && bufferPtyShutdownReplayData(subscribedPtyId, data)) {
               return
             }
