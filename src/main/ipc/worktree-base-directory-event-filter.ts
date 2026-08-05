@@ -31,6 +31,8 @@ export type WorktreeBaseWatchTarget = {
   path: string
   connectionId?: string
   repos: Map<string, WorktreeBaseRepoWatchConfig>
+  /** Exact upstream leaf selected by accepted active-worktree status. */
+  gitStatusRefPaths?: ReadonlySet<string>
 }
 
 export function pathRelativeToWorktreeWatchRoot(
@@ -114,16 +116,18 @@ function isHeadLogParts(parts: string[], offset: number): boolean {
   return parts.length === offset + 2 && parts[offset] === 'logs' && parts[offset + 1] === 'HEAD'
 }
 
-// Remote-tracking refs are the only refs/** carve-out from the depth cutoff:
-// external push/fetch rewrites them, and git status derives upstream plus
-// ahead/behind from them. Ref locks and reflogs stay ignored so fetch/prune
-// churn cannot fan out beyond one debounced refresh.
-function isRemoteTrackingRefParts(parts: string[]): boolean {
-  return (
-    parts.length >= 3 &&
-    parts[0] === 'refs' &&
-    parts[1] === 'remotes' &&
-    !parts.at(-1)?.endsWith('.lock')
+// Only the active status result's exact upstream ref crosses the refs/** cutoff.
+function isBoundUpstreamRef(
+  target: WorktreeBaseWatchTarget,
+  eventPath: string,
+  parts: string[]
+): boolean {
+  if (parts.length < 2 || parts[0] !== 'refs' || parts.at(-1)?.endsWith('.lock')) {
+    return false
+  }
+  const eventKey = normalizeRuntimePathForComparison(eventPath)
+  return [...(target.gitStatusRefPaths ?? [])].some(
+    (path) => normalizeRuntimePathForComparison(path) === eventKey
   )
 }
 
@@ -188,7 +192,7 @@ function classifyGitCommonEvent(
     if (isHeadLogParts(parts, 0)) {
       return headIdentityChange(repoIds)
     }
-    if (isRemoteTrackingRefParts(parts)) {
+    if (isBoundUpstreamRef(target, event.path, parts)) {
       return gitStatusChange(repoIds)
     }
     return NO_CHANGE

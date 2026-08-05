@@ -1991,6 +1991,7 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
     cancelStatus: async ({ requestToken }) => {
       webGitStatusAbortControllers.get(requestToken)?.abort()
     },
+    setStatusUpstreamRefWatch: async () => {},
     submoduleStatus: async ({ worktreePath, submodulePath, area }) => {
       const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
       return callRuntimeResult('git.submoduleStatus', {

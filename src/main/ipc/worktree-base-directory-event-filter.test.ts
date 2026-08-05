@@ -168,7 +168,7 @@ describe('matchingWorktreeBaseRepoIds (git-common)', () => {
     })
   })
 
-  it('classifies common config and remote-tracking refs as status-only external push/fetch signals', () => {
+  it('classifies config and the exact upstream ref as status-only external push signals', () => {
     const target = makeGitCommonTarget()
     // External `git push -u` writes only branch.<name>.remote/merge into the
     // common config; without this signal the upstream stays invisible until a
@@ -183,11 +183,14 @@ describe('matchingWorktreeBaseRepoIds (git-common)', () => {
       gitStatusRepoIds: ['repo-1'],
       headIdentityRepoIds: []
     })
-    for (const path of [
+    const boundPaths = [
       join(COMMON_DIR, 'refs', 'remotes', 'origin', 'main'),
       // Branch names with slashes nest arbitrarily deep.
-      join(COMMON_DIR, 'refs', 'remotes', 'origin', 'feature', 'nested')
-    ]) {
+      join(COMMON_DIR, 'refs', 'remotes', 'team', 'fork', 'feature', 'nested'),
+      join(COMMON_DIR, 'refs', 'custom', 'origin', 'main')
+    ]
+    for (const path of boundPaths) {
+      target.gitStatusRefPaths = new Set([path])
       for (const type of ['create', 'update'] as const) {
         expect(classifyWorktreeBaseChange(target, { type, path })).toEqual({
           structureRepoIds: [],
@@ -207,6 +210,16 @@ describe('matchingWorktreeBaseRepoIds (git-common)', () => {
       gitStatusRepoIds: [],
       headIdentityRepoIds: []
     })
+    expect(
+      classifyWorktreeBaseChange(target, {
+        type: 'update',
+        path: join(COMMON_DIR, 'refs', 'remotes', 'origin', 'unrelated')
+      })
+    ).toEqual({
+      structureRepoIds: [],
+      gitStatusRepoIds: [],
+      headIdentityRepoIds: []
+    })
   })
 
   it('classifies Windows-shaped linked metadata paths', () => {
@@ -214,7 +227,8 @@ describe('matchingWorktreeBaseRepoIds (git-common)', () => {
     const target: WorktreeBaseWatchTarget = {
       ...makeGitCommonTarget(),
       key: `git-common:local:${commonDir}`,
-      path: commonDir
+      path: commonDir,
+      gitStatusRefPaths: new Set([win32.join(commonDir, 'refs', 'remotes', 'origin', 'main')])
     }
     expect(
       classifyWorktreeBaseChange(target, {
