@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_TERMINAL_INACTIVE_PANE_OPACITY,
   getDefaultNotificationSettings,
   getDefaultPrimarySelectionMiddleClickPaste,
   getDefaultTerminalRightClickToPaste,
@@ -24,6 +25,11 @@ describe('getDefaultSettings', () => {
 
   it('uses a commit-oriented Source Control layout by default', () => {})
 
+  it('defaults mobile pairing to discovered network addresses', () => {
+    expect(getDefaultSettings('/tmp').mobilePairingCustomAddress).toBeNull()
+    expect(getDefaultSettings('/tmp').mobilePairingCustomAddresses).toEqual([])
+  })
+
   it('keeps first-work branch auto-renaming on by default for new settings', () => {
     expect(getDefaultSettings('/tmp').autoRenameBranchFromWork).toBe(true)
     expect(getDefaultSettings('/tmp').autoRenameBranchFromWorkDefaultedOn).toBe(true)
@@ -41,6 +47,12 @@ describe('getDefaultSettings', () => {
 
   it('enables separate light terminal theme by default', () => {
     expect(getDefaultSettings('/tmp').terminalUseSeparateLightTheme).toBe(true)
+  })
+
+  it('keeps inactive terminal panes readable by default', () => {
+    expect(getDefaultSettings('/tmp').terminalInactivePaneOpacity).toBe(
+      DEFAULT_TERMINAL_INACTIVE_PANE_OPACITY
+    )
   })
 
   it('asks before closing terminals with running processes by default', () => {
