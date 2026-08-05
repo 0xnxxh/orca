@@ -297,6 +297,7 @@ export function buildInitialGitHubWorkItemRequest(
     ...(workspaceRunContext ? { workspaceRunContext } : {}),
     name: seedName,
     ...(displayName ? { displayName } : {}),
+    ...(displayName ? { displayNameKind: 'generated' } : {}),
     ...(identity.type === 'issue' && identity.number ? { linkedIssue: identity.number } : {}),
     ...(identity.type === 'pr' && identity.number ? { linkedPR: identity.number } : {}),
     ...(args.telemetrySource ? { telemetrySource: args.telemetrySource } : {}),

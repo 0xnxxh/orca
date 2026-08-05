@@ -48,6 +48,7 @@ describe('applyWorktreeUpdates', () => {
     )
 
     expect(result['repo-a']?.[0]?.displayName).toBe('Renamed A')
+    expect(result['repo-a']?.[0]?.displayNameMode).toBe('fixed')
     expect(result['repo-b']?.[0]).toBe(samePathDifferentProject)
     expect(result['repo-b']?.[0]?.displayName).toBe('Project B')
   })
@@ -57,6 +58,7 @@ describe('applyWorktreeUpdates', () => {
       id: 'repo-a::/Users/alice/project',
       repoId: 'repo-a',
       displayName: 'Project A',
+      displayNameMode: 'fixed',
       comment: 'notes'
     })
 
@@ -66,6 +68,20 @@ describe('applyWorktreeUpdates', () => {
     })
 
     expect(result['repo-a']?.[0]?.displayName).toBe('Project A')
+    expect(result['repo-a']?.[0]?.displayNameMode).toBe('fixed')
     expect(result['repo-a']?.[0]?.comment).toBe('edited')
+  })
+
+  it('restores automatic naming when the stored display name is cleared', () => {
+    const target = makeWorktree({
+      id: 'repo-a::/Users/alice/project',
+      repoId: 'repo-a',
+      displayName: 'Project A',
+      displayNameMode: 'fixed'
+    })
+
+    const result = applyWorktreeUpdates({ 'repo-a': [target] }, target.id, { displayName: '' })
+
+    expect(result['repo-a']?.[0]?.displayNameMode).toBe('automatic')
   })
 })

@@ -29,6 +29,9 @@ export function mergeWorktree(
     ...(git.isSparse === true ? { isSparse: true } : {}),
     isMainWorktree: git.isMainWorktree,
     displayName: meta?.displayName || branchShort || defaultDisplayName || basename(git.path),
+    // Why trim: a blank-but-present name renders as the branch anyway, and the
+    // renderer's optimistic projection trims — untrimmed here they disagree.
+    displayNameMode: meta?.displayName?.trim() ? 'fixed' : 'automatic',
     comment: meta?.comment || '',
     linkedIssue: meta?.linkedIssue ?? null,
     linkedPR: meta?.linkedPR ?? null,

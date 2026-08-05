@@ -491,6 +491,165 @@ describe('fetchWorktrees', () => {
     expect(store.getState().sortEpoch).toBe(8)
   })
 
+  it('adopts a fixed title mode when a rename elsewhere leaves the title unchanged', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'automatic'
+    })
+    const refreshed = { ...existing, displayNameMode: 'fixed' as const }
+
+    mockApi.worktrees.list.mockResolvedValue([refreshed])
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(store.getState().worktreesByRepo.repo1[0].displayNameMode).toBe('fixed')
+  })
+
+  it('keeps a same-name rename fixed when an older in-flight refresh lands', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'automatic'
+    })
+    let resolveListing: ((worktrees: Worktree[]) => void) | undefined
+    worktreeListMock.mockReturnValueOnce(
+      new Promise<Worktree[]>((resolve) => {
+        resolveListing = resolve
+      })
+    )
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    const refresh = store.getState().fetchWorktrees('repo1')
+    await Promise.resolve()
+    await store.getState().updateWorktreeMeta(existing.id, {
+      displayName: 'v1.4.170-release'
+    })
+    resolveListing?.([existing])
+    await refresh
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'fixed'
+    })
+  })
+
+  it('does not let an older-runtime payload forget a known fixed title mode', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'fixed'
+    })
+    const olderRuntimeRow = { ...existing, displayNameMode: undefined }
+    worktreeListMock.mockResolvedValueOnce([olderRuntimeRow])
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(store.getState().worktreesByRepo.repo1[0].displayNameMode).toBe('fixed')
+  })
+
+  it('adopts an explicit automatic transition from a modern client', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'fixed'
+    })
+    const refreshed = { ...existing, displayNameMode: 'automatic' as const }
+    worktreeListMock.mockResolvedValueOnce([refreshed])
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(store.getState().worktreesByRepo.repo1[0].displayNameMode).toBe('automatic')
+  })
+
+  it('rolls back a rejected same-name rename before mixed-version reconciliation', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'automatic'
+    })
+    const olderRuntimeRow = { ...existing, displayNameMode: undefined }
+    worktreeListMock.mockResolvedValue([olderRuntimeRow])
+    mockApi.worktrees.updateMeta.mockRejectedValueOnce(new Error('write failed'))
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    const result = await store.getState().updateWorktreeMeta(existing.id, {
+      displayName: 'v1.4.170-release'
+    })
+
+    expect(result).toMatchObject({ ok: false })
+    await vi.waitFor(() => {
+      expect(listDetectedMock).toHaveBeenCalled()
+      expect(store.getState().worktreesByRepo.repo1[0].displayNameMode).toBe('automatic')
+    })
+  })
+
+  it('keeps a newer rename while an earlier rejected rename refetches', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      displayName: 'feature',
+      displayNameMode: 'automatic'
+    })
+    let rejectFirst: ((error: Error) => void) | undefined
+    let resolveSecond: (() => void) | undefined
+    mockApi.worktrees.updateMeta
+      .mockImplementationOnce(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectFirst = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSecond = resolve
+          })
+      )
+    worktreeListMock.mockResolvedValue([existing])
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    const first = store.getState().updateWorktreeMeta(existing.id, { displayName: 'First' })
+    await vi.waitFor(() => expect(rejectFirst).toBeTypeOf('function'))
+    const second = store.getState().updateWorktreeMeta(existing.id, { displayName: 'Second' })
+    await vi.waitFor(() => expect(resolveSecond).toBeTypeOf('function'))
+    rejectFirst?.(new Error('first write failed'))
+    await first
+    await vi.waitFor(() => expect(listDetectedMock).toHaveBeenCalled())
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      displayName: 'Second',
+      displayNameMode: 'fixed'
+    })
+    resolveSecond?.()
+    await second
+  })
+
   it('clears branch-scoped linked reviews when the listing observes a branch switch', async () => {
     const store = createTestStore()
     const existing = makeWorktree({
@@ -3901,6 +4060,46 @@ describe('updateWorktreeGitIdentity', () => {
     expect(store.getState().worktreesByRepo.repo1[0].displayName).toBe('My Cool Work')
   })
 
+  it('preserves a fixed title when it matches the old branch', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameMode: 'fixed'
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: 'refs/heads/adhoc/remote-server-fixes'
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0].displayName).toBe('v1.4.170-release')
+  })
+
+  it('follows the branch when the title is automatic', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/feature',
+      displayName: 'stale-title',
+      displayNameMode: 'automatic'
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: 'refs/heads/main'
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0].displayName).toBe('main')
+  })
+
   it('clears stale branch identity for detached HEAD updates', () => {
     const store = createTestStore()
     const existing = makeWorktree({
@@ -5146,20 +5345,22 @@ describe('worktree remote runtime mutations', () => {
       worktreesByRepo: { repo1: [] }
     } as Partial<AppState>)
 
-    const result = await store
-      .getState()
-      .createWorktree(
-        'repo1',
-        'feature',
-        'origin/main',
-        'skip',
-        { directories: ['src'], presetId: 'preset-1' },
-        'sidebar',
-        'Feature title',
-        123,
-        456,
-        { remoteName: 'fork', branchName: 'feature' }
-      )
+    const createWorktree = store.getState().createWorktree
+    const createArgs: Parameters<typeof createWorktree> = [
+      'repo1',
+      'feature',
+      'origin/main',
+      'skip',
+      { directories: ['src'], presetId: 'preset-1' },
+      'sidebar',
+      'Feature title',
+      123,
+      456,
+      { remoteName: 'fork', branchName: 'feature' }
+    ]
+    createArgs[25] = { displayNameKind: 'user' }
+
+    const result = await createWorktree(...createArgs)
 
     expect(result).toEqual({ worktree: wt })
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
@@ -5173,6 +5374,7 @@ describe('worktree remote runtime mutations', () => {
         sparseCheckout: { directories: ['src'], presetId: 'preset-1' },
         telemetrySource: 'sidebar',
         displayName: 'Feature title',
+        displayNameKind: 'user',
         linkedIssue: 123,
         linkedPR: 456,
         pushTarget: { remoteName: 'fork', branchName: 'feature' }
@@ -5180,7 +5382,7 @@ describe('worktree remote runtime mutations', () => {
       timeoutMs: 10 * 60_000
     })
     expect(mockApi.worktrees.create).not.toHaveBeenCalled()
-    expect(store.getState().worktreesByRepo.repo1).toEqual([wt])
+    expect(store.getState().worktreesByRepo.repo1).toEqual([{ ...wt, displayNameMode: 'fixed' }])
   })
 
   it('persists Jira item and source context through paired-runtime create', async () => {
@@ -5918,9 +6120,54 @@ describe('worktree remote runtime mutations', () => {
     })
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
       displayName: 'Fix auth',
+      displayNameMode: 'fixed',
       pendingFirstAgentMessageRename: false,
       firstAgentMessageRenameError: null
     })
+  })
+
+  it('resumes branch-follow behavior when the title is cleared', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      displayName: 'Fixed title',
+      displayNameMode: 'fixed'
+    })
+    store.setState({ worktreesByRepo: { repo1: [wt] } } as Partial<AppState>)
+
+    await store.getState().updateWorktreeMeta(wt.id, { displayName: '' })
+
+    expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
+      worktreeId: wt.id,
+      updates: expect.objectContaining({
+        displayName: ''
+      })
+    })
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      displayName: '',
+      displayNameMode: 'automatic'
+    })
+  })
+
+  it('keeps the derived title mode out of persisted metadata', async () => {
+    // Why: setWorktreeMeta blind-spreads onto on-disk worktreeMeta, and
+    // mergeWorktree re-derives this flag — persisting it would strand junk.
+    const store = createTestStore()
+    const wt = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      displayName: 'feature'
+    })
+    store.setState({ worktreesByRepo: { repo1: [wt] } } as Partial<AppState>)
+
+    await store.getState().updateWorktreeMeta(wt.id, { displayName: 'Renamed' })
+
+    const persisted = mockApi.worktrees.updateMeta.mock.calls.at(-1)?.[0]
+    expect(persisted.updates).not.toHaveProperty('displayNameMode')
+    expect(store.getState().worktreesByRepo.repo1[0].displayNameMode).toBe('fixed')
   })
 
   it('resolves and persists a push target when manually linking a GitHub PR', async () => {

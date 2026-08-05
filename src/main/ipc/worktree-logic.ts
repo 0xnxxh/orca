@@ -1,5 +1,10 @@
 import { resolve, relative, isAbsolute, posix, sep, win32 } from 'node:path'
-import type { GlobalSettings, OrcaWorkspaceLayout, Repo } from '../../shared/types'
+import type {
+  CreateWorktreeArgs,
+  GlobalSettings,
+  OrcaWorkspaceLayout,
+  Repo
+} from '../../shared/types'
 import { isWindowsAbsolutePathLike, resolveRuntimePath } from '../../shared/cross-platform-path'
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { splitWorktreeId } from '../../shared/worktree-id'
@@ -70,6 +75,16 @@ export function sanitizeWorktreeDisplayName(input: string): string | undefined {
     .trim()
 
   return sanitized || undefined
+}
+
+export function resolveWorktreeCreateDisplayName(
+  input: string | undefined,
+  kind: CreateWorktreeArgs['displayNameKind']
+): string | undefined {
+  if (!input) {
+    return undefined
+  }
+  return kind === 'user' ? input.trim() || undefined : sanitizeWorktreeDisplayName(input)
 }
 
 /**
@@ -220,6 +235,14 @@ export function shouldSetDisplayName(
   sanitizedName: string
 ): boolean {
   return !(branchName === requestedName && sanitizedName === requestedName)
+}
+
+export function shouldPersistRequestedWorktreeDisplayName(
+  displayName: string,
+  branchName: string,
+  kind: CreateWorktreeArgs['displayNameKind']
+): boolean {
+  return kind === 'user' || displayName !== branchName
 }
 
 /**

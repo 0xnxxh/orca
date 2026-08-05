@@ -84,6 +84,32 @@ describe('createBlankWorkspace', () => {
     expect('startupCommand' in params).toBe(false)
   })
 
+  it('keeps a typed blank-workspace name fixed across collision retries', async () => {
+    const calls: Call[] = []
+    const client = fakeClient(
+      (_method, call) =>
+        call === 1 ? new Error('already exists locally') : { worktree: { id: 'wt-manual' } },
+      calls
+    )
+
+    await createBlankWorkspace({
+      client,
+      repoId: 'repo-1',
+      baseName: 'My  exact  label',
+      nameIsAutoManaged: false,
+      createdWithAgentId: undefined,
+      comment: undefined,
+      setupDecision: 'inherit',
+      supportsIdempotentCutoverRetry: true
+    })
+
+    expect(calls[1]?.params).toMatchObject({
+      name: 'My  exact  label-2',
+      displayName: 'My  exact  label',
+      displayNameKind: 'user'
+    })
+  })
+
   it('retries with a numeric suffix on a branch-collision error', async () => {
     const calls: Call[] = []
     const client = fakeClient((_method, call) => {

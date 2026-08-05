@@ -196,6 +196,7 @@ export type WorktreeSlice = {
     compareBaseRef?: string,
     options?: {
       automationProvenanceRequest?: CreateWorktreeArgs['automationProvenanceRequest']
+      displayNameKind?: CreateWorktreeArgs['displayNameKind']
       linkedWorkItem?: WorkspaceLinkedItem | null
       linkedTaskSourceContext?: TaskSourceContext | null
     }
@@ -373,7 +374,7 @@ const ERASURE_PROTECTED_KEYS: Record<Extract<RequiredKey<Worktree>, keyof Worktr
   lastActivityAt: true
 }
 
-export function withoutErasedRequiredWorktreeFields(
+function withoutErasedRequiredWorktreeFields(
   updates: Partial<WorktreeMeta>
 ): Partial<WorktreeMeta> {
   const erased = Object.keys(ERASURE_PROTECTED_KEYS).filter(
@@ -392,12 +393,25 @@ export function withoutErasedRequiredWorktreeFields(
   return next
 }
 
+export function projectWorktreeMetaUpdates(
+  rawUpdates: Partial<WorktreeMeta>
+): Partial<WorktreeMeta> & Partial<Pick<Worktree, 'displayNameMode'>> {
+  const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
+  if (!Object.prototype.hasOwnProperty.call(updates, 'displayName')) {
+    return updates
+  }
+  return {
+    ...updates,
+    displayNameMode: updates.displayName?.trim() ? 'fixed' : 'automatic'
+  }
+}
+
 export function applyWorktreeUpdates(
   worktreesByRepo: Record<string, Worktree[]>,
   worktreeId: string,
   rawUpdates: Partial<WorktreeMeta>
 ): Record<string, Worktree[]> {
-  const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
+  const updates = projectWorktreeMetaUpdates(rawUpdates)
   const repoId = getRepoIdFromWorktreeId(worktreeId)
   const worktrees = worktreesByRepo[repoId]
   if (!worktrees) {

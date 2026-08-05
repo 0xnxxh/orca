@@ -32,6 +32,17 @@ describe('worktree RPC schemas', () => {
     expect(parsed.success).toBe(false)
   })
 
+  it('accepts only known display-name provenance values', () => {
+    expect(
+      WorktreeCreate.parse({ repo: 'repo-1', name: 'manual', displayNameKind: 'user' })
+        .displayNameKind
+    ).toBe('user')
+    expect(
+      WorktreeCreate.safeParse({ repo: 'repo-1', name: 'manual', displayNameKind: 'unknown' })
+        .success
+    ).toBe(false)
+  })
+
   it('normalizes durable Jira linked-item metadata and rejects provider mismatches', () => {
     const linkedWorkItem = {
       provider: 'jira',

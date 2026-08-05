@@ -103,7 +103,8 @@ import {
   areWorktreePathsEqual,
   formatWorktreeRemovalError,
   isOrphanCompatiblePreflightError,
-  isOrphanedWorktreeError
+  isOrphanedWorktreeError,
+  resolveWorktreeCreateDisplayName
 } from './worktree-logic'
 import { dedupeWorktreesByPath } from './worktree-path-comparison'
 import { joinWorktreeRelativePath } from '../runtime/runtime-relative-paths'
@@ -946,6 +947,7 @@ function mergeFolderWorkspace(repo: Repo, worktreeId: string, meta: WorktreeMeta
     isBare: false,
     isMainWorktree: worktreeId === getFolderWorkspaceRootId(repo),
     displayName: meta.displayName || repo.displayName,
+    displayNameMode: meta.displayName?.trim() ? 'fixed' : 'automatic',
     comment: meta.comment || '',
     linkedIssue: meta.linkedIssue ?? null,
     linkedPR: meta.linkedPR ?? null,
@@ -1055,7 +1057,8 @@ function createFolderWorkspace(
     ...(store.getProjectHostSetups
       ? getProjectHostSetupWorktreeMeta(store.getProjectHostSetups(), repo)
       : {}),
-    displayName: args.displayName || args.name,
+    displayName:
+      resolveWorktreeCreateDisplayName(args.displayName, args.displayNameKind) ?? args.name,
     lastActivityAt: now,
     createdAt: now,
     orcaCreatedAt: now,

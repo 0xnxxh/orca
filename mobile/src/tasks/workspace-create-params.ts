@@ -108,8 +108,6 @@ export function buildTaskWorkspaceCreateParams(args: {
   const comment = note?.trim()
   const selectedBaseBranch = baseBranch || hostedStartPoint?.baseBranch
   const selectedPushTarget = pushTarget ?? hostedStartPoint?.pushTarget
-  // Why: desktop only sends displayName while the name is still auto-derived; a
-  // user-edited name suppresses it so the runtime keeps the user's chosen name.
   const sourceName =
     item.provider === 'linear'
       ? getWorkspaceSourceName({
@@ -121,7 +119,13 @@ export function buildTaskWorkspaceCreateParams(args: {
           linearIdentifier: item.source.identifier
         })
       : getWorkspaceSourceName({ provider: item.provider, ...item.source })
-  const displayName = nameIsAutoManaged ? { displayName: sourceName.displayName } : {}
+  const requestedDisplayName = nameIsAutoManaged ? sourceName.displayName : workspaceName?.trim()
+  const displayName = requestedDisplayName
+    ? {
+        displayName: requestedDisplayName,
+        displayNameKind: nameIsAutoManaged ? ('generated' as const) : ('user' as const)
+      }
+    : {}
   const common = {
     setupDecision,
     activate: true,

@@ -493,6 +493,8 @@ export type Worktree = {
   /** Host-specific setup used to create/run this workspace. */
   projectHostSetupId?: string
   displayName: string
+  /** Whether branch changes may replace the resolved display name. */
+  displayNameMode?: 'fixed' | 'automatic'
   comment: string
   linkedIssue: number | null
   linkedPR: number | null
@@ -2238,6 +2240,9 @@ export type CreateWorktreeArgs = {
    *  branch/path seed. Used when a workspace is created from a GitHub or
    *  Linear artifact whose title should remain readable in the sidebar. */
   displayName?: string
+  /** Generated labels are sanitized as untrusted external titles; user labels
+   *  preserve their exact trimmed text. Defaults to generated for compatibility. */
+  displayNameKind?: 'generated' | 'user'
   baseBranch?: string
   /** Source Control compare target when it differs from the checkout start point. */
   compareBaseRef?: string

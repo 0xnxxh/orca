@@ -898,6 +898,59 @@ describe('registerWorktreeHandlers', () => {
     expect(persistedMeta).not.toHaveProperty('automationProvenance')
   })
 
+  it('persists an explicit display name when it matches the branch', async () => {
+    store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/v1.4.170-release',
+        head: 'abc123',
+        branch: 'refs/heads/v1.4.170-release',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'v1.4.170-release',
+      displayName: 'v1.4.170-release',
+      displayNameKind: 'user'
+    })
+
+    const persistedMeta = store.setWorktreeMeta.mock.calls.find(
+      ([worktreeId]) => worktreeId === 'repo-1::/workspace/v1.4.170-release'
+    )?.[1]
+    expect(persistedMeta).toMatchObject({ displayName: 'v1.4.170-release' })
+  })
+
+  it('keeps a generated branch-matching display name automatic', async () => {
+    store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/release',
+        head: 'abc123',
+        branch: 'refs/heads/release',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'release',
+      displayName: 'release',
+      displayNameKind: 'generated'
+    })
+
+    const persistedMeta = store.setWorktreeMeta.mock.calls.find(
+      ([worktreeId]) => worktreeId === 'repo-1::/workspace/release'
+    )?.[1]
+    expect(persistedMeta).not.toHaveProperty('displayName')
+    expect(result).toMatchObject({
+      worktree: { displayName: 'release', displayNameMode: 'automatic' }
+    })
+  })
+
   it('auto-suffixes the branch name when the first choice collides with a remote branch', async () => {
     // Why: new-workspace flow should silently try improve-dashboard-2, -3, … rather than failing back to the name picker.
     getBranchConflictKindMock.mockImplementation(async (_repoPath: string, branch: string) =>
@@ -1117,6 +1170,7 @@ describe('registerWorktreeHandlers', () => {
         repoId: 'repo-folder',
         path: '/workspace/folder',
         displayName: 'folder-session',
+        displayNameMode: 'fixed',
         instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         createdWithAgent: 'codex'
       })
@@ -1921,6 +1975,33 @@ describe('registerWorktreeHandlers', () => {
         displayName: 'Fix: dashboards for PRs'
       })
     })
+  })
+
+  it('preserves a user-authored display name beyond the external-title limit', async () => {
+    const displayName = `${'a'.repeat(121)}  exact  spacing`
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/manual-name',
+        head: 'abc123',
+        branch: 'manual-name',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'manual-name',
+      displayName: `  ${displayName}  `,
+      displayNameKind: 'user'
+    })
+
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/manual-name',
+      expect.objectContaining({ displayName })
+    )
+    expect(result).toMatchObject({ worktree: expect.objectContaining({ displayName }) })
   })
 
   it('persists linked issue and PR metadata during local create', async () => {

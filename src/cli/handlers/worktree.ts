@@ -208,6 +208,7 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     const explicitParentWorkspace = explicitParent.parentWorkspace
     const startupAgent = getOptionalStartupAgent(flags)
     const setupDecision = getOptionalSetupDecision(flags)
+    const requestedName = getRequiredStringFlag(flags, 'name')
     const noParent = flags.get('no-parent') === true
     const envParentWorkspace =
       !noParent && !explicitParentWorkspace && !explicitParentWorktree
@@ -231,7 +232,9 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     const linearIssueLink = getOptionalLinearIssueLinkFlag(flags, 'linear-issue')
     const result = await client.call<RuntimeWorktreeCreateResult>('worktree.create', {
       repo: await getCreateRepoSelector(flags, cwdParentWorktree, client),
-      name: getRequiredStringFlag(flags, 'name'),
+      name: requestedName,
+      displayName: requestedName,
+      displayNameKind: 'user',
       baseBranch: getOptionalStringFlag(flags, 'base-branch'),
       linkedIssue: getOptionalNumberFlag(flags, 'issue'),
       ...linearIssueLink,

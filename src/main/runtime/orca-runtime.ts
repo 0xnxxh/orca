@@ -146,6 +146,7 @@ import type {
   AutomationWorkspaceProvenance,
   CliWorkspaceProvenance,
   BaseRefSearchResult,
+  CreateWorktreeArgs,
   CreateWorktreeResult,
   DetectedWorktree,
   DetectedWorktreeListResult,
@@ -896,6 +897,8 @@ import {
   isOrphanCompatiblePreflightError,
   isOrphanedWorktreeError,
   mergeWorktree,
+  resolveWorktreeCreateDisplayName,
+  shouldPersistRequestedWorktreeDisplayName,
   sanitizeWorktreeName,
   shouldSetDisplayName,
   areWorktreePathsEqual
@@ -2110,6 +2113,7 @@ function mergeRuntimeFolderWorkspace(repo: Repo, worktreeId: string, meta: Workt
     isBare: false,
     isMainWorktree: worktreeId === getRuntimeFolderWorkspaceRootId(repo),
     displayName: meta.displayName || repo.displayName,
+    displayNameMode: meta.displayName?.trim() ? 'fixed' : 'automatic',
     comment: meta.comment || '',
     linkedIssue: meta.linkedIssue ?? null,
     linkedPR: meta.linkedPR ?? null,
@@ -10676,10 +10680,7 @@ export class OrcaRuntimeService {
     // A spawn published (or admission pending) this generation already
     // attaches the provider stream; a replacement under a reused id must not
     // read as the discovered never-attached session it replaced.
-    if (
-      this.spawnPublishedPtys.has(ptyId) ||
-      this.pendingPtyRegistrationIncarnations.has(ptyId)
-    ) {
+    if (this.spawnPublishedPtys.has(ptyId) || this.pendingPtyRegistrationIncarnations.has(ptyId)) {
       return false
     }
     // SSH panes have their own lease/reattach machinery.
@@ -21225,6 +21226,7 @@ export class OrcaRuntimeService {
     linkedTaskSourceContext?: TaskSourceContext | null
     comment?: string
     displayName?: string
+    displayNameKind?: CreateWorktreeArgs['displayNameKind']
     telemetrySource?: WorkspaceCreateTelemetrySource
     workspaceStatus?: string
     manualOrder?: number
@@ -21291,7 +21293,8 @@ export class OrcaRuntimeService {
       const meta = this.store.setWorktreeMeta(worktreeId, {
         instanceId,
         ...getProjectHostSetupWorktreeMeta(this.store.getProjectHostSetups?.() ?? [], repo),
-        displayName: args.displayName?.trim() || args.name,
+        displayName:
+          resolveWorktreeCreateDisplayName(args.displayName, args.displayNameKind) ?? args.name,
         lastActivityAt: now,
         createdAt: now,
         orcaCreatedAt: now,
@@ -21473,7 +21476,10 @@ export class OrcaRuntimeService {
     }
     const hostedReviewExecutionContext = this.getHostedReviewExecutionOptions(repo)
     let effectiveRequestedName = args.name
-    const requestedDisplayName = args.displayName?.trim() || undefined
+    const requestedDisplayName = resolveWorktreeCreateDisplayName(
+      args.displayName,
+      args.displayNameKind
+    )
     const sanitizedName = sanitizeWorktreeName(args.name)
     let effectiveSanitizedName = sanitizedName
     // Why: explicit branches and non-username prefix modes never consume this
@@ -21868,7 +21874,13 @@ export class OrcaRuntimeService {
     // Control must compare against the review target branch.
     const metadataBaseRef = args.compareBaseRef ?? remoteTrackingBase?.ref ?? baseBranch
     const displayNameMeta = requestedDisplayName
-      ? { displayName: requestedDisplayName }
+      ? shouldPersistRequestedWorktreeDisplayName(
+          requestedDisplayName,
+          branchName,
+          args.displayNameKind
+        )
+        ? { displayName: requestedDisplayName }
+        : {}
       : shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
         ? { displayName: effectiveRequestedName }
         : {}
@@ -22326,6 +22338,7 @@ export class OrcaRuntimeService {
       linkedTaskSourceContext?: TaskSourceContext | null
       comment?: string
       displayName?: string
+      displayNameKind?: CreateWorktreeArgs['displayNameKind']
       workspaceStatus?: string
       manualOrder?: number
       sparseCheckout?: { directories: string[]; presetId?: string }
@@ -22361,6 +22374,7 @@ export class OrcaRuntimeService {
         repoId: repo.id,
         name: args.name,
         ...(args.displayName ? { displayName: args.displayName } : {}),
+        ...(args.displayNameKind ? { displayNameKind: args.displayNameKind } : {}),
         ...(args.baseBranch ? { baseBranch: args.baseBranch } : {}),
         ...(args.compareBaseRef ? { compareBaseRef: args.compareBaseRef } : {}),
         ...(args.branchNameOverride ? { branchNameOverride: args.branchNameOverride } : {}),

@@ -618,6 +618,7 @@ type SetupPrompt = {
   repoIdOverride?: string
   agentOverride?: WorkspaceAgentChoice
   workspaceNameOverride?: string
+  nameIsAutoManaged: boolean
   noteOverride?: string
   baseBranchOverride?: string
   branchNameOverride?: string
@@ -633,6 +634,7 @@ type WorkspaceCreateArgs = {
   setupOverride?: Exclude<SetupDecision, 'inherit'>
   agentOverride?: WorkspaceAgentChoice
   workspaceNameOverride?: string
+  nameIsAutoManaged: boolean
   noteOverride?: string
   baseBranchOverride?: string
   branchNameOverride?: string
@@ -4864,23 +4866,14 @@ export default function MobileTasksScreen() {
 
   const handleWorkspaceNameDraftChange = useCallback(
     (nextName: string): void => {
-      if (!nextName.trim()) {
-        setWorkspaceLastAutoName('')
-      } else if (workspaceNameDraft !== workspaceLastAutoName) {
-        setWorkspaceLastAutoName('')
-      }
+      setWorkspaceLastAutoName('')
       if (workspaceBranchNameOverride && nextName !== workspaceBranchAutoName) {
         setWorkspaceBranchNameOverride(undefined)
         setWorkspaceBranchAutoName('')
       }
       setWorkspaceNameDraft(nextName)
     },
-    [
-      workspaceBranchAutoName,
-      workspaceBranchNameOverride,
-      workspaceLastAutoName,
-      workspaceNameDraft
-    ]
+    [workspaceBranchAutoName, workspaceBranchNameOverride]
   )
 
   const selectWorkspaceBaseBranch = useCallback(
@@ -5368,6 +5361,7 @@ export default function MobileTasksScreen() {
       setupOverride?: Exclude<SetupDecision, 'inherit'>,
       agentOverride?: WorkspaceAgentChoice,
       workspaceNameOverride?: string,
+      nameIsAutoManaged = true,
       noteOverride?: string,
       baseBranchOverride?: string,
       branchNameOverride?: string,
@@ -5426,6 +5420,7 @@ export default function MobileTasksScreen() {
             ...(repoIdOverride ? { repoIdOverride } : {}),
             ...(agentOverride ? { agentOverride } : {}),
             ...(workspaceNameOverride ? { workspaceNameOverride } : {}),
+            nameIsAutoManaged,
             ...(comment ? { noteOverride: comment } : {}),
             ...(baseBranchOverride ? { baseBranchOverride } : {}),
             ...(branchNameOverride ? { branchNameOverride } : {}),
@@ -5457,6 +5452,7 @@ export default function MobileTasksScreen() {
             setupOverride: 'run',
             ...(agentOverride ? { agentOverride } : {}),
             ...(workspaceNameOverride ? { workspaceNameOverride } : {}),
+            nameIsAutoManaged,
             ...(comment ? { noteOverride: comment } : {}),
             ...(baseBranchOverride ? { baseBranchOverride } : {}),
             ...(branchNameOverride ? { branchNameOverride } : {}),
@@ -5470,6 +5466,13 @@ export default function MobileTasksScreen() {
           return
         }
         let params: Record<string, unknown>
+        const workspaceSelection = {
+          setupDecision,
+          agent: selectedAgent,
+          workspaceName: workspaceNameOverride,
+          nameIsAutoManaged,
+          note: comment
+        }
         if (item.provider === 'github') {
           const source = item.source
           let prStartPoint: { baseBranch: string; pushTarget?: GitPushTarget } | undefined
@@ -5505,10 +5508,7 @@ export default function MobileTasksScreen() {
           params = buildTaskWorkspaceCreateParams({
             item,
             targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
+            ...workspaceSelection,
             baseBranch: baseBranchOverride,
             branchNameOverride,
             sparseCheckout: sparseCheckoutOverride,
@@ -5549,10 +5549,7 @@ export default function MobileTasksScreen() {
           params = buildTaskWorkspaceCreateParams({
             item,
             targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
+            ...workspaceSelection,
             baseBranch: baseBranchOverride,
             branchNameOverride,
             sparseCheckout: sparseCheckoutOverride,
@@ -5562,10 +5559,7 @@ export default function MobileTasksScreen() {
           params = buildTaskWorkspaceCreateParams({
             item,
             targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
+            ...workspaceSelection,
             baseBranch: baseBranchOverride,
             branchNameOverride,
             sparseCheckout: sparseCheckoutOverride
@@ -11090,6 +11084,7 @@ export default function MobileTasksScreen() {
                     undefined,
                     resolvedWorkspaceAgent,
                     workspaceNameDraft.trim(),
+                    workspaceLastAutoName !== '' && workspaceNameDraft === workspaceLastAutoName,
                     undefined,
                     workspaceBaseBranch?.refName,
                     workspaceBranchNameOverride &&
@@ -11416,6 +11411,7 @@ export default function MobileTasksScreen() {
                     'run',
                     setupPrompt.agentOverride,
                     setupPrompt.workspaceNameOverride,
+                    setupPrompt.nameIsAutoManaged,
                     setupPrompt.noteOverride,
                     setupPrompt.baseBranchOverride,
                     setupPrompt.branchNameOverride,
@@ -11439,6 +11435,7 @@ export default function MobileTasksScreen() {
                     'skip',
                     setupPrompt.agentOverride,
                     setupPrompt.workspaceNameOverride,
+                    setupPrompt.nameIsAutoManaged,
                     setupPrompt.noteOverride,
                     setupPrompt.baseBranchOverride,
                     setupPrompt.branchNameOverride,
@@ -11501,6 +11498,7 @@ export default function MobileTasksScreen() {
                         'run',
                         orcaYamlTrustPrompt.agentOverride,
                         orcaYamlTrustPrompt.workspaceNameOverride,
+                        orcaYamlTrustPrompt.nameIsAutoManaged,
                         orcaYamlTrustPrompt.noteOverride,
                         orcaYamlTrustPrompt.baseBranchOverride,
                         orcaYamlTrustPrompt.branchNameOverride,
@@ -11535,6 +11533,7 @@ export default function MobileTasksScreen() {
                         'run',
                         orcaYamlTrustPrompt.agentOverride,
                         orcaYamlTrustPrompt.workspaceNameOverride,
+                        orcaYamlTrustPrompt.nameIsAutoManaged,
                         orcaYamlTrustPrompt.noteOverride,
                         orcaYamlTrustPrompt.baseBranchOverride,
                         orcaYamlTrustPrompt.branchNameOverride,
@@ -11563,6 +11562,7 @@ export default function MobileTasksScreen() {
                     'skip',
                     prompt.agentOverride,
                     prompt.workspaceNameOverride,
+                    prompt.nameIsAutoManaged,
                     prompt.noteOverride,
                     prompt.baseBranchOverride,
                     prompt.branchNameOverride,

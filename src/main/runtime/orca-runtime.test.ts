@@ -3995,10 +3995,13 @@ describe('OrcaRuntimeService', () => {
     })
     const notifier = { worktreesChanged: vi.fn() }
     runtime.setNotifier(notifier as never)
+    const displayName = `${'c'.repeat(121)}  exact  spacing`
 
     const result = await runtime.createManagedWorktree({
       repoSelector: 'id:folder-repo',
       name: 'folder-session',
+      displayName: `  ${displayName}  `,
+      displayNameKind: 'user',
       createdWithAgent: 'codex',
       startup: { command: 'codex', viewMode: 'chat' }
     })
@@ -4013,14 +4016,15 @@ describe('OrcaRuntimeService', () => {
         id: expect.stringMatching(/^folder-repo::\/workspace\/folder::workspace:[0-9a-f-]{36}$/),
         repoId: 'folder-repo',
         path: '/workspace/folder',
-        displayName: 'folder-session',
+        displayName,
+        displayNameMode: 'fixed',
         isMainWorktree: false,
         createdWithAgent: 'codex'
       })
     )
     expect(metaById[result.worktree.id]).toMatchObject({
       instanceId: result.worktree.instanceId,
-      displayName: 'folder-session',
+      displayName,
       orcaCreationSource: 'runtime',
       createdWithAgent: 'codex'
     })
@@ -4028,7 +4032,8 @@ describe('OrcaRuntimeService', () => {
       id: result.worktree.id,
       repoId: 'folder-repo',
       path: '/workspace/folder',
-      displayName: 'folder-session'
+      displayName,
+      displayNameMode: 'fixed'
     })
     await expect(runtime.listManagedWorktrees('id:folder-repo')).resolves.toMatchObject({
       totalCount: 2,
@@ -4427,6 +4432,7 @@ describe('OrcaRuntimeService', () => {
 
   it('creates a branchNameOverride worktree from the selected matching remote base ref', async () => {
     const runtime = new OrcaRuntimeService(store)
+    const displayName = `${'a'.repeat(121)}  exact  spacing`
     vi.spyOn(gitRunner, 'gitExecFileAsync').mockResolvedValue({ stdout: '', stderr: '' })
     computeWorktreePathMock.mockReturnValue('/tmp/workspaces/feature-something')
     ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/feature-something')
@@ -4443,6 +4449,8 @@ describe('OrcaRuntimeService', () => {
     const result = await runtime.createManagedWorktree({
       repoSelector: 'id:repo-1',
       name: 'feature/something',
+      displayName: `  ${displayName}  `,
+      displayNameKind: 'user',
       baseBranch: 'origin/feature/something',
       branchNameOverride: 'feature/something'
     })
@@ -4462,7 +4470,8 @@ describe('OrcaRuntimeService', () => {
     expect(resolveLocalGitUsernameMock).not.toHaveBeenCalled()
     expect(result.worktree).toMatchObject({
       path: '/tmp/workspaces/feature-something',
-      branch: 'feature/something'
+      branch: 'feature/something',
+      displayName
     })
   })
 
@@ -5129,10 +5138,13 @@ describe('OrcaRuntimeService', () => {
     registerSshGitProvider('ssh-1', provider as never)
     getActiveMultiplexerMock.mockReturnValue({ request: muxRequestMock, notify: vi.fn() })
     const runtime = new OrcaRuntimeService(remoteStore as never)
+    const displayName = `${'b'.repeat(121)}  exact  spacing`
 
     const result = await runtime.createManagedWorktree({
       repoSelector: TEST_REPO_ID,
       name: 'mobile-feature',
+      displayName: `  ${displayName}  `,
+      displayNameKind: 'user',
       linkedGitLabIssue: 321,
       linkedGitLabMR: 654,
       startup: { command: 'claude' }
@@ -5147,10 +5159,12 @@ describe('OrcaRuntimeService', () => {
     expect(result.worktree).toMatchObject({
       id: `${TEST_REPO_ID}::${created.path}`,
       path: created.path,
+      displayName,
       linkedGitLabIssue: 321,
       linkedGitLabMR: 654
     })
     expect(metaById[result.worktree.id]).toMatchObject({
+      displayName,
       linkedGitLabIssue: 321,
       linkedGitLabMR: 654
     })

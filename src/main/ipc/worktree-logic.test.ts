@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   sanitizeWorktreeName,
   sanitizeWorktreeDisplayName,
+  resolveWorktreeCreateDisplayName,
+  shouldPersistRequestedWorktreeDisplayName,
   ensurePathWithinWorkspace,
   computeBranchName,
   getConfiguredBranchPrefix,
@@ -127,6 +129,25 @@ describe('sanitizeWorktreeDisplayName', () => {
 
   it('returns undefined when nothing displayable remains', () => {
     expect(sanitizeWorktreeDisplayName('\u0000\n\t')).toBeUndefined()
+  })
+
+  it('preserves user-authored spacing and length while trimming the edges', () => {
+    const manualName = `${'a'.repeat(121)}  exact  spacing`
+
+    expect(resolveWorktreeCreateDisplayName(`  ${manualName}  `, 'user')).toBe(manualName)
+  })
+
+  it('keeps generated labels on the external-title sanitization path', () => {
+    expect(resolveWorktreeCreateDisplayName(`  ${'a'.repeat(121)}\nnext  `, 'generated')).toBe(
+      'a'.repeat(120)
+    )
+    expect(resolveWorktreeCreateDisplayName('  two  spaces  ', undefined)).toBe('two spaces')
+  })
+
+  it('only fixes a branch-matching display name when it was user-authored', () => {
+    expect(shouldPersistRequestedWorktreeDisplayName('release', 'release', 'user')).toBe(true)
+    expect(shouldPersistRequestedWorktreeDisplayName('release', 'release', 'generated')).toBe(false)
+    expect(shouldPersistRequestedWorktreeDisplayName('Release', 'release', 'generated')).toBe(true)
   })
 })
 
@@ -500,6 +521,7 @@ describe('mergeWorktree', () => {
       isBare: false,
       isMainWorktree: false,
       displayName: 'My Feature',
+      displayNameMode: 'fixed',
       comment: 'WIP',
       linkedIssue: 42,
       linkedPR: 10,
@@ -558,6 +580,29 @@ describe('mergeWorktree', () => {
   it('strips refs/heads/ prefix from branch for display name', () => {
     const result = mergeWorktree('repo1', baseGit, undefined)
     expect(result.displayName).toBe('feature-x')
+  })
+
+  it('marks fallback names as automatic', () => {
+    const result = mergeWorktree('repo1', baseGit, undefined)
+    expect(result.displayNameMode).toBe('automatic')
+  })
+
+  it('treats a blank stored name as automatic', () => {
+    // Why: `orca worktree set --display-name " "` persists untrimmed; the row
+    // still renders as its branch, so it must keep following branch switches.
+    const result = mergeWorktree('repo1', baseGit, {
+      displayName: '   ',
+      comment: '',
+      linkedIssue: null,
+      linkedPR: null,
+      linkedLinearIssue: null,
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 0
+    })
+    expect(result.displayNameMode).toBe('automatic')
   })
 
   it('falls back to basename when bare worktree has no branch', () => {

@@ -13,6 +13,7 @@ export async function createBlankWorkspace(args: {
   client: RpcClient
   repoId: string
   baseName: string
+  nameIsAutoManaged?: boolean
   createdWithAgentId: TuiAgent | undefined
   comment: string | undefined
   setupDecision: WorkspaceCreateSetupDecision
@@ -23,10 +24,15 @@ export async function createBlankWorkspace(args: {
     baseName: args.baseName,
     supportsIdempotentCutoverRetry: args.supportsIdempotentCutoverRetry,
     buildParams: (name) => {
+      const displayNameFields =
+        args.nameIsAutoManaged === false
+          ? { displayName: args.baseName, displayNameKind: 'user' }
+          : {}
       const params: Record<string, unknown> = {
         repo: `id:${args.repoId}`,
         setupDecision: args.setupDecision,
         name,
+        ...displayNameFields,
         ...agentLaunchCreateFields(args.createdWithAgentId)
       }
       if (args.comment) {

@@ -20,7 +20,7 @@ import type { RuntimeWorktreeListResult } from '../../../../shared/runtime-types
 import {
   findWorktreeById,
   applyWorktreeUpdates,
-  withoutErasedRequiredWorktreeFields,
+  projectWorktreeMetaUpdates,
   getRepoIdFromWorktreeId,
   type DirectSshWorktreeFetchOptions,
   type WorktreeFetchOptions,
@@ -141,6 +141,7 @@ const FOLDER_WORKSPACE_ACTIVITY_PERSIST_INTERVAL_MS = 1_000
 export const WORKTREE_REFRESH_CONCURRENCY = 8
 const pendingActivationTerminalPrepCancels = new Map<string, () => void>()
 const detachedHeadAutoDerivedDisplayNames = new Map<string, string>()
+const displayNameMutationGenerationByWorktreeId = new Map<string, number>()
 const folderWorkspaceWorktreeCache = new WeakMap<FolderWorkspace, Worktree>()
 const hostedReviewPushTargetLookupsInFlight = new Set<string>()
 const runtimeDetectedWorktreeRefreshesInFlight = new Map<
@@ -320,6 +321,10 @@ function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): b
       worktree.isMainWorktree === candidate.isMainWorktree &&
       worktree.isSparse === candidate.isSparse &&
       worktree.displayName === candidate.displayName &&
+      // Why: a rename made elsewhere (mobile, CLI, second window) to the name the
+      // branch already produced changes only this flag; dropping it here would
+      // leave the row auto-derived and let the next branch switch overwrite it.
+      worktree.displayNameMode === candidate.displayNameMode &&
       worktree.comment === candidate.comment &&
       worktree.linkedIssue === candidate.linkedIssue &&
       worktree.linkedPR === candidate.linkedPR &&
@@ -797,7 +802,7 @@ function applyDetectedWorktreeUpdates(
   rawUpdates: Partial<WorktreeMeta>
 ): AppState['detectedWorktreesByRepo'] {
   // Why: mirrors applyWorktreeUpdates — detected rows feed the same palette.
-  const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
+  const updates = projectWorktreeMetaUpdates(rawUpdates)
   let changed = false
   const nextByRepo: AppState['detectedWorktreesByRepo'] = {}
 
@@ -2833,17 +2838,17 @@ function staleDetectedWorktreeProviderResult(
     : undefined
 }
 
-function preserveConcurrentManualOrder<T extends Worktree>(
+function preserveConcurrentWorktreeMetadata<T extends Worktree>(
   incoming: readonly T[],
   requestStarted: readonly Worktree[] | undefined,
   current: readonly Worktree[] | undefined,
   matchesRefreshHost: (worktree: Worktree) => boolean
 ): T[] {
-  if (!requestStarted || !current) {
+  if (!current) {
     return [...incoming]
   }
   const startedById = new Map(
-    requestStarted.filter(matchesRefreshHost).map((worktree) => [worktree.id, worktree])
+    (requestStarted ?? []).filter(matchesRefreshHost).map((worktree) => [worktree.id, worktree])
   )
   const currentById = new Map(
     current.filter(matchesRefreshHost).map((worktree) => [worktree.id, worktree])
@@ -2851,12 +2856,60 @@ function preserveConcurrentManualOrder<T extends Worktree>(
   return incoming.map((worktree) => {
     const started = startedById.get(worktree.id)
     const latest = currentById.get(worktree.id)
-    if (!started || !latest || started.manualOrder === latest.manualOrder) {
+    if (!latest) {
       return worktree
     }
-    // Why: a refresh response may predate a completed drag; the renderer's optimistic rank is newer.
-    return { ...worktree, manualOrder: latest.manualOrder }
+    let reconciled = worktree
+    if (started && started.manualOrder !== latest.manualOrder) {
+      // Why: a refresh response may predate a completed drag; the renderer's optimistic rank is newer.
+      reconciled = { ...reconciled, manualOrder: latest.manualOrder }
+    }
+    if (
+      displayNameMutationGenerationByWorktreeId.has(worktree.id) ||
+      (started &&
+        (started.displayName !== latest.displayName ||
+          started.displayNameMode !== latest.displayNameMode))
+    ) {
+      return {
+        ...reconciled,
+        displayName: latest.displayName,
+        displayNameMode: latest.displayNameMode
+      }
+    }
+    if (
+      worktree.displayNameMode === undefined &&
+      latest.displayNameMode === 'fixed' &&
+      worktree.displayName === latest.displayName
+    ) {
+      // Why: older runtimes omit the derived mode; an unchanged known-fixed title must stay fixed.
+      return { ...reconciled, displayNameMode: 'fixed' }
+    }
+    return reconciled
   })
+}
+
+function restoreRejectedDisplayName<T extends Worktree>(
+  worktrees: T[] | undefined,
+  worktreeId: string,
+  attempted: Pick<Worktree, 'displayName' | 'displayNameMode'>,
+  previous: Pick<Worktree, 'displayName' | 'displayNameMode'>
+): T[] | undefined {
+  if (!worktrees) {
+    return worktrees
+  }
+  let changed = false
+  const restored = worktrees.map((worktree) => {
+    if (
+      worktree.id !== worktreeId ||
+      worktree.displayName !== attempted.displayName ||
+      worktree.displayNameMode !== attempted.displayNameMode
+    ) {
+      return worktree
+    }
+    changed = true
+    return { ...worktree, ...previous }
+  })
+  return changed ? restored : worktrees
 }
 
 type FencedWorktreeMergeArgs = {
@@ -2893,7 +2946,7 @@ function mergeFetchedWorktrees(
     const currentWorktrees = s.worktreesByRepo[args.repoId]
     const refreshResult = {
       ...args.refresh.result,
-      worktrees: preserveConcurrentManualOrder(
+      worktrees: preserveConcurrentWorktreeMetadata(
         args.refresh.result.worktrees,
         args.requestStartedWorktrees,
         currentWorktrees,
@@ -3524,7 +3577,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
         // Why: terminal branch switches only patch branch/head here; re-derive auto titles like full listing does.
         const currentBranchName = branchName(worktree.branch)
-        const wasAutoDerived = worktree.displayName === currentBranchName
+        const wasAutoDerived =
+          worktree.displayNameMode === 'automatic' ||
+          (worktree.displayNameMode === undefined && worktree.displayName === currentBranchName)
         const wasDetachedAutoDerived =
           worktree.branch === '' &&
           nextBranch !== '' &&
@@ -3698,6 +3753,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     options
   ) => {
     const automationProvenanceRequest = options?.automationProvenanceRequest
+    const displayNameKind = options?.displayNameKind
     const linkedWorkItem = options?.linkedWorkItem
     const linkedTaskSourceContext = options?.linkedTaskSourceContext
     try {
@@ -3726,6 +3782,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             setupDecision,
             sparseCheckout,
             ...(displayName ? { displayName } : {}),
+            ...(displayNameKind ? { displayNameKind } : {}),
             ...(telemetrySource ? { telemetrySource } : {}),
             ...(linkedIssue !== undefined ? { linkedIssue } : {}),
             ...(linkedPR !== undefined ? { linkedPR } : {}),
@@ -3781,6 +3838,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                     setupDecision,
                     sparseCheckout,
                     ...(displayName ? { displayName } : {}),
+                    ...(displayNameKind ? { displayNameKind } : {}),
                     ...(telemetrySource ? { telemetrySource } : {}),
                     ...(linkedIssue !== undefined ? { linkedIssue } : {}),
                     ...(linkedPR !== undefined ? { linkedPR } : {}),
@@ -3827,7 +3885,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           set((s) => {
             const hostId = repoHostId(s, repoId)
             const createdWorktree = withRepoHostOwnership(
-              result.worktree,
+              displayNameKind === 'user' &&
+                displayName?.trim() &&
+                result.worktree.displayNameMode === undefined
+                ? { ...result.worktree, displayNameMode: 'fixed' as const }
+                : result.worktree,
               hostId,
               getProjectHostSetupForRepoHost(s, repoId, hostId)
             )
@@ -4606,6 +4668,28 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         : targetEnriched
     const enriched =
       'comment' in renameCleared ? { ...renameCleared, lastActivityAt: Date.now() } : renameCleared
+    const projectedEnriched = projectWorktreeMetaUpdates(enriched)
+    const attemptedDisplayName = Object.prototype.hasOwnProperty.call(
+      projectedEnriched,
+      'displayName'
+    )
+      ? {
+          displayName: projectedEnriched.displayName as string,
+          displayNameMode: projectedEnriched.displayNameMode
+        }
+      : null
+    const previousDisplayName = worktreeForUpdate
+      ? {
+          displayName: worktreeForUpdate.displayName,
+          displayNameMode: worktreeForUpdate.displayNameMode
+        }
+      : null
+    const displayNameMutationGeneration = attemptedDisplayName
+      ? (displayNameMutationGenerationByWorktreeId.get(worktreeId) ?? 0) + 1
+      : null
+    if (displayNameMutationGeneration !== null) {
+      displayNameMutationGenerationByWorktreeId.set(worktreeId, displayNameMutationGeneration)
+    }
 
     let didApply = false
     set((s) => {
@@ -4694,6 +4778,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       }
     })
     if (shouldApplyUpdate && !didApply) {
+      if (
+        displayNameMutationGeneration !== null &&
+        displayNameMutationGenerationByWorktreeId.get(worktreeId) === displayNameMutationGeneration
+      ) {
+        displayNameMutationGenerationByWorktreeId.delete(worktreeId)
+      }
       return { ok: true }
     }
     if (hasHostedReviewLinkUpdates(enriched)) {
@@ -4702,6 +4792,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
     try {
       await persistWorktreeMeta(settingsForWorktreeOwner(get(), worktreeId), worktreeId, enriched)
+      if (
+        displayNameMutationGeneration !== null &&
+        displayNameMutationGenerationByWorktreeId.get(worktreeId) === displayNameMutationGeneration
+      ) {
+        displayNameMutationGenerationByWorktreeId.delete(worktreeId)
+      }
       if (
         !options?.suppressHostedReviewRefresh &&
         reviewRepo &&
@@ -4740,6 +4836,54 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         })
       }
     } catch (err) {
+      const ownsDisplayNameMutation =
+        displayNameMutationGeneration !== null &&
+        displayNameMutationGenerationByWorktreeId.get(worktreeId) === displayNameMutationGeneration
+      if (ownsDisplayNameMutation) {
+        displayNameMutationGenerationByWorktreeId.delete(worktreeId)
+      }
+      if (attemptedDisplayName && previousDisplayName && ownsDisplayNameMutation) {
+        set((s) => {
+          const repoId = getRepoIdFromWorktreeId(worktreeId)
+          const currentWorktrees = s.worktreesByRepo[repoId]
+          const restoredWorktrees = restoreRejectedDisplayName(
+            currentWorktrees,
+            worktreeId,
+            attemptedDisplayName,
+            previousDisplayName
+          )
+          const currentDetected = s.detectedWorktreesByRepo[repoId]
+          const restoredDetectedWorktrees = restoreRejectedDisplayName(
+            currentDetected?.worktrees,
+            worktreeId,
+            attemptedDisplayName,
+            previousDisplayName
+          )
+          const worktreesChanged = restoredWorktrees !== currentWorktrees
+          const detectedChanged = restoredDetectedWorktrees !== currentDetected?.worktrees
+          return worktreesChanged || detectedChanged
+            ? {
+                ...(worktreesChanged
+                  ? {
+                      worktreesByRepo: {
+                        ...s.worktreesByRepo,
+                        [repoId]: restoredWorktrees ?? []
+                      },
+                      sortEpoch: s.sortEpoch + 1
+                    }
+                  : {}),
+                ...(detectedChanged && currentDetected
+                  ? {
+                      detectedWorktreesByRepo: {
+                        ...s.detectedWorktreesByRepo,
+                        [repoId]: { ...currentDetected, worktrees: restoredDetectedWorktrees ?? [] }
+                      }
+                    }
+                  : {})
+              }
+            : {}
+        })
+      }
       if (isRuntimeSelectorNotFoundError(err)) {
         void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
         return {

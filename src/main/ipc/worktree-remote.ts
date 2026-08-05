@@ -74,7 +74,8 @@ type CreateWorktreeArgsWithSystemProvenance = CreateWorktreeArgs & {
 }
 import {
   sanitizeWorktreeName,
-  sanitizeWorktreeDisplayName,
+  resolveWorktreeCreateDisplayName,
+  shouldPersistRequestedWorktreeDisplayName,
   computeValidatedBranchName,
   computeWorktreePath,
   computeRemoteWorktreePath,
@@ -1496,9 +1497,10 @@ export async function createRemoteWorktree(
   let effectiveRequestedName = args.name
   const sanitizedName = sanitizeWorktreeName(args.name)
   let effectiveSanitizedName = sanitizedName
-  const requestedDisplayName = args.displayName
-    ? sanitizeWorktreeDisplayName(args.displayName)
-    : undefined
+  const requestedDisplayName = resolveWorktreeCreateDisplayName(
+    args.displayName,
+    args.displayNameKind
+  )
 
   // Why: base resolution probes refs via generic git.exec; register the repo root first so relays don't report a valid base as stale.
   await registerRequiredSshWorktreeCreateRoots(repo.connectionId!, [repo.path])
@@ -1790,8 +1792,14 @@ export async function createRemoteWorktree(
     baseRef: metadataBaseRef,
     ...(checkoutExistingBranch ? { preserveBranchOnDelete: true } : {}),
     ...(configuredPushTarget ? { pushTarget: configuredPushTarget } : {}),
-    ...(requestedDisplayName
-      ? { displayName: requestedDisplayName }
+    ...(requestedDisplayName !== undefined
+      ? shouldPersistRequestedWorktreeDisplayName(
+          requestedDisplayName,
+          branchName,
+          args.displayNameKind
+        )
+        ? { displayName: requestedDisplayName }
+        : {}
       : shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
         ? { displayName: effectiveRequestedName }
         : {}),
@@ -1916,9 +1924,10 @@ export async function createLocalWorktree(
 
   const requestedName = args.name
   const sanitizedName = sanitizeWorktreeName(args.name)
-  const requestedDisplayName = args.displayName
-    ? sanitizeWorktreeDisplayName(args.displayName)
-    : undefined
+  const requestedDisplayName = resolveWorktreeCreateDisplayName(
+    args.displayName,
+    args.displayNameKind
+  )
   // Why: explicit branches and non-username prefix modes never consume this; skipping the probe preserves the exact generated branch name.
   const username =
     !args.branchNameOverride && settings.branchPrefix === 'git-username'
@@ -2398,8 +2407,14 @@ export async function createLocalWorktree(
     baseRef: metadataBaseRef,
     ...(checkoutExistingBranch ? { preserveBranchOnDelete: true } : {}),
     ...(configuredPushTarget ? { pushTarget: configuredPushTarget } : {}),
-    ...(requestedDisplayName
-      ? { displayName: requestedDisplayName }
+    ...(requestedDisplayName !== undefined
+      ? shouldPersistRequestedWorktreeDisplayName(
+          requestedDisplayName,
+          branchName,
+          args.displayNameKind
+        )
+        ? { displayName: requestedDisplayName }
+        : {}
       : shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
         ? { displayName: effectiveRequestedName }
         : {}),

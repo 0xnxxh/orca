@@ -3243,6 +3243,8 @@ describe('web worktree preload API', () => {
       baseBranch: TEST_COMMIT_OID,
       compareBaseRef: 'refs/remotes/origin/main',
       setupDecision: 'inherit',
+      displayName: 'Review PR 42',
+      displayNameKind: 'user',
       createdWithAgent: 'codex',
       startup: {
         command: "codex 'summarize repo'",
@@ -3277,6 +3279,8 @@ describe('web worktree preload API', () => {
           repo: 'repo-1',
           baseBranch: TEST_COMMIT_OID,
           compareBaseRef: 'refs/remotes/origin/main',
+          displayName: 'Review PR 42',
+          displayNameKind: 'user',
           createdWithAgent: 'codex',
           startupCommand: "codex 'summarize repo'",
           startupEnv: { ORCA_AGENT_MODE: 'direct' },

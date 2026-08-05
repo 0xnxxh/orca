@@ -37,6 +37,7 @@ import {
   type TaskSourceContext
 } from '../../../shared/task-source-context'
 import type {
+  CreateWorktreeArgs,
   GitHubRepositoryIdentity,
   GitHubWorkItem,
   GitHubPrStartPoint,
@@ -472,6 +473,28 @@ export function resolveSmartGitHubCreateNames({
     return { workspaceName: fallbackWorkspaceName, displayName: undefined }
   }
   return { workspaceName: smartWorkspaceName, displayName: smartDisplayName }
+}
+
+export function resolveComposerCreateDisplayName({
+  nameIsAutoManaged,
+  workspaceName,
+  generatedDisplayName
+}: {
+  nameIsAutoManaged: boolean
+  workspaceName: string
+  generatedDisplayName: string | undefined
+}): string | undefined {
+  return nameIsAutoManaged ? generatedDisplayName : workspaceName
+}
+
+export function resolveComposerCreateDisplayNameKind({
+  nameIsAutoManaged,
+  displayName
+}: {
+  nameIsAutoManaged: boolean
+  displayName: string | undefined
+}): CreateWorktreeArgs['displayNameKind'] {
+  return displayName ? (nameIsAutoManaged ? 'generated' : 'user') : undefined
 }
 
 function getLinkedWorkItemSeedName(item: LinkedWorkItemSummary | null | undefined): string {
@@ -3555,12 +3578,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         createBranchFromWorkspaceName:
           smartGitHubResolution.kind === 'none' && smartNameMode === 'branches'
       })
-      const createDisplayName =
-        smartGitHubResolution.kind === 'none'
-          ? nameIsAutoManaged
+      const createDisplayName = resolveComposerCreateDisplayName({
+        nameIsAutoManaged,
+        workspaceName,
+        generatedDisplayName:
+          smartGitHubResolution.kind === 'none'
             ? submitTitleName?.displayName
-            : undefined
-          : smartGitHubCreateNames.displayName
+            : smartGitHubCreateNames.displayName
+      })
+      const createDisplayNameKind = resolveComposerCreateDisplayNameKind({
+        nameIsAutoManaged,
+        displayName: createDisplayName
+      })
       // Why: the first-work hook only renames blank, auto-generated git workspaces that launch an agent; persist that pending state for the card.
       const pendingFirstAgentMessageRename =
         selectedRepoIsGit &&
@@ -3645,6 +3674,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         undefined,
         submitCompareBaseRef,
         {
+          ...(createDisplayNameKind ? { displayNameKind: createDisplayNameKind } : {}),
           linkedWorkItem: toFolderWorkspaceLinkedTask(submitLinkedWorkItem),
           linkedTaskSourceContext: taskSourceContext
         }
@@ -3972,12 +4002,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
               explicitBaseBranch: smartSubmitBaseBranch
             })
           : undefined
-        const createDisplayName =
-          smartGitHubResolution.kind === 'none'
-            ? nameIsAutoManaged
+        const createDisplayName = resolveComposerCreateDisplayName({
+          nameIsAutoManaged,
+          workspaceName,
+          generatedDisplayName:
+            smartGitHubResolution.kind === 'none'
               ? submitTitleName?.displayName
-              : undefined
-            : smartGitHubCreateNames.displayName
+              : smartGitHubCreateNames.displayName
+        })
+        const createDisplayNameKind = resolveComposerCreateDisplayNameKind({
+          nameIsAutoManaged,
+          displayName: createDisplayName
+        })
         // Why: quick create shares the blank-name flow; the card needs an explicit marker, not a guess from the title.
         const pendingFirstAgentMessageRename =
           selectedRepoIsGit &&
@@ -4121,6 +4157,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             : {}),
           name: workspaceName,
           ...(createDisplayName ? { displayName: createDisplayName } : {}),
+          ...(createDisplayNameKind ? { displayNameKind: createDisplayNameKind } : {}),
           ...(selectedRepoIsGit && submitBaseBranch ? { baseBranch: submitBaseBranch } : {}),
           ...(selectedRepoIsGit && submitCompareBaseRef
             ? { compareBaseRef: submitCompareBaseRef }

@@ -6,6 +6,8 @@ import {
   getInitialAutoManagedWorkspaceName,
   getMatchingLinkedTaskSourceContext,
   isExplicitWorkspaceNameInput,
+  resolveComposerCreateDisplayName,
+  resolveComposerCreateDisplayNameKind,
   resolveSmartGitHubCreateNames,
   resolveInitialWorkspaceRunSeed
 } from './useComposerState'
@@ -73,6 +75,45 @@ describe('useComposerState host-context boundaries', () => {
         nameIsAutoManaged: true
       })
     ).toEqual({ workspaceName: 'title-derived-name', displayName: 'Title derived name' })
+  })
+
+  it('persists manual names while leaving auto branch names derived', () => {
+    expect(
+      resolveComposerCreateDisplayName({
+        nameIsAutoManaged: false,
+        workspaceName: 'v1.4.170-release',
+        generatedDisplayName: undefined
+      })
+    ).toBe('v1.4.170-release')
+    expect(
+      resolveComposerCreateDisplayName({
+        nameIsAutoManaged: true,
+        workspaceName: 'generated-issue-title',
+        generatedDisplayName: 'Generated issue title'
+      })
+    ).toBe('Generated issue title')
+    expect(
+      resolveComposerCreateDisplayName({
+        nameIsAutoManaged: true,
+        workspaceName: 'Nautilus',
+        generatedDisplayName: undefined
+      })
+    ).toBeUndefined()
+    expect(
+      resolveComposerCreateDisplayNameKind({
+        nameIsAutoManaged: false,
+        displayName: 'v1.4.170-release'
+      })
+    ).toBe('user')
+    expect(
+      resolveComposerCreateDisplayNameKind({
+        nameIsAutoManaged: true,
+        displayName: 'Generated issue title'
+      })
+    ).toBe('generated')
+    expect(
+      resolveComposerCreateDisplayNameKind({ nameIsAutoManaged: true, displayName: undefined })
+    ).toBeUndefined()
   })
 
   it('requires pasted PR recovery to match the selected GitHub host', () => {

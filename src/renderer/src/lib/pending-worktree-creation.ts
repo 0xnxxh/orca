@@ -1,4 +1,5 @@
 import type {
+  CreateWorktreeArgs,
   CreateSparseCheckoutRequest,
   GitPushTarget,
   SetupDecision,
@@ -57,6 +58,7 @@ export type WorktreeCreationRequest = {
   worktreeCreateProgressMode?: WorktreeCreationProgressMode
   name: string
   displayName?: string
+  displayNameKind?: CreateWorktreeArgs['displayNameKind']
   baseBranch?: string
   compareBaseRef?: string
   setupDecision: SetupDecision

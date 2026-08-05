@@ -1714,6 +1714,7 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         linkedAzureDevOpsPR: args.linkedAzureDevOpsPR,
         linkedGiteaPR: args.linkedGiteaPR,
         displayName: args.displayName,
+        displayNameKind: args.displayNameKind,
         sparseCheckout: args.sparseCheckout,
         pushTarget: args.pushTarget,
         setupDecision: args.setupDecision,

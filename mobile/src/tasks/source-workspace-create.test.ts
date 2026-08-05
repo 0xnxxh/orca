@@ -58,7 +58,8 @@ describe('createWorkspaceFromComposerSource', () => {
     expect(calls[0]!.params).toMatchObject({
       repo: 'id:repo-9',
       linkedIssue: 7,
-      displayName: 'Bug'
+      displayName: 'Bug',
+      displayNameKind: 'generated'
     })
   })
 
@@ -168,9 +169,11 @@ describe('createWorkspaceFromComposerSource', () => {
       name: 'feature/login',
       branchNameOverride: 'feature/login'
     })
+    expect(calls[0]!.params.displayName).toBeUndefined()
+    expect(calls[0]!.params.displayNameKind).toBeUndefined()
   })
 
-  it('suppresses displayName when the name is user-edited (not auto-managed)', async () => {
+  it('preserves a user-edited work-item name as a fixed display name', async () => {
     const calls: Call[] = []
     const client = fakeClient(() => ({ worktree: { id: 'wt-dn' } }), calls)
     const selection: MobileComposerCreateSelection = {
@@ -191,8 +194,43 @@ describe('createWorkspaceFromComposerSource', () => {
       workspaceName: 'my-name',
       nameIsAutoManaged: false
     })
-    expect(calls[0]!.params.displayName).toBeUndefined()
-    expect(calls[0]!.params).toMatchObject({ name: 'my-name', linkedIssue: 7 })
+    expect(calls[0]!.params).toMatchObject({
+      name: 'my-name',
+      displayName: 'my-name',
+      displayNameKind: 'user',
+      linkedIssue: 7
+    })
+  })
+
+  it('preserves a user-edited branch workspace name without suffixing its label', async () => {
+    const calls: Call[] = []
+    const client = fakeClient(
+      (_method, call) =>
+        call === 1 ? new Error('already exists locally') : { worktree: { id: 'wt-branch' } },
+      calls
+    )
+    const selection: MobileComposerCreateSelection = {
+      kind: 'branch',
+      baseBranch: 'main',
+      refName: 'main',
+      localBranchName: 'topic',
+      reuse: false,
+      branchNameOverride: 'topic'
+    }
+
+    await createWorkspaceFromComposerSource({
+      client,
+      selection,
+      ...baseArgs,
+      workspaceName: 'My  exact  label',
+      nameIsAutoManaged: false
+    })
+
+    expect(calls[1]!.params).toMatchObject({
+      name: 'My  exact  label-2',
+      displayName: 'My  exact  label',
+      displayNameKind: 'user'
+    })
   })
 
   it('creates a new branch off a ref, bumping the branch on collision', async () => {

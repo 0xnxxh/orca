@@ -139,6 +139,7 @@ describe('createGitHubWorkItemWorkspaceInBackground', () => {
         repoId: 'repo-1',
         name: 'issue-42-make-issue-workspace',
         displayName: 'Issue 42 Make Issue Workspace',
+        displayNameKind: 'generated',
         linkedIssue: 42,
         telemetrySource: 'sidebar',
         setupDecision: 'inherit',

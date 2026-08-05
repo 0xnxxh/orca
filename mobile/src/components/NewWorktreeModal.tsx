@@ -655,6 +655,7 @@ function NewWorktreeModalContent({
             client,
             repoId: selectedRepo.id,
             baseName,
+            nameIsAutoManaged: composer.isNameAutoManaged,
             createdWithAgentId,
             comment: trimmedNote,
             setupDecision,
