@@ -6,7 +6,8 @@
  * unknown value and `decodeTerminalStreamFrame` returned null, dropping the entire frame rather
  * than the one field mobile did not understand. That is how STA-3482 lost terminal output on
  * phones. Re-exporting keeps mobile decoding every frame the host can send; opcodes mobile has
- * no behavior for are ignored by the frame handler instead of poisoning the frame.
+ * no behavior for are ignored by the frame handler, which `terminal-stream-opcode-coverage.test.ts`
+ * pins explicitly.
  *
  * Metro resolves this via `config.watchFolders` in metro.config.js.
  */
