@@ -14746,7 +14746,8 @@
           "max": "Max",
           "on": "On",
           "off": "Off"
-        }
+        },
+        "finishTerminalPrompt": "Finish the terminal prompt before sending"
       },
       "tool": {
         "running": "Running…",

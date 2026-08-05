@@ -61,6 +61,39 @@ describe('sendMobileNativeChatMessage', () => {
     ).resolves.toBe(false)
   })
 
+  it('reports an interactive prompt rejection for guarded native-chat sends', async () => {
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: {
+        send: {
+          accepted: false,
+          refusedReason: 'interactive-prompt'
+        }
+      },
+      _meta: { runtimeId: 'runtime' }
+    })
+
+    await expect(
+      sendMobileNativeChatMessageWithOutcome({
+        client,
+        terminal: 'term',
+        text: 'hello',
+        guardInteractivePrompt: true
+      })
+    ).resolves.toBe('interactive-prompt')
+    expect(client.sendRequest).toHaveBeenCalledWith(
+      'terminal.send',
+      {
+        terminal: 'term',
+        text: 'hello',
+        enter: true,
+        nativeChat: true
+      },
+      { timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS, budgetSpansConnect: true }
+    )
+  })
+
   it('returns false when the RPC fails', async () => {
     const client = {
       sendRequest: vi.fn().mockRejectedValue(new Error('disconnected'))

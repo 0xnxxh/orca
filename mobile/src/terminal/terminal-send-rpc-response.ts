@@ -13,3 +13,12 @@ export function isTerminalSendRpcAccepted(response: RpcResponse): boolean {
   }
   return response.result.send.accepted === true
 }
+
+export function getTerminalSendRpcRefusedReason(response: RpcResponse): string | null {
+  if (!response.ok || !isRecord(response.result) || !isRecord(response.result.send)) {
+    return null
+  }
+  return typeof response.result.send.refusedReason === 'string'
+    ? response.result.send.refusedReason
+    : null
+}

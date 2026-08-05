@@ -41,6 +41,7 @@ import type {
   NativeChatComposerHandle,
   NativeChatComposerProps
 } from './native-chat-composer-types'
+import { guardNativeChatTerminalPrompt } from './native-chat-terminal-prompt-guard'
 
 export type {
   NativeChatComposerHandle,
@@ -251,6 +252,9 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
+      if (guardNativeChatTerminalPrompt(classification, readTerminalScreen, onSwitchToTerminal)) {
+        return
+      }
       // A parked launch draft must be cleared line-by-line before the body.
       const { sendOptions } = resolveNativeChatLaunchDraftSend({
         launchDraft,
@@ -322,6 +326,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
       resolveTarget,
       onOptimisticSend,
       onSlashCommand,
+      onSwitchToTerminal,
       sessionOptionsSurface,
       terminalTabId,
       trackPendingSend,
