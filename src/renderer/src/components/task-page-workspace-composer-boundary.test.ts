@@ -52,9 +52,9 @@ describe('TaskPage workspace creation source boundaries', () => {
       'const submitQuick = useCallback(',
       'const createGateInput = {'
     )
-    expect(quickSubmit).toContain(
-      "ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')"
-    )
+    expect(quickSubmit).toContain('readAndConfirmRuntimeIssueCommand(')
+    expect(quickSubmit).toContain('selectedRepoExecutionHostId')
+    expect(quickSubmit).toContain('isSubmissionCancelled')
     expect(quickSubmit).toContain('...(issueCommand ? { issueCommand } : {})')
   })
 

@@ -423,13 +423,13 @@ describe('useComposerState host-context boundaries', () => {
       'const submit = useCallback',
       'const submitQuick = useCallback'
     )
-    const fullPolicySave = fullSubmit.indexOf('await persistSetupAgentStartupPolicy()')
+    const fullPolicySave = fullSubmit.indexOf('persistSetupAgentStartupPolicy()')
     const fullCreate = fullSubmit.indexOf('const result = await createWorktree(')
     expect(fullPolicySave).toBeGreaterThanOrEqual(0)
     expect(fullCreate).toBeGreaterThan(fullPolicySave)
 
     const quickSubmit = sourceBetween(HOOK_SOURCE, 'const submitQuick = useCallback', 'return {')
-    const quickPolicySave = quickSubmit.indexOf('await persistSetupAgentStartupPolicy()')
+    const quickPolicySave = quickSubmit.indexOf('persistSetupAgentStartupPolicy()')
     const quickCreate = quickSubmit.indexOf('const request: WorktreeCreationRequest = {')
     expect(quickPolicySave).toBeGreaterThanOrEqual(0)
     expect(quickCreate).toBeGreaterThan(quickPolicySave)
@@ -464,8 +464,9 @@ describe('useComposerState host-context boundaries', () => {
     )
     expect(section).toContain('canResolveFolderSmartGitHubSubmit')
     expect(section).toContain('hasFolderSourceRepos: folderSourceRepos.length > 0')
-    expect(section).toContain('? await resolvePendingSmartGitHubSubmit()')
-    expect(section).toContain(': null')
+    expect(section).toContain('? resolvePendingSmartGitHubSubmit()')
+    expect(section).toContain("Promise.resolve({ kind: 'none' } as const)")
+    expect(section).toContain('isSubmissionCancelled')
     expect(section).not.toContain('folderSourceRequiresConnection')
   })
 
