@@ -269,6 +269,7 @@ describe('useMobileNativeChatDrafts', () => {
       )
     )
     expect(state?.pending).toEqual([])
+    expect(state?.imagePreviewsByMessageId).toEqual({ u1: ['file:///a.jpg'] })
   })
 
   it("keeps an image-only echo when an unrelated text send's echo lands", async () => {
@@ -345,6 +346,29 @@ describe('useMobileNativeChatDrafts', () => {
       )
     )
     expect(state?.pending).toEqual([])
+    expect(state?.imagePreviewsByMessageId).toEqual({ u2: ['file:///a.jpg'] })
+  })
+
+  it('hands a marker-only image preview to the authoritative user bubble', async () => {
+    await mount('a')
+    const origin = state?.captureSendOrigin('')
+    act(() => {
+      if (origin) {
+        state?.acceptSend(origin, '', ['file:///a.jpg'])
+      }
+    })
+
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [userTextMessage('u1', '[Image #1]')]
+        })
+      )
+    )
+
+    expect(state?.pending).toEqual([])
+    expect(state?.imagePreviewsByMessageId).toEqual({ u1: ['file:///a.jpg'] })
   })
 
   it('does not reconcile a repeated send against an older identical turn', async () => {

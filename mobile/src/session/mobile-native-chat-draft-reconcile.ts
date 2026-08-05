@@ -1,6 +1,7 @@
-import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { isImageRefBlock, type NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
   isImageSourceUserTurn,
+  normalizeImageTranscriptMessages,
   stripImagePromptMarker
 } from './mobile-native-chat-image-transcript-markers'
 
@@ -59,6 +60,94 @@ export function countImageSourceTurnsAfter(
     }
   }
   return count
+}
+
+export type PendingImagePreviewEcho = {
+  id: string
+  text: string
+  images?: string[]
+  expectedOccurrence: number
+  baselineTailMessageId: string | null
+}
+
+export type LandedImagePreviewEcho = {
+  pendingId: string
+  messageId: string
+  images: string[]
+}
+
+const SENT_IMAGE_PREVIEW_LIMIT = 32
+const SENT_IMAGE_PREVIEW_SESSION_LIMIT = 8
+
+export function mergeLandedImagePreviewEchoes(
+  previous: Record<string, Record<string, string[]>>,
+  sessionKey: string,
+  landed: readonly LandedImagePreviewEcho[]
+): Record<string, Record<string, string[]>> {
+  const entries = Object.entries(previous[sessionKey] ?? {})
+  for (const preview of landed) {
+    const existingIndex = entries.findIndex(([messageId]) => messageId === preview.messageId)
+    if (existingIndex >= 0) {
+      entries.splice(existingIndex, 1)
+    }
+    entries.push([preview.messageId, preview.images])
+  }
+  const next = { ...previous }
+  delete next[sessionKey]
+  next[sessionKey] = Object.fromEntries(entries.slice(-SENT_IMAGE_PREVIEW_LIMIT))
+  for (const key of Object.keys(next).slice(0, -SENT_IMAGE_PREVIEW_SESSION_LIMIT)) {
+    delete next[key]
+  }
+  return next
+}
+
+/** Binds local preview URIs to the authoritative transcript turn that replaced
+ *  the optimistic bubble. Host paths and marker-only Codex turns cannot render
+ *  the phone-local photo without this handoff. */
+export function findLandedImagePreviewEchoes(
+  messages: readonly NativeChatMessage[],
+  entries: readonly PendingImagePreviewEcho[]
+): LandedImagePreviewEcho[] {
+  const normalized = normalizeImageTranscriptMessages(messages)
+  const messageIndexById = new Map(normalized.map((message, index) => [message.id, index]))
+  const claimedMessageIds = new Set<string>()
+  const landed: LandedImagePreviewEcho[] = []
+
+  for (const entry of entries) {
+    if (!entry.images?.length) {
+      continue
+    }
+    const targetText = entry.text.trim()
+    const candidates = normalized.filter((message) => {
+      if (message.role !== 'user') {
+        return false
+      }
+      if (targetText) {
+        return normalizedUserText(message) === targetText
+      }
+      return message.blocks.length === 0 || message.blocks.some(isImageRefBlock)
+    })
+    const tailIndex = entry.baselineTailMessageId
+      ? messageIndexById.get(entry.baselineTailMessageId)
+      : -1
+    const occurrenceIndex = Math.max(0, entry.expectedOccurrence - 1)
+    const candidate = targetText
+      ? candidates[occurrenceIndex]
+      : candidates.filter(
+          (message) =>
+            tailIndex === undefined || (messageIndexById.get(message.id) ?? -1) > tailIndex
+        )[occurrenceIndex]
+    if (
+      !candidate ||
+      claimedMessageIds.has(candidate.id) ||
+      (tailIndex !== undefined && (messageIndexById.get(candidate.id) ?? -1) <= tailIndex)
+    ) {
+      continue
+    }
+    claimedMessageIds.add(candidate.id)
+    landed.push({ pendingId: entry.id, messageId: candidate.id, images: entry.images })
+  }
+  return landed
 }
 
 export function findLandedUnconfirmedSends(

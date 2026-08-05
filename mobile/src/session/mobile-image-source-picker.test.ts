@@ -12,7 +12,11 @@ vi.mock('expo-file-system', () => ({
   File: vi.fn()
 }))
 
-import { ImageLibraryPermissionError, pickMobileImage } from './mobile-image-source-picker'
+import {
+  ImageLibraryPermissionError,
+  pickMobileImage,
+  pickMobileImages
+} from './mobile-image-source-picker'
 
 const granted = { granted: true } as Awaited<
   ReturnType<typeof import('expo-image-picker').requestMediaLibraryPermissionsAsync>
@@ -66,6 +70,51 @@ describe('pickMobileImage', () => {
     expect(launchLibrary).toHaveBeenCalledWith(expect.objectContaining({ base64: false }))
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(file.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns every selected library photo in order', async () => {
+    const bytesByUri = new Map([
+      ['file:///a.jpg', new Uint8Array([1])],
+      ['file:///b.jpg', new Uint8Array([2])],
+      ['file:///c.jpg', new Uint8Array([3])]
+    ])
+    const createFile = vi.fn((uri: string) => {
+      const bytes = bytesByUri.get(uri)!
+      let read = false
+      return {
+        size: bytes.length,
+        open: () => ({
+          size: bytes.length,
+          readBytes: () => {
+            if (read) {
+              return new Uint8Array()
+            }
+            read = true
+            return bytes
+          },
+          close: vi.fn()
+        })
+      }
+    })
+    const launchLibrary = vi.fn().mockResolvedValue({
+      canceled: false,
+      assets: [...bytesByUri].map(([uri, bytes]) => ({ uri, fileSize: bytes.length }))
+    })
+
+    const result = await pickMobileImages('library', {
+      requestLibraryPermission: vi.fn().mockResolvedValue(granted),
+      launchLibrary,
+      createFile
+    })
+
+    expect(result.map((image) => image.uri)).toEqual([
+      'file:///a.jpg',
+      'file:///b.jpg',
+      'file:///c.jpg'
+    ])
+    expect(launchLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({ allowsMultipleSelection: true, selectionLimit: 0 })
+    )
   })
 
   it('throws when photo library permission is denied', async () => {

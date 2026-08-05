@@ -5,11 +5,11 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import {
   ImageLibraryPermissionError,
-  pickMobileImage,
+  pickMobileImages,
   type MobileImageSource
 } from './mobile-image-source-picker'
 import {
-  uploadMobileNativeChatImage,
+  uploadMobileNativeChatImages,
   type PendingNativeChatImage
 } from './mobile-native-chat-image-attachment'
 import {
@@ -82,10 +82,6 @@ export type MobileNativeChatImageAttachments = {
   readonly sendNativeChat: (text: string) => Promise<boolean>
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 const NO_ATTACHMENTS: PendingNativeChatImage[] = []
 
 function withScopeAttachments(
@@ -147,10 +143,10 @@ export function useMobileNativeChatImageAttachments({
       // shared counter would clear a concurrent upload's in-flight flag early.
       let started = false
       try {
-        const uploaded = await uploadMobileNativeChatImage(source, {
+        const uploaded = await uploadMobileNativeChatImages(source, {
           client,
           getConnectionId: getActiveWorktreeConnectionId,
-          pickImage: pickMobileImage,
+          pickImages: pickMobileImages,
           onUploadStart: () => {
             started = true
             attachingCount.current += 1
@@ -158,14 +154,20 @@ export function useMobileNativeChatImageAttachments({
           }
         })
         // Cancelled picker: no error, no toast.
-        if (!uploaded) {
+        if (uploaded.length === 0) {
           return
         }
-        idCounter.current += 1
-        const chip = { id: `img-${idCounter.current}`, ...uploaded }
-        setAttachmentsByScope((prev) => ({ ...prev, [scope]: [...(prev[scope] ?? []), chip] }))
+        const chips = uploaded.map((image) => {
+          idCounter.current += 1
+          return { id: `img-${idCounter.current}`, ...image }
+        })
+        setAttachmentsByScope((prev) => ({
+          ...prev,
+          [scope]: [...(prev[scope] ?? []), ...chips]
+        }))
         onAttachSuccess?.()
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
         onError?.()
         if (connStateRef.current !== 'connected') {
           showToast('Attach failed (disconnected)', 1500)
@@ -175,7 +177,7 @@ export function useMobileNativeChatImageAttachments({
           showToast('Photo permission denied', 1500)
           return
         }
-        if (getErrorMessage(error) === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
+        if (message === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
           showToast('Image too large to attach', 1500)
           return
         }
