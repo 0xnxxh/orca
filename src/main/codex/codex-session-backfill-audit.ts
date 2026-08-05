@@ -1,9 +1,19 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream, type Stats } from 'node:fs'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { createInterface } from 'node:readline'
+import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import type { CodexSessionBackfillSummary } from './codex-session-backfill-types'
 
 export type CodexSessionBackfillAuditWriter = (record: Record<string, unknown>) => Promise<boolean>
+
+export type CodexSessionBackfillAuditCoverage = {
+  fileEventIds: Set<string>
+  hasRunSummary: boolean
+}
+
+const HEAL_AUDIT_ACTIONS = new Set(['hardlink', 'copy', 'existing'])
 
 export function createCodexSessionBackfillAuditWriter(
   auditLogPath: string
@@ -48,28 +58,85 @@ export function createCodexSessionBackfillAuditWriter(
   }
 }
 
+export async function readCodexSessionBackfillAuditCoverage(
+  auditLogPath: string
+): Promise<CodexSessionBackfillAuditCoverage> {
+  const coverage: CodexSessionBackfillAuditCoverage = {
+    fileEventIds: new Set<string>(),
+    hasRunSummary: false
+  }
+  const input = createReadStream(auditLogPath, { encoding: 'utf-8' })
+  const lines = createInterface({ input, crlfDelay: Infinity })
+  try {
+    for await (const raw of lines) {
+      try {
+        const parsed: unknown = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          continue
+        }
+        const record = parsed as Record<string, unknown>
+        coverage.hasRunSummary ||= record.action === 'run-summary'
+        if (
+          typeof record.action === 'string' &&
+          HEAL_AUDIT_ACTIONS.has(record.action) &&
+          typeof record.fileEventId === 'string'
+        ) {
+          coverage.fileEventIds.add(record.fileEventId)
+        }
+      } catch {
+        // Torn audit tails are quarantined by the writer's leading newline.
+      }
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error
+    }
+  }
+  return coverage
+}
+
+export function createCodexSessionBackfillFileEventId(targetPath: string, stat: Stats): string {
+  const stableFileIdentity =
+    stat.ino !== 0 || stat.birthtimeMs !== 0
+      ? `${stat.dev}\0${stat.ino}\0${stat.birthtimeMs}`
+      : `${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}`
+  return createHash('sha256')
+    .update(normalizeRuntimePathForComparison(targetPath))
+    .update('\0')
+    .update(stableFileIdentity)
+    .digest('hex')
+}
+
 export async function appendCodexSessionHealAuditRecord(
   writer: CodexSessionBackfillAuditWriter,
   summary: CodexSessionBackfillSummary,
   record: Record<string, unknown>
-): Promise<void> {
-  if (!(await writer(record))) {
+): Promise<boolean> {
+  const appended = await writer(record)
+  if (!appended) {
     summary.failedHealAuditRecords += 1
   }
+  return appended
 }
 
 export async function recordExistingCodexSessionForHeal(
   writer: CodexSessionBackfillAuditWriter,
   summary: CodexSessionBackfillSummary,
   source: string,
-  target: string
-): Promise<void> {
+  target: string,
+  fileEventId?: string
+): Promise<boolean> {
   summary.skippedExistingFiles += 1
   // Why: this also recovers a rollout installed before a crash or audit
   // failure; thread/read is idempotent for a pre-existing real-home file.
-  await appendCodexSessionHealAuditRecord(writer, summary, {
+  return appendCodexSessionHealAuditRecord(writer, summary, {
     action: 'existing',
     source,
-    target
+    target,
+    ...(fileEventId ? { fileEventId } : {})
   })
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 }

@@ -6,11 +6,10 @@ import {
   getSystemCodexHomePath
 } from './codex-home-paths'
 import {
-  appendCodexSessionHealAuditRecord,
-  createCodexSessionBackfillAuditWriter,
-  recordExistingCodexSessionForHeal,
-  type CodexSessionBackfillAuditWriter
-} from './codex-session-backfill-audit'
+  createCodexSessionBackfillAuditPass,
+  readCodexSessionTargetStat,
+  type CodexSessionBackfillAuditPass
+} from './codex-session-backfill-audit-pass'
 import {
   copySessionFileWithoutOverwrite,
   isAtomicNoReplaceUnsupportedError
@@ -135,13 +134,9 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
     failedFiles: 0,
     failedHealAuditRecords: 0
   }
-  const appendAuditRecord = createCodexSessionBackfillAuditWriter(paths.auditLogPath)
+  const auditPass = await createCodexSessionBackfillAuditPass(paths.auditLogPath)
   const ensuredTargetDirectories = new Set<string>()
-  const managedSessionsRootExists = await checkManagedSessionsRoot(
-    paths,
-    summary,
-    appendAuditRecord
-  )
+  const managedSessionsRootExists = await checkManagedSessionsRoot(paths, summary, auditPass)
   if (managedSessionsRootExists) {
     for await (const managedSessionFilePath of listCodexSessionJsonlFilesIncrementally(
       paths.managedSessionsRoot,
@@ -150,7 +145,7 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
         // Why: a partial walk must remain retryable; otherwise an unreadable
         // date directory would be silently omitted behind a completion marker.
         summary.failedDirectories += 1
-        await appendAuditRecord({
+        await auditPass.appendRecord({
           action: 'scan-failed',
           source: directoryPath,
           error: describeError(error)
@@ -174,13 +169,13 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
         paths,
         managedSessionFilePath,
         summary,
-        appendAuditRecord,
-        ensuredTargetDirectories
+        ensuredTargetDirectories,
+        auditPass
       )
     }
   }
   summary.stopped ||= options.shouldStop?.() === true
-  await appendAuditRecord({ action: 'run-summary', ...summary })
+  await auditPass.finish(summary)
   // Why: opt-out can land while the async summary append is pending; carry it
   // back to the marker gate so a managed launch cannot be hidden by stale completion.
   summary.stopped ||= options.shouldStop?.() === true
@@ -190,7 +185,7 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
 async function checkManagedSessionsRoot(
   paths: CodexSessionBackfillPaths,
   summary: CodexSessionBackfillSummary,
-  appendAuditRecord: CodexSessionBackfillAuditWriter
+  auditPass: CodexSessionBackfillAuditPass
 ): Promise<boolean> {
   try {
     await lstat(paths.managedSessionsRoot)
@@ -202,7 +197,7 @@ async function checkManagedSessionsRoot(
     // Why: existsSync collapses access failures into "missing," which could
     // permanently hide sessions behind an incorrect completion marker.
     summary.failedDirectories += 1
-    await appendAuditRecord({
+    await auditPass.appendRecord({
       action: 'scan-failed',
       source: paths.managedSessionsRoot,
       error: describeError(error)
@@ -229,8 +224,8 @@ async function backfillOneManagedSessionFile(
   paths: CodexSessionBackfillPaths,
   managedSessionFilePath: string,
   summary: CodexSessionBackfillSummary,
-  appendAuditRecord: CodexSessionBackfillAuditWriter,
-  ensuredTargetDirectories: Set<string>
+  ensuredTargetDirectories: Set<string>,
+  auditPass: CodexSessionBackfillAuditPass
 ): Promise<void> {
   if (await isSymbolicLink(managedSessionFilePath)) {
     // Why: bridge-created symlinks already point at a file in the user's own
@@ -240,12 +235,13 @@ async function backfillOneManagedSessionFile(
   }
   const relativePath = relative(paths.managedSessionsRoot, managedSessionFilePath)
   const systemSessionFilePath = join(paths.systemSessionsRoot, relativePath)
-  if (await pathEntryExists(systemSessionFilePath)) {
-    await recordExistingCodexSessionForHeal(
-      appendAuditRecord,
+  const existingTargetStat = await readCodexSessionTargetStat(systemSessionFilePath)
+  if (existingTargetStat) {
+    await auditPass.recordExisting(
       summary,
       managedSessionFilePath,
-      systemSessionFilePath
+      systemSessionFilePath,
+      existingTargetStat
     )
     return
   }
@@ -260,20 +256,21 @@ async function backfillOneManagedSessionFile(
     }
     await link(managedSessionFilePath, systemSessionFilePath)
     summary.linkedFiles += 1
-    await appendCodexSessionHealAuditRecord(appendAuditRecord, summary, {
-      action: 'hardlink',
-      source: managedSessionFilePath,
-      target: systemSessionFilePath
-    })
+    await auditPass.recordPublished(
+      summary,
+      'hardlink',
+      managedSessionFilePath,
+      systemSessionFilePath
+    )
   } catch (linkError) {
     if (isExistsError(linkError)) {
       // Why: another window can publish the target after our existence probe;
       // enqueue it here too in case that writer died before its audit append.
-      await recordExistingCodexSessionForHeal(
-        appendAuditRecord,
+      await auditPass.recordExisting(
         summary,
         managedSessionFilePath,
-        systemSessionFilePath
+        systemSessionFilePath,
+        await readCodexSessionTargetStat(systemSessionFilePath)
       )
       return
     }
@@ -285,24 +282,25 @@ async function backfillOneManagedSessionFile(
       // truncated rollout, then installed without overwriting collisions.
       await copySessionFileWithoutOverwrite(managedSessionFilePath, systemSessionFilePath)
       summary.copiedFiles += 1
-      await appendCodexSessionHealAuditRecord(appendAuditRecord, summary, {
-        action: 'copy',
-        source: managedSessionFilePath,
-        target: systemSessionFilePath
-      })
+      await auditPass.recordPublished(
+        summary,
+        'copy',
+        managedSessionFilePath,
+        systemSessionFilePath
+      )
     } catch (copyError) {
       if (isExistsError(copyError)) {
-        await recordExistingCodexSessionForHeal(
-          appendAuditRecord,
+        await auditPass.recordExisting(
           summary,
           managedSessionFilePath,
-          systemSessionFilePath
+          systemSessionFilePath,
+          await readCodexSessionTargetStat(systemSessionFilePath)
         )
         return
       }
       if (isAtomicNoReplaceUnsupportedError(copyError)) {
         summary.skippedUnsupportedFilesystemFiles += 1
-        await appendAuditRecord({
+        await auditPass.appendRecord({
           action: 'copy-unsupported',
           source: managedSessionFilePath,
           target: systemSessionFilePath
@@ -310,7 +308,7 @@ async function backfillOneManagedSessionFile(
         return
       }
       summary.failedFiles += 1
-      await appendAuditRecord({
+      await auditPass.appendRecord({
         action: 'failed',
         source: managedSessionFilePath,
         target: systemSessionFilePath,
@@ -324,16 +322,6 @@ async function backfillOneManagedSessionFile(
 async function isSymbolicLink(filePath: string): Promise<boolean> {
   try {
     return (await lstat(filePath)).isSymbolicLink()
-  } catch {
-    return false
-  }
-}
-
-/** Existence via lstat so a broken symlink at the target still counts as taken. */
-async function pathEntryExists(entryPath: string): Promise<boolean> {
-  try {
-    await lstat(entryPath)
-    return true
   } catch {
     return false
   }

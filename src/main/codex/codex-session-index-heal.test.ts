@@ -232,7 +232,7 @@ describe('runCodexSessionIndexHeal', () => {
     expect(marker.healedThreads).toBe(3)
   })
 
-  it('is a no-op when the marker matches the audit ledger size', async () => {
+  it('keeps second and later passes cheap when the audit ledger is unchanged', async () => {
     const rig = createHealRig({
       auditedThreads: [{ stamp: '2026-07-01T10-00-00', id: threadId('1') }]
     })
@@ -245,8 +245,13 @@ describe('runCodexSessionIndexHeal', () => {
       buildInvocation: rig.buildInvocation,
       interBatchDelayMs: 0
     })
+    const third = await runCodexSessionIndexHeal(rig.paths, {
+      buildInvocation: rig.buildInvocation,
+      interBatchDelayMs: 0
+    })
     expect(second.outcome).toBe('up-to-date')
-    // One spawn from the first run only — the no-op run must not hit the CLI.
+    expect(third.outcome).toBe('up-to-date')
+    // One spawn from the first run only — no-op runs must not hit the CLI.
     expect(rig.readLog().serverStarts).toBe(1)
   })
 

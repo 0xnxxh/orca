@@ -140,6 +140,7 @@ import {
   resolveCodexSessionBackfillPaths,
   startCodexSessionBackfillInBackground
 } from './codex-session-backfill'
+import { invalidateCodexSessionBackfillMarker } from './codex-session-backfill-marker'
 
 let fakeHomeDir: string
 let userDataDir: string
@@ -168,17 +169,27 @@ function writeManagedSession(relativePath: string, contents: string): string {
   return filePath
 }
 
-function readAuditActions(): string[] {
+type BackfillAuditRecord = {
+  action: string
+  target?: string
+  fileEventId?: string
+}
+
+function readBackfillAuditRecords(): BackfillAuditRecord[] {
   return readFileSync(getAuditLogPath(), 'utf-8')
     .split('\n')
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [(JSON.parse(line) as { action: string }).action]
+        return [JSON.parse(line) as BackfillAuditRecord]
       } catch {
         return []
       }
     })
+}
+
+function readAuditActions(): string[] {
+  return readBackfillAuditRecords().map((record) => record.action)
 }
 
 beforeEach(() => {
@@ -494,6 +505,74 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(
       existsSync(join(getSystemSessionsRoot(), '2026', '07', '01', 'rollout-later.jsonl'))
     ).toBe(false)
+  })
+
+  it('keeps repeated launch invalidations audit-stable', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+
+    const first = await startCodexSessionBackfillInBackground()
+    expect(first).toMatchObject({ linkedFiles: 1, failedHealAuditRecords: 0 })
+    const firstAudit = readFileSync(getAuditLogPath(), 'utf-8')
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      invalidateCodexSessionBackfillMarker(getMarkerPath())
+      const repeated = await startCodexSessionBackfillInBackground()
+      expect(repeated).toMatchObject({
+        linkedFiles: 0,
+        copiedFiles: 0,
+        skippedExistingFiles: 1,
+        failedHealAuditRecords: 0
+      })
+      expect(readFileSync(getAuditLogPath(), 'utf-8')).toBe(firstAudit)
+    }
+
+    const fileRecords = readBackfillAuditRecords().filter((record) =>
+      ['hardlink', 'copy', 'existing'].includes(record.action)
+    )
+    expect(fileRecords).toEqual([
+      expect.objectContaining({ action: 'hardlink', fileEventId: expect.any(String) })
+    ])
+  })
+
+  it('recovers a post-install audit interruption without duplicating prior events', async () => {
+    const firstRelativePath = join('2026', '05', '26', 'rollout-a.jsonl')
+    const secondRelativePath = join('2026', '05', '26', 'rollout-b.jsonl')
+    writeManagedSession(firstRelativePath, '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+    writeManagedSession(secondRelativePath, '{"id":"b"}\n')
+    fsMockState.failAuditWrites = true
+
+    const interrupted = await startCodexSessionBackfillInBackground()
+
+    expect(interrupted).toMatchObject({ linkedFiles: 1, failedHealAuditRecords: 1 })
+    expect(existsSync(getMarkerPath())).toBe(false)
+    expect(
+      readBackfillAuditRecords().filter((record) =>
+        ['hardlink', 'copy', 'existing'].includes(record.action)
+      )
+    ).toHaveLength(1)
+
+    fsMockState.failAuditWrites = false
+    const recovered = await startCodexSessionBackfillInBackground()
+
+    expect(recovered).toMatchObject({
+      linkedFiles: 0,
+      skippedExistingFiles: 2,
+      failedHealAuditRecords: 0
+    })
+    expect(existsSync(getMarkerPath())).toBe(true)
+    const recoveredFileRecords = readBackfillAuditRecords().filter((record) =>
+      ['hardlink', 'copy', 'existing'].includes(record.action)
+    )
+    expect(recoveredFileRecords).toHaveLength(2)
+    expect(new Set(recoveredFileRecords.map((record) => record.target))).toEqual(
+      new Set([
+        join(getSystemSessionsRoot(), firstRelativePath),
+        join(getSystemSessionsRoot(), secondRelativePath)
+      ])
+    )
   })
 
   it('self-heals a zero-file marker when managed rollouts appear later', async () => {
