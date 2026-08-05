@@ -5237,7 +5237,10 @@ export default function TaskPage(): React.JSX.Element {
     [inOrcaLinkedLinearRefs]
   )
   const inOrcaLinkedLinearRefsRef = useRef(inOrcaLinkedLinearRefs)
-  inOrcaLinkedLinearRefsRef.current = inOrcaLinkedLinearRefs
+  // Keep latest linked refs for the in-orca loader without re-running it on identity churn.
+  useEffect(() => {
+    inOrcaLinkedLinearRefsRef.current = inOrcaLinkedLinearRefs
+  }, [inOrcaLinkedLinearRefs])
 
   const filteredLinearIssues = useMemo(() => {
     const searchedIssues =
