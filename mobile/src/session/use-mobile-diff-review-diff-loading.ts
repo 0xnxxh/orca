@@ -21,6 +21,10 @@ export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewD
   const { client, connState, worktreeId, currentItem, screenState, setActiveHunkIndex } = input
   const [diffState, setDiffState] = useState<ReviewDiffState>({ kind: 'idle' })
   const hunkResetKeyRef = useRef<string | null>(null)
+  // Why: depend on the two fields this effect reads, not the screenState object —
+  // an identity-only change must not restart the git.diff request.
+  const screenReady = screenState.kind === 'ready'
+  const branchCompare = screenState.kind === 'ready' ? screenState.branchCompare : null
 
   useEffect(() => {
     // Why (F10): a connection blip re-runs this effect; the reader's hunk position must
@@ -30,7 +34,7 @@ export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewD
       hunkResetKeyRef.current = hunkKey
       setActiveHunkIndex(null)
     }
-    if (!currentItem || screenState.kind !== 'ready') {
+    if (!currentItem || !screenReady) {
       setDiffState({ kind: 'idle' })
       return
     }
@@ -47,7 +51,7 @@ export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewD
       client,
       worktreeId,
       item: currentItem,
-      branchCompare: screenState.branchCompare
+      branchCompare
     })
       .then((nextState) => {
         if (!stale) {
@@ -66,7 +70,7 @@ export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewD
     return () => {
       stale = true
     }
-  }, [client, connState, currentItem, screenState, setActiveHunkIndex, worktreeId])
+  }, [client, connState, currentItem, screenReady, branchCompare, setActiveHunkIndex, worktreeId])
 
   return diffState
 }

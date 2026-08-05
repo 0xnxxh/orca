@@ -202,7 +202,13 @@ export function createStableLogicalRpcClient(
       const forwarder = forwardMigrationDialState({
         session: nextSession,
         snapshot: () => ({ state, suspended }),
-        publish: publishState
+        // Why: close() during the dial already published 'disconnected'; a late
+        // forwarded phase must not resurrect a closed client's dot.
+        publish: (next) => {
+          if (!closed) {
+            publishState(next)
+          }
+        }
       })
       try {
         await waitForAuthenticated(nextSession, timeoutMs)

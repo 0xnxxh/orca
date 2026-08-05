@@ -2,6 +2,7 @@ import type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-sup
 import {
   dialRelayThroughDirectorFallback,
   encodeBase64Url,
+  RelayDialAbortedError,
   toError
 } from './mobile-endpoint-supervisor-support'
 import { persistResumeConfirmation } from './mobile-relay-credential-rotation'
@@ -37,6 +38,7 @@ export class MobileRelaySessionEstablisher {
       // Owns the stopped/background null-out so a late resolve never re-arms a stale timer.
       scheduleLease: (expiry: number | null) => void
       scheduleDirectProbe: () => void
+      onBookkeepingError: (error: Error) => void
     }
   ) {}
 
@@ -61,7 +63,7 @@ export class MobileRelaySessionEstablisher {
     const bundle = args.bundle()
     // Why: director resolution and grace fallback can finish after background/stop.
     if (!args.isActive() || !relay || !bundle) {
-      return { ok: false, error: new Error('relay state missing') }
+      return { ok: false, error: new RelayDialAbortedError() }
     }
     const session = args.openRelay(
       relay,
@@ -70,11 +72,15 @@ export class MobileRelaySessionEstablisher {
     )
     try {
       await args.logical.migrateTo(session, 'relay')
-      args.controller.setActiveSession(session)
-      if (!args.isForeground()) {
-        args.controller.suspendActiveRelay(args.logical)
-      }
-      args.recordMigration()
+    } catch (error) {
+      return { ok: false, error: session.getFailure() ?? toError(error) }
+    }
+    args.controller.setActiveSession(session)
+    if (!args.isForeground()) {
+      args.controller.suspendActiveRelay(args.logical)
+    }
+    args.recordMigration()
+    try {
       const applied = await persistResumeConfirmation({
         session,
         bundle,
@@ -83,10 +89,12 @@ export class MobileRelaySessionEstablisher {
       })
       args.adoptBundle(applied.bundle)
       args.scheduleLease(applied.leaseExpiry)
-      args.scheduleDirectProbe()
-      return { ok: true }
     } catch (error) {
-      return { ok: false, error: session.getFailure() ?? toError(error) }
+      // Why: the session is live and registered — reporting bookkeeping as a dial
+      // failure would book backoff against it and can suspend the healthy session.
+      args.onBookkeepingError(toError(error))
     }
+    args.scheduleDirectProbe()
+    return { ok: true }
   }
 }

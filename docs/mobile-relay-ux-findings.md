@@ -245,8 +245,8 @@ against current main clean (only overlap, #12575, touches different regions of `
 auto-merges); full mobile suite (411 files, 3110 tests) passed on a local merge of main into the PR
 branch. The PR routes Resume through the shared mount-then-replace mechanism
 (`src/navigation/host-stack-navigation.ts`) and adds a source-guard test against reintroducing the
-bare push. This branch (`mobile-relay-ux`) predates the merge — rebase on main before implementing
-F4, which builds on the extracted module.
+bare push. This branch has since been fast-forwarded onto that merge, and F4 builds on the
+extracted module.
 Backward compat: navigation-only, none.
 Residuals tracked as F4/F7/F8/F9.
 

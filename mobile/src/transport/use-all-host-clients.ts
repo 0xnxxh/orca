@@ -31,7 +31,6 @@ export function useAllHostClients(hostIds: string[]) {
         ctx.release(id)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   return useMemo(() => {
@@ -53,6 +52,5 @@ export function useAllHostClients(hostIds: string[]) {
       }
     }
     return out
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, tick])
 }

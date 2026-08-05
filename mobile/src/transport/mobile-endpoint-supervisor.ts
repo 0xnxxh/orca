@@ -100,7 +100,9 @@ export class MobileEndpointSupervisor {
       },
       scheduleLease: (expiry) =>
         this.leaseRotation.scheduleFromLease(this.stopped || !this.foreground ? null : expiry),
-      scheduleDirectProbe: () => this.directProbe.schedule()
+      scheduleDirectProbe: () => this.directProbe.schedule(),
+      onBookkeepingError: (error) =>
+        this.logRelay('relay bookkeeping failed after migration', error.message.slice(0, 80))
     })
     this.directProbe = new DirectReturnProbe(dependencies, {
       hysteresis: this.hysteresis,

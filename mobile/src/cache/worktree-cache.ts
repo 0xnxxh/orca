@@ -20,6 +20,11 @@ export function setCachedWorktrees(
   worktrees: unknown[],
   options?: { proven?: boolean }
 ): void {
+  // Why: a cold-start snapshot seed landing after a live worktree.ps must not erase
+  // the proof — or truncate the host-listed rows — the resume check depends on.
+  if (options?.proven !== true && readFreshEntry(hostId)?.proven) {
+    return
+  }
   // Why: Map.set on an existing key does not move it to the end of iteration
   // order. Delete first so the re-inserted key becomes the newest entry,
   // giving us true LRU eviction when the cap is hit.

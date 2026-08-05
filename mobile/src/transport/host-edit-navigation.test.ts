@@ -81,6 +81,20 @@ describe('mobile host edit navigation', () => {
     expect(harness.navigation.dispatch).not.toHaveBeenCalled()
   })
 
+  it('disposes itself when navigation leaves the host flow without cancel()', () => {
+    const harness = navigationHarness({ index: 0, routes: [{ name: 'index' }] })
+    navigateToMobileHostEdit(harness.navigation, { push: vi.fn() }, 'host-1')
+
+    // Enter the host flow for a different host, then leave it entirely.
+    harness.setState(committedHostState('host-2'))
+    harness.setState({ index: 0, routes: [{ name: 'index' }] })
+    expect(harness.unsubscribeState).toHaveBeenCalledOnce()
+
+    // A late matching commit must not resurrect the replacement.
+    harness.setState(committedHostState('host-1'))
+    expect(harness.navigation.dispatch).not.toHaveBeenCalled()
+  })
+
   it('cancels a pending replacement when navigation leaves the host flow', () => {
     const harness = navigationHarness({ index: 0, routes: [{ name: 'index' }] })
     const controller = navigateToMobileHostEdit(harness.navigation, { push: vi.fn() }, 'host-1')

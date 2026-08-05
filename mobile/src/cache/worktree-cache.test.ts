@@ -65,12 +65,23 @@ describe('worktree-cache provenance', () => {
     expect(getProvenCachedWorktrees(hostId)).toEqual(listed)
   })
 
-  it('drops provenance when a seed overwrites a proven catalog', () => {
-    const hostId = 'host-downgraded'
-    setCachedWorktrees(hostId, [{ worktreeId: 'a' }], { proven: true })
+  it('keeps a fresh proven catalog when an unproven seed lands after it', () => {
+    const hostId = 'host-kept'
+    const listed = [{ worktreeId: 'a' }, { worktreeId: 'b' }]
+    setCachedWorktrees(hostId, listed, { proven: true })
 
+    // A cold-start snapshot seed must neither truncate nor de-prove the host-listed rows.
     setCachedWorktrees(hostId, [{ worktreeId: 'a' }])
 
+    expect(getProvenCachedWorktrees(hostId)).toEqual(listed)
+  })
+
+  it('lets an unproven seed replace another unproven entry', () => {
+    const hostId = 'host-reseeded'
+    setCachedWorktrees(hostId, [{ worktreeId: 'a' }])
+    setCachedWorktrees(hostId, [{ worktreeId: 'b' }])
+
+    expect(getCachedWorktrees(hostId)).toEqual([{ worktreeId: 'b' }])
     expect(getProvenCachedWorktrees(hostId)).toBeNull()
   })
 

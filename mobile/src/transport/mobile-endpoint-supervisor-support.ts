@@ -18,6 +18,14 @@ export function suspendRelayIfStillConnected(
 
 type RelayDialResult = { ok: true } | { ok: false; error: Error }
 
+// Why: a locally-aborted dial (background/stop/missing state) proves nothing about the
+// cell assignment, so the director fallback must not burn a resolution round on it.
+export class RelayDialAbortedError extends Error {
+  constructor() {
+    super('relay dial aborted before opening a session')
+  }
+}
+
 // One credential attempt: dial, and on a director-class failure re-resolve the
 // cell assignment, persist it durably, then dial once more.
 export async function dialRelayThroughDirectorFallback(args: {
@@ -32,7 +40,12 @@ export async function dialRelayThroughDirectorFallback(args: {
 }): Promise<RelayDialResult> {
   const first = await args.dial()
   const relay = args.relay()
-  if (first.ok || !isDirectorResolutionFailure(first.error) || !relay) {
+  if (
+    first.ok ||
+    first.error instanceof RelayDialAbortedError ||
+    !isDirectorResolutionFailure(first.error) ||
+    !relay
+  ) {
     return first
   }
   try {
