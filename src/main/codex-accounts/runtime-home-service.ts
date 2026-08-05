@@ -270,6 +270,12 @@ export class CodexRuntimeHomeService {
     )
   }
 
+  prepareHostSystemDefaultSessionMigrationPass(): void {
+    invalidateCodexSessionBackfillMarker(
+      join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
+    )
+  }
+
   // Why: with the real-home flag ON, a managed HOST account runs against its own
   // self-contained CODEX_HOME (codex-accounts/<id>/home) instead of the shared
   // runtime mirror. Its auth.json lives there and codex refreshes it in place,
@@ -441,9 +447,7 @@ export class CodexRuntimeHomeService {
     ) {
       return false
     }
-    invalidateCodexSessionBackfillMarker(
-      join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
-    )
+    this.prepareHostSystemDefaultSessionMigrationPass()
     return true
   }
 

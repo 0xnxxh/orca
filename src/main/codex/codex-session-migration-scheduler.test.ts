@@ -8,12 +8,14 @@ describe('createCodexSessionMigrationScheduler', () => {
 
   it('runs after a managed-account startup switches to host system default', async () => {
     let eligible = false
+    const prepareScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi.fn().mockResolvedValue(null)
     const scheduler = createCodexSessionMigrationScheduler({
       isEligible: () => eligible,
       isQuitting: () => false,
       resolveSystemCodexHomePathOverride: () => undefined,
+      prepareScheduledRun,
       startBackfill,
       startIndexHeal
     })
@@ -26,15 +28,18 @@ describe('createCodexSessionMigrationScheduler', () => {
     scheduler.requestRun()
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
     expect(startBackfill).toHaveBeenCalledOnce()
+    expect(prepareScheduledRun).not.toHaveBeenCalled()
   })
 
   it('schedules a delayed rerun after a shared-home launch', async () => {
+    const prepareScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi.fn().mockResolvedValue(null)
     const scheduler = createCodexSessionMigrationScheduler({
       isEligible: () => true,
       isQuitting: () => false,
       resolveSystemCodexHomePathOverride: () => undefined,
+      prepareScheduledRun,
       startBackfill,
       startIndexHeal,
       initialDelayMs: 1_000
@@ -48,15 +53,18 @@ describe('createCodexSessionMigrationScheduler', () => {
     await vi.advanceTimersByTimeAsync(1)
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
     expect(startBackfill).toHaveBeenCalledOnce()
+    expect(prepareScheduledRun).toHaveBeenCalledOnce()
   })
 
   it('delays the startup run from the latest shared-home launch', async () => {
+    const prepareScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi.fn().mockResolvedValue(null)
     const scheduler = createCodexSessionMigrationScheduler({
       isEligible: () => true,
       isQuitting: () => false,
       resolveSystemCodexHomePathOverride: () => undefined,
+      prepareScheduledRun,
       startBackfill,
       startIndexHeal,
       initialDelayMs: 1_000
@@ -72,10 +80,12 @@ describe('createCodexSessionMigrationScheduler', () => {
     await vi.advanceTimersByTimeAsync(999)
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
     expect(startBackfill).toHaveBeenCalledOnce()
+    expect(prepareScheduledRun).toHaveBeenCalledOnce()
   })
 
   it('preserves a delayed launch rerun while an earlier migration is active', async () => {
     let releaseFirstIndexHeal: (() => void) | undefined
+    const prepareScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi
       .fn()
@@ -90,6 +100,7 @@ describe('createCodexSessionMigrationScheduler', () => {
       isEligible: () => true,
       isQuitting: () => false,
       resolveSystemCodexHomePathOverride: () => undefined,
+      prepareScheduledRun,
       startBackfill,
       startIndexHeal,
       initialDelayMs: 1_000
@@ -101,10 +112,60 @@ describe('createCodexSessionMigrationScheduler', () => {
     scheduler.scheduleRun()
     await vi.advanceTimersByTimeAsync(1_000)
     expect(startBackfill).toHaveBeenCalledOnce()
+    expect(prepareScheduledRun).not.toHaveBeenCalled()
 
     releaseFirstIndexHeal?.()
     await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledTimes(2))
+    expect(prepareScheduledRun).toHaveBeenCalledOnce()
+    expect(prepareScheduledRun.mock.invocationCallOrder[0]).toBeLessThan(
+      startBackfill.mock.invocationCallOrder[1]!
+    )
+  })
+
+  it('prepares a delayed launch pass after an earlier migration settles before the timer', async () => {
+    let releaseFirstBackfill: (() => void) | undefined
+    let markerPresent = false
+    const prepareScheduledRun = vi.fn(() => {
+      markerPresent = false
+    })
+    const startBackfill = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFirstBackfill = () => {
+              markerPresent = true
+              resolve()
+            }
+          })
+      )
+      .mockImplementationOnce(async () => {
+        expect(markerPresent).toBe(false)
+      })
+    const startIndexHeal = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      prepareScheduledRun,
+      startBackfill,
+      startIndexHeal,
+      initialDelayMs: 1_000
+    })
+
+    scheduler.requestRun()
+    scheduler.scheduleRun()
+    releaseFirstBackfill?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(markerPresent).toBe(true)
+    expect(startIndexHeal).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
+    expect(prepareScheduledRun).toHaveBeenCalledOnce()
   })
 
   it('coalesces concurrent run requests and stops before index heal after opt-out', async () => {
