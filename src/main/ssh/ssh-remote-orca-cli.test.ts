@@ -141,7 +141,15 @@ describe('runRemoteOrcaCli', () => {
 
   it.each([
     { argv: ['terminal', 'list'], includeVisualLayouts: true },
-    { argv: ['terminal', 'list', '--json'], includeVisualLayouts: false }
+    { argv: ['terminal', 'list', '--json'], includeVisualLayouts: false },
+    {
+      argv: ['terminal', 'list', '--json', '--include-visual-layouts'],
+      includeVisualLayouts: true
+    },
+    {
+      argv: ['--include-visual-layouts', 'terminal', 'list', '--json'],
+      includeVisualLayouts: true
+    }
   ])(
     'requests terminal layouts according to the legacy SSH output mode',
     async ({ argv, includeVisualLayouts }) => {

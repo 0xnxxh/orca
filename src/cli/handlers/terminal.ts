@@ -56,8 +56,8 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
     const result = await client.call<RuntimeTerminalListResult>('terminal.list', {
       worktree: await getOptionalWorktreeSelector(flags, 'worktree', cwd, client),
       limit: getOptionalPositiveIntegerFlag(flags, 'limit'),
-      // Why: only the human formatter renders layouts; --json ships and discards them.
-      includeVisualLayouts: !json
+      // Why: agent JSON calls dominate; topology stays available through an explicit opt-in.
+      includeVisualLayouts: !json || flags.has('include-visual-layouts')
     })
     printResult(result, json, formatTerminalList)
   },

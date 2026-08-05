@@ -189,8 +189,9 @@ async function dispatchRemoteCli(
       return await call(dispatcher, 'terminal.list', {
         worktree: optionalRemoteCliString(parsed.flags, 'worktree'),
         limit: optionalRemoteCliNumber(parsed.flags, 'limit'),
-        // Why: only the human formatter renders layouts; --json ships and discards them.
-        includeVisualLayouts: !parsed.flags.has('json')
+        // Why: agent JSON calls dominate; topology stays available through an explicit opt-in.
+        includeVisualLayouts:
+          !parsed.flags.has('json') || parsed.flags.has('include-visual-layouts')
       })
     case 'orchestration send': {
       const type = optionalRemoteCliString(parsed.flags, 'type')
