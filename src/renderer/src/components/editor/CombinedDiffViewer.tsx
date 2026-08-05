@@ -902,8 +902,10 @@ export default function CombinedDiffViewer({
   })
   const combinedDiffTotalSize = virtualizer.getTotalSize()
   const combinedDiffVirtualItems = virtualizer.getVirtualItems()
-  // Why: retrySection needs the on-screen set without taking the virtualizer as a dep.
-  renderedIndicesRef.current = new Set(combinedDiffVirtualItems.map((item) => item.index))
+  // Why: keep render pure (React Doctor); retrySection still needs the on-screen set without the virtualizer as a dep.
+  useLayoutEffect(() => {
+    renderedIndicesRef.current = new Set(combinedDiffVirtualItems.map((item) => item.index))
+  }, [combinedDiffVirtualItems])
   const getCombinedDiffSectionKey = useCallback((section: DiffSection): string => section.key, [])
   const getCombinedDiffSectionElementKey = useCallback(
     (element: Element): string | null =>
