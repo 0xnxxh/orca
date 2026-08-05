@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { ChevronLeft, X } from 'lucide-react-native'
 import { useHostClient, useForceReconnect } from '../transport/client-context'
-import { showForceReconnectError } from '../transport/force-reconnect-feedback'
+import { startForceReconnectWithFeedback } from '../transport/force-reconnect-feedback'
 import { getWorktreeLabel } from '../session/worktree-label'
 import {
   flattenDirectoryCache,
@@ -250,7 +250,7 @@ export function MobileFileExplorerPanel(props: {
     (relativePath: string) => {
       if (connState !== 'connected' && hostId) {
         pendingDirectoryRetriesRef.current.add(relativePath)
-        void forceReconnect(hostId).catch(showForceReconnectError)
+        startForceReconnectWithFeedback(() => forceReconnect(hostId))
         return
       }
       void loadDirectory(relativePath)
@@ -334,7 +334,7 @@ export function MobileFileExplorerPanel(props: {
         style={styles.retryButton}
         onPress={() =>
           connState !== 'connected' && hostId
-            ? void forceReconnect(hostId).catch(showForceReconnectError)
+            ? startForceReconnectWithFeedback(() => forceReconnect(hostId))
             : void loadDirectory('')
         }
       >

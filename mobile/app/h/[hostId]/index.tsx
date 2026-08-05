@@ -28,7 +28,7 @@ import {
   useCloseHost,
   useForceReconnect
 } from '../../../src/transport/client-context'
-import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
+import { startForceReconnectWithFeedback } from '../../../src/transport/force-reconnect-feedback'
 import { useWorktreeResync } from '../../../src/transport/use-worktree-resync'
 import { startHostWorktreeRefresh } from '../../../src/worktree/host-worktree-refresh'
 import {
@@ -147,6 +147,12 @@ export function HostScreen({
   const newWorktreeModalVisibleRef = useRef(false)
   const closeHostClient = useCloseHost()
   const forceReconnectHost = useForceReconnect()
+  const reconnectHostWithFeedback = useCallback(() => {
+    if (!hostId) {
+      return
+    }
+    startForceReconnectWithFeedback(() => forceReconnectHost(hostId))
+  }, [forceReconnectHost, hostId])
   const [worktrees, setWorktrees] = useState<Worktree[]>(initialCache ?? [])
   const [worktreesLoaded, setWorktreesLoaded] = useState(initialCache != null)
   // Why (STA-3123): error code of the last failed worktree.ps, so a broken catalog
@@ -836,12 +842,10 @@ export function HostScreen({
                   return (
                     <Pressable
                       style={styles.reconnectButton}
-                      onPress={() =>
-                        void forceReconnectHost(hostId!).catch(showForceReconnectError)
-                      }
+                      onPress={reconnectHostWithFeedback}
                       hitSlop={8}
                     >
-                      <Text style={styles.reconnectButtonText}>Reconnect</Text>
+                      <Text style={styles.reconnectButtonText}>Reconnect now</Text>
                     </Pressable>
                   )
                 })()}
@@ -1099,7 +1103,7 @@ export function HostScreen({
       {connState === 'auth-failed' && (
         <AuthFailedBanner
           canRetry={!!hostId}
-          onRetry={() => hostId && void forceReconnectHost(hostId).catch(showForceReconnectError)}
+          onRetry={reconnectHostWithFeedback}
           onRepair={() => router.push('/pair-scan')}
           onRemove={() => setConfirmRemoveHost(true)}
         />

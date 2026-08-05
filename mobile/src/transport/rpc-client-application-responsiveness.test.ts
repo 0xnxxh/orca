@@ -109,7 +109,7 @@ describe('direct RPC application responsiveness', () => {
         lastConnectedAt: client.getLastConnectedAt(),
         rpcUnresponsiveSince
       })
-    ).toMatchObject({ kind: 'warning', label: 'Connected, not responding' })
+    ).toMatchObject({ kind: 'warning', label: 'Desktop not responding' })
 
     const second = client
       .sendRequest('browser.screenshot', {}, { timeoutMs: 100, applicationHealthProbe: true })
@@ -217,7 +217,7 @@ describe('direct RPC application responsiveness', () => {
         lastConnectedAt: client.getLastConnectedAt(),
         rpcUnresponsiveSince
       })
-    ).toMatchObject({ kind: 'warning', label: 'Connected, not responding' })
+    ).toMatchObject({ kind: 'warning', label: 'Desktop not responding' })
     client.close()
   })
 

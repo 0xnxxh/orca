@@ -116,7 +116,7 @@ export default function ConnectionLogScreen() {
           <View style={styles.statusRow}>
             <Text style={styles.statusText}>
               {state === 'connected' && rpcUnresponsiveSince != null
-                ? 'Connected, not responding'
+                ? 'Desktop not responding'
                 : state}
               {reconnectAttempts > 0 ? ` · attempt ${reconnectAttempts}` : ''}
             </Text>

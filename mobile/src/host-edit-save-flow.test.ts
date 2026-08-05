@@ -305,7 +305,11 @@ describe('edit host handleSave', () => {
 
     expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
-    expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
+    expect(dependencies.alert).toHaveBeenCalledWith(
+      "Couldn't reconnect to desktop",
+      'Make sure desktop Orca is open and both devices are online, then try again.',
+      [{ text: 'Dismiss', style: 'cancel' }]
+    )
 
     act(() => renderer.unmount())
   })

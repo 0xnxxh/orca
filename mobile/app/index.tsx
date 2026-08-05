@@ -31,7 +31,7 @@ import {
   useForceReconnect,
   usePrimeHosts
 } from '../src/transport/client-context'
-import { showForceReconnectError } from '../src/transport/force-reconnect-feedback'
+import { startForceReconnectWithFeedback } from '../src/transport/force-reconnect-feedback'
 import { useRpcUnresponsiveByHost } from '../src/transport/client-context-connection-metrics'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
@@ -244,6 +244,12 @@ export default function HomeScreen() {
   )
   const closeHostClient = useCloseHost()
   const forceReconnectHost = useForceReconnect()
+  const reconnectHostWithFeedback = useCallback(
+    (hostId: string) => {
+      startForceReconnectWithFeedback(() => forceReconnectHost(hostId))
+    },
+    [forceReconnectHost]
+  )
   const primeHosts = usePrimeHosts()
   const allClientsRef = useRef<Array<{ hostId: string; client: RpcClient }>>([])
   // Why: keep the focus callback stable (no refetch per render) while still exposing the latest host clients.
@@ -718,6 +724,28 @@ export default function HomeScreen() {
               rpcUnresponsiveSince: hostRpcUnresponsive[item.id] ?? null,
               endpoint: item.endpoint
             })
+            const reconnectAction = {
+              label: state === 'disconnected' ? 'Connect' : 'Reconnect now',
+              onPress: () => reconnectHostWithFeedback(item.id)
+            }
+            let statusActions: { label: string; onPress: () => void }[] | undefined
+            if (verdict.kind === 'auth-failed') {
+              statusActions = [
+                { label: 'Retry', onPress: reconnectAction.onPress },
+                { label: 'Re-pair', onPress: () => router.push('/pair-scan') }
+              ]
+            } else if (verdict.kind === 'unreachable') {
+              statusActions = [
+                reconnectAction,
+                { label: 'Re-pair', onPress: () => router.push('/pair-scan') }
+              ]
+            } else if (
+              verdict.kind === 'warning' ||
+              state === 'reconnecting' ||
+              state === 'disconnected'
+            ) {
+              statusActions = [reconnectAction]
+            }
             return (
               <MobileHostCard
                 host={item}
@@ -725,6 +753,7 @@ export default function HomeScreen() {
                 verdict={verdict}
                 path={hostPaths[item.id] ?? 'lan'}
                 worktreeInfo={worktreeInfo[item.id]}
+                statusActions={statusActions}
                 onPress={() => router.push(`/h/${item.id}`)}
                 onLongPress={() => {
                   triggerMediumImpact()
@@ -908,7 +937,7 @@ export default function HomeScreen() {
             ? (hostLastConnected[actionTarget.id] ?? null) != null
             : false,
           onDismiss: () => setActionTarget(null),
-          onReconnect: (hostId) => void forceReconnectHost(hostId).catch(showForceReconnectError),
+          onReconnect: reconnectHostWithFeedback,
           onDisconnect: closeHostClient,
           onEdit: openMobileHostEdit,
           onRemove: setConfirmRemove
