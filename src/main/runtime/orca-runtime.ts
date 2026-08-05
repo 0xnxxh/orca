@@ -245,6 +245,10 @@ import {
   navigationTargetsHost,
   type RuntimeNavigationTarget
 } from '../../shared/runtime-navigation'
+import {
+  isAutomaticTabActivation,
+  type TabActivationIntent
+} from '../../shared/tab-activation-intent'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
@@ -7280,6 +7284,7 @@ export class OrcaRuntimeService {
       notifyClients?: boolean
       clientNavigationId?: string
       navigation?: RuntimeNavigationTarget
+      intent?: TabActivationIntent
     } = {}
   ): Promise<RuntimeMobileSessionTabsResult> {
     const navigation = opts.navigation ?? (opts.notifyClients === false ? 'caller' : 'all')
@@ -7321,7 +7326,10 @@ export class OrcaRuntimeService {
       const shouldMaterializePendingTerminal =
         publicTab?.type === 'terminal' &&
         publicTab.status !== 'ready' &&
-        !this.isDeliberatelyParkedPane(worktreeId, tab) &&
+        // Why: opening a tab is the documented wake gesture for a slept pane
+        // (#11598), so only a background probe may be refused for one.
+        (!isAutomaticTabActivation(opts.intent) ||
+          !this.isDeliberatelyParkedPane(worktreeId, tab)) &&
         (!targetsHost ||
           !this.notifier?.focusTerminal ||
           this.shouldMaterializeHeadlessMobileSessionTab(snapshot!, tab))
@@ -7480,6 +7488,7 @@ export class OrcaRuntimeService {
    * (workspace sleep or completed-agent hibernation) rather than lost and awaiting reconnect.
    * Why: `pending-handle` alone cannot tell those apart — a parked pane publishes it
    * indefinitely — and respawning a parked pane re-launches its agent behind the user.
+   * Only an automatic activation consults this; a user opening the tab is the wake gesture.
    */
   private isDeliberatelyParkedPane(
     worktreeId: string,
