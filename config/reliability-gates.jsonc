@@ -9557,6 +9557,88 @@
         "The live topology uses an SSH Git worktree; folder-workspace behavior is covered by target-scoped renderer reconciliation rather than a second headed topology."
       ],
       "demotionRule": "Keep experimental or demote if same-authority snapshots can overwrite newer pushes, reconnect silently loses persisted intent, one forward operation disturbs unrelated forwards, live HTTP diverges from renderer/main inventory, or either transport topology flakes without an identified product or harness fault."
+    },
+    {
+      "id": "remote-wire.cross-version-terminal-journey",
+      "title": "A released client and a current server still complete one terminal journey in both skew directions",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "remote-runtime",
+      "layer": "cross-version-protocol-integration",
+      "surfaces": [
+        "terminal binary stream framing",
+        "terminal multiplex subscribe handshake and capability negotiation",
+        "host-published snapshot and output projection",
+        "remote terminal reconnect"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["paired-runtime"],
+      "coverageNotes": "Loads the real host RPC methods, the real RpcDispatcher, and the real renderer terminal multiplexer from two builds (current working tree and the newest release tag) and drives them against each other over an in-process transport that reproduces production frame routing, including the host-side decode that silently drops unknown opcodes. Covers the terminal stream only; the session-tab sync channel, agent-session publications, file/Git RPCs, mobile E2EE framing, and the relay transport are uncovered.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/pull/12641",
+        "https://github.com/stablyai/orca/pull/12655"
+      ],
+      "invariant": "A client and a server built from different releases must complete subscribe, input delivery to the process, hide/reveal buffer snapshot, transport drop, and resubscribe with no frame refused by the receiving build's decoder, the same negotiated capabilities, and the same published snapshot content — so a new optional field stays safe, a new opcode is only sent after negotiation, and a change in what the host publishes is visible before release.",
+      "oracle": "Run one fixed journey per pairing (old client/new server, new client/old server, and current/current as control) and assert the recorded step list, the exact named frame sequence, both subscribed events with their negotiated capabilities, the exact input texts the host wrote to the PTY before and after reconnect, the rendered snapshot and live-output content, and an empty set of decoder-rejected frames in either direction. Missing host runtime methods are reported by name so a harness gap can never be read as a wire incompatibility.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts tests/e2e/cross-version-wire/cross-version-terminal-wire.unit.test.ts"
+      ],
+      "testFiles": ["tests/e2e/cross-version-wire/cross-version-terminal-wire.unit.test.ts"],
+      "assertionRefs": [
+        {
+          "file": "tests/e2e/cross-version-wire/cross-version-terminal-wire.unit.test.ts",
+          "assertions": [
+            "expect(record.completed).toEqual([...JOURNEY_STEPS])",
+            "expect(record.frameSequence).toEqual(EXPECTED_JOURNEY_FRAMES)",
+            "expect(record.rejected).toEqual([])",
+            "expect(record.inputAtProcess).toEqual([JOURNEY_INPUTS.first, JOURNEY_INPUTS.second])",
+            "expect(event.capabilities).toEqual({ outputPause: 1 })"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-05",
+          "runner": "local",
+          "platform": "macos",
+          "result": "passed",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts tests/e2e/cross-version-wire/cross-version-terminal-wire.unit.test.ts",
+          "durationSeconds": 6,
+          "summary": "v1.4.169 against working tree c4d5a535f2; all three pairings produced the identical 16-frame journey with zero rejected frames."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 60,
+        "scope": "one baseline checkout extraction plus three in-process journeys"
+      },
+      "flakeHistory": {
+        "status": "not-started",
+        "evidence": "New gate; no soak history yet. The journey uses observed-state barriers only, with no sleeps or elapsed-time oracles."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "Red proven separately for each rule by injecting the violation into the working tree and reverting it. Rule 2: adding opcode 17 and sending it ungated from the client turned new-client/old-server red with rejected rawOpcode 17 in the client-to-host direction, while old-client/new-server stayed green. Rule 3: making the host stop publishing the snapshot `source` field turned both new-server pairings red and left the old-server pairing green; trimming the published initial buffer removed the SnapshotChunk frame and failed the frame-sequence oracle. Rule 1: adding an optional `hiddenOutputReason` field to the snapshot frame kept all pairings green, and making the client require that field turned only new-client/old-server red."
+      },
+      "performanceBudget": {
+        "required": false,
+        "evidence": "Test-only infrastructure; it adds no product code path. The extracted baseline tree is cached by resolved commit, so repeat runs skip extraction and each journey completes in roughly 35ms."
+      },
+      "promotionCriteria": [
+        "Extend the matrix beyond two version points, for example the previous two minor releases.",
+        "Cover a second wire surface, starting with the session-tab sync channel that PR #12641 changed.",
+        "Collect 100 consecutive CI passes on the dedicated cross-version-wire job.",
+        "Run the job on Linux and Windows runners, not only macOS locally."
+      ],
+      "knownGaps": [
+        "Only the terminal stream is covered; session tabs, agent sessions, file/Git RPCs, mobile E2EE framing, and the relay transport are not.",
+        "Only two version points are compared, so a regression introduced and reverted between them is invisible.",
+        "The host runtime is a stub around a fake PTY, so real PTY, daemon, and SSH provider behavior is out of scope.",
+        "The baseline is the newest release tag by default, so the compared pair changes when a new release is cut unless ORCA_CROSS_VERSION_BASELINE_REF pins it.",
+        "tests/ is outside every tsconfig include, so the harness is linted and executed but not typechecked."
+      ],
+      "demotionRule": "Demote if the baseline checkout cannot be materialized in CI, if a pairing has to be skipped to keep the lane green, or if the journey stops asserting the full step list and frame sequence."
     }
   ]
 }
