@@ -1,11 +1,22 @@
+// Migration note: the eviction policy that used to live here now lives in
+// agent-hook-status-eviction-policy.ts, shared with the daemon-side binding store
+// (agent-hook-binding-store.ts). This file stays as the pane-keyed adapter over that policy
+// for HookListenerState; new terminal-scoped callers should use the binding store instead.
+
 import {
   clearPaneCacheState,
   type AgentHookEventPayload,
   type HookListenerState
 } from './agent-hook-listener'
-import { AGENT_STATUS_STALE_AFTER_MS } from './agent-status-types'
+import {
+  assertAgentHookStatusBound,
+  MAX_AGENT_HOOK_STATUS_ENTRIES,
+  selectAgentHookStatusEvictionKey,
+  type AgentHookStatusEvictionCandidate
+} from './agent-hook-status-eviction-policy'
 
-export const MAX_AGENT_HOOK_STATUS_CACHE_PANES = 500
+/** @deprecated Prefer MAX_AGENT_HOOK_STATUS_ENTRIES; kept for existing pane-keyed callers. */
+export const MAX_AGENT_HOOK_STATUS_CACHE_PANES = MAX_AGENT_HOOK_STATUS_ENTRIES
 
 export type AgentHookStatusCacheEviction = {
   paneKey: string
@@ -17,17 +28,15 @@ export function upsertBoundedAgentHookStatus(
   entry: AgentHookEventPayload,
   options: { maxPanes?: number; now?: number } = {}
 ): AgentHookStatusCacheEviction[] {
-  const maxPanes = options.maxPanes ?? MAX_AGENT_HOOK_STATUS_CACHE_PANES
-  if (!Number.isSafeInteger(maxPanes) || maxPanes < 1) {
-    throw new RangeError('Agent hook status cache limit must be a positive safe integer')
-  }
+  const maxPanes = options.maxPanes ?? MAX_AGENT_HOOK_STATUS_ENTRIES
+  assertAgentHookStatusBound(maxPanes)
 
   state.lastStatusByPaneKey.delete(entry.paneKey)
   state.lastStatusByPaneKey.set(entry.paneKey, entry)
   const evicted: AgentHookStatusCacheEviction[] = []
   const now = options.now ?? Date.now()
   while (state.lastStatusByPaneKey.size > maxPanes) {
-    const paneKey = selectEvictionCandidate(state, entry.paneKey, now)
+    const paneKey = selectAgentHookStatusEvictionKey(evictionCandidates(state), entry.paneKey, now)
     if (!paneKey) {
       break
     }
@@ -41,29 +50,17 @@ export function upsertBoundedAgentHookStatus(
   return evicted
 }
 
-function selectEvictionCandidate(
-  state: HookListenerState,
-  currentPaneKey: string,
-  now: number
-): string | undefined {
-  let oldestFallback: string | undefined
+function* evictionCandidates(
+  state: HookListenerState
+): Iterable<readonly [string, AgentHookStatusEvictionCandidate]> {
   for (const [paneKey, entry] of state.lastStatusByPaneKey) {
-    if (paneKey === currentPaneKey) {
-      continue
-    }
-    oldestFallback ??= paneKey
-    if (entry.payload.state === 'done' || isStaleStatus(entry, now)) {
-      return paneKey
-    }
+    const receivedAt = (entry as AgentHookEventPayload & { receivedAt?: unknown }).receivedAt
+    yield [
+      paneKey,
+      {
+        state: entry.payload.state,
+        receivedAt: typeof receivedAt === 'number' ? receivedAt : undefined
+      }
+    ]
   }
-  return oldestFallback
-}
-
-function isStaleStatus(entry: AgentHookEventPayload, now: number): boolean {
-  const receivedAt = (entry as AgentHookEventPayload & { receivedAt?: unknown }).receivedAt
-  return (
-    typeof receivedAt === 'number' &&
-    Number.isFinite(receivedAt) &&
-    now - receivedAt > AGENT_STATUS_STALE_AFTER_MS
-  )
 }
