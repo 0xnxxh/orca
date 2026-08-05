@@ -5972,6 +5972,95 @@
       "demotionRule": "Cannot promote if provider failure can close panes or if the oracle is screenshot-only."
     },
     {
+      "id": "terminal-input.remote-write-rejection-recovery",
+      "title": "Rejected paired-runtime terminal input reaches pane recovery",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-runtime",
+      "layer": "paired-runtime-stream-contract",
+      "surfaces": [
+        "terminal multiplex input",
+        "legacy binary terminal input",
+        "one-shot terminal.send fallback",
+        "pane recovery"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["paired-runtime"],
+      "coverageNotes": "Deterministic dispatcher and renderer contracts cover rejected authoritative writes, capability negotiation, legacy clients, legacy binary subscriptions, stream-id reuse, pane lifecycle reuse, and the one-shot JSON fallback. Live headed/headless paired-runtime and mixed installed releases remain uncollected.",
+      "motivatingLinks": [
+        "https://linear.app/stably/issue/STA-2830",
+        "https://github.com/stablyai/orca/issues/11124"
+      ],
+      "invariant": "When a paired-runtime client accepts terminal input locally but the authoritative host rejects the PTY write, a capability-compatible stream must notify only that current pane generation so its existing write-unavailable recovery runs. A host must never send the new opcode to a legacy client, and a late rejection must never recover a replacement stream or pane lifecycle.",
+      "oracle": "Subscribe through the real dispatcher, deliver an Input frame, reject the authoritative runtime send before any process write, and require one WriteUnavailable frame only for a capability-declaring client. Reuse the stream id before releasing a held rejection and require no signal. Decode the signal through the renderer multiplexer and require the current pane callback, then replace the stream or detach and reattach the same handle before releasing held failures and require no stale recovery. Repeat for the legacy binary stream and rejected terminal.send fallback.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/renderer/src/runtime/runtime-terminal-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts --reporter=dot"
+      ],
+      "testFiles": [
+        "src/main/runtime/rpc/terminal-multiplex.test.ts",
+        "src/renderer/src/runtime/runtime-terminal-stream.test.ts",
+        "src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
+        "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/runtime/rpc/terminal-multiplex.test.ts",
+          "assertions": [
+            "rejected authoritative input emits WriteUnavailable only for capable multiplex and legacy binary clients",
+            "a late rejection cannot target a replacement stream with the same id"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+          "assertions": [
+            "WriteUnavailable reaches the current pane recovery callback without a fatal error",
+            "superseded streams and same-handle pane lifecycles ignore delayed rejections",
+            "a rejected one-shot runtime fallback invokes pane recovery"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-05",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/renderer/src/runtime/runtime-terminal-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 16,
+          "summary": "Deterministic host and renderer contracts passed capability, rejection, mixed-version, and stale-generation coverage."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 30,
+        "scope": "focused paired-runtime host and renderer contracts"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Deterministic controlled-promise tests pass locally; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "On origin/main e5f49e0e1d, the test-only dispatcher oracle subscribed, accepted client input, invoked the authoritative host send once, recorded no process write, and failed only because no WriteUnavailable frame returned. Independent host, renderer, and fallback mutations each make their focused oracle red; the integrated implementation is green."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The change adds one optional capability field, one constant-time outcome classification per existing write, and one rejection-only frame/callback. It adds no polling, timer, provider listing, subprocess, retained payload, or cross-pane fanout."
+      },
+      "promotionCriteria": [
+        "Collect headed and headless paired-runtime journeys with a rejected host write.",
+        "Collect mixed installed-release evidence in both client/server directions.",
+        "Collect CI soak history with no unexplained flakes."
+      ],
+      "knownGaps": [
+        "Live headed and headless paired-runtime journeys are not collected.",
+        "Linux, Windows, mobile, and mixed installed-release runs are not collected.",
+        "Dead-record connected-state correction remains tracked separately in STA-2896."
+      ],
+      "demotionRule": "Keep experimental or demote if rejected input can remain silent, a legacy client receives an unknown opcode, a stale failure recovers a replacement pane, or the deterministic contract flakes without an identified product or harness bug."
+    },
+    {
       "id": "terminal-provider.wsl-restore-contract",
       "title": "WSL terminals preserve launch identity, liveness, and restore boundaries",
       "maturity": "experimental",

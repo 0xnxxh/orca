@@ -69,6 +69,7 @@ export type RemoteRuntimeMultiplexedTerminalCallbacks = {
   onDriverChanged?: (
     driver: { kind: 'idle' } | { kind: 'desktop' } | { kind: 'mobile'; clientId: string }
   ) => void
+  onWriteUnavailable?: () => void
   onTransportClose?: (event: { recoverable: boolean; retryWithBackoff?: boolean }) => void
 }
 
@@ -447,6 +448,7 @@ class RemoteRuntimeTerminalMultiplexer {
             ackOutput: 1,
             ackOutputSourceRanges: 1,
             outputPause: 1,
+            writeUnavailable: 1,
             ...(args.client.type === 'desktop' ? { desktopViewportClaims: 1 } : {})
           }
         })
@@ -676,6 +678,10 @@ class RemoteRuntimeTerminalMultiplexer {
       return
     }
     stream.watchdog.recordInbound()
+    if (frame.opcode === TerminalStreamOpcode.WriteUnavailable) {
+      stream.callbacks.onWriteUnavailable?.()
+      return
+    }
     if (
       frame.opcode === TerminalStreamOpcode.Output ||
       frame.opcode === TerminalStreamOpcode.OutputSpan
