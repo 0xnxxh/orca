@@ -8,7 +8,7 @@ describe('Codex backfill error detector', () => {
   it('recognizes the timeout across ANSI-decorated chunks once', () => {
     const detector = createCodexBackfillErrorDetector()
 
-    expect(detector.observe('\u001b[31mtimed out waiting for state db back')).toBeNull()
+    expect(detector.observe('\u001b[31mError: timed out waiting for state DB back')).toBeNull()
     expect(detector.observe('fill\u001b[0m\r\n')).toBe(CODEX_BACKFILL_RECOVERY_NOTICE)
     expect(detector.observe('timed out waiting for state db backfill')).toBeNull()
   })

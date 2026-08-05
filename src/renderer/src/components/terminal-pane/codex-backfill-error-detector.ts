@@ -23,7 +23,7 @@ export function createCodexBackfillErrorDetector(): CodexBackfillErrorDetector {
       }
       const normalized = (tail + chunk).replace(ANSI_ESCAPE_PATTERN, '').replace(/\r/g, '')
       tail = normalized.slice(-DETECTOR_BUFFER_MAX_CHARS)
-      if (!tail.includes(CODEX_BACKFILL_TIMEOUT_SIGNATURE)) {
+      if (!tail.toLowerCase().includes(CODEX_BACKFILL_TIMEOUT_SIGNATURE)) {
         return null
       }
       armed = false
