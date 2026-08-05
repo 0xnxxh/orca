@@ -14,6 +14,7 @@ const secureStoreMock = vi.hoisted(() => ({
 }))
 
 const scheduleCleanupMock = vi.hoisted(() => vi.fn())
+const cancelCleanupMock = vi.hoisted(() => vi.fn())
 const platformMock = vi.hoisted(() => ({ OS: 'ios' }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -30,6 +31,7 @@ vi.mock('react-native', () => ({
 }))
 
 vi.mock('./host-credential-cleanup', () => ({
+  cancelPendingHostCredentialCleanup: (...args: unknown[]) => cancelCleanupMock(...args),
   scheduleHostCredentialCleanup: (...args: unknown[]) => scheduleCleanupMock(...args),
   retryPendingHostCredentialCleanups: vi.fn()
 }))
@@ -88,6 +90,8 @@ describe('host-store list mutations', () => {
     resetMobileRelayHostOverlayStoreForTests()
     scheduleCleanupMock.mockReset()
     scheduleCleanupMock.mockResolvedValue(undefined)
+    cancelCleanupMock.mockReset()
+    cancelCleanupMock.mockResolvedValue(undefined)
     storedHostsRaw = JSON.stringify([HOST_ONE, HOST_TWO])
     storedOverlayRaw = null
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
@@ -278,7 +282,22 @@ describe('host-store list mutations', () => {
       | undefined
     await writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
 
-    await staleCleanup?.(HOST_ONE.id)
+    await expect(staleCleanup?.(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
+
+    expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('keeps stale cleanup pending when a replacement relay write fails', async () => {
+    await removeHost(HOST_ONE.id)
+    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+    secureStoreMock.setItemAsync.mockRejectedValueOnce(new Error('keychain write failed'))
+
+    await expect(writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)).rejects.toThrow(
+      'keychain write failed'
+    )
+    await expect(staleCleanup?.(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
 
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
@@ -304,7 +323,8 @@ describe('host-store list mutations', () => {
     })
     const bundleWrite = writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
     releaseTokenDelete()
-    await Promise.all([cleanup, bundleWrite])
+    await bundleWrite
+    await expect(cleanup).rejects.toThrow('credential write superseded cleanup')
 
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalledWith(
       'orca.mobile-relay.credentials.host-1',
@@ -343,7 +363,7 @@ describe('host-store list mutations', () => {
     queueMicrotask(() => {
       bundleWrite = writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
     })
-    await cleanup
+    await expect(cleanup).rejects.toThrow('credential write superseded cleanup')
     await vi.waitFor(() => expect(bundleWrite).not.toBeNull())
     await bundleWrite
 
@@ -749,6 +769,8 @@ describe('host-store pairing save after an Android encryption rejection', () => 
     resetMobileRelayHostOverlayStoreForTests()
     scheduleCleanupMock.mockReset()
     scheduleCleanupMock.mockResolvedValue(undefined)
+    cancelCleanupMock.mockReset()
+    cancelCleanupMock.mockResolvedValue(undefined)
     storedHostsRaw = '[]'
     storedGenerationRaw = null
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {

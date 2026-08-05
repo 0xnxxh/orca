@@ -17,33 +17,41 @@ export function createUnpairedHostCredentialDeletion(dependencies: DeletionDepen
     return getHostCredentialWriteRevision(hostId) !== writeRevision
   }
 
+  function assertWriteRevisionUnchanged(hostId: string, writeRevision: number): void {
+    if (writeRevisionChanged(hostId, writeRevision)) {
+      throw new Error('credential write superseded cleanup')
+    }
+  }
+
   async function shouldSkip(hostId: string, writeRevision: number): Promise<boolean> {
-    if (writeRevisionChanged(hostId, writeRevision)) {
-      return true
-    }
     await dependencies.waitForHostMutations()
-    if (writeRevisionChanged(hostId, writeRevision)) {
+    if (await dependencies.hasStoredHost(hostId)) {
       return true
     }
-    return (await dependencies.hasStoredHost(hostId)) || writeRevisionChanged(hostId, writeRevision)
+    assertWriteRevisionUnchanged(hostId, writeRevision)
+    return false
   }
 
   return async (hostId: string, writeRevision: number): Promise<void> => {
-    if ((await shouldSkip(hostId, writeRevision)) || writeRevisionChanged(hostId, writeRevision)) {
+    if (await shouldSkip(hostId, writeRevision)) {
       return
     }
+    assertWriteRevisionUnchanged(hostId, writeRevision)
     await deleteHostDeviceToken(hostId)
-    if ((await shouldSkip(hostId, writeRevision)) || writeRevisionChanged(hostId, writeRevision)) {
+    if (await shouldSkip(hostId, writeRevision)) {
       return
     }
+    assertWriteRevisionUnchanged(hostId, writeRevision)
     await deleteMobileRelayCredentialBundle(hostId)
-    if ((await shouldSkip(hostId, writeRevision)) || writeRevisionChanged(hostId, writeRevision)) {
+    if (await shouldSkip(hostId, writeRevision)) {
       return
     }
+    assertWriteRevisionUnchanged(hostId, writeRevision)
     await deleteMobileRelayDirectUpgradeJournal(hostId)
-    if (writeRevisionChanged(hostId, writeRevision)) {
+    if (await shouldSkip(hostId, writeRevision)) {
       return
     }
+    assertWriteRevisionUnchanged(hostId, writeRevision)
     clearHostCredentialWriteRevision(hostId)
     dependencies.onDeleted(hostId)
   }

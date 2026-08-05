@@ -12,6 +12,7 @@ import { joinHostCatalogCredentials } from './host-catalog-credential-join'
 import { resetPairingKeychainForTests } from './pairing-keychain'
 import { readHostDeviceToken, writeHostDeviceToken } from './host-device-token-store'
 import {
+  cancelPendingHostCredentialCleanup,
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
 } from './host-credential-cleanup'
@@ -233,6 +234,8 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
     // Why: the catalog can now surface a failed token write for recovery instead of losing the host.
     await commitDeviceToken(stored.id, validated.deviceToken)
   }
+  // Why: publication supersedes stale removal intent; clearing it must not delay pairing.
+  void cancelPendingHostCredentialCleanup(stored.id).catch(() => undefined)
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
       v: 2,

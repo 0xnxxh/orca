@@ -209,6 +209,11 @@ export function subscribePendingHostCredentialCleanup(listener: () => void): () 
   return () => pendingListeners.delete(listener)
 }
 
+export async function cancelPendingHostCredentialCleanup(hostId: string): Promise<void> {
+  clearUnrecordedPending(hostId)
+  await removePendingId(hostId)
+}
+
 /**
  * Record cleanup intent, then fire-and-forget the native keychain delete so
  * removeHost never blocks on SecureStore. If the durable intent write fails,
