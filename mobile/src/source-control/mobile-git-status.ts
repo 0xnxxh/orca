@@ -19,7 +19,7 @@ export type MobileSourceControlSection<TEntry extends MobileGitStatusEntry = Mob
     data: TEntry[]
   }
 
-const AREA_ORDER: MobileGitStagingArea[] = ['staged', 'unstaged']
+const AREA_ORDER: MobileGitStagingArea[] = ['unstaged', 'staged']
 
 const AREA_TITLES: Record<MobileGitStagingArea, string> = {
   unstaged: 'Changes',

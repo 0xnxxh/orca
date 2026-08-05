@@ -28,8 +28,8 @@ function groups(partial: Partial<SourceControlEntryGroups>): SourceControlEntryG
 }
 
 describe('SOURCE_CONTROL_GROUP_ORDER', () => {
-  it('keeps staged changes closest to commit', () => {
-    expect(SOURCE_CONTROL_GROUP_ORDER).toEqual(['staged', 'unstaged', 'untracked'])
+  it('follows the edit, stage, commit workflow', () => {
+    expect(SOURCE_CONTROL_GROUP_ORDER).toEqual(['unstaged', 'staged', 'untracked'])
   })
 })
 
@@ -48,7 +48,7 @@ describe('mergeUntrackedIntoChanges', () => {
 })
 
 describe('buildSourceControlDisplaySections', () => {
-  it('uses the configured order for normal sections', () => {
+  it('uses the fixed workflow order for normal sections', () => {
     const sections = buildSourceControlDisplaySections(
       groups({
         staged: [entry({ area: 'staged', path: 'staged.ts' })],
@@ -58,7 +58,7 @@ describe('buildSourceControlDisplaySections', () => {
       SOURCE_CONTROL_GROUP_ORDER
     )
 
-    expect(sections.map((section) => section.id)).toEqual(['staged', 'unstaged', 'untracked'])
+    expect(sections.map((section) => section.id)).toEqual(['unstaged', 'staged', 'untracked'])
   })
 
   it('keeps conflicts pinned before the configured normal order', () => {
@@ -81,8 +81,8 @@ describe('buildSourceControlDisplaySections', () => {
 
     expect(sections.map((section) => section.id)).toEqual([
       'conflicts',
-      'staged',
       'unstaged',
+      'staged',
       'untracked'
     ])
   })

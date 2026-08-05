@@ -22,8 +22,8 @@ export type SourceControlSectionViewAction =
   | { kind: 'combined-diff'; area?: SourceControlSectionArea; entries: GitStatusEntry[] }
 
 export const SOURCE_CONTROL_GROUP_ORDER: readonly SourceControlSectionArea[] = [
-  'staged',
   'unstaged',
+  'staged',
   'untracked'
 ]
 
