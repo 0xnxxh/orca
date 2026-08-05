@@ -51,6 +51,28 @@ peer confirms it. The existing pattern is `SetOutputPaused` (opcode 16):
 - the client sends opcode 16 only after that echo (`stream.supportsOutputPause`);
 - the host only acts on opcode 16 when it negotiated it (`stream.supportsOutputPause`).
 
+`OutputSpan` (opcode 15) is the worked example of getting this wrong. It shipped
+ungated on both the legacy `terminal.subscribe` stream and the multiplex stream, so
+transformed emissions (SSH relay, startup ingress, daemon keep-tail salvage) reached
+mobile as an opcode its vendored table does not contain — dropped with no error, no
+banner, no retry. It is now gated on `capabilities.outputSpan`, and a sender that has
+not been told the peer can decode a span **downgrades to plain `Output`** rather than
+sending nothing. That downgrade is the part worth copying: for an opcode that carries
+user-visible data, "don't send it" is still data loss, so a gate needs a fallback that
+preserves the payload, not just a suppressed frame.
+
+### Mobile vendors its own opcode table
+
+`mobile/` is a separate pnpm workspace and cannot import `src/shared/`, so
+`mobile/src/transport/terminal-stream-protocol.ts` holds a **hand-copied** enum. It
+knows only 1-6 and 12. Adding an opcode to the shared file therefore does not add it
+to mobile, and nothing fails — not typecheck, not lint, not the cross-version harness,
+which pairs desktop builds only. The two tables drift silently by construction.
+
+So "is this opcode safe to send?" cannot be answered by reading the shared enum. Until
+the vendored copy is generated from the shared one, treat every mobile-reachable
+opcode above 12 as unsupported unless the stream negotiated it.
+
 Reuse an existing opcode with a new optional payload field (Rule 1) whenever that
 expresses the change; reach for a new opcode only when framing genuinely differs.
 
