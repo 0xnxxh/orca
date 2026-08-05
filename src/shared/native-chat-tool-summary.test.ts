@@ -1,14 +1,48 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { NativeChatBlock } from './native-chat-types'
 import {
   briefToolArg,
+  createToolInputDisplay,
   describeToolInput,
   formatToolInput,
   isStructuredToolInput,
+  MAX_TOOL_DETAIL_LENGTH,
   summarizeToolInput,
   summarizeToolRun,
-  toolFilePath
+  toolFilePath,
+  truncateToolDetail
 } from './native-chat-tool-summary'
+
+describe('createToolInputDisplay', () => {
+  it('builds the shared row model from one JSON-string parse', () => {
+    const parse = vi.spyOn(JSON, 'parse')
+    const display = createToolInputDisplay(
+      '{"file_path":"src/index.ts","description":"Read the entry point"}'
+    )
+
+    expect(display.label).toBe('src/index.ts')
+    expect(display.filePath).toBe('src/index.ts')
+    expect(display.hasDetail).toBe(true)
+    expect(display.formatDetail()).toBe(
+      '{\n  "file_path": "src/index.ts",\n  "description": "Read the entry point"\n}'
+    )
+    expect(parse).toHaveBeenCalledTimes(1)
+    parse.mockRestore()
+  })
+
+  it('only offers detail when the formatted input adds information', () => {
+    expect(createToolInputDisplay('x'.repeat(60)).hasDetail).toBe(false)
+    expect(createToolInputDisplay('x'.repeat(100)).hasDetail).toBe(true)
+    expect(createToolInputDisplay('{}').hasDetail).toBe(false)
+    expect(createToolInputDisplay('{"command":"ls"}').hasDetail).toBe(true)
+  })
+
+  it('bounds tool detail through the shared desktop and mobile cap', () => {
+    const detail = truncateToolDetail('x'.repeat(MAX_TOOL_DETAIL_LENGTH + 1))
+    expect(detail).toHaveLength(MAX_TOOL_DETAIL_LENGTH + 1)
+    expect(detail.endsWith('…')).toBe(true)
+  })
+})
 
 describe('describeToolInput', () => {
   it('labels a file-target call with its path, not raw JSON', () => {

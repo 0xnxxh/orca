@@ -7,6 +7,14 @@ const MAX_PREVIEW_DEPTH = 2
 const MAX_TOOL_RUN_SUMMARY_PARTS = 3
 const PRIMARY_ARG_KEYS = ['command', 'cmd', 'query', 'pattern', 'url', 'description'] as const
 const BRIEF_ARG_KEYS = ['command', 'cmd', 'query', 'pattern'] as const
+export const MAX_TOOL_DETAIL_LENGTH = 4000
+
+export type ToolInputDisplay = {
+  label: string
+  filePath: string | null
+  hasDetail: boolean
+  formatDetail: () => string
+}
 
 export function summarizeToolInput(input: unknown): string {
   const collapsed = toRawPreview(input).replace(/\s+/g, ' ').trim()
@@ -15,23 +23,44 @@ export function summarizeToolInput(input: unknown): string {
     : `${collapsed.slice(0, MAX_PREVIEW_LENGTH - 1)}…`
 }
 
+/** Build the renderer-independent row model from one normalization pass. Detail
+ *  formatting stays lazy because collapsed mobile rows never render it. */
+export function createToolInputDisplay(input: unknown): ToolInputDisplay {
+  const normalized = normalizeToolInput(input)
+  const filePath = normalizedToolFilePath(normalized)
+  const label = describeNormalizedToolInput(normalized, filePath)
+  return {
+    label,
+    filePath,
+    hasDetail: normalizedToolInputHasDetail(normalized, label),
+    formatDetail: () => truncateToolDetail(formatNormalizedToolInput(normalized))
+  }
+}
+
+export function truncateToolDetail(text: string): string {
+  return text.length > MAX_TOOL_DETAIL_LENGTH ? `${text.slice(0, MAX_TOOL_DETAIL_LENGTH)}…` : text
+}
+
 /** Human label for a tool line: the target file path, else the primary string
  *  argument (command/query/…), else the bounded JSON preview. Keeps raw
  *  `{"file_path":…}` JSON out of the tappable row label. */
 export function describeToolInput(input: unknown): string {
   const normalized = normalizeToolInput(input)
-  const path = toolFilePath(normalized)
+  return describeNormalizedToolInput(normalized, normalizedToolFilePath(normalized))
+}
+
+function describeNormalizedToolInput(input: unknown, path: string | null): string {
   if (path) {
     return summarizeToolPath(path)
   }
-  if (normalized && typeof normalized === 'object') {
+  if (input && typeof input === 'object') {
     // Concrete target/action first; prose `description` only as a last resort.
-    const primary = firstPrimaryToolArg(normalized as Record<string, unknown>, PRIMARY_ARG_KEYS)
+    const primary = firstPrimaryToolArg(input as Record<string, unknown>, PRIMARY_ARG_KEYS)
     if (primary) {
       return primary
     }
   }
-  return summarizeToolInput(normalized)
+  return summarizeToolInput(input)
 }
 
 /** Full, pretty-printed tool-call input for the expanded detail view. Structured
@@ -39,18 +68,21 @@ export function describeToolInput(input: unknown): string {
  *  (e.g. a question payload) reads cleanly instead of one long minified line;
  *  other strings pass through as-is. */
 export function formatToolInput(input: unknown): string {
-  const normalized = normalizeToolInput(input)
-  if (normalized === null || normalized === undefined) {
+  return formatNormalizedToolInput(normalizeToolInput(input))
+}
+
+function formatNormalizedToolInput(input: unknown): string {
+  if (input === null || input === undefined) {
     return ''
   }
-  if (typeof normalized === 'string') {
-    return normalized
+  if (typeof input === 'string') {
+    return input
   }
-  if (typeof normalized === 'number' || typeof normalized === 'boolean') {
-    return String(normalized)
+  if (typeof input === 'number' || typeof input === 'boolean') {
+    return String(input)
   }
   try {
-    return JSON.stringify(normalized, null, 2) ?? ''
+    return JSON.stringify(input, null, 2) ?? ''
   } catch {
     return ''
   }
@@ -59,21 +91,34 @@ export function formatToolInput(input: unknown): string {
 /** Whether the expanded detail would show structured JSON rather than repeating
  *  the row label — i.e. whether expanding the row is worth offering. */
 export function isStructuredToolInput(input: unknown): boolean {
-  const normalized = normalizeToolInput(input)
-  if (normalized === null || typeof normalized !== 'object') {
+  return isStructuredNormalizedToolInput(normalizeToolInput(input))
+}
+
+function isStructuredNormalizedToolInput(input: unknown): boolean {
+  if (input === null || typeof input !== 'object') {
     return false
   }
   // An empty object formats back to the row label verbatim, so offering the
   // expander would promise detail and then repeat the row.
-  return Array.isArray(normalized) ? normalized.length > 0 : Object.keys(normalized).length > 0
+  return Array.isArray(input) ? input.length > 0 : Object.keys(input).length > 0
+}
+
+function normalizedToolInputHasDetail(input: unknown, label: string): boolean {
+  if (isStructuredNormalizedToolInput(input)) {
+    return true
+  }
+  return typeof input === 'string' && input.replace(/\s+/g, ' ').trim() !== label
 }
 
 export function toolFilePath(input: unknown): string | null {
-  const normalized = normalizeToolInput(input)
-  if (!normalized || typeof normalized !== 'object') {
+  return normalizedToolFilePath(normalizeToolInput(input))
+}
+
+function normalizedToolFilePath(input: unknown): string | null {
+  if (!input || typeof input !== 'object') {
     return null
   }
-  const value = normalized as Record<string, unknown>
+  const value = input as Record<string, unknown>
   // A search call's `path` is usually the directory it scanned, so taking it as a
   // target would label the row with the scan root and link to a folder. Costs the
   // link on a file-scoped search; a dead link on every other search is worse.

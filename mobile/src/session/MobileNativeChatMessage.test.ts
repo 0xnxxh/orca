@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
-import { MAX_TOOL_RESULT_CHARS } from './mobile-native-chat-message-styles'
+import { MAX_TOOL_DETAIL_LENGTH } from './mobile-native-chat-tool-summary'
 
 vi.mock('react-native', async () => {
   const React = await import('react')
@@ -114,7 +114,7 @@ describe('MobileNativeChatMessage', () => {
       { toolsExpanded: true }
     )
     const detail = textIn(tree.root).find((text) => text.startsWith('{\n'))
-    expect(detail).toHaveLength(MAX_TOOL_RESULT_CHARS + 1)
+    expect(detail).toHaveLength(MAX_TOOL_DETAIL_LENGTH + 1)
     expect(detail?.endsWith('…')).toBe(true)
   })
 
@@ -153,6 +153,16 @@ describe('MobileNativeChatMessage', () => {
     // The chevron has to agree with the panel, or the row claims to be open over
     // nothing and the tap that would close it is guarded off. Only the run header
     // is open here; the row itself stays collapsed.
+    expect(tree.root.findAllByType('ChevronDown' as never)).toHaveLength(1)
+    expect(tree.root.findAllByType('SquareChevronRight' as never)).toHaveLength(1)
+  })
+
+  it('does not expand a plain input that already fits in the row label', () => {
+    const input = 'x'.repeat(60)
+    const tree = render(toolMessage([{ type: 'tool-call', name: 'CustomTool', input }]), {
+      toolsExpanded: true
+    })
+    expect(textIn(tree.root).filter((text) => text === input)).toHaveLength(1)
     expect(tree.root.findAllByType('ChevronDown' as never)).toHaveLength(1)
     expect(tree.root.findAllByType('SquareChevronRight' as never)).toHaveLength(1)
   })
