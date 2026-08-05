@@ -41,6 +41,21 @@ export type NotificationHandler = (method: string, params: Record<string, unknow
 export type MethodNotificationHandler = (params: Record<string, unknown>) => void
 export type RequestHandler = (params: Record<string, unknown>) => Promise<unknown> | unknown
 
+export type MultiplexerDisposeReason = 'shutdown' | 'connection_lost'
+
+// Why: the renderer uses the message/code to distinguish temporary disconnects
+// (show reconnection overlay) from permanent shutdown (show error toast), so
+// every producer of a disposal rejection must mint it here — a divergent copy
+// silently downgrades the relay-lost UI to a bug-report toast.
+export function createSshDisposalError(reason: MultiplexerDisposeReason): Error & { code: string } {
+  const lost = reason === 'connection_lost'
+  const err = new Error(
+    lost ? 'SSH connection lost, reconnecting...' : 'Multiplexer disposed'
+  ) as Error & { code: string }
+  err.code = lost ? 'CONNECTION_LOST' : 'DISPOSED'
+  return err
+}
+
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_ORDINARY_UNACKED_TIMESTAMPS = 4095
 const MAX_UNACKED_TIMESTAMPS = MAX_ORDINARY_UNACKED_TIMESTAMPS + 1
@@ -369,15 +384,8 @@ export class SshChannelMultiplexer {
 
   // ── Private ───────────────────────────────────────────────────────
 
-  // Why: the renderer uses the error code to distinguish temporary disconnects
-  // (show reconnection overlay) from permanent shutdown (show error toast).
   private disposedError(): Error & { code: string } {
-    const lost = (this.disposeReason ?? 'shutdown') === 'connection_lost'
-    const err = new Error(
-      lost ? 'SSH connection lost, reconnecting...' : 'Multiplexer disposed'
-    ) as Error & { code: string }
-    err.code = lost ? 'CONNECTION_LOST' : 'DISPOSED'
-    return err
+    return createSshDisposalError(this.disposeReason ?? 'shutdown')
   }
 
   private sendMessage(
