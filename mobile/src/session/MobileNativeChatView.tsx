@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AccessibilityInfo,
   ActivityIndicator,
   FlatList,
   type NativeScrollEvent,
@@ -21,11 +20,12 @@ import {
   mobileNativeChatEmptyState,
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
-import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
+import { useMobileNativeChatLoadEarlierAccessibility } from './use-mobile-native-chat-load-earlier-accessibility'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import { MobileNativeChatComposer } from './MobileNativeChatComposer'
+import type { MobileNativeChatSessionOptionPickersProps } from './MobileNativeChatSessionOptionPickers'
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 import { MobileNativeChatAsk } from './MobileNativeChatAsk'
 import type { AskAnswerSelection, AskPrompt } from './mobile-native-chat-ask'
@@ -85,11 +85,18 @@ type Props = {
   onClearSendError?: () => void
   filePaths?: string[]
   onNeedFiles?: (query: string) => void
+  /** Model/session-option pickers for the composer action row (desktop parity). */
+  sessionOptions?: MobileNativeChatSessionOptionPickersProps | null
   /** A pending agent question/permission detected from live status, shown as a
    *  native card above the composer; answering sends text to the agent. */
   /** Structured AskUserQuestion prompt parsed from the transcript (preferred over
    *  the heuristic question card). */
   ask?: AskPrompt | null
+  /** Stable key for the ask card. Dismissal state lives in the controller (it
+   *  must survive this subtree unmounting on a chat↔terminal toggle). */
+  askKey?: string | null
+  /** Hide the answered/dismissed ask until a different question arrives. */
+  onDismissAsk?: () => void
   /** Deliver the ask answer as per-question selections; the send hook turns them
    *  into selector keystrokes (Claude) or pasted label text (other agents). */
   onAnswerAsk?: (prompt: AskPrompt, selections: AskAnswerSelection[]) => Promise<boolean>
@@ -136,7 +143,10 @@ export function MobileNativeChatView({
   onClearSendError,
   filePaths,
   onNeedFiles,
+  sessionOptions,
   ask,
+  askKey,
+  onDismissAsk,
   onAnswerAsk,
   onCancelAsk,
   question,
@@ -149,16 +159,8 @@ export function MobileNativeChatView({
   const insets = useSafeAreaInsets()
   const listRef = useRef<FlatList<NativeChatMessage>>(null)
   const [toolsExpanded, setToolsExpanded] = useState(false)
-  const isLoadingEarlier = loadingEarlier === true
-  const loadEarlierAccessibilityLabel = isLoadingEarlier
-    ? 'Loading earlier messages'
-    : loadEarlierError
-      ? `${loadEarlierError}. Tap to retry`
-      : 'Load earlier messages'
-  // Dismiss the question card as soon as it's answered; the live status lingers
-  // briefly (the agent emits a post-tool event with the same prompt), so hide it
-  // until a genuinely different question arrives.
-  const { askKey, showAsk, dismissAsk } = useMobileNativeChatAskDismiss(ask)
+  const { isLoadingEarlier, accessibilityLabel: loadEarlierAccessibilityLabel } =
+    useMobileNativeChatLoadEarlierAccessibility(loadingEarlier, loadEarlierError)
   // Lift the composer clear of the keyboard, plus the bottom safe-area so it
   // never sits under the home indicator / nav bar (mirrors the terminal dock).
   const bottomPad = keyboardInset > 0 ? keyboardInset + insets.bottom : insets.bottom
@@ -173,12 +175,6 @@ export function MobileNativeChatView({
     },
     []
   )
-  useEffect(() => {
-    if (loadEarlierError && !isLoadingEarlier) {
-      AccessibilityInfo.announceForAccessibility(loadEarlierAccessibilityLabel)
-    }
-  }, [isLoadingEarlier, loadEarlierAccessibilityLabel, loadEarlierError])
-
   const pendingIds = useMemo(() => new Set(pending.map((p) => p.id)), [pending])
   // `data` is the list source: folded transcript + synthetic streaming bubble +
   // route-owned optimistic queued messages. Memoize on the same deps so the
@@ -361,22 +357,24 @@ export function MobileNativeChatView({
         </GestureHandlerRootView>
       )}
       {/* Pending agent prompt: a structured AskUserQuestion wins, then a
-          heuristic permission, then a heuristic question. */}
-      {showAsk && ask ? (
+          heuristic permission, then a heuristic question. The controller owns
+          dismissal (it must survive this subtree unmounting on a view toggle);
+          `ask` arrives already nulled while dismissed. */}
+      {ask ? (
         <MobileNativeChatAsk
           key={askKey ?? 'ask'}
           prompt={ask}
           onAnswer={async (selections) => {
             const accepted = (await onAnswerAsk?.(ask, selections)) ?? false
             if (accepted) {
-              dismissAsk()
+              onDismissAsk?.()
             }
             return accepted
           }}
           onCancel={async () => {
             const accepted = (await onCancelAsk?.()) ?? false
             if (accepted) {
-              dismissAsk()
+              onDismissAsk?.()
             }
             return accepted
           }}
@@ -438,6 +436,8 @@ export function MobileNativeChatView({
         value={composerText}
         onChangeText={onComposerTextChange}
         onSend={handleSend}
+        agent={agent}
+        sessionOptions={sessionOptions}
         onAttachImage={onAttachImage}
         attachments={attachments}
         onRemoveAttachment={onRemoveAttachment}

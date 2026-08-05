@@ -68,6 +68,8 @@ export function MobileNativeChatOverlay({
         streaming={streaming}
         onStop={controller.handleNativeChatStop}
         ask={controller.nativeChatAsk}
+        askKey={controller.nativeChatAskKey}
+        onDismissAsk={controller.dismissNativeChatAsk}
         onAnswerAsk={controller.handleNativeChatAnswerAsk}
         onCancelAsk={controller.handleNativeChatCancelAsk}
         question={controller.nativeChatQuestion}
@@ -97,6 +99,7 @@ export function MobileNativeChatOverlay({
         onClearSendError={onClearSendError}
         filePaths={controller.nativeChatFilePaths}
         onNeedFiles={controller.loadNativeChatFiles}
+        sessionOptions={controller.nativeChatSessionOptions}
         keyboardInset={keyboardInset}
       />
     </View>
