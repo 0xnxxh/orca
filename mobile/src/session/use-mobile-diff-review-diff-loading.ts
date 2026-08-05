@@ -1,0 +1,65 @@
+import { useEffect, useState } from 'react'
+import type { ConnectionState } from '../transport/types'
+import type { RpcClient } from '../transport/rpc-client'
+import { loadMobileDiffReviewDiff } from './mobile-diff-review-loaders'
+import type { MobileDiffReviewQueueItem } from './mobile-diff-review-queue'
+import type { ReviewDiffState, ReviewScreenState } from './mobile-diff-review-screen-model'
+
+type DiffLoadingInput = {
+  client: RpcClient | null
+  connState: ConnectionState
+  worktreeId: string
+  currentItem: MobileDiffReviewQueueItem | null
+  screenState: ReviewScreenState
+  setActiveHunkIndex: (index: number | null) => void
+}
+
+// Owns the diff body for the reviewed item. Split out of the review controller so the loaded diff
+// can survive a transport blip: a drop re-runs this effect, and (F10) a diff already on screen for
+// the same item stays there instead of being replaced by "Waiting for desktop..." or a spinner.
+export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewDiffState {
+  const { client, connState, worktreeId, currentItem, screenState, setActiveHunkIndex } = input
+  const [diffState, setDiffState] = useState<ReviewDiffState>({ kind: 'idle' })
+
+  useEffect(() => {
+    setActiveHunkIndex(null)
+    if (!currentItem || screenState.kind !== 'ready') {
+      setDiffState({ kind: 'idle' })
+      return
+    }
+    const itemKey = currentItem.key
+    const keepLoadedDiff = (fallback: ReviewDiffState) => (prev: ReviewDiffState) =>
+      prev.kind === 'ready' && prev.itemKey === itemKey ? prev : fallback
+    if (!client || connState !== 'connected') {
+      setDiffState(keepLoadedDiff({ kind: 'error', itemKey, message: 'Waiting for desktop...' }))
+      return
+    }
+    let stale = false
+    setDiffState(keepLoadedDiff({ kind: 'loading', itemKey }))
+    void loadMobileDiffReviewDiff({
+      client,
+      worktreeId,
+      item: currentItem,
+      branchCompare: screenState.branchCompare
+    })
+      .then((nextState) => {
+        if (!stale) {
+          setDiffState(nextState)
+        }
+      })
+      .catch((err: unknown) => {
+        if (!stale) {
+          setDiffState({
+            kind: 'error',
+            itemKey,
+            message: err instanceof Error ? err.message : 'Unable to load diff'
+          })
+        }
+      })
+    return () => {
+      stale = true
+    }
+  }, [client, connState, currentItem, screenState, setActiveHunkIndex, worktreeId])
+
+  return diffState
+}
