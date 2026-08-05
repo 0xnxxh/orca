@@ -10,11 +10,7 @@ import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
 import { joinHostCatalogCredentials } from './host-catalog-credential-join'
 import { resetPairingKeychainForTests } from './pairing-keychain'
-import {
-  deleteHostDeviceToken,
-  readHostDeviceToken,
-  writeHostDeviceToken
-} from './host-device-token-store'
+import { readHostDeviceToken, writeHostDeviceToken } from './host-device-token-store'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -25,28 +21,25 @@ import {
   removeMobileRelayHostOverlays,
   saveMobileRelayHostOverlay
 } from './mobile-relay-host-overlay-store'
-import { deleteMobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
-import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upgrade-journal'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
+import {
+  getHostCredentialWriteRevision,
+  markHostCredentialWrite,
+  resetHostCredentialWriteRevisionsForTests
+} from './host-credential-write-revision'
+import { createUnpairedHostCredentialDeletion } from './unpaired-host-credential-deletion'
 
 const STORAGE_KEY = 'orca:hosts'
 
 async function commitDeviceToken(hostId: string, token: string): Promise<void> {
-  credentialWriteRevisions.set(hostId, (credentialWriteRevisions.get(hostId) ?? 0) + 1)
+  markHostCredentialWrite(hostId)
   await writeHostDeviceToken(hostId, token)
   tokenCache.set(hostId, token)
   hostListLoads.dropSharedHostListLoad()
 }
 
-async function deleteHostCredentials(hostId: string): Promise<void> {
-  await deleteHostDeviceToken(hostId)
-  await deleteMobileRelayCredentialBundle(hostId)
-  await deleteMobileRelayDirectUpgradeJournal(hostId)
-}
-
 // Why: Keychain reads are slow (50-200ms) and loadHosts() runs on every screen mount; cache per-hostId in memory, invalidate on save/remove.
 const tokenCache = new Map<string, string>()
-const credentialWriteRevisions = new Map<string, number>()
 // Why: serialize RMW of the shared hosts JSON; without a queue concurrent writers drop writes (resurrect a removed host, drop a rename).
 let hostListMutation: Promise<void> = Promise.resolve()
 
@@ -96,9 +89,13 @@ async function doLoadHostListSnapshot(): Promise<hostListLoads.HostListSnapshot>
   const overlayState = await loadMobileRelayHostOverlayState(
     new Set(storedHosts.map(({ id }) => id))
   )
+  const orphanWriteRevisions = new Map(
+    overlayState.orphanHostIds.map((hostId) => [hostId, getHostCredentialWriteRevision(hostId)])
+  )
   await scheduleOrphanedMobileRelayCleanup({
     hostIds: overlayState.orphanHostIds,
-    deleteCredential: deleteHostCredentials
+    deleteCredential: (hostId) =>
+      deleteUnpairedHostCredentials(hostId, orphanWriteRevisions.get(hostId) ?? 0)
   })
   return joinHostCatalogCredentials({
     storedHosts,
@@ -138,19 +135,21 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
   }
 }
 
-async function deleteUnpairedHostCredentials(hostId: string): Promise<void> {
-  const writeRevision = credentialWriteRevisions.get(hostId) ?? 0
-  await hostListMutation
-  const hosts = await readStoredHostsForMutation()
-  if (
-    (credentialWriteRevisions.get(hostId) ?? 0) !== writeRevision ||
-    hosts.some(({ id }) => id === hostId)
-  ) {
-    return
+const deleteUnpairedHostCredentials = createUnpairedHostCredentialDeletion({
+  waitForHostMutations: () => hostListMutation,
+  hasStoredHost: async (hostId) =>
+    (await readStoredHostsForMutation()).some(({ id }) => id === hostId),
+  onDeleted: (hostId) => {
+    tokenCache.delete(hostId)
+    hostListLoads.dropSharedHostListLoad()
   }
-  await deleteHostCredentials(hostId)
-  tokenCache.delete(hostId)
-  hostListLoads.dropSharedHostListLoad()
+})
+
+function scheduleUnpairedHostCredentialCleanup(hostId: string): Promise<void> {
+  const writeRevision = getHostCredentialWriteRevision(hostId)
+  return scheduleHostCredentialCleanup(hostId, (id) =>
+    deleteUnpairedHostCredentials(id, writeRevision)
+  )
 }
 
 async function mutateStoredHosts(
@@ -223,7 +222,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   } catch (error) {
     if (tokenCommittedBeforeMetadata && !updatedExistingHost) {
       try {
-        await scheduleHostCredentialCleanup(stored.id, deleteUnpairedHostCredentials)
+        await scheduleUnpairedHostCredentialCleanup(stored.id)
       } catch {
         // The replacement remains recoverable through the session cache.
       }
@@ -255,7 +254,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   }
   for (const duplicateHostId of duplicateHostIds) {
     try {
-      await scheduleHostCredentialCleanup(duplicateHostId, deleteUnpairedHostCredentials)
+      await scheduleUnpairedHostCredentialCleanup(duplicateHostId)
     } catch {
       // Metadata is already deduplicated; orphan-token recovery is best-effort.
     }
@@ -273,7 +272,7 @@ export async function removeHost(hostId: string): Promise<void> {
   }
   // Why: keychain delete can stall/reject; await only the durable cleanup intent so removeHost can't freeze the UI.
   try {
-    await scheduleHostCredentialCleanup(hostId, deleteUnpairedHostCredentials)
+    await scheduleUnpairedHostCredentialCleanup(hostId)
   } catch {
     // Metadata is already committed; orphan-token recovery is best-effort.
   }
@@ -284,7 +283,9 @@ export async function retryPendingHostCredentialCleanup(): Promise<{
   remainingIds: string[]
   storageUnreadable: boolean
 }> {
-  return retryPendingHostCredentialCleanups(deleteUnpairedHostCredentials)
+  return retryPendingHostCredentialCleanups((hostId) =>
+    deleteUnpairedHostCredentials(hostId, getHostCredentialWriteRevision(hostId))
+  )
 }
 
 // Why: single mutation pass commits name + endpoint atomically so a mid-save failure can't persist one without the other.
@@ -327,7 +328,7 @@ export async function updateLastConnected(hostId: string): Promise<void> {
 export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
-  credentialWriteRevisions.clear()
+  resetHostCredentialWriteRevisionsForTests()
   hostListLoads.dropSharedHostListLoad()
   resetPairingKeychainForTests()
 }

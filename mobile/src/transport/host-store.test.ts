@@ -47,6 +47,7 @@ import {
   updateLastConnected
 } from './host-store'
 import { resetMobileRelayHostOverlayStoreForTests } from './mobile-relay-host-overlay-store'
+import { writeMobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
 
 const HOSTS_STORAGE_KEY = 'orca:hosts'
 const OVERLAY_STORAGE_KEY = 'orca:mobile-relay:host-overlays:v2'
@@ -63,6 +64,17 @@ const HOST_TWO = {
   endpoint: 'ws://127.0.0.1:2',
   publicKeyB64: 'key-2',
   lastConnected: 0
+}
+const HOST_ONE_RELAY_BUNDLE = {
+  v: 1 as const,
+  hostId: HOST_ONE.id,
+  deviceToken: 'replacement-token',
+  current: {
+    token: 'A'.repeat(43),
+    hash: 'B'.repeat(43),
+    version: 1,
+    expiresAt: 10_000
+  }
 }
 
 describe('host-store list mutations', () => {
@@ -256,6 +268,85 @@ describe('host-store list mutations', () => {
     await staleCleanup?.(duplicate.id)
 
     expect(JSON.parse(storedHostsRaw)).toEqual([duplicate])
+    expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('does not let stale removal cleanup delete a replacement relay bundle before publication', async () => {
+    await removeHost(HOST_ONE.id)
+    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+    await writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
+
+    await staleCleanup?.(HOST_ONE.id)
+
+    expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('stops stale cleanup when a replacement relay write starts during token deletion', async () => {
+    await removeHost(HOST_ONE.id)
+    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+    let releaseTokenDelete: () => void = () => {}
+    secureStoreMock.deleteItemAsync.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releaseTokenDelete = resolve
+      })
+    )
+
+    const cleanup = staleCleanup?.(HOST_ONE.id)
+    await vi.waitFor(() => {
+      expect(secureStoreMock.deleteItemAsync).toHaveBeenCalledWith(
+        'orca.host-token.host-1',
+        expect.anything()
+      )
+    })
+    const bundleWrite = writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
+    releaseTokenDelete()
+    await Promise.all([cleanup, bundleWrite])
+
+    expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalledWith(
+      'orca.mobile-relay.credentials.host-1',
+      expect.anything()
+    )
+  })
+
+  it('rechecks the write generation immediately before starting credential deletion', async () => {
+    await removeHost(HOST_ONE.id)
+    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
+      | ((hostId: string) => Promise<void>)
+      | undefined
+    let resolveCleanupRead: (raw: string) => void = () => {}
+    const cleanupRead = new Promise<string>((resolve) => {
+      resolveCleanupRead = resolve
+    })
+    let cleanupReadStarted = false
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === HOSTS_STORAGE_KEY && !cleanupReadStarted) {
+        cleanupReadStarted = true
+        return cleanupRead
+      }
+      if (key === HOSTS_STORAGE_KEY) {
+        return storedHostsRaw
+      }
+      if (key === OVERLAY_STORAGE_KEY) {
+        return storedOverlayRaw
+      }
+      return null
+    })
+
+    const cleanup = staleCleanup?.(HOST_ONE.id)
+    await vi.waitFor(() => expect(cleanupReadStarted).toBe(true))
+    let bundleWrite: Promise<void> | null = null
+    resolveCleanupRead(storedHostsRaw)
+    queueMicrotask(() => {
+      bundleWrite = writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
+    })
+    await cleanup
+    await vi.waitFor(() => expect(bundleWrite).not.toBeNull())
+    await bundleWrite
+
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
 
