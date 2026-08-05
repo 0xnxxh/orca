@@ -2589,6 +2589,84 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('lists every persisted SSH worktree without accessing the live provider', async () => {
+    const sshHostId = toSshExecutionHostId('target-a')
+    const sshRepo = {
+      id: 'repo-1',
+      path: '/remote/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'target-a'
+    }
+    const metaById = {
+      'repo-1::/remote/repo': makeWorktreeMeta({
+        displayName: 'main',
+        hostId: sshHostId
+      }),
+      'repo-1::/remote/queued': makeWorktreeMeta({
+        displayName: 'queued',
+        hostId: sshHostId
+      }),
+      'repo-1::/remote/other-host': makeWorktreeMeta({
+        displayName: 'other host',
+        hostId: toSshExecutionHostId('target-b')
+      })
+    }
+    store.getRepos.mockReturnValue([sshRepo])
+    store.getProjectHostSetups.mockReturnValue([])
+    store.getAllWorktreeMeta.mockReturnValue(metaById)
+    store.getWorktreeMeta.mockImplementation((worktreeId: string) => metaById[worktreeId])
+
+    const result = await handlers['worktrees:listKnownForExecutionHost'](null, {
+      repoId: sshRepo.id,
+      executionHostId: sshHostId
+    })
+
+    expect(result).toMatchObject({
+      status: 'complete',
+      repoId: sshRepo.id,
+      executionHostId: sshHostId,
+      result: {
+        repoId: sshRepo.id,
+        authoritative: false,
+        source: 'metadata-fallback',
+        worktrees: [
+          expect.objectContaining({ path: '/remote/repo', isMainWorktree: true }),
+          expect.objectContaining({ path: '/remote/queued', isMainWorktree: false })
+        ]
+      }
+    })
+    expect(getSshGitProviderMock).not.toHaveBeenCalled()
+    expect(listWorktreesMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects ambiguous metadata-only SSH owners', async () => {
+    const sshHostId = toSshExecutionHostId('target-a')
+    const sshRepo = {
+      id: 'repo-1',
+      path: '/remote/repo-a',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'target-a'
+    }
+    store.getRepos.mockReturnValue([sshRepo, { ...sshRepo, path: '/remote/repo-b' }])
+
+    const result = await handlers['worktrees:listKnownForExecutionHost'](null, {
+      repoId: sshRepo.id,
+      executionHostId: sshHostId
+    })
+
+    expect(result).toEqual({
+      status: 'rejected',
+      repoId: sshRepo.id,
+      executionHostId: sshHostId
+    })
+    expect(store.getAllWorktreeMeta).not.toHaveBeenCalled()
+    expect(getSshGitProviderMock).not.toHaveBeenCalled()
+  })
+
   it('fails closed for duplicate exact owners and ambiguous legacy repo IDs', async () => {
     const sshRepo = {
       id: 'shared-repo',

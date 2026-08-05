@@ -49,7 +49,9 @@ import {
 import {
   PROVIDER_REQUEST_ID_MAX_UTF8_BYTES,
   type DirectSshDetectedWorktreeRequest,
+  type HostQualifiedKnownWorktreeResult,
   type HostQualifiedDetectedWorktreeResult,
+  type ListKnownWorktreesForExecutionHostArgs,
   type ListDetectedWorktreesArgs,
   type ProviderRequestId
 } from '../../shared/detected-worktree-provider-contract'
@@ -1826,6 +1828,7 @@ export function registerWorktreeHandlers(
   ipcMain.removeHandler('worktrees:listAll')
   ipcMain.removeHandler('worktrees:list')
   ipcMain.removeHandler('worktrees:listDetected')
+  ipcMain.removeHandler('worktrees:listKnownForExecutionHost')
   ipcMain.removeHandler('worktrees:cancelListDetected')
   ipcMain.removeHandler('worktrees:create')
   ipcMain.removeHandler('worktrees:prefetchCreateBase')
@@ -1969,6 +1972,44 @@ export function registerWorktreeHandlers(
       return []
     }
   })
+
+  ipcMain.handle(
+    'worktrees:listKnownForExecutionHost',
+    (_event, args: ListKnownWorktreesForExecutionHostArgs): HostQualifiedKnownWorktreeResult => {
+      const rejected = (): HostQualifiedKnownWorktreeResult => ({
+        status: 'rejected',
+        repoId: args.repoId,
+        executionHostId: args.executionHostId
+      })
+      const parsedHost = parseExecutionHostId(args.executionHostId)
+      if (parsedHost?.kind !== 'ssh') {
+        return rejected()
+      }
+      const candidates = store.getRepos().filter((candidate) => candidate.id === args.repoId)
+      if (
+        candidates.some((candidate) => resolveRepoOwnershipEvidence(candidate).status !== 'owned')
+      ) {
+        return rejected()
+      }
+      const repo = findExactRepoOwner(store, args.repoId, args.executionHostId)
+      if (!repo || repo.connectionId !== parsedHost.targetId) {
+        return rejected()
+      }
+      const metaIndex = createSshWorktreeMetaIndex(Object.entries(store.getAllWorktreeMeta()))
+      const worktrees = listDisconnectedSshWorktrees(store, repo, metaIndex)
+      return {
+        status: 'complete',
+        repoId: repo.id,
+        executionHostId: args.executionHostId,
+        result: {
+          repoId: repo.id,
+          authoritative: false,
+          source: 'metadata-fallback',
+          worktrees: buildDisconnectedDetectedWorktrees(store, repo, worktrees)
+        }
+      }
+    }
+  )
 
   ipcMain.handle(
     'worktrees:listDetected',

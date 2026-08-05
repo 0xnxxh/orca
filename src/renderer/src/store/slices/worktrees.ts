@@ -121,6 +121,7 @@ import {
 import { getTerminalActivationSpawnSuppression } from './terminal-activation-spawn-suppression'
 import type {
   HostQualifiedDetectedWorktreeResult,
+  HostQualifiedKnownWorktreeResult,
   ListDetectedWorktreesArgs,
   ProviderRequestId,
   SshExecutionHostId
@@ -2980,6 +2981,100 @@ function mergeFetchedWorktrees(
   return admitted
 }
 
+function appendMissingWorktreesForHost<
+  T extends { id: string; hostId?: ExecutionHostId; runtimeOwnerEnvironmentId?: string }
+>(
+  current: readonly T[] | undefined,
+  incoming: readonly T[],
+  hostId: ExecutionHostId,
+  options: WorktreeHostMatchOptions
+): T[] {
+  const existing = current ?? []
+  const existingHostIds = new Set(
+    existing
+      .filter((worktree) => worktreeMatchesHost(worktree, hostId, options))
+      .map(({ id }) => id)
+  )
+  return [...existing, ...incoming.filter((worktree) => !existingHostIds.has(worktree.id))]
+}
+
+function isAdmittedKnownSshWorktreeResult(
+  result: HostQualifiedKnownWorktreeResult,
+  repoId: string,
+  executionHostId: SshExecutionHostId
+): result is Extract<HostQualifiedKnownWorktreeResult, { status: 'complete' }> {
+  return (
+    result.status === 'complete' &&
+    result.repoId === repoId &&
+    result.executionHostId === executionHostId &&
+    isDetectedWorktreeListResult(result.result) &&
+    result.result.repoId === repoId &&
+    result.result.authoritative === false
+  )
+}
+
+async function fetchKnownSshWorktreesForRepo(
+  set: Parameters<StateCreator<AppState, [], [], WorktreeSlice>>[0],
+  repoId: string,
+  executionHostId: SshExecutionHostId
+): Promise<DetectedWorktreeListResult | null> {
+  const listKnown = window.api.worktrees.listKnownForExecutionHost
+  if (typeof listKnown !== 'function') {
+    return null
+  }
+  const result = await listKnown({ repoId, executionHostId })
+  if (!isAdmittedKnownSshWorktreeResult(result, repoId, executionHostId)) {
+    return null
+  }
+  let admitted = false
+  set((state) => {
+    if (!repoHasExactlyOneExecutionHostOwner(state, repoId, executionHostId, false)) {
+      return state
+    }
+    admitted = true
+    const setup = getProjectHostSetupForRepoHost(state, repoId, executionHostId)
+    const matchOptions = worktreeHostMatchOptions(state, repoId, executionHostId)
+    const incomingDetected = result.result.worktrees.map((worktree) =>
+      withRepoHostOwnership(worktree, executionHostId, setup)
+    )
+    const detected = {
+      ...result.result,
+      worktrees: appendMissingWorktreesForHost(
+        state.detectedWorktreesByRepo[repoId]?.worktrees,
+        incomingDetected,
+        executionHostId,
+        matchOptions
+      )
+    }
+    const worktrees = appendMissingWorktreesForHost(
+      state.worktreesByRepo[repoId],
+      toVisibleWorktrees(result.result, executionHostId, setup),
+      executionHostId,
+      matchOptions
+    )
+    const worktreesChanged = !areWorktreesEqual(state.worktreesByRepo[repoId], worktrees)
+    const detectedChanged = !areDetectedWorktreeResultsEqual(
+      state.detectedWorktreesByRepo[repoId],
+      detected
+    )
+    if (!worktreesChanged && !detectedChanged) {
+      return state
+    }
+    return {
+      ...(worktreesChanged
+        ? {
+            worktreesByRepo: { ...state.worktreesByRepo, [repoId]: worktrees },
+            sortEpoch: state.sortEpoch + 1
+          }
+        : {}),
+      ...(detectedChanged
+        ? { detectedWorktreesByRepo: { ...state.detectedWorktreesByRepo, [repoId]: detected } }
+        : {})
+    }
+  })
+  return admitted ? result.result : null
+}
+
 export type DirectSshDetectedWorktreeRefresh = {
   waiterLeaseId: DetectedWorktreeRefreshLease['waiterLeaseId']
   providerRequestId: ProviderRequestId
@@ -3110,7 +3205,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? (getCurrentDirectSshAuthority(ownerState, hostId) ?? undefined)
           : undefined
       if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
-        return null
+        return fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
       }
       const refresh = await listDetectedWorktreesForRepoCoalesced(
         settingsForRepoOwner(ownerState, repoId, hostId),
@@ -3208,6 +3303,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? (directCallerAuthority ?? getCurrentDirectSshAuthority(ownerState, hostId) ?? undefined)
           : undefined
       if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
+        await fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
         return false
       }
       const refresh = await listDetectedWorktreesForRepoCoalesced(settings, repoId, {
@@ -3272,6 +3368,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
               ? (getCurrentDirectSshAuthority(requestStartedState, hostId) ?? undefined)
               : undefined
           if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
+            await fetchKnownSshWorktreesForRepo(set, r.id, parsedHost.id)
             return
           }
           const refresh = await listDetectedWorktreesForRepoCoalesced(settings, r.id, {
@@ -3323,6 +3420,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
               ? (getCurrentDirectSshAuthority(requestStartedState, hostId) ?? undefined)
               : undefined
           if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
+            await fetchKnownSshWorktreesForRepo(set, r.id, parsedHost.id)
             return { repoId: r.id, ok: false as const }
           }
           const refresh = await listDetectedWorktreesForRepoCoalesced(

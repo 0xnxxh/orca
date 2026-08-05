@@ -21,6 +21,8 @@ import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rp
 import { LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 import type {
   HostQualifiedDetectedWorktreeResult,
+  HostQualifiedKnownWorktreeResult,
+  ListKnownWorktreesForExecutionHostArgs,
   ListDetectedWorktreesArgs
 } from '../../../../shared/detected-worktree-provider-contract'
 import type { DirectSshAuthority, SshProviderEpoch } from '../../../../shared/ssh-types'
@@ -105,12 +107,17 @@ const listDetectedMock = vi.fn<
   return qualifyDetectedResult(args, result)
 })
 
+const listKnownForExecutionHostMock = vi.fn<
+  (args: ListKnownWorktreesForExecutionHostArgs) => Promise<HostQualifiedKnownWorktreeResult>
+>(async (args) => ({ status: 'rejected', ...args }))
+
 const mockApi = {
   worktrees: {
     create: vi.fn(),
     prefetchCreateBase: vi.fn().mockResolvedValue(undefined),
     list: worktreeListMock,
     listDetected: listDetectedMock,
+    listKnownForExecutionHost: listKnownForExecutionHostMock,
     cancelListDetected: vi.fn().mockResolvedValue(undefined),
     listLineage: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue(undefined),
@@ -1348,6 +1355,107 @@ describe('fetchWorktrees', () => {
     expect(mockApi.worktrees.listDetected).not.toHaveBeenCalled()
     expect(store.getState().worktreesByRepo).toBe(worktreesByRepo)
     expect(store.getState().detectedWorktreesByRepo).toBe(detectedWorktreesByRepo)
+  })
+
+  it('shows persisted secondary worktrees while SSH is connecting', async () => {
+    const store = createTestStore()
+    const sshRepo = {
+      id: 'repo-ssh',
+      path: '/home/orca/repo',
+      displayName: 'SSH Repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'ssh-1'
+    }
+    const queued = makeWorktree({
+      id: 'repo-ssh::/home/orca/queued',
+      repoId: 'repo-ssh',
+      path: '/home/orca/queued',
+      displayName: 'queued'
+    })
+    const detected = makeDetectedResult('repo-ssh', [queued], {
+      authoritative: false,
+      source: 'metadata-fallback'
+    })
+    listKnownForExecutionHostMock.mockResolvedValueOnce({
+      status: 'complete',
+      repoId: sshRepo.id,
+      executionHostId: 'ssh:ssh-1',
+      result: detected
+    })
+    store.setState({
+      repos: [sshRepo],
+      sshConnectionStates: new Map([
+        [
+          'ssh-1',
+          {
+            targetId: 'ssh-1',
+            status: 'connecting',
+            error: null,
+            reconnectAttempt: 0,
+            providerEpoch: null
+          }
+        ]
+      ])
+    } as Partial<AppState>)
+
+    await expect(store.getState().fetchWorktrees(sshRepo.id)).resolves.toBe(false)
+
+    expect(store.getState().worktreesByRepo[sshRepo.id]).toEqual([
+      { ...queued, hostId: 'ssh:ssh-1' }
+    ])
+    expect(listKnownForExecutionHostMock).toHaveBeenCalledWith({
+      repoId: sshRepo.id,
+      executionHostId: 'ssh:ssh-1'
+    })
+    expect(mockApi.worktrees.listDetected).not.toHaveBeenCalled()
+  })
+
+  it('adds metadata rows without replacing richer cached SSH worktrees', async () => {
+    const store = createTestStore()
+    const sshRepo = {
+      id: 'repo-ssh',
+      path: '/home/orca/repo',
+      displayName: 'SSH Repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'ssh-1'
+    }
+    const existing = makeWorktree({
+      id: 'repo-ssh::/home/orca/existing',
+      repoId: 'repo-ssh',
+      path: '/home/orca/existing',
+      hostId: 'ssh:ssh-1',
+      head: 'live-head',
+      branch: 'refs/heads/live-branch'
+    })
+    const metadataExisting = { ...existing, head: '', branch: '' }
+    const queued = makeWorktree({
+      id: 'repo-ssh::/home/orca/queued',
+      repoId: 'repo-ssh',
+      path: '/home/orca/queued'
+    })
+    listKnownForExecutionHostMock.mockResolvedValueOnce({
+      status: 'complete',
+      repoId: sshRepo.id,
+      executionHostId: 'ssh:ssh-1',
+      result: makeDetectedResult('repo-ssh', [metadataExisting, queued], {
+        authoritative: false,
+        source: 'metadata-fallback'
+      })
+    })
+    store.setState({
+      repos: [sshRepo],
+      sshConnectionStates: new Map(),
+      worktreesByRepo: { [sshRepo.id]: [existing] }
+    } as Partial<AppState>)
+
+    await store.getState().fetchWorktrees(sshRepo.id)
+
+    expect(store.getState().worktreesByRepo[sshRepo.id]).toEqual([
+      existing,
+      { ...queued, hostId: 'ssh:ssh-1' }
+    ])
   })
 
   it('keeps worktree maps byte-identical for stale and malformed direct results', async () => {
@@ -7535,6 +7643,63 @@ describe('fetchAllWorktrees hydration-time purge (design §4.4)', () => {
     badgeColor: '#111',
     addedAt: 0
   }
+
+  it.each([false, true])(
+    'hydrates connecting SSH worktrees with hydration purge completed=%s',
+    async (hasHydratedWorktreePurge) => {
+      const store = createTestStore()
+      const sshRepo = {
+        id: 'repo-ssh',
+        path: '/home/orca/repo',
+        displayName: 'SSH Repo',
+        badgeColor: '#000',
+        addedAt: 0,
+        connectionId: 'ssh-1'
+      }
+      const queued = makeWorktree({
+        id: 'repo-ssh::/home/orca/queued',
+        repoId: 'repo-ssh',
+        path: '/home/orca/queued',
+        displayName: 'queued'
+      })
+      listKnownForExecutionHostMock.mockResolvedValueOnce({
+        status: 'complete',
+        repoId: sshRepo.id,
+        executionHostId: 'ssh:ssh-1',
+        result: makeDetectedResult(sshRepo.id, [queued], {
+          authoritative: false,
+          source: 'metadata-fallback'
+        })
+      })
+      store.setState({
+        repos: [sshRepo],
+        hasHydratedWorktreePurge,
+        sshConnectionStates: new Map([
+          [
+            'ssh-1',
+            {
+              targetId: 'ssh-1',
+              status: 'connecting',
+              error: null,
+              reconnectAttempt: 0,
+              providerEpoch: null
+            }
+          ]
+        ])
+      } as Partial<AppState>)
+
+      await store.getState().fetchAllWorktrees()
+
+      expect(store.getState().worktreesByRepo[sshRepo.id]).toEqual([
+        { ...queued, hostId: 'ssh:ssh-1' }
+      ])
+      expect(listKnownForExecutionHostMock).toHaveBeenCalledWith({
+        repoId: sshRepo.id,
+        executionHostId: 'ssh:ssh-1'
+      })
+      expect(mockApi.worktrees.listDetected).not.toHaveBeenCalled()
+    }
+  )
 
   it('preserves resolved inline legacy lineage when side-map hydration is absent', async () => {
     const store = createTestStore()

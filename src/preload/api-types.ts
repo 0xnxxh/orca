@@ -30,8 +30,10 @@ import type { ReadClipboardTextOptions } from '../shared/clipboard-text'
 import type { AppIdentity } from '../shared/app-identity'
 import type { ReleaseChannel } from '../shared/release-channel'
 import type {
+  HostQualifiedKnownWorktreeResult,
   HostQualifiedDetectedWorktreeResult,
   LegacyDetectedWorktreeRequest,
+  ListKnownWorktreesForExecutionHostArgs,
   ListDetectedWorktreesArgs,
   ProviderRequestId
 } from '../shared/detected-worktree-provider-contract'
@@ -1396,6 +1398,9 @@ export type PreloadApi = {
       ): Promise<HostQualifiedDetectedWorktreeResult | DetectedWorktreeListResult>
       (args: LegacyDetectedWorktreeRequest): Promise<DetectedWorktreeListResult>
     }
+    listKnownForExecutionHost?: (
+      args: ListKnownWorktreesForExecutionHostArgs
+    ) => Promise<HostQualifiedKnownWorktreeResult>
     cancelListDetected?: (args: { providerRequestId: ProviderRequestId }) => Promise<void>
     listAll: () => Promise<Worktree[]>
     create: (args: CreateWorktreeArgs) => Promise<CreateWorktreeResult>
