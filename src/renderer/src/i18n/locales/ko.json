@@ -4267,7 +4267,9 @@
           "83a820fa71": "프로젝트 필터링...",
           "5a273fbfce": "프로젝트 추가...",
           "4815c70605": "일치하는 프로젝트가 없습니다.",
-          "bbbc6e8e3b": "선택되지 않은 일치하는 프로젝트가 없습니다."
+          "bbbc6e8e3b": "선택되지 않은 일치하는 프로젝트가 없습니다.",
+          "allProjects": "모든 프로젝트",
+          "selectedProjectsCount": "프로젝트 {{value0}}개"
         },
         "SidebarSettingsHelpMenu": {
           "ad3d3ed7f1": "Orca 재시작",
@@ -4345,6 +4347,7 @@
           "680043342f": "콤팩트",
           "c7591b6014": "repo",
           "hosts": "호스트",
+          "showSection": "표시",
           "allHostsDetail": "모든 호스트 표시",
           "configuredSshHost": "구성된 SSH",
           "projectSshHost": "프로젝트 SSH",
