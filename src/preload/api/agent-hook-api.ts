@@ -39,7 +39,6 @@ export type AgentHooksApi = {
   claudeStatus: () => Promise<AgentHookInstallStatus>
   openClaudeStatus: () => Promise<AgentHookInstallStatus>
   codexStatus: () => Promise<AgentHookInstallStatus>
-  geminiStatus: () => Promise<AgentHookInstallStatus>
   antigravityStatus: () => Promise<AgentHookInstallStatus>
   ampStatus: () => Promise<AgentHookInstallStatus>
   cursorStatus: () => Promise<AgentHookInstallStatus>

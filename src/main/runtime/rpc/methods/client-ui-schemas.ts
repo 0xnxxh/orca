@@ -23,6 +23,7 @@ import { ClientUiWorkspaceFilterFields } from './client-ui-workspace-filter-fiel
 import { TaskResumeState } from './task-resume-state-schema'
 import { WorkspaceCleanup } from './workspace-cleanup-ui-schema'
 import { omitUndefinedValues, tolerateUnknownValues } from './ui-update-value-tolerance'
+import { RetainedStatusBarItems } from './client-ui-status-bar-items'
 
 const NullableString = z.string().nullable()
 const StringArray = z.array(z.string())
@@ -59,19 +60,6 @@ const RightSidebarTabParam = z.custom<StaticRightSidebarTab | `plugin:${string}`
   { message: 'Unknown right sidebar tab' }
 )
 const AgentActivityDisplayMode = z.enum(['compact', 'full'])
-const StatusBarItem = z.enum([
-  'claude',
-  'codex',
-  'gemini',
-  'antigravity',
-  'opencode-go',
-  'kimi',
-  'minimax',
-  'grok',
-  'ssh',
-  'resource-usage',
-  'ports'
-])
 const WorkspaceStatusDefinition = z.object({
   id: z.string(),
   label: z.string(),
@@ -220,10 +208,12 @@ const UiUpdateFields = z
     _workspaceStatusesReorderedDefaultRepaired: z.boolean().optional(),
     _workspaceStatusesDefaultWorkflowMigrated: z.boolean().optional(),
     _workspaceStatusesDefaultVisualsMigrated: z.boolean().optional(),
-    statusBarItems: z.array(StatusBarItem).optional(),
+    statusBarItems: RetainedStatusBarItems.optional(),
     _portsStatusBarDefaultAdded: z.boolean().optional(),
     _kimiStatusBarDefaultAdded: z.boolean().optional(),
     _minimaxStatusBarDefaultAdded: z.boolean().optional(),
+    // Why: no longer persisted, but unknown keys are a hard rejection here, so an
+    // older client's whole ui.set batch would fail without this accepted no-op.
     _antigravityStatusBarDefaultAdded: z.boolean().optional(),
     _grokStatusBarDefaultAdded: z.boolean().optional(),
     statusBarVisible: z.boolean().optional(),

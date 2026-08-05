@@ -2196,8 +2196,6 @@ const api = {
       ipcRenderer.invoke('agentHooks:openClaudeStatus'),
     codexStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:codexStatus'),
-    geminiStatus: (): Promise<AgentHookInstallStatus> =>
-      ipcRenderer.invoke('agentHooks:geminiStatus'),
     antigravityStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:antigravityStatus'),
     ampStatus: (): Promise<AgentHookInstallStatus> => ipcRenderer.invoke('agentHooks:ampStatus'),

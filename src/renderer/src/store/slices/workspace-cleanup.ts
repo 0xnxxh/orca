@@ -149,8 +149,6 @@ const AGENT_PROCESS_NAMES = new Set([
   'codex',
   'crush',
   'droid',
-  'gemini',
-  'gemini-cli',
   'goose',
   'opencode'
 ])

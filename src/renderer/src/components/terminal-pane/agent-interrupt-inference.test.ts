@@ -70,13 +70,9 @@ describe('agent interrupt inference', () => {
     }
   )
 
-  it.each([
-    ['plain-escape', 'gemini'],
-    ['ctrl-c', 'gemini'],
-    ['plain-escape', 'codex']
-  ] as const)('emits a strict baseline request for %s from %s immediately', (intent, agentType) => {
+  it('emits a strict baseline request for Escape from Codex immediately', () => {
     vi.useFakeTimers()
-    let entry: AgentStatusEntry | undefined = makeEntry({ agentType })
+    let entry: AgentStatusEntry | undefined = makeEntry({ agentType: 'codex' })
     const inferInterrupt = vi.fn()
     const tracker = createAgentInterruptInference({
       paneKey: PANE_KEY,
@@ -85,15 +81,15 @@ describe('agent interrupt inference', () => {
       now: () => 1_100
     })
 
-    tracker.observeInputIntent(intent)
+    tracker.observeInputIntent('plain-escape')
 
     expect(inferInterrupt).toHaveBeenCalledWith({
       paneKey: PANE_KEY,
       baselineUpdatedAt: 1_000,
       baselineStateStartedAt: 900,
       baselinePrompt: 'write tests',
-      baselineAgentType: agentType,
-      intent
+      baselineAgentType: 'codex',
+      intent: 'plain-escape'
     })
     tracker.dispose()
     entry = undefined

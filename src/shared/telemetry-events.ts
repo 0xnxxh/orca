@@ -74,7 +74,6 @@ export const AGENT_KIND_VALUES = [
   'pi',
   'omp',
   'prime-agent',
-  'gemini',
   'antigravity',
   'aider',
   'goose',
@@ -251,7 +250,6 @@ export const SETTINGS_CHANGED_WHITELIST = [
   'experimentalTerminalAttention',
   'experimentalAgentHibernation',
   'experimentalEphemeralVms',
-  'geminiCliOAuthEnabled',
   'openAgentTabsInChatByDefault'
 ] as const satisfies readonly BooleanGlobalSettingsKey[]
 export const settingsChangedKeySchema = z.enum(SETTINGS_CHANGED_WHITELIST)

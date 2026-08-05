@@ -233,7 +233,7 @@ describe('TabBarCreateEntry keyboard navigation', () => {
 
   it('launches a matched agent when its highlighted row is selected', () => {
     const agentOptions: TabAgentLaunchOption[] = [
-      { agent: 'gemini', aliases: ['gemini'], label: 'Gemini' }
+      { agent: 'aider', aliases: ['aider'], label: 'Aider' }
     ]
     const onLaunchAgent = vi.fn()
     mount(
@@ -249,10 +249,10 @@ describe('TabBarCreateEntry keyboard navigation', () => {
 
     // A partial query surfaces the agent (issue #1); it is the top row, so Enter
     // launches it.
-    setQuery('gem')
+    setQuery('aid')
     submitForm()
 
-    expect(onLaunchAgent).toHaveBeenCalledWith('gemini')
+    expect(onLaunchAgent).toHaveBeenCalledWith('aider')
   })
 
   it('exposes the highlighted row to assistive tech via aria-activedescendant', () => {
