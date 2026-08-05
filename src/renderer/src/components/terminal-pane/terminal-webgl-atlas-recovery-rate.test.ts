@@ -72,8 +72,10 @@ describe('terminal WebGL atlas recovery rate', () => {
     expect(Date.now() - wipeTimes.at(-1)!).toBeLessThanOrEqual(6_500)
   })
 
-  it('cancels a pending settle when the recovery state is reset', () => {
+  it('cancels pending settle and deferred repair timers when recovery state resets', () => {
     vi.useFakeTimers()
+    vi.setSystemTime(0)
+    useImmediateAnimationFrames()
     const manager = registerManager()
 
     scheduleTerminalWebglAtlasRecovery()
@@ -82,9 +84,19 @@ describe('terminal WebGL atlas recovery rate', () => {
 
     expect(manager.resetWebglTextureAtlases).not.toHaveBeenCalled()
     expect(manager.scheduleRevealPresent).not.toHaveBeenCalled()
+
+    scheduleTerminalWebglAtlasRecovery()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+    scheduleTerminalWebglAtlasRecovery()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+    resetTerminalWebglAtlasRecoveryBudgetForTesting()
+    vi.advanceTimersByTime(3_000)
+
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledOnce()
+    expect(manager.scheduleRevealPresent).toHaveBeenCalledOnce()
   })
 
-  it('presents live buffers while an atlas wipe is suppressed', () => {
+  it('presents a suppressed wipe and cancels its repair while output resumes', () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
     useImmediateAnimationFrames()
@@ -97,6 +109,32 @@ describe('terminal WebGL atlas recovery rate', () => {
 
     expect(manager.resetWebglTextureAtlases).toHaveBeenCalledOnce()
     expect(manager.scheduleRevealPresent).toHaveBeenCalledOnce()
+
+    for (let elapsed = 0; elapsed < 3_000; elapsed += 50) {
+      scheduleTerminalWebglAtlasRecovery()
+      vi.advanceTimersByTime(50)
+    }
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledOnce()
+
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledTimes(2)
+  })
+
+  it('repairs the final suppressed settle when the budget becomes available', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    useImmediateAnimationFrames()
+    const manager = registerManager()
+
+    scheduleTerminalWebglAtlasRecovery()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+    scheduleTerminalWebglAtlasRecovery()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+    vi.advanceTimersByTime(2_799)
+
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1)
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledTimes(2)
   })
 
   it('reports suppressed reset counts on the next permitted wipe', () => {

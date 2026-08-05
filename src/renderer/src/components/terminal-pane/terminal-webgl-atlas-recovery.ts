@@ -17,6 +17,7 @@ const TERMINAL_OUTPUT_RECOVERY_BURST_WIPES = 10
 const TERMINAL_OUTPUT_RECOVERY_REFILL_INTERVAL_MS = 6_000
 
 let terminalOutputRecoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let terminalOutputRecoveryRetryTimer: ReturnType<typeof setTimeout> | null = null
 let terminalOutputRecoveryWipeTokens = TERMINAL_OUTPUT_RECOVERY_BURST_WIPES
 let terminalOutputRecoveryTokensRefilledAt: number | null = null
 let terminalOutputRecoveryLastWipeAt: number | null = null
@@ -76,6 +77,10 @@ export function scheduleTerminalWebglAtlasRecovery(): void {
   if (terminalOutputRecoveryDebounceTimer != null) {
     globalThis.clearTimeout(terminalOutputRecoveryDebounceTimer)
   }
+  if (terminalOutputRecoveryRetryTimer != null) {
+    globalThis.clearTimeout(terminalOutputRecoveryRetryTimer)
+    terminalOutputRecoveryRetryTimer = null
+  }
   terminalOutputRecoveryDebounceTimer = globalThis.setTimeout(() => {
     terminalOutputRecoveryDebounceTimer = null
     terminalOutputRecoveryAttemptsSinceLastWipe += 1
@@ -83,18 +88,35 @@ export function scheduleTerminalWebglAtlasRecovery(): void {
     if (!decision.allowed) {
       terminalOutputRecoverySuppressedSinceLastWipe += 1
       presentPanesWithoutAtlasClear()
+      scheduleTerminalOutputRecoveryRetry(decision.retryAfterMs)
       return
     }
-    recordTerminalWebglDiagnostic('webgl-atlas-reset-rate', {
-      reason: 'terminal-output',
-      attemptsSinceLastReset: terminalOutputRecoveryAttemptsSinceLastWipe,
-      atlasResetsSuppressed: terminalOutputRecoverySuppressedSinceLastWipe,
-      intervalMs: decision.intervalMs
-    })
-    terminalOutputRecoveryAttemptsSinceLastWipe = 0
-    terminalOutputRecoverySuppressedSinceLastWipe = 0
-    resetAtlasesAndRefreshPanes('terminal-output')
+    resetTerminalOutputAtlases(decision.intervalMs)
   }, TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+}
+
+function scheduleTerminalOutputRecoveryRetry(delayMs: number): void {
+  terminalOutputRecoveryRetryTimer = globalThis.setTimeout(() => {
+    terminalOutputRecoveryRetryTimer = null
+    const decision = consumeTerminalOutputRecoveryWipeBudget()
+    if (!decision.allowed) {
+      scheduleTerminalOutputRecoveryRetry(decision.retryAfterMs)
+      return
+    }
+    resetTerminalOutputAtlases(decision.intervalMs)
+  }, delayMs)
+}
+
+function resetTerminalOutputAtlases(intervalMs: number): void {
+  recordTerminalWebglDiagnostic('webgl-atlas-reset-rate', {
+    reason: 'terminal-output',
+    attemptsSinceLastReset: terminalOutputRecoveryAttemptsSinceLastWipe,
+    atlasResetsSuppressed: terminalOutputRecoverySuppressedSinceLastWipe,
+    intervalMs
+  })
+  terminalOutputRecoveryAttemptsSinceLastWipe = 0
+  terminalOutputRecoverySuppressedSinceLastWipe = 0
+  resetAtlasesAndRefreshPanes('terminal-output')
 }
 
 export function resetTerminalWebglAtlasRecoveryBudgetForTesting(): void {
@@ -102,6 +124,10 @@ export function resetTerminalWebglAtlasRecoveryBudgetForTesting(): void {
     globalThis.clearTimeout(terminalOutputRecoveryDebounceTimer)
   }
   terminalOutputRecoveryDebounceTimer = null
+  if (terminalOutputRecoveryRetryTimer != null) {
+    globalThis.clearTimeout(terminalOutputRecoveryRetryTimer)
+  }
+  terminalOutputRecoveryRetryTimer = null
   terminalOutputRecoveryWipeTokens = TERMINAL_OUTPUT_RECOVERY_BURST_WIPES
   terminalOutputRecoveryTokensRefilledAt = null
   terminalOutputRecoveryLastWipeAt = null
@@ -124,21 +150,28 @@ function refillTerminalOutputRecoveryWipeTokens(now: number): void {
   )
 }
 
-function consumeTerminalOutputRecoveryWipeBudget(): { allowed: boolean; intervalMs: number } {
+function consumeTerminalOutputRecoveryWipeBudget(): {
+  allowed: boolean
+  intervalMs: number
+  retryAfterMs: number
+} {
   const now = Date.now()
   refillTerminalOutputRecoveryWipeTokens(now)
   const intervalMs =
     terminalOutputRecoveryLastWipeAt == null ? 0 : now - terminalOutputRecoveryLastWipeAt
-  if (
-    terminalOutputRecoveryLastWipeAt != null &&
-    intervalMs < TERMINAL_OUTPUT_RECOVERY_MIN_INTERVAL_MS
-  ) {
-    return { allowed: false, intervalMs }
-  }
-  if (terminalOutputRecoveryWipeTokens < 1) {
-    return { allowed: false, intervalMs }
+  const intervalBudgetMs =
+    terminalOutputRecoveryLastWipeAt == null
+      ? 0
+      : Math.max(0, TERMINAL_OUTPUT_RECOVERY_MIN_INTERVAL_MS - intervalMs)
+  const tokenBudgetMs =
+    terminalOutputRecoveryWipeTokens >= 1
+      ? 0
+      : (1 - terminalOutputRecoveryWipeTokens) * TERMINAL_OUTPUT_RECOVERY_REFILL_INTERVAL_MS
+  const retryAfterMs = Math.ceil(Math.max(intervalBudgetMs, tokenBudgetMs))
+  if (retryAfterMs > 0) {
+    return { allowed: false, intervalMs, retryAfterMs }
   }
   terminalOutputRecoveryWipeTokens -= 1
   terminalOutputRecoveryLastWipeAt = now
-  return { allowed: true, intervalMs }
+  return { allowed: true, intervalMs, retryAfterMs: 0 }
 }

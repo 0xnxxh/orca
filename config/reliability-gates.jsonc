@@ -8087,7 +8087,7 @@
         "https://github.com/stablyai/orca/issues/12094"
       ],
       "invariant": "Ordinary document visibility transitions and hidden terminal output must not clear the shared WebGL glyph atlas. Heavy reset-and-refresh recovery may touch only managers with visible terminal surfaces; hidden managers recover when revealed. Sustained streaming recovery requests must keep resets rate-bounded without starving repair. Genuine OS resume remains a heavy recovery trigger.",
-      "oracle": "Dispatch a visible document visibilitychange and require atlas-preserving wake recovery; register one visible manager and 64 hidden managers and require exactly one reset and one refresh; parse hidden synchronized and high-confidence TUI output and require zero global atlas-recovery schedules. Across five minutes of 300ms streaming recovery requests, require more than one but at most 75 resets, no internal or trailing repair gap above 6.5 seconds, and atlas-preserving presentation while a reset is suppressed. Separately, drive an Electron visibility cycle with two real WebGL panes, require zero atlas clears, and retain at least 85% of each pane's baseline ink pixels.",
+      "oracle": "Dispatch a visible document visibilitychange and require atlas-preserving wake recovery; register one visible manager and 64 hidden managers and require exactly one reset and one refresh; parse hidden synchronized and high-confidence TUI output and require zero global atlas-recovery schedules. Across five minutes of 300ms streaming recovery requests, require more than one but at most 75 resets, no internal or trailing repair gap above 6.5 seconds, atlas-preserving presentation while a reset is suppressed, and one delayed wipe for a final suppressed settle. Separately, drive an Electron visibility cycle with two real WebGL panes, require zero atlas clears, and retain at least 85% of each pane's baseline ink pixels.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery-rate.test.ts",
@@ -8117,7 +8117,7 @@
           "file": "src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery-rate.test.ts",
           "assertions": [
             "sustained streaming requests keep atlas resets rate-bounded with no repair starvation",
-            "suppressed resets present live buffers and test teardown cancels pending recovery"
+            "suppressed resets present live buffers, cancel repair during resumed output, receive a trailing repair after settle, and clean up pending timers"
           ]
         },
         {
@@ -8147,7 +8147,7 @@
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery-rate.test.ts",
           "result": "passed",
           "durationSeconds": 0.5,
-          "summary": "Six deterministic tests passed for sustained reset cadence, bounded repair gaps, suppressed presentation, clock rollback, one-shot bypasses, and pending-timer cleanup."
+          "summary": "Seven deterministic tests passed for sustained reset cadence, bounded repair gaps, suppressed presentation with trailing repair, clock rollback, one-shot bypasses, and pending-timer cleanup."
         },
         {
           "date": "2026-08-01",
@@ -8191,7 +8191,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "A recovery with one visible and 64 hidden managers performs one reset and one refresh instead of 65 of each. Hidden synchronized/TUI output schedules zero global recovery work. Sustained 300ms recovery requests keep full atlas resets at or below 75 over five minutes while preserving a 6.5-second maximum repair gap. The rate budget adds no polling, recurring timer, provider call, or parking change."
+        "evidence": "A recovery with one visible and 64 hidden managers performs one reset and one refresh instead of 65 of each. Hidden synchronized/TUI output schedules zero global recovery work. Sustained 300ms recovery requests keep full atlas resets at or below 75 over five minutes while preserving a 6.5-second maximum repair gap. A final suppressed settle schedules one cancelable repair at the next budget boundary; resumed streaming cancels it. The rate budget adds no polling, recurring timer, provider call, or parking change."
       },
       "promotionCriteria": [
         "Accumulate stable macOS Electron runs with real BrowserWindow visibility transitions.",
