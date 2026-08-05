@@ -187,6 +187,7 @@ export class CodexRuntimeHomeService {
   private scheduleHostSystemDefaultSessionMigration: (fullScanRequired: boolean) => void = () => {}
   private hostSystemDefaultSessionMigrationPending = false
   private pendingHostSystemDefaultSessionMigrationNeedsFullScan = false
+  private pendingHostSystemDefaultSessionMigrationTarget: string | null = null
 
   constructor(private readonly store: Store) {
     this.safeRecoverInterruptedRuntimeAuthOperation()
@@ -276,16 +277,25 @@ export class CodexRuntimeHomeService {
     )
   }
 
-  prepareHostSystemDefaultSessionMigrationPass(): void {
+  prepareHostSystemDefaultSessionMigrationPass(): boolean {
     const paths = resolveCodexSessionBackfillPaths(
       resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
+    if (
+      this.hostSystemDefaultSessionMigrationPending &&
+      this.pendingHostSystemDefaultSessionMigrationTarget !== paths.systemSessionsRoot
+    ) {
+      this.pendingHostSystemDefaultSessionMigrationNeedsFullScan = true
+      this.pendingHostSystemDefaultSessionMigrationTarget = paths.systemSessionsRoot
+    }
     invalidateCodexSessionBackfillMarker(paths.markerPath)
+    return this.pendingHostSystemDefaultSessionMigrationNeedsFullScan
   }
 
   finishHostSystemDefaultSessionMigrationPass(): void {
     this.hostSystemDefaultSessionMigrationPending = false
     this.pendingHostSystemDefaultSessionMigrationNeedsFullScan = false
+    this.pendingHostSystemDefaultSessionMigrationTarget = null
   }
 
   // Why: a managed HOST account runs against its own self-contained CODEX_HOME
@@ -455,10 +465,10 @@ export class CodexRuntimeHomeService {
       )
       this.pendingHostSystemDefaultSessionMigrationNeedsFullScan =
         !hasCompletedCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot)
+      this.pendingHostSystemDefaultSessionMigrationTarget = paths.systemSessionsRoot
       this.hostSystemDefaultSessionMigrationPending = true
     }
-    this.prepareHostSystemDefaultSessionMigrationPass()
-    return this.pendingHostSystemDefaultSessionMigrationNeedsFullScan
+    return this.prepareHostSystemDefaultSessionMigrationPass()
   }
 
   private startWslSessionBridgeForLaunch(

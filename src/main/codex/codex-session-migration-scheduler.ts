@@ -19,7 +19,7 @@ export function createCodexSessionMigrationScheduler(args: {
   isEligible: () => boolean
   isQuitting: () => boolean
   resolveSystemCodexHomePathOverride: () => string | undefined
-  prepareScheduledRun?: () => void
+  prepareScheduledRun?: () => boolean | void
   finishScheduledRun?: () => void
   startBackfill: MigrationRun
   startIndexHeal: MigrationRun
@@ -61,12 +61,13 @@ export function createCodexSessionMigrationScheduler(args: {
       return
     }
     const isScheduledRun = pendingScheduledRunGeneration !== null
+    let preparationNeedsFullScan = false
     if (isScheduledRun) {
       pendingScheduledRunGeneration = null
       // Why: an older active pass can rewrite the marker after launch invalidates it.
-      args.prepareScheduledRun?.()
+      preparationNeedsFullScan = args.prepareScheduledRun?.() === true
     }
-    const fullScanRequired = pendingFullScan
+    const fullScanRequired = pendingFullScan || preparationNeedsFullScan
     const scanDates =
       !fullScanRequired && pendingScanDates.size > 0 ? [...pendingScanDates.values()] : undefined
     pendingScanDates.clear()
@@ -81,7 +82,10 @@ export function createCodexSessionMigrationScheduler(args: {
     const systemCodexHomePathOverride = args.resolveSystemCodexHomePathOverride()
     let stoppedBackfill = false
     const task = args
-      .startBackfill({ shouldStop, scanDates }, systemCodexHomePathOverride)
+      .startBackfill(
+        { shouldStop, scanDates, ignoreCompletionMarker: isScheduledRun },
+        systemCodexHomePathOverride
+      )
       .then((result) => {
         stoppedBackfill = isStoppedMigrationResult(result)
         if (stoppedBackfill || shouldStop()) {

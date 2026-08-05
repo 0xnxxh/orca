@@ -553,13 +553,19 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(existsSync(getMarkerPath())).toBe(true)
     expect(JSON.parse(readFileSync(getMarkerPath(), 'utf-8'))).toMatchObject({ version: 3 })
 
-    // A file appearing after the marker must not be backfilled again.
+    // An ordinary call remains a no-op; only a launch-scheduled pass bypasses the marker.
     writeManagedSession(join('2026', '07', '01', 'rollout-later.jsonl'), '{"id":"later"}\n')
     const second = await startCodexSessionBackfillInBackground()
     expect(second).toBeNull()
     expect(
       existsSync(join(getSystemSessionsRoot(), '2026', '07', '01', 'rollout-later.jsonl'))
     ).toBe(false)
+
+    const scheduled = await startCodexSessionBackfillInBackground({
+      ignoreCompletionMarker: true,
+      scanDates: [['2026', '07', '01']]
+    })
+    expect(scheduled).toMatchObject({ scannedFiles: 1, linkedFiles: 1 })
   })
 
   it('keeps repeated launch invalidations audit-stable', async () => {

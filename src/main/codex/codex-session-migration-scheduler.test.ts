@@ -57,7 +57,10 @@ describe('createCodexSessionMigrationScheduler', () => {
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
     expect(startBackfill).toHaveBeenCalledOnce()
     expect(startBackfill).toHaveBeenCalledWith(
-      expect.objectContaining({ scanDates: [['2026', '08', '05']] }),
+      expect.objectContaining({
+        scanDates: [['2026', '08', '05']],
+        ignoreCompletionMarker: true
+      }),
       undefined
     )
     expect(prepareScheduledRun).toHaveBeenCalledOnce()
@@ -107,6 +110,27 @@ describe('createCodexSessionMigrationScheduler', () => {
     expect(startBackfill).toHaveBeenCalledWith(
       expect.objectContaining({ scanDates: undefined }),
       undefined
+    )
+  })
+
+  it('upgrades a bounded pass when its target changed before the timer fired', async () => {
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => '/moved-history',
+      prepareScheduledRun: () => true,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({ scanDates: undefined }),
+      '/moved-history'
     )
   })
 

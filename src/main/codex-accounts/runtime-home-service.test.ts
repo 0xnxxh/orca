@@ -1026,6 +1026,11 @@ describe('CodexRuntimeHomeService', () => {
     service.prepareForCodexLaunch()
     expect(scheduleSessionMigration).toHaveBeenLastCalledWith(false)
     expect(scheduleSessionMigration).toHaveBeenCalledTimes(3)
+    store.updateSettings({
+      codexSessionSourceHome: { host: join(testState.fakeHomeDir, 'moved-history'), wsl: {} }
+    })
+    service.prepareForCodexLaunch()
+    expect(scheduleSessionMigration).toHaveBeenLastCalledWith(true)
     expect(service.prepareForRateLimitFetch()).toBe(getRuntimeCodexHomePath())
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([getRuntimeCodexHomePath()])
     expect(existsSync(getRuntimeCodexHomePath())).toBe(true)

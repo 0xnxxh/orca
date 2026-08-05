@@ -26,6 +26,8 @@ export type CodexSessionBackfillOptions = CodexSessionBridgeIncrementalOptions &
   shouldStop?: () => boolean
   /** Limits a launch-triggered pass to the date directories that can contain its rollouts. */
   scanDates?: readonly CodexSessionBackfillDate[]
+  /** A scheduled launch pass must not be suppressed by a marker it just invalidated. */
+  ignoreCompletionMarker?: boolean
 }
 
 export type CodexSessionBackfillDate = readonly [year: string, month: string, day: string]
