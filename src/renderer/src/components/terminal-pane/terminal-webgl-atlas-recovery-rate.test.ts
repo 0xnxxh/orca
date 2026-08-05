@@ -70,6 +70,12 @@ describe('terminal WebGL atlas recovery rate', () => {
     expect(wipeTimes.length).toBeLessThanOrEqual(75)
     expect(Math.max(...gaps)).toBeLessThanOrEqual(6_500)
     expect(Date.now() - wipeTimes.at(-1)!).toBeLessThanOrEqual(6_500)
+
+    const streamEndedAt = Date.now()
+    const wipesBeforeTailRepair = wipeTimes.length
+    vi.advanceTimersByTime(6_500)
+    expect(wipeTimes).toHaveLength(wipesBeforeTailRepair + 1)
+    expect(wipeTimes.at(-1)! - streamEndedAt).toBeLessThanOrEqual(6_500)
   })
 
   it('cancels pending settle and deferred repair timers when recovery state resets', () => {
