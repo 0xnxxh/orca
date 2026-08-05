@@ -13474,6 +13474,20 @@
               }
             }
           }
+        },
+        "RichMarkdownTableControls": {
+          "deleteTable": "Delete table",
+          "tableActions": "Table actions",
+          "addColumn": "Add column",
+          "addRow": "Add row",
+          "rowActions": "Row actions",
+          "columnActions": "Column actions",
+          "insertRowAbove": "Insert row above",
+          "insertColumnLeft": "Insert column left",
+          "insertRowBelow": "Insert row below",
+          "insertColumnRight": "Insert column right",
+          "deleteRow": "Delete row",
+          "deleteColumn": "Delete column"
         }
       },
       "diff": {
@@ -14714,6 +14728,20 @@
         "retry": "Retry",
         "connect": "Connect",
         "connecting": "Connecting…"
+      }
+    },
+    "main": {
+      "window": {
+        "editableContextMenu": {
+          "table": "Table",
+          "insertRowAbove": "Insert row above",
+          "insertRowBelow": "Insert row below",
+          "deleteRow": "Delete row",
+          "insertColumnLeft": "Insert column left",
+          "insertColumnRight": "Insert column right",
+          "deleteColumn": "Delete column",
+          "deleteTable": "Delete table"
+        }
       }
     }
   },
