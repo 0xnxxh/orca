@@ -18,7 +18,7 @@ export function useAllHostClients(hostIds: string[]) {
     for (const id of hostIds) {
       ctx.acquire(id)
     }
-    const unsubs: Array<() => void> = []
+    const unsubs: (() => void)[] = []
     for (const id of hostIds) {
       unsubs.push(ctx.subscribeHostState(id, () => setTick((n) => n + 1)))
     }
@@ -34,12 +34,12 @@ export function useAllHostClients(hostIds: string[]) {
   }, [key])
 
   return useMemo(() => {
-    const out: Array<{
+    const out: {
       hostId: string
       client: RpcClient
       state: ConnectionState
       path: MobileConnectionPath
-    }> = []
+    }[] = []
     for (const id of hostIds) {
       const all = ctx.getAllClients().find((entry) => entry.hostId === id)
       if (all) {

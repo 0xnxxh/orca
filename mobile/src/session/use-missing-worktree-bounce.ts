@@ -23,7 +23,11 @@ export function useMissingWorktreeBounce(args: {
   // unmount would each fire again — and it lets callers pass an inline bounce closure.
   const bouncedRef = useRef<string | null>(null)
   const bounceRef = useRef(args.bounce)
-  bounceRef.current = args.bounce
+  // Why: synced in an effect (render must stay pure); declared first so the
+  // bounce effect below always sees the freshest closure in the same commit.
+  useEffect(() => {
+    bounceRef.current = args.bounce
+  })
   useEffect(() => {
     if (!hostId || bouncedRef.current === worktreeId) {
       return

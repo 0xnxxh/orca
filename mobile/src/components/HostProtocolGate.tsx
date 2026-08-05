@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { ActivityIndicator, StyleSheet, View } from 'react-native'
 import { useHostClient } from '../transport/client-context'
 import { useHostStatusGates, type HostStatusGates } from '../transport/host-status-gates'
@@ -29,11 +29,27 @@ export function HostProtocolGate({ hostId, children }: Props) {
   const resolvedHostIdRef = useRef<string | null>(null)
   const mountedHostIdRef = useRef<string | null>(null)
   const hostKey = hostId ?? null
-  if (state === 'connected' && client && !statusPending) {
-    resolvedHostIdRef.current = hostKey
-  }
+  const resolvedNow = state === 'connected' && client !== null && !statusPending
+  const blocked = compatVerdict.kind === 'blocked'
   const pending = statusPending && resolvedHostIdRef.current !== hostKey
-  if (pending && mountedHostIdRef.current !== hostKey) {
+  const holdBack = pending && mountedHostIdRef.current !== hostKey
+
+  // Why: React can replay or discard a render, so the latches record committed
+  // outcomes only — a discarded children render must not count as mounted.
+  useEffect(() => {
+    if (resolvedNow) {
+      resolvedHostIdRef.current = hostKey
+    }
+    if (blocked) {
+      // Why: the block screen unmounts the routes, so a later pending window
+      // must not assume a live tree it can overlay.
+      mountedHostIdRef.current = null
+    } else if (!holdBack) {
+      mountedHostIdRef.current = hostKey
+    }
+  })
+
+  if (holdBack) {
     // Why: nothing is mounted yet for this host, so hold the routes back entirely
     // rather than letting them mount (and fire their connect RPCs) pre-verdict.
     return (
@@ -45,13 +61,9 @@ export function HostProtocolGate({ hostId, children }: Props) {
       </View>
     )
   }
-  if (compatVerdict.kind === 'blocked') {
-    // Why: the block screen unmounts the routes, so a later pending window must not
-    // assume a live tree it can overlay.
-    mountedHostIdRef.current = null
+  if (blocked) {
     return <ProtocolBlockScreen verdict={compatVerdict} />
   }
-  mountedHostIdRef.current = hostKey
   // Why: the host sidebar needs the same status fields; sharing the result avoids a second status.get per route.
   return (
     <HostStatusGatesContext.Provider value={gates}>

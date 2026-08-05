@@ -50,7 +50,7 @@ export class MobileRelaySessionEstablisher {
   // Tries each eligible credential until one establishes. Only a grace-repairable
   // failure (BAD_OUTER_CREDENTIAL) moves on to the next credential.
   async dialEligible(
-    credentials: Array<{ token: string; version: number }>
+    credentials: { token: string; version: number }[]
   ): Promise<
     { outcome: 'established' } | { outcome: 'aborted' } | { outcome: 'failed'; error: Error | null }
   > {
