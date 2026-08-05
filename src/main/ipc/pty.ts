@@ -4066,7 +4066,7 @@ export function registerPtyHandlers(
   }
 
   type CodexResumeLaunch = {
-    codexResumeHome: { codexHomePath: string } | null
+    codexResumeHome: Extract<CodexSessionResumePreparation, { outcome: 'resume' }> | null
     command: string | undefined
     notifyResumeUnavailable: boolean
     droppedResumeArgv: boolean
@@ -4117,6 +4117,20 @@ export function registerPtyHandlers(
         providerSession
       }
     })
+
+  const reconcileSharedRuntimeResumeHome = (
+    resumeHome: Extract<CodexSessionResumePreparation, { outcome: 'resume' }>,
+    resolveCurrentHome: () => string | null
+  ): string => {
+    if (!resumeHome.reconcileSharedRuntimeAuth) {
+      return resumeHome.codexHomePath
+    }
+    const currentHome = resolveCurrentHome()
+    if (!codexHomePathsEqual(currentHome, resumeHome.codexHomePath)) {
+      throw new Error(CODEX_RESUME_AUTH_UNAVAILABLE_MESSAGE)
+    }
+    return resumeHome.codexHomePath
+  }
 
   /** Why: buildPtyHostEnv prefers ORCA_SEQUENCED_STARTUP_COMMAND over the launch command
    *  and the sequenced wrapper `eval`s it, so a dropped resume argv has to go there too. */
@@ -4395,7 +4409,15 @@ export function registerPtyHandlers(
           ? getCompatibleSelectedCodexHomePath(
               codexSelectionTarget,
               codexResumeHome
-                ? codexResumeHome.codexHomePath
+                ? reconcileSharedRuntimeResumeHome(codexResumeHome, () =>
+                    getCompatibleSelectedCodexHomePath(
+                      codexSelectionTarget,
+                      getSelectedCodexHomePath?.(codexSelectionTarget, env, {
+                        workspacePath: cwd,
+                        launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
+                      }) ?? null
+                    )
+                  )
                 : (getSelectedCodexHomePath?.(codexSelectionTarget, env, {
                     workspacePath: cwd,
                     launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
@@ -5832,7 +5854,15 @@ export function registerPtyHandlers(
             ? getCompatibleSelectedCodexHomePath(
                 codexSelectionTarget,
                 codexResumeHome
-                  ? codexResumeHome.codexHomePath
+                  ? reconcileSharedRuntimeResumeHome(codexResumeHome, () =>
+                      getCompatibleSelectedCodexHomePath(
+                        codexSelectionTarget,
+                        getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv, {
+                          workspacePath: cwd,
+                          launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
+                        }) ?? null
+                      )
+                    )
                   : (getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv, {
                       workspacePath: cwd,
                       launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
