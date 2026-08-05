@@ -63,6 +63,10 @@ type Props = {
   /** Resolved agent for this chat; names the empty-state copy (desktop parity). */
   agent?: string | null
   agentWorking?: boolean
+  /** Canonical transport liveness for status sourced before the latest disconnect. */
+  agentStatusLive: boolean
+  /** Canonical controller write gate for Stop. */
+  stopTargetWritable: boolean
   /** Interrupt the agent mid-turn (shown as a Stop button on the working bar). */
   onStop?: () => void
   /** Live partial assistant text to show as an in-progress bubble, already gated
@@ -125,6 +129,8 @@ export function MobileNativeChatView({
   error,
   agent,
   agentWorking,
+  agentStatusLive,
+  stopTargetWritable,
   onStop,
   streaming,
   hasMore,
@@ -266,11 +272,10 @@ export function MobileNativeChatView({
   const rawLockReason = inputLockReason ?? null
   const lockHeld = useDelayedActivation(rawLockReason !== null)
   const lockReason = lockHeld ? rawLockReason : null
-  // `lockReason` stays latched across reason changes, so stale status needs its own hold.
-  const statusStale = useDelayedActivation(rawLockReason === 'disconnected')
+  // Status liveness belongs to the transport, not the composer's independently delayed lock.
+  const statusStale = useDelayedActivation(!agentStatusLive)
   const canStopAgent = canStopNativeChatAgent({
-    // Match the controller's write gate: Stop also needs an acknowledged input lease.
-    targetWritable: rawLockReason === null,
+    targetWritable: stopTargetWritable,
     stopCommandAvailable: onStop !== undefined
   })
 

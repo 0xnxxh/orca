@@ -41,6 +41,10 @@ export type MobileNativeChatController = {
   chatPending: MobileNativeChatPendingMessage[]
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   nativeChatAgentWorking: boolean
+  /** Whether transport state can still refresh the displayed agent status. */
+  nativeChatAgentStatusLive: boolean
+  /** Exact write gate used by the Stop handler. */
+  nativeChatStopTargetWritable: boolean
   nativeChatStreamingText?: string
   /** Agent mid-turn, regardless of whether chat is the visible view. */
   nativeChatStreamLive: boolean
@@ -261,6 +265,8 @@ export function useMobileNativeChatController(args: {
     chatPending,
     nativeChatSession,
     nativeChatAgentWorking,
+    nativeChatAgentStatusLive: connState === 'connected',
+    nativeChatStopTargetWritable: inputSendable,
     nativeChatStreamingText,
     nativeChatStreamLive,
     nativeChatStreamScopeKey: streamScopeKey,

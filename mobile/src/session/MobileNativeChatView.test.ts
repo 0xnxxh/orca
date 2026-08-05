@@ -75,6 +75,8 @@ type Overrides = {
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
   agentWorking?: boolean
+  agentStatusLive?: boolean
+  stopTargetWritable?: boolean
   onStop?: () => void
   onSend?: (text: string) => Promise<boolean>
 }
@@ -95,6 +97,7 @@ function assistantTurn(id: string, text: string): NativeChatMessage {
 }
 
 function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
+  const lockReason = overrides.inputLockReason ?? null
   return createElement(MobileNativeChatView, {
     messages: [],
     folded: [],
@@ -102,6 +105,8 @@ function chatViewElement(overrides: Overrides): ReturnType<typeof createElement>
     streaming: null,
     onSend: vi.fn().mockResolvedValue(true),
     onStop: vi.fn(),
+    agentStatusLive: lockReason !== 'disconnected',
+    stopTargetWritable: lockReason === null,
     pending: [],
     composerText: '',
     onComposerTextChange: vi.fn(),
@@ -215,7 +220,12 @@ describe('MobileNativeChatView', () => {
   }
 
   async function relock(inputLockReason: Overrides['inputLockReason']): Promise<void> {
-    await update({ agentWorking: true, inputLockReason })
+    await update({
+      agentWorking: true,
+      inputLockReason,
+      agentStatusLive: inputLockReason !== 'disconnected',
+      stopTargetWritable: inputLockReason == null
+    })
   }
 
   it('blocks Stop immediately and marks the working row stale once a disconnect settles', async () => {
@@ -223,6 +233,25 @@ describe('MobileNativeChatView', () => {
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
 
     // The label is held to avoid flicker; the unreachable action is not.
+    expect(workingIndicator().props.stale).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
+
+    await settleLockDebounce()
+
+    expect(workingIndicator().props.stale).toBe(true)
+    expect(stopButton().props.disabled).toBe(true)
+  })
+
+  it('uses canonical transport state when the composer lock misses socket loss', async () => {
+    vi.useFakeTimers()
+    await render({
+      agentWorking: true,
+      inputLockReason: null,
+      agentStatusLive: false,
+      stopTargetWritable: false
+    })
+
+    // Real socket loss can precede the composer-specific lock signal.
     expect(workingIndicator().props.stale).toBe(false)
     expect(stopButton().props.disabled).toBe(true)
 
@@ -254,8 +283,7 @@ describe('MobileNativeChatView', () => {
     expect(stopButton().props.disabled).toBe(true)
   })
 
-  // The composer lock latches on the first non-null reason and never unlatches
-  // between reasons, so reading it directly would skip the hold on this edge.
+  // Status liveness owns a separate hold from the composer's lock feedback.
   it('still holds 600ms when a settled lease wait drops to disconnected', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'waiting' })
