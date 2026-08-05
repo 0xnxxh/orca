@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { ArrowDown, ChevronsDownUp, ChevronsUpDown, Square } from 'lucide-react-native'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { canAutoLoadEarlier as canAutoPage } from '../../../src/shared/native-chat-load-earlier'
 import { colors } from '../theme/mobile-theme'
 import { styles } from './mobile-native-chat-view-styles'
 import {
@@ -55,8 +56,6 @@ type Props = {
   streaming: string | null
   hasMore?: boolean
   loadingEarlier?: boolean
-  /** Last older-history page failed; shows an inline retry in the header row and
-   *  stops the near-top scroll trigger from re-firing against the same failure. */
   loadEarlierError?: string | null
   onLoadEarlier?: () => void
   onSend: (text: string) => Promise<boolean>
@@ -229,14 +228,12 @@ export function MobileNativeChatView({
       const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
       const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height)
       setAtBottom(distanceFromBottom < 80)
-      // Near the top — page in older history. A failed page stops this: the user
-      // stays near the top, so every later scroll frame would re-fire the same
-      // doomed request. Only the header's explicit retry clears it.
-      if (contentOffset.y < 60 && hasMore && !isLoadingEarlier && !loadEarlierError) {
+      // A failed page stays at the top, so only its explicit retry may clear it.
+      if (contentOffset.y < 60 && canAutoPage(hasMore, loadingEarlier, loadEarlierError)) {
         onLoadEarlier?.()
       }
     },
-    [hasMore, isLoadingEarlier, loadEarlierError, onLoadEarlier]
+    [hasMore, loadingEarlier, loadEarlierError, onLoadEarlier]
   )
 
   // Align a single message's top to the top of the viewport.

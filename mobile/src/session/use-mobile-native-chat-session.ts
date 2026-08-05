@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import {
+  createNativeChatLoadEarlierController,
+  NATIVE_CHAT_LOAD_EARLIER_IDLE,
+  startNativeChatLoadEarlier,
+  type NativeChatLoadEarlier
+} from '../../../src/shared/native-chat-load-earlier'
 import { buildNativeChatSubscriptionId } from '../../../src/shared/native-chat-stream-unsubscribe'
 import type { RpcClient } from '../transport/rpc-client'
 import { createNativeChatMerger, replaceList } from './mobile-native-chat-merge'
@@ -10,7 +16,7 @@ import {
 
 export type MobileNativeChatStatus = 'idle' | 'loading' | 'waiting-session' | 'ready' | 'error'
 
-export type MobileNativeChatSession = {
+export type MobileNativeChatSession = NativeChatLoadEarlier & {
   messages: NativeChatMessage[]
   status: MobileNativeChatStatus
   /** True while `messages` cannot be trusted as this session's real history:
@@ -20,14 +26,6 @@ export type MobileNativeChatSession = {
    *  (the launch-draft seed) must wait for this to clear. */
   transcriptLoading: boolean
   error?: string
-  /** True when an older page may exist (the last read filled the window). */
-  hasMore: boolean
-  /** Whether an older-history page is currently loading. */
-  loadingEarlier: boolean
-  /** Set when the last older-history page failed; retry via `loadEarlier`. */
-  loadEarlierError: string | null
-  /** Grow the window to page in older history. */
-  loadEarlier: () => void
 }
 
 // Stable empty reference so a not-yet-current read doesn't churn consumers.
@@ -37,8 +35,6 @@ const EMPTY_MESSAGES: NativeChatMessage[] = []
 const INITIAL_LIMIT = 40
 const PAGE = 60
 const MAX_MESSAGES = 2000
-
-const LOAD_EARLIER_ERROR = 'Couldn’t load earlier messages'
 
 type ReadSessionResult =
   | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
@@ -84,16 +80,14 @@ export function useMobileNativeChatSession(args: {
   const status = settled ? settled.status : initialStatus
   const [error, setError] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
-  const [loadingEarlier, setLoadingEarlier] = useState(false)
-  const [loadEarlierError, setLoadEarlierError] = useState<string | null>(null)
-  const loadingEarlierRef = useRef(false)
+  const [loadEarlierState, setLoadEarlierState] = useState(NATIVE_CHAT_LOAD_EARLIER_IDLE)
+  const [loadEarlierController] = useState(createNativeChatLoadEarlierController)
   const beforeOffsetRef = useRef<number | null>(null)
   // Stateful id-dedup merger: caches the id→index map so each live append frame
   // costs O(incoming), not O(existing+incoming) (#18). `replaceList` resets the
   // base (read / loadEarlier ordered tails); `applyAppend` folds live frames in.
   const mergerRef = useRef(createNativeChatMerger())
   const limitRef = useRef(INITIAL_LIMIT)
-  const streamGenerationRef = useRef(0)
   // Whether this subscription already delivered its base snapshot; later
   // snapshots on the same subscription are reconnect replays, not fresh bases.
   const snapshotSeenRef = useRef(false)
@@ -108,16 +102,14 @@ export function useMobileNativeChatSession(args: {
   // Invalidate pages during commit, before the passive subscription reset, for
   // every source change — including same-session agent, path, or client swaps.
   useLayoutEffect(() => {
-    streamGenerationRef.current += 1
-  }, [client, identity])
+    loadEarlierController.invalidate()
+  }, [client, identity, loadEarlierController])
 
   useEffect(() => {
     let cancelled = false
     limitRef.current = INITIAL_LIMIT
-    loadingEarlierRef.current = false
     snapshotSeenRef.current = false
-    setLoadingEarlier(false)
-    setLoadEarlierError(null)
+    setLoadEarlierState(NATIVE_CHAT_LOAD_EARLIER_IDLE)
     setList([])
     setError(undefined)
     setHasMore(false)
@@ -163,11 +155,8 @@ export function useMobileNativeChatSession(args: {
         if (applied.windowReplaced || frame.type === 'snapshot') {
           // Why: any authoritative window (and any replay merge) invalidates an
           // in-flight older-page request; stale results must not land on it.
-          streamGenerationRef.current += 1
-          loadingEarlierRef.current = false
-          setLoadingEarlier(false)
-          // The fresh window supersedes the failed page, so stop blocking paging.
-          setLoadEarlierError(null)
+          loadEarlierController.invalidate()
+          setLoadEarlierState(NATIVE_CHAT_LOAD_EARLIER_IDLE)
         }
         if (applied.windowReplaced) {
           // Only a genuinely fresh window resets the grown read window — an
@@ -186,9 +175,10 @@ export function useMobileNativeChatSession(args: {
         if (applied.cursorInvalidated) {
           // Fall back to a growing-tail read so history trimmed by live appends
           // cannot leave a gap between the retained window and the old cursor.
-          streamGenerationRef.current += 1
-          loadingEarlierRef.current = false
-          setLoadingEarlier(false)
+          loadEarlierController.invalidate()
+          setLoadEarlierState((state) =>
+            state.loadingEarlier ? { ...state, loadingEarlier: false } : state
+          )
           beforeOffsetRef.current = null
         }
         setRead({ client, identity, status: 'ready' })
@@ -202,11 +192,9 @@ export function useMobileNativeChatSession(args: {
   }, [client, agent, sessionId, transcriptPath, identity, setList])
 
   const loadEarlier = useCallback(() => {
-    if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
+    if (!client || !agent || !sessionId || !hasMore) {
       return
     }
-    // Capture the source generation so a swap cannot apply this page to its replacement.
-    const requestGeneration = streamGenerationRef.current
     const nextLimit = Math.min(limitRef.current + PAGE, MAX_MESSAGES)
     const pageLimit = nextLimit - limitRef.current
     if (pageLimit <= 0) {
@@ -214,12 +202,9 @@ export function useMobileNativeChatSession(args: {
       return
     }
     const beforeOffset = beforeOffsetRef.current
-    loadingEarlierRef.current = true
-    setLoadingEarlier(true)
-    setLoadEarlierError(null)
-    const requestIsCurrent = (): boolean => streamGenerationRef.current === requestGeneration
-    void (async () => {
-      try {
+    startNativeChatLoadEarlier({
+      controller: loadEarlierController,
+      read: async () => {
         const response = await client.sendRequest('nativeChat.readSession', {
           agent,
           sessionId,
@@ -227,19 +212,11 @@ export function useMobileNativeChatSession(args: {
           ...(beforeOffset === null ? {} : { beforeOffset }),
           ...(transcriptPath ? { transcriptPath } : {})
         })
-        const result = response.ok ? (response.result as ReadSessionResult) : null
-        if (!result || 'error' in result) {
-          // Surface the failed page: doing nothing silently reads as a dead
-          // scroll, and the header row is the only retry affordance.
-          if (requestIsCurrent()) {
-            setLoadEarlierError(LOAD_EARLIER_ERROR)
-          }
-          return
-        }
-        // Drop a stale resolve from a session that swapped underneath us.
-        if (!requestIsCurrent()) {
-          return
-        }
+        return response.ok ? (response.result as ReadSessionResult) : null
+      },
+      isSuccess: (result): result is Exclude<ReadSessionResult, { error: string }> =>
+        result !== null && !('error' in result),
+      apply: (result) => {
         limitRef.current = nextLimit
         if (beforeOffset !== null && result.beforeOffset != null) {
           beforeOffsetRef.current = result.beforeOffset
@@ -252,21 +229,10 @@ export function useMobileNativeChatSession(args: {
           setList(result.messages)
           setHasMore(result.messages.length >= nextLimit)
         }
-      } catch {
-        // A rejected transport request (disconnect mid-page) is a failed page too;
-        // without this it also escaped as an unhandled rejection.
-        if (requestIsCurrent()) {
-          setLoadEarlierError(LOAD_EARLIER_ERROR)
-        }
-      } finally {
-        // A late page from a prior tab must not unlock the current tab's request.
-        if (requestIsCurrent()) {
-          loadingEarlierRef.current = false
-          setLoadingEarlier(false)
-        }
-      }
-    })()
-  }, [client, agent, sessionId, transcriptPath, hasMore, setList])
+      },
+      setState: setLoadEarlierState
+    })
+  }, [client, agent, sessionId, transcriptPath, hasMore, loadEarlierController, setList])
 
   return {
     // Withheld until the settled read belongs to this identity: the effect that
@@ -276,8 +242,7 @@ export function useMobileNativeChatSession(args: {
     transcriptLoading: status === 'loading',
     error,
     hasMore,
-    loadingEarlier,
-    loadEarlierError,
+    ...loadEarlierState,
     loadEarlier
   }
 }

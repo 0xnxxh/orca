@@ -313,8 +313,7 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.loadingEarlier).toBe(false)
   })
 
-  // Both stale-failure guards have to hold: a swapped-out page can fail by
-  // rejecting or by resolving not-ok, and each has its own `requestIsCurrent()`.
+  // A source generation must drop every stale settlement shape.
   it.each([
     ['a rejected request', (settle: PageSettle) => settle.reject(new Error('disconnected'))],
     ['a not-ok response', (settle: PageSettle) => settle.resolve({ ok: false, error: 'offline' })]
@@ -348,8 +347,6 @@ describe('useMobileNativeChatSession', () => {
       await Promise.resolve()
     })
 
-    // The fresh window already superseded that page; a stale failure must not
-    // block paging on it.
     expect(state?.loadEarlierError).toBeNull()
   })
 

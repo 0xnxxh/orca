@@ -19,7 +19,9 @@ import { isNearBottom, shouldShowJumpToLatest, type ScrollGeometry } from './nat
 import { isNativeChatPastedImagePath } from './native-chat-image-paste'
 import { NativeChatToolRun } from './NativeChatToolRun'
 import { NativeChatCopyButton } from './NativeChatCopyButton'
+import { NativeChatLoadEarlierButton } from './NativeChatLoadEarlierButton'
 import { NATIVE_CHAT_STREAMING_ID } from '../../../../shared/native-chat-streaming'
+import { canAutoLoadEarlier } from '../../../../shared/native-chat-load-earlier'
 
 function geometryOf(el: HTMLElement): ScrollGeometry {
   return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
@@ -263,7 +265,7 @@ export function NativeChatMessageList({
   const stuckToBottomRef = useRef(stuckToBottom)
   stuckToBottomRef.current = stuckToBottom
 
-  const { hasMore, loadingEarlier, loadEarlier } = session
+  const { hasMore, loadingEarlier, loadEarlierError, loadEarlier } = session
 
   // Strip harness noise (task-notifications, system reminders, slash-command
   // envelopes) before folding so they don't render as the user's own bubbles —
@@ -293,11 +295,11 @@ export function NativeChatMessageList({
     setShowJump(shouldShowJumpToLatest(stick, geometry))
     // Near the top — page in older history, anchoring the current position so the
     // prepend doesn't yank the view.
-    if (geometry.scrollTop < 80 && hasMore && !loadingEarlier) {
+    if (geometry.scrollTop < 80 && canAutoLoadEarlier(hasMore, loadingEarlier, loadEarlierError)) {
       prependAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
       loadEarlier()
     }
-  }, [hasMore, loadingEarlier, loadEarlier])
+  }, [hasMore, loadingEarlier, loadEarlierError, loadEarlier])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -386,18 +388,11 @@ export function NativeChatMessageList({
           style={{ zoom: fontScale }}
         >
           {hasMore ? (
-            <div className="flex justify-center py-1">
-              <button
-                type="button"
-                onClick={loadEarlier}
-                disabled={loadingEarlier}
-                className="rounded-md px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-              >
-                {loadingEarlier
-                  ? translate('components.native-chat.loadingEarlier', 'Loading…')
-                  : translate('components.native-chat.loadEarlier', 'Load earlier messages')}
-              </button>
-            </div>
+            <NativeChatLoadEarlierButton
+              loadingEarlier={loadingEarlier}
+              loadEarlierError={loadEarlierError}
+              onLoadEarlier={loadEarlier}
+            />
           ) : null}
           {messages.map((message) => (
             <MessageRow
