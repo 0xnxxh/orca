@@ -78,6 +78,22 @@ async function loadWindowsIdentity() {
   return { identity: await import('./managed-hook-owner-identity'), execFileAsync }
 }
 
+async function loadDarwinIdentity() {
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+  let psCalls = 0
+  const execFileAsync = vi.fn(async (file: string) => {
+    if (file === 'sysctl') {
+      return { stdout: 'boot-session\n' }
+    }
+    if (file === 'ps' && ++psCalls === 1) {
+      throw new Error('transient ps failure')
+    }
+    return { stdout: 'Wed Aug  5 12:00:00 2026 node app\n' }
+  })
+  vi.doMock('node:util', () => ({ promisify: () => execFileAsync }))
+  return await import('./managed-hook-owner-identity')
+}
+
 afterEach(() => {
   Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
   if (originalGetuidDescriptor) {
@@ -205,5 +221,14 @@ describe('managed hook owner identity', () => {
       `win32:${process.pid}:1777777777000`
     )
     expect(execFileAsync).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries an unverified macOS process identity', async () => {
+    const identity = await loadDarwinIdentity()
+
+    await expect(identity.readManagedHookProcessIdentity(process.pid)).resolves.toBeUndefined()
+    await expect(identity.readManagedHookProcessIdentity(process.pid)).resolves.toBe(
+      'darwin:boot-session:Wed Aug  5 12:00:00 2026 node app'
+    )
   })
 })

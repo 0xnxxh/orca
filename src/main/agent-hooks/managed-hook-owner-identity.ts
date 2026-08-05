@@ -192,7 +192,7 @@ export function scopeManagedHookHostIdentity(
 export async function readManagedHookProcessIdentity(
   pid: number
 ): Promise<string | null | undefined> {
-  if (pid === process.pid) {
+  if (process.platform === 'win32' && pid === process.pid) {
     selfProcessIdentityPromise ??= readProcessIdentity(pid)
     return await selfProcessIdentityPromise
   }
