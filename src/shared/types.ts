@@ -2630,7 +2630,7 @@ export type OpenInApplication = {
 }
 
 export type SourceControlViewMode = 'list' | 'tree'
-export type SourceControlGroupOrder = 'changes-first' | 'staged-first' | 'untracked-first'
+export type SourceControlGroupOrder = 'changes-first' | 'staged-first'
 
 export type LeftSidebarAppearanceMode = 'default' | 'match-terminal' | 'tinted'
 
@@ -2818,6 +2818,8 @@ export type GlobalSettings = {
   sourceControlViewMode: SourceControlViewMode
   /** Preferred Source Control group order. Per-user, not per-workspace. */
   sourceControlGroupOrder: SourceControlGroupOrder
+  /** One-shot migration stamp for the commit-oriented Source Control defaults. */
+  sourceControlHierarchyDefaultedV2?: boolean
   /** Compare base defaults to the branch upstream instead of the repo default; affects only the compare/diff view, not the PR/rebase target. Per-user. */
   sourceControlCompareAgainstUpstream: boolean
   /** Whether to show the Orca app name in the titlebar. */

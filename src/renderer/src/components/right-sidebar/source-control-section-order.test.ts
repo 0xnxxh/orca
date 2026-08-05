@@ -4,6 +4,7 @@ import {
   buildSourceControlDisplaySections,
   getConflictReviewEntries,
   getSourceControlSectionViewAction,
+  mergeUntrackedIntoChanges,
   resolveSourceControlGroupOrder,
   splitPinnedSourceControlConflicts,
   type SourceControlEntryGroups
@@ -27,21 +28,35 @@ function groups(partial: Partial<SourceControlEntryGroups>): SourceControlEntryG
 }
 
 describe('resolveSourceControlGroupOrder', () => {
-  it('keeps Changes first by default', () => {
-    expect(resolveSourceControlGroupOrder(undefined)).toEqual(['unstaged', 'staged', 'untracked'])
+  it('keeps staged changes closest to commit by default', () => {
+    expect(resolveSourceControlGroupOrder(undefined)).toEqual(['staged', 'unstaged', 'untracked'])
   })
 
-  it('supports staged-first and untracked-first presets', () => {
+  it('supports staged-first and changes-first presets', () => {
     expect(resolveSourceControlGroupOrder('staged-first')).toEqual([
       'staged',
       'unstaged',
       'untracked'
     ])
-    expect(resolveSourceControlGroupOrder('untracked-first')).toEqual([
-      'untracked',
+    expect(resolveSourceControlGroupOrder('changes-first')).toEqual([
       'unstaged',
-      'staged'
+      'staged',
+      'untracked'
     ])
+  })
+})
+
+describe('mergeUntrackedIntoChanges', () => {
+  it('folds untracked entries into Changes without changing their Git area', () => {
+    const unstaged = entry({ area: 'unstaged', path: 'changed.ts' })
+    const untracked = entry({ area: 'untracked', path: 'new.ts', status: 'untracked' })
+    const merged = mergeUntrackedIntoChanges(
+      groups({ unstaged: [unstaged], untracked: [untracked] })
+    )
+
+    expect(merged.unstaged).toEqual([unstaged, untracked])
+    expect(merged.untracked).toEqual([])
+    expect(merged.unstaged[1]?.area).toBe('untracked')
   })
 })
 

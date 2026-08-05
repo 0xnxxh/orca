@@ -676,7 +676,7 @@ describe('Store', () => {
     const settings = store.getSettings()
     expect(settings.branchPrefix).toBe('git-username')
     expect(settings.refreshLocalBaseRefOnWorktreeCreate).toBe(false)
-    expect(settings.sourceControlGroupOrder).toBe('changes-first')
+    expect(settings.sourceControlGroupOrder).toBe('staged-first')
     expect(settings.theme).toBe('system')
     expect(settings.appIcon).toBe('classic')
     expect(settings.appFontFamily).toBe('Geist')
@@ -2796,7 +2796,7 @@ describe('Store', () => {
     })
 
     const store = await createStore()
-    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
   })
 
   it('repairs drifted task provider defaults on load', async () => {
@@ -5713,13 +5713,62 @@ describe('Store', () => {
 
   it('updateSettings persists sourceControlGroupOrder as a user setting', async () => {
     const store = await createStore()
-    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
-
-    store.updateSettings({ sourceControlGroupOrder: 'staged-first' })
     expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
 
-    store.updateSettings({ sourceControlGroupOrder: 'tracked-first' as never })
+    store.updateSettings({ sourceControlGroupOrder: 'changes-first' })
     expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+
+    store.updateSettings({ sourceControlGroupOrder: 'tracked-first' as never })
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
+  })
+
+  it('migrates the old Source Control defaults once', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { sourceControlGroupOrder: 'changes-first' },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
+    expect(store.getSettings().sourceControlHierarchyDefaultedV2).toBe(true)
+  })
+
+  it('preserves Source Control choices after the hierarchy migration', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {
+        sourceControlGroupOrder: 'changes-first',
+        sourceControlHierarchyDefaultedV2: true
+      },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+  })
+
+  it('migrates the removed untracked-first preference to staged-first', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { sourceControlGroupOrder: 'untracked-first' },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
   })
 
   it('updateSettings normalizes terminal shortcut policy', async () => {
@@ -5777,7 +5826,7 @@ describe('Store', () => {
 
     const store = await createStore()
     expect(store.getSettings().sourceControlViewMode).toBe('list')
-    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
 
     store.updateSettings({ sourceControlViewMode: 'tree', sourceControlGroupOrder: 'staged-first' })
     store.flush()

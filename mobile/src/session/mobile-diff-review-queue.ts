@@ -56,8 +56,8 @@ export type BuildMobileDiffReviewQueueInput = {
 }
 
 const SCOPE_SORT_ORDER: Record<DiffReviewScope, number> = {
-  unstaged: 0,
-  staged: 1,
+  staged: 0,
+  unstaged: 1,
   branch: 2
 }
 

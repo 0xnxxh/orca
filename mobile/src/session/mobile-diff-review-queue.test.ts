@@ -58,8 +58,8 @@ describe('mobile diff review queue', () => {
     })
 
     expect(queue.map((item) => `${item.scope}:${item.filePath}`)).toEqual([
-      'unstaged:a.ts',
       'staged:z.ts',
+      'unstaged:a.ts',
       'branch:b.ts'
     ])
   })

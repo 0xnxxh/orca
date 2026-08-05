@@ -171,7 +171,10 @@ import { normalizeTaskProviderSettings } from '../shared/task-providers'
 import { normalizeAutoRenameBranchFromWorkDefaultOn } from '../shared/auto-rename-branch-from-work-settings'
 import { normalizeOpenInApplications } from '../shared/open-in-applications'
 import { normalizeTerminalShortcutPolicy } from '../shared/keybindings'
-import { normalizeSourceControlGroupOrder } from '../shared/source-control-group-order'
+import {
+  DEFAULT_SOURCE_CONTROL_GROUP_ORDER,
+  normalizeSourceControlGroupOrder
+} from '../shared/source-control-group-order'
 import { normalizeAppIconId } from '../shared/app-icon'
 import { normalizeTerminalCustomThemes } from '../shared/terminal-custom-themes'
 import {
@@ -3126,9 +3129,17 @@ export class Store {
           parsed.settings?.compactWorktreeCards ??
           parsed.settings?.experimentalCompactWorktreeCards ??
           defaults.settings.compactWorktreeCards
-        const normalizedSourceControlGroupOrder = normalizeSourceControlGroupOrder(
-          parsed.settings?.sourceControlGroupOrder
-        )
+        const sourceControlHierarchyDefaultedV2 =
+          parsed.settings?.sourceControlHierarchyDefaultedV2 === true
+        const normalizedSourceControlGroupOrder = sourceControlHierarchyDefaultedV2
+          ? normalizeSourceControlGroupOrder(parsed.settings?.sourceControlGroupOrder)
+          : parsed.settings?.sourceControlGroupOrder === 'changes-first' ||
+              parsed.settings?.sourceControlGroupOrder === undefined
+            ? DEFAULT_SOURCE_CONTROL_GROUP_ORDER
+            : normalizeSourceControlGroupOrder(parsed.settings.sourceControlGroupOrder)
+        if (!sourceControlHierarchyDefaultedV2) {
+          this.loadNeedsSave = true
+        }
         if (
           parsed.settings?.sourceControlGroupOrder !== undefined &&
           parsed.settings.sourceControlGroupOrder !== normalizedSourceControlGroupOrder
@@ -3229,6 +3240,7 @@ export class Store {
             notifications: normalizeNotificationSettings(parsed.settings?.notifications),
             sourceControlAi: migratedSourceControlAi,
             sourceControlGroupOrder: normalizedSourceControlGroupOrder,
+            sourceControlHierarchyDefaultedV2: true,
             // Why: rollback builds still read commitMessageAi, so refresh the legacy projection from sourceControlAi for compat.
             commitMessageAi: projectSourceControlAiToLegacyCommitMessageAi(
               migratedSourceControlAi,

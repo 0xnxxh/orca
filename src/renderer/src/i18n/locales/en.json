@@ -6018,10 +6018,9 @@
           "1f32ba27a6": "Custom",
           "a182c5125e": "Git Username",
           "sourceControlGroupOrderTitle": "Source Control Group Order",
-          "sourceControlGroupOrderDescription": "Choose whether Changes, Staged Changes, or Untracked Files appear first in Source Control.",
+          "sourceControlGroupOrderDescription": "Choose whether Staged Changes or Changes appear first in Source Control.",
           "changesFirst": "Changes first",
           "stagedFirst": "Staged first",
-          "untrackedFirst": "Untracked first",
           "compareAgainstUpstreamTitle": "Default Compare Base",
           "compareAgainstUpstreamDescription": "Choose which base Source Control uses by default for committed-change comparisons. Branch upstream follows the current branch automatically and falls back to the repository default branch when no upstream exists. You can still change the compare base per worktree from that worktree's Git panel. Pull Request and rebase targets don't change.",
           "compareBaseRepositoryDefault": "Repository default",
@@ -8267,11 +8266,10 @@
             "5ecd91c5ef": "Prefix added to branch names when creating worktrees.",
             "68bd65fdb8": "Branch Prefix",
             "sourceControlGroupOrderTitle": "Source Control Group Order",
-            "sourceControlGroupOrderDescription": "Choose whether Changes, Staged Changes, or Untracked Files appear first in Source Control.",
+            "sourceControlGroupOrderDescription": "Choose whether Staged Changes or Changes appear first in Source Control.",
             "groupOrder": "group order",
             "changesFirst": "changes first",
             "stagedFirst": "staged first",
-            "untrackedFirst": "untracked first",
             "sourceControl": "source control",
             "gitChanges": "git changes",
             "compareAgainstUpstreamTitle": "Default Compare Base",
@@ -10489,7 +10487,9 @@
             "b8c2e1a904": "{{value0}} → {{value1}}",
             "a4e93c21d7": "Current branch: {{value0}}",
             "c7d4e2f801": "Change base ref: {{value0}}",
-            "f3a1b8c204": "upstream"
+            "f3a1b8c204": "upstream",
+            "discardAllMixedUntracked": "Discard changes and delete untracked files",
+            "discardFolderMixedUntracked": "Discard changes and delete untracked files in folder"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "Could not start the selected agent.",
@@ -10911,7 +10911,10 @@
                   "40e9357b2a": "This will restore the file from HEAD and discard the deletion. This cannot be undone.",
                   "5c0bdbc4cb": "Restore \"{{value0}}\"?",
                   "d97bf697c9": "This will permanently delete this file. This cannot be undone.",
-                  "96c772bee9": "Delete \"{{value0}}\"?"
+                  "96c772bee9": "Delete \"{{value0}}\"?",
+                  "mixedTitle": "Discard changes and delete untracked files?",
+                  "mixedDescription": "Tracked changes will be reverted and untracked files will be permanently deleted. This cannot be undone.",
+                  "mixedConfirm": "Delete and discard"
                 },
                 "dialog": {
                   "3bc61dc989": "Cancel",

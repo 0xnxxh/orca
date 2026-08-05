@@ -24,14 +24,26 @@ export type SourceControlSectionViewAction =
 
 const ORDER_BY_PRESET: Record<SourceControlGroupOrder, readonly SourceControlSectionArea[]> = {
   'changes-first': ['unstaged', 'staged', 'untracked'],
-  'staged-first': ['staged', 'unstaged', 'untracked'],
-  'untracked-first': ['untracked', 'unstaged', 'staged']
+  'staged-first': ['staged', 'unstaged', 'untracked']
 }
 
 export function resolveSourceControlGroupOrder(
   value: SourceControlGroupOrder | null | undefined
 ): readonly SourceControlSectionArea[] {
   return ORDER_BY_PRESET[normalizeSourceControlGroupOrder(value)]
+}
+
+export function mergeUntrackedIntoChanges(
+  groups: SourceControlEntryGroups
+): SourceControlEntryGroups {
+  if (groups.untracked.length === 0) {
+    return groups
+  }
+  return {
+    staged: groups.staged,
+    unstaged: [...groups.unstaged, ...groups.untracked],
+    untracked: []
+  }
 }
 
 export function isPinnedConflictEntry(entry: GitStatusEntry): boolean {
