@@ -185,6 +185,8 @@ export class CodexRuntimeHomeService {
   // Why: transient auth.json read/parse failures must not deselect an account.
   private readonly credentialAbsenceGrace = new CodexCredentialAbsenceGrace()
   private scheduleHostSystemDefaultSessionMigration: (fullScanRequired: boolean) => void = () => {}
+  private hostSystemDefaultSessionMigrationPending = false
+  private pendingHostSystemDefaultSessionMigrationNeedsFullScan = false
 
   constructor(private readonly store: Store) {
     this.safeRecoverInterruptedRuntimeAuthOperation()
@@ -274,16 +276,16 @@ export class CodexRuntimeHomeService {
     )
   }
 
-  prepareHostSystemDefaultSessionMigrationPass(): boolean {
+  prepareHostSystemDefaultSessionMigrationPass(): void {
     const paths = resolveCodexSessionBackfillPaths(
       resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
-    const fullScanRequired = !hasCompletedCodexSessionBackfillMarker(
-      paths.markerPath,
-      paths.systemSessionsRoot
-    )
     invalidateCodexSessionBackfillMarker(paths.markerPath)
-    return fullScanRequired
+  }
+
+  finishHostSystemDefaultSessionMigrationPass(): void {
+    this.hostSystemDefaultSessionMigrationPending = false
+    this.pendingHostSystemDefaultSessionMigrationNeedsFullScan = false
   }
 
   // Why: a managed HOST account runs against its own self-contained CODEX_HOME
@@ -447,7 +449,16 @@ export class CodexRuntimeHomeService {
     ) {
       return null
     }
-    return this.prepareHostSystemDefaultSessionMigrationPass()
+    if (!this.hostSystemDefaultSessionMigrationPending) {
+      const paths = resolveCodexSessionBackfillPaths(
+        resolveHostCodexSessionSourceHome(this.store.getSettings())
+      )
+      this.pendingHostSystemDefaultSessionMigrationNeedsFullScan =
+        !hasCompletedCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot)
+      this.hostSystemDefaultSessionMigrationPending = true
+    }
+    this.prepareHostSystemDefaultSessionMigrationPass()
+    return this.pendingHostSystemDefaultSessionMigrationNeedsFullScan
   }
 
   private startWslSessionBridgeForLaunch(

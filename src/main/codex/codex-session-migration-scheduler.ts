@@ -20,6 +20,7 @@ export function createCodexSessionMigrationScheduler(args: {
   isQuitting: () => boolean
   resolveSystemCodexHomePathOverride: () => string | undefined
   prepareScheduledRun?: () => void
+  finishScheduledRun?: () => void
   startBackfill: MigrationRun
   startIndexHeal: MigrationRun
   initialDelayMs?: number
@@ -59,13 +60,15 @@ export function createCodexSessionMigrationScheduler(args: {
       rerunRequested ||= rerunIfActive || activeRunStopObserved
       return
     }
-    if (pendingScheduledRunGeneration !== null) {
+    const isScheduledRun = pendingScheduledRunGeneration !== null
+    if (isScheduledRun) {
       pendingScheduledRunGeneration = null
       // Why: an older active pass can rewrite the marker after launch invalidates it.
       args.prepareScheduledRun?.()
     }
+    const fullScanRequired = pendingFullScan
     const scanDates =
-      !pendingFullScan && pendingScanDates.size > 0 ? [...pendingScanDates.values()] : undefined
+      !fullScanRequired && pendingScanDates.size > 0 ? [...pendingScanDates.values()] : undefined
     pendingScanDates.clear()
     pendingFullScan = false
     activeRunStopObserved = false
@@ -97,6 +100,15 @@ export function createCodexSessionMigrationScheduler(args: {
         const shouldRerun = rerunRequested || stoppedBackfill
         rerunRequested = false
         activeRunStopObserved = false
+        if (shouldRerun && isScheduledRun) {
+          pendingFullScan ||= fullScanRequired
+          for (const scanDate of scanDates ?? []) {
+            pendingScanDates.set(scanDate.join('-'), scanDate)
+          }
+        }
+        if (isScheduledRun && scheduledTimer === null && pendingScheduledRunGeneration === null) {
+          args.finishScheduledRun?.()
+        }
         if (shouldRerun) {
           requestRun()
         }

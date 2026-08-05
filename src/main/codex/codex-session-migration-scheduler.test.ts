@@ -34,6 +34,7 @@ describe('createCodexSessionMigrationScheduler', () => {
   it('schedules a delayed rerun after a shared-home launch', async () => {
     vi.setSystemTime(new Date(2026, 7, 5, 10, 0, 0))
     const prepareScheduledRun = vi.fn()
+    const finishScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue(null)
     const startIndexHeal = vi.fn().mockResolvedValue(null)
     const scheduler = createCodexSessionMigrationScheduler({
@@ -41,6 +42,7 @@ describe('createCodexSessionMigrationScheduler', () => {
       isQuitting: () => false,
       resolveSystemCodexHomePathOverride: () => undefined,
       prepareScheduledRun,
+      finishScheduledRun,
       startBackfill,
       startIndexHeal,
       initialDelayMs: 1_000
@@ -59,6 +61,7 @@ describe('createCodexSessionMigrationScheduler', () => {
       undefined
     )
     expect(prepareScheduledRun).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(finishScheduledRun).toHaveBeenCalledOnce())
   })
 
   it('covers both launch and run dates when a delayed pass crosses midnight', async () => {
