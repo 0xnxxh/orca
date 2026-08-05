@@ -27,6 +27,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private fallback: IPtyProvider
+  private inventoriedLegacy = new Set<DaemonPtyAdapter>() // see probePtyOwners (STA-3536)
   private sessionProviders = new Map<string, IPtyProvider>()
   private freshSpawns: DegradedDaemonFreshSpawnRouter
   private unsubscribers: (() => void)[] = []
@@ -51,23 +52,21 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
     for (const provider of this.allProviders()) {
       this.unsubscribers.push(
-        provider.onData((payload) => {
-          for (const listener of this.dataListeners) {
-            listener(payload)
-          }
-        }),
+        provider.onData((payload) => this.dataListeners.forEach((listener) => listener(payload))),
         provider.onExit((payload) => {
           this.sessionProviders.delete(payload.id)
-          for (const listener of this.exitListeners) {
-            listener(payload)
-          }
+          this.exitListeners.forEach((listener) => listener(payload))
         })
       )
     }
   }
 
-  discoverDaemonSessions(): Promise<void> {
-    return discoverDegradedDaemonSessions(this.allDaemonAdapters(), this.sessionProviders)
+  async discoverDaemonSessions(): Promise<void> {
+    this.inventoriedLegacy = await discoverDegradedDaemonSessions(
+      this.allDaemonAdapters(),
+      this.legacy,
+      this.sessionProviders
+    )
   }
 
   get routesFreshSpawnsToLocalProvider(): true | undefined {
@@ -94,7 +93,8 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async probePtyLiveness(id: string): Promise<boolean | null> {
-    return await probePtyOwners(id, this.sessionProviders.get(id), this.allDaemonAdapters())
+    const routed = this.sessionProviders.get(id)
+    return await probePtyOwners(id, routed, this.allDaemonAdapters(), this.inventoriedLegacy)
   }
 
   // Why: an unknown id cannot borrow listing authority from the fresh-spawn provider.

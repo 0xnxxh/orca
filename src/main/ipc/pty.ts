@@ -736,6 +736,27 @@ function retirePersistedStablePaneOwner(
   return true
 }
 
+// Why a ladder and not one probe: cold start funnels every restored pane into
+// attach at once, and a daemon draining that stampede can miss a single 2s
+// probe deadline. That blip must not surface as a dead pane (STA-3536) — only
+// an owner that stays unverifiable across the whole ladder is an error.
+const STABLE_PANE_OWNER_PROBE_RETRY_DELAYS_MS = [250, 1000, 2000]
+
+async function probeStablePaneOwnerLiveness(
+  probe: (id: string) => Promise<boolean | null>,
+  ptyId: string
+): Promise<boolean | null> {
+  let verdict = await probe(ptyId)
+  for (const delayMs of STABLE_PANE_OWNER_PROBE_RETRY_DELAYS_MS) {
+    if (verdict === false) {
+      return verdict
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    verdict = await probe(ptyId)
+  }
+  return verdict
+}
+
 type StablePaneSpawnContext = {
   runtime: OrcaRuntimeService | undefined
   store?: Store
@@ -778,7 +799,13 @@ async function attachStablePaneOwner(
     // binding. Absence must be proven across every possible owner first; `null` (nobody
     // could answer) is not absence. Providers without a probe are their own sole owner,
     // so their refusal stays authoritative.
-    if (provider.probePtyLiveness && (await provider.probePtyLiveness(owner.ptyId)) !== false) {
+    if (
+      provider.probePtyLiveness &&
+      (await probeStablePaneOwnerLiveness(
+        provider.probePtyLiveness.bind(provider),
+        owner.ptyId
+      )) !== false
+    ) {
       throw new Error('terminal_pane_owner_unverified')
     }
     const ownerBeforeRetire = args.resolveOwner?.()

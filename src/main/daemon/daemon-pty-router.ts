@@ -17,6 +17,8 @@ export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
+  // Legacy adapters whose startup inventory listing succeeded; see probePtyOwners.
+  private inventoriedLegacy = new Set<DaemonPtyAdapter>()
   private readonly subscriptions: DaemonPtyAdapterSubscriptionFanout
 
   constructor(opts: { current: DaemonPtyAdapter; legacy: DaemonPtyAdapter[] }) {
@@ -34,6 +36,7 @@ export class DaemonPtyRouter implements IPtyProvider {
         for (const session of sessions) {
           this.sessionAdapters.set(session.id, adapter)
         }
+        this.inventoriedLegacy.add(adapter)
       } catch (error) {
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
       }
@@ -86,7 +89,12 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   async probePtyLiveness(id: string): Promise<boolean | null> {
-    return await probePtyOwners(id, this.sessionAdapters.get(id), this.allAdapters())
+    return await probePtyOwners(
+      id,
+      this.sessionAdapters.get(id),
+      this.allAdapters(),
+      this.inventoriedLegacy
+    )
   }
 
   write(id: string, data: string): void {

@@ -158,6 +158,41 @@ it('forwards dead-endpoint write-unavailable signals from the daemon adapters', 
   expect(recovered).toEqual(['daemon-pane', 'legacy-pane'])
 })
 
+// STA-3536: a wedged legacy daemon must not make every unmapped probe unprovable
+// once its inventory is captured — but the degraded current daemon stays probed,
+// because it can still own sessions the map missed.
+it('skips inventoried legacy daemons but keeps probing the current daemon', async () => {
+  const current = createDaemonAdapter('daemon')
+  const legacy = createDaemonAdapter('legacy', ['legacy-session'])
+  const provider = new DegradedDaemonPtyProvider({
+    current,
+    legacy: [legacy],
+    fallback: createProvider('fallback')
+  })
+  await provider.discoverDaemonSessions()
+  vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+
+  await expect(provider.probePtyLiveness('unknown-session')).resolves.toBe(false)
+  expect(legacy.probePtyLiveness).not.toHaveBeenCalled()
+  expect(current.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+})
+
+it('keeps consulting a legacy daemon whose inventory listing failed', async () => {
+  const current = createDaemonAdapter('daemon')
+  const legacy = createDaemonAdapter('legacy', ['legacy-session'])
+  vi.mocked(legacy.listProcesses).mockRejectedValue(new Error('wedged'))
+  vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+  const provider = new DegradedDaemonPtyProvider({
+    current,
+    legacy: [legacy],
+    fallback: createProvider('fallback')
+  })
+  await provider.discoverDaemonSessions()
+
+  await expect(provider.probePtyLiveness('unknown-session')).resolves.toBeNull()
+  expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+})
+
 it('rejects completion inspection instead of borrowing the fallback provider', async () => {
   const provider = new DegradedDaemonPtyProvider({
     current: createDaemonAdapter('daemon'),

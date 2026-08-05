@@ -2,19 +2,27 @@ import type { IPtyProvider } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { SessionNotFoundError } from './daemon-errors'
 
+/** Returns the legacy adapters whose inventory listing succeeded, so probe
+ *  fan-outs can skip them for ids their captured inventory never contained. */
 export async function discoverDegradedDaemonSessions(
   adapters: readonly DaemonPtyAdapter[],
+  legacy: readonly DaemonPtyAdapter[],
   sessionProviders: Map<string, IPtyProvider>
-): Promise<void> {
+): Promise<Set<DaemonPtyAdapter>> {
+  const inventoriedLegacy = new Set<DaemonPtyAdapter>()
   for (const adapter of adapters) {
     try {
       for (const session of await adapter.listProcesses()) {
         sessionProviders.set(session.id, adapter)
       }
+      if (legacy.includes(adapter)) {
+        inventoriedLegacy.add(adapter)
+      }
     } catch (error) {
       console.warn('[daemon] Failed to discover degraded daemon sessions', error)
     }
   }
+  return inventoriedLegacy
 }
 
 export function listProviderSessionIds(

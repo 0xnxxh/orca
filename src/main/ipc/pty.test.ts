@@ -9393,8 +9393,9 @@ describe('registerPtyHandlers', () => {
       store as never
     )
 
-    await expect(
-      handlers.get('pty:spawn')!(null, {
+    vi.useFakeTimers()
+    try {
+      const spawnPromise = handlers.get('pty:spawn')!(null, {
         cols: 80,
         rows: 24,
         cwd,
@@ -9408,8 +9409,15 @@ describe('registerPtyHandlers', () => {
           ORCA_WORKTREE_ID: worktreeId
         }
       })
-    ).rejects.toThrow('terminal_pane_owner_unverified')
+      const rejection = expect(spawnPromise).rejects.toThrow('terminal_pane_owner_unverified')
+      // Ride out the whole probe retry ladder (STA-3536) before the error surfaces.
+      await vi.advanceTimersByTimeAsync(4000)
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
 
+    expect(probePtyLiveness).toHaveBeenCalledTimes(4)
     expect(probePtyLiveness).toHaveBeenCalledWith('pty-unproven-owner')
     // The live PTY keeps its pane binding, gets no synthetic exit, and is not duplicated.
     expect(providerSpawn).toHaveBeenCalledOnce()
@@ -9546,6 +9554,129 @@ describe('registerPtyHandlers', () => {
     )
     expect(store.setWorkspaceSession).toHaveBeenCalledOnce()
     expect(store.flushOrThrow).toHaveBeenCalledOnce()
+  })
+
+  // STA-3536: one missed probe deadline (cold-start daemon draining an attach
+  // stampede) must ride the retry ladder to a verdict, not surface as an error.
+  it('retires the owner when a transient probe blip resolves to proven absence', async () => {
+    const worktreeId = 'repo-1::/tmp/probe-blip-owner'
+    const cwd = '/tmp/probe-blip-owner'
+    const tabId = 'tab-probe-blip-owner'
+    const leafId = '67676767-6767-4767-8767-676767676767'
+    const paneKey = makePaneKey(tabId, leafId)
+    const providerSpawn = vi.fn(
+      async (options: { attachOnly?: boolean; command?: string; sessionId?: string }) => {
+        if (options.attachOnly) {
+          throw new Error('Session not found: pty-probe-blip-owner')
+        }
+        return { id: 'pty-fresh-probe-blip', incarnationId: 'inc-fresh-probe-blip' }
+      }
+    )
+    const probePtyLiveness = vi
+      .fn<(id: string) => Promise<boolean | null>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(false)
+    setLocalPtyProvider({
+      spawn: providerSpawn,
+      probePtyLiveness,
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      acknowledgeDataEvent: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(async () => []),
+      attach: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    } as never)
+    let session = {
+      tabsByWorktree: {
+        [worktreeId]: [{ id: tabId, worktreeId, ptyId: 'pty-probe-blip-owner' }]
+      },
+      terminalLayoutsByTabId: {
+        [tabId]: {
+          root: { type: 'leaf' as const, leafId },
+          activeLeafId: leafId,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [leafId]: 'pty-probe-blip-owner' }
+        }
+      },
+      terminalPtyIncarnationsByPaneKey: { [paneKey]: 'inc-probe-blip-owner' }
+    }
+    const store = {
+      getWorkspaceSession: vi.fn(() => session),
+      setWorkspaceSession: vi.fn((next) => {
+        session = next
+      }),
+      flushOrThrow: vi.fn(),
+      persistPtyBinding: vi.fn(),
+      getFolderWorkspace: vi.fn(() => undefined),
+      getFolderWorkspaces: vi.fn(() => []),
+      getProjectGroups: vi.fn(() => []),
+      getRepos: vi.fn(() => [])
+    }
+    const runtime = {
+      setPtyController: vi.fn(),
+      resolveTerminalPane: vi.fn(() => {
+        throw new Error('terminal_not_found')
+      }),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term-probe-blip'),
+      preAllocateHandleForPty: vi.fn(() => 'term-probe-blip'),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      beginPtyRegistration: vi.fn(),
+      cancelPendingPtyRegistration: vi.fn(),
+      assertPtyRegistrationAllowed: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      seedHeadlessTerminal: vi.fn(),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+
+    const mounted = await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      cwd,
+      command: 'codex resume probe-blip-session',
+      worktreeId,
+      tabId,
+      leafId,
+      env: {
+        ORCA_PANE_KEY: paneKey,
+        ORCA_TAB_ID: tabId,
+        ORCA_WORKTREE_ID: worktreeId
+      }
+    })
+
+    expect(probePtyLiveness).toHaveBeenCalledTimes(2)
+    expect(mounted).toMatchObject({ id: 'pty-fresh-probe-blip' })
+    expect(providerSpawn).toHaveBeenCalledTimes(2)
+    expect(runtime.onPtyExit).toHaveBeenCalledWith(
+      'pty-probe-blip-owner',
+      0,
+      'inc-probe-blip-owner'
+    )
   })
 
   // Why: a parked pane (stopped with keepHistory) leaves the runtime holding the binding while

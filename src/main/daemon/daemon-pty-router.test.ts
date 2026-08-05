@@ -517,6 +517,42 @@ describe('DaemonPtyRouter', () => {
     await expect(router.probePtyLiveness('unknown-session')).resolves.toBeNull()
   })
 
+  // STA-3536: a superseded daemon that wedges after startup would otherwise turn
+  // every unmapped probe unprovable, erroring every restored pane.
+  it('skips an inventoried legacy daemon when probing an unmapped session', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+    vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+
+    await expect(router.probePtyLiveness('unknown-session')).resolves.toBe(false)
+    expect(legacy.probePtyLiveness).not.toHaveBeenCalled()
+  })
+
+  it('still routes probes for a discovered session to its owning legacy daemon', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+
+    await expect(router.probePtyLiveness('legacy-session')).resolves.toBe(true)
+    expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('legacy-session')
+  })
+
+  it('keeps consulting a legacy daemon whose inventory listing failed', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    vi.mocked(legacy.listProcesses).mockRejectedValue(new Error('wedged'))
+    vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+
+    // Without an inventory nothing proves the legacy daemon doesn't own this id.
+    await expect(router.probePtyLiveness('unknown-session')).resolves.toBeNull()
+    expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+  })
+
   it('hands a checkpointed pre-v30 session to the current daemon on wake', async () => {
     const current = createAdapter('current', [], undefined, HISTORY_SEED_TRANSFER_PROTOCOL_VERSION)
     const legacy = createAdapter(
