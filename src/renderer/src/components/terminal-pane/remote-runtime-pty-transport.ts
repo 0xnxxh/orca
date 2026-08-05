@@ -498,6 +498,30 @@ export function createRemoteRuntimePtyTransport(
     )
   }
 
+  // Why: pending host surfaces materialize only through activation.
+  function activateHostSessionSurface(
+    hostTabId: string,
+    worktree: string,
+    timeoutMs?: number
+  ): Promise<RuntimeMobileSessionTabsResult> {
+    return callRuntime<RuntimeMobileSessionTabsResult>(
+      'session.tabs.activate',
+      {
+        worktree,
+        tabId: hostTabId,
+        ...(leafId ? { leafId } : {}),
+        notifyClients: false,
+        navigation: 'caller'
+      },
+      timeoutMs
+    )
+  }
+
+  function isMissingHostSessionSurfaceError(error: unknown): boolean {
+    const message = runtimeTerminalErrorMessage(error)
+    return message.includes('tab_not_found') || message.includes('terminal_not_found')
+  }
+
   async function waitForHostSessionHandle(
     hostTabId: string,
     isCurrent: () => boolean
@@ -508,16 +532,9 @@ export function createRemoteRuntimePtyTransport(
     const worktree = toRuntimeWorktreeSelector(worktreeId)
     let activated: RuntimeMobileSessionTabsResult
     try {
-      activated = await callRuntime<RuntimeMobileSessionTabsResult>('session.tabs.activate', {
-        worktree,
-        tabId: hostTabId,
-        ...(leafId ? { leafId } : {}),
-        notifyClients: false,
-        navigation: 'caller'
-      })
+      activated = await activateHostSessionSurface(hostTabId, worktree)
     } catch (error) {
-      const message = runtimeTerminalErrorMessage(error)
-      if (message.includes('tab_not_found') || message.includes('terminal_not_found')) {
+      if (isMissingHostSessionSurfaceError(error)) {
         return null
       }
       throw error
@@ -634,9 +651,10 @@ export function createRemoteRuntimePtyTransport(
     const worktree = toRuntimeWorktreeSelector(worktreeId)
     const startedAt = Date.now()
     let pollMs = HOST_SESSION_ATTACH_POLL_MS
-    let lastListError: unknown = null
+    // Why: list-only polling cannot recreate a host PTY lost across desktop generations.
+    let nextRequest: 'activate' | 'list' = 'activate'
+    let lastRequestError: unknown = null
     let lastReadyHandle: string | null = null
-    let sawSuccessfulInventory = false
     const finishBoundedWait = (): HostSessionHandleWaitResult => {
       const effectivePolicy = stricterReplacementPolicy(
         replacementPolicy,
@@ -645,16 +663,14 @@ export function createRemoteRuntimePtyTransport(
       if (effectivePolicy === 'prefer-replacement' && lastReadyHandle) {
         return { handle: lastReadyHandle, inventoryFailed: false }
       }
-      if (lastListError) {
+      if (lastRequestError) {
         console.warn(
-          sawSuccessfulInventory
-            ? '[remote-runtime-pty] final host session inventory poll failed during reconnect:'
-            : '[remote-runtime-pty] host session inventory unavailable during reconnect:',
-          runtimeTerminalErrorMessage(lastListError)
+          '[remote-runtime-pty] host session recovery request failed during reconnect:',
+          runtimeTerminalErrorMessage(lastRequestError)
         )
       }
       // Why: a bounded wait without removal evidence is unknown liveness; keep the pane for a later snapshot to reattach.
-      return { handle: undefined, inventoryFailed: lastListError !== null }
+      return { handle: undefined, inventoryFailed: lastRequestError !== null }
     }
     while (
       !destroyed &&
@@ -666,21 +682,24 @@ export function createRemoteRuntimePtyTransport(
       if (requestRemainingMs <= 0) {
         return finishBoundedWait()
       }
+      const request = nextRequest
       try {
-        const listed = await listRemoteRuntimeSessionTabsDeduped({
-          environmentId: currentRuntimeEnvironmentId,
-          worktreeId,
-          load: () =>
-            callRuntime<RuntimeMobileSessionTabsResult>(
-              'session.tabs.list',
-              {
-                worktree
-              },
-              requestRemainingMs
-            )
-        })
-        lastListError = null
-        sawSuccessfulInventory = true
+        const listed =
+          request === 'list'
+            ? await listRemoteRuntimeSessionTabsDeduped({
+                environmentId: currentRuntimeEnvironmentId,
+                worktreeId,
+                load: () =>
+                  callRuntime<RuntimeMobileSessionTabsResult>(
+                    'session.tabs.list',
+                    {
+                      worktree
+                    },
+                    requestRemainingMs
+                  )
+              })
+            : await activateHostSessionSurface(hostTabId, worktree, requestRemainingMs)
+        lastRequestError = null
         const nextHandle = findReadyHostSessionHandle(listed, hostTabId)
         if (nextHandle) {
           lastReadyHandle = nextHandle
@@ -692,12 +711,25 @@ export function createRemoteRuntimePtyTransport(
         if (nextHandle && (effectivePolicy === 'reuse' || nextHandle !== previousHandle)) {
           return { handle: nextHandle, inventoryFailed: false }
         }
-        if (!hasHostSessionTerminalSurface(listed, hostTabId)) {
-          return { handle: null, inventoryFailed: false }
+        if (request === 'list') {
+          if (!hasHostSessionTerminalSurface(listed, hostTabId)) {
+            return { handle: null, inventoryFailed: false }
+          }
+          if (!nextHandle) {
+            // Why: the surface is published but unmaterialized, and only activation can mint its PTY.
+            nextRequest = 'activate'
+          }
+        } else {
+          // Why: an activation response can race host publication, so inventory — not this snapshot — decides what exists.
+          nextRequest = 'list'
         }
       } catch (error) {
         // Why: the inventory can race the reconnect that invalidated the handle; unknown liveness must not retire the pane.
-        lastListError = error
+        lastRequestError = error
+        if (request === 'activate') {
+          // Why: no activation failure is absence proof, whether the surface is missing or the host predates the method.
+          nextRequest = 'list'
+        }
       }
       const remainingMs = HOST_SESSION_ATTACH_TIMEOUT_MS - (Date.now() - startedAt)
       if (remainingMs <= 0) {
