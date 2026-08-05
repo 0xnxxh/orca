@@ -155,6 +155,18 @@ describe('redactor — .env-shape line', () => {
     expect(out).not.toContain('hunter2')
     expect(out).not.toContain('db.local')
   })
+  // `^`-anchoring alone published a spliced-in env dump — the shape a failing
+  // spawn puts in its message, where the pairs are mid-line rather than leading one.
+  it('redacts pairs spliced into the middle of a line', () => {
+    const out = redactString('spawn ssh failed: USER=alice LOGNAME=alice SSH_AUTH_SOCK=/tmp/x')
+    expect(out).toContain('USER=[redacted:env-value]')
+    expect(out).toContain('LOGNAME=[redacted:env-value]')
+    expect(out).not.toContain('alice')
+    expect(out).toContain('spawn ssh failed:')
+  })
+  it('leaves prose that merely contains an equals sign alone', () => {
+    expect(redactString('exit code = 1')).toBe('exit code = 1')
+  })
 })
 
 describe('redactor — attribute-key blocklist', () => {

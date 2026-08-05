@@ -2931,8 +2931,7 @@
             "diagnosticsDisabled": "Diagnostics are disabled on this device.",
             "diagnosticsCopied": "Diagnostics copied",
             "diagnosticsCopyFailed": "Failed to copy diagnostics",
-            "copyDiagnosticsLabel": "Copy diagnostics",
-            "diagnosticsUnavailableOnWeb": "Copying diagnostics is unavailable on web."
+            "copyDiagnosticsLabel": "Copy diagnostics"
           },
           "TerminalRemoteRuntimeReconnectBanner": {
             "retryingTitle": "Reconnecting to remote runtime",

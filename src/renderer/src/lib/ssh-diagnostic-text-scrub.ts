@@ -203,7 +203,11 @@ function namesCodeNotAHost(match: string, offset: number, text: string): boolean
 
 // Non-ASCII is in the class so an IDN host does not pass whole.
 const HOST_CHARS = String.raw`A-Za-z0-9\u0080-\uFFFF`
-const HOST_LABEL = String.raw`[${HOST_CHARS}](?:[${HOST_CHARS}._-]{0,253}[${HOST_CHARS}])?`
+// `\` is in the INTERIOR class only, so a Windows `DOMAIN\account` collapses as a
+// single span. Without it the placeholder stopped at the backslash and published
+// the account name \u2014 redacting the domain, i.e. exactly the wrong half. Paths are
+// already placeholders by the time these run, so no `\` here can eat one.
+const HOST_LABEL = String.raw`[${HOST_CHARS}](?:[${HOST_CHARS}._\\-]{0,253}[${HOST_CHARS}])?`
 // OpenSSH quotes the host as often as it does not.
 const QUOTED_OR_BARE = String.raw`(?:'[^'\n]{0,255}'|"[^"\n]{0,255}"|${HOST_LABEL})`
 // Words that follow a carrier phrase in OpenSSH prose and name no host —
@@ -255,9 +259,13 @@ const HOST_IN_PROSE: readonly (readonly [RegExp, string])[] = [
   ],
   // OpenSSH verbose: `Authenticated to bastion ([10.0.0.1]:22) using "publickey".`
   // and `Connecting to bastion [10.0.0.1] port 22.` — single-label hosts with no
-  // `host`/`hostname` carrier word.
+  // `host`/`hostname` carrier word. `Authenticating` shares the carrier: it is the
+  // `debug1:` form and names the account too (handled by the `as` rule below).
   [
-    new RegExp(String.raw`\b(Authenticated to[ \t]+)(?!${NOT_A_HOST})${QUOTED_OR_BARE}`, 'gi'),
+    new RegExp(
+      String.raw`\b(Authenticat(?:ed|ing) to[ \t]+)(?!${NOT_A_HOST})${QUOTED_OR_BARE}`,
+      'gi'
+    ),
     `$1${HOST_PLACEHOLDER}`
   ],
   [
@@ -276,17 +284,20 @@ const HOST_IN_PROSE: readonly (readonly [RegExp, string])[] = [
   ],
   // sshd / OpenSSH account carriers — §7 drops usernames as well as hosts.
   // `Connection closed by authenticating user root 10.0.0.5 port 22`
-  // `Invalid user alice from 10.0.0.1 port 22`
-  // `Disconnected from user alice 10.0.0.1 port 22`
-  // `Failed password for alice from …` / `Accepted publickey for alice from …`
+  // `Invalid user alice …` / `Permission denied for user alice`
   [
-    new RegExp(String.raw`\b((?:invalid|authenticating) user[ \t]+)${QUOTED_OR_BARE}`, 'gi'),
+    new RegExp(String.raw`\b((?:invalid|authenticating|for) user[ \t]+)${QUOTED_OR_BARE}`, 'gi'),
     '$1<user>'
   ],
   [new RegExp(String.raw`\b(Disconnected from user[ \t]+)${QUOTED_OR_BARE}`, 'gi'), '$1<user>'],
+  // One alternation over every `… for <account>` sentence. Enumerating only
+  // `Failed password`/`Accepted <method>` republished the account in the rest —
+  // `Too many authentication failures for <user>` among them, which is the
+  // agent-offers-too-many-keys failure and reaches `state.error` verbatim through
+  // the system-ssh stderr splice (ssh-connection.ts:941).
   [
     new RegExp(
-      String.raw`\b((?:Failed password|Accepted (?:publickey|password|keyboard-interactive)) for[ \t]+)${QUOTED_OR_BARE}`,
+      String.raw`\b((?:(?:Failed|Accepted) (?:publickey|password|keyboard-interactive|hostbased|none)|Too many authentication failures) for[ \t]+)${QUOTED_OR_BARE}`,
       'gi'
     ),
     '$1<user>'
@@ -296,6 +307,13 @@ const HOST_IN_PROSE: readonly (readonly [RegExp, string])[] = [
   [
     new RegExp(String.raw`\b(host[ \t]+)(?!${NOT_A_HOST})${QUOTED_OR_BARE}`, 'gi'),
     `$1${HOST_PLACEHOLDER}`
+  ],
+  // `debug1: Authenticating to bastion:22 as 'alice'`. Last, and anchored on the
+  // placeholder a host rule above just wrote, so a bare `as` in ordinary prose is
+  // untouched — `as` alone is far too common to carry a rule.
+  [
+    new RegExp(String.raw`(${HOST_PLACEHOLDER}(?::\d{1,5})?[ \t]+as[ \t]+)${QUOTED_OR_BARE}`, 'g'),
+    '$1<user>'
   ]
 ]
 
@@ -354,6 +372,37 @@ function sliceAvoidingLoneSurrogate(text: string, maxChars: number): string {
   return text.slice(0, end)
 }
 
+// Mirror of `sliceAvoidingLoneSurrogate` for a tail cut: a low surrogate first is
+// the same lone-`\udc00` defect from the other end.
+function sliceTailAvoidingLoneSurrogate(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text
+  }
+  let start = text.length - maxChars
+  const firstCode = text.charCodeAt(start)
+  if (firstCode >= 0xdc_00 && firstCode <= 0xdf_ff) {
+    start += 1
+  }
+  return text.slice(start)
+}
+
+const ELLIPSIS_LINE = '\n…\n'
+
+/**
+ * Bound `text` keeping BOTH ends. A head-only cut strands the head of a key: the
+ * PEM rule is anchored on `-----END`, so an over-long stderr whose preamble pushes
+ * the terminator past the bound leaves the whole block unredacted. Keeping a tail
+ * means the anchor survives whatever the preamble costs. Surrogate-safe at both cuts.
+ */
+export function boundPreservingEnds(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text
+  }
+  const budget = maxChars - ELLIPSIS_LINE.length
+  const head = Math.ceil(budget * 0.75)
+  return `${sliceAvoidingLoneSurrogate(text, head)}${ELLIPSIS_LINE}${sliceTailAvoidingLoneSurrogate(text, budget - head)}`
+}
+
 function truncateFreeText(text: string): string {
   if (text.length <= MAX_FREE_TEXT_CHARS) {
     return text
@@ -371,7 +420,7 @@ function truncateFreeText(text: string): string {
  * the same one the timeline applies at record time.
  */
 export function scrubDiagnosticText(input: string): string {
-  const bounded = sliceAvoidingLoneSurrogate(input, MAX_SCRUB_INPUT_CHARS)
+  const bounded = boundPreservingEnds(input, MAX_SCRUB_INPUT_CHARS)
   return truncateFreeText(redactSshIdentifiers(redactString(bounded)))
 }
 

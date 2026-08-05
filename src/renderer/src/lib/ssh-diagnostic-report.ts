@@ -45,7 +45,8 @@ export type SshDiagnosticReport = {
     targetRemoved: boolean
     runtimeOwned: boolean
   }
-  timeline: SshStatusTimelineEntry[]
+  /** `errorCategory` is classified from the RAW entry error, same as `live`. */
+  timeline: (SshStatusTimelineEntry & { errorCategory: SshErrorCategory | null })[]
   sectionErrors: Record<string, string>
 }
 
@@ -86,6 +87,11 @@ function readLiveState(targetId: string, environmentId: string | null): SshConne
 
 // Why guard past the declared type: these states cross IPC, so a malformed
 // payload must degrade to null rather than put junk on the clipboard.
+//
+// DISPLAY-ONLY cast: membership in the union is NOT checked, so an off-union
+// string reaches the field typed as if it were on it. Every consumer today
+// string-interpolates it (`formatSshDiagnosticReport`). Do not `switch` on these
+// without adding a real membership test first.
 function stringOrNull<T extends string>(value: unknown): T | null {
   return typeof value === 'string' ? (value as T) : null
 }
@@ -142,7 +148,12 @@ export function buildSshDiagnosticReport(input: {
     () => {
       const state = readLiveState(input.targetId, input.environmentId)
       if (!state) {
-        return emptyLive(input.targetRemoved, runtimeOwned, 'disconnected')
+        // Only the LOCAL lookup defaults to `disconnected`. For a runtime-owned
+        // target `selectRuntimeAwareSshStatus` returns null — unreachable
+        // environment, un-hydrated bucket, or no entry — and the overlay renders
+        // nothing at all, so claiming `disconnected` here would assert a verdict
+        // the UI never made.
+        return emptyLive(input.targetRemoved, runtimeOwned, runtimeOwned ? null : 'disconnected')
       }
       return {
         status: stringOrNull<SshConnectionStatus>(state.status),
@@ -163,7 +174,7 @@ export function buildSshDiagnosticReport(input: {
     // A throwing store is not a `disconnected` target: leave the status unknown.
     emptyLive(input.targetRemoved, runtimeOwned, null)
   )
-  const timeline = section<SshStatusTimelineEntry[]>(
+  const timeline = section<SshDiagnosticReport['timeline']>(
     sectionErrors,
     'timeline',
     () =>
@@ -172,6 +183,8 @@ export function buildSshDiagnosticReport(input: {
       // retained history and make a second capture disagree with the first.
       snapshotSshStatusTimeline(input.targetId, input.environmentId).map((entry) => ({
         ...entry,
+        // Classified before the scrub, for the same reason `live` is.
+        errorCategory: classifySshErrorCategory(entry.error),
         error: typeof entry.error === 'string' ? scrubDiagnosticText(entry.error) : null
       })),
     []
@@ -216,13 +229,25 @@ function describeOptional(value: string | boolean | null): string {
   return value === null ? 'unknown' : String(value)
 }
 
-function describeLastError(live: SshDiagnosticReport['live']): string {
-  if (live.error === null) {
+/**
+ * Falls back to the newest timeline entry carrying an error. Without it the one
+ * capture that most needs a header — a removed target, whose store entry
+ * `clearRemovedSshTargetState` has already deleted, and which the timeline's own
+ * docstring calls a state users capture from — printed `Last error: none` above a
+ * JSON block holding the real failure.
+ */
+function describeLastError(report: SshDiagnosticReport): string {
+  const live = report.live
+  const fromTimeline =
+    live.error === null ? report.timeline.findLast((e) => e.error !== null) : null
+  const error = live.error ?? fromTimeline?.error ?? null
+  if (error === null) {
     return 'Last error: none'
   }
+  const category = (live.error === null ? fromTimeline?.errorCategory : live.errorCategory) ?? null
   // First line only — the JSON block below keeps the whole value, and a
   // multi-line OpenSSH stderr here would break the rest of the header off.
-  return `Last error [${live.errorCategory ?? 'unclassified'}]: ${firstLine(live.error)}`
+  return `Last error [${category ?? 'unclassified'}]${fromTimeline ? ' (from timeline)' : ''}: ${firstLine(error)}`
 }
 
 /**
@@ -241,7 +266,7 @@ export function formatSshDiagnosticReport(report: SshDiagnosticReport): string {
     `Remote platform: ${describeOptional(report.live.remotePlatform)} · Folder download: ${describeOptional(report.live.supportsFolderDownload)}`,
     `Target removed: ${report.live.targetRemoved} · Runtime-owned: ${report.live.runtimeOwned}`,
     `Timeline: ${report.timeline.length} ${report.timeline.length === 1 ? 'entry' : 'entries'}${describeTimelineSpan(report.timeline)}`,
-    describeLastError(report.live),
+    describeLastError(report),
     `Section errors: ${failed.length === 0 ? 'none' : failed.join(', ')}`
   ].join('\n')
   return `${header}\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`

@@ -614,6 +614,40 @@ const UNQUOTED_IDENTIFIERS = [
   'nas'
 ]
 
+// §7 promises usernames are dropped, and this payload is written to be pasted into
+// a public tracker. Two whole shapes used to survive it: the Windows `DOMAIN\user`
+// account form, and every `for <user>` sentence outside the four that were listed.
+describe('scrubDiagnosticText account names', () => {
+  it.each([
+    // The domain used to absorb the placeholder, republishing the account after it.
+    [String.raw`Connection closed by authenticating user CONTOSO\alice 10.0.0.5 port 22`],
+    [String.raw`Invalid user CONTOSO\alice from 10.0.0.1 port 22`],
+    [String.raw`Failed password for CONTOSO\alice from 10.0.0.1 port 22`],
+    [String.raw`Disconnected from user CONTOSO\alice 10.0.0.1 port 22`],
+    // The agent-offers-too-many-keys failure — the commonest of the lot.
+    ['Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures for alice'],
+    ['Failed publickey for alice from 10.0.0.5 port 22'],
+    ['Failed keyboard-interactive for alice from 10.0.0.5 port 22'],
+    ['Accepted hostbased for alice from 10.0.0.5 port 22'],
+    ['ssh: Permission denied for user alice'],
+    [`debug1: Authenticating to bastion:22 as 'alice'`]
+  ])('publishes no account name from %j', (raw) => {
+    const scrubbed = scrubDiagnosticText(raw)
+
+    expect(scrubbed).not.toContain('alice')
+    expect(scrubbed).not.toContain('CONTOSO')
+    expect(scrubbed).toContain('<user>')
+  })
+
+  it('leaves the surrounding diagnosis legible', () => {
+    expect(
+      scrubDiagnosticText(
+        'Received disconnect from 10.0.0.5 port 22:2: Too many authentication failures for alice'
+      )
+    ).toBe('Received disconnect from <ip> port 22:2: Too many authentication failures for <user>')
+  })
+})
+
 describe('buildSshDiagnosticReport privacy', () => {
   it('drops every identifier the error text carries, in live and in the timeline', () => {
     const state = makeState({ status: 'error', error: IDENTIFYING_ERROR, connectionGeneration: 4 })

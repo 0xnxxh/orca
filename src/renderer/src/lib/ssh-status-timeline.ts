@@ -3,16 +3,23 @@ import {
   type PtyDeliveryBreadcrumbRing
 } from '../../../shared/pty-delivery-diagnostics'
 import type { SshConnectionState } from '../../../shared/ssh-types'
+import { boundPreservingEnds } from './ssh-diagnostic-text-scrub'
 
 // A paired-runtime user routinely holds a local ring per configured target plus
 // one per target on every environment, so 16 was under a single realistic
-// session. The ceiling this buys is RING_CAPACITY * RAW_ERROR_CHARS per target,
-// and only if every entry carries a distinct maximal error.
-export const MAX_TARGETS = 48
+// session. 48 was too, in the other direction: the cap is GLOBAL, so a
+// wake-from-sleep that flaps 60 targets at once shed the 12 oldest — and the
+// oldest is the pane whose overlay surfaced first, i.e. the one the user clicks.
+// Scope fairness (`evictForNewRing`) only answers a flood concentrated in one
+// scope; breadth needed headroom. RAW_ERROR_CHARS pays for it so the product
+// stays near the previous ceiling: 128 * 100 * 2048 ≈ 26MB worst case, and only
+// if every entry of every ring carries a distinct maximal error.
+export const MAX_TARGETS = 128
 const RING_CAPACITY = 100
-// Record-time cap only. Capture redacts BEFORE truncating to 512 (§7): a key
-// blob sliced here would lose the `-----END` the PEM rule anchors on.
-const RAW_ERROR_CHARS = 4096
+// Record-time cap only; capture redacts BEFORE truncating to 512 (§7). Bounded
+// through `boundPreservingEnds`, so a key blob keeps the `-----END` the PEM rule
+// anchors on even when the cut lands mid-block.
+const RAW_ERROR_CHARS = 2048
 
 export type SshStatusTimelineOrigin =
   | 'push'
@@ -20,6 +27,10 @@ export type SshStatusTimelineOrigin =
   | 'reconciliation'
   | 'runtime-push'
   | 'runtime-hydration'
+  // A state the RENDERER fabricated (optimistic connect, rollback) rather than one
+  // main emitted. Named so a report whose headline status came from one does not
+  // read as a backend verdict — these carry no providerEpoch or generation.
+  | 'renderer-optimistic'
 
 export type SshStatusTimelineEntry = {
   atMs: number
@@ -66,6 +77,16 @@ function timelineKey(targetId: string, environmentId?: string | null): string {
 // pin the unbounded pre-clamp stderr the state arrived with.
 function flattenString(text: string): string {
   return text.split('').join('')
+}
+
+// Only a bound that actually cut can pin a parent, and only then is the flatten
+// (~19µs at the cap, ~95x the rest of this function) worth paying — an error
+// already inside the cap is stored as-is, which is the overwhelmingly common case.
+function boundedError(error: string): string {
+  if (error.length <= RAW_ERROR_CHARS) {
+    return error
+  }
+  return flattenString(boundPreservingEnds(error, RAW_ERROR_CHARS))
 }
 
 // Why read defensively past the type: these states cross IPC, and §8.1 requires
@@ -164,23 +185,23 @@ export function recordSshStateArrival(
     const now = Date.now()
     const key = foldKey(state)
     const last = lastRecorded.get(timelineId)
+    if (last?.key === key) {
+      // A hydration that re-reads the state the timeline already ends with is a
+      // poll, not an arrival — the forced hydration a push triggers re-reads that
+      // same push, and folding it in reports one arrival as a flap. Checked before
+      // `detail` is built so a discarded re-read pays nothing for it.
+      if (origin === 'initial-hydration' || origin === 'runtime-hydration') {
+        return
+      }
+    }
     const detail = {
       attempt: attemptOf(state),
       // Capped, not classified — capture scrubs then truncates (§7).
-      error:
-        typeof state.error === 'string'
-          ? flattenString(state.error.slice(0, RAW_ERROR_CHARS))
-          : null,
+      error: typeof state.error === 'string' ? boundedError(state.error) : null,
       generation: generationOf(state),
       origin
     }
     if (last?.key === key) {
-      // A hydration that re-reads the state the timeline already ends with is a
-      // poll, not an arrival — the forced hydration a push triggers re-reads that
-      // same push, and folding it in reports one arrival as a flap.
-      if (origin === 'initial-hydration' || origin === 'runtime-hydration') {
-        return
-      }
       // Fold a repeat of the same (status, attempt, generation) at any spacing,
       // preserving the run's START time — the ring stamps its own coalescing
       // with the LAST. Clamped: a backwards system clock would store a negative run.

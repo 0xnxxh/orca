@@ -1,25 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import { formatSshDiagnosticReport, type SshDiagnosticReport } from './ssh-diagnostic-report'
-import type { SshStatusTimelineEntry } from './ssh-status-timeline'
 
-const CONNECTED_ENTRY: SshStatusTimelineEntry = {
+type TimelineEntry = SshDiagnosticReport['timeline'][number]
+
+const CONNECTED_ENTRY: TimelineEntry = {
   atMs: 1_000,
   status: 'connected',
   attempt: 0,
   repeats: 1,
   runMs: null,
   error: null,
+  errorCategory: null,
   generation: 12,
   origin: 'push'
 }
 
-const RECONNECTING_ENTRY: SshStatusTimelineEntry = {
+const RECONNECTING_ENTRY: TimelineEntry = {
   atMs: 104_000,
   status: 'reconnecting',
   attempt: 3,
   repeats: 4,
   runMs: 9_000,
   error: 'Relay channel lost. Reconnecting...',
+  errorCategory: 'relay',
   generation: 12,
   origin: 'push'
 }
@@ -110,6 +113,34 @@ describe('formatSshDiagnosticReport', () => {
       'Last error: none',
       'Section errors: live, timeline, captureId, capturedAt, clientPlatform'
     ])
+  })
+
+  // The removed-target overlay is a state users capture from, and by then
+  // `clearRemovedSshTargetState` has deleted the store entry — so a live-only
+  // header printed "Last error: none" directly above the real failure in the JSON.
+  it('falls back to the newest timeline error when live state is gone', () => {
+    const ghost: SshDiagnosticReport = {
+      ...HEALTHY,
+      live: { ...HEALTHY.live, error: null, errorCategory: null, liveStatePresent: false },
+      timeline: [
+        { ...RECONNECTING_ENTRY, error: 'earlier failure', errorCategory: 'reset' },
+        { ...RECONNECTING_ENTRY, error: 'Permission denied (publickey).', errorCategory: 'auth' }
+      ]
+    }
+
+    expect(headerOf(ghost)[8]).toBe(
+      'Last error [auth] (from timeline): Permission denied (publickey).'
+    )
+  })
+
+  it('still reports none when neither live nor the timeline carries an error', () => {
+    const quiet: SshDiagnosticReport = {
+      ...HEALTHY,
+      live: { ...HEALTHY.live, error: null, errorCategory: null },
+      timeline: [CONNECTED_ENTRY]
+    }
+
+    expect(headerOf(quiet)[8]).toBe('Last error: none')
   })
 
   it('agrees with the overlay when the store held no live state', () => {

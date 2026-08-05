@@ -46,12 +46,19 @@ const CATEGORY_FRAGMENTS: { category: SshErrorCategory; fragments: string[] }[] 
   },
   {
     category: 'auth',
+    // NOT a bare `permission denied`: the product's own `isAuthError`
+    // (ssh-connection-utils.ts) deliberately requires the method suffix, because a
+    // remote `EACCES`/`mkdir`/relay-install denial is a filesystem fault, not a
+    // credential one — and it is classified `error`, not `auth-failed`, upstream.
+    // Bare `publickey` is gone for the same reason: it appears in the benign
+    // `Authentications that can continue: publickey,password` line of an error
+    // whose actual cause is on a later line.
     fragments: [
-      'permission denied',
+      'permission denied, please try again',
+      'permission denied (',
       'authentication failed',
       'all configured authentication methods failed',
-      'too many authentication failures',
-      'publickey'
+      'too many authentication failures'
     ]
   },
   { category: 'refused', fragments: ['econnrefused', 'connection refused'] },
@@ -84,20 +91,49 @@ const CATEGORY_FRAGMENTS: { category: SshErrorCategory; fragments: string[] }[] 
       'ssh_exchange_identification'
     ]
   },
-  { category: 'key-file', fragments: ['bad permissions', 'load key', 'no such file'] },
+  // `no such file` is gone: it is generic (`ENOENT … open '/tmp/orca-relay.tgz'`)
+  // while the bucket is specific, so it pointed relay-packaging faults at the
+  // user's key material. `are too open` / `unprotected` is what OpenSSH actually
+  // prints for a bad key mode — the bucket was missing its likeliest input.
+  {
+    category: 'key-file',
+    fragments: [
+      'bad permissions',
+      'are too open',
+      'unprotected private key',
+      'load key',
+      'key_load_public'
+    ]
+  },
   { category: 'relay', fragments: ['relay'] }
 ]
+
+// The whole message is often an aggregate — `ssh-connection.ts:941` splices entire
+// system-ssh stderr into one string — so first-match-wins over the aggregate returns
+// whichever bucket sits highest in the table, not the failure that actually ended the
+// connect. Scanning last line first makes the terminal cause win; the whole string is
+// still the fallback so single-line and wrapped messages are unaffected.
+function categoryOfLine(line: string): SshErrorCategory | null {
+  const message = line.toLowerCase()
+  for (const { category, fragments } of CATEGORY_FRAGMENTS) {
+    if (fragments.some((fragment) => message.includes(fragment))) {
+      return category
+    }
+  }
+  return null
+}
 
 /** Classify from the RAW error, before scrubbing — redaction must not move the bucket. */
 export function classifySshErrorCategory(error: unknown): SshErrorCategory | null {
   if (typeof error !== 'string' || error.length === 0) {
     return null
   }
-  const message = error.toLowerCase()
-  for (const { category, fragments } of CATEGORY_FRAGMENTS) {
-    if (fragments.some((fragment) => message.includes(fragment))) {
+  const lines = error.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const category = categoryOfLine(lines[index] ?? '')
+    if (category) {
       return category
     }
   }
-  return 'other'
+  return categoryOfLine(error) ?? 'other'
 }

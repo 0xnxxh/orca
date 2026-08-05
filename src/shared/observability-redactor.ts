@@ -37,6 +37,8 @@ const URL_USERINFO = /(https?:\/\/)([^/@\s]+)@/g
 
 // Per-line .env shape. `m` anchors `^` in multi-line strings; `\S.*` redacts the whole value (so `FOO=Bearer <jwt>` can't leak its tail), leading `\S` skips empty `FOO=`.
 const ENV_LINE = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*\S.*/gm
+// The same shape spliced INTO a line rather than starting one — `spawn ssh failed: USER=alice LOGNAME=alice …`. `^`-anchoring alone published those. Value stops at whitespace here: mid-line, the rest of the line is prose, not the value. A leading capture rather than a lookbehind: this module is renderer-reachable since the move to `src/shared`, and lookbehind is the one regex feature older mobile Safari lacks.
+const ENV_INLINE = /(^|\s)([A-Z_][A-Z0-9_]*)=(\S+)/g
 
 // Attribute keys dropped regardless of value. Matched case-insensitively since HTTP headers vary in case.
 const CLIENT_ATTR_BLOCKLIST = new Set([
@@ -108,6 +110,12 @@ export function redactString(input: string): string {
 
   // Rule 4 — .env-shape line: keep key, redact value. Last so rule 1 wins over a coincidentally .env-shaped substring.
   out = out.replace(ENV_LINE, (_match, key) => `${String(key)}=[redacted:env-value]`)
+
+  // Rule 5 — the same pair spliced mid-line. After rule 4 so a line-leading pair takes the whole-value form.
+  out = out.replace(
+    ENV_INLINE,
+    (_match, lead, key) => `${String(lead)}${String(key)}=[redacted:env-value]`
+  )
 
   return out
 }

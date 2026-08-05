@@ -183,7 +183,10 @@ export function applyRuntimeEnvironmentSshStateChanged(
     return
   }
   // Why: above the hydrated-bucket branch so an unknown target's history survives the
-  // removal race (§5.2); below the guards so the timeline only holds states the overlay can show.
+  // removal race (§5.2) — which does mean a state the overlay never showed can be
+  // recorded here. That is the deliberate side of the trade; it is bounded to this
+  // environment's own eviction scope, and losing the history of a target racing its
+  // own removal is the worse failure.
   recordSshStateArrival(targetId, admittedState, 'runtime-push', environmentId)
   const store = useAppStore.getState()
   const bucket = store.sshStateByEnvironment.get(environmentId)

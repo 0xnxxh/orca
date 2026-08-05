@@ -465,6 +465,53 @@ describe('TerminalSshReconnectOverlay', () => {
     expect(diagnostics.writeClipboardText).not.toHaveBeenCalled()
   })
 
+  // The clipboard lives in main, so a wedged main hangs the WRITE too. Bounding
+  // only the consent read in front of it left the same inert button one step later.
+  it('reports a copy failure when the clipboard write never settles', async () => {
+    const diagnostics = installSshConnect(
+      vi.fn(),
+      {},
+      { writeClipboardText: vi.fn().mockReturnValue(new Promise(() => {})) }
+    )
+    vi.useFakeTimers()
+
+    renderOverlay(
+      <TerminalSshReconnectOverlay targetId="ssh-target-1" targetLabel="devbox" status="error" />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(diagnostics.writeClipboardText).toHaveBeenCalledTimes(1)
+    expect(toastMocks.error).toHaveBeenCalledWith('Failed to copy diagnostics')
+    expect(toastMocks.success).not.toHaveBeenCalled()
+  })
+
+  // Impatient repeat clicks are expected precisely because the main process is
+  // wedged; each used to arm its own round-trips and stack a toast per click.
+  it('ignores repeat clicks while a copy is already in flight', async () => {
+    const diagnostics = installSshConnect(
+      vi.fn(),
+      {},
+      { writeClipboardText: vi.fn().mockReturnValue(new Promise(() => {})) }
+    )
+    vi.useFakeTimers()
+
+    renderOverlay(
+      <TerminalSshReconnectOverlay targetId="ssh-target-1" targetLabel="devbox" status="error" />
+    )
+
+    const button = screen.getByRole('button', { name: 'Copy diagnostics' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    fireEvent.click(button)
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(diagnostics.getDiagnosticsStatus).toHaveBeenCalledTimes(1)
+    expect(diagnostics.writeClipboardText).toHaveBeenCalledTimes(1)
+    expect(toastMocks.error).toHaveBeenCalledTimes(1)
+  })
+
   // Why each posture, not just the explicit opt-out: `ci` is resolved before
   // ORCA_DIAGNOSTICS_DISABLED and returns a single reason, and the web stub
   // reports no reason at all — matching one reason string lets both copy.
@@ -542,24 +589,14 @@ describe('TerminalSshReconnectOverlay', () => {
   // Why: the overlay is in the web bundle with no web guard, and the web stub
   // cannot reach the serving host's consent — so the copy is blocked there and
   // the toast has to say that rather than blame a device setting.
-  it('names the web client when consent cannot be resolved from the serving host', async () => {
+  // The web stub hardcodes consent off for every browser client, so the control
+  // could only ever produce its own failure toast. Not rendering it beats
+  // rendering a button whose single reachable outcome is an error.
+  it('does not offer the copy control at all on a web client', () => {
     const webWindow = globalThis as { __ORCA_WEB_CLIENT__?: boolean }
     webWindow.__ORCA_WEB_CLIENT__ = true
     try {
-      const diagnostics = installSshConnect(
-        vi.fn(),
-        {},
-        {
-          // The shape web-preload-api.ts resolves: off, with no reason.
-          getDiagnosticsStatus: vi.fn().mockResolvedValue({
-            localFileEnabled: false,
-            bundleEnabled: false,
-            traceFilePath: '',
-            traceFamilySize: 0
-          })
-        }
-      )
-      const user = userEvent.setup()
+      installSshConnect(vi.fn())
 
       renderOverlay(
         <TerminalSshReconnectOverlay
@@ -569,12 +606,7 @@ describe('TerminalSshReconnectOverlay', () => {
         />
       )
 
-      await user.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
-
-      await waitFor(() =>
-        expect(toastMocks.error).toHaveBeenCalledWith('Copying diagnostics is unavailable on web.')
-      )
-      expect(diagnostics.writeClipboardText).not.toHaveBeenCalled()
+      expect(screen.queryByRole('button', { name: 'Copy diagnostics' })).toBeNull()
     } finally {
       delete webWindow.__ORCA_WEB_CLIENT__
     }

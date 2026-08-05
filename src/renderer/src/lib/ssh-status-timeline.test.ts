@@ -134,14 +134,30 @@ describe('ssh status timeline', () => {
     expect(entries[0].runMs).toBe(6_000)
   })
 
-  it('caps a raw error at 4096 chars when recording', () => {
+  it('caps a raw error at 2048 chars when recording', () => {
     timeline.recordSshStateArrival(
       'target-1',
       sshState({ status: 'error', error: 'x'.repeat(5_000) }),
       'push'
     )
 
-    expect(timeline.snapshotSshStatusTimeline('target-1')[0].error).toBe('x'.repeat(4_096))
+    expect(timeline.snapshotSshStatusTimeline('target-1')[0].error).toHaveLength(2_048)
+  })
+
+  // Head-only truncation strands the head of a key: the PEM rule is anchored on
+  // `-----END`, so a preamble long enough to push the terminator past the cap
+  // would leave the whole block for the capture-side scrub to miss.
+  it('keeps both ends of an over-long error so the PEM terminator survives', () => {
+    const key = `-----BEGIN OPENSSH PRIVATE KEY-----\n${'k'.repeat(400)}\n-----END OPENSSH PRIVATE KEY-----`
+    timeline.recordSshStateArrival(
+      'target-1',
+      sshState({ status: 'error', error: `${'preamble '.repeat(400)}${key}` }),
+      'push'
+    )
+
+    const recorded = timeline.snapshotSshStatusTimeline('target-1')[0].error ?? ''
+    expect(recorded).toContain('-----END OPENSSH PRIVATE KEY-----')
+    expect(recorded.length).toBeLessThanOrEqual(2_048)
   })
 
   // The cap above bounds the reported LENGTH either way: `.slice()` hands back a
@@ -264,6 +280,24 @@ describe('ssh status timeline', () => {
         timeline.snapshotSshStatusTimeline(`env-target-${i}`, 'env-1')
       ).map((entries) => entries.length)
     ).toEqual([1, 1, 1, 1, 1, 1, 1, 1])
+  })
+
+  // Scope fairness answers a flood concentrated in ONE scope; a wake-from-sleep
+  // is the other shape — every configured target flaps once, at once. The cap
+  // used to sit below a realistic target count, so the oldest rings shed and the
+  // pane whose overlay surfaced first (the one the user clicks) captured nothing.
+  it('keeps every ring through a simultaneous flap of a realistic target count', () => {
+    const arrival = sshState({ status: 'reconnecting', reconnectAttempt: 1 })
+    const WAKE_TARGETS = 60
+
+    for (let i = 0; i < WAKE_TARGETS; i++) {
+      vi.advanceTimersByTime(10)
+      timeline.recordSshStateArrival(`local-${i}`, arrival, 'push')
+    }
+
+    expect(WAKE_TARGETS).toBeLessThanOrEqual(timeline.MAX_TARGETS)
+    expect(timeline.snapshotSshStatusTimeline('local-0')).toHaveLength(1)
+    expect(timeline.snapshotSshStatusTimeline('local-11')).toHaveLength(1)
   })
 
   // Copy-diagnostics is a read, and a read that leaves its own ring at the head

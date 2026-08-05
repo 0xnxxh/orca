@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { Copy, Loader2, Server, ServerOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -6,7 +6,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { useAppStore } from '@/store'
 import type { SshConnectionStatus } from '../../../../shared/ssh-types'
-import type { DiagnosticsStatusPayload } from '../../../../preload/api-types'
 import { assertClipboardTextWriteWithinLimit } from '../../../../shared/clipboard-text'
 import { translate } from '@/i18n/i18n'
 import { buildSshDiagnosticReport, formatSshDiagnosticReport } from '@/lib/ssh-diagnostic-report'
@@ -46,21 +45,21 @@ function isWebClient(): boolean {
 }
 
 // Why: report assembly is synchronous precisely because a wedged main process is
-// the state it exists for, and this consent read is the one round-trip in front
-// of it — unbounded, it leaves the button inert with no toast at all.
+// the state it exists for. EVERY round-trip in front of it must be bounded — the
+// consent read and the clipboard write alike. Bounding only the first left the
+// second able to hang forever, which is the inert-button-with-no-toast failure
+// this timeout exists to remove.
 const DIAGNOSTICS_CONSENT_TIMEOUT_MS = 3_000
+const CLIPBOARD_WRITE_TIMEOUT_MS = 3_000
 
-// Rejects rather than resolving "off": the disabled branch would blame a setting
-// the user never touched, so a stalled read belongs in the copy-failed toast.
-function readDiagnosticsConsent(): Promise<DiagnosticsStatusPayload> {
+// Rejects rather than resolving a default: a stalled main process belongs in the
+// copy-failed toast, not in a branch that blames a setting the user never touched.
+function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('Timed out reading diagnostics consent')),
-      DIAGNOSTICS_CONSENT_TIMEOUT_MS
-    )
+    timer = setTimeout(() => reject(new Error(`Timed out ${label}`)), ms)
   })
-  return Promise.race([window.api.diagnostics.getStatus(), timeout]).finally(() => {
+  return Promise.race([work, timeout]).finally(() => {
     clearTimeout(timer)
   })
 }
@@ -111,6 +110,7 @@ export function TerminalSshReconnectOverlay({
   sshOwnerEnvironmentId = null
 }: TerminalSshReconnectOverlayProps): React.JSX.Element {
   const mountedRef = useMountedRef()
+  const copyInFlightRef = useRef(false)
   const setSshConnectionState = useAppStore((store) => store.setSshConnectionState)
   // Why: shared registry, not local state — the sidebar card control can dial the same
   // target, and the store status lags a click by one IPC hop.
@@ -172,10 +172,21 @@ export function TerminalSshReconnectOverlay({
   }, [setSshConnectionState, sshOwnerEnvironmentId, status, targetId])
 
   const handleCopyDiagnostics = useCallback(async () => {
+    // Why a guard and not a disabled button: a wedged main process is the state
+    // this exists for, so impatient repeat clicks are expected — each one used to
+    // arm its own pair of round-trips and stack a toast per click.
+    if (copyInFlightRef.current) {
+      return
+    }
+    copyInFlightRef.current = true
     try {
       // Why: consent gates the copy, not the button — resolving it before the
       // click would pop the button in after first paint and resize the row (§7).
-      const diagnosticsStatus = await readDiagnosticsConsent()
+      const diagnosticsStatus = await withTimeout(
+        window.api.diagnostics.getStatus(),
+        DIAGNOSTICS_CONSENT_TIMEOUT_MS,
+        'reading diagnostics consent'
+      )
       // Why the flag and not one reason string: `ci` is resolved first and masks
       // an explicit ORCA_DIAGNOSTICS_DISABLED, and the web stub omits the reason
       // entirely. `localFileEnabled` is what every other diagnostics-egress
@@ -184,15 +195,10 @@ export function TerminalSshReconnectOverlay({
       if (!diagnosticsStatus?.localFileEnabled) {
         if (mountedRef.current) {
           toast.error(
-            isWebClient()
-              ? translate(
-                  'auto.components.terminal.pane.TerminalSshReconnectOverlay.diagnosticsUnavailableOnWeb',
-                  'Copying diagnostics is unavailable on web.'
-                )
-              : translate(
-                  'auto.components.terminal.pane.TerminalSshReconnectOverlay.diagnosticsDisabled',
-                  'Diagnostics are disabled on this device.'
-                )
+            translate(
+              'auto.components.terminal.pane.TerminalSshReconnectOverlay.diagnosticsDisabled',
+              'Diagnostics are disabled on this device.'
+            )
           )
         }
         return
@@ -201,16 +207,24 @@ export function TerminalSshReconnectOverlay({
       // Why assert rather than shed entries: the 512-char capture cap bounds the
       // report at ~2% of the clipboard limit, so a throw here means a new
       // unbounded field — surfacing it beats pasting a silently trimmed report.
-      await window.api.ui.writeClipboardText(
-        assertClipboardTextWriteWithinLimit(
-          formatSshDiagnosticReport(
-            buildSshDiagnosticReport({
-              targetId,
-              targetRemoved,
-              environmentId: sshOwnerEnvironmentId ?? null
-            })
+      // Bounded like the consent read: the clipboard lives in main, so a wedged
+      // main hangs this call, and an unbounded hang here is a button that never
+      // answers. It still cannot SUCCEED against a dead main — nothing can — but
+      // it fails loudly instead of silently.
+      await withTimeout(
+        window.api.ui.writeClipboardText(
+          assertClipboardTextWriteWithinLimit(
+            formatSshDiagnosticReport(
+              buildSshDiagnosticReport({
+                targetId,
+                targetRemoved,
+                environmentId: sshOwnerEnvironmentId ?? null
+              })
+            )
           )
-        )
+        ),
+        CLIPBOARD_WRITE_TIMEOUT_MS,
+        'writing to the clipboard'
       )
       if (mountedRef.current) {
         toast.success(
@@ -229,8 +243,10 @@ export function TerminalSshReconnectOverlay({
           )
         )
       }
+    } finally {
+      copyInFlightRef.current = false
     }
-  }, [mountedRef, sshOwnerEnvironmentId, targetId, targetRemoved])
+  }, [copyInFlightRef, mountedRef, sshOwnerEnvironmentId, targetId, targetRemoved])
 
   // Why: z-40 clears pane-local chrome (focus rim z-30); bg-card is fully opaque so terminal text cannot paint through.
   return (
@@ -278,29 +294,31 @@ export function TerminalSshReconnectOverlay({
               : messageForStatus(status, targetLabel)}
           </div>
         </div>
-        {/* Recessive and mounted in every state: this overlay paints on every wake-from-sleep, so an eye-catching button would read as an alarm (§6.1). */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void handleCopyDiagnostics()}
-              aria-label={translate(
+        {/* Recessive and mounted in every state: this overlay paints on every wake-from-sleep, so an eye-catching button would read as an alarm (§6.1). Hidden on web, where the stub reports consent off for every client, so the control could only ever produce its own failure toast. */}
+        {isWebClient() ? null : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void handleCopyDiagnostics()}
+                aria-label={translate(
+                  'auto.components.terminal.pane.TerminalSshReconnectOverlay.copyDiagnosticsLabel',
+                  'Copy diagnostics'
+                )}
+              >
+                <Copy className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              {translate(
                 'auto.components.terminal.pane.TerminalSshReconnectOverlay.copyDiagnosticsLabel',
                 'Copy diagnostics'
               )}
-            >
-              <Copy className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top" sideOffset={4}>
-            {translate(
-              'auto.components.terminal.pane.TerminalSshReconnectOverlay.copyDiagnosticsLabel',
-              'Copy diagnostics'
-            )}
-          </TooltipContent>
-        </Tooltip>
+            </TooltipContent>
+          </Tooltip>
+        )}
         {targetRemoved ? (
           <Button
             className="shrink-0"
