@@ -124,6 +124,7 @@ import type {
   BrowserCertificateProceedResult,
   BrowserLoadError,
   BrowserSessionProfile,
+  BrowserSessionProfileCreateOptions,
   BrowserSessionProfileScope,
   BrowserSessionProfileSource,
   BrowserViewportOverride,
@@ -329,7 +330,10 @@ import type {
   UpdatePullRequestBySlugArgs,
   UpdateProjectItemFieldArgs
 } from '../shared/github-project-types'
-import type { RichMarkdownContextMenuCommandPayload } from '../shared/rich-markdown-context-menu'
+import type {
+  RichMarkdownContextMenuCommandPayload,
+  RichMarkdownContextMenuTableTarget
+} from '../shared/rich-markdown-context-menu'
 import type {
   BrowserSetGrabModeArgs,
   BrowserSetGrabModeResult,
@@ -617,10 +621,12 @@ export type BrowserApi = {
     callback: (args: { browserPageId: string; key: 'c' | 's' }) => void
   ) => () => void
   sessionListProfiles: () => Promise<BrowserSessionProfile[]>
-  sessionCreateProfile: (args: {
-    scope: BrowserSessionProfileScope
-    label: string
-  }) => Promise<BrowserSessionProfile | null>
+  sessionCreateProfile: (
+    args: {
+      scope: BrowserSessionProfileScope
+      label: string
+    } & BrowserSessionProfileCreateOptions
+  ) => Promise<BrowserSessionProfile | null>
   sessionDeleteProfile: (args: { profileId: string }) => Promise<boolean>
   sessionImportCookies: (args: { profileId: string }) => Promise<BrowserCookieImportResult>
   sessionResolvePartition: (args: { profileId: string | null }) => Promise<string | null>
@@ -2895,6 +2901,14 @@ export type PreloadApi = {
       requestToken?: string
     }) => Promise<GitStatusResult>
     cancelStatus: (args: { requestToken: string }) => Promise<void>
+    setStatusUpstreamRefWatch: (args: {
+      worktreeId: string
+      worktreePath: string
+      executionHostId: string
+      connectionId?: string
+      branch?: string
+      upstreamName?: string
+    }) => Promise<void>
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string
@@ -3298,6 +3312,7 @@ export type PreloadApi = {
     setZoomLevel: (level: number) => void
     syncTrafficLights: (zoomFactor: number) => void
     setMarkdownEditorFocused: (focused: boolean) => void
+    setRichMarkdownContextMenuTarget: (target: RichMarkdownContextMenuTableTarget | null) => void
     setTerminalInputFocused: (focused: boolean) => void
     setFloatingFocus: (state: { panelFocused: boolean; terminalFocused: boolean }) => void
     setShortcutRecorderFocused: (focused: boolean) => void
