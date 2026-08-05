@@ -25,17 +25,17 @@ const RECOVERABLE_MESSAGE_FRAGMENTS = [
 ]
 
 export function isRuntimeRpcQueueOverloadError(error: RemoteRuntimeClientErrorLike): boolean {
-  return (
-    error.code === RUNTIME_RPC_QUEUE_OVERLOAD_CODE ||
-    error.message.toLowerCase().includes(RUNTIME_RPC_QUEUE_OVERLOAD_MESSAGE_FRAGMENT)
-  )
+  if (error.code) {
+    return error.code === RUNTIME_RPC_QUEUE_OVERLOAD_CODE
+  }
+  return error.message.toLowerCase().includes(RUNTIME_RPC_QUEUE_OVERLOAD_MESSAGE_FRAGMENT)
 }
 
 export function isRecoverableRemoteRuntimeConnectionError(
   error: RemoteRuntimeClientErrorLike
 ): boolean {
-  if (error.code && RECOVERABLE_CODES.has(error.code)) {
-    return true
+  if (error.code) {
+    return RECOVERABLE_CODES.has(error.code)
   }
   const message = error.message.toLowerCase()
   return RECOVERABLE_MESSAGE_FRAGMENTS.some((fragment) => message.includes(fragment))
