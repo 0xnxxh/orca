@@ -569,6 +569,8 @@
     "noWorktrees": "Sin árboles de trabajo",
     "noWorktreesMatch": "Ningún árbol de trabajo coincide con los filtros",
     "noMatching": "No hay árboles de trabajo coincidentes",
+    "catalogErrorTitle": "No se pudieron cargar los espacios de trabajo de este host",
+    "catalogErrorDetail": "worktree.ps falló ({{catalogError}}); se reintentará automáticamente",
     "searchWorktreesAccessibility": "Buscar árboles de trabajo",
     "searchWorktrees": "Buscar árboles de trabajo…",
     "recent": "Reciente",
@@ -1022,7 +1024,8 @@
     "waiting": "Esperando el escritorio...",
     "unableOpen": "No se puede abrir la diferencia",
     "unableLoad": "No se puede cargar la diferencia comprometida",
-    "binary": "Vista previa de diferencias de rama binaria no disponible en dispositivos móviles"
+    "binary": "Vista previa de diferencias de rama binaria no disponible en dispositivos móviles",
+    "tabNotReady": "El archivo se abrió, pero su pestaña aún no está lista. Inténtalo de nuevo."
   },
   "useMobileSourceControlRunners": {
     "source": "Error en la acción de control de código fuente"
@@ -1402,10 +1405,44 @@
     "floating": "Espacio de trabajo flotante"
   },
   "githubPrRpc": {
-    "request": "Solicitud fallida: {{requestMethod}}"
+    "request": "Solicitud fallida: {{requestMethod}}",
+    "invalidPullRequestResponse": "GitHub devolvió una respuesta de solicitud de extracción no válida."
   },
   "mobileNativeChatStreamFrame": {
     "transcript": "Error en la secuencia de transcripción"
+  },
+  "mobileNativeChatSessionOptions": {
+    "model": "Modelo",
+    "effort": "Esfuerzo",
+    "fastMode": "Modo rápido",
+    "thinking": "Razonamiento",
+    "options": "Opciones",
+    "notSet": "Sin configurar",
+    "closePicker": "Cerrar selector",
+    "backToModels": "Volver a los modelos",
+    "selectModel": "Seleccionar modelo",
+    "selectOption": "Seleccionar {{optionLabel}}",
+    "modelAccessibleName": "Modelo, {{modelLabel}}",
+    "chooseInAgentPicker": "Elegir en el selector del agente…",
+    "toggleOption": "Alternar {{optionLabel}}",
+    "valueUnknown": "Valor actual desconocido — elige Activado o Desactivado",
+    "sentNotConfirmed": "Enviado al agente — sin confirmar",
+    "setWhenSessionStarts": "Configúralo al iniciar la sesión.",
+    "availableAfterSessionStarts": "Disponible después de iniciar la sesión.",
+    "optionValue": {
+      "fast": "Rápido",
+      "minimal": "Mínimo",
+      "low": "Bajo",
+      "medium": "Medio",
+      "high": "Alto",
+      "xhigh": "Muy alto",
+      "max": "Máximo",
+      "on": "Activado",
+      "off": "Desactivado"
+    }
+  },
+  "mobileTerminalViewportResubscribe": {
+    "fitFailed": "No se pudo ajustar el terminal a esta pantalla"
   },
   "mobileNativeChatToggleAction": {
     "switchChat": "Cambiar a vista de chat",
@@ -1429,6 +1466,7 @@
   },
   "useMobileNativeChatAnswerSend": {
     "answerNotSent": "Respuesta no enviada",
+    "answerNotSentCheckChat": "Respuesta no enviada; compruebe el chat antes de volver a intentarlo",
     "answerUnconfirmed": "Respuesta no confirmada: revisa el chat antes de volver a intentarlo",
     "answerPartly": "Respuesta parcialmente enviada: revisa el chat antes de volver a intentarlo.",
     "answerNotSentDisconnected": "Respuesta no enviada (desconectada)"
@@ -1521,6 +1559,10 @@
   "hostProtocolGate": {
     "checking": "Comprobando la compatibilidad del host",
     "use": "useHostProtocolGates debe usarse dentro de <HostProtocolGate>"
+  },
+  "hostRouteNotice": {
+    "dismiss": "Descartar aviso",
+    "worktreeMissing": "Ese espacio de trabajo ya no existe en este host."
   },
   "mobileDictationSetupSheet": {
     "download": "Descargar",
@@ -1638,7 +1680,10 @@
   "mobileHostCard": {
     "update": "Actualice Orca de escritorio e inicie sesión para conectarse desde cualquier lugar",
     "worktreeCountWorktree": "{{worktreeCount}} árbol de trabajo",
-    "active": "{{activeWorktreeCount}} activo"
+    "worktreeCountWorktrees": "{{worktreeCount}} árboles de trabajo",
+    "active": "{{activeWorktreeCount}} activo",
+    "worktreeListUnavailable": "Lista de árboles de trabajo no disponible",
+    "lastKnown": "Último dato conocido: {{worktreeSummary}}"
   },
   "mobileHtmlPreview": {
     "view": "Ver fuente HTML",

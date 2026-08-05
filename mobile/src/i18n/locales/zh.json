@@ -582,6 +582,8 @@
     "noWorktrees": "没有工作树",
     "noWorktreesMatch": "没有工作树匹配过滤器",
     "noMatching": "没有匹配的工作树",
+    "catalogErrorTitle": "无法从此主机加载工作区",
+    "catalogErrorDetail": "worktree.ps 失败（{{catalogError}}）— 正在自动重试",
     "searchWorktreesAccessibility": "搜索工作树",
     "searchWorktrees": "搜索工作树...",
     "host": "主机",
@@ -1041,7 +1043,8 @@
     "waiting": "等待桌面...",
     "unableOpen": "无法打开差异",
     "unableLoad": "无法加载提交的差异",
-    "binary": "二进制分支差异预览在移动设备上不可用"
+    "binary": "二进制分支差异预览在移动设备上不可用",
+    "tabNotReady": "文件已打开，但其标签页尚未就绪。请重试。"
   },
   "useMobileSourceControlRunners": {
     "source": "源代码控制操作失败"
@@ -1434,10 +1437,44 @@
     "floating": "浮动工作区"
   },
   "githubPrRpc": {
-    "request": "请求失败：{{requestMethod}}"
+    "request": "请求失败：{{requestMethod}}",
+    "invalidPullRequestResponse": "GitHub 返回了无效的拉取请求响应。"
   },
   "mobileNativeChatStreamFrame": {
     "transcript": "转录流失败"
+  },
+  "mobileNativeChatSessionOptions": {
+    "model": "模型",
+    "effort": "推理强度",
+    "fastMode": "快速模式",
+    "thinking": "思考",
+    "options": "选项",
+    "notSet": "未设置",
+    "closePicker": "关闭选择器",
+    "backToModels": "返回模型列表",
+    "selectModel": "选择模型",
+    "selectOption": "选择{{optionLabel}}",
+    "modelAccessibleName": "模型，{{modelLabel}}",
+    "chooseInAgentPicker": "在代理选择器中选择…",
+    "toggleOption": "切换{{optionLabel}}",
+    "valueUnknown": "当前值未知 — 请选择开或关",
+    "sentNotConfirmed": "已发送给代理 — 尚未确认",
+    "setWhenSessionStarts": "请在会话开始时设置。",
+    "availableAfterSessionStarts": "会话开始后可用。",
+    "optionValue": {
+      "fast": "快速",
+      "minimal": "最小",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "极高",
+      "max": "最大",
+      "on": "开",
+      "off": "关"
+    }
+  },
+  "mobileTerminalViewportResubscribe": {
+    "fitFailed": "无法使终端适应此屏幕"
   },
   "mobileNativeChatToggleAction": {
     "switchChat": "切换到聊天视图",
@@ -1461,6 +1498,7 @@
   },
   "useMobileNativeChatAnswerSend": {
     "answerNotSent": "答复未发送",
+    "answerNotSentCheckChat": "回答未发送——重试前请检查聊天",
     "answerUnconfirmed": "回答未确认 — 在重试之前检查聊天记录",
     "answerPartly": "答复已部分发送 — 在重试之前检查聊天记录",
     "answerNotSentDisconnected": "答复未发送（已断开连接）"
@@ -1553,6 +1591,10 @@
   "hostProtocolGate": {
     "checking": "检查主机兼容性",
     "use": "useHostProtocolGates 必须在 <HostProtocolGate> 内部使用"
+  },
+  "hostRouteNotice": {
+    "dismiss": "关闭通知",
+    "worktreeMissing": "该工作区已不存在于此主机上。"
   },
   "mobileDictationSetupSheet": {
     "download": "下载",
@@ -1671,7 +1713,9 @@
     "update": "更新桌面 Orca 并登录以从任何地方进行连接",
     "worktreeCountWorktree": "{{worktreeCount}} 工作树",
     "worktreeCountWorktrees": "{{worktreeCount}} 个工作树",
-    "active": "{{activeWorktreeCount}} 活跃"
+    "active": "{{activeWorktreeCount}} 活跃",
+    "worktreeListUnavailable": "工作树列表不可用",
+    "lastKnown": "上次确认：{{worktreeSummary}}"
   },
   "mobileHtmlPreview": {
     "view": "查看 HTML 源代码",

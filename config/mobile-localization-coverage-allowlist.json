@@ -33,5 +33,26 @@
     "text": "MB",
     "dynamic": true,
     "count": 1
+  },
+  {
+    "filePath": "mobile/src/host-route-notice.ts",
+    "kind": "user-visible-return",
+    "text": "/h/",
+    "dynamic": true,
+    "count": 1
+  },
+  {
+    "filePath": "mobile/src/host-route-notice.ts",
+    "kind": "user-visible-return",
+    "text": "?notice=",
+    "dynamic": true,
+    "count": 1
+  },
+  {
+    "filePath": "mobile/src/transport/mobile-relay-recovery-log.ts",
+    "kind": "object-property:message",
+    "text": "Relay:",
+    "dynamic": true,
+    "count": 1
   }
 ]

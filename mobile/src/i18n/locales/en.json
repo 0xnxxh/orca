@@ -598,6 +598,8 @@
     "noWorktrees": "No worktrees",
     "noWorktreesMatch": "No worktrees match filters",
     "noMatching": "No matching worktrees",
+    "catalogErrorTitle": "Could not load workspaces from this host",
+    "catalogErrorDetail": "worktree.ps failed ({{catalogError}}) — retrying automatically",
     "searchWorktreesAccessibility": "Search worktrees",
     "searchWorktrees": "Search worktrees…",
     "host": "Host",
@@ -1129,7 +1131,8 @@
     "waiting": "Waiting for desktop...",
     "unableOpen": "Unable to open diff",
     "unableLoad": "Unable to load committed diff",
-    "binary": "Binary branch diff preview unavailable on mobile"
+    "binary": "Binary branch diff preview unavailable on mobile",
+    "tabNotReady": "The file opened, but its tab isn't ready yet. Try again."
   },
   "useMobileSourceControlRunners": {
     "source": "Source control action failed"
@@ -1531,7 +1534,8 @@
     "floating": "Floating Workspace"
   },
   "githubPrRpc": {
-    "request": "Request failed: {{requestMethod}}"
+    "request": "Request failed: {{requestMethod}}",
+    "invalidPullRequestResponse": "GitHub returned an invalid pull request response."
   },
   "mobileDiffReviewRpc": {
     "terminal": "Terminal"
@@ -1539,12 +1543,45 @@
   "mobileNativeChatStreamFrame": {
     "transcript": "Transcript stream failed"
   },
+  "mobileNativeChatSessionOptions": {
+    "model": "Model",
+    "effort": "Effort",
+    "fastMode": "Fast mode",
+    "thinking": "Thinking",
+    "options": "Options",
+    "notSet": "Not set",
+    "closePicker": "Close picker",
+    "backToModels": "Back to models",
+    "selectModel": "Select model",
+    "selectOption": "Select {{optionLabel}}",
+    "modelAccessibleName": "Model, {{modelLabel}}",
+    "chooseInAgentPicker": "Choose in agent picker…",
+    "toggleOption": "Toggle {{optionLabel}}",
+    "valueUnknown": "Current value unknown — pick On or Off",
+    "sentNotConfirmed": "Sent to the agent — not confirmed",
+    "setWhenSessionStarts": "Set when the session starts.",
+    "availableAfterSessionStarts": "Available after the session starts.",
+    "optionValue": {
+      "fast": "Fast",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high",
+      "max": "Max",
+      "on": "On",
+      "off": "Off"
+    }
+  },
   "mobileNativeChatToggleAction": {
     "switchChat": "Switch to chat view",
     "switchTerminal": "Switch to terminal view"
   },
   "mobileTerminalRecords": {
     "terminal": "Terminal"
+  },
+  "mobileTerminalViewportResubscribe": {
+    "fitFailed": "Couldn't fit the terminal to this screen"
   },
   "mobileNativeChatPermissionSend": {
     "responseNotSent": "Response not sent",
@@ -1564,6 +1601,7 @@
   },
   "useMobileNativeChatAnswerSend": {
     "answerNotSent": "Answer not sent",
+    "answerNotSentCheckChat": "Answer not sent — check chat before retrying",
     "answerUnconfirmed": "Answer unconfirmed — check chat before retrying",
     "answerPartly": "Answer partly sent — check chat before retrying",
     "answerNotSentDisconnected": "Answer not sent (disconnected)"
@@ -1656,6 +1694,10 @@
   "hostProtocolGate": {
     "checking": "Checking host compatibility",
     "use": "useHostProtocolGates must be used inside <HostProtocolGate>"
+  },
+  "hostRouteNotice": {
+    "dismiss": "Dismiss notice",
+    "worktreeMissing": "That workspace no longer exists on this host."
   },
   "mobileDictationSetupSheet": {
     "download": "Download",
@@ -1776,7 +1818,9 @@
     "update": "Update desktop Orca and sign in to connect from anywhere",
     "worktreeCountWorktree": "{{worktreeCount}} worktree",
     "worktreeCountWorktrees": "{{worktreeCount}} worktrees",
-    "active": "{{activeWorktreeCount}} active"
+    "active": "{{activeWorktreeCount}} active",
+    "worktreeListUnavailable": "Worktree list unavailable",
+    "lastKnown": "Last known: {{worktreeSummary}}"
   },
   "mobileHtmlPreview": {
     "source": "Source",

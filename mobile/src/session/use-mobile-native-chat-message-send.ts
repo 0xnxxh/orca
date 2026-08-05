@@ -7,6 +7,11 @@ import {
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
+import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite
+} from './mobile-native-chat-terminal-write-lock'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
 import { t } from '@/i18n/mobile-i18n'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
@@ -26,6 +31,9 @@ export type MobileNativeChatMessageSend = {
   ) => Promise<MobileNativeChatSendOutcome>
   /** Answer to an agent question — never touches the composer draft. */
   answerQuestion: (text: string) => Promise<boolean>
+  /** Session-option command dispatch (e.g. `/model sonnet`) — never touches the
+   *  composer draft; callers need the outcome to track dispatched state. */
+  dispatchCommand: (text: string) => Promise<MobileNativeChatSendOutcome>
 }
 
 /** The native-chat send seam: one write path shared by composer sends, image
@@ -35,6 +43,11 @@ export function useMobileNativeChatMessageSend(args: {
   enabled: boolean
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
+  /** Active tab's agent — classification is per-agent (command catalogs differ). */
+  agentRef: MutableRefObject<string | null>
+  /** Captured when a control send starts so a later tab switch cannot record its
+   *  session-option effects against the newly active tab. */
+  commandSendRef: MutableRefObject<(command: string) => void>
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
    *  at send time so the pre-clear can be sized to every line it occupies. */
@@ -54,6 +67,8 @@ export function useMobileNativeChatMessageSend(args: {
     enabled,
     handleRef,
     deviceTokenRef,
+    agentRef,
+    commandSendRef,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -68,10 +83,13 @@ export function useMobileNativeChatMessageSend(args: {
       text: string,
       images: string[] | undefined,
       syncComposer: boolean,
+      recordControlSend: boolean,
       sharedDeadline?: number
     ): Promise<MobileNativeChatSendOutcome> => {
       const handle = handleRef.current
       const origin = captureSendOrigin(text)
+      const agent = agentRef.current
+      const recordCommand = commandSendRef.current
       // Why: the lease collapses one render after `connState`, so a question-card
       // answer (which reaches this send directly) would otherwise burn the whole
       // 15s heal+send budget waiting on a socket that is already gone.
@@ -162,12 +180,19 @@ export function useMobileNativeChatMessageSend(args: {
           ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
           : {})
       })
+      // Why (desktop parity): a slash/skill send dispatches into the agent's own
+      // TUI, not the conversation — the transcript never echoes it as a user
+      // turn, so an optimistic bubble would sit at "Queued" forever and the
+      // unconfirmed hold could never observe a landing.
+      const classification = classifyMobileNativeChatSend(agent, text)
       if (outcome === 'unknown') {
-        // Why: an ack-lost send usually WAS delivered (issue seen on cellular
-        // relay) — verify via the transcript echo instead of a false "not sent".
-        holdUnconfirmedSend(origin, text, () =>
-          onSendError(t('useMobileNativeChatMessageSend.delivery'))
-        )
+        if (classification === 'chat') {
+          // Why: an ack-lost send usually WAS delivered (issue seen on cellular
+          // relay) — verify via the transcript echo instead of a false "not sent".
+          holdUnconfirmedSend(origin, text, () =>
+            onSendError(t('useMobileNativeChatMessageSend.delivery'))
+          )
+        }
         return 'unknown'
       }
       if (outcome === 'rejected') {
@@ -177,16 +202,24 @@ export function useMobileNativeChatMessageSend(args: {
         onSendError(t('useMobileNativeChatMessageSend.messageNotSent'))
         return 'rejected'
       }
-      // `images` are local preview URIs for the optimistic echo only — the actual
-      // image bytes already rode along as a bracketed paste before this text send.
-      acceptSend(origin, text, images)
+      if (classification === 'chat') {
+        // `images` are local preview URIs for the optimistic echo only — the actual
+        // image bytes already rode along as a bracketed paste before this text send.
+        acceptSend(origin, text, images)
+      } else if (recordControlSend) {
+        // The session-option catalog can recognize controls omitted from the
+        // autocomplete catalog (for example Claude `/model` and `/fast`).
+        recordCommand(text.trim())
+      }
       return 'accepted'
     },
     [
       acceptSend,
+      agentRef,
       captureSendOrigin,
       clearDraftForSend,
       client,
+      commandSendRef,
       deviceTokenRef,
       enabled,
       handleRef,
@@ -199,7 +232,7 @@ export function useMobileNativeChatMessageSend(args: {
 
   const sendWithOutcome = useCallback(
     (text: string, images?: string[], deadline?: number) =>
-      sendMessage(text, images, true, deadline),
+      sendMessage(text, images, true, true, deadline),
     [sendMessage]
   )
 
@@ -211,12 +244,47 @@ export function useMobileNativeChatMessageSend(args: {
     [sendWithOutcome]
   )
 
-  // A question answer is not composer text, so it never syncs the draft.
+  // A question answer is not composer text, so it never syncs the draft. It
+  // reaches this send directly (not through the image hook's locked path), so
+  // it takes the per-terminal write lock itself: an answer landing mid-flight
+  // in an image paste sequence would interleave bytes into the PTY.
   const answerQuestion = useCallback(
-    async (text: string): Promise<boolean> =>
-      (await sendMessage(text, undefined, false)) !== 'rejected',
-    [sendMessage]
+    async (text: string): Promise<boolean> => {
+      const terminal = handleRef.current
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        onSendError(t('useMobileNativeChatAnswerSend.answerNotSent'))
+        return false
+      }
+      try {
+        return (await sendMessage(text, undefined, false, true)) !== 'rejected'
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [handleRef, onSendError, sendMessage]
   )
 
-  return { send, sendWithOutcome, answerQuestion }
+  // A session-option apply writes to the same input line as a send, and the host
+  // spaces a send's body and its Enter ~500ms apart — so without this lock an
+  // apply lands between them and is submitted as part of the user's prompt.
+  const dispatchCommand = useCallback(
+    async (text: string): Promise<MobileNativeChatSendOutcome> => {
+      const terminal = handleRef.current
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        return 'rejected'
+      }
+      try {
+        return await sendMessage(text, undefined, false, false)
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [handleRef, sendMessage]
+  )
+
+  return { send, sendWithOutcome, answerQuestion, dispatchCommand }
 }

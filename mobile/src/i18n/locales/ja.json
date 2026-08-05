@@ -582,6 +582,8 @@
     "noWorktrees": "ワークツリーなし",
     "noWorktreesMatch": "フィルターに一致するワークツリーはありません",
     "noMatching": "一致するワークツリーがありません",
+    "catalogErrorTitle": "このホストからワークスペースを読み込めませんでした",
+    "catalogErrorDetail": "worktree.ps が失敗しました ({{catalogError}}) — 自動的に再試行します",
     "searchWorktreesAccessibility": "ワークツリーの検索",
     "searchWorktrees": "ワークツリーを検索…",
     "host": "ホスト",
@@ -1041,7 +1043,8 @@
     "waiting": "デスクトップを待っています...",
     "unableOpen": "差分を開けません",
     "unableLoad": "コミットされた差分をロードできません",
-    "binary": "バイナリ ブランチの差分プレビューはモバイルでは利用できません"
+    "binary": "バイナリ ブランチの差分プレビューはモバイルでは利用できません",
+    "tabNotReady": "ファイルは開きましたが、タブの準備がまだできていません。もう一度お試しください。"
   },
   "useMobileSourceControlRunners": {
     "source": "ソース管理操作が失敗しました"
@@ -1434,10 +1437,44 @@
     "floating": "フローティングワークスペース"
   },
   "githubPrRpc": {
-    "request": "リクエストが失敗しました: {{requestMethod}}"
+    "request": "リクエストが失敗しました: {{requestMethod}}",
+    "invalidPullRequestResponse": "GitHub から無効なプルリクエスト応答が返されました。"
   },
   "mobileNativeChatStreamFrame": {
     "transcript": "トランスクリプトストリームが失敗しました"
+  },
+  "mobileNativeChatSessionOptions": {
+    "model": "モデル",
+    "effort": "推論レベル",
+    "fastMode": "高速モード",
+    "thinking": "思考",
+    "options": "オプション",
+    "notSet": "未設定",
+    "closePicker": "選択画面を閉じる",
+    "backToModels": "モデルに戻る",
+    "selectModel": "モデルを選択",
+    "selectOption": "{{optionLabel}}を選択",
+    "modelAccessibleName": "モデル、{{modelLabel}}",
+    "chooseInAgentPicker": "エージェントの選択画面で選ぶ…",
+    "toggleOption": "{{optionLabel}}を切り替える",
+    "valueUnknown": "現在の値が不明です — オンまたはオフを選んでください",
+    "sentNotConfirmed": "エージェントに送信済み — 未確認",
+    "setWhenSessionStarts": "セッション開始時に設定してください。",
+    "availableAfterSessionStarts": "セッション開始後に利用できます。",
+    "optionValue": {
+      "fast": "高速",
+      "minimal": "最小",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "最高",
+      "max": "最大",
+      "on": "オン",
+      "off": "オフ"
+    }
+  },
+  "mobileTerminalViewportResubscribe": {
+    "fitFailed": "ターミナルをこの画面に合わせられませんでした"
   },
   "mobileNativeChatToggleAction": {
     "switchChat": "チャットビューに切り替える",
@@ -1461,6 +1498,7 @@
   },
   "useMobileNativeChatAnswerSend": {
     "answerNotSent": "回答は送信されませんでした",
+    "answerNotSentCheckChat": "回答は送信されませんでした。再試行する前にチャットを確認してください",
     "answerUnconfirmed": "回答は未確認です — 再試行する前にチャットを確認してください",
     "answerPartly": "回答が部分的に送信されました - 再試行する前にチャットを確認してください",
     "answerNotSentDisconnected": "回答が送信されませんでした (切断されました)"
@@ -1553,6 +1591,10 @@
   "hostProtocolGate": {
     "checking": "ホストの互換性を確認する",
     "use": "useHostProtocolGate は <HostProtocolGate> 内で使用する必要があります"
+  },
+  "hostRouteNotice": {
+    "dismiss": "通知を閉じる",
+    "worktreeMissing": "そのワークスペースはこのホストに存在しません。"
   },
   "mobileDictationSetupSheet": {
     "download": "ダウンロード",
@@ -1670,7 +1712,9 @@
     "update": "デスクトップ Orca を更新し、どこからでも接続できるようにサインインします",
     "worktreeCountWorktree": "{{worktreeCount}} ワークツリー",
     "worktreeCountWorktrees": "{{worktreeCount}} 件のワークツリー",
-    "active": "{{activeWorktreeCount}} アクティブ"
+    "active": "{{activeWorktreeCount}} アクティブ",
+    "worktreeListUnavailable": "ワークツリー一覧を利用できません",
+    "lastKnown": "最終確認: {{worktreeSummary}}"
   },
   "mobileHtmlPreview": {
     "view": "HTMLソースを表示する",
