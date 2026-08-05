@@ -53,6 +53,8 @@ export type UseNativeChatLiveSessionArgs = {
 /** A live session plus the older-history pagination controls the view needs. */
 export type NativeChatLiveSession = NativeChatSession &
   NativeChatLoadEarlier & {
+    /** Changes whenever the transcript or its owning host changes. */
+    historySourceKey: string
     /** Raw initial-read phase. `status` is not a substitute: a live 'working' hook
      *  outranks (and so hides) 'loading', which would let a consumer deciding from
      *  an empty list treat an in-flight transcript as real history. */
@@ -115,6 +117,7 @@ export function useNativeChatLiveSession(
   args: UseNativeChatLiveSessionArgs
 ): NativeChatLiveSession {
   const { paneKey, agent, sessionId, transcriptPath, runtimeEnvironmentId } = args
+  const historySourceKey = `${runtimeEnvironmentId ?? ''}\0${agent}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
   // Stable per owner id so a re-render without an owner flip keeps the same transport and doesn't re-subscribe.
   const transport = useMemo(
     () => getNativeChatSessionTransport(runtimeEnvironmentId ?? null),
@@ -343,7 +346,14 @@ export function useNativeChatLiveSession(
       loading: read.phase === 'loading' && appended.length === 0,
       ...(read.phase === 'error' && appended.length === 0 ? { error: read.error } : {})
     })
-    return { ...session, hasMore, ...loadEarlierState, loadEarlier, readPhase: read.phase }
+    return {
+      ...session,
+      hasMore,
+      ...loadEarlierState,
+      loadEarlier,
+      historySourceKey,
+      readPhase: read.phase
+    }
   }, [
     surfacedMessages,
     read,
@@ -356,6 +366,7 @@ export function useNativeChatLiveSession(
     hasMore,
     loadEarlierState,
     loadEarlier,
+    historySourceKey,
     appended
   ])
 }

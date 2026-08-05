@@ -15,6 +15,9 @@ export function NativeChatLoadEarlierButton({
 
   return (
     <div className="flex justify-center py-1">
+      <span role="status" aria-live="polite" className="sr-only">
+        {loadEarlierError ? `${errorLabel}. ${retryLabel}` : ''}
+      </span>
       <Button
         type="button"
         variant="ghost"

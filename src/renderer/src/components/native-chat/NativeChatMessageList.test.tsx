@@ -12,7 +12,9 @@ import type { NativeChatLiveSession } from './use-native-chat-live-session'
 function session(
   loadEarlier: () => void,
   loadEarlierError: string | null,
-  messages: NativeChatMessage[] = []
+  messages: NativeChatMessage[] = [],
+  loadingEarlier = false,
+  historySourceKey = 'source-1'
 ): NativeChatLiveSession {
   return {
     messages,
@@ -20,9 +22,10 @@ function session(
     sessionId: 'session',
     agent: 'claude',
     hasMore: true,
-    loadingEarlier: false,
+    loadingEarlier,
     loadEarlierError,
     loadEarlier,
+    historySourceKey,
     readPhase: 'ready'
   }
 }
@@ -43,20 +46,31 @@ function setScrollHeight(scroller: HTMLElement, value: number): void {
 
 function renderList(
   loadEarlier: () => void,
-  loadEarlierError: string | null
+  loadEarlierError: string | null,
+  initialMessages: NativeChatMessage[] = []
 ): {
   scroller: HTMLElement
-  rerender: (error: string | null, messages?: NativeChatMessage[]) => void
+  rerender: (
+    error: string | null,
+    messages?: NativeChatMessage[],
+    loadingEarlier?: boolean,
+    historySourceKey?: string
+  ) => void
 } {
-  const list = (error: string | null, messages: NativeChatMessage[] = []) => (
+  const list = (
+    error: string | null,
+    messages: NativeChatMessage[] = [],
+    loadingEarlier = false,
+    historySourceKey = 'source-1'
+  ) => (
     <NativeChatMessageList
-      session={session(loadEarlier, error, messages)}
+      session={session(loadEarlier, error, messages, loadingEarlier, historySourceKey)}
       isWorking={false}
       expandSignal={false}
       fontScale={1}
     />
   )
-  const view = render(list(loadEarlierError))
+  const view = render(list(loadEarlierError, initialMessages))
   const scroller = view.container.querySelector<HTMLElement>('.scrollbar-sleek')
   if (!scroller) {
     throw new Error('Missing native chat scroller')
@@ -68,7 +82,8 @@ function renderList(
   })
   return {
     scroller,
-    rerender: (error, messages) => view.rerender(list(error, messages))
+    rerender: (error, messages, loadingEarlier, historySourceKey) =>
+      view.rerender(list(error, messages, loadingEarlier, historySourceKey))
   }
 }
 
@@ -101,6 +116,17 @@ describe('NativeChatMessageList load earlier', () => {
     expect(loadEarlier).toHaveBeenCalledOnce()
   })
 
+  it('announces a load-earlier failure that arrives after automatic paging', () => {
+    const { rerender } = renderList(vi.fn(), null)
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+
+    rerender(NATIVE_CHAT_LOAD_EARLIER_ERROR)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Couldn’t load earlier messages. Try again'
+    )
+  })
+
   it('discards a failed page anchor before live content grows', () => {
     const loadEarlier = vi.fn()
     const { scroller, rerender } = renderList(loadEarlier, null)
@@ -125,5 +151,82 @@ describe('NativeChatMessageList load earlier', () => {
     rerender(null, [message('older')])
 
     expect(scroller.scrollTop).toBe(125)
+  })
+
+  it('keeps a visible-row anchor while live messages arrive during an older-page read', () => {
+    const loadEarlier = vi.fn()
+    const current = message('current')
+    const { scroller, rerender } = renderList(loadEarlier, null, [current])
+    const row = scroller.querySelector<HTMLElement>('[data-native-chat-message-id="current"]')
+    if (!row) {
+      throw new Error('Missing current message row')
+    }
+    let rowTop = 100
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ y: 0, height: 400 })
+    )
+    vi.spyOn(row, 'getBoundingClientRect').mockImplementation(() =>
+      DOMRect.fromRect({ y: rowTop, height: 40 })
+    )
+
+    fireEvent.scroll(scroller)
+    setScrollHeight(scroller, 1_100)
+    rerender(null, [current, message('live')], true)
+    expect(scroller.scrollTop).toBe(0)
+
+    rowTop = 220
+    setScrollHeight(scroller, 1_300)
+    rerender(null, [message('older'), current, message('live')], false)
+
+    expect(scroller.scrollTop).toBe(120)
+  })
+
+  it('clears a settled no-growth anchor before later live content arrives', () => {
+    const loadEarlier = vi.fn()
+    const { scroller, rerender } = renderList(loadEarlier, null)
+    fireEvent.scroll(scroller)
+    rerender(null, [], true)
+    rerender(null, [], false)
+
+    setScrollHeight(scroller, 1_100)
+    rerender(null, [message('live')])
+
+    expect(scroller.scrollTop).toBe(0)
+  })
+
+  it('does not restore a stale anchor after the user scrolls during the request', () => {
+    const loadEarlier = vi.fn()
+    const current = message('current')
+    const { scroller, rerender } = renderList(loadEarlier, null, [current])
+    const row = scroller.querySelector<HTMLElement>('[data-native-chat-message-id="current"]')
+    if (!row) {
+      throw new Error('Missing current message row')
+    }
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ y: 0, height: 400 })
+    )
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ y: 100, height: 40 }))
+
+    fireEvent.scroll(scroller)
+    rerender(null, [current], true)
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
+    setScrollHeight(scroller, 1_300)
+    rerender(null, [message('older'), current], false)
+
+    expect(scroller.scrollTop).toBe(200)
+  })
+
+  it('drops a pending anchor when the owning transcript source changes', () => {
+    const loadEarlier = vi.fn()
+    const current = message('current')
+    const { scroller, rerender } = renderList(loadEarlier, null, [current])
+    fireEvent.scroll(scroller)
+    rerender(null, [current], true)
+
+    setScrollHeight(scroller, 1_300)
+    rerender(null, [message('replacement')], false, 'source-2')
+
+    expect(scroller.scrollTop).toBe(0)
   })
 })

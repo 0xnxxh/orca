@@ -22,6 +22,11 @@ import { NativeChatCopyButton } from './NativeChatCopyButton'
 import { NativeChatLoadEarlierButton } from './NativeChatLoadEarlierButton'
 import { NATIVE_CHAT_STREAMING_ID } from '../../../../shared/native-chat-streaming'
 import { canAutoLoadEarlier } from '../../../../shared/native-chat-load-earlier'
+import {
+  captureNativeChatPrependAnchor,
+  restoreNativeChatPrependAnchor,
+  type NativeChatPrependAnchor
+} from './native-chat-prepend-anchor'
 
 function geometryOf(el: HTMLElement): ScrollGeometry {
   return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
@@ -168,7 +173,11 @@ function MessageRow({
     // stays. (A distinct "queued" treatment flickered normal→queued→normal as the
     // transcript caught up.)
     return (
-      <div ref={rowRef} className="flex flex-col items-end gap-0.5">
+      <div
+        ref={rowRef}
+        data-native-chat-message-id={message.id}
+        className="flex flex-col items-end gap-0.5"
+      >
         {/* User turns get a distinct muted fill (not the card/canvas color) so
             the prompt reads apart from the assistant's body copy. */}
         <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-muted px-3.5 py-2.5 text-sm text-foreground">
@@ -206,6 +215,7 @@ function MessageRow({
   return (
     <div
       ref={rowRef}
+      data-native-chat-message-id={message.id}
       className={cn(
         'group relative max-w-full text-sm leading-relaxed text-foreground',
         // Reasoning is the agent thinking aloud — quieter, italic, like an aside.
@@ -279,16 +289,17 @@ export function NativeChatMessageList({
   const showTypingIndicator =
     isWorking && !messages.some((message) => message.id === NATIVE_CHAT_STREAMING_ID)
 
-  // When an older page prepends, the scroll content grows above the viewport.
-  // Capture the pre-render scroll height so the layout effect can restore the
-  // user's position (no jump) instead of letting the browser keep scrollTop.
-  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  // Preserve the visible row while older history is prepended above it.
+  const prependAnchorRef = useRef<NativeChatPrependAnchor | null>(null)
+  useLayoutEffect(() => {
+    prependAnchorRef.current = null
+  }, [session.historySourceKey])
   const loadEarlierWithAnchor = useCallback(() => {
     const el = scrollRef.current
     if (!el) {
       return
     }
-    prependAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+    prependAnchorRef.current = captureNativeChatPrependAnchor(el, contentRef.current)
     loadEarlier()
   }, [loadEarlier])
 
@@ -298,6 +309,13 @@ export function NativeChatMessageList({
       return
     }
     const geometry = geometryOf(el)
+    if (
+      loadingEarlier &&
+      prependAnchorRef.current &&
+      geometry.scrollTop !== prependAnchorRef.current.scrollTop
+    ) {
+      prependAnchorRef.current = null
+    }
     const stick = isNearBottom(geometry)
     setStuckToBottom(stick)
     setShowJump(shouldShowJumpToLatest(stick, geometry))
@@ -345,17 +363,19 @@ export function NativeChatMessageList({
   useLayoutEffect(() => {
     const el = scrollRef.current
     if (el && prependAnchorRef.current) {
-      // Preserve the viewport: shift scrollTop by however much taller the content
-      // got, so the message the user was reading stays put.
-      const grew = el.scrollHeight - prependAnchorRef.current.scrollHeight
-      el.scrollTop = prependAnchorRef.current.scrollTop + grew
+      // Live tail growth may race the page; keep the visible row as the anchor
+      // and consume it only when the older-page request settles.
+      if (loadingEarlier) {
+        return
+      }
+      restoreNativeChatPrependAnchor(el, prependAnchorRef.current)
       prependAnchorRef.current = null
       return
     }
     if (stuckToBottomRef.current) {
       scrollToBottom()
     }
-  }, [messages.length, isWorking, showTypingIndicator, scrollToBottom])
+  }, [messages.length, isWorking, showTypingIndicator, loadingEarlier, scrollToBottom])
 
   // Content growing without a message-count change (a streaming assistant turn
   // extends its own message in place) never re-fires the layout effect above.
