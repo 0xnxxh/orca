@@ -11299,6 +11299,17 @@
                   "8f9a0b1c2d": "Nothing to commit. Branch is up to date.",
                   "h3i4j5k607": "Checking whether this branch can create a {{value0}}…"
                 }
+              },
+              "branch": {
+                "line": {
+                  "total": {
+                    "chip": {
+                      "daa8e8e59b": "{{value0}} additions, {{value1}} deletions",
+                      "8a9b97b666": "{{value0}} additions",
+                      "52c366d88d": "{{value0}} deletions"
+                    }
+                  }
+                }
               }
             }
           },
