@@ -3685,7 +3685,9 @@ describe('web git preload API', () => {
     await globals.window.api.git.status({ worktreePath: '/workspace/repo' })
 
     const statusCalls = runtimeCalls.filter((call) => call.method === 'git.status')
-    expect(statusCalls).toEqual([
+    // Why: strict — `toEqual` would pass on a forwarded `branchLineTotalMergeBase: undefined`,
+    // which is exactly what the conditional spread must avoid sending.
+    expect(statusCalls).toStrictEqual([
       {
         method: 'git.status',
         params: {

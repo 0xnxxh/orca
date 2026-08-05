@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   beginGitStatusLineStatsCacheWrite,
   clearGitStatusLineStatsCache,
+  readCachedGitBranchLineTotal,
   reuseOrRecomputeGitStatusLineStats
 } from './git-status-line-stats-cache'
 
 const MERGE_BASE = 'a'.repeat(40)
+const CACHE_KEY = 'native\0/repo'
 const entries = [{ path: 'a.txt', area: 'unstaged', status: 'M', added: 1, removed: 0 }]
 
 async function runPass(diffDelayMs: number): Promise<{ elapsed: number; total: unknown }> {
-  const cacheKey = 'native\0/repo'
+  const cacheKey = CACHE_KEY
   const started = Date.now()
   const result = await reuseOrRecomputeGitStatusLineStats({
     cacheKey,
@@ -37,7 +39,16 @@ describe('branch line total never blocks the status response', () => {
     expect(slow.total).toBeUndefined()
     expect(slow.elapsed).toBeLessThan(1200)
 
-    await new Promise((r) => setTimeout(r, 3200))
+    // Why: poll the cache rather than run another pass — a second recompute
+    // stores, which retires the first pass's still-pending late-arrival token.
+    await vi.waitFor(
+      () => {
+        expect(
+          readCachedGitBranchLineTotal({ cacheKey: CACHE_KEY, mergeBase: MERGE_BASE })
+        ).toEqual({ added: 5, removed: 5, mergeBase: MERGE_BASE })
+      },
+      { timeout: 15000, interval: 50 }
+    )
     const next = await runPass(3000)
     expect(next.total).toEqual({ added: 5, removed: 5, mergeBase: MERGE_BASE })
   }, 20000)

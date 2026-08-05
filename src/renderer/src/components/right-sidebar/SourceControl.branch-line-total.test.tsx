@@ -278,7 +278,8 @@ describe('SourceControl branch line total chip', () => {
     renderSourceControl()
 
     expect(chip()?.getAttribute('aria-label')).toBe('8259 additions, 670 deletions')
-    expect(chip()?.textContent).toBe(`+${(8259).toLocaleString()}-${(670).toLocaleString()}`)
+    // Grouping is pinned to the app locale (`en`), not the runner's host locale.
+    expect(chip()?.textContent).toBe('+8,259-670')
   })
 
   it('drops a total whose fork point has since moved', () => {

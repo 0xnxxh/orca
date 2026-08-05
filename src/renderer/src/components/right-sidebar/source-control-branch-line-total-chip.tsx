@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import type { GitBranchLineTotal } from '../../../../shared/git-status-types'
-import { translate } from '@/i18n/i18n'
+import { getIntlLocale, translate } from '@/i18n/i18n'
 
 // Why: raw digits, not the grouped display string — screen readers announce
 // "8,259" as two numbers in several locales.
@@ -38,10 +38,11 @@ export const SourceControlBranchLineTotalChip = React.memo(
     const removed = branchLineTotal?.removed ?? 0
     const hasAdded = added > 0
     const hasRemoved = removed > 0
-    // Full precision and locale-aware; a status tick that leaves the counts
+    // Full precision and app-locale-aware; a status tick that leaves the counts
     // alone must not rebuild these strings.
-    const addedText = useMemo(() => added.toLocaleString(), [added])
-    const removedText = useMemo(() => removed.toLocaleString(), [removed])
+    const locale = getIntlLocale()
+    const addedText = useMemo(() => added.toLocaleString(locale), [added, locale])
+    const removedText = useMemo(() => removed.toLocaleString(locale), [removed, locale])
     const accessibleLabel = useMemo(() => buildAccessibleLabel(added, removed), [added, removed])
 
     if (!hasAdded && !hasRemoved) {

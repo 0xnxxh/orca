@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getRuntimeGitStatus } from './runtime-git-client'
 import {
   createCompatibleRuntimeStatusResponseIfNeeded,
@@ -36,6 +36,10 @@ beforeEach(() => {
       runtimeEnvironments: { call: runtimeEnvironmentTransportCall }
     }
   })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('branch line total merge base on git status requests', () => {
