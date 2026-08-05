@@ -1660,6 +1660,8 @@ type RuntimePtyController = {
     signal?: AbortSignal
   ): Promise<boolean>
   getSize?(ptyId: string): { cols: number; rows: number } | null
+  /** False only when the owning provider proved the PTY absent; null = unknown (never a denial). */
+  probePtyLiveness?(ptyId: string): Promise<boolean | null>
 }
 
 type PtyControllerTerminalIdentity = Readonly<{
@@ -1721,6 +1723,10 @@ const RECENT_PTY_PATH_CANDIDATE_LIMIT = 1024
 const RECENT_PTY_PATH_CANDIDATE_MAX_BYTES = 4 * 1024
 const RECENT_PTY_PATH_CANDIDATE_TOTAL_BYTES = 64 * 1024
 const SSH_PANE_RECOVERY_GRACE_MS = 30_000
+// Why: long enough that a keystroke burst to a proven-dead leaf probes once,
+// short enough that a recreated session id regains writability quickly even if
+// its runtime record (which also invalidates the verdict) is late.
+const PROVEN_ABSENT_LEAF_PTY_TTL_MS = 15_000
 
 function isClientDisconnectedError(error: unknown): boolean {
   return error instanceof Error && error.message === 'client_disconnected'
@@ -13202,6 +13208,10 @@ export class OrcaRuntimeService {
       clearTimeout(pendingSoft.timer)
       this.pendingSoftLeavers.delete(ptyId)
     }
+    // Why: a cold restore can respawn under the same session id within the
+    // delayed-Enter window; the armed Enter would inject \r into the
+    // replacement and stamp rows it never received.
+    this.retirePendingMessageDeliveryForPty(ptyId)
 
     if (this.terminalFitOverrides.has(ptyId)) {
       this.terminalFitOverrides.delete(ptyId)
@@ -16079,6 +16089,67 @@ export class OrcaRuntimeService {
     return visibleRead
   }
 
+  // Why a cache: leaf-branch sends may arrive per keystroke; one proven-absent
+  // verdict per ptyId serves the burst instead of a probe round-trip each call.
+  private readonly provenAbsentLeafPtyVerdicts = new Map<string, number>()
+  private readonly leafPtyAbsenceProbes = new Map<string, Promise<boolean>>()
+  // Why: probe dedupe shares one promise across callers, but each caller's
+  // continuation would re-deliver the same unread rows; arm one per pty.
+  private readonly probeDeferredDeliveryPtyIds = new Set<string>()
+
+  private controllerKnowsPtyIsLive(ptyId: string): boolean {
+    try {
+      return this.ptyController?.hasPty?.(ptyId) === true
+    } catch {
+      // Why: liveness lookup failures are doubt; doubt never gates a write.
+      return false
+    }
+  }
+
+  /** True only on controller-proven absence; live, unknown, and probe errors all answer false. */
+  private isLeafPtyProvenAbsent(ptyId: string): Promise<boolean> {
+    // Why hasPty and not ptysById: graph sync mirrors a connected record for
+    // every leaf ptyId — including a prior process's — so runtime records can't
+    // distinguish live from stale. The controller's exact-id hasPty is the
+    // provider's own synchronous inventory: a known id is alive, skip probing
+    // and supersede any cached verdict (the id came back).
+    if (this.controllerKnowsPtyIsLive(ptyId)) {
+      this.provenAbsentLeafPtyVerdicts.delete(ptyId)
+      return Promise.resolve(false)
+    }
+    const verdictAt = this.provenAbsentLeafPtyVerdicts.get(ptyId)
+    if (verdictAt !== undefined) {
+      if (Date.now() - verdictAt < PROVEN_ABSENT_LEAF_PTY_TTL_MS) {
+        return Promise.resolve(true)
+      }
+      this.provenAbsentLeafPtyVerdicts.delete(ptyId)
+    }
+    const probeLiveness = this.ptyController?.probePtyLiveness?.bind(this.ptyController)
+    if (!probeLiveness) {
+      return Promise.resolve(false)
+    }
+    const inFlight = this.leafPtyAbsenceProbes.get(ptyId)
+    if (inFlight) {
+      return inFlight
+    }
+    const probe = (async () => {
+      try {
+        if ((await probeLiveness(ptyId)) !== false) {
+          return false
+        }
+        this.provenAbsentLeafPtyVerdicts.set(ptyId, Date.now())
+        return true
+      } catch {
+        // Why: a failed probe is unknown, and unknown never rejects a write.
+        return false
+      } finally {
+        this.leafPtyAbsenceProbes.delete(ptyId)
+      }
+    })()
+    this.leafPtyAbsenceProbes.set(ptyId, probe)
+    return probe
+  }
+
   async sendTerminal(
     handle: string,
     action: {
@@ -16120,6 +16191,13 @@ export class OrcaRuntimeService {
       throw new Error('invalid_terminal_send')
     }
     await assertTerminalInputWithinLimitWithYield(action.text)
+    // Why: leaf.writable mirrors the renderer graph, which can still answer for
+    // a prior process's ptyId — and provider writes to unknown ids are accepted
+    // no-ops. Only controller-proven absence rejects; unknown proceeds (a
+    // restored daemon session takes writes before its pane remounts).
+    if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
+      throw new Error('terminal_not_writable')
+    }
 
     await this.writeTerminalAction(leaf.ptyId, action, payload, options)
 
@@ -16155,6 +16233,11 @@ export class OrcaRuntimeService {
       throw new Error('terminal_not_writable')
     }
     await assertTerminalInputWithinLimitWithYield(payload)
+    // Why: same absence gate as sendTerminal — a stale graph mirror must not
+    // accept a prompt into a void; unknown liveness still proceeds.
+    if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
+      throw new Error('terminal_not_writable')
+    }
     await this.writeTerminalAgentPrompt(leaf.ptyId, payload, options)
     return { handle, accepted: true, bytesWritten }
   }
@@ -31218,14 +31301,61 @@ export class OrcaRuntimeService {
     return null
   }
 
+  // Why: delivered_at for Claude targets stamps only in the delayed-Enter
+  // callback, so the whole write→settle span must be single-flight per pty —
+  // a second read inside it would re-inject the same unread rows. Triggers
+  // landing mid-flight park the latest leaf and re-run once on settle. The
+  // flight object is the settle identity: a stale settle surviving an exit
+  // retire must not clear a newer same-id flight or flush its parked trigger.
+  private readonly messageDeliveryFlightsByPtyId = new Map<
+    string,
+    { enterTimer: ReturnType<typeof setTimeout> | null }
+  >()
+
+  private readonly parkedMessageRedeliveryLeavesByPtyId = new Map<string, RuntimeLeafRecord>()
+
+  private settlePendingMessageDelivery(
+    ptyId: string,
+    flight: { enterTimer: ReturnType<typeof setTimeout> | null }
+  ): void {
+    if (this.messageDeliveryFlightsByPtyId.get(ptyId) !== flight) {
+      return
+    }
+    this.messageDeliveryFlightsByPtyId.delete(ptyId)
+    const parkedLeaf = this.parkedMessageRedeliveryLeavesByPtyId.get(ptyId)
+    if (!parkedLeaf) {
+      return
+    }
+    this.parkedMessageRedeliveryLeavesByPtyId.delete(ptyId)
+    this.deliverPendingMessages(parkedLeaf)
+  }
+
+  // Why: an Enter armed for a dead session must not fire into a same-id cold
+  // restore — it would inject \r and stamp rows the replacement never saw.
+  // Retire without stamping; the rows re-deliver on the replacement's next idle.
+  private retirePendingMessageDeliveryForPty(ptyId: string): void {
+    const flight = this.messageDeliveryFlightsByPtyId.get(ptyId)
+    if (flight?.enterTimer != null) {
+      clearTimeout(flight.enterTimer)
+    }
+    this.messageDeliveryFlightsByPtyId.delete(ptyId)
+    this.parkedMessageRedeliveryLeavesByPtyId.delete(ptyId)
+  }
+
   // Why: push-on-idle delivery is event-driven (no polling) because the runtime owns both the message store and terminal status detection.
-  private deliverPendingMessages(leaf: RuntimeLeafRecord): void {
+  private deliverPendingMessages(leaf: RuntimeLeafRecord, skipAbsenceProbe = false): void {
     if (!this._orchestrationDb) {
       return
     }
 
     const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
     if (!handle) {
+      return
+    }
+
+    // Why before reading rows: rows read mid-flight are the not-yet-stamped ones.
+    if (leaf.ptyId && this.messageDeliveryFlightsByPtyId.has(leaf.ptyId)) {
+      this.parkedMessageRedeliveryLeavesByPtyId.set(leaf.ptyId, leaf)
       return
     }
 
@@ -31238,41 +31368,95 @@ export class OrcaRuntimeService {
       return
     }
 
-    const payload = formatMessagesForInjection(unread)
-    const wrote = this.ptyController?.write(leaf.ptyId, payload) ?? false
-    if (!wrote) {
-      return
-    }
-
-    // The active coordinator prompt is user-owned input, so push-on-idle must not synthesize Enter.
-    if (this._orchestrationDb.getActiveCoordinatorRun()?.coordinator_handle === handle) {
-      this._orchestrationDb.markAsDelivered(unread.map((m) => m.id))
-      return
-    }
-
-    const tabTitle = this.tabs.get(leaf.tabId)?.title
-    if (isCursorAgentOrchestrationTarget(leaf, tabTitle)) {
-      // Why: Cursor Agent treats injected PTY text as editable prompt input, so submitting must stay under user control.
-      this._orchestrationDb.markAsDelivered(unread.map((m) => m.id))
-      return
-    }
-
-    // Why: Claude Code treats a large PTY write as a paste and swallows a \r in the same write; send Enter separately after a delay, stamping delivered_at only once \r is confirmed.
-    // Important (design doc §3.2, feedback #2): stamp delivered_at, not read — read means "a check-caller consumed this"; flipping it would hide the message from check --unread.
-    const ptyId = leaf.ptyId
-    setTimeout(() => {
-      try {
-        if (!leaf.writable) {
-          return
-        }
-        const submitted = this.ptyController?.write(ptyId, '\r') ?? false
-        if (submitted) {
-          this._orchestrationDb?.markAsDelivered(unread.map((m) => m.id))
-        }
-      } catch {
-        // Terminal may have closed during the delay — messages stay queued (delivered_at NULL) and re-deliver on next idle.
+    if (
+      !skipAbsenceProbe &&
+      this.ptyController?.probePtyLiveness &&
+      !this.controllerKnowsPtyIsLive(leaf.ptyId)
+    ) {
+      // Why: a fire-and-forget write to a prior process's ptyId reports success
+      // and would mark these delivered while losing them. Proven absence keeps
+      // them queued for a future surface; unknown liveness still delivers.
+      const probedPtyId = leaf.ptyId
+      // Why: triggers arriving mid-probe must not each arm a continuation — the
+      // Claude Enter delay stamps delivered_at late, so every continuation would
+      // re-read the same unread rows and double-deliver. The single armed
+      // continuation re-reads fresh rows when it fires, so nothing is lost.
+      if (this.probeDeferredDeliveryPtyIds.has(probedPtyId)) {
+        return
       }
-    }, 500)
+      this.probeDeferredDeliveryPtyIds.add(probedPtyId)
+      void this.isLeafPtyProvenAbsent(probedPtyId)
+        .then((absent) => {
+          this.probeDeferredDeliveryPtyIds.delete(probedPtyId)
+          if (!absent && leaf.ptyId === probedPtyId) {
+            this.deliverPendingMessages(leaf, true)
+          }
+        })
+        .catch(() => {
+          this.probeDeferredDeliveryPtyIds.delete(probedPtyId)
+        })
+      return
+    }
+
+    const deliveryPtyId = leaf.ptyId
+    const flight: { enterTimer: ReturnType<typeof setTimeout> | null } = { enterTimer: null }
+    this.messageDeliveryFlightsByPtyId.set(deliveryPtyId, flight)
+    // Why: every sync outcome — failed write, sync-stamped branch, or a throw —
+    // must end the flight here, or a leaked flag parks this pty's deliveries
+    // forever. Only an armed Enter hands settling to its own callback.
+    let settlesInEnterCallback = false
+    try {
+      const payload = formatMessagesForInjection(unread)
+      const wrote = this.ptyController?.write(deliveryPtyId, payload) ?? false
+      if (!wrote) {
+        return
+      }
+
+      // The active coordinator prompt is user-owned input, so push-on-idle must not synthesize Enter.
+      if (this._orchestrationDb.getActiveCoordinatorRun()?.coordinator_handle === handle) {
+        this._orchestrationDb.markAsDelivered(unread.map((m) => m.id))
+        return
+      }
+
+      const tabTitle = this.tabs.get(leaf.tabId)?.title
+      if (isCursorAgentOrchestrationTarget(leaf, tabTitle)) {
+        // Why: Cursor Agent treats injected PTY text as editable prompt input, so submitting must stay under user control.
+        this._orchestrationDb.markAsDelivered(unread.map((m) => m.id))
+        return
+      }
+
+      // Why: Claude Code treats a large PTY write as a paste and swallows a \r in the same write; send Enter separately after a delay, stamping delivered_at only once \r is confirmed.
+      // Important (design doc §3.2, feedback #2): stamp delivered_at, not read — read means "a check-caller consumed this"; flipping it would hide the message from check --unread.
+      flight.enterTimer = setTimeout(() => {
+        try {
+          // Why current state, not the closure: graph resync replaces leaf
+          // objects, so the captured record can read writable=true after the
+          // pty died, and an exit retire may have superseded this flight.
+          if (this.messageDeliveryFlightsByPtyId.get(deliveryPtyId) !== flight) {
+            return
+          }
+          const currentLeaf = this.leaves.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+          if (!currentLeaf || currentLeaf.ptyId !== deliveryPtyId || !currentLeaf.writable) {
+            return
+          }
+          const submitted = this.ptyController?.write(deliveryPtyId, '\r') ?? false
+          if (submitted) {
+            this._orchestrationDb?.markAsDelivered(unread.map((m) => m.id))
+          }
+        } catch {
+          // Terminal may have closed during the delay — messages stay queued (delivered_at NULL) and re-deliver on next idle.
+        } finally {
+          // Why finally: every outcome — submit, refusal, throw — ends the flight,
+          // and settle re-runs any trigger parked during it so nothing strands.
+          this.settlePendingMessageDelivery(deliveryPtyId, flight)
+        }
+      }, 500)
+      settlesInEnterCallback = true
+    } finally {
+      if (!settlesInEnterCallback) {
+        this.settlePendingMessageDelivery(deliveryPtyId, flight)
+      }
+    }
   }
 
   private resolveWaiter(waiter: TerminalWaiter, result: RuntimeTerminalWait): void {
