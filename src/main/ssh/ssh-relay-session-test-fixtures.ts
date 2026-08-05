@@ -32,7 +32,8 @@ export function createMockDeps(): SshRelaySessionTestDeps {
         ? {
             worktreeId: binding.worktreeId,
             tabId: binding.tabId,
-            leafId: binding.leafId
+            leafId: binding.leafId,
+            hostId: `ssh:${binding.targetId}`
           }
         : null
     ),

@@ -520,12 +520,14 @@ describe('SshRelaySession', () => {
         ? {
             worktreeId: 'worktree-1',
             tabId: 'tab-live',
-            leafId: '11111111-1111-4111-8111-111111111111'
+            leafId: '11111111-1111-4111-8111-111111111111',
+            hostId: 'ssh:target-1'
           }
         : {
             worktreeId: 'worktree-1',
             tabId: 'tab-live-2',
-            leafId: '22222222-2222-4222-8222-222222222222'
+            leafId: '22222222-2222-4222-8222-222222222222',
+            hostId: 'ssh:target-1'
           }
     )
 
@@ -558,7 +560,8 @@ describe('SshRelaySession', () => {
     vi.mocked(mockStore.resolveExistingSshPtyBinding).mockReturnValue({
       worktreeId: 'worktree-1',
       tabId: 'tab-a',
-      leafId
+      leafId,
+      hostId: 'ssh:target-1'
     })
 
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)

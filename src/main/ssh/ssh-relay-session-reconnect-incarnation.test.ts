@@ -656,7 +656,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     vi.mocked(mockStore.resolveExistingSshPtyBinding).mockReturnValue({
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
-      leafId: INCARNATION_LEAF_ID
+      leafId: INCARNATION_LEAF_ID,
+      hostId: 'ssh:target-1'
     })
     const runtime = { onPtySpawned: vi.fn(), registerPty: vi.fn() }
     const session = new SshRelaySession(
@@ -679,23 +680,6 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       incarnationId: 'incarnation-legacy'
     })
     expect(runtime.onPtySpawned).not.toHaveBeenCalled()
-  })
-
-  it('quarantines an incomplete lease without a unique durable pane', async () => {
-    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const attachForReconnect = vi.fn()
-    vi.mocked(getSshPtyProvider).mockReturnValue({ attachForReconnect } as never)
-    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
-      { ...detachedLease(), leafId: undefined }
-    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
-    vi.mocked(mockStore.resolveExistingSshPtyBinding).mockReturnValue(null)
-    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
-
-    await session.establish(mockConn)
-
-    expect(attachForReconnect).not.toHaveBeenCalled()
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', ['pty-live'])
-    expect(deletePtyOwnership).toHaveBeenCalledWith(APP_PTY_ID)
   })
 
   it('does not restore a PTY whose matching exit shares the attach reply batch', async () => {

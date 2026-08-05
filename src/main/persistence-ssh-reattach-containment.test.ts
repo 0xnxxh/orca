@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDefaultWorkspaceSession } from '../shared/constants'
+import { LOCAL_EXECUTION_HOST_ID } from '../shared/execution-host'
 import type { TerminalTab, WorkspaceSessionState } from '../shared/types'
 
 const testState = { dir: '' }
@@ -152,7 +153,7 @@ describe('Store SSH reattach containment', () => {
     }
   })
 
-  it('resolves panes only from the requested SSH host partition', async () => {
+  it('resolves panes from the target partition and reports it', async () => {
     const store = await createStore()
     const binding = {
       targetId: 'target-1',
@@ -167,8 +168,57 @@ describe('Store SSH reattach containment', () => {
     expect(store.resolveExistingSshPtyBinding(binding)).toEqual({
       worktreeId: 'wt-1',
       tabId: 'tab-1',
-      leafId: LEAF_1
+      leafId: LEAF_1,
+      hostId: SSH_HOST_ID
     })
+  })
+
+  // Why: buildHostIdByWorktreeId collapses repo-only SSH ownership onto the local partition, so a
+  // pane the user still has open can be durable there while the target partition never saw it.
+  it('falls back to the local spill partition and binds back into it', async () => {
+    const store = await createStore()
+    const binding = {
+      targetId: 'target-1',
+      ptyId: APP_PTY_ID,
+      worktreeId: 'wt-1',
+      tabId: 'tab-1',
+      leafId: LEAF_1
+    }
+    store.setWorkspaceSession(sessionWithExistingPane(APP_PTY_ID))
+
+    const resolved = store.resolveExistingSshPtyBinding(binding)
+    expect(resolved).toEqual({
+      worktreeId: 'wt-1',
+      tabId: 'tab-1',
+      leafId: LEAF_1,
+      hostId: LOCAL_EXECUTION_HOST_ID
+    })
+    expect(
+      store.persistPtyBinding(
+        { worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1, ptyId: 'pty-new' },
+        resolved?.hostId,
+        { mayCreate: false }
+      )
+    ).toBe('bound')
+    expect(store.getWorkspaceSession().terminalLayoutsByTabId['tab-1'].ptyIdsByLeafId).toEqual({
+      [LEAF_1]: 'pty-new'
+    })
+  })
+
+  it('prefers the target partition when both partitions hold the pane', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession(sessionWithExistingPane(APP_PTY_ID))
+    store.setWorkspaceSession(sessionWithExistingPane(APP_PTY_ID), SSH_HOST_ID)
+
+    expect(
+      store.resolveExistingSshPtyBinding({
+        targetId: 'target-1',
+        ptyId: APP_PTY_ID,
+        worktreeId: 'wt-1',
+        tabId: 'tab-1',
+        leafId: LEAF_1
+      })?.hostId
+    ).toBe(SSH_HOST_ID)
   })
 
   it('resolves incomplete legacy leases only from a unique durable PTY binding', async () => {
@@ -182,9 +232,9 @@ describe('Store SSH reattach containment', () => {
         worktreeId: 'wt-1',
         tabId: 'tab-1'
       })
-    ).toEqual({ worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1 })
+    ).toEqual({ worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1, hostId: SSH_HOST_ID })
     expect(store.resolveExistingSshPtyBinding({ targetId: 'target-1', ptyId: APP_PTY_ID })).toEqual(
-      { worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1 }
+      { worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1, hostId: SSH_HOST_ID }
     )
 
     const ambiguous = sessionWithExistingPane(APP_PTY_ID)

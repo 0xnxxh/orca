@@ -6646,14 +6646,41 @@ export class Store {
     return this.state.repos.find((repo) => repo.id === repoId)?.connectionId ?? null
   }
 
+  // Why: the renderer partitions an SSH worktree by worktree.hostId but collapses repo-only
+  // ownership onto the local partition, so a live pane is durable in either one. Search the
+  // owning partition first and report which one matched, else a pane the user still has open
+  // resolves to nothing and reattach quarantines its surviving remote shell.
   resolveExistingSshPtyBinding(args: {
     targetId: string
     ptyId: string
     worktreeId?: string
     tabId?: string
     leafId?: string
-  }): { worktreeId: string; tabId: string; leafId: string } | null {
-    const session = this.getWorkspaceSession(toSshExecutionHostId(args.targetId))
+  }): { worktreeId: string; tabId: string; leafId: string; hostId: ExecutionHostId } | null {
+    const partitions: ExecutionHostId[] = [
+      toSshExecutionHostId(args.targetId),
+      LOCAL_EXECUTION_HOST_ID
+    ]
+    for (const hostId of partitions) {
+      const resolved = this.resolveExistingSshPtyBindingInPartition(args, hostId)
+      if (resolved) {
+        return resolved
+      }
+    }
+    return null
+  }
+
+  private resolveExistingSshPtyBindingInPartition(
+    args: {
+      targetId: string
+      ptyId: string
+      worktreeId?: string
+      tabId?: string
+      leafId?: string
+    },
+    hostId: ExecutionHostId
+  ): { worktreeId: string; tabId: string; leafId: string; hostId: ExecutionHostId } | null {
+    const session = this.getWorkspaceSession(hostId)
     const requestedLeafId =
       typeof args.leafId === 'string' && isTerminalLeafId(args.leafId) ? args.leafId : undefined
     if (args.worktreeId && args.tabId && requestedLeafId) {
@@ -6662,12 +6689,17 @@ export class Store {
       )
       const layout = session.terminalLayoutsByTabId?.[args.tabId]
       return tab && layoutContainsLeafId(layout?.root ?? null, requestedLeafId)
-        ? { worktreeId: args.worktreeId, tabId: args.tabId, leafId: requestedLeafId }
+        ? { worktreeId: args.worktreeId, tabId: args.tabId, leafId: requestedLeafId, hostId }
         : null
     }
 
     const relayPtyId = this.getRelayPtyIdForSshLeaseComparison(args.targetId, args.ptyId)
-    const matches: { worktreeId: string; tabId: string; leafId: string }[] = []
+    const matches: {
+      worktreeId: string
+      tabId: string
+      leafId: string
+      hostId: ExecutionHostId
+    }[] = []
     for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
       if (args.worktreeId && args.worktreeId !== worktreeId) {
         continue
@@ -6693,7 +6725,7 @@ export class Store {
           ) {
             continue
           }
-          matches.push({ worktreeId, tabId: tab.id, leafId })
+          matches.push({ worktreeId, tabId: tab.id, leafId, hostId })
           if (matches.length > 1) {
             return null
           }
