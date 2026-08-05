@@ -8,6 +8,7 @@ vi.mock('react-native', async () => {
   return {
     ActivityIndicator: 'ActivityIndicator',
     Image: 'Image',
+    Keyboard: { dismiss: vi.fn() },
     Pressable: 'Pressable',
     ScrollView: ({ children, ...props }: { children?: unknown }) =>
       React.createElement('ScrollView', props, children),
@@ -25,11 +26,21 @@ vi.mock('lucide-react-native', () => ({
   ArrowUp: 'ArrowUp',
   Check: 'Check',
   ChevronDown: 'ChevronDown',
+  ChevronLeft: 'ChevronLeft',
+  ChevronRight: 'ChevronRight',
   ImagePlus: 'ImagePlus',
   Mic: 'Mic',
   Square: 'Square',
   X: 'X'
 }))
+
+vi.mock('../components/BottomDrawer', async () => {
+  const React = await import('react')
+  return {
+    BottomDrawer: ({ visible, children }: { visible: boolean; children?: unknown }) =>
+      visible ? React.createElement('BottomDrawer', { visible }, children) : null
+  }
+})
 
 function suppressRendererWarning(): () => void {
   const original = console.error
@@ -94,6 +105,15 @@ describe('MobileNativeChatComposer', () => {
 
     expect(onSend).toHaveBeenCalledWith(' hello')
     expect(onChangeText).not.toHaveBeenCalled()
+  })
+
+  it('stacks the input above the composer action row', async () => {
+    await render(vi.fn().mockResolvedValue(true), vi.fn())
+
+    const composer = renderer!.root.findByProps({ testID: 'native-chat-composer' })
+    const actions = renderer!.root.findByProps({ testID: 'native-chat-composer-actions' })
+    expect(composer.findAllByType('TextInput')).toHaveLength(1)
+    expect(composer.children[1]).toBe(actions)
   })
 
   it('preserves leading whitespace so prose is not turned into a slash command', async () => {

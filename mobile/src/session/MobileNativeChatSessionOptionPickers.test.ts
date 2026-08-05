@@ -5,19 +5,28 @@ import type { SessionOptionDescriptor } from '../../../src/shared/native-chat-se
 import { MobileNativeChatSessionOptionPickers } from './MobileNativeChatSessionOptionPickers'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 
-vi.mock('react-native', async () => {
+vi.mock('react-native', () => ({
+  ActivityIndicator: 'ActivityIndicator',
+  Keyboard: { dismiss: vi.fn() },
+  Pressable: 'Pressable',
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  Text: 'Text',
+  View: 'View'
+}))
+vi.mock('lucide-react-native', () => ({
+  Check: 'Check',
+  ChevronDown: 'ChevronDown',
+  ChevronLeft: 'ChevronLeft',
+  ChevronRight: 'ChevronRight',
+  X: 'X'
+}))
+vi.mock('../components/BottomDrawer', async () => {
   const React = await import('react')
   return {
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    ScrollView: ({ children, ...props }: { children?: unknown }) =>
-      React.createElement('ScrollView', props, children),
-    StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-    Text: 'Text',
-    View: 'View'
+    BottomDrawer: ({ visible, children }: { visible: boolean; children?: unknown }) =>
+      visible ? React.createElement('BottomDrawer', { visible }, children) : null
   }
 })
-vi.mock('lucide-react-native', () => ({ Check: 'Check', ChevronDown: 'ChevronDown', X: 'X' }))
 
 const MODEL_DESCRIPTOR: SessionOptionDescriptor = {
   id: 'model',
@@ -51,6 +60,15 @@ const EFFORT_DESCRIPTOR: SessionOptionDescriptor = {
   settable: true
 }
 
+const FAST_MODE_DESCRIPTOR: SessionOptionDescriptor = {
+  id: 'fastMode',
+  label: 'Fast mode',
+  category: 'mode',
+  kind: { type: 'boolean', currentValue: false },
+  valueSource: 'reported',
+  settable: true
+}
+
 describe('MobileNativeChatSessionOptionPickers', () => {
   let renderer: ReactTestRenderer | null = null
   const setOption = vi.fn<MobileNativeChatSessionOptionsController['setOption']>()
@@ -76,6 +94,7 @@ describe('MobileNativeChatSessionOptionPickers', () => {
   ): {
     props: {
       onPress: () => void
+      accessibilityLabel?: string
       disabled?: boolean
       accessibilityRole?: string
       accessibilityState?: { disabled?: boolean }
@@ -89,6 +108,7 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     ) as {
       props: {
         onPress: () => void
+        accessibilityLabel?: string
         disabled?: boolean
         accessibilityRole?: string
         accessibilityState?: { disabled?: boolean }
@@ -101,6 +121,7 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     props: {
       onPress: () => void
       accessibilityRole?: string
+      accessibilityLabel?: string
       accessibilityState?: { checked?: boolean; disabled?: boolean }
     }
   } => {
@@ -121,6 +142,7 @@ describe('MobileNativeChatSessionOptionPickers', () => {
       props: {
         onPress: () => void
         accessibilityRole?: string
+        accessibilityLabel?: string
         accessibilityState?: { checked?: boolean; disabled?: boolean }
       }
     }
@@ -145,21 +167,38 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     expect(renderer!.toJSON()).toBeNull()
   })
 
-  it('shows the current model and effort values on the pills', () => {
+  it('shows the current model and effort in one pill', () => {
     mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
-    expect(pill('Model').props).toMatchObject({ disabled: false })
+    expect(pill('Model').props).toMatchObject({
+      accessibilityLabel: 'Model, Sonnet 5 High',
+      disabled: false
+    })
     const labels = renderer!.root
       .findAll((node) => node.type === 'Text')
       .map((node) => (node.props as { children?: unknown }).children)
-    expect(labels).toContain('Sonnet 5')
-    expect(labels).toContain('High')
+    expect(labels).toContain('Sonnet 5 High')
   })
 
   it('opens the model sheet and applies a picked model', async () => {
     mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
     await act(async () => pill('Model').props.onPress())
+    expect(renderer!.root.findByType('BottomDrawer').props.visible).toBe(true)
     await act(async () => rowByText('Opus 4.8').props.onPress())
     expect(setOption).toHaveBeenCalledWith('model', 'opus')
+  })
+
+  it('opens an option picker from the model sheet summary', async () => {
+    mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
+    await act(async () => pill('Model').props.onPress())
+    await act(async () => rowByText('Effort').props.onPress())
+    await act(async () => rowByText('Low').props.onPress())
+    expect(setOption).toHaveBeenCalledWith('effort', 'low')
+  })
+
+  it('shows absolute boolean values in option summaries', async () => {
+    mount([MODEL_DESCRIPTOR, FAST_MODE_DESCRIPTOR])
+    await act(async () => pill('Model').props.onPress())
+    expect(rowByText('Off').props.accessibilityLabel).toBe('Fast mode, Off')
   })
 
   it('announces choice selection and disabled state', async () => {

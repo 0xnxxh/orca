@@ -195,27 +195,7 @@ export function MobileNativeChatComposer({
           ))}
         </ScrollView>
       ) : null}
-      {sessionOptions ? (
-        <MobileNativeChatSessionOptionPickers
-          {...sessionOptions}
-          sendInFlight={sending || isAttaching}
-        />
-      ) : null}
-      <View style={styles.bar}>
-        {onAttachImage ? (
-          <Pressable
-            accessibilityLabel="Attach image"
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={onAttachImage}
-            disabled={isAttaching || disabled}
-          >
-            {isAttaching ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
-            )}
-          </Pressable>
-        ) : null}
+      <View style={styles.bar} testID="native-chat-composer">
         <TextInput
           style={styles.input}
           value={value}
@@ -235,40 +215,67 @@ export function MobileNativeChatComposer({
           // The lock gates sending; the draft survives and rides the next send.
           textAlignVertical="top"
         />
-        {onMicPress ? (
+        <View style={styles.actionRow} testID="native-chat-composer-actions">
+          {onAttachImage ? (
+            <Pressable
+              accessibilityLabel="Attach image"
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+              onPress={onAttachImage}
+              disabled={isAttaching || disabled}
+            >
+              {isAttaching ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
+              )}
+            </Pressable>
+          ) : null}
+          {sessionOptions ? (
+            <MobileNativeChatSessionOptionPickers
+              {...sessionOptions}
+              sendInFlight={sending || isAttaching}
+            />
+          ) : null}
+          <View style={styles.actionSpacer} />
+          {onMicPress ? (
+            <Pressable
+              accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+              // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
+              onPress={dictationMode === 'hold' ? undefined : onMicPress}
+              onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
+              onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
+              disabled={disabled}
+            >
+              {micActive ? (
+                <Square
+                  size={18}
+                  color={colors.statusRed}
+                  strokeWidth={2.4}
+                  fill={colors.statusRed}
+                />
+              ) : (
+                <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
-            accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
-            onPress={dictationMode === 'hold' ? undefined : onMicPress}
-            onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
-            onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
-            disabled={disabled}
+            accessibilityLabel="Send message"
+            style={({ pressed }) => [
+              styles.sendButton,
+              !canSend && styles.sendButtonDisabled,
+              pressed && canSend && styles.pressed
+            ]}
+            onPress={handleSend}
+            disabled={!canSend}
           >
-            {micActive ? (
-              <Square
-                size={18}
-                color={colors.statusRed}
-                strokeWidth={2.4}
-                fill={colors.statusRed}
-              />
-            ) : (
-              <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
-            )}
+            <ArrowUp
+              size={20}
+              color={canSend ? colors.bgBase : colors.textMuted}
+              strokeWidth={2.6}
+            />
           </Pressable>
-        ) : null}
-        <Pressable
-          accessibilityLabel="Send message"
-          style={({ pressed }) => [
-            styles.sendButton,
-            !canSend && styles.sendButtonDisabled,
-            pressed && canSend && styles.pressed
-          ]}
-          onPress={handleSend}
-          disabled={!canSend}
-        >
-          <ArrowUp size={20} color={canSend ? colors.bgBase : colors.textMuted} strokeWidth={2.6} />
-        </Pressable>
+        </View>
       </View>
     </View>
   )
@@ -315,17 +322,24 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSubtle
   },
   bar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
+    gap: spacing.xs,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderSubtle,
     backgroundColor: colors.bgPanel
   },
+  actionRow: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm
+  },
+  actionSpacer: {
+    flex: 1
+  },
   input: {
-    flex: 1,
+    width: '100%',
     maxHeight: 140,
     minHeight: 40,
     color: colors.textPrimary,

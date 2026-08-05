@@ -2,7 +2,7 @@
 // beside it so the card file stays about layout and apply wiring.
 
 import { Pressable, StyleSheet, Text, View } from 'react-native'
-import { Check, ChevronDown } from 'lucide-react-native'
+import { Check, ChevronDown, ChevronRight } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 import type {
   SessionOptionDescriptor,
@@ -52,19 +52,29 @@ function ChoiceRow({
   description,
   selected,
   disabled,
+  grouped,
+  divided,
   onPress
 }: {
   label: string
   description?: string
   selected: boolean
   disabled: boolean
+  grouped: boolean
+  divided: boolean
   onPress: () => void
 }): React.JSX.Element {
   return (
     <Pressable
       accessibilityRole="radio"
       accessibilityState={{ checked: selected, disabled }}
-      style={[styles.row, selected && styles.rowSelected, disabled && styles.rowDisabled]}
+      style={[
+        styles.row,
+        selected && styles.rowSelected,
+        grouped && styles.rowGrouped,
+        divided && styles.rowDivided,
+        disabled && styles.rowDisabled
+      ]}
       onPress={onPress}
       disabled={disabled}
     >
@@ -86,17 +96,19 @@ function ChoiceRow({
 function ActionRow({
   label,
   disabled,
+  grouped,
   onPress
 }: {
   label: string
   disabled: boolean
+  grouped: boolean
   onPress: () => void
 }): React.JSX.Element {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ disabled }}
-      style={[styles.row, disabled && styles.rowDisabled]}
+      style={[styles.row, grouped && styles.rowGrouped, disabled && styles.rowDisabled]}
       onPress={onPress}
       disabled={disabled}
     >
@@ -107,14 +119,52 @@ function ActionRow({
   )
 }
 
+export function SessionOptionSummaryRow({
+  label,
+  value,
+  disabled,
+  divided,
+  onPress
+}: {
+  label: string
+  value: string
+  disabled: boolean
+  divided: boolean
+  onPress: () => void
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityLabel={`${label}, ${value}`}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [
+        styles.summaryRow,
+        divided && styles.rowDivided,
+        pressed && !disabled && styles.pressed,
+        disabled && styles.rowDisabled
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue} numberOfLines={1}>
+        {value}
+      </Text>
+      <ChevronRight size={16} color={colors.textMuted} strokeWidth={2.2} />
+    </Pressable>
+  )
+}
+
 export function DescriptorRows({
   descriptor,
   disabled,
+  grouped = false,
   onSetOption,
   onInvokeAction
 }: {
   descriptor: SessionOptionDescriptor
   disabled: boolean
+  grouped?: boolean
   onSetOption: (value: SessionOptionValue) => void
   onInvokeAction: () => void
 }): React.JSX.Element {
@@ -125,13 +175,21 @@ export function DescriptorRows({
       <ActionRow
         label={`Toggle ${descriptor.label.toLowerCase()}`}
         disabled={locked}
+        grouped={grouped}
         onPress={onInvokeAction}
       />
     )
   }
   // Why: agent-picker opens the TUI; it is not a set of radio choices.
   if (descriptor.action?.type === 'agent-picker') {
-    return <ActionRow label="Choose in agent picker…" disabled={locked} onPress={onInvokeAction} />
+    return (
+      <ActionRow
+        label="Choose in agent picker…"
+        disabled={locked}
+        grouped={grouped}
+        onPress={onInvokeAction}
+      />
+    )
   }
   // Unknown booleans leave both radios unselected instead of inventing truth.
   if (descriptor.kind.type === 'boolean') {
@@ -145,12 +203,16 @@ export function DescriptorRows({
           label="On"
           selected={current === true}
           disabled={locked}
+          grouped={grouped}
+          divided={grouped}
           onPress={() => onSetOption(true)}
         />
         <ChoiceRow
           label="Off"
           selected={current === false}
           disabled={locked}
+          grouped={grouped}
+          divided={false}
           onPress={() => onSetOption(false)}
         />
       </>
@@ -159,13 +221,15 @@ export function DescriptorRows({
   const { currentValue, choices } = descriptor.kind
   return (
     <>
-      {choices.map((choice) => (
+      {choices.map((choice, index) => (
         <ChoiceRow
           key={choice.value}
           label={choice.label}
           description={choice.description}
           selected={choice.value === currentValue}
           disabled={locked}
+          grouped={grouped}
+          divided={grouped && index < choices.length - 1}
           onPress={() => onSetOption(choice.value)}
         />
       ))}
@@ -220,6 +284,16 @@ const styles = StyleSheet.create({
   rowSelected: {
     borderColor: colors.statusGreen
   },
+  rowGrouped: {
+    marginBottom: 0,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: 'transparent'
+  },
+  rowDivided: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderSubtle
+  },
   rowDisabled: {
     opacity: 0.5
   },
@@ -248,5 +322,24 @@ const styles = StyleSheet.create({
   rowDescription: {
     color: colors.textSecondary,
     fontSize: typography.metaSize
+  },
+  summaryRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  summaryLabel: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: typography.bodySize,
+    fontWeight: '600'
+  },
+  summaryValue: {
+    maxWidth: 160,
+    color: colors.textSecondary,
+    fontSize: typography.bodySize
   }
 })

@@ -42,11 +42,18 @@ export function mobileModelPillLabel(descriptor: SessionOptionDescriptor): strin
   return selectedChoiceLabel(descriptor) ?? 'Model'
 }
 
-export function mobileOptionsPillTitle(descriptors: readonly SessionOptionDescriptor[]): string {
-  const effort = descriptors.find((descriptor) => descriptor.id === 'effort')
-  // Why: an effort-backed group is primarily the effort picker, even when it
-  // also reports modes.
-  return effort ? effort.label : 'Session options'
+export function mobileSessionOptionSummaryValue(descriptor: SessionOptionDescriptor): string {
+  if (descriptor.valueSource === 'unknown') {
+    return 'Not set'
+  }
+  if (descriptor.kind.type === 'select') {
+    return selectedChoiceLabel(descriptor) ?? 'Not set'
+  }
+  return descriptor.kind.currentValue === undefined
+    ? 'Not set'
+    : descriptor.kind.currentValue
+      ? 'On'
+      : 'Off'
 }
 
 export function mobileOptionsPillLabel(descriptors: readonly SessionOptionDescriptor[]): string {
