@@ -319,6 +319,10 @@ import {
   registerTerminalSideEffectFactConsumer
 } from './terminal-side-effect-facts-handler'
 import { isRendererHiddenPtyDeliveryGateEnabled } from './terminal-hidden-delivery-gate'
+import {
+  markRendererOwnedAgentStatusWrite,
+  registerRendererOwnedAgentStatusPane
+} from './renderer-owned-agent-status-registry'
 import type { DirectSshPaneRetryAttempt } from '@/store/slices/direct-ssh-terminal-recovery'
 import { directSshAuthoritiesEqual } from '@/store/slices/direct-ssh-terminal-authority-ledger'
 
@@ -3574,6 +3578,14 @@ export function connectPanePty(
         })
       : undefined
   const shouldOwnAgentStatusInRenderer = runtimeEnvironmentId !== null
+  // Why: the host also mirrors agent status for this pane through session.tabs.
+  // Claiming here (decided once at transport creation, like the side-effect
+  // authority below) lets the mirror keep this renderer's byte-derived status
+  // instead of overwriting/deleting it on every republication.
+  const releaseRendererOwnedAgentStatusPane =
+    runtimeEnvironmentId !== null
+      ? registerRendererOwnedAgentStatusPane(cacheKey, runtimeEnvironmentId)
+      : null
   handleRendererOwnedAgentStatus = (payload): void => {
     if (
       shouldSuppressCodexAutoApprovalStatus(payload, {
@@ -3600,6 +3612,9 @@ export function connectPanePty(
           agentType ?? authoritativePaneAgent
         )
       : resolvedStatusTitle
+    // Why: proves the claim — only a pane that really produced byte-derived
+    // status may fence the host mirror out of its store key.
+    markRendererOwnedAgentStatusWrite(cacheKey)
     if (launchToken) {
       currentState.setAgentStatus(cacheKey, statusPayload, statusTitle, undefined, routing, {
         launchToken
@@ -8991,6 +9006,9 @@ export function connectPanePty(
     reconcileIfSessionMissing,
     dispose() {
       disposed = true
+      // Why: a detached client stops observing the pane's bytes, so it must cede
+      // agent-status authority back to the host on the next mirrored snapshot.
+      releaseRendererOwnedAgentStatusPane?.()
       directSshPaneRetrySettlementCancelled = true
       for (const timer of directSshPaneRetrySettlementTimers) {
         clearTimeout(timer)
