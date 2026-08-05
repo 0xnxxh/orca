@@ -1,7 +1,9 @@
 import React from 'react'
 import { FilePlus, FileText, Globe, Loader2, Smartphone, TerminalSquare } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
+import { basename, dirname } from '@/lib/path'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 import type { ActiveOption } from './tab-create-entry-active-option'
 
@@ -40,8 +42,7 @@ export function EntryActionRow({
   selected: boolean
 }): React.JSX.Element {
   const presentation = getActionPresentation(option)
-
-  return (
+  const actionRow = (
     <button
       type="button"
       id={id}
@@ -61,13 +62,49 @@ export function EntryActionRow({
       </span>
       {presentation.showDetail ? (
         <>
-          <span className="text-muted-foreground/70" aria-hidden="true">
+          <span className="shrink-0 text-muted-foreground/70" aria-hidden="true">
             ·
           </span>
-          <span className="min-w-0 truncate">{presentation.detail}</span>
+          {presentation.prioritizeFilename ? (
+            <FilenameFirstPath path={presentation.detail} />
+          ) : (
+            <span className="min-w-0 flex-1 truncate">{presentation.detail}</span>
+          )}
         </>
       ) : null}
     </button>
+  )
+
+  if (!presentation.prioritizeFilename) {
+    return actionRow
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{actionRow}</TooltipTrigger>
+      <TooltipContent
+        side="top"
+        sideOffset={4}
+        className="max-w-[min(90vw,600px)] break-all font-mono"
+      >
+        {presentation.detail}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function FilenameFirstPath({ path }: { path: string }): React.JSX.Element {
+  const filename = basename(path)
+  const directory = dirname(path)
+  const directoryLabel = directory === '.' ? '' : `${directory}${path.includes('\\') ? '\\' : '/'}`
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1">
+      <span className="min-w-0 max-w-full shrink-0 truncate text-foreground">{filename}</span>
+      {directoryLabel ? (
+        <span className="min-w-0 truncate text-muted-foreground">{directoryLabel}</span>
+      ) : null}
+    </span>
   )
 }
 
@@ -75,6 +112,7 @@ function getActionPresentation(option: ActiveOption): {
   detail: string
   icon: React.ReactNode
   label: string
+  prioritizeFilename?: boolean
   showDetail: boolean
 } {
   if (option.kind === 'menu') {
@@ -122,6 +160,7 @@ function getActionPresentation(option: ActiveOption): {
           : classification.relativePath,
       icon: <FileText className="size-3.5 shrink-0" aria-hidden="true" />,
       label: translate('auto.components.tab.bar.TabBarCreateEntry.25dc1cd653', 'Open file'),
+      prioritizeFilename: true,
       showDetail: true
     }
   }

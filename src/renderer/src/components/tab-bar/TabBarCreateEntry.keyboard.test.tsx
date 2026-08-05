@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TabEntryOption } from './tab-create-entry-action'
 import type { TabAgentLaunchOption } from './tab-agent-launch-options'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 // Why: the real entry-action module pulls in runtime IPC + the app store; the
 // keyboard behavior under test only needs a controllable option list.
@@ -37,7 +38,7 @@ let root: Root
 
 function mount(node: React.JSX.Element): void {
   act(() => {
-    root.render(node)
+    root.render(<TooltipProvider>{node}</TooltipProvider>)
   })
 }
 
