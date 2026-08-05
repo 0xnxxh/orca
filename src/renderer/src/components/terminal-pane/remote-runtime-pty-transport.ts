@@ -43,7 +43,8 @@ import {
 import {
   getRemoteRuntimeTerminalMultiplexer,
   REMOTE_TERMINAL_SNAPSHOT_TOO_LARGE,
-  type RemoteRuntimeMultiplexedTerminal
+  type RemoteRuntimeMultiplexedTerminal,
+  type RemoteRuntimeSnapshotOutcome
 } from '../../runtime/remote-runtime-terminal-multiplexer'
 import {
   toRuntimeTerminalWorktreeSelector,
@@ -2459,6 +2460,23 @@ export function createRemoteRuntimePtyTransport(
         return null
       }
       return getCurrentMultiplexedStream(handle)?.serializeBuffer(opts) ?? null
+    },
+
+    async serializeBufferOutcome(opts): Promise<RemoteRuntimeSnapshotOutcome> {
+      if (!connected || !handle) {
+        return {
+          availability: { kind: 'retry-worthy', cause: 'connection-not-ready' },
+          snapshot: null
+        }
+      }
+      const stream = getCurrentMultiplexedStream(handle)
+      if (!stream) {
+        return {
+          availability: { kind: 'retry-worthy', cause: 'stream-detached' },
+          snapshot: null
+        }
+      }
+      return stream.serializeBufferOutcome(opts)
     },
 
     destroy() {

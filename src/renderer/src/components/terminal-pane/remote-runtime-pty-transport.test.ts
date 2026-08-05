@@ -5801,6 +5801,41 @@ describe('createRemoteRuntimePtyTransport', () => {
     expect(onData).not.toHaveBeenCalledWith('requested snapshot', expect.anything())
   })
 
+  it('forwards requested snapshot availability through the remote transport', async () => {
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const transport = createRemoteRuntimePtyTransport('env-1', { worktreeId: 'wt-1' })
+
+    await transport.connect({ url: '', callbacks: {} })
+    await vi.waitFor(() => expect(subscriptionSendBinary).toHaveBeenCalled())
+    const { streamId } = latestSubscribePayload()
+    emitSnapshot(streamId, 'initial')
+
+    const outcomePromise = transport.serializeBufferOutcome?.({ scrollbackRows: 5000 })
+    await vi.waitFor(() =>
+      expect(latestFrameForOpcode(TerminalStreamOpcode.SnapshotRequest)).toBeDefined()
+    )
+    const requestFrame = latestFrameForOpcode(TerminalStreamOpcode.SnapshotRequest)
+    const request = requestFrame
+      ? decodeTerminalStreamJson<{ requestId?: number }>(requestFrame.payload)
+      : null
+    emitSnapshotFrame(
+      streamId,
+      TerminalStreamOpcode.SnapshotStart,
+      encodeTerminalStreamJson({
+        requestId: request?.requestId,
+        cols: 120,
+        rows: 40,
+        unavailable: 'no-serializable-buffer'
+      })
+    )
+    emitSnapshotFrame(streamId, TerminalStreamOpcode.SnapshotEnd, new Uint8Array())
+
+    await expect(outcomePromise).resolves.toMatchObject({
+      availability: { kind: 'retry-worthy', cause: 'host-no-serializable-buffer' },
+      snapshot: { data: '' }
+    })
+  })
+
   it('keeps initial replay separate from in-flight explicit binary snapshot requests', async () => {
     const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
     const onReplayData = vi.fn()

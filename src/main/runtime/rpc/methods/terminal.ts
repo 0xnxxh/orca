@@ -71,6 +71,7 @@ import {
   sameTerminalOutputSourceIdentity,
   type TerminalOutputSourceRange
 } from '../../../../shared/terminal-output-source-range'
+import type { TerminalSnapshotUnavailableReason } from '../../../../shared/terminal-snapshot-unavailability'
 import type { RemoteTerminalSourceRangeReplacementReservation } from '../../remote-terminal-source-range-consumer'
 import { withTerminalCloseAttribution } from '../terminal-close-attribution'
 
@@ -93,6 +94,8 @@ type SnapshotFrameOptions = {
   cwd?: string | null
   truncated?: boolean
   truncatedByByteBudget?: boolean
+  // Why: distinguishes "I could not answer right now" from a genuinely empty buffer; omitted on success.
+  unavailable?: TerminalSnapshotUnavailableReason
   source?: 'headless' | 'renderer'
   oscLinks?: TerminalOscLinkRange[]
   pendingEscapeTailAnsi?: string
@@ -628,6 +631,7 @@ function sendSnapshotFrames(
         requestId: options.requestId,
         displayMode: options.displayMode,
         reason: options.reason,
+        unavailable: options.unavailable,
         seq: options.seq,
         cwd: options.cwd,
         source: options.source,
@@ -2279,6 +2283,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
                 displayMode,
                 truncated: true,
                 truncatedByByteBudget: false,
+                unavailable: 'pending-output-overflowed',
                 data: ''
               })
               return
@@ -2298,6 +2303,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             pendingEscapeTailAnsi: serialized?.pendingEscapeTailAnsi,
             truncated: false,
             truncatedByByteBudget: serialized?.truncatedByByteBudget,
+            // Why: no serializer answered, which is not proof the pane is empty — say so instead of passing off '' as the buffer.
+            unavailable: serialized ? undefined : 'no-serializable-buffer',
             data: serialized?.data ?? ''
           })
         } catch (error) {
