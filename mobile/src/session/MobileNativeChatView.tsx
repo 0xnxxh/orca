@@ -61,6 +61,9 @@ type Props = {
   /** Optimistic queued sends (owned by the route so they survive view switches). */
   /** Optimistic user echoes, including any ridden-along image preview URIs. */
   pending: MobileNativeChatPendingItem[]
+  /** Local photo URIs retained when the authoritative transcript replaces an
+   *  optimistic image bubble. */
+  imagePreviewsByMessageId?: Record<string, string[]>
   /** Controlled composer text (owned by the route so dictation can write to it). */
   composerText: string
   onComposerTextChange: (text: string) => void
@@ -125,6 +128,7 @@ export function MobileNativeChatView({
   onLoadEarlier,
   onSend,
   pending,
+  imagePreviewsByMessageId,
   composerText,
   onComposerTextChange,
   onAttachImage,
@@ -177,8 +181,14 @@ export function MobileNativeChatView({
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded, streaming, pending }),
-    [folded, streaming, pending]
+    () =>
+      buildMobileNativeChatTransientData({
+        folded,
+        streaming,
+        pending,
+        imagePreviewsByMessageId
+      }),
+    [folded, streaming, pending, imagePreviewsByMessageId]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above
