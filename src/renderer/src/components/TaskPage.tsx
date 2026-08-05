@@ -5244,7 +5244,9 @@ export default function TaskPage(): React.JSX.Element {
       linearMode === 'in-orca'
         ? filterLinearIssuesBySearchQuery(displayedLinearIssues, appliedLinearSearch)
         : displayedLinearIssues
-    if (activeLinearIssueContextLabel) {
+    // Why: 'in-orca' is scoped by local workspace links, not by team, and it has no "Fetch more" —
+    // a team filter would silently drop a linked ticket with no way to recover it.
+    if (activeLinearIssueContextLabel || linearMode === 'in-orca') {
       return searchedIssues
     }
     // Why: team options can arrive after issue rows render; treat an empty selection as "all" until reconciliation sets teams.
@@ -8794,7 +8796,7 @@ export default function TaskPage(): React.JSX.Element {
                                 <TooltipContent side="bottom" sideOffset={6}>
                                   {translate(
                                     'auto.components.TaskPage.linearModeHasWorktreeTooltip',
-                                    'Linear tickets linked to a local Orca worktree'
+                                    'Linear tickets linked to an Orca workspace'
                                   )}
                                 </TooltipContent>
                               </Tooltip>

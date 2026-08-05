@@ -100,4 +100,21 @@ describe('openLinearIssueWorkspaceOrStart', () => {
     })
     expect(startWorkspace).not.toHaveBeenCalled()
   })
+
+  it('starts a workspace when the issue has none attached', () => {
+    const startWorkspace = vi.fn()
+
+    expect(openLinearIssueWorkspaceOrStart({ identifier: 'ENG-1' }, startWorkspace)).toBe('started')
+    expect(startWorkspace).toHaveBeenCalledTimes(1)
+    expect(mocks.activateAndRevealWorktree).not.toHaveBeenCalled()
+  })
+
+  it('reports failure when activation is refused', () => {
+    mocks.worktrees = [worktree()]
+    mocks.activateAndRevealWorktree.mockReturnValue(false)
+    const startWorkspace = vi.fn()
+
+    expect(openLinearIssueWorkspaceOrStart({ identifier: 'ENG-1' }, startWorkspace)).toBe('failed')
+    expect(startWorkspace).not.toHaveBeenCalled()
+  })
 })

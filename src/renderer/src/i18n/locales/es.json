@@ -302,15 +302,6 @@
       }
     },
     "lib": {
-      "linear": {
-        "issue": {
-          "workspace": {
-            "open": {
-              "4f2c1d8a3b": "No se pudo abrir el espacio de trabajo vinculado a este issue."
-            }
-          }
-        }
-      },
       "agent": {
         "catalog": {
           "5dff448636": "OpenClaw",
@@ -637,6 +628,13 @@
             "attachPrPrompt": "Usa {{value0}} para adjuntar esta pull request o merge request a la incidencia de Linear vinculada.",
             "triageFollowupsSummary": "Set assignee, priority, or estimate, and file parented follow-up tickets.",
             "triageFollowupsPrompt": "Use {{value0}} to triage the linked Linear issue — set priority and estimate — and create a parented follow-up ticket for the deferred cleanup."
+          }
+        },
+        "issue": {
+          "workspace": {
+            "open": {
+              "4f2c1d8a3b": "No se pudo abrir el espacio de trabajo vinculado a este issue."
+            }
           }
         }
       },

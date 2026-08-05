@@ -302,15 +302,6 @@
       }
     },
     "lib": {
-      "linear": {
-        "issue": {
-          "workspace": {
-            "open": {
-              "4f2c1d8a3b": "无法打开关联到此议题的工作区。"
-            }
-          }
-        }
-      },
       "agent": {
         "catalog": {
           "5dff448636": "OpenClaw",
@@ -637,6 +628,13 @@
             "attachPrPrompt": "使用 {{value0}} 将此拉取或合并请求附加到关联的 Linear 议题。",
             "triageFollowupsSummary": "设置负责人、优先级或预估工时，并创建带父级关联的后续议题。",
             "triageFollowupsPrompt": "使用 {{value0}} 对关联的 Linear 议题进行分类处理 — 设置优先级和预估工时 — 并为延后清理创建带父级关联的后续议题。"
+          }
+        },
+        "issue": {
+          "workspace": {
+            "open": {
+              "4f2c1d8a3b": "无法打开关联到此议题的工作区。"
+            }
           }
         }
       },

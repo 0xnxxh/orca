@@ -302,15 +302,6 @@
       }
     },
     "lib": {
-      "linear": {
-        "issue": {
-          "workspace": {
-            "open": {
-              "4f2c1d8a3b": "이 이슈에 연결된 워크스페이스를 열 수 없습니다."
-            }
-          }
-        }
-      },
       "agent": {
         "catalog": {
           "5dff448636": "OpenClaw",
@@ -637,6 +628,13 @@
             "attachPrPrompt": "{{value0}}을 사용해 이 풀 또는 머지 리퀘스트를 연결된 Linear 이슈에 첨부하세요.",
             "triageFollowupsSummary": "Set assignee, priority, or estimate, and file parented follow-up tickets.",
             "triageFollowupsPrompt": "Use {{value0}} to triage the linked Linear issue — set priority and estimate — and create a parented follow-up ticket for the deferred cleanup."
+          }
+        },
+        "issue": {
+          "workspace": {
+            "open": {
+              "4f2c1d8a3b": "이 이슈에 연결된 워크스페이스를 열 수 없습니다."
+            }
           }
         }
       },

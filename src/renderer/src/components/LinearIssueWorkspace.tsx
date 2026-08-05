@@ -1040,6 +1040,10 @@ export default function LinearIssueWorkspace({
                   <button
                     type="button"
                     onClick={handleOpenOrUseIssue}
+                    aria-label={translate(
+                      'auto.components.LinearIssueWorkspace.openAttachedWorkspace',
+                      'Open workspace attached to issue'
+                    )}
                     className="flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
                     <FolderOpen className="size-4 shrink-0" />
