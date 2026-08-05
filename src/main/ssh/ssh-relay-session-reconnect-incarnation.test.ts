@@ -126,6 +126,7 @@ const {
   registerSshPtyProvider,
   getSshPtyProvider,
   getPtyIdsForConnection,
+  clearProviderPtyState,
   deletePtyOwnership,
   setPtyOwnership,
   restorePtyIncarnation
@@ -433,7 +434,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
         incarnationId
       },
       SSH_HOST_ID,
-      { mayCreate: false }
+      { mayCreate: false, expectedBinding: { ptyId: APP_PTY_ID } }
     )
     expect(vi.mocked(mockStore.persistPtyBinding).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(mockStore.markSshRemotePtyLeasesAttachedAsync).mock.invocationCallOrder[0]!
@@ -472,7 +473,9 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
         leafId: INCARNATION_LEAF_ID
       })
     )
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', ['pty-live'])
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledWith('target-1', [
+      'pty-live'
+    ])
     expect(deletePtyOwnership).toHaveBeenCalledWith(APP_PTY_ID)
     expect(mockStore.persistPtyBinding).not.toHaveBeenCalled()
     expect(attachForReconnect).not.toHaveBeenCalled()
@@ -528,7 +531,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
   it('contains a post-attach bind race without allowing a creating recovery bind', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
-    const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
+    const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn().mockResolvedValue(true) }
     const attachForReconnect = vi.fn().mockResolvedValue({
       incarnationId: 'incarnation-raced',
       replay: 'unpublished-output',
@@ -560,9 +563,11 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(mockStore.persistPtyBinding).toHaveBeenCalledWith(
       expect.objectContaining({ incarnationId: 'incarnation-raced' }),
       SSH_HOST_ID,
-      { mayCreate: false }
+      { mayCreate: false, expectedBinding: { ptyId: APP_PTY_ID } }
     )
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', ['pty-live'])
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledWith('target-1', [
+      'pty-live'
+    ])
     expect(deletePtyOwnership).toHaveBeenCalledWith(APP_PTY_ID)
     expect(runtime.registerPty).not.toHaveBeenCalled()
     expect(runtime.onPtySpawned).not.toHaveBeenCalled()
@@ -605,7 +610,10 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     await session.establish(mockConn)
 
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', ['pty-old'])
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledWith('target-1', [
+      'pty-old'
+    ])
+    expect(clearProviderPtyState).toHaveBeenCalledWith('ssh:target-1@@pty-old')
     expect(deletePtyOwnership).toHaveBeenCalledWith('ssh:target-1@@pty-old')
     expect(attachForReconnect).toHaveBeenCalledOnce()
     expect(attachForReconnect).toHaveBeenCalledWith(
@@ -628,13 +636,15 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       { ...detachedLease(), ptyId: 'pty-winner', createdAt: 20, updatedAt: 20 }
     ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>
     vi.mocked(mockStore.getSshRemotePtyLeases).mockImplementation(() => leases)
-    vi.mocked(mockStore.quarantineSshRemotePtyLeases).mockImplementation((_targetId, ptyIds) => {
-      for (const lease of leases) {
-        if (ptyIds.includes(lease.ptyId)) {
-          lease.state = 'expired'
+    vi.mocked(mockStore.quarantineSshRemotePtyLeasesAsync).mockImplementation(
+      async (_targetId, ptyIds) => {
+        for (const lease of leases) {
+          if (ptyIds.includes(lease.ptyId)) {
+            lease.state = 'expired'
+          }
         }
       }
-    })
+    )
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
 
     await session.establish(mockConn)
@@ -657,7 +667,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       worktreeId: 'worktree-1',
       tabId: 'tab-1',
       leafId: INCARNATION_LEAF_ID,
-      hostId: 'ssh:target-1'
+      hostId: 'ssh:target-1',
+      ptyId: APP_PTY_ID
     })
     const runtime = { onPtySpawned: vi.fn(), registerPty: vi.fn() }
     const session = new SshRelaySession(
@@ -787,7 +798,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(mockStore.persistPtyBinding).toHaveBeenCalledWith(
       expect.objectContaining({ ptyId: APP_PTY_ID, incarnationId: currentIncarnationId }),
       SSH_HOST_ID,
-      { mayCreate: false }
+      { mayCreate: false, expectedBinding: { ptyId: APP_PTY_ID } }
     )
     expect(mockWindow.webContents.send).toHaveBeenCalledWith('pty:replay', {
       id: APP_PTY_ID,

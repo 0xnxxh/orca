@@ -521,13 +521,15 @@ describe('SshRelaySession', () => {
             worktreeId: 'worktree-1',
             tabId: 'tab-live',
             leafId: '11111111-1111-4111-8111-111111111111',
-            hostId: 'ssh:target-1'
+            hostId: 'ssh:target-1',
+            ptyId
           }
         : {
             worktreeId: 'worktree-1',
             tabId: 'tab-live-2',
             leafId: '22222222-2222-4222-8222-222222222222',
-            hostId: 'ssh:target-1'
+            hostId: 'ssh:target-1',
+            ptyId
           }
     )
 
@@ -542,6 +544,7 @@ describe('SshRelaySession', () => {
       'target-1',
       expect.arrayContaining(['pty-live', 'pty-live-2'])
     )
+    expect(mockStore.persistPtyBinding).not.toHaveBeenCalled()
   })
 
   it('resolves a legacy tab lease to pane identity before reattach', async () => {
@@ -561,7 +564,8 @@ describe('SshRelaySession', () => {
       worktreeId: 'worktree-1',
       tabId: 'tab-a',
       leafId,
-      hostId: 'ssh:target-1'
+      hostId: 'ssh:target-1',
+      ptyId: 'ssh:target-1@@pty-1'
     })
 
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)

@@ -115,13 +115,17 @@ import {
   rememberSshPtyConsumerRecovery,
   removeSshPtyConsumerOwnerRecovery
 } from './ssh-pty-consumer-recovery'
-import { selectSshRemotePtyLeasesForReattach } from './ssh-remote-pty-lease-selection'
+import {
+  coalesceSshRemotePtyLeasesByIdentity,
+  selectSshRemotePtyLeasesForReattach
+} from './ssh-remote-pty-lease-selection'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
 type SshPtyExitPayload = Parameters<SshPtyExitCallback>[0]
 type SshPtyDataPayload = Parameters<SshPtyDataCallback>[0]
 type SshPtyLease = ReturnType<Store['getSshRemotePtyLeases']>[number]
+type ResolvedSshPtyBinding = NonNullable<ReturnType<Store['resolveExistingSshPtyBinding']>>
 const SSH_PTY_REATTACH_MAX_CONCURRENCY = 8
 const SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS = 10_000
 const SSH_PTY_REATTACH_RETRY_MIN_DELAY_MS = 50
@@ -1937,9 +1941,21 @@ export class SshRelaySession {
     if (!ptyProvider || providerGeneration === null || this.mux !== mux || !shouldContinue()) {
       return
     }
-    const storedLeases = this.store.getSshRemotePtyLeases(this.targetId)
-    const { candidates: activeLeases, discardedDuplicates } =
-      selectSshRemotePtyLeasesForReattach(storedLeases)
+    const storedLeases = coalesceSshRemotePtyLeasesByIdentity(
+      this.store.getSshRemotePtyLeases(this.targetId)
+    )
+    const { candidates, discardedDuplicates } = selectSshRemotePtyLeasesForReattach(storedLeases, {
+      isDurablyBound: (lease) =>
+        Boolean(
+          this.store.resolveExistingSshPtyBinding({
+            targetId: this.targetId,
+            ptyId: lease.ptyId,
+            worktreeId: lease.worktreeId,
+            tabId: lease.tabId,
+            leafId: lease.leafId
+          })
+        )
+    })
     const discardedDuplicatePtyIds = new Set(discardedDuplicates.map((lease) => lease.ptyId))
     const blockedPtyIds = new Set(
       storedLeases
@@ -1947,15 +1963,21 @@ export class SshRelaySession {
         .map((lease) => lease.ptyId)
     )
     if (discardedDuplicatePtyIds.size > 0) {
-      this.store.quarantineSshRemotePtyLeases(this.targetId, Array.from(discardedDuplicatePtyIds))
+      await this.store.quarantineSshRemotePtyLeasesAsync(
+        this.targetId,
+        Array.from(discardedDuplicatePtyIds)
+      )
       for (const ptyId of discardedDuplicatePtyIds) {
         blockedPtyIds.add(ptyId)
       }
     }
     for (const ptyId of blockedPtyIds) {
       // Why: connection-loss ownership survives reconnects, so drop quarantined ids before a later pass can revive them without lease identity.
-      deletePtyOwnership(toAppSshPtyId(this.targetId, ptyId))
+      const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+      clearProviderPtyState(appPtyId)
+      deletePtyOwnership(appPtyId)
     }
+    const activeLeases = candidates.filter((lease) => !blockedPtyIds.has(lease.ptyId))
     const activeLeaseByPtyId = new Map(activeLeases.map((lease) => [lease.ptyId, lease]))
     const leasedPtyIds = activeLeases.map((lease) => lease.ptyId)
     // Why: pass pane identity so the relay can reject cross-generation id collisions; tabId falls back for pre-leafId leases.
@@ -2009,16 +2031,25 @@ export class SshRelaySession {
         }
       }
     }
-    try {
-      await Promise.all(
-        Array.from({ length: Math.min(SSH_PTY_REATTACH_MAX_CONCURRENCY, ptyIds.length) }, worker)
+    const workerResults = await Promise.allSettled(
+      Array.from({ length: Math.min(SSH_PTY_REATTACH_MAX_CONCURRENCY, ptyIds.length) }, worker)
+    )
+    if (quarantinedPtyIds.size > 0) {
+      await this.store.quarantineSshRemotePtyLeasesAsync(
+        this.targetId,
+        Array.from(quarantinedPtyIds)
       )
-    } finally {
-      // Why: in finally so a cancelled or failed pass still records the panes it already retired;
-      // ownership is dropped inline, so leaving the lease active would revive them on the next pass.
-      if (quarantinedPtyIds.size > 0) {
-        this.store.quarantineSshRemotePtyLeases(this.targetId, Array.from(quarantinedPtyIds))
+      for (const ptyId of quarantinedPtyIds) {
+        const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+        clearProviderPtyState(appPtyId)
+        deletePtyOwnership(appPtyId)
       }
+    }
+    const workerFailure = workerResults.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (workerFailure) {
+      throw workerFailure.reason
     }
     if (attachedLeaseIds.size > 0 && shouldContinue()) {
       await this.store.markSshRemotePtyLeasesAttachedAsync(
@@ -2052,7 +2083,7 @@ export class SshRelaySession {
     } = args
     const appPtyId = toAppSshPtyId(this.targetId, ptyId)
     let lease = activeLeaseByPtyId.get(ptyId)
-    let bindingHostId: ExecutionHostId | undefined
+    let resolvedBinding: ResolvedSshPtyBinding | undefined
     if (lease) {
       const binding = this.store.resolveExistingSshPtyBinding({
         targetId: this.targetId,
@@ -2062,11 +2093,16 @@ export class SshRelaySession {
         leafId: lease.leafId
       })
       if (!binding) {
-        this.quarantineSshRemotePtyLease(ptyId, appPtyId, quarantinedPtyIds)
+        this.quarantineSshRemotePtyLease(ptyId, quarantinedPtyIds)
         return
       }
-      const { hostId, ...paneBinding } = binding
-      bindingHostId = hostId
+      const {
+        hostId: _hostId,
+        ptyId: _ptyId,
+        incarnationId: _incarnationId,
+        ...paneBinding
+      } = binding
+      resolvedBinding = binding
       lease = { ...lease, ...paneBinding }
       activeLeaseByPtyId.set(ptyId, lease)
       const expectedIdentity = expectedIdentityForLease(lease)
@@ -2179,10 +2215,23 @@ export class SshRelaySession {
         appPtyId,
         attachResult.incarnationId,
         lease,
-        bindingHostId
+        resolvedBinding
       )
       if (restoreOutcome === 'refused') {
-        this.quarantineSshRemotePtyLease(ptyId, appPtyId, quarantinedPtyIds)
+        if (recoveryActivationLease) {
+          await this.abandonPtySourceRecovery(ptyId, appPtyId, pendingReattach)
+          recoveryActivationLease.retire()
+          recoveryActivationLease = undefined
+        } else if (sourceActivationLease) {
+          const canceled = await sourceActivationLease.rollback()
+          sourceActivationLease = undefined
+          if (!canceled) {
+            throw sourceRecoveryCancellationError(
+              new Error('ssh_source_activation_cancellation_unproven')
+            )
+          }
+        }
+        this.quarantineSshRemotePtyLease(ptyId, quarantinedPtyIds)
         return
       }
       setPtyOwnership(appPtyId, this.targetId)
@@ -2249,9 +2298,24 @@ export class SshRelaySession {
     appPtyId: string,
     incarnationId: string | undefined,
     lease: SshPtyLease | undefined,
-    bindingHostId?: ExecutionHostId
+    resolvedBinding?: ResolvedSshPtyBinding
   ): 'bound' | 'refused' {
     if (lease?.worktreeId && lease.tabId && lease.leafId) {
+      if (!resolvedBinding) {
+        return 'refused'
+      }
+      if (!incarnationId) {
+        const current = this.store.resolveExistingSshPtyBinding({
+          targetId: this.targetId,
+          ptyId: appPtyId,
+          worktreeId: lease.worktreeId,
+          tabId: lease.tabId,
+          leafId: lease.leafId
+        })
+        return current && this.sameResolvedSshPtyBinding(current, resolvedBinding)
+          ? 'bound'
+          : 'refused'
+      }
       let outcome: 'bound' | 'refused'
       try {
         outcome = this.store.persistPtyBinding(
@@ -2264,8 +2328,16 @@ export class SshRelaySession {
           },
           // Why: bind back into the partition the pane was resolved from; writing to the target's
           // own partition would refuse a pane the renderer durably keeps on the local one.
-          bindingHostId ?? toSshExecutionHostId(this.targetId),
-          { mayCreate: false }
+          resolvedBinding.hostId,
+          {
+            mayCreate: false,
+            expectedBinding: {
+              ptyId: resolvedBinding.ptyId,
+              ...(resolvedBinding.incarnationId
+                ? { incarnationId: resolvedBinding.incarnationId }
+                : {})
+            }
+          }
         )
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
@@ -2291,18 +2363,24 @@ export class SshRelaySession {
     return 'bound'
   }
 
+  private sameResolvedSshPtyBinding(
+    left: ResolvedSshPtyBinding,
+    right: ResolvedSshPtyBinding
+  ): boolean {
+    return (
+      left.worktreeId === right.worktreeId &&
+      left.tabId === right.tabId &&
+      left.leafId === right.leafId &&
+      left.hostId === right.hostId &&
+      left.ptyId === right.ptyId &&
+      left.incarnationId === right.incarnationId
+    )
+  }
+
   // Why: the store write is deferred to one batched flush per reattach pass — quarantining inline
   // ran a synchronous whole-profile write per refused pane, on a path that can hold a stalled mount.
-  private quarantineSshRemotePtyLease(
-    ptyId: string,
-    appPtyId: string,
-    quarantinedPtyIds: Set<string>
-  ): void {
+  private quarantineSshRemotePtyLease(ptyId: string, quarantinedPtyIds: Set<string>): void {
     quarantinedPtyIds.add(ptyId)
-    // Why: quarantine retires the id for good, so release the provider-scoped state that
-    // connection_lost teardown deliberately preserved for a reattach that will now never happen.
-    clearProviderPtyState(appPtyId)
-    deletePtyOwnership(appPtyId)
     console.warn(
       `[ssh-relay-session] Quarantined PTY ${ptyId} for ${this.targetId}: no durable pane owns it; its remote shell is left running.`
     )

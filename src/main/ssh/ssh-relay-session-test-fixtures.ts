@@ -33,11 +33,12 @@ export function createMockDeps(): SshRelaySessionTestDeps {
             worktreeId: binding.worktreeId,
             tabId: binding.tabId,
             leafId: binding.leafId,
-            hostId: `ssh:${binding.targetId}`
+            hostId: `ssh:${binding.targetId}`,
+            ptyId: binding.ptyId
           }
         : null
     ),
-    quarantineSshRemotePtyLeases: vi.fn()
+    quarantineSshRemotePtyLeasesAsync: vi.fn().mockResolvedValue(undefined)
   } as unknown as Store
   const mockPortForward = {
     removeAllForwards: vi.fn()

@@ -167,7 +167,9 @@ describe('SshRelaySession reattach quarantine', () => {
     await session.establish(mockConn)
 
     expect(attachForReconnect).not.toHaveBeenCalled()
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', ['pty-live'])
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledWith('target-1', [
+      'pty-live'
+    ])
     expect(deletePtyOwnership).toHaveBeenCalledWith(APP_PTY_ID)
   })
 
@@ -185,9 +187,9 @@ describe('SshRelaySession reattach quarantine', () => {
 
     await session.establish(mockConn)
 
-    // Why: one synchronous whole-profile write per refusal is the regression this guards.
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledTimes(1)
-    expect(mockStore.quarantineSshRemotePtyLeases).toHaveBeenCalledWith('target-1', [
+    // Why: persist every refusal in one awaited durable batch.
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledTimes(1)
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).toHaveBeenCalledWith('target-1', [
       'pty-a',
       'pty-b',
       'pty-c'
@@ -196,5 +198,65 @@ describe('SshRelaySession reattach quarantine', () => {
       expect(deletePtyOwnership).toHaveBeenCalledWith(`ssh:target-1@@${ptyId}`)
       expect(clearProviderPtyState).toHaveBeenCalledWith(`ssh:target-1@@${ptyId}`)
     }
+  })
+
+  it('does not let an older final identity duplicate block its active winner', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const attachForReconnect = vi.fn().mockResolvedValue({ incarnationId: 'incarnation-live' })
+    vi.mocked(getSshPtyProvider).mockReturnValue({ attachForReconnect } as never)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
+      { ...detachedLease(), state: 'expired', createdAt: 1, updatedAt: 1 },
+      { ...detachedLease(), createdAt: 2, updatedAt: 2 }
+    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await session.establish(mockConn)
+
+    expect(attachForReconnect).toHaveBeenCalledOnce()
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).not.toHaveBeenCalled()
+  })
+
+  it('retains provider state when durable quarantine fails', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
+      { ...detachedLease(), leafId: undefined }
+    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
+    vi.mocked(mockStore.resolveExistingSshPtyBinding).mockReturnValue(null)
+    vi.mocked(mockStore.quarantineSshRemotePtyLeasesAsync).mockRejectedValue(
+      new Error('disk unavailable')
+    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await expect(session.establish(mockConn)).rejects.toThrow('disk unavailable')
+
+    expect(clearProviderPtyState).not.toHaveBeenCalled()
+    expect(deletePtyOwnership).not.toHaveBeenCalled()
+  })
+
+  it('fails establishment when a refused attach cannot prove source cancellation', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn().mockResolvedValue(false)
+    }
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: vi.fn().mockResolvedValue({
+        incarnationId: 'incarnation-raced',
+        sourceActivationLease
+      })
+    } as never)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
+      typeof mockStore.getSshRemotePtyLeases
+    >)
+    vi.mocked(mockStore.persistPtyBinding).mockReturnValue('refused')
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await expect(session.establish(mockConn)).rejects.toMatchObject({
+      code: 'ssh_source_recovery_cancellation_failed'
+    })
+
+    expect(sourceActivationLease.rollback).toHaveBeenCalledOnce()
+    expect(mockStore.quarantineSshRemotePtyLeasesAsync).not.toHaveBeenCalled()
+    expect(session.getState()).toBe('idle')
   })
 })

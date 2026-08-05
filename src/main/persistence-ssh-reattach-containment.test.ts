@@ -169,7 +169,8 @@ describe('Store SSH reattach containment', () => {
       worktreeId: 'wt-1',
       tabId: 'tab-1',
       leafId: LEAF_1,
-      hostId: SSH_HOST_ID
+      hostId: SSH_HOST_ID,
+      ptyId: APP_PTY_ID
     })
   })
 
@@ -191,7 +192,8 @@ describe('Store SSH reattach containment', () => {
       worktreeId: 'wt-1',
       tabId: 'tab-1',
       leafId: LEAF_1,
-      hostId: LOCAL_EXECUTION_HOST_ID
+      hostId: LOCAL_EXECUTION_HOST_ID,
+      ptyId: APP_PTY_ID
     })
     expect(
       store.persistPtyBinding(
@@ -221,6 +223,53 @@ describe('Store SSH reattach containment', () => {
     ).toBe(SSH_HOST_ID)
   })
 
+  it('refuses a complete lease when the pane is bound to a replacement PTY', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession(sessionWithExistingPane('ssh:target-1@@pty-new'), SSH_HOST_ID)
+
+    expect(
+      store.resolveExistingSshPtyBinding({
+        targetId: 'target-1',
+        ptyId: APP_PTY_ID,
+        worktreeId: 'wt-1',
+        tabId: 'tab-1',
+        leafId: LEAF_1
+      })
+    ).toBeNull()
+  })
+
+  it('refuses a stale single-leaf tab summary when the leaf binding is newer', async () => {
+    const store = await createStore()
+    const session = sessionWithExistingPane('ssh:target-1@@pty-new')
+    session.tabsByWorktree['wt-1'][0].ptyId = APP_PTY_ID
+    store.setWorkspaceSession(session, SSH_HOST_ID)
+
+    expect(
+      store.resolveExistingSshPtyBinding({
+        targetId: 'target-1',
+        ptyId: APP_PTY_ID,
+        worktreeId: 'wt-1',
+        tabId: 'tab-1'
+      })
+    ).toBeNull()
+  })
+
+  it('refuses conflicting copies of the same pane across host partitions', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession(sessionWithExistingPane(APP_PTY_ID), SSH_HOST_ID)
+    store.setWorkspaceSession(sessionWithExistingPane('ssh:target-1@@pty-new'))
+
+    expect(
+      store.resolveExistingSshPtyBinding({
+        targetId: 'target-1',
+        ptyId: APP_PTY_ID,
+        worktreeId: 'wt-1',
+        tabId: 'tab-1',
+        leafId: LEAF_1
+      })
+    ).toBeNull()
+  })
+
   it('resolves incomplete legacy leases only from a unique durable PTY binding', async () => {
     const store = await createStore()
     store.setWorkspaceSession(sessionWithExistingPane(APP_PTY_ID), SSH_HOST_ID)
@@ -232,9 +281,21 @@ describe('Store SSH reattach containment', () => {
         worktreeId: 'wt-1',
         tabId: 'tab-1'
       })
-    ).toEqual({ worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1, hostId: SSH_HOST_ID })
+    ).toEqual({
+      worktreeId: 'wt-1',
+      tabId: 'tab-1',
+      leafId: LEAF_1,
+      hostId: SSH_HOST_ID,
+      ptyId: APP_PTY_ID
+    })
     expect(store.resolveExistingSshPtyBinding({ targetId: 'target-1', ptyId: APP_PTY_ID })).toEqual(
-      { worktreeId: 'wt-1', tabId: 'tab-1', leafId: LEAF_1, hostId: SSH_HOST_ID }
+      {
+        worktreeId: 'wt-1',
+        tabId: 'tab-1',
+        leafId: LEAF_1,
+        hostId: SSH_HOST_ID,
+        ptyId: APP_PTY_ID
+      }
     )
 
     const ambiguous = sessionWithExistingPane(APP_PTY_ID)
@@ -283,6 +344,34 @@ describe('Store SSH reattach containment', () => {
     expect(flush).toHaveBeenCalledOnce()
   })
 
+  it('compare-and-set refuses a pane that was replaced during reattach', async () => {
+    const store = await createStore()
+    const session = sessionWithExistingPane('pty-new')
+    session.terminalPtyIncarnationsByPaneKey = { [`tab-1:${LEAF_1}`]: 'incarnation-new' }
+    store.setWorkspaceSession(session)
+    const before = structuredClone(store.getWorkspaceSession())
+    const flush = vi.spyOn(store, 'flushOrThrow')
+
+    expect(
+      store.persistPtyBinding(
+        {
+          worktreeId: 'wt-1',
+          tabId: 'tab-1',
+          leafId: LEAF_1,
+          ptyId: 'pty-old',
+          incarnationId: 'incarnation-reattached'
+        },
+        undefined,
+        {
+          mayCreate: false,
+          expectedBinding: { ptyId: 'pty-old', incarnationId: 'incarnation-old' }
+        }
+      )
+    ).toBe('refused')
+    expect(store.getWorkspaceSession()).toEqual(before)
+    expect(flush).not.toHaveBeenCalled()
+  })
+
   it('rolls back an existing-only bind when its durable flush fails', async () => {
     const store = await createStore()
     store.setWorkspaceSession(sessionWithExistingPane())
@@ -307,7 +396,7 @@ describe('Store SSH reattach containment', () => {
     expect(store.getWorkspaceSession()).toEqual(before)
   })
 
-  it('collapses duplicate panes deterministically and persists the terminal losers', async () => {
+  it('leaves pane duplicates active until durable binding can arbitrate reattach', async () => {
     const store = await createStore()
     const timestamps = [
       ['pty-updated-old', 900, 100],
@@ -340,18 +429,8 @@ describe('Store SSH reattach containment', () => {
 
     const reloaded = await createStore()
     const collapsed = reloaded.getSshRemotePtyLeases('target-1')
-    expect(collapsed.find((lease) => lease.ptyId === 'pty-z')?.state).toBe('detached')
-    expect(collapsed.find((lease) => lease.ptyId === 'pty-identity-incomplete')?.state).toBe(
-      'detached'
-    )
-    for (const ptyId of ['pty-updated-old', 'pty-created-old', 'pty-a']) {
-      expect(collapsed.find((lease) => lease.ptyId === ptyId)?.state, ptyId).toBe('expired')
-    }
-
-    reloaded.flush()
-    const persisted = (await createStore()).getSshRemotePtyLeases('target-1')
-    for (const ptyId of ['pty-updated-old', 'pty-created-old', 'pty-a']) {
-      expect(persisted.find((lease) => lease.ptyId === ptyId)?.state, ptyId).toBe('expired')
+    for (const ptyId of [...timestamps.map(([ptyId]) => ptyId), 'pty-identity-incomplete']) {
+      expect(collapsed.find((lease) => lease.ptyId === ptyId)?.state, ptyId).toBe('detached')
     }
   })
 
@@ -362,7 +441,9 @@ describe('Store SSH reattach containment', () => {
       ptyId: 'pty-discarded',
       state: 'attached'
     })
-    store.quarantineSshRemotePtyLeases('target-1', ['pty-discarded'])
+    const syncFlush = vi.spyOn(store, 'flush')
+    await store.quarantineSshRemotePtyLeasesAsync('target-1', ['pty-discarded'])
+    expect(syncFlush).not.toHaveBeenCalled()
 
     store.markSshRemotePtyLease('target-1', 'pty-discarded', 'detached')
     await store.markSshRemotePtyLeasesAttachedAsync('target-1', ['pty-discarded'])
@@ -370,5 +451,50 @@ describe('Store SSH reattach containment', () => {
     expect(store.getSshRemotePtyLeases('target-1')[0]).toEqual(
       expect.objectContaining({ ptyId: 'pty-discarded', state: 'expired' })
     )
+  })
+
+  it('rolls back an in-memory quarantine when its durable write fails', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'target-1',
+      ptyId: 'pty-discarded',
+      state: 'attached'
+    })
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync(): Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockRejectedValueOnce(new Error('disk unavailable'))
+
+    await expect(
+      store.quarantineSshRemotePtyLeasesAsync('target-1', ['pty-discarded'])
+    ).rejects.toThrow('disk unavailable')
+
+    expect(store.getSshRemotePtyLeases('target-1')[0]).toEqual(
+      expect.objectContaining({ ptyId: 'pty-discarded', state: 'attached' })
+    )
+  })
+
+  it('coalesces target reassignment collisions by remote PTY identity', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'target-old',
+      ptyId: 'pty-shared',
+      state: 'detached',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    store.upsertSshRemotePtyLease({
+      targetId: 'target-new',
+      ptyId: 'pty-shared',
+      state: 'attached',
+      createdAt: 2,
+      updatedAt: 2
+    })
+
+    store.reassignSshTargetId('target-old', 'target-new')
+
+    expect(store.getSshRemotePtyLeases('target-new')).toEqual([
+      expect.objectContaining({ ptyId: 'pty-shared', state: 'attached', updatedAt: 2 })
+    ])
   })
 })
