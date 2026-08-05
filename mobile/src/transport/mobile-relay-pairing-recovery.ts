@@ -27,7 +27,7 @@ import {
 import { createRecoveringPairingRelayCandidate } from './pairing-relay-candidate'
 import type { HostProfile, RpcResponse } from './types'
 
-export type MobileRelayPairingRecoveryResult = 'none' | 'recovered' | 'deferred'
+export type MobileRelayPairingRecoveryResult = 'none' | 'recovered' | 'deferred' | 'abandoned'
 
 type RecoveryDependencies = {
   loadJournal: typeof loadMobileRelayPairingJournal
@@ -137,6 +137,14 @@ async function runRecovery(
     } finally {
       client?.close()
     }
+  }
+  // Why: past invite expiry no credential can still establish what happened, so
+  // retaining the journal cannot reconcile anything — it only fails every later
+  // pairing with "recovery pending" forever. Re-pairing mints a fresh device and
+  // any uncommitted server-side install expires on its own.
+  if (journal.metadata.relay.inviteExpiresAt <= dependencies.now()) {
+    await dependencies.clearJournal(journal.metadata.journalId).catch(() => {})
+    return 'abandoned'
   }
   return 'deferred'
 }

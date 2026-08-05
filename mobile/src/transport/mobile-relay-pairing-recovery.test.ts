@@ -220,4 +220,33 @@ describe('mobile relay pairing recovery', () => {
     expect(saved.metadata.authorizationMode).toBe('authenticated-direct')
     expect(deps.updateJournal).toHaveBeenCalledTimes(2)
   })
+  // Why: a journal stranded by a relay outage used to block every later pairing
+  // with "recovery pending" forever, because recovery only ever deferred.
+  it('abandons a journal once its invite expired and no credential can reconcile', async () => {
+    const saved = journal()
+    const unreachable = client(async () => {
+      throw new Error('relay unreachable')
+    })
+    const deps = {
+      ...dependencies({ journal: saved, connectRelay: vi.fn(() => unreachable) }),
+      now: () => saved.metadata.relay.inviteExpiresAt + 1
+    }
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('abandoned')
+    expect(deps.clearJournal).toHaveBeenCalledWith(saved.metadata.journalId)
+  })
+
+  it('keeps a journal whose invite can still reconcile', async () => {
+    const saved = journal()
+    const unreachable = client(async () => {
+      throw new Error('relay unreachable')
+    })
+    const deps = {
+      ...dependencies({ journal: saved, connectRelay: vi.fn(() => unreachable) }),
+      now: () => saved.metadata.relay.inviteExpiresAt - 1
+    }
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+  })
 })
