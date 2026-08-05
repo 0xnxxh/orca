@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Plugin, Rollup } from 'vite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createPlainNodeEntryGuardPlugin } from '../build-plugins/plain-node-entry-guard'
+import {
+  createPlainNodeEntryGuardPlugin,
+  GUARDED_ENTRY_NAMES
+} from '../build-plugins/plain-node-entry-guard'
 
 let outputDir: string | undefined
 
@@ -83,6 +86,55 @@ describe('plain Node entry guard', () => {
     expect(() => runWriteBundle(plugin, createOutputDir(), 'require("electron")')).toThrow(
       'requires electron'
     )
+  })
+
+  it('rejects Electron subpath requires', () => {
+    const plugin = createPlainNodeEntryGuardPlugin()
+
+    expect(() => runWriteBundle(plugin, createOutputDir(), 'require("electron/main")')).toThrow(
+      'requires electron'
+    )
+  })
+
+  it('fails the smoke when the daemon exits zero on an empty argv', () => {
+    const dir = createOutputDir()
+    const plugin = createPlainNodeEntryGuardPlugin()
+
+    runWriteBundle(plugin, dir)
+    writeFileSync(join(dir, 'daemon-entry.js'), 'console.error("Usage: daemon-entry <socket>")\n')
+
+    expect(() => runCloseBundle(plugin)).toThrow('did not reject an empty argv')
+  })
+})
+
+// Why: writeBundle skips names absent from the bundle, so a renamed rollup input
+// would silently stop guarding that entry instead of failing the build.
+describe('guarded entry names', () => {
+  function runBuildStart(plugin: Plugin, input: unknown): void {
+    const hook = plugin.buildStart
+    if (typeof hook !== 'function') {
+      throw new Error('Expected buildStart hook')
+    }
+    hook.call({} as never, { input } as Rollup.NormalizedInputOptions)
+  }
+
+  it('rejects a guarded name that is no longer a rollup input', () => {
+    const plugin = createPlainNodeEntryGuardPlugin()
+    const input = Object.fromEntries(
+      GUARDED_ENTRY_NAMES.filter((name) => name !== 'stt-worker').map((name) => [
+        name,
+        `${name}.ts`
+      ])
+    )
+
+    expect(() => runBuildStart(plugin, input)).toThrow('"stt-worker"')
+  })
+
+  it('passes when every guarded name is a rollup input', () => {
+    const plugin = createPlainNodeEntryGuardPlugin()
+    const input = Object.fromEntries(GUARDED_ENTRY_NAMES.map((name) => [name, `${name}.ts`]))
+
+    expect(() => runBuildStart(plugin, input)).not.toThrow()
   })
 })
 
