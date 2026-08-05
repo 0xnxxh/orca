@@ -16,6 +16,7 @@ function options(sendRequest: RpcClient['sendRequest']) {
     client: clientWith(sendRequest),
     worktreeId: 'worktree-1',
     relativePath: 'src/target.ts',
+    tabMode: 'diff' as const,
     staged: true
   }
 }
@@ -137,6 +138,38 @@ describe('revealMobileSourceControlSessionDiff', () => {
     expect(sendRequest).toHaveBeenLastCalledWith(
       'session.tabs.activate',
       expect.objectContaining({ tabId: 'staged-diff' })
+    )
+  })
+
+  it('activates a legacy edit tab when opening a diff falls back to files.open', async () => {
+    const sendRequest = vi
+      .fn<RpcClient['sendRequest']>()
+      .mockResolvedValueOnce(
+        success({
+          tabs: [
+            {
+              id: 'stale-diff',
+              type: 'file',
+              mode: 'diff',
+              diffSource: 'staged',
+              relativePath: 'src/target.ts'
+            },
+            {
+              id: 'target-edit',
+              type: 'file',
+              relativePath: 'src/target.ts'
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(success({ activeTabId: 'target-edit' }))
+
+    await expect(
+      revealMobileSourceControlSessionDiff({ ...options(sendRequest), tabMode: 'edit' })
+    ).resolves.toBe('revealed')
+    expect(sendRequest).toHaveBeenLastCalledWith(
+      'session.tabs.activate',
+      expect.objectContaining({ tabId: 'target-edit' })
     )
   })
 

@@ -116,11 +116,13 @@ export function useMobileSourceControlOpeners(params: Params) {
           relativePath: entry.path,
           staged: entry.area === 'staged'
         })
+        let openedTabMode: 'diff' | 'edit' = 'diff'
         if (!response.ok && isMobileGitUnavailable(response.error?.code, response.error?.message)) {
           response = await client.sendRequest('files.open', {
             worktree: `id:${worktreeId}`,
             relativePath: entry.path
           })
+          openedTabMode = 'edit'
         }
         if (!response.ok) {
           throw new Error(response.error?.message || 'Unable to open diff')
@@ -132,6 +134,7 @@ export function useMobileSourceControlOpeners(params: Params) {
           client,
           worktreeId,
           relativePath: entry.path,
+          tabMode: openedTabMode,
           staged: entry.area === 'staged',
           onOpenedFileDiff,
           isCurrent: () => mountedRef.current && openingPathRef.current === entry.path
@@ -140,7 +143,7 @@ export function useMobileSourceControlOpeners(params: Params) {
           return
         }
         if (revealResult === 'timeout') {
-          throw new Error("The diff opened, but its tab isn't ready yet. Try again.")
+          throw new Error("The file opened, but its tab isn't ready yet. Try again.")
         }
         triggerSelection()
         // Why: when launched from the session screen, opening a file dismisses

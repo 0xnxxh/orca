@@ -3,7 +3,7 @@ import { activateMobileSessionTab } from '../session/mobile-session-tab-activati
 
 type ActivationClient = Pick<RpcClient, 'sendRequest'>
 
-type DiffTabCandidate = {
+type SessionFileTabCandidate = {
   id: string
   type: string
   mode?: unknown
@@ -15,6 +15,7 @@ type Options = {
   client: ActivationClient
   worktreeId: string
   relativePath: string
+  tabMode: 'diff' | 'edit'
   staged: boolean
   onOpenedFileDiff?: (relativePath: string) => void
   isCurrent?: () => boolean
@@ -38,7 +39,7 @@ export async function revealMobileSourceControlSessionDiff(
       return 'cancelled'
     }
 
-    const tab = await findOpenedDiffTab(options)
+    const tab = await findOpenedSessionFileTab(options)
     if (options.isCurrent?.() === false) {
       return 'cancelled'
     }
@@ -46,7 +47,7 @@ export async function revealMobileSourceControlSessionDiff(
       continue
     }
 
-    const activated = await activateDiffTab(options, tab.id)
+    const activated = await activateSessionFileTab(options, tab.id)
     if (options.isCurrent?.() === false) {
       return 'cancelled'
     }
@@ -58,7 +59,7 @@ export async function revealMobileSourceControlSessionDiff(
   return 'timeout'
 }
 
-async function findOpenedDiffTab(options: Options): Promise<DiffTabCandidate | null> {
+async function findOpenedSessionFileTab(options: Options): Promise<SessionFileTabCandidate | null> {
   try {
     const response = await options.client.sendRequest('session.tabs.list', {
       worktree: `id:${options.worktreeId}`
@@ -71,14 +72,17 @@ async function findOpenedDiffTab(options: Options): Promise<DiffTabCandidate | n
       return null
     }
 
-    const source = options.staged ? 'staged' : 'unstaged'
     const matches = snapshot.tabs.filter(
       (tab) =>
         tab.type !== 'browser' &&
         tab.type !== 'terminal' &&
-        tab.mode === 'diff' &&
+        matchesTabMode(tab.mode, options.tabMode) &&
         tab.relativePath === options.relativePath
     )
+    if (options.tabMode === 'edit') {
+      return matches[0] ?? null
+    }
+    const source = options.staged ? 'staged' : 'unstaged'
     return (
       matches.find((tab) => tab.diffSource === source) ??
       matches.find((tab) => tab.diffSource == null) ??
@@ -89,7 +93,11 @@ async function findOpenedDiffTab(options: Options): Promise<DiffTabCandidate | n
   }
 }
 
-async function activateDiffTab(options: Options, tabId: string): Promise<boolean> {
+function matchesTabMode(mode: unknown, expected: 'diff' | 'edit'): boolean {
+  return expected === 'diff' ? mode === 'diff' : mode === 'edit' || mode == null
+}
+
+async function activateSessionFileTab(options: Options, tabId: string): Promise<boolean> {
   try {
     const response = await activateMobileSessionTab(options.client, {
       worktree: `id:${options.worktreeId}`,
@@ -104,14 +112,18 @@ async function activateDiffTab(options: Options, tabId: string): Promise<boolean
   }
 }
 
-function readTabSnapshot(value: unknown): { tabs: DiffTabCandidate[] } | null {
-  if (!isRecord(value) || !Array.isArray(value.tabs) || !value.tabs.every(isDiffTabCandidate)) {
+function readTabSnapshot(value: unknown): { tabs: SessionFileTabCandidate[] } | null {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.tabs) ||
+    !value.tabs.every(isSessionFileTabCandidate)
+  ) {
     return null
   }
   return { tabs: value.tabs }
 }
 
-function isDiffTabCandidate(value: unknown): value is DiffTabCandidate {
+function isSessionFileTabCandidate(value: unknown): value is SessionFileTabCandidate {
   return isRecord(value) && typeof value.id === 'string' && typeof value.type === 'string'
 }
 
