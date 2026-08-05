@@ -52,7 +52,7 @@ describe('terminal output frame source ranges', () => {
             }
           })
         ]
-      })
+      }, { supportsOutputSpan: true })
     )
 
     expect(frames).toHaveLength(2)
@@ -89,7 +89,7 @@ describe('terminal output frame source ranges', () => {
       rawLength: 9,
       transformed: true,
       sourceRanges: [sourceRange]
-    })
+    }, { supportsOutputSpan: true })
 
     expect(frame?.sourceRanges).toEqual([sourceRange])
   })

@@ -135,6 +135,7 @@ type TerminalMultiplexStream = {
   ackInFlightBytes: number
   ackWindowBytes: number
   supportsOutputPause: boolean
+  supportsOutputSpan: boolean
   supportsWriteUnavailable: boolean
   outputPaused: boolean
   supportsDesktopViewportClaims: boolean
@@ -570,7 +571,11 @@ function* iterateTerminalStreamTextPayloads(data: string): Generator<Uint8Array<
   if (!data) {
     return
   }
-  for (const chunk of iterateTerminalOutputFrameChunks(data)) {
+  // Text-only payloads (no meta), so the span branch cannot fire; the caller
+  // discards opcodes anyway.
+  for (const chunk of iterateTerminalOutputFrameChunks(data, undefined, {
+    supportsOutputSpan: false
+  })) {
     yield chunk.bytes
   }
 }
@@ -1029,6 +1034,7 @@ const TerminalSubscribe = TerminalHandle.extend({
       terminalBinaryStream: z.literal(1).optional(),
       desktopViewportClaims: z.literal(1).optional(),
       mobileInputLeaseOnly: z.literal(1).optional(),
+      outputSpan: z.literal(1).optional(),
       writeUnavailable: z.literal(1).optional()
     })
     .optional()
@@ -1051,6 +1057,7 @@ const TerminalMultiplexSubscribeFrame = TerminalHandle.extend({
       ackOutputSourceRanges: z.literal(1).optional(),
       desktopViewportClaims: z.literal(1).optional(),
       outputPause: z.literal(1).optional(),
+      outputSpan: z.literal(1).optional(),
       writeUnavailable: z.literal(1).optional()
     })
     .optional()
@@ -2504,6 +2511,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           ackInFlightBytes: 0,
           ackWindowBytes: TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
           supportsOutputPause: request.capabilities?.outputPause === 1,
+          supportsOutputSpan: request.capabilities?.outputSpan === 1,
           supportsWriteUnavailable: request.capabilities?.writeUnavailable === 1,
           outputPaused: false,
           supportsDesktopViewportClaims: request.capabilities?.desktopViewportClaims === 1,
@@ -2531,7 +2539,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
                 meta.seq
               )
             }
-            for (const chunk of iterateTerminalOutputFrameChunks(data, meta)) {
+            for (const chunk of iterateTerminalOutputFrameChunks(data, meta, {
+              supportsOutputSpan: stream.supportsOutputSpan
+            })) {
               queueOrSendOutput(stream, chunk)
             }
           }),
@@ -2921,6 +2931,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           : runtime.getRendererTerminalSerializerGeneration(ptyId)
         : 0
       const supportsDesktopViewportClaims = params.capabilities?.desktopViewportClaims === 1
+      const supportsOutputSpan = params.capabilities?.outputSpan === 1
       const supportsWriteUnavailable = params.capabilities?.writeUnavailable === 1
       if (mobileInputLeaseOnly && clientId) {
         let closed = false
@@ -3148,7 +3159,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             meta.seq
           )
         }
-        for (const chunk of iterateTerminalOutputFrameChunks(data, meta)) {
+        for (const chunk of iterateTerminalOutputFrameChunks(data, meta, {
+          supportsOutputSpan
+        })) {
           sendFrame(chunk.opcode ?? TerminalStreamOpcode.Output, chunk.bytes, chunk.seq)
         }
       })

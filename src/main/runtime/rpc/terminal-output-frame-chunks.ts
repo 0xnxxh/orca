@@ -50,12 +50,19 @@ export function exceedsTerminalStreamChunkBytes(data: string): boolean {
   return false
 }
 
+export type TerminalOutputFrameChunkOptions = {
+  // Required, not defaulted: the caller owns the peer's negotiated capability, and a
+  // default would silently re-introduce ungated spans at the next call site.
+  supportsOutputSpan: boolean
+}
+
 export function* iterateTerminalOutputFrameChunks(
   data: string,
-  meta?: TerminalOutputMeta
+  meta: TerminalOutputMeta | undefined,
+  options: TerminalOutputFrameChunkOptions
 ): Generator<TerminalOutputFrameChunk> {
   const rawLength = meta?.rawLength ?? data.length
-  if (meta?.transformed || rawLength !== data.length) {
+  if (options.supportsOutputSpan && (meta?.transformed || rawLength !== data.length)) {
     yield {
       opcode: TerminalStreamOpcode.OutputSpan,
       bytes: encodeTerminalStreamJson({ data, rawLength, transformed: true }),
@@ -75,8 +82,9 @@ export function* iterateTerminalOutputFrameChunks(
     return
   }
   const canPreserveChunkSeq = typeof meta?.seq === 'number' && rawLength === data.length
-  // Unreachable past the OutputSpan branch above (rawLength === data.length there), but kept
-  // as defence in depth: it is the only shape that can carry a seq the chunk offsets can't map.
+  // This is the downgrade path for a peer without `outputSpan`: it carries the raw
+  // high-water mark on the final frame only, because a transformed run's seq cannot
+  // map back to UTF-16 chunk offsets. Matches what hosts sent before OutputSpan existed.
   const shouldDelayFinalSeq = !canPreserveChunkSeq && typeof meta?.seq === 'number'
   const startSeq = canPreserveChunkSeq ? meta.seq! - rawLength : undefined
   let chunkStart = 0

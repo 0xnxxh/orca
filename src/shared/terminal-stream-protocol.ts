@@ -28,6 +28,9 @@ export enum TerminalStreamOpcode {
   // Why 14: Ack already occupies 13 on current clients; older runtimes ignore
   // this opcode and still receive the compatibility Resize frame behind it.
   ClaimViewport = 14,
+  // Negotiated per stream: mobile's vendored decoder stops at 12 and drops this
+  // frame silently, so an ungated span is lost output. Senders downgrade to
+  // Output when the peer did not confirm `outputSpan`.
   OutputSpan = 15,
   // Negotiated per stream; older hosts reject unknown opcodes, so clients send only after capability confirmation.
   SetOutputPaused = 16,

@@ -507,6 +507,7 @@ class RemoteRuntimeTerminalMultiplexer {
             ackOutput: 1,
             ackOutputSourceRanges: 1,
             outputPause: 1,
+            outputSpan: 1,
             writeUnavailable: 1,
             ...(args.client.type === 'desktop' ? { desktopViewportClaims: 1 } : {})
           }

@@ -148,7 +148,7 @@ function describeFrames(frames: Iterable<TerminalOutputFrameChunk>): FrameShape[
 
 function expectEquivalent(data: string, meta: TerminalOutputMeta | undefined, label: string): void {
   const legacy = describeFrames(legacyIterateTerminalOutputFrameChunks(data, meta))
-  const next = describeFrames(iterateTerminalOutputFrameChunks(data, meta))
+  const next = describeFrames(iterateTerminalOutputFrameChunks(data, meta, { supportsOutputSpan: true }))
   expect(next, label).toEqual(legacy)
 }
 
@@ -321,7 +321,7 @@ describe('iterateTerminalOutputFrameChunks equivalence with the pre-optimization
     const meta = seqPreservingMeta(data, seq)
 
     expectEquivalent(data, meta, 'unsafe seq rounding')
-    const frames = [...iterateTerminalOutputFrameChunks(data, meta)]
+    const frames = [...iterateTerminalOutputFrameChunks(data, meta, { supportsOutputSpan: true })]
     expect(frames.at(-1)?.seq).toBe(9_007_199_254_740_992)
   })
 
@@ -498,7 +498,7 @@ describe('iterateTerminalOutputFrameChunks equivalence with the pre-optimization
 
   it('keeps every emitted frame within the wire cap and reassembles to the input', () => {
     const data = `${'a'.repeat(200 * 1024)}${SURROGATE_PAIR.repeat(4096)}${LONE_HIGH}`
-    const frames = [...iterateTerminalOutputFrameChunks(data, seqPreservingMeta(data, 999_999))]
+    const frames = [...iterateTerminalOutputFrameChunks(data, seqPreservingMeta(data, 999_999), { supportsOutputSpan: true })]
     expect(frames.length).toBeGreaterThan(4)
     for (const frame of frames) {
       expect(frame.bytes.byteLength).toBeLessThanOrEqual(TERMINAL_STREAM_CHUNK_BYTES)
@@ -516,10 +516,10 @@ describe('iterateTerminalOutputFrameChunks equivalence with the pre-optimization
     // 3-byte code points: 16384 code units = 49152 bytes = exactly the cap.
     const exact = '\u20ac'.repeat(TERMINAL_STREAM_CHUNK_BYTES / 3)
     expect(Buffer.byteLength(exact, 'utf8')).toBe(TERMINAL_STREAM_CHUNK_BYTES)
-    expect([...iterateTerminalOutputFrameChunks(exact)]).toHaveLength(1)
+    expect([...iterateTerminalOutputFrameChunks(exact, undefined, { supportsOutputSpan: true })]).toHaveLength(1)
     expect([...legacyIterateTerminalOutputFrameChunks(exact)]).toHaveLength(1)
     const overByOne = `${exact}a`
-    expect([...iterateTerminalOutputFrameChunks(overByOne)].length).toBeGreaterThan(1)
+    expect([...iterateTerminalOutputFrameChunks(overByOne, undefined, { supportsOutputSpan: true })].length).toBeGreaterThan(1)
     expect([...legacyIterateTerminalOutputFrameChunks(overByOne)].length).toBeGreaterThan(1)
   })
 
