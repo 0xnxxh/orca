@@ -146,7 +146,6 @@ import {
 } from '@/lib/linear-issue-workspace-attachment'
 import { openLinearIssueWorkspaceOrStart } from '@/lib/linear-issue-workspace-open'
 import { folderWorkspaceToWorktree } from '../../../shared/folder-workspace-worktree'
-import { createGitHubWorkItemWorkspaceInBackground } from '@/lib/github-work-item-background-create'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
 import GitHubItemDialog, { type ItemDialogTab } from '@/components/GitHubItemDialog'
@@ -6759,15 +6758,9 @@ export default function TaskPage(): React.JSX.Element {
   const handleUseWorkItem = useCallback(
     (item: GitHubWorkItem): void => {
       useAppStore.getState().recordFeatureInteraction('github-tasks')
-      void createGitHubWorkItemWorkspaceInBackground({
-        item,
-        repoId: item.repoId,
-        taskSourceContext: getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'github'),
-        telemetrySource: 'sidebar',
-        openModalFallback: () => openComposerForItem(item)
-      })
+      openComposerForItem(item)
     },
-    [openComposerForItem, repoMap]
+    [openComposerForItem]
   )
 
   const handleOpenOrUseGitHubWorkItem = useCallback(
