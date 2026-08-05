@@ -115,6 +115,7 @@ import {
   rememberSshPtyConsumerRecovery,
   removeSshPtyConsumerOwnerRecovery
 } from './ssh-pty-consumer-recovery'
+import { selectSshRemotePtyLeasesForReattach } from './ssh-remote-pty-lease-selection'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
@@ -1931,9 +1932,22 @@ export class SshRelaySession {
     mux: SshChannelMultiplexer,
     shouldContinue: () => boolean
   ): Promise<void> {
-    const activeLeases = this.store
-      .getSshRemotePtyLeases(this.targetId)
-      .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
+    const ptyProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
+    const providerGeneration = this.activePtyProviderGeneration
+    if (!ptyProvider || providerGeneration === null || this.mux !== mux || !shouldContinue()) {
+      return
+    }
+    const { candidates: activeLeases, discardedDuplicates } = selectSshRemotePtyLeasesForReattach(
+      this.store.getSshRemotePtyLeases(this.targetId)
+    )
+    const discardedDuplicatePtyIds = new Set(discardedDuplicates.map((lease) => lease.ptyId))
+    if (discardedDuplicatePtyIds.size > 0) {
+      // Why: keep stale ids local-only and let their relay PTYs age out through the existing grace period.
+      this.store.excludeDuplicateSshRemotePtyLeases(
+        this.targetId,
+        Array.from(discardedDuplicatePtyIds)
+      )
+    }
     const activeLeaseByPtyId = new Map(activeLeases.map((lease) => [lease.ptyId, lease]))
     const leasedPtyIds = activeLeases.map((lease) => lease.ptyId)
     // Why: pass pane identity so the relay can reject cross-generation id collisions; tabId falls back for pre-leafId leases.
@@ -1949,17 +1963,12 @@ export class SshRelaySession {
     // Why: after app restart ptyOwnership is empty, but durable SSH leases still describe grace-window survivors.
     const ptyIds = Array.from(
       new Set([
-        ...getPtyIdsForConnection(this.targetId).map((ptyId) =>
-          toRelaySshPtyId(this.targetId, ptyId)
-        ),
+        ...getPtyIdsForConnection(this.targetId)
+          .map((ptyId) => toRelaySshPtyId(this.targetId, ptyId))
+          .filter((ptyId) => !discardedDuplicatePtyIds.has(ptyId)),
         ...leasedPtyIds
       ])
     )
-    const ptyProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
-    const providerGeneration = this.activePtyProviderGeneration
-    if (!ptyProvider || providerGeneration === null || this.mux !== mux) {
-      return
-    }
     let nextPtyIndex = 0
     const worker = async (): Promise<void> => {
       while (shouldContinue()) {
@@ -2022,6 +2031,22 @@ export class SshRelaySession {
       shouldContinue
     } = args
     const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+    const lease = activeLeaseByPtyId.get(ptyId)
+    if (lease?.worktreeId && lease.tabId && lease.leafId) {
+      const bindVerdict = this.store.persistPtyBinding(
+        {
+          worktreeId: lease.worktreeId,
+          tabId: lease.tabId,
+          leafId: lease.leafId,
+          ptyId: appPtyId
+        },
+        undefined,
+        { mayCreate: false, dryRun: true }
+      )
+      if (bindVerdict === 'refused') {
+        return
+      }
+    }
     const pendingReattach: PendingPtyReattach = {
       mux,
       providerGeneration,
@@ -2123,15 +2148,15 @@ export class SshRelaySession {
       if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pendingReattach)) {
         return
       }
-      setPtyOwnership(appPtyId, this.targetId)
-      if (attachResult.incarnationId) {
-        restorePtyIncarnation(appPtyId, attachResult.incarnationId)
-        this.restoreReattachedPtyRuntime(
-          appPtyId,
-          attachResult.incarnationId,
-          activeLeaseByPtyId.get(ptyId)
-        )
+      const restoreOutcome = this.restoreReattachedPtyRuntime(
+        appPtyId,
+        attachResult.incarnationId,
+        activeLeaseByPtyId.get(ptyId)
+      )
+      if (restoreOutcome === 'refused') {
+        return
       }
+      setPtyOwnership(appPtyId, this.targetId)
       attachedLeaseIds.add(ptyId)
       pendingReattach.activated = true
       recoveryActivationLease?.commit()
@@ -2193,29 +2218,45 @@ export class SshRelaySession {
 
   private restoreReattachedPtyRuntime(
     appPtyId: string,
-    incarnationId: string,
+    incarnationId: string | undefined,
     lease: SshPtyLease | undefined
-  ): void {
+  ): 'bound' | 'refused' {
     if (lease?.worktreeId && lease.tabId && lease.leafId) {
-      this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
-        tabId: lease.tabId,
-        leafId: lease.leafId,
-        incarnationId
-      })
+      let outcome: 'bound' | 'refused'
       try {
-        this.store.persistPtyBinding({
-          worktreeId: lease.worktreeId,
-          tabId: lease.tabId,
-          leafId: lease.leafId,
-          ptyId: appPtyId,
-          incarnationId
-        })
+        outcome = this.store.persistPtyBinding(
+          {
+            worktreeId: lease.worktreeId,
+            tabId: lease.tabId,
+            leafId: lease.leafId,
+            ptyId: appPtyId,
+            ...(incarnationId ? { incarnationId } : {})
+          },
+          undefined,
+          { mayCreate: false }
+        )
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
+        outcome = 'bound'
       }
-      return
+      if (outcome === 'refused') {
+        return 'refused'
+      }
+      if (incarnationId) {
+        restorePtyIncarnation(appPtyId, incarnationId)
+        this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
+          tabId: lease.tabId,
+          leafId: lease.leafId,
+          incarnationId
+        })
+      }
+      return 'bound'
     }
-    this.runtime?.onPtySpawned(appPtyId, incarnationId, { awaitsRegistration: false })
+    if (incarnationId) {
+      restorePtyIncarnation(appPtyId, incarnationId)
+      this.runtime?.onPtySpawned(appPtyId, incarnationId, { awaitsRegistration: false })
+    }
+    return 'bound'
   }
 
   private async attachPtyWithRetry(
