@@ -7,6 +7,8 @@ const PROJECT_VIEW_SOURCE = readFileSync(
   join(__dirname, 'github-project', 'ProjectViewWrapper.tsx'),
   'utf8'
 )
+const COMPOSER_MODAL_SOURCE = readFileSync(join(__dirname, 'NewWorkspaceComposerModal.tsx'), 'utf8')
+const COMPOSER_STATE_SOURCE = readFileSync(join(__dirname, '../hooks/useComposerState.ts'), 'utf8')
 
 function sourceBetween(source: string, startPattern: string, endPattern: string): string {
   const start = source.indexOf(startPattern)
@@ -33,7 +35,27 @@ describe('TaskPage workspace creation source boundaries', () => {
     expect(section).toContain("getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'github')")
     expect(section).toContain('prefilledName: getGitHubWorkItemWorkspaceSeed(item)')
     expect(section).toContain('initialRepoId: item.repoId')
+    expect(section).toContain('initialGitHubWorkItem: item')
+    expect(section).toContain("enableIssueAutomation: item.type === 'issue'")
     expect(section).toContain("telemetrySource: 'sidebar'")
+  })
+
+  it('forwards PR start-point data and issue automation through quick submit', () => {
+    expect(COMPOSER_MODAL_SOURCE).toContain(
+      'initialGitHubWorkItem: modalData.initialGitHubWorkItem ?? null'
+    )
+    expect(COMPOSER_MODAL_SOURCE).toContain(
+      'enableIssueAutomation: modalData.enableIssueAutomation === true'
+    )
+    const quickSubmit = sourceBetween(
+      COMPOSER_STATE_SOURCE,
+      'const submitQuick = useCallback(',
+      'const createGateInput = {'
+    )
+    expect(quickSubmit).toContain(
+      "ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')"
+    )
+    expect(quickSubmit).toContain('...(issueCommand ? { issueCommand } : {})')
   })
 
   it('routes TaskPage GitHub starts directly to the composer', () => {

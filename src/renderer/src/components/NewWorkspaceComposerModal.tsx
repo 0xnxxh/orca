@@ -20,6 +20,7 @@ import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
 import { shouldAllowComposerEnterSubmitTarget } from '@/lib/new-workspace-enter-guard'
 import { isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import type {
+  GitHubWorkItem,
   TuiAgent,
   WorkspaceCreateTelemetrySource,
   WorkspaceStatus
@@ -41,9 +42,11 @@ type ComposerModalData = {
   initialEphemeralVmRecipeId?: string
   initialProjectGroupId?: string
   linkedWorkItem?: LinkedWorkItemSummary | null
+  initialGitHubWorkItem?: GitHubWorkItem | null
   taskSourceContext?: TaskSourceContext | null
   initialBaseBranch?: string
   initialWorkspaceStatus?: WorkspaceStatus
+  enableIssueAutomation?: boolean
   /** Telemetry surface that opened the composer. Set by each
    *  `openModal('new-workspace-composer', ...)` site so
    *  `workspace_created.source` carries the right value. Falls back to
@@ -136,6 +139,7 @@ function QuickTabBody({
     // intentionally ignored even if older callers still send it.
     initialPrompt: '',
     initialLinkedWorkItem: modalData.linkedWorkItem ?? null,
+    initialGitHubWorkItem: modalData.initialGitHubWorkItem ?? null,
     initialTaskSourceContext: modalData.taskSourceContext ?? null,
     initialRepoId: modalData.initialRepoId,
     initialEphemeralVmRecipeId: modalData.initialEphemeralVmRecipeId,
@@ -145,7 +149,7 @@ function QuickTabBody({
     persistDraft: false,
     onCreated: onClose,
     ...(modalData.telemetrySource ? { telemetrySource: modalData.telemetrySource } : {}),
-    enableIssueAutomation: false,
+    enableIssueAutomation: modalData.enableIssueAutomation === true,
     createGateMode: 'quick'
   })
   // Why: the composer's built-in `onOpenAgentSettings` handler navigates to

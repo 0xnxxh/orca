@@ -6746,9 +6746,11 @@ export default function TaskPage(): React.JSX.Element {
       }
       openModal('new-workspace-composer', {
         linkedWorkItem,
+        initialGitHubWorkItem: item,
         taskSourceContext: getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'github'),
         prefilledName: getGitHubWorkItemWorkspaceSeed(item),
         initialRepoId: item.repoId,
+        enableIssueAutomation: item.type === 'issue',
         telemetrySource: 'sidebar'
       })
     },

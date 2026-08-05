@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canResolveFolderSmartGitHubSubmit,
   getInitialAutoManagedWorkspaceName,
+  getInitialGitHubPrStartPointSelection,
   getMatchingLinkedTaskSourceContext,
   isExplicitWorkspaceNameInput,
   resolveSmartGitHubCreateNames,
@@ -25,6 +26,52 @@ function sourceBetween(source: string, startPattern: string, endPattern: string)
 }
 
 describe('useComposerState host-context boundaries', () => {
+  it('seeds TaskPage pull requests as submit-time PR start points', () => {
+    const item = {
+      id: 'pr-42',
+      type: 'pr' as const,
+      number: 42,
+      title: 'Fix PR workspace creation',
+      state: 'open' as const,
+      url: 'https://github.com/stablyai/orca/pull/42',
+      labels: [],
+      updatedAt: '2026-08-04T00:00:00.000Z',
+      author: 'octocat',
+      branchName: 'fix-pr-workspace',
+      baseRefName: 'main',
+      isCrossRepository: true,
+      repoId: 'repo-1'
+    }
+
+    expect(
+      getInitialGitHubPrStartPointSelection({
+        item,
+        linkedWorkItem: {
+          provider: 'github',
+          type: 'pr',
+          number: 42,
+          title: item.title,
+          url: item.url,
+          repoId: item.repoId
+        },
+        repoId: 'repo-1'
+      })
+    ).toEqual({ repoId: 'repo-1', item })
+    expect(
+      getInitialGitHubPrStartPointSelection({
+        item,
+        linkedWorkItem: {
+          provider: 'github',
+          type: 'pr',
+          number: 43,
+          title: item.title,
+          url: 'https://github.com/stablyai/orca/pull/43'
+        },
+        repoId: 'repo-1'
+      })
+    ).toBeNull()
+  })
+
   it('treats typed workspace names as user-authored, not auto-managed', () => {
     expect(isExplicitWorkspaceNameInput({ name: 'keep-my-name', lastAutoName: '' })).toBe(true)
     expect(

@@ -198,6 +198,10 @@ import {
 import { translate } from '@/i18n/i18n'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../../../shared/workspace-linked-item-source-context'
 import { resolveJiraSourceHostId } from '@/lib/jira-source-host'
+import {
+  buildTrustedComposerIssueCommand,
+  shouldPrepareComposerIssueCommand
+} from '@/lib/composer-issue-command'
 
 export function canResolveFolderSmartGitHubSubmit({
   hasFolderSourceRepos
@@ -231,6 +235,7 @@ export type UseComposerStateOptions = {
   initialName?: string
   initialPrompt?: string
   initialLinkedWorkItem?: LinkedWorkItemSummary | null
+  initialGitHubWorkItem?: GitHubWorkItem | null
   initialTaskSourceContext?: TaskSourceContext | null
   initialWorkspaceStatus?: WorkspaceStatus
   /** Seeds the Start-from selection on open; the Create-from → Quick fallback uses it so a PR pick lands with the resolved PR head as base. */
@@ -244,7 +249,7 @@ export type UseComposerStateOptions = {
   onRepoIdOverrideChange?: (value: string) => void
   /** Telemetry surface that opened this composer; threaded into createWorktree so workspace_created.source reflects the entry point. Defaults to unknown. */
   telemetrySource?: WorkspaceCreateTelemetrySource
-  /** Quick-create skips the issueCommand probe (no automation), which the full composer needs for linked-item prompt previews. */
+  /** Enables linked-item prompt and issue-command automation for this composer entry point. */
   enableIssueAutomation?: boolean
   createGateMode?: 'full' | 'quick'
 }
@@ -513,6 +518,33 @@ function normalizeGitHubLinkedWorkItem(
   return { ...item, type: identity.type, number: identity.number }
 }
 
+export function getInitialGitHubPrStartPointSelection({
+  item,
+  linkedWorkItem,
+  repoId
+}: {
+  item: GitHubWorkItem | null | undefined
+  linkedWorkItem: LinkedWorkItemSummary | null | undefined
+  repoId: string | null | undefined
+}): SmartGitHubPrStartPointSelection | null {
+  if (!item || !repoId) {
+    return null
+  }
+  const itemIdentity = resolveGitHubWorkItemIdentity(item)
+  const linkedIdentity = getGitHubLinkedWorkItemIdentity(linkedWorkItem)
+  if (
+    itemIdentity.type !== 'pr' ||
+    linkedIdentity?.type !== 'pr' ||
+    itemIdentity.number !== linkedIdentity.number
+  ) {
+    return null
+  }
+  return {
+    repoId,
+    item: { ...item, type: itemIdentity.type, number: itemIdentity.number }
+  }
+}
+
 export function getMatchingLinkedTaskSourceContext(
   item: LinkedWorkItemSummary | null | undefined,
   context: TaskSourceContext | null | undefined
@@ -548,6 +580,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     initialName = '',
     initialPrompt = '',
     initialLinkedWorkItem = null,
+    initialGitHubWorkItem = null,
     initialTaskSourceContext = null,
     initialWorkspaceStatus,
     initialBaseBranch,
@@ -1184,7 +1217,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const noteRef = useRef<string>(note)
   noteRef.current = note
   // Why: PR checkout refs resolve async, so submit can still see the linked PR as a checkout source if Create fires before the resolver settles.
-  const smartGitHubPrStartPointSelectionRef = useRef<SmartGitHubPrStartPointSelection | null>(null)
+  const smartGitHubPrStartPointSelectionRef = useRef<SmartGitHubPrStartPointSelection | null>(
+    getInitialGitHubPrStartPointSelection({
+      item: initialGitHubWorkItem,
+      linkedWorkItem: initialLinkedWorkItemSeed,
+      repoId: selectedRepo?.id ?? initialRepoId
+    })
+  )
   useEffect(() => {
     const clearAutoManagedName = (): void => {
       if (nameRef.current === lastAutoNameRef.current) {
@@ -1721,6 +1760,12 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
     }
 
+    if (createGateMode === 'quick') {
+      return () => {
+        cancelled = true
+      }
+    }
+
     void readRuntimeIssueCommand(selectedRepoSettingsRef.current, repoId)
       .then((result) => {
         if (!cancelled) {
@@ -1745,6 +1790,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     commitHookCheckIfCurrent,
+    createGateMode,
     enableIssueAutomation,
     loadHookCheckForRepo,
     repoId,
@@ -3946,6 +3992,39 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         const submitLinkedWorkItemProvider = submitLinkedWorkItem
           ? getLinkedWorkItemProvider(submitLinkedWorkItem)
           : null
+        let submitIssueCommandTemplate = issueCommandTemplate
+        if (
+          enableIssueAutomation &&
+          selectedRepoIsGit &&
+          submitLinkedIssueNumber !== null &&
+          !hasLoadedIssueCommand
+        ) {
+          try {
+            const result = await readRuntimeIssueCommand(selectedRepoSettingsRef.current, repoId)
+            submitIssueCommandTemplate = result.effectiveContent ?? ''
+          } catch {
+            submitIssueCommandTemplate = ''
+          }
+          setIssueCommandTemplate(submitIssueCommandTemplate)
+          setHasLoadedIssueCommand(true)
+        }
+        const issueCommandInput = {
+          enabled: enableIssueAutomation && selectedRepoIsGit,
+          provider: submitLinkedWorkItemProvider,
+          issueNumber: submitLinkedIssueNumber,
+          template: submitIssueCommandTemplate,
+          artifactUrl: submitLinkedWorkItem?.url ?? null
+        }
+        const shouldRunIssueCommand = shouldPrepareComposerIssueCommand(issueCommandInput)
+        const issueCommandTrustDecision = shouldRunIssueCommand
+          ? trustDecision === 'skip'
+            ? 'skip'
+            : await ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')
+          : 'skip'
+        const issueCommand = buildTrustedComposerIssueCommand({
+          ...issueCommandInput,
+          trustDecision: issueCommandTrustDecision
+        })
         const linkedLinearIssue =
           submitLinkedWorkItem && submitLinkedWorkItemProvider === 'linear'
             ? submitLinkedWorkItem.linearIdentifier
@@ -4157,6 +4236,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             ? { linkedGitLabIssue }
             : {}),
           ...(backendStartup ? { startup: backendStartup } : {}),
+          ...(issueCommand ? { issueCommand } : {}),
           pendingFirstAgentMessageRename,
           note: trimmedNote,
           startupPlan,
@@ -4193,6 +4273,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       clearNewWorkspaceDraft,
       fallbackCreatureName,
       effectiveLinkedPR,
+      enableIssueAutomation,
+      hasLoadedIssueCommand,
+      issueCommandTemplate,
       linkedGitLabIssue,
       linkedGitLabMR,
       linkedPR,
