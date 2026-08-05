@@ -323,10 +323,13 @@ const styles = StyleSheet.create({
   },
   bar: {
     gap: spacing.xs,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderSubtle,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle,
+    borderRadius: radii.card,
     backgroundColor: colors.bgPanel
   },
   actionRow: {

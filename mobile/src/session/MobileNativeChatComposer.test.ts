@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { radii, spacing } from '../theme/mobile-theme'
 import { MobileNativeChatComposer } from './MobileNativeChatComposer'
 
 vi.mock('react-native', async () => {
@@ -114,6 +115,12 @@ describe('MobileNativeChatComposer', () => {
     const actions = renderer!.root.findByProps({ testID: 'native-chat-composer-actions' })
     expect(composer.findAllByType('TextInput')).toHaveLength(1)
     expect(composer.children[1]).toBe(actions)
+    expect(composer.props.style).toMatchObject({
+      marginHorizontal: spacing.md,
+      marginBottom: spacing.sm,
+      borderWidth: 1,
+      borderRadius: radii.card
+    })
   })
 
   it('preserves leading whitespace so prose is not turned into a slash command', async () => {
