@@ -48,8 +48,6 @@ export function useMobileNativeChatTailFollow(args: {
   const momentumOwnerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const identityRef = useRef(conversationIdentity)
-  const firstMessageIdRef = useRef(firstMessageId)
-  firstMessageIdRef.current = firstMessageId
 
   const cancelTailFollow = useCallback(() => {
     if (tailTimerRef.current) {
@@ -175,10 +173,16 @@ export function useMobileNativeChatTailFollow(args: {
     offsetRef.current = 0
     viewportHeightRef.current = 0
     setAtBottom(true)
-    if (firstMessageIdRef.current !== null) {
+    if (firstMessageId !== null) {
       scheduleTailFollow()
     }
-  }, [cancelMomentumOwnerTimer, cancelTailFollow, conversationIdentity, scheduleTailFollow])
+  }, [
+    cancelMomentumOwnerTimer,
+    cancelTailFollow,
+    conversationIdentity,
+    firstMessageId,
+    scheduleTailFollow
+  ])
 
   useLayoutEffect(() => {
     const request = historyRequestRef.current
