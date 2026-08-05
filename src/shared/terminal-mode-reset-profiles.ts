@@ -20,13 +20,17 @@ export const POST_REPLAY_LIVE_SNAPSHOT_RESET = `${RESET_TERMINAL_CURSOR_STYLE}\x
 // Why: daemon reattach hits a live session, so skip the full reset; still clear cursor/focus/mouse/Kitty bits harmful to a plain shell after a bad TUI exit — safe for live TUIs since the post-reattach SIGWINCH repaints the cursor.
 export const POST_REPLAY_REATTACH_RESET = `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h${RESET_MOUSE_REPORTING}\x1b[?1004l`
 
-// Why: the reattach reset must not outlive the daemon's authoritative mode mirror — the
-// snapshot rehydrates a live TUI's mouse protocol/encoding and RESET_MOUSE_REPORTING would
-// disarm it one write later, re-enabling xterm's row-wise selection over the TUI (#8291).
+// Why: the reattach reset must not outlive the daemon's authoritative mode mirror — an
+// alternate-screen TUI's mouse protocol/encoding and RESET_MOUSE_REPORTING would disarm it one
+// write later, re-enabling xterm's row-wise selection over the TUI (#8291). Normal-buffer
+// snapshots intentionally stay disarmed so stale modes cannot reach a shell.
 // A TUI that died leaving modes armed is still cleaned up by the confirmed-shell-foreground
 // reset in pty-connection, so this only preserves modes the replayed payload really left on.
-export function buildReattachMouseModeRearm(payload: string): string {
-  return scanReplayedMouseModeRearm(payload)
+export function buildReattachMouseModeRearm(
+  payload: string,
+  options: { isAlternateScreen?: boolean } = {}
+): string {
+  return scanReplayedMouseModeRearm(payload, options)
 }
 
 // Why: a live agent owns focus reporting; resetting ?1004h suppresses the focus-in it needs to re-anchor its cursor (IME).

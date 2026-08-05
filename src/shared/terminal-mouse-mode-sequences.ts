@@ -6,6 +6,26 @@ export type TerminalMouseModeState = {
   sgrMousePixelsMode: boolean
 }
 
+/** True when the replay's final screen mode is an alternate-screen buffer. */
+export function replayPayloadEndsInAlternateScreen(payload: string): boolean {
+  let alternateScreen = false
+  // oxlint-disable-next-line no-control-regex -- terminal escape sequences require control chars
+  const alternateScreenRe = /\x1bc|\x1b\[\?([0-9;]+)([hl])|\x9b\?([0-9;]+)([hl])/g
+  let match: RegExpExecArray | null
+  while ((match = alternateScreenRe.exec(payload)) !== null) {
+    if (match[0] === '\x1bc') {
+      alternateScreen = false
+      continue
+    }
+    const params = match[1] ?? match[3]
+    const enabled = (match[2] ?? match[4]) === 'h'
+    if (params.split(';').some((param) => param === '47' || param === '1047' || param === '1049')) {
+      alternateScreen = enabled
+    }
+  }
+  return alternateScreen
+}
+
 // Why: PTY/SSH chunks can split a long combined DECSET before the final h/l.
 // Keep parser state far beyond normal mode lists while still bounding memory.
 const PRIVATE_MODE_SCAN_TAIL_LIMIT = 4096
@@ -157,7 +177,15 @@ export function buildMouseModeRearmSequence(state: TerminalMouseModeState): stri
 }
 
 /** Mouse modes a replayed payload leaves armed, as DECSET bytes ('' when none). */
-export function scanReplayedMouseModeRearm(payload: string): string {
+export function scanReplayedMouseModeRearm(
+  payload: string,
+  options: { isAlternateScreen?: boolean } = {}
+): string {
+  // Why: a dead TUI can leave mouse modes in a normal-buffer snapshot. Only
+  // re-arm a replay that still represents a live full-screen TUI.
+  if (!(options.isAlternateScreen ?? replayPayloadEndsInAlternateScreen(payload))) {
+    return ''
+  }
   const mirror = new TerminalMouseModeMirror()
   mirror.scan(payload)
   return buildMouseModeRearmSequence({

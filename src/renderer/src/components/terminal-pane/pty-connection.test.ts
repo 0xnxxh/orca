@@ -9238,7 +9238,10 @@ describe('connectPanePty', () => {
     const transport = createMockTransport('tab-pty')
     transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
       if (sessionId) {
-        return { id: sessionId, snapshot: '\x1b[?1002h\x1b[?1006hthird-party tui session' }
+        return {
+          id: sessionId,
+          snapshot: '\x1b[?1049h\x1b[?1002h\x1b[?1006hthird-party tui session'
+        }
       }
       return null
     })
