@@ -76,15 +76,15 @@ describe('useMobileNativeChatSession', () => {
       return () => {}
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
-    let started: boolean | undefined
-    let duplicate: boolean | undefined
+    let completion: Promise<boolean> | null | undefined
+    let duplicate: Promise<boolean> | null | undefined
     act(() => {
-      started = state?.loadEarlier()
+      completion = state?.loadEarlier()
       duplicate = state?.loadEarlier()
     })
 
-    expect(started).toBe(true)
-    expect(duplicate).toBe(false)
+    expect(completion).toBeInstanceOf(Promise)
+    expect(duplicate).toBeNull()
 
     await act(async () => {
       emit({
@@ -102,6 +102,7 @@ describe('useMobileNativeChatSession', () => {
       await Promise.resolve()
     })
 
+    await expect(completion).resolves.toBe(false)
     expect(state?.messages.map((entry) => entry.id)).toEqual(['replacement'])
     expect(state?.loadingEarlier).toBe(false)
   })
@@ -121,7 +122,9 @@ describe('useMobileNativeChatSession', () => {
       return () => {}
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
-    act(() => state?.loadEarlier())
+    act(() => {
+      void state?.loadEarlier()
+    })
     await act(async () => renderer?.update(createElement(Harness, { client: null })))
     await act(async () => {
       resolveEarlier({ ok: true, result: { messages: [message('stale-page')] } })
@@ -251,7 +254,9 @@ describe('useMobileNativeChatSession', () => {
 
     expect(state?.messages[0]?.id).toBe('win-1')
     expect(state?.hasMore).toBe(true)
-    act(() => state?.loadEarlier())
+    act(() => {
+      void state?.loadEarlier()
+    })
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
@@ -310,7 +315,9 @@ describe('useMobileNativeChatSession', () => {
         messages: Array.from({ length: 40 }, (_unused, index) => message(`new-${index}`))
       })
     )
-    act(() => state?.loadEarlier())
+    act(() => {
+      void state?.loadEarlier()
+    })
 
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
@@ -353,7 +360,9 @@ describe('useMobileNativeChatSession', () => {
       return () => {}
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
-    act(() => state?.loadEarlier())
+    act(() => {
+      void state?.loadEarlier()
+    })
 
     // The replay merges (same rows, no trim), but the host re-cut the file, so
     // it carries a new cursor. The page already in flight was addressed with the
@@ -417,7 +426,9 @@ describe('useMobileNativeChatSession', () => {
       return () => {}
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
-    act(() => state?.loadEarlier())
+    act(() => {
+      void state?.loadEarlier()
+    })
     await act(async () => emit({ type: 'appended', messages: [message('live-trim')] }))
     await act(async () => {
       resolveCursorPage({

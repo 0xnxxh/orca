@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native'
+import { nativeChatDistanceFromBottom } from '../../../src/shared/native-chat-scroll-geometry'
+import type { MobileNativeChatLoadEarlier } from './use-mobile-native-chat-session'
 
 const BOTTOM_THRESHOLD = 80
 const TAIL_FOLLOW_DELAY_MS = 60
 
 type HistoryRequest = {
-  firstMessageId: string | null
   restoreFollowing: boolean
-  observedLoading: boolean
   triggeringGesture: number | null
   userIntent: boolean | null
 }
@@ -23,18 +23,17 @@ type MobileNativeChatTailFollow = {
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
   onScrollBeginDrag: () => void
   onScrollEndDrag: () => void
-  requestHistory: (loadEarlier: () => boolean) => boolean
-  requestHistoryFromScroll: (loadEarlier: () => boolean) => boolean
+  requestHistory: (loadEarlier: MobileNativeChatLoadEarlier) => boolean
+  requestHistoryFromScroll: (loadEarlier: MobileNativeChatLoadEarlier) => boolean
   scheduleTailFollow: () => void
 }
 
 export function useMobileNativeChatTailFollow(args: {
   conversationIdentity: string
-  firstMessageId: string | null
-  loadingEarlier: boolean | undefined
+  hasContent: boolean
   scrollToEnd: (animated: boolean) => void
 }): MobileNativeChatTailFollow {
-  const { conversationIdentity, firstMessageId, loadingEarlier, scrollToEnd } = args
+  const { conversationIdentity, hasContent, scrollToEnd } = args
   const [atBottom, setAtBottom] = useState(true)
   const followingRef = useRef(true)
   const nearBottomRef = useRef(true)
@@ -111,11 +110,18 @@ export function useMobileNativeChatTailFollow(args: {
     scheduleTailFollow()
   }, [attachTailFollow, scheduleTailFollow])
 
-  const restoreRejectedHistoryRequest = useCallback(
-    (request: HistoryRequest) => {
+  const settleHistoryRequest = useCallback(
+    (request: HistoryRequest, madeProgress: boolean) => {
+      if (historyRequestRef.current !== request) {
+        return
+      }
       historyRequestRef.current = null
-      followingRef.current = request.restoreFollowing
-      if (request.restoreFollowing) {
+      const shouldFollow = request.userIntent ?? (madeProgress ? false : request.restoreFollowing)
+      if (madeProgress && request.userIntent === null) {
+        detachedGestureIdRef.current = request.triggeringGesture
+      }
+      followingRef.current = shouldFollow
+      if (shouldFollow) {
         scheduleTailFollow()
       }
     },
@@ -123,14 +129,12 @@ export function useMobileNativeChatTailFollow(args: {
   )
 
   const requestHistory = useCallback(
-    (loadEarlier: () => boolean): boolean => {
-      if (historyRequestRef.current || loadingEarlier) {
+    (loadEarlier: MobileNativeChatLoadEarlier): boolean => {
+      if (historyRequestRef.current) {
         return false
       }
       const request: HistoryRequest = {
-        firstMessageId,
         restoreFollowing: followingRef.current,
-        observedLoading: false,
         triggeringGesture: userScrollActiveRef.current ? gestureIdRef.current : null,
         userIntent: null
       }
@@ -138,21 +142,26 @@ export function useMobileNativeChatTailFollow(args: {
       followingRef.current = false
       cancelTailFollow()
       try {
-        if (loadEarlier()) {
-          return true
+        const completion = loadEarlier()
+        if (!completion) {
+          settleHistoryRequest(request, false)
+          return false
         }
+        void completion.then(
+          (madeProgress) => settleHistoryRequest(request, madeProgress),
+          () => settleHistoryRequest(request, false)
+        )
+        return true
       } catch (error) {
-        restoreRejectedHistoryRequest(request)
+        settleHistoryRequest(request, false)
         throw error
       }
-      restoreRejectedHistoryRequest(request)
-      return false
     },
-    [cancelTailFollow, firstMessageId, loadingEarlier, restoreRejectedHistoryRequest]
+    [cancelTailFollow, settleHistoryRequest]
   )
 
   const requestHistoryFromScroll = useCallback(
-    (loadEarlier: () => boolean): boolean =>
+    (loadEarlier: MobileNativeChatLoadEarlier): boolean =>
       userScrollActiveRef.current ? requestHistory(loadEarlier) : false,
     [requestHistory]
   )
@@ -173,56 +182,24 @@ export function useMobileNativeChatTailFollow(args: {
     offsetRef.current = 0
     viewportHeightRef.current = 0
     setAtBottom(true)
-    if (firstMessageId !== null) {
+    if (hasContent) {
       scheduleTailFollow()
     }
   }, [
     cancelMomentumOwnerTimer,
     cancelTailFollow,
     conversationIdentity,
-    firstMessageId,
+    hasContent,
     scheduleTailFollow
   ])
-
-  useLayoutEffect(() => {
-    const request = historyRequestRef.current
-    if (loadingEarlier) {
-      if (request) {
-        request.observedLoading = true
-      } else {
-        historyRequestRef.current = {
-          firstMessageId,
-          restoreFollowing: followingRef.current,
-          observedLoading: true,
-          triggeringGesture: userScrollActiveRef.current ? gestureIdRef.current : null,
-          userIntent: null
-        }
-        followingRef.current = false
-        cancelTailFollow()
-      }
-      return
-    }
-    if (!request?.observedLoading) {
-      return
-    }
-    historyRequestRef.current = null
-    const madeProgress = firstMessageId !== request.firstMessageId
-    const shouldFollow = request.userIntent ?? (madeProgress ? false : request.restoreFollowing)
-    if (madeProgress && request.userIntent === null) {
-      detachedGestureIdRef.current = request.triggeringGesture
-    }
-    followingRef.current = shouldFollow
-    if (shouldFollow) {
-      scheduleTailFollow()
-    }
-  }, [cancelTailFollow, firstMessageId, loadingEarlier, scheduleTailFollow])
 
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
     offsetRef.current = contentOffset.y
     viewportHeightRef.current = layoutMeasurement.height
-    const distance = contentSize.height - contentOffset.y - layoutMeasurement.height
-    const nearBottom = distance < BOTTOM_THRESHOLD
+    const nearBottom =
+      nativeChatDistanceFromBottom(contentOffset.y, contentSize.height, layoutMeasurement.height) <
+      BOTTOM_THRESHOLD
     nearBottomRef.current = nearBottom
     setAtBottom(nearBottom)
   }, [])
@@ -253,11 +230,11 @@ export function useMobileNativeChatTailFollow(args: {
   }, [])
 
   const onScrollEndDrag = useCallback(() => {
-    applyGestureEnd()
     cancelMomentumOwnerTimer()
     momentumOwnerTimerRef.current = setTimeout(() => {
       momentumOwnerTimerRef.current = null
       gestureOwnsMomentumRef.current = false
+      applyGestureEnd()
       detachedGestureIdRef.current = null
     }, 0)
   }, [applyGestureEnd, cancelMomentumOwnerTimer])
@@ -288,7 +265,9 @@ export function useMobileNativeChatTailFollow(args: {
         return
       }
       if (viewportHeightRef.current > 0) {
-        const nearBottom = height - offsetRef.current - viewportHeightRef.current < BOTTOM_THRESHOLD
+        const nearBottom =
+          nativeChatDistanceFromBottom(offsetRef.current, height, viewportHeightRef.current) <
+          BOTTOM_THRESHOLD
         nearBottomRef.current = nearBottom
         setAtBottom(nearBottom)
       }
@@ -298,6 +277,7 @@ export function useMobileNativeChatTailFollow(args: {
 
   useEffect(
     () => () => {
+      historyRequestRef.current = null
       cancelTailFollow()
       cancelMomentumOwnerTimer()
     },

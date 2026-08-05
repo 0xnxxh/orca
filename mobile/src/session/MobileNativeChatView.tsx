@@ -32,11 +32,16 @@ import { MobileNativeChatPermission } from './MobileNativeChatPermission'
 import type { MobileChatPermission } from './mobile-native-chat-permission'
 import { MobileNativeChatQuestion } from './MobileNativeChatQuestion'
 import { mobileChatQuestionKey, type MobileChatQuestion } from './mobile-native-chat-question'
-import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
+import type {
+  MobileNativeChatLoadEarlier,
+  MobileNativeChatStatus
+} from './use-mobile-native-chat-session'
 
 /** Why the composer input is locked: the transport is disconnected, or the
  *  terminal subscription has not acknowledged its input lease yet. */
 export type MobileNativeChatInputLockReason = 'disconnected' | 'waiting'
+
+const NATIVE_CHAT_MAINTAIN_VISIBLE_CONTENT_POSITION = { minIndexForVisible: 0 } as const
 
 type Props = {
   conversationIdentity: string
@@ -56,7 +61,7 @@ type Props = {
   streaming: string | null
   hasMore?: boolean
   loadingEarlier?: boolean
-  onLoadEarlier?: () => boolean
+  onLoadEarlier?: MobileNativeChatLoadEarlier
   onSend: (text: string) => Promise<boolean>
   /** Optimistic queued sends (owned by the route so they survive view switches). */
   /** Optimistic user echoes, including any ridden-along image preview URIs. */
@@ -161,8 +166,7 @@ export function MobileNativeChatView({
   )
   const tailFollow = useMobileNativeChatTailFollow({
     conversationIdentity,
-    firstMessageId: messages[0]?.id ?? null,
-    loadingEarlier,
+    hasContent: messages.length > 0,
     scrollToEnd
   })
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
@@ -296,7 +300,7 @@ export function MobileNativeChatView({
               // Grow the list upward on a loadEarlier prepend instead of jumping
               // the reader. Index 0 is the first message — FlatList accounts for
               // the load-earlier header offset internally.
-              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              maintainVisibleContentPosition={NATIVE_CHAT_MAINTAIN_VISIBLE_CONTENT_POSITION}
               onContentSizeChange={(_width, height) => tailFollow.onContentSizeChange(height)}
               // scrollToIndex can fail before an off-screen row is measured —
               // fall back to an estimated offset, then retry once it's laid out.

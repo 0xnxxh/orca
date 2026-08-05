@@ -9,6 +9,7 @@ import {
 } from './mobile-native-chat-stream-frame'
 
 export type MobileNativeChatStatus = 'idle' | 'loading' | 'waiting-session' | 'ready' | 'error'
+export type MobileNativeChatLoadEarlier = () => Promise<boolean> | null
 
 export type MobileNativeChatSession = {
   messages: NativeChatMessage[]
@@ -24,8 +25,8 @@ export type MobileNativeChatSession = {
   hasMore: boolean
   /** Whether an older-history page is currently loading. */
   loadingEarlier: boolean
-  /** Grow the window to page in older history. */
-  loadEarlier: () => boolean
+  /** Start an older-history page; completion reports whether rows prepended. */
+  loadEarlier: MobileNativeChatLoadEarlier
 }
 
 // Stable empty reference so a not-yet-current read doesn't churn consumers.
@@ -193,9 +194,9 @@ export function useMobileNativeChatSession(args: {
     }
   }, [client, agent, sessionId, transcriptPath, identity, setList])
 
-  const loadEarlier = useCallback((): boolean => {
+  const loadEarlier = useCallback((): Promise<boolean> | null => {
     if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
-      return false
+      return null
     }
     // Capture the session this page belongs to; a swap underneath us must not
     // apply this read's result onto the new session (mirrors desktop's guard).
@@ -205,12 +206,13 @@ export function useMobileNativeChatSession(args: {
     const pageLimit = nextLimit - limitRef.current
     if (pageLimit <= 0) {
       setHasMore(false)
-      return false
+      return null
     }
     const beforeOffset = beforeOffsetRef.current
+    const firstMessageId = mergerRef.current.list[0]?.id ?? null
     loadingEarlierRef.current = true
     setLoadingEarlier(true)
-    void (async () => {
+    return (async (): Promise<boolean> => {
       try {
         const response = await client.sendRequest('nativeChat.readSession', {
           agent,
@@ -220,18 +222,18 @@ export function useMobileNativeChatSession(args: {
           ...(transcriptPath ? { transcriptPath } : {})
         })
         if (!response.ok) {
-          return
+          return false
         }
         const result = response.result as ReadSessionResult
         if ('error' in result) {
-          return
+          return false
         }
         // Drop a stale resolve from a session that swapped underneath us.
         if (
           sessionIdRef.current !== requestSessionId ||
           streamGenerationRef.current !== requestGeneration
         ) {
-          return
+          return false
         }
         limitRef.current = nextLimit
         if (beforeOffset !== null && result.beforeOffset != null) {
@@ -245,6 +247,9 @@ export function useMobileNativeChatSession(args: {
           setList(result.messages)
           setHasMore(result.messages.length >= nextLimit)
         }
+        return (mergerRef.current.list[0]?.id ?? null) !== firstMessageId
+      } catch {
+        return false
       } finally {
         // A late page from a prior tab must not unlock the current tab's request.
         if (
@@ -256,7 +261,6 @@ export function useMobileNativeChatSession(args: {
         }
       }
     })()
-    return true
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
   return {

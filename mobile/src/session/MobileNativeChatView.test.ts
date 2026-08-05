@@ -76,7 +76,7 @@ type Overrides = {
   inputLockReason?: 'disconnected' | 'waiting' | null
   hasMore?: boolean
   loadingEarlier?: boolean
-  onLoadEarlier?: () => boolean
+  onLoadEarlier?: Parameters<typeof MobileNativeChatView>[0]['onLoadEarlier']
   onSend?: (text: string) => Promise<boolean>
 }
 
@@ -93,6 +93,17 @@ function suppressRendererWarning(): () => void {
 
 function assistantTurn(id: string, text: string): NativeChatMessage {
   return { id, role: 'assistant', blocks: [{ type: 'text', text }], timestamp: 0, source: 'hook' }
+}
+
+function deferredPage(): {
+  onLoadEarlier: ReturnType<typeof vi.fn<() => Promise<boolean>>>
+  resolve: (madeProgress: boolean) => void
+} {
+  let resolve = (_madeProgress: boolean): void => {
+    throw new Error('Page request did not start')
+  }
+  const onLoadEarlier = vi.fn(() => new Promise<boolean>((settle) => (resolve = settle)))
+  return { onLoadEarlier, resolve: (madeProgress) => resolve(madeProgress) }
 }
 
 function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
@@ -214,6 +225,10 @@ describe('MobileNativeChatView', () => {
     return renderer!.root.find((node) => node.type === 'FlatList')
   }
 
+  function pressLoadEarlier(): void {
+    list().props.ListHeaderComponent.props.onPress()
+  }
+
   function scroll(offset: number, contentHeight: number, viewportHeight: number): void {
     list().props.onScroll({
       nativeEvent: {
@@ -227,13 +242,29 @@ describe('MobileNativeChatView', () => {
   it('anchors a prepend and stays detached until the user returns to the tail', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      act(pressLoadEarlier)
+      await update({
+        messages: [message],
+        hasMore: true,
+        loadingEarlier: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
       act(() => list().props.onContentSizeChange(0, 600))
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      await update({
+        messages: [older, message],
+        hasMore: false,
+        loadingEarlier: false,
+        onLoadEarlier: page.onLoadEarlier
+      })
+      await act(async () => {
+        page.resolve(true)
+        await Promise.resolve()
+      })
       expect(list().props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
       act(() => list().props.onContentSizeChange(0, 1200))
       await act(async () => vi.advanceTimersByTimeAsync(60_000))
@@ -249,6 +280,7 @@ describe('MobileNativeChatView', () => {
         scroll(800, 1400, 600)
         list().props.onScrollEndDrag()
       })
+      await act(async () => vi.advanceTimersByTimeAsync(0))
       const latest = { ...message, id: 'latest' }
       await update({ messages: [older, message, appended, latest], hasMore: false })
       act(() => list().props.onContentSizeChange(0, 1500))
@@ -262,16 +294,51 @@ describe('MobileNativeChatView', () => {
   it('does not follow new output during an arbitrarily slow history request', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      act(pressLoadEarlier)
+      await update({
+        messages: [message],
+        hasMore: true,
+        loadingEarlier: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
       await act(async () => vi.advanceTimersByTimeAsync(60_000))
       const appended = { ...message, id: 'appended' }
-      await update({ messages: [message, appended], hasMore: true, loadingEarlier: true })
+      await update({
+        messages: [message, appended],
+        hasMore: true,
+        loadingEarlier: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
       act(() => list().props.onContentSizeChange(0, 900))
       await act(async () => vi.runAllTimersAsync())
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores a history completion after unmount', async () => {
+    vi.useFakeTimers()
+    try {
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      act(pressLoadEarlier)
+      act(() => renderer?.unmount())
+      renderer = null
+      await act(async () => {
+        page.resolve(false)
+        await Promise.resolve()
+        await vi.runAllTimersAsync()
+      })
 
       expect(scrollToEnd).not.toHaveBeenCalled()
     } finally {
@@ -282,48 +349,74 @@ describe('MobileNativeChatView', () => {
   it('cancels an armed tail-follow before requesting history', async () => {
     vi.useFakeTimers()
     try {
-      const onLoadEarlier = vi.fn(() => true)
-      await render({ messages: [message], hasMore: true, onLoadEarlier })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
       const appended = { ...message, id: 'appended' }
-      await update({ messages: [message, appended], hasMore: true, onLoadEarlier })
+      await update({
+        messages: [message, appended],
+        hasMore: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
       await act(async () => vi.advanceTimersByTimeAsync(30))
-      act(() => list().props.ListHeaderComponent.props.onPress())
+      act(pressLoadEarlier)
       await act(async () => vi.advanceTimersByTimeAsync(60))
 
-      expect(onLoadEarlier).toHaveBeenCalledOnce()
+      expect(page.onLoadEarlier).toHaveBeenCalledOnce()
       expect(scrollToEnd).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
+  it('keeps the native anchor config stable across streaming renders', async () => {
+    await render({ messages: [message] })
+    const config = list().props.maintainVisibleContentPosition
+
+    await update({ messages: [message], streaming: 'partial response' })
+
+    expect(list().props.maintainVisibleContentPosition).toBe(config)
+  })
+
   it('auto-pages only from a gesture without reattaching a short transcript', async () => {
     vi.useFakeTimers()
     try {
-      const onLoadEarlier = vi.fn(() => true)
-      await render({ messages: [message], hasMore: true, onLoadEarlier })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
       act(() => scroll(0, 600, 600))
-      expect(onLoadEarlier).not.toHaveBeenCalled()
+      expect(page.onLoadEarlier).not.toHaveBeenCalled()
 
       act(() => {
         list().props.onScrollBeginDrag()
         scroll(0, 600, 600)
       })
-      await update({ messages: [message], hasMore: true, loadingEarlier: true, onLoadEarlier })
-      await update({ messages: [older, message], hasMore: false, onLoadEarlier })
+      await update({
+        messages: [message],
+        hasMore: true,
+        loadingEarlier: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
+      await update({
+        messages: [older, message],
+        hasMore: false,
+        onLoadEarlier: page.onLoadEarlier
+      })
+      await act(async () => {
+        page.resolve(true)
+        await Promise.resolve()
+      })
       act(() => {
         list().props.onScrollEndDrag()
         list().props.onContentSizeChange(0, 1200)
       })
       await act(async () => vi.runAllTimersAsync())
 
-      expect(onLoadEarlier).toHaveBeenCalledOnce()
+      expect(page.onLoadEarlier).toHaveBeenCalledOnce()
       expect(scrollToEnd).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
@@ -351,14 +444,42 @@ describe('MobileNativeChatView', () => {
     }
   })
 
-  it('lets scroll-to-latest override an in-flight history detach', async () => {
+  it('stays detached while a drag hands off to momentum', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      await render({ messages: [message] })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      act(() => {
+        list().props.onScrollBeginDrag()
+        scroll(600, 1200, 600)
+        list().props.onScrollEndDrag()
+        list().props.onContentSizeChange(0, 1400)
+        list().props.onMomentumScrollBegin()
+      })
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets scroll-to-latest override an in-flight history detach', async () => {
+    vi.useFakeTimers()
+    try {
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      act(pressLoadEarlier)
+      await update({
+        messages: [message],
+        hasMore: true,
+        loadingEarlier: true,
+        onLoadEarlier: page.onLoadEarlier
+      })
       act(() => scroll(0, 1200, 600))
       const latest = renderer!.root.find(
         (node) => node.props.accessibilityLabel === 'Scroll to latest'
@@ -367,7 +488,15 @@ describe('MobileNativeChatView', () => {
       expect(scrollToEnd).toHaveBeenLastCalledWith({ animated: true })
 
       scrollToEnd.mockClear()
-      await update({ messages: [older, message], hasMore: false })
+      await update({
+        messages: [older, message],
+        hasMore: false,
+        onLoadEarlier: page.onLoadEarlier
+      })
+      await act(async () => {
+        page.resolve(true)
+        await Promise.resolve()
+      })
       act(() => list().props.onContentSizeChange(0, 1400))
 
       expect(scrollToEnd).toHaveBeenCalled()
@@ -379,12 +508,16 @@ describe('MobileNativeChatView', () => {
   it('restores tail-follow when a history request makes no progress', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [message], hasMore: true, loadingEarlier: false })
+      act(pressLoadEarlier)
+      await act(async () => {
+        page.resolve(false)
+        await Promise.resolve()
+      })
       await act(async () => vi.runAllTimersAsync())
 
       expect(scrollToEnd).toHaveBeenCalled()
@@ -393,10 +526,32 @@ describe('MobileNativeChatView', () => {
     }
   })
 
+  it('settles a completed page without observing a loading render', async () => {
+    vi.useFakeTimers()
+    try {
+      const onLoadEarlier = vi.fn().mockResolvedValue(true)
+      await render({ messages: [message], hasMore: true, onLoadEarlier })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      act(pressLoadEarlier)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      await update({ messages: [older, message], hasMore: false })
+      act(() => list().props.onContentSizeChange(0, 1200))
+
+      expect(onLoadEarlier).toHaveBeenCalledOnce()
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('restores tail-follow when a history request is rejected synchronously', async () => {
     vi.useFakeTimers()
     try {
-      const onLoadEarlier = vi.fn(() => false)
+      const onLoadEarlier = vi.fn(() => null)
       await render({ messages: [message], hasMore: true, onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
@@ -414,12 +569,21 @@ describe('MobileNativeChatView', () => {
   it('resets tail-follow when the conversation changes', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      const page = deferredPage()
+      await render({ messages: [message], hasMore: true, onLoadEarlier: page.onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
+      act(pressLoadEarlier)
+      await update({
+        messages: [older, message],
+        hasMore: false,
+        onLoadEarlier: page.onLoadEarlier
+      })
+      await act(async () => {
+        page.resolve(true)
+        await Promise.resolve()
+      })
       scrollToEnd.mockClear()
 
       await update({
