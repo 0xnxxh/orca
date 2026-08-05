@@ -1431,11 +1431,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       if (existing?.key === key) {
         return existing.promise
       }
-      const promise = checkRuntimeHooks(
+      // Why: drop the cache entry on failure so a transient IPC error doesn't pin every later
+      // check for this repo/host to the same rejection.
+      const promise: Promise<HookCheckResult> = checkRuntimeHooks(
         selectedRepoSettingsRef.current,
         targetRepoId,
         selectedRepoExecutionHostId ?? undefined
-      )
+      ).catch((error: unknown) => {
+        if (hookCheckRef.current?.promise === promise) {
+          hookCheckRef.current = null
+        }
+        throw error
+      })
       hookCheckRef.current = { key, promise }
       return promise
     },

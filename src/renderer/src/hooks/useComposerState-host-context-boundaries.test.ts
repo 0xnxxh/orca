@@ -466,7 +466,7 @@ describe('useComposerState host-context boundaries', () => {
     expect(section).toContain('hasFolderSourceRepos: folderSourceRepos.length > 0')
     expect(section).toContain('? resolvePendingSmartGitHubSubmit()')
     expect(section).toContain("Promise.resolve({ kind: 'none' } as const)")
-    expect(section).toContain('isSubmissionCancelled')
+    expect(section).toContain("smartGitHubSettlement.status === 'cancelled'")
     expect(section).not.toContain('folderSourceRequiresConnection')
   })
 

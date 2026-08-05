@@ -225,30 +225,31 @@ export function resolveWorkspaceCreationTarget(
       : null
   const legacyRepo =
     focusedLegacyRepo ?? (legacyCandidates.length === 1 ? legacyCandidates[0] : null)
-  if (!legacyRepo) {
-    return { status: 'unavailable', reason: 'no-eligible-repo' }
+  let legacyTarget: WorkspaceCreationTarget | null = null
+  if (legacyRepo) {
+    const projectedLegacySetup = projectHostSetupProjectionFromRepos([legacyRepo]).setups[0]
+    const legacyHostId = getRepoExecutionHostId(legacyRepo)
+    const legacySetup =
+      setups.find(
+        (setup) =>
+          setup.repoId === legacyRepo.id && setup.hostId === legacyHostId && isReadySetup(setup)
+      ) ??
+      (!actionableHostIds || actionableHostIds.has(projectedLegacySetup.hostId)
+        ? projectedLegacySetup
+        : null)
+    legacyTarget = legacySetup ? createTarget(legacySetup, reposById) : null
+  } else if (repoId) {
+    // Why: duplicate repo ids across hosts leave no single legacy repo. Stay on the resolved id's
+    // own setup instead of failing closed and letting the composer re-pick an arbitrary repo.
+    legacyTarget = findReadySetupTarget(setups, reposById, (setup) => setup.repoId === repoId)
   }
-
-  const projectedLegacySetup = projectHostSetupProjectionFromRepos([legacyRepo]).setups[0]
-  const legacyHostId = getRepoExecutionHostId(legacyRepo)
-  const legacySetup =
-    setups.find(
-      (setup) =>
-        setup.repoId === legacyRepo.id && setup.hostId === legacyHostId && isReadySetup(setup)
-    ) ??
-    (!actionableHostIds || actionableHostIds.has(projectedLegacySetup.hostId)
-      ? projectedLegacySetup
-      : null)
-  const legacyTarget = legacySetup ? createTarget(legacySetup, reposById) : null
   if (legacyTarget) {
     return { status: 'ready', target: legacyTarget }
   }
-  const fallbackTarget = actionableHostIds
-    ? findReadySetupTarget(setups, reposById, () => true)
-    : null
+  const fallbackTarget = findReadySetupTarget(setups, reposById, () => true)
   return fallbackTarget
     ? { status: 'ready', target: fallbackTarget }
-    : { status: 'unavailable', reason: 'setup-not-found' }
+    : { status: 'unavailable', reason: legacyRepo ? 'setup-not-found' : 'no-eligible-repo' }
 }
 
 export function resolveWorkspaceCreationRepoId(input: ProjectHostWorkspaceTargetInput): string {
