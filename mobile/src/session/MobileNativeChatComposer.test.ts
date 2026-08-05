@@ -112,14 +112,19 @@ describe('MobileNativeChatComposer', () => {
     await render(vi.fn().mockResolvedValue(true), vi.fn())
 
     const composer = renderer!.root.findByProps({ testID: 'native-chat-composer' })
+    const inset = renderer!.root.findByProps({ testID: 'native-chat-composer-inset' })
     const actions = renderer!.root.findByProps({ testID: 'native-chat-composer-actions' })
     expect(composer.findAllByType('TextInput')).toHaveLength(1)
     expect(composer.children[1]).toBe(actions)
+    expect(inset.props.style).toMatchObject({
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.md
+    })
     expect(composer.props.style).toMatchObject({
-      marginHorizontal: spacing.md,
-      marginBottom: spacing.sm,
       borderWidth: 1,
-      borderRadius: radii.card
+      borderRadius: radii.card,
+      overflow: 'hidden'
     })
   })
 

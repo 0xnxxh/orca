@@ -195,86 +195,88 @@ export function MobileNativeChatComposer({
           ))}
         </ScrollView>
       ) : null}
-      <View style={styles.bar} testID="native-chat-composer">
-        <TextInput
-          style={styles.input}
-          value={value}
-          onChangeText={handleChange}
-          // Controlled only transiently right after an autocomplete insert.
-          selection={pendingSelection ?? undefined}
-          onSelectionChange={(e) => {
-            setCursor(e.nativeEvent.selection.end)
-            setPendingSelection(null)
-          }}
-          placeholder={placeholder}
-          placeholderTextColor={colors.textMuted}
-          selectionColor={colors.accentBlue}
-          multiline
-          // Why: never revoke `editable` — iOS resigns first responder on a focused
-          // field, so a transient lock would yank the keyboard mid-typing (#10681).
-          // The lock gates sending; the draft survives and rides the next send.
-          textAlignVertical="top"
-        />
-        <View style={styles.actionRow} testID="native-chat-composer-actions">
-          {onAttachImage ? (
+      <View style={styles.composerInset} testID="native-chat-composer-inset">
+        <View style={styles.bar} testID="native-chat-composer">
+          <TextInput
+            style={styles.input}
+            value={value}
+            onChangeText={handleChange}
+            // Controlled only transiently right after an autocomplete insert.
+            selection={pendingSelection ?? undefined}
+            onSelectionChange={(e) => {
+              setCursor(e.nativeEvent.selection.end)
+              setPendingSelection(null)
+            }}
+            placeholder={placeholder}
+            placeholderTextColor={colors.textMuted}
+            selectionColor={colors.accentBlue}
+            multiline
+            // Why: never revoke `editable` — iOS resigns first responder on a focused
+            // field, so a transient lock would yank the keyboard mid-typing (#10681).
+            // The lock gates sending; the draft survives and rides the next send.
+            textAlignVertical="top"
+          />
+          <View style={styles.actionRow} testID="native-chat-composer-actions">
+            {onAttachImage ? (
+              <Pressable
+                accessibilityLabel="Attach image"
+                style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+                onPress={onAttachImage}
+                disabled={isAttaching || disabled}
+              >
+                {isAttaching ? (
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                  <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
+                )}
+              </Pressable>
+            ) : null}
+            {sessionOptions ? (
+              <MobileNativeChatSessionOptionPickers
+                {...sessionOptions}
+                sendInFlight={sending || isAttaching}
+              />
+            ) : null}
+            <View style={styles.actionSpacer} />
+            {onMicPress ? (
+              <Pressable
+                accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
+                style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+                // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
+                onPress={dictationMode === 'hold' ? undefined : onMicPress}
+                onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
+                onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
+                disabled={disabled}
+              >
+                {micActive ? (
+                  <Square
+                    size={18}
+                    color={colors.statusRed}
+                    strokeWidth={2.4}
+                    fill={colors.statusRed}
+                  />
+                ) : (
+                  <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
+                )}
+              </Pressable>
+            ) : null}
             <Pressable
-              accessibilityLabel="Attach image"
-              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-              onPress={onAttachImage}
-              disabled={isAttaching || disabled}
+              accessibilityLabel="Send message"
+              style={({ pressed }) => [
+                styles.sendButton,
+                !canSend && styles.sendButtonDisabled,
+                pressed && canSend && styles.pressed
+              ]}
+              onPress={handleSend}
+              disabled={!canSend}
             >
-              {isAttaching ? (
-                <ActivityIndicator size="small" color={colors.textSecondary} />
-              ) : (
-                <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
-              )}
+              <ArrowUp
+                size={20}
+                color={canSend ? colors.bgBase : colors.textMuted}
+                strokeWidth={2.6}
+              />
             </Pressable>
-          ) : null}
-          {sessionOptions ? (
-            <MobileNativeChatSessionOptionPickers
-              {...sessionOptions}
-              sendInFlight={sending || isAttaching}
-            />
-          ) : null}
-          <View style={styles.actionSpacer} />
-          {onMicPress ? (
-            <Pressable
-              accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
-              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-              // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
-              onPress={dictationMode === 'hold' ? undefined : onMicPress}
-              onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
-              onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
-              disabled={disabled}
-            >
-              {micActive ? (
-                <Square
-                  size={18}
-                  color={colors.statusRed}
-                  strokeWidth={2.4}
-                  fill={colors.statusRed}
-                />
-              ) : (
-                <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
-              )}
-            </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityLabel="Send message"
-            style={({ pressed }) => [
-              styles.sendButton,
-              !canSend && styles.sendButtonDisabled,
-              pressed && canSend && styles.pressed
-            ]}
-            onPress={handleSend}
-            disabled={!canSend}
-          >
-            <ArrowUp
-              size={20}
-              color={canSend ? colors.bgBase : colors.textMuted}
-              strokeWidth={2.6}
-            />
-          </Pressable>
+          </View>
         </View>
       </View>
     </View>
@@ -321,16 +323,20 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderSubtle
   },
+  composerInset: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md
+  },
   bar: {
     gap: spacing.xs,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderSubtle,
     borderRadius: radii.card,
-    backgroundColor: colors.bgPanel
+    backgroundColor: colors.bgPanel,
+    overflow: 'hidden'
   },
   actionRow: {
     minHeight: 40,
