@@ -249,4 +249,24 @@ describe('mobile relay pairing recovery', () => {
     await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
     expect(deps.clearJournal).not.toHaveBeenCalled()
   })
+
+  // Why: a committed install whose local persistence failed is the one case the
+  // journal must survive — it is the only record left to retry the write from.
+  it('keeps a journal when the server committed but the local write failed', async () => {
+    const saved = journal()
+    const directInstalled = installed(saved, 'authenticated-direct')
+    const committed = client(async () =>
+      response(endpoints(saved, { state: 'committed', result: directInstalled }))
+    )
+    const deps = {
+      ...dependencies({ journal: saved, connectRelay: vi.fn(() => committed) }),
+      now: () => saved.metadata.relay.inviteExpiresAt + 10 * 60 * 1000 + 1,
+      writeCredentialBundle: vi.fn(async () => {
+        throw new Error('keychain unavailable')
+      })
+    }
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+  })
 })
