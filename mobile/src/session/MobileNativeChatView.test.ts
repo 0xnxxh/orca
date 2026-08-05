@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 
 const { scrollToEnd } = vi.hoisted(() => ({ scrollToEnd: vi.fn() }))
@@ -68,6 +69,8 @@ vi.mock('./MobileNativeChatComposer', async () => {
 type Overrides = {
   conversationIdentity?: string
   messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
+  folded?: Parameters<typeof MobileNativeChatView>[0]['folded']
+  streaming?: string | null
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
@@ -88,6 +91,26 @@ function suppressRendererWarning(): () => void {
   return () => spy.mockRestore()
 }
 
+function assistantTurn(id: string, text: string): NativeChatMessage {
+  return { id, role: 'assistant', blocks: [{ type: 'text', text }], timestamp: 0, source: 'hook' }
+}
+
+function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
+  const messages = overrides.messages ?? []
+  return createElement(MobileNativeChatView, {
+    conversationIdentity: 'test-conversation',
+    messages,
+    folded: overrides.folded ?? messages,
+    status: 'ready',
+    streaming: null,
+    onSend: vi.fn().mockResolvedValue(true),
+    pending: [],
+    composerText: '',
+    onComposerTextChange: vi.fn(),
+    ...overrides
+  })
+}
+
 describe('MobileNativeChatView', () => {
   let renderer: ReactTestRenderer | null = null
 
@@ -105,18 +128,7 @@ describe('MobileNativeChatView', () => {
     const restore = suppressRendererWarning()
     try {
       await act(async () => {
-        renderer = create(
-          createElement(MobileNativeChatView, {
-            conversationIdentity: 'test-conversation',
-            messages: [],
-            status: 'ready',
-            onSend: overrides.onSend ?? vi.fn().mockResolvedValue(true),
-            pending: [],
-            composerText: '',
-            onComposerTextChange: vi.fn(),
-            ...overrides
-          })
-        )
+        renderer = create(chatViewElement(overrides))
       })
     } finally {
       restore()
@@ -125,19 +137,14 @@ describe('MobileNativeChatView', () => {
 
   async function update(overrides: Overrides = {}): Promise<void> {
     await act(async () => {
-      renderer?.update(
-        createElement(MobileNativeChatView, {
-          conversationIdentity: 'test-conversation',
-          messages: [],
-          status: 'ready',
-          onSend: vi.fn().mockResolvedValue(true),
-          pending: [],
-          composerText: '',
-          onComposerTextChange: vi.fn(),
-          ...overrides
-        })
-      )
+      renderer?.update(chatViewElement(overrides))
     })
+  }
+
+  /** Ids of the rows the list is currently rendering. */
+  function listIds(): string[] {
+    const list = renderer!.root.find((node) => node.type === 'FlatList')
+    return (list.props.data as { id: string }[]).map((row) => row.id)
   }
 
   function banners(): ReactTestInstance[] {
@@ -426,5 +433,17 @@ describe('MobileNativeChatView', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // The gate that decides `streaming` lives in MobileNativeChatOverlay, which
+  // outlives this view; see MobileNativeChatOverlay.test.ts.
+  it('appends the gated streaming bubble after the folded transcript', async () => {
+    const folded = [assistantTurn('a1', 'The tests pass.')]
+    await render({ folded })
+    expect(listIds()).toEqual(['a1'])
+
+    await update({ folded, streaming: 'The tests' })
+
+    expect(listIds()).toEqual(['a1', 'streaming'])
   })
 })
