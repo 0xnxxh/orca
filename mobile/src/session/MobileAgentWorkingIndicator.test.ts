@@ -79,8 +79,7 @@ describe('MobileAgentWorkingIndicator', () => {
     expect(label()).toBe('Agent is working')
     expect(dots()).toBe(3)
     expect(mocks.start).toHaveBeenCalledTimes(3)
-    // Constant across both states by design: Android drops the announcement if
-    // the mode is switched on in the same commit as the content change.
+    // Android needs the live-region mode before the content changes.
     expect(liveRegion()).toBe('polite')
   })
 
@@ -88,7 +87,7 @@ describe('MobileAgentWorkingIndicator', () => {
     await render(true)
 
     expect(label()).toBe('Agent status stale')
-    // Dots are the "live activity" signal — they must not survive a disconnect.
+    // Dots must not imply live activity after a disconnect.
     expect(dots()).toBe(0)
     expect(mocks.start).not.toHaveBeenCalled()
     expect(liveRegion()).toBe('polite')

@@ -2,10 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Animated, StyleSheet, Text, View } from 'react-native'
 import { colors, spacing, typography } from '../theme/mobile-theme'
 
-/** Animated three-dot "agent is working" row, shown while the active agent is
- *  still producing a reply. Pure presentation — visibility is the caller's call.
- *  `stale` mutes it while the transport is down: the state came from
- *  pre-disconnect data and must not read as live activity. */
+/** Animated working row; `stale` removes signals that would imply live activity. */
 export function MobileAgentWorkingIndicator({
   stale = false
 }: {
@@ -39,10 +36,7 @@ export function MobileAgentWorkingIndicator({
   }, [stale])
 
   return (
-    // Not dimmed: the label is the only thing left carrying the state once the
-    // dots go, and fading it under `textMuted` drops it below AA on `bgBase`.
-    // The live region is constant, not toggled with `stale` — Android only
-    // announces content changes once the mode is already set.
+    // Android announces the swap only when the live-region mode already exists.
     <View style={styles.row} accessibilityLiveRegion="polite">
       <Text style={styles.label}>{stale ? 'Agent status stale' : 'Agent is working'}</Text>
       {stale ? null : (

@@ -11,12 +11,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { ArrowDown, ChevronsDownUp, ChevronsUpDown, Square } from 'lucide-react-native'
+import { canStopNativeChatAgent } from '../../../src/shared/native-chat-action-availability'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { colors } from '../theme/mobile-theme'
 import { styles } from './mobile-native-chat-view-styles'
 import {
   buildMobileNativeChatTransientData,
-  foldMobileNativeChatMessages,
   mobileNativeChatEmptyState,
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
@@ -38,8 +38,26 @@ import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
  *  terminal subscription has not acknowledged its input lease yet. */
 export type MobileNativeChatInputLockReason = 'disconnected' | 'waiting'
 
+const LOCK_FEEDBACK_DELAY_MS = 600
+
+function useDelayedActivation(active: boolean): boolean {
+  const [delayedActive, setDelayedActive] = useState(false)
+  useEffect(() => {
+    if (!active) {
+      setDelayedActive(false)
+      return
+    }
+    const timer = setTimeout(() => setDelayedActive(true), LOCK_FEEDBACK_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [active])
+  return delayedActive
+}
+
 type Props = {
+  /** Raw transcript, only for telling "still loading" from "loaded and empty". */
   messages: NativeChatMessage[]
+  /** `messages` with noise stripped and tool turns folded in, from the overlay. */
+  folded: NativeChatMessage[]
   status: MobileNativeChatStatus
   error?: string
   /** Resolved agent for this chat; names the empty-state copy (desktop parity). */
@@ -47,9 +65,9 @@ type Props = {
   agentWorking?: boolean
   /** Interrupt the agent mid-turn (shown as a Stop button on the working bar). */
   onStop?: () => void
-  /** Live partial assistant text while a turn is still streaming (from the agent
-   *  status hook). Shown as an in-progress bubble until the transcript catches up. */
-  streamingText?: string
+  /** Live partial assistant text to show as an in-progress bubble, already gated
+   *  by the overlay against the transcript catching up. */
+  streaming: string | null
   hasMore?: boolean
   loadingEarlier?: boolean
   onLoadEarlier?: () => void
@@ -102,12 +120,13 @@ type Props = {
 
 export function MobileNativeChatView({
   messages,
+  folded,
   status,
   error,
   agent,
   agentWorking,
   onStop,
-  streamingText,
+  streaming,
   hasMore,
   loadingEarlier,
   onLoadEarlier,
@@ -165,10 +184,9 @@ export function MobileNativeChatView({
   // `data` is the list source: folded transcript + synthetic streaming bubble +
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
-  const foldedMessages = useMemo(() => foldMobileNativeChatMessages(messages), [messages])
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded: foldedMessages, streamingText, pending }),
-    [foldedMessages, streamingText, pending]
+    () => buildMobileNativeChatTransientData({ folded, streaming, pending }),
+    [folded, streaming, pending]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above
@@ -246,30 +264,15 @@ export function MobileNativeChatView({
   // hand-offs would otherwise toggle the lock placeholder on and off. Only surface
   // a lock once it has held ~600ms; drop it instantly so unlocking stays snappy.
   const rawLockReason = inputLockReason ?? null
-  const [lockHeld, setLockHeld] = useState(false)
-  useEffect(() => {
-    if (rawLockReason === null) {
-      setLockHeld(false)
-      return
-    }
-    const timer = setTimeout(() => setLockHeld(true), 600)
-    return () => clearTimeout(timer)
-  }, [rawLockReason])
+  const lockHeld = useDelayedActivation(rawLockReason !== null)
   const lockReason = lockHeld ? rawLockReason : null
-  // Everything derived from agent status is pre-disconnect data while the
-  // transport is down: mute the working row and disable Stop (a tap could not
-  // reach the PTY anyway). Needs its own hold rather than reading `lockReason`,
-  // which stays latched across 'waiting' -> 'disconnected' and would strobe the
-  // row on a flapping link. Recovery is immediate, so Stop comes straight back.
-  const [statusStale, setStatusStale] = useState(false)
-  useEffect(() => {
-    if (rawLockReason !== 'disconnected') {
-      setStatusStale(false)
-      return
-    }
-    const timer = setTimeout(() => setStatusStale(true), 600)
-    return () => clearTimeout(timer)
-  }, [rawLockReason])
+  // `lockReason` stays latched across reason changes, so stale status needs its own hold.
+  const statusStale = useDelayedActivation(rawLockReason === 'disconnected')
+  const canStopAgent = canStopNativeChatAgent({
+    // Match desktop: an unreachable target disables Stop immediately.
+    targetWritable: rawLockReason !== 'disconnected',
+    stopCommandAvailable: onStop !== undefined
+  })
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
@@ -286,6 +289,9 @@ export function MobileNativeChatView({
               keyExtractor={(item) => item.id}
               renderItem={renderItem}
               contentContainerStyle={styles.listContent}
+              // Let link/file taps land while the composer keyboard is up
+              // instead of being swallowed by the dismiss gesture.
+              keyboardShouldPersistTaps="handled"
               onScroll={onScroll}
               scrollEventThrottle={32}
               onContentSizeChange={() => {
@@ -403,10 +409,10 @@ export function MobileNativeChatView({
             style={({ pressed }) => [
               styles.stopButton,
               pressed && styles.pressed,
-              statusStale && styles.stopDisabled
+              !canStopAgent && styles.stopDisabled
             ]}
             onPress={onStop}
-            disabled={statusStale}
+            disabled={!canStopAgent}
             hitSlop={8}
             accessibilityLabel="Stop the agent"
           >

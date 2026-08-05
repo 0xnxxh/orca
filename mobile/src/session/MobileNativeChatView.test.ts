@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 import { styles } from './mobile-native-chat-view-styles'
 
@@ -59,6 +60,9 @@ vi.mock('./MobileNativeChatComposer', async () => {
 })
 
 type Overrides = {
+  messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
+  folded?: Parameters<typeof MobileNativeChatView>[0]['folded']
+  streaming?: string | null
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
@@ -78,6 +82,25 @@ function suppressRendererWarning(): () => void {
   return () => spy.mockRestore()
 }
 
+function assistantTurn(id: string, text: string): NativeChatMessage {
+  return { id, role: 'assistant', blocks: [{ type: 'text', text }], timestamp: 0, source: 'hook' }
+}
+
+function chatViewElement(overrides: Overrides): ReturnType<typeof createElement> {
+  return createElement(MobileNativeChatView, {
+    messages: [],
+    folded: [],
+    status: 'ready',
+    streaming: null,
+    onSend: vi.fn().mockResolvedValue(true),
+    onStop: vi.fn(),
+    pending: [],
+    composerText: '',
+    onComposerTextChange: vi.fn(),
+    ...overrides
+  })
+}
+
 describe('MobileNativeChatView', () => {
   let renderer: ReactTestRenderer | null = null
 
@@ -95,21 +118,23 @@ describe('MobileNativeChatView', () => {
     const restore = suppressRendererWarning()
     try {
       await act(async () => {
-        renderer = create(
-          createElement(MobileNativeChatView, {
-            messages: [],
-            status: 'ready',
-            onSend: overrides.onSend ?? vi.fn().mockResolvedValue(true),
-            pending: [],
-            composerText: '',
-            onComposerTextChange: vi.fn(),
-            ...overrides
-          })
-        )
+        renderer = create(chatViewElement(overrides))
       })
     } finally {
       restore()
     }
+  }
+
+  async function update(overrides: Overrides = {}): Promise<void> {
+    await act(async () => {
+      renderer?.update(chatViewElement(overrides))
+    })
+  }
+
+  /** Ids of the rows the list is currently rendering. */
+  function listIds(): string[] {
+    const list = renderer!.root.find((node) => node.type === 'FlatList')
+    return (list.props.data as { id: string }[]).map((row) => row.id)
   }
 
   function banners(): ReactTestInstance[] {
@@ -181,29 +206,16 @@ describe('MobileNativeChatView', () => {
   }
 
   async function relock(inputLockReason: Overrides['inputLockReason']): Promise<void> {
-    await act(async () => {
-      renderer?.update(
-        createElement(MobileNativeChatView, {
-          messages: [],
-          status: 'ready',
-          agentWorking: true,
-          inputLockReason,
-          onSend: vi.fn().mockResolvedValue(true),
-          pending: [],
-          composerText: '',
-          onComposerTextChange: vi.fn()
-        })
-      )
-    })
+    await update({ agentWorking: true, inputLockReason })
   }
 
-  it('marks the working row stale and blocks Stop once a disconnect settles', async () => {
+  it('blocks Stop immediately and marks the working row stale once a disconnect settles', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
 
-    // Debounced with the composer lock: a blip must not flicker the row.
+    // The label is held to avoid flicker; the unreachable action is not.
     expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
 
     await settleLockDebounce()
 
@@ -211,15 +223,14 @@ describe('MobileNativeChatView', () => {
     expect(stopButton().props.disabled).toBe(true)
   })
 
-  it('does not fire Stop while the status is stale', async () => {
+  it('disables and dims Stop while disconnected', async () => {
     vi.useFakeTimers()
     const onStop = vi.fn()
     await render({ agentWorking: true, inputLockReason: 'disconnected', onStop })
     await settleLockDebounce()
 
     const stop = stopButton()
-    // `disabled` is the real block — Pressable never claims the responder. The
-    // dimmed style is the matching affordance, not the guard.
+    // `disabled` is the behavioral guard; opacity is only its affordance.
     expect(stop.props.disabled).toBe(true)
     expect(stop.props.style({ pressed: false })).toContainEqual(styles.stopDisabled)
     expect(stop.props.onPress).toBe(onStop)
@@ -244,7 +255,7 @@ describe('MobileNativeChatView', () => {
     await relock('disconnected')
 
     expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(false)
+    expect(stopButton().props.disabled).toBe(true)
 
     await settleLockDebounce()
 
@@ -262,8 +273,7 @@ describe('MobileNativeChatView', () => {
     await relock('waiting')
     await settleLockDebounce()
 
-    // The armed timer has to be cancelled, not just overruled — a surviving one
-    // would fire late and mute a row whose transport is already back.
+    // A surviving timer would mute a row whose transport is already back.
     expect(workingIndicator().props.stale).toBe(false)
     expect(stopButton().props.disabled).toBe(false)
   })
@@ -281,5 +291,17 @@ describe('MobileNativeChatView', () => {
     // Unlock is immediate (no debounce on the way out), so Stop comes straight back.
     expect(workingIndicator().props.stale).toBe(false)
     expect(stopButton().props.disabled).toBe(false)
+  })
+
+  // The gate that decides `streaming` lives in MobileNativeChatOverlay, which
+  // outlives this view; see MobileNativeChatOverlay.test.ts.
+  it('appends the gated streaming bubble after the folded transcript', async () => {
+    const folded = [assistantTurn('a1', 'The tests pass.')]
+    await render({ folded })
+    expect(listIds()).toEqual(['a1'])
+
+    await update({ folded, streaming: 'The tests' })
+
+    expect(listIds()).toEqual(['a1', 'streaming'])
   })
 })
