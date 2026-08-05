@@ -1,5 +1,6 @@
 import { truncateDiffForPrompt } from './commit-message-prompt'
 import { assertJsonTextStructureWithinLimits } from './json-text-structure-limit'
+import { isLinkedIssueNumber } from './source-control-ai-action-variables'
 
 export const GENERATED_PULL_REQUEST_JSON_STRUCTURE_LIMITS = {
   structuralTokens: 64,
@@ -39,6 +40,12 @@ export function buildPullRequestFieldsPrompt(
   context: PullRequestDraftContext,
   customPrompt: string
 ): string {
+  const linkedIssue = isLinkedIssueNumber(context.linkedIssue) ? context.linkedIssue : null
+  const linkedIssueRule = linkedIssue
+    ? `- The linked GitHub issue is #${linkedIssue}. State whether this is a complete or partial fix. Use ` +
+      `\`Fixes #${linkedIssue}\` only if the changes clearly resolve the whole issue; ` +
+      `otherwise use \`Refs #${linkedIssue}\`.`
+    : '- No GitHub issue is linked. Do not invent an issue reference.'
   const base = [
     'You are generating pull request details.',
     'Return ONLY compact JSON with this exact shape:',
@@ -48,8 +55,11 @@ export function buildPullRequestFieldsPrompt(
     '- Use the branch diff and commits below as source of truth.',
     '- Keep the base branch as the current base unless the diff clearly targets a different branch.',
     '- Title: concise, specific, no trailing period.',
-    '- Body: useful Markdown summary for reviewers. Include testing notes only when evidence exists.',
-    '- If Current description contains a pull request or merge request template, preserve its headings, required sections, and checklists while filling relevant sections from the branch changes.',
+    '- Body: useful Markdown for reviewers. Start with `## Problem`, then `## Solution`, written in very simple ELI5 language for someone unfamiliar with the internals, before implementation details.',
+    '- If Current description already has equivalent Problem or Solution sections, reuse and reorder them instead of creating duplicates.',
+    linkedIssueRule,
+    '- If Current description contains a pull request or merge request template, retain every heading, required section, and checklist while filling relevant sections from the branch changes. Add Problem and Solution before the template details when absent.',
+    '- Include testing notes only when evidence exists.',
     '- Leave genuinely unknown template items as TODO or unchecked instead of deleting them.',
     '- draft: true only when the changes clearly look unfinished, WIP, or unsafe to review.',
     '- Do not include labels, reviewers, code fences, prose, or any keys beyond base/title/body/draft.',
@@ -59,6 +69,7 @@ export function buildPullRequestFieldsPrompt(
     `Current title: ${context.currentTitle || '(empty)'}`,
     `Current description: ${context.currentBody || '(empty)'}`,
     `Current draft: ${context.currentDraft ? 'true' : 'false'}`,
+    `Linked GitHub issue: ${linkedIssue ? `#${linkedIssue}` : '(none)'}`,
     '',
     'Commits:',
     limitSection(context.commitSummary || '(none)', 8_000),

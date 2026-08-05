@@ -2218,7 +2218,7 @@ describe('linkedIssue template substitution', () => {
     expect(prompt).not.toContain('linkedIssue')
   })
 
-  it('leaves the built-in pull-request prompt free of issue guidance', async () => {
+  it('includes the linked issue in the built-in pull-request prompt', async () => {
     let prompt = ''
     await generatePullRequestFieldsFromContext(
       { ...PULL_REQUEST_CONTEXT, linkedIssue: BUILT_IN_PROMPT_SENTINEL_ISSUE },
@@ -2228,8 +2228,9 @@ describe('linkedIssue template substitution', () => {
       })
     )
 
-    expect(prompt).not.toContain(String(BUILT_IN_PROMPT_SENTINEL_ISSUE))
-    expect(prompt).not.toContain('linkedIssue')
+    expect(prompt).toContain(`Linked GitHub issue: #${BUILT_IN_PROMPT_SENTINEL_ISSUE}`)
+    expect(prompt).toContain(`Fixes #${BUILT_IN_PROMPT_SENTINEL_ISSUE}`)
+    expect(prompt).toContain(`Refs #${BUILT_IN_PROMPT_SENTINEL_ISSUE}`)
   })
 
   it('substitutes the linked issue into the pull-request prompt', async () => {

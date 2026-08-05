@@ -33,6 +33,31 @@ describe('buildPullRequestFieldsPrompt', () => {
     expect(prompt).toContain('Use conventional PR titles.')
   })
 
+  it('requires ELI5 problem and solution sections before implementation details', () => {
+    const prompt = buildPullRequestFieldsPrompt(context, '')
+
+    expect(prompt).toContain('Start with `## Problem`, then `## Solution`')
+    expect(prompt).toContain('written in very simple ELI5 language')
+    expect(prompt).toContain('for someone unfamiliar with the internals')
+    expect(prompt).toContain('reuse and reorder them instead of creating duplicates')
+  })
+
+  it('requires an accurate reference to the linked GitHub issue', () => {
+    const prompt = buildPullRequestFieldsPrompt({ ...context, linkedIssue: 12398 }, '')
+
+    expect(prompt).toContain('Linked GitHub issue: #12398')
+    expect(prompt).toContain('State whether this is a complete or partial fix')
+    expect(prompt).toContain('`Fixes #12398` only if the changes clearly resolve the whole issue')
+    expect(prompt).toContain('otherwise use `Refs #12398`')
+  })
+
+  it('warns against inventing an issue when none is linked', () => {
+    const prompt = buildPullRequestFieldsPrompt(context, '')
+
+    expect(prompt).toContain('Linked GitHub issue: (none)')
+    expect(prompt).toContain('Do not invent an issue reference')
+  })
+
   it('tells the agent to preserve existing review templates', () => {
     const prompt = buildPullRequestFieldsPrompt(
       {
@@ -42,7 +67,7 @@ describe('buildPullRequestFieldsPrompt', () => {
       ''
     )
 
-    expect(prompt).toContain('preserve its headings, required sections, and checklists')
+    expect(prompt).toContain('retain every heading, required section, and checklist')
     expect(prompt).toContain('Leave genuinely unknown template items as TODO or unchecked')
   })
 })
