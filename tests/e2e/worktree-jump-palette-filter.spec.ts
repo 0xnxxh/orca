@@ -150,7 +150,7 @@ test.describe('Worktree jump-palette filters', () => {
     await filterTrigger(orcaPage).click()
     await palette(orcaPage).getByText('Projects', { exact: true }).click()
     const projects = palette(orcaPage).getByRole('listbox', { name: 'Projects' })
-    const localProject = projects.getByRole('option').filter({ hasNotText: REMOTE_PROJECT }).first()
+    const localProject = projects.getByRole('option', { name: LOCAL_PROJECT })
     await expect(localProject).toBeVisible()
     await localProject.click()
     await filterTrigger(orcaPage).click()
