@@ -20,6 +20,9 @@ export async function probePtyOwners(
   const consulted = inventoriedOwners
     ? possibleOwners.filter((provider) => !inventoriedOwners.has(provider))
     : possibleOwners
+  if (consulted.length === 0) {
+    return null
+  }
   const results = await Promise.all(consulted.map((provider) => provider.probePtyLiveness(id)))
   return results.some((result) => result === true)
     ? true

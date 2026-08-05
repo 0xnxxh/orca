@@ -30,17 +30,19 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   async discoverLegacySessions(): Promise<void> {
+    const inventoriedLegacy = new Set<DaemonPtyAdapter>()
     for (const adapter of this.legacy) {
       try {
         const sessions = await adapter.listProcesses()
         for (const session of sessions) {
           this.sessionAdapters.set(session.id, adapter)
         }
-        this.inventoriedLegacy.add(adapter)
+        inventoriedLegacy.add(adapter)
       } catch (error) {
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
       }
     }
+    this.inventoriedLegacy = inventoriedLegacy
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {

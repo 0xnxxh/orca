@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DaemonPtyRouter } from './daemon-pty-router'
+import { probePtyOwners } from './daemon-pty-liveness-probe'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type { PtyBackgroundStreamEvent, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import {
@@ -549,6 +550,28 @@ describe('DaemonPtyRouter', () => {
     await router.discoverLegacySessions()
 
     // Without an inventory nothing proves the legacy daemon doesn't own this id.
+    await expect(router.probePtyLiveness('unknown-session')).resolves.toBeNull()
+    expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+  })
+
+  it('fails closed when every possible owner is excluded from a probe', async () => {
+    const legacy = createAdapter('legacy')
+
+    await expect(
+      probePtyOwners('unknown-session', undefined, [legacy], new Set([legacy]))
+    ).resolves.toBeNull()
+    expect(legacy.probePtyLiveness).not.toHaveBeenCalled()
+  })
+
+  it('reconsults a legacy daemon after a later inventory attempt fails', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy')
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('wedged'))
+    vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+    await router.discoverLegacySessions()
+
     await expect(router.probePtyLiveness('unknown-session')).resolves.toBeNull()
     expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
   })

@@ -748,7 +748,7 @@ async function probeStablePaneOwnerLiveness(
 ): Promise<boolean | null> {
   let verdict = await probe(ptyId)
   for (const delayMs of STABLE_PANE_OWNER_PROBE_RETRY_DELAYS_MS) {
-    if (verdict === false) {
+    if (verdict !== null) {
       return verdict
     }
     await new Promise((resolve) => setTimeout(resolve, delayMs))
