@@ -3,7 +3,9 @@ export type RemoteRuntimeClientErrorLike = { code?: string; message: string }
 export const RUNTIME_RPC_QUEUE_OVERLOAD_CODE = 'runtime_rpc_queue_overloaded'
 export const RUNTIME_RPC_QUEUE_OVERLOAD_MESSAGE_FRAGMENT = 'remote runtime call queue is full'
 
-const RECOVERABLE_CODES = new Set([
+// Exported so the transport-error corpus guard can name the offending entry when a
+// code and its message disagree; see remote-runtime-transport-error-agreement.test.ts.
+export const RECOVERABLE_CODES: ReadonlySet<string> = new Set([
   'remote_runtime_unavailable',
   RUNTIME_RPC_QUEUE_OVERLOAD_CODE,
   'runtime_timeout',
@@ -12,7 +14,7 @@ const RECOVERABLE_CODES = new Set([
   'timeout'
 ])
 
-const RECOVERABLE_MESSAGE_FRAGMENTS = [
+export const RECOVERABLE_MESSAGE_FRAGMENTS: readonly string[] = [
   'could not connect to the remote orca runtime',
   'remote orca runtime closed the connection',
   'remote orca runtime connection closed',
