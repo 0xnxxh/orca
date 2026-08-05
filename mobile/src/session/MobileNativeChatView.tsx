@@ -50,7 +50,7 @@ function useDelayedActivation(active: boolean): boolean {
     const timer = setTimeout(() => setDelayedActive(true), LOCK_FEEDBACK_DELAY_MS)
     return () => clearTimeout(timer)
   }, [active])
-  return delayedActive
+  return active && delayedActive
 }
 
 type Props = {

@@ -5,6 +5,8 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 import { styles } from './mobile-native-chat-view-styles'
 
+const mocks = vi.hoisted(() => ({ staleRenders: [] as boolean[] }))
+
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   FlatList: 'FlatList',
@@ -42,9 +44,15 @@ vi.mock('./MobileNativeChatMessage', () => ({ MobileNativeChatMessage: 'ChatMess
 vi.mock('./MobileNativeChatAsk', () => ({ MobileNativeChatAsk: 'ChatAsk' }))
 vi.mock('./MobileNativeChatPermission', () => ({ MobileNativeChatPermission: 'ChatPermission' }))
 vi.mock('./MobileNativeChatQuestion', () => ({ MobileNativeChatQuestion: 'ChatQuestion' }))
-vi.mock('./MobileAgentWorkingIndicator', () => ({
-  MobileAgentWorkingIndicator: 'WorkingIndicator'
-}))
+vi.mock('./MobileAgentWorkingIndicator', async () => {
+  const React = await import('react')
+  return {
+    MobileAgentWorkingIndicator: ({ stale = false }: { stale?: boolean }) => {
+      mocks.staleRenders.push(stale)
+      return React.createElement('WorkingIndicator', { stale })
+    }
+  }
+})
 
 // Stand-in composer: exposes the view's `handleSend` through a pressable, which is
 // the only composer behaviour these banner tests exercise.
@@ -106,6 +114,7 @@ describe('MobileNativeChatView', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    mocks.staleRenders.length = 0
   })
 
   afterEach(() => {
@@ -291,6 +300,32 @@ describe('MobileNativeChatView', () => {
     // Unlock is immediate (no debounce on the way out), so Stop comes straight back.
     expect(workingIndicator().props.stale).toBe(false)
     expect(stopButton().props.disabled).toBe(false)
+  })
+
+  it('never renders stale feedback after the transport reconnects', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'disconnected' })
+    await settleLockDebounce()
+    expect(workingIndicator().props.stale).toBe(true)
+
+    mocks.staleRenders.length = 0
+    await relock('waiting')
+
+    expect(mocks.staleRenders.length).toBeGreaterThan(0)
+    expect(mocks.staleRenders).not.toContain(true)
+  })
+
+  it('restarts the hold when the recovered transport disconnects again', async () => {
+    vi.useFakeTimers()
+    await render({ agentWorking: true, inputLockReason: 'disconnected' })
+    await settleLockDebounce()
+    await relock('waiting')
+
+    await relock('disconnected')
+    expect(workingIndicator().props.stale).toBe(false)
+
+    await settleLockDebounce()
+    expect(workingIndicator().props.stale).toBe(true)
   })
 
   // The gate that decides `streaming` lives in MobileNativeChatOverlay, which
