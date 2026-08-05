@@ -41,10 +41,10 @@ describe('terminal WebGL atlas recovery rate', () => {
       unregisterLivePaneManager(manager)
     }
     setTerminalWebglDiagnosticRecorder(null)
+    resetTerminalWebglAtlasRecoveryBudgetForTesting()
     vi.clearAllTimers()
     vi.useRealTimers()
     vi.unstubAllGlobals()
-    resetTerminalWebglAtlasRecoveryBudgetForTesting()
   })
 
   it('caps atlas wipes under a sustained redraw cadence', () => {
@@ -65,9 +65,23 @@ describe('terminal WebGL atlas recovery rate', () => {
       vi.advanceTimersByTime(300)
     }
 
+    expect(wipeTimes.length).toBeGreaterThan(1)
     const gaps = wipeTimes.slice(1).map((at, index) => at - wipeTimes[index]!)
     expect(wipeTimes.length).toBeLessThanOrEqual(75)
     expect(Math.max(...gaps)).toBeLessThanOrEqual(6_500)
+    expect(Date.now() - wipeTimes.at(-1)!).toBeLessThanOrEqual(6_500)
+  })
+
+  it('cancels a pending settle when the recovery state is reset', () => {
+    vi.useFakeTimers()
+    const manager = registerManager()
+
+    scheduleTerminalWebglAtlasRecovery()
+    resetTerminalWebglAtlasRecoveryBudgetForTesting()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+
+    expect(manager.resetWebglTextureAtlases).not.toHaveBeenCalled()
+    expect(manager.scheduleRevealPresent).not.toHaveBeenCalled()
   })
 
   it('presents live buffers while an atlas wipe is suppressed', () => {

@@ -98,6 +98,9 @@ export function scheduleTerminalWebglAtlasRecovery(): void {
 }
 
 export function resetTerminalWebglAtlasRecoveryBudgetForTesting(): void {
+  if (terminalOutputRecoveryDebounceTimer != null) {
+    globalThis.clearTimeout(terminalOutputRecoveryDebounceTimer)
+  }
   terminalOutputRecoveryDebounceTimer = null
   terminalOutputRecoveryWipeTokens = TERMINAL_OUTPUT_RECOVERY_BURST_WIPES
   terminalOutputRecoveryTokensRefilledAt = null

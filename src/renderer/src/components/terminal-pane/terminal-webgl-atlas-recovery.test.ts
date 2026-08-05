@@ -33,13 +33,10 @@ describe('terminal WebGL atlas recovery', () => {
     for (const manager of registeredManagers.splice(0)) {
       unregisterLivePaneManager(manager)
     }
-    // Why: a test can leave the module-global debounce timer armed; clear the
-    // fake-timer queue before restoring real timers so no pending fire leaks
-    // into a later test.
+    resetTerminalWebglAtlasRecoveryBudgetForTesting()
     vi.clearAllTimers()
     vi.useRealTimers()
     vi.unstubAllGlobals()
-    resetTerminalWebglAtlasRecoveryBudgetForTesting()
   })
 
   it('clears atlases and refreshes panes through the post-paste redraw window', () => {
