@@ -32,6 +32,7 @@ describe('Windows System Default Codex home ownership', () => {
         SHELL: 'powershell.exe'
       })
     ).toBe(false)
+    expect(service.isHostSystemDefaultSessionMigrationEligible()).toBe(true)
   })
 })
 

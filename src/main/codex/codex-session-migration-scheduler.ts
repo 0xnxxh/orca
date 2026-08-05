@@ -7,6 +7,7 @@ type MigrationRun = (
 
 export type CodexSessionMigrationScheduler = {
   scheduleInitialRun(): void
+  scheduleRun(): void
   requestRun(): void
 }
 
@@ -18,7 +19,7 @@ export function createCodexSessionMigrationScheduler(args: {
   startIndexHeal: MigrationRun
   initialDelayMs?: number
 }): CodexSessionMigrationScheduler {
-  let initialTimer: ReturnType<typeof setTimeout> | null = null
+  let scheduledTimer: ReturnType<typeof setTimeout> | null = null
   let migrationTask: Promise<void> | null = null
   let activeRunStopObserved = false
   let rerunRequested = false
@@ -68,16 +69,19 @@ export function createCodexSessionMigrationScheduler(args: {
     })
   }
 
+  const scheduleRun = (): void => {
+    if (scheduledTimer) {
+      return
+    }
+    scheduledTimer = setTimeout(() => {
+      scheduledTimer = null
+      requestRun()
+    }, args.initialDelayMs ?? 15_000)
+  }
+
   return {
-    scheduleInitialRun(): void {
-      if (initialTimer) {
-        return
-      }
-      initialTimer = setTimeout(() => {
-        initialTimer = null
-        requestRun()
-      }, args.initialDelayMs ?? 15_000)
-    },
+    scheduleInitialRun: scheduleRun,
+    scheduleRun,
     requestRun
   }
 }

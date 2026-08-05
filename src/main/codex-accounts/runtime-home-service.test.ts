@@ -1758,9 +1758,12 @@ describe('CodexRuntimeHomeService', () => {
     const store = createStore(createSettings())
     const { CodexRuntimeHomeService } = await import('./runtime-home-service')
     const service = new CodexRuntimeHomeService(store as never)
+    const scheduleSessionMigration = vi.fn()
+    service.setHostSystemDefaultSessionMigrationScheduler(scheduleSessionMigration)
 
     expect(service.prepareForCodexLaunch()).toBe(getRuntimeCodexHomePath())
     expect(existsSync(markerPath)).toBe(false)
+    expect(scheduleSessionMigration).toHaveBeenCalledOnce()
     expect(service.prepareForRateLimitFetch()).toBe(getRuntimeCodexHomePath())
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([getRuntimeCodexHomePath()])
     expect(existsSync(getRuntimeCodexHomePath())).toBe(true)
@@ -1792,12 +1795,15 @@ describe('CodexRuntimeHomeService', () => {
     expect(existsSync(markerPath)).toBe(false)
     service.setRealHomeLaneGate(() => true)
     const perSpawnCustomHome = join(testState.fakeHomeDir, 'per-spawn-custom-codex-home')
+    const scheduleSessionMigration = vi.fn()
+    service.setHostSystemDefaultSessionMigrationScheduler(scheduleSessionMigration)
     writeFileSync(markerPath, '{}\n', 'utf-8')
     expect(service.isHostSystemDefaultRealHome({ CODEX_HOME: perSpawnCustomHome })).toBe(false)
     expect(service.prepareForCodexLaunch(undefined, { CODEX_HOME: perSpawnCustomHome })).toBe(
       getRuntimeCodexHomePath()
     )
     expect(existsSync(markerPath)).toBe(true)
+    expect(scheduleSessionMigration).not.toHaveBeenCalled()
     if (process.platform !== 'win32') {
       // Why: shell startup CODEX_HOME discovery is a POSIX-shell lane; Windows
       // must not invoke an ambient WSL bash while evaluating this contract.
@@ -2506,10 +2512,14 @@ describe('CodexRuntimeHomeService', () => {
     )
     const { CodexRuntimeHomeService } = await import('./runtime-home-service')
     const service = new CodexRuntimeHomeService(store as never)
+    const scheduleSessionMigration = vi.fn()
+    service.setHostSystemDefaultSessionMigrationScheduler(scheduleSessionMigration)
 
     // Flag ON + host managed account = the account's own home is CODEX_HOME.
     expect(service.isHostSystemDefaultRealHome()).toBe(false)
+    expect(service.isHostSystemDefaultSessionMigrationEligible()).toBe(false)
     expect(service.prepareForCodexLaunch()).toBe(managedHomePath)
+    expect(scheduleSessionMigration).not.toHaveBeenCalled()
     // The per-account home keeps its own auth in place; the shared mirror's
     // auth.json is never hot-swapped, so two accounts cannot race one file.
     expect(readFileSync(join(managedHomePath, 'auth.json'), 'utf-8')).toBe(

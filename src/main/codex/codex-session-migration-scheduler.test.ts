@@ -28,6 +28,28 @@ describe('createCodexSessionMigrationScheduler', () => {
     expect(startBackfill).toHaveBeenCalledOnce()
   })
 
+  it('schedules a delayed rerun after a shared-home launch', async () => {
+    const startBackfill = vi.fn().mockResolvedValue(null)
+    const startIndexHeal = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal,
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun()
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(999)
+    expect(startBackfill).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
+    expect(startBackfill).toHaveBeenCalledOnce()
+  })
+
   it('coalesces concurrent run requests and stops before index heal after opt-out', async () => {
     let eligible = true
     let releaseBackfill: (() => void) | undefined

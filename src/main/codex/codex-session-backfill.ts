@@ -87,7 +87,13 @@ async function runCodexSessionBackfillOncePerHost(
   systemCodexHomePathOverride?: string
 ): Promise<CodexSessionBackfillSummary | null> {
   const paths = resolveCodexSessionBackfillPaths(systemCodexHomePathOverride)
-  if (hasCompletedCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot)) {
+  if (
+    hasCompletedCodexSessionBackfillMarker(
+      paths.markerPath,
+      paths.systemSessionsRoot,
+      paths.managedSessionsRoot
+    )
+  ) {
     return null
   }
   const summary = await backfillManagedCodexSessionsIntoSystemHome(paths, options)

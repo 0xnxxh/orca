@@ -2221,20 +2221,19 @@ void app.whenReady().then(async () => {
       isAgentStatusHooksEnabled(store?.getSettings())
   )
   const codexSessionMigration = createCodexSessionMigrationScheduler({
-    isEligible: () => codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+    isEligible: () => codexRuntimeHome?.isHostSystemDefaultSessionMigrationEligible() === true,
     isQuitting: () => isQuitting,
     resolveSystemCodexHomePathOverride: () =>
       resolveHostCodexSessionSourceHome(store!.getSettings()),
     startBackfill: startCodexSessionBackfillInBackground,
     startIndexHeal: startCodexSessionIndexHealInBackground
   })
+  codexRuntimeHome.setHostSystemDefaultSessionMigrationScheduler(codexSessionMigration.scheduleRun)
   codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome, {
     onHostSystemDefaultSelected: codexSessionMigration.requestRun
   })
-  // Why: one-time per-host backfill makes historical Orca-managed Codex
-  // sessions visible to the user's own resume picker and app history (#4444,
-  // #8612). Deferred so startup and first PTY spawns never compete with the
-  // sessions tree walk.
+  // Why: migrate historical shared-home sessions after startup; compatibility
+  // launches re-arm the non-destructive pass for new rollouts (#4444, #8612, #12480).
   codexSessionMigration.scheduleInitialRun()
   claudeRuntimeAuth = new ClaudeRuntimeAuthService(store)
   claudeAccounts = new ClaudeAccountService(store, rateLimits, claudeRuntimeAuth)

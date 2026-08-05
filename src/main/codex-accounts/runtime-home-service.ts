@@ -182,6 +182,7 @@ export class CodexRuntimeHomeService {
   private sharedAuthRefreshBlockedByManagedTransition = false
   // Why: transient auth.json read/parse failures must not deselect an account.
   private readonly credentialAbsenceGrace = new CodexCredentialAbsenceGrace()
+  private scheduleHostSystemDefaultSessionMigration: () => void = () => {}
 
   constructor(private readonly store: Store) {
     this.safeRecoverInterruptedRuntimeAuthOperation()
@@ -242,7 +243,8 @@ export class CodexRuntimeHomeService {
       this.reconcileLegacySharedHomeForRetainedPanes()
       return null
     }
-    this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
+    const shouldScheduleSessionMigration =
+      this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
     this.syncForCurrentSelection(target, launchEnv)
     syncSystemCodexResourcesIntoManagedHome()
     syncSystemConfigIntoManagedCodexHome()
@@ -251,7 +253,21 @@ export class CodexRuntimeHomeService {
       {},
       resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
+    if (shouldScheduleSessionMigration) {
+      this.scheduleHostSystemDefaultSessionMigration()
+    }
     return this.getRuntimeHomePath()
+  }
+
+  setHostSystemDefaultSessionMigrationScheduler(schedule: () => void): void {
+    this.scheduleHostSystemDefaultSessionMigration = schedule
+  }
+
+  isHostSystemDefaultSessionMigrationEligible(): boolean {
+    return (
+      normalizeCodexRuntimeSelection(this.store.getSettings()).host === null &&
+      !hasCustomCodexHomeOverrideForLaunch()
+    )
   }
 
   // Why: with the real-home flag ON, a managed HOST account runs against its own
@@ -415,17 +431,20 @@ export class CodexRuntimeHomeService {
     this.lastHostAccountUsedSelfContainedHome = false
   }
 
-  private invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv?: NodeJS.ProcessEnv): void {
+  private invalidateBackfillAfterManagedSystemDefaultLaunch(
+    launchEnv?: NodeJS.ProcessEnv
+  ): boolean {
     const settings = this.store.getSettings()
-    if (normalizeCodexRuntimeSelection(settings).host !== null) {
-      return
+    if (
+      normalizeCodexRuntimeSelection(settings).host !== null ||
+      hasCustomCodexHomeOverrideForLaunch(launchEnv)
+    ) {
+      return false
     }
-    const realHomeSelected = this.isHostSystemDefaultRealHomeSelected(launchEnv)
-    if (realHomeSelected || !isCodexSystemDefaultRealHomeEnabled()) {
-      invalidateCodexSessionBackfillMarker(
-        join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
-      )
-    }
+    invalidateCodexSessionBackfillMarker(
+      join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
+    )
+    return true
   }
 
   private startWslSessionBridgeForLaunch(
