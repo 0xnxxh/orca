@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { CreateWorktreeResult, GitWorktreeInfo, Repo, Worktree } from '../../shared/types'
 import type { ProviderRequestId } from '../../shared/detected-worktree-provider-contract'
-import { toSshExecutionHostId } from '../../shared/execution-host'
+import { LOCAL_EXECUTION_HOST_ID, toSshExecutionHostId } from '../../shared/execution-host'
 import * as localWorktreeFilesystem from '../local-worktree-filesystem'
 
 const ORIGINAL_PLATFORM = process.platform
@@ -2639,6 +2639,61 @@ describe('registerWorktreeHandlers', () => {
     })
     expect(getSshGitProviderMock).not.toHaveBeenCalled()
     expect(listWorktreesMock).not.toHaveBeenCalled()
+  })
+
+  it('lists SSH folder workspaces at the folder path, not the instance-suffixed id', async () => {
+    const sshHostId = toSshExecutionHostId('target-a')
+    const folderRepo = {
+      id: 'repo-1',
+      path: '/remote/folder',
+      displayName: 'folder',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'target-a',
+      kind: 'folder' as const
+    }
+    const rootId = `${folderRepo.id}::${folderRepo.path}`
+    const instanceId = `${rootId}::workspace:11111111-2222-3333-4444-555555555555`
+    const metaById = {
+      [rootId]: makeWorktreeMeta({ displayName: 'root', hostId: sshHostId }),
+      [instanceId]: makeWorktreeMeta({
+        displayName: 'second workspace',
+        hostId: sshHostId,
+        instanceId: '11111111-2222-3333-4444-555555555555'
+      })
+    }
+    store.getRepos.mockReturnValue([folderRepo])
+    store.getProjectHostSetups.mockReturnValue([])
+    store.getAllWorktreeMeta.mockReturnValue(metaById)
+    store.getWorktreeMeta.mockImplementation((worktreeId: string) => metaById[worktreeId])
+
+    const result = (await handlers['worktrees:listKnownForExecutionHost'](null, {
+      repoId: folderRepo.id,
+      executionHostId: sshHostId
+    })) as { status: string; result: { authoritative: boolean; worktrees: Worktree[] } }
+
+    expect(result.status).toBe('complete')
+    expect(result.result.authoritative).toBe(false)
+    // Why: the git-worktree synthesizer would read the "::workspace:<uuid>" tail as a directory.
+    expect(result.result.worktrees).toEqual([
+      expect.objectContaining({ id: rootId, path: folderRepo.path, isMainWorktree: true }),
+      expect.objectContaining({ id: instanceId, path: folderRepo.path, isMainWorktree: false })
+    ])
+    expect(getSshGitProviderMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects metadata-only reads for non-SSH execution hosts', async () => {
+    const result = await handlers['worktrees:listKnownForExecutionHost'](null, {
+      repoId: 'repo-1',
+      executionHostId: LOCAL_EXECUTION_HOST_ID
+    })
+
+    expect(result).toEqual({
+      status: 'rejected',
+      repoId: 'repo-1',
+      executionHostId: LOCAL_EXECUTION_HOST_ID
+    })
+    expect(store.getRepos).not.toHaveBeenCalled()
   })
 
   it('rejects ambiguous metadata-only SSH owners', async () => {

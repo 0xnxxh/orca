@@ -2876,6 +2876,8 @@ function mergeFetchedWorktrees(
   args: FencedWorktreeMergeArgs
 ): boolean {
   let admitted = false
+  let authoritativelyRemovedIds: readonly string[] = []
+  let authoritativelySeenIds: readonly string[] = []
   set((s) => {
     if (
       !isCurrentDetectedWorktreeRefresh(s, args.refresh) ||
@@ -2949,6 +2951,10 @@ function mergeFetchedWorktrees(
             args.refresh.result,
             args.hostId
           )
+    authoritativelyRemovedIds = removedIds
+    if (args.refresh.result.authoritative) {
+      authoritativelySeenIds = args.refresh.result.worktrees.map((worktree) => worktree.id)
+    }
     const worktreesChanged = !areWorktreesEqual(s.worktreesByRepo[args.repoId], mergedWorktrees)
     const detectedChanged = !areDetectedWorktreeResultsEqual(
       s.detectedWorktreesByRepo[args.repoId],
@@ -2978,7 +2984,62 @@ function mergeFetchedWorktrees(
       ...(removedIds.length > 0 ? buildWorktreePurgeState(s, removedIds) : {})
     }
   })
+  if (admitted) {
+    // Why: applied outside the updater so a repeated updater call cannot double-apply the removal memory.
+    forgetAuthoritativelyRemovedWorktrees(args.hostId, authoritativelySeenIds)
+    rememberAuthoritativelyRemovedWorktrees(args.hostId, authoritativelyRemovedIds)
+  }
   return admitted
+}
+
+// Why: an authoritative scan is the only proof a remote worktree is gone, but SSH WorktreeMeta is exempt from
+// gcStaleWorktreeMeta (persistence.ts:407,415), so without this memory the metadata fallback re-appends every
+// deleted row on the next disconnect — forever.
+const AUTHORITATIVE_REMOVAL_MEMORY_LIMIT = 512
+const authoritativelyRemovedWorktreeIdsByHost = new Map<ExecutionHostId, Set<string>>()
+
+function rememberAuthoritativelyRemovedWorktrees(
+  hostId: ExecutionHostId,
+  worktreeIds: readonly string[]
+): void {
+  if (worktreeIds.length === 0) {
+    return
+  }
+  const removed = authoritativelyRemovedWorktreeIdsByHost.get(hostId) ?? new Set<string>()
+  for (const worktreeId of worktreeIds) {
+    // Why: re-insert so a re-removed id moves to the back of the insertion order the cap evicts from.
+    removed.delete(worktreeId)
+    removed.add(worktreeId)
+  }
+  for (const oldest of removed) {
+    if (removed.size <= AUTHORITATIVE_REMOVAL_MEMORY_LIMIT) {
+      break
+    }
+    removed.delete(oldest)
+  }
+  authoritativelyRemovedWorktreeIdsByHost.set(hostId, removed)
+}
+
+// Why: a remote path can be recreated, so a scan that reports it again retracts the deletion verdict.
+function forgetAuthoritativelyRemovedWorktrees(
+  hostId: ExecutionHostId,
+  worktreeIds: Iterable<string>
+): void {
+  const removed = authoritativelyRemovedWorktreeIdsByHost.get(hostId)
+  if (!removed) {
+    return
+  }
+  for (const worktreeId of worktreeIds) {
+    removed.delete(worktreeId)
+  }
+  if (removed.size === 0) {
+    authoritativelyRemovedWorktreeIdsByHost.delete(hostId)
+  }
+}
+
+/** Test-only: module-level removal memory would otherwise leak across cases in one file. */
+export function resetAuthoritativelyRemovedWorktreeMemoryForTests(): void {
+  authoritativelyRemovedWorktreeIdsByHost.clear()
 }
 
 function appendMissingWorktreesForHost<
@@ -2995,7 +3056,18 @@ function appendMissingWorktreesForHost<
       .filter((worktree) => worktreeMatchesHost(worktree, hostId, options))
       .map(({ id }) => id)
   )
-  return [...existing, ...incoming.filter((worktree) => !existingHostIds.has(worktree.id))]
+  const missing = incoming.filter((worktree) => !existingHostIds.has(worktree.id))
+  if (missing.length === 0) {
+    return [...existing]
+  }
+  // Why: land inside the host's block like mergeWorktreesForHost does, else these rows sit past sibling hosts and visibly jump once the authoritative scan splices them back.
+  const lastHostIndex = existing.findLastIndex((worktree) =>
+    worktreeMatchesHost(worktree, hostId, options)
+  )
+  if (lastHostIndex === -1) {
+    return [...existing, ...missing]
+  }
+  return [...existing.slice(0, lastHostIndex + 1), ...missing, ...existing.slice(lastHostIndex + 1)]
 }
 
 function isAdmittedKnownSshWorktreeResult(
@@ -3013,11 +3085,36 @@ function isAdmittedKnownSshWorktreeResult(
   )
 }
 
+const inflightKnownSshWorktreeFetches = new Map<
+  string,
+  Promise<DetectedWorktreeListResult | null>
+>()
+
+// Why: the authoritative path dedupes through listDetectedWorktreesForRepoCoalesced; without a matching guard
+// the four refresh triggers can each issue this IPC and its merge for the same repo/host.
 async function fetchKnownSshWorktreesForRepo(
   set: Parameters<StateCreator<AppState, [], [], WorktreeSlice>>[0],
   repoId: string,
   executionHostId: SshExecutionHostId
 ): Promise<DetectedWorktreeListResult | null> {
+  const coalesceKey = `${repoId} ${executionHostId}`
+  const inflight = inflightKnownSshWorktreeFetches.get(coalesceKey)
+  if (inflight) {
+    return await inflight
+  }
+  const request = runKnownSshWorktreeFetch(set, repoId, executionHostId).finally(() => {
+    inflightKnownSshWorktreeFetches.delete(coalesceKey)
+  })
+  inflightKnownSshWorktreeFetches.set(coalesceKey, request)
+  return await request
+}
+
+async function runKnownSshWorktreeFetch(
+  set: Parameters<StateCreator<AppState, [], [], WorktreeSlice>>[0],
+  repoId: string,
+  executionHostId: SshExecutionHostId
+): Promise<DetectedWorktreeListResult | null> {
+  // Why: reads the local store only, so a runtime-hub session (whose repo ids live on the hub) always gets 'rejected' and keeps the pre-existing no-op.
   const listKnown = window.api.worktrees.listKnownForExecutionHost
   if (typeof listKnown !== 'function') {
     return null
@@ -3026,21 +3123,37 @@ async function fetchKnownSshWorktreesForRepo(
   if (!isAdmittedKnownSshWorktreeResult(result, repoId, executionHostId)) {
     return null
   }
+  // Why: persisted SSH metadata outlives the remote worktree, so drop rows a completed scan already proved gone.
+  const suppressedIds = authoritativelyRemovedWorktreeIdsByHost.get(executionHostId)
+  const known =
+    suppressedIds && suppressedIds.size > 0
+      ? {
+          ...result.result,
+          worktrees: result.result.worktrees.filter((worktree) => !suppressedIds.has(worktree.id))
+        }
+      : result.result
   let admitted = false
   set((state) => {
-    if (!repoHasExactlyOneExecutionHostOwner(state, repoId, executionHostId, false)) {
+    // Why: the provider can connect during the await; authoritative rows already replaced this host, so appending stale metadata would resurrect purged worktrees.
+    if (
+      getCurrentDirectSshAuthority(state, executionHostId) ||
+      !repoHasExactlyOneExecutionHostOwner(state, repoId, executionHostId, false)
+    ) {
       return state
     }
     admitted = true
     const setup = getProjectHostSetupForRepoHost(state, repoId, executionHostId)
     const matchOptions = worktreeHostMatchOptions(state, repoId, executionHostId)
-    const incomingDetected = result.result.worktrees.map((worktree) =>
+    const incomingDetected = known.worktrees.map((worktree) =>
       withRepoHostOwnership(worktree, executionHostId, setup)
     )
+    const priorDetected = state.detectedWorktreesByRepo[repoId]
+    // Why: only the rows are ours to merge. This entry is keyed by repo alone, so adopting the fallback's
+    // authoritative/source would demote a sibling host's completed scan and blank every authoritative-gated surface.
     const detected = {
-      ...result.result,
+      ...(priorDetected ?? known),
       worktrees: appendMissingWorktreesForHost(
-        state.detectedWorktreesByRepo[repoId]?.worktrees,
+        priorDetected?.worktrees,
         incomingDetected,
         executionHostId,
         matchOptions
@@ -3048,7 +3161,7 @@ async function fetchKnownSshWorktreesForRepo(
     }
     const worktrees = appendMissingWorktreesForHost(
       state.worktreesByRepo[repoId],
-      toVisibleWorktrees(result.result, executionHostId, setup),
+      toVisibleWorktrees(known, executionHostId, setup),
       executionHostId,
       matchOptions
     )
@@ -3072,7 +3185,7 @@ async function fetchKnownSshWorktreesForRepo(
         : {})
     }
   })
-  return admitted ? result.result : null
+  return admitted ? known : null
 }
 
 export type DirectSshDetectedWorktreeRefresh = {
@@ -3205,7 +3318,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? (getCurrentDirectSshAuthority(ownerState, hostId) ?? undefined)
           : undefined
       if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
-        return fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
+        // Why: this function's contract is detected-only. The fallback runs for its store side effect, but
+        // callers keep seeing null as they did before the metadata path existed.
+        await fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
+        return null
       }
       const refresh = await listDetectedWorktreesForRepoCoalesced(
         settingsForRepoOwner(ownerState, repoId, hostId),
@@ -3303,7 +3419,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ? (directCallerAuthority ?? getCurrentDirectSshAuthority(ownerState, hostId) ?? undefined)
           : undefined
       if (parsedHost?.kind === 'ssh' && !directSshAuthority) {
-        await fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
+        // Why: requireAuthoritative callers asked for authoritative-or-nothing, so writing non-authoritative
+        // rows as a side effect before returning false would silently weaken that contract.
+        if (!options?.requireAuthoritative) {
+          await fetchKnownSshWorktreesForRepo(set, repoId, parsedHost.id)
+        }
         return false
       }
       const refresh = await listDetectedWorktreesForRepoCoalesced(settings, repoId, {
@@ -4178,6 +4298,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       // Why: invalidate stale probes once deletion is authoritative, so an old toast can't mutate a same-path replacement.
       forgetHugeRepoWarningDismissalsForWorktrees([worktreeId])
+      // Why: forget-local is legal while the host is unreachable, so record the removal here too — otherwise an
+      // in-flight metadata read that snapshotted this row re-appends it, and disconnected polls never drop it.
+      if (hostId && parseExecutionHostId(hostId)?.kind === 'ssh') {
+        rememberAuthoritativelyRemovedWorktrees(hostId, [worktreeId])
+      }
 
       const worktreeDisplayName = worktreeBeforeRemoval?.displayName?.trim()
       if (worktreeDisplayName) {

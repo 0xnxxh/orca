@@ -231,7 +231,8 @@ import {
 import { DEFAULT_WORKSPACE_STATUS_ID } from '../../shared/workspace-statuses'
 import {
   FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
-  getRepoIdFromWorktreeId
+  getRepoIdFromWorktreeId,
+  getWorktreePathBasenameFromId
 } from '../../shared/worktree-id'
 import { prefetchWorktreeCreateBase } from '../worktree-create-base-prefetch'
 import {
@@ -806,6 +807,17 @@ function createSshWorktreeMetaIndex(entries: [string, WorktreeMeta][]): SshWorkt
   return index
 }
 
+// Why: scopes parseWorktreeId to one repo's keys. The entry list itself is still materialized for the whole
+// store, so this is cheaper per call than the unfiltered index, not free.
+function createSshWorktreeMetaIndexForRepo(
+  allMeta: Record<string, WorktreeMeta>,
+  repoId: string
+): SshWorktreeMetaIndex {
+  return createSshWorktreeMetaIndex(
+    Object.entries(allMeta).filter(([worktreeId]) => getRepoIdFromWorktreeId(worktreeId) === repoId)
+  )
+}
+
 function synthesizeSshGitWorktree(repo: Repo, path: string, meta: WorktreeMeta): GitWorktreeInfo {
   return {
     path,
@@ -844,10 +856,15 @@ function listDisconnectedSshWorktrees(
     if (Object.keys(ownershipUpdates).length > 0) {
       store.setWorktreeMeta(candidate.id, ownershipUpdates)
     }
+    // Why: synthesized rows carry no branch, so the title would fall through to the DESKTOP's basename()
+    // applied to a REMOTE path — a Windows remote then renders its whole C:\... path as the name. Rows must
+    // stay per-directory (repo.displayName would title every row identically), so use the separator-agnostic
+    // basename instead.
     const worktree = mergeWorktree(
       repo.id,
       synthesizeSshGitWorktree(repo, candidate.path, meta),
-      meta
+      meta,
+      getWorktreePathBasenameFromId(candidate.id) ?? undefined
     )
     byWorktreeId.delete(worktree.id)
     byWorktreeId.set(worktree.id, worktree)
@@ -1976,38 +1993,60 @@ export function registerWorktreeHandlers(
   ipcMain.handle(
     'worktrees:listKnownForExecutionHost',
     (_event, args: ListKnownWorktreesForExecutionHostArgs): HostQualifiedKnownWorktreeResult => {
+      // Why: a malformed invoke must fail closed as `rejected`, not throw out of the handler. `ssh:` is inert —
+      // it owns no repo, so every guard below still rejects it.
+      const requestedRepoId = args?.repoId ?? ''
+      const requestedExecutionHostId = args?.executionHostId ?? 'ssh:'
       const rejected = (): HostQualifiedKnownWorktreeResult => ({
         status: 'rejected',
-        repoId: args.repoId,
-        executionHostId: args.executionHostId
+        repoId: requestedRepoId,
+        executionHostId: requestedExecutionHostId
       })
-      const parsedHost = parseExecutionHostId(args.executionHostId)
+      const parsedHost = parseExecutionHostId(requestedExecutionHostId)
       if (parsedHost?.kind !== 'ssh') {
         return rejected()
       }
-      const candidates = store.getRepos().filter((candidate) => candidate.id === args.repoId)
-      if (
-        candidates.some((candidate) => resolveRepoOwnershipEvidence(candidate).status !== 'owned')
-      ) {
-        return rejected()
-      }
-      const repo = findExactRepoOwner(store, args.repoId, args.executionHostId)
+      // Why: findExactRepoOwner repeats this same all-candidates-owned check, and getRepos() re-hydrates the
+      // whole catalog, so a separate pass here is pure cost.
+      const repo = findExactRepoOwner(store, requestedRepoId, requestedExecutionHostId)
       if (!repo || repo.connectionId !== parsedHost.targetId) {
         return rejected()
       }
-      const metaIndex = createSshWorktreeMetaIndex(Object.entries(store.getAllWorktreeMeta()))
-      const worktrees = listDisconnectedSshWorktrees(store, repo, metaIndex)
-      return {
+      const complete = (worktrees: DetectedWorktree[]): HostQualifiedKnownWorktreeResult => ({
         status: 'complete',
         repoId: repo.id,
-        executionHostId: args.executionHostId,
+        executionHostId: requestedExecutionHostId,
         result: {
           repoId: repo.id,
           authoritative: false,
           source: 'metadata-fallback',
-          worktrees: buildDisconnectedDetectedWorktrees(store, repo, worktrees)
+          worktrees
         }
+      })
+      // Why: folder workspace ids carry an instance suffix the git-worktree synthesizer would read as a directory; build them the way every other listing does.
+      if (isFolderRepo(repo)) {
+        const folderWorkspaceIds = Object.keys(store.getAllWorktreeMeta()).filter((worktreeId) =>
+          isFolderWorkspaceIdForRepo(repo, worktreeId)
+        )
+        return hasConflictingStoredWorktreeOwner(store, repo, folderWorkspaceIds)
+          ? rejected()
+          : complete(
+              // Why: match the authoritative folder listing; without lineage these rows render flat and then
+              // reshuffle once the real scan lands.
+              projectResolvedWorktreeLineage(
+                buildFolderDetectedWorktrees(store, repo),
+                store.getAllWorktreeLineage?.() ?? {}
+              )
+            )
       }
+      const metaIndex = createSshWorktreeMetaIndexForRepo(store.getAllWorktreeMeta(), repo.id)
+      return complete(
+        buildDisconnectedDetectedWorktrees(
+          store,
+          repo,
+          listDisconnectedSshWorktrees(store, repo, metaIndex)
+        )
+      )
     }
   )
 
