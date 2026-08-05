@@ -16,7 +16,7 @@ function sourceBetween(source: string, startPattern: string, endPattern: string)
   return source.slice(start, end)
 }
 
-describe('GitHub workspace creation source boundaries', () => {
+describe('TaskPage workspace creation source boundaries', () => {
   it('prefills the workspace composer for GitHub issues and pull requests', () => {
     const section = sourceBetween(
       TASK_PAGE_SOURCE,
@@ -47,6 +47,27 @@ describe('GitHub workspace creation source boundaries', () => {
     expect(section).toContain('openComposerForItem(item)')
     expect(section).not.toContain('createGitHubWorkItemWorkspaceInBackground')
     expect(TASK_PAGE_SOURCE).not.toContain('@/lib/github-work-item-background-create')
+  })
+
+  it('routes TaskPage Linear starts directly to the composer', () => {
+    const composerSection = sourceBetween(
+      TASK_PAGE_SOURCE,
+      'const openComposerForLinearItem = useCallback(',
+      'const handleUseLinearItem = useCallback('
+    )
+    const handlerSection = sourceBetween(
+      TASK_PAGE_SOURCE,
+      'const handleUseLinearItem = useCallback(',
+      'const handleOpenOrUseLinearItem = useCallback('
+    )
+
+    expect(composerSection).toContain('buildLinearIssueLinkedWorkItem(issue)')
+    expect(composerSection).toContain("openModal('new-workspace-composer', {")
+    expect(composerSection).toContain('taskSourceContext: linearTaskSourceContext')
+    expect(composerSection).toContain('prefilledName: getLinearIssueWorkspaceName(issue)')
+    expect(composerSection).toContain("telemetrySource: 'sidebar'")
+    expect(handlerSection).toContain("recordFeatureInteraction('linear-tasks')")
+    expect(handlerSection).toContain('openComposerForLinearItem(issue)')
   })
 
   it('resumes an attachment from the primary action and composes when none exists', () => {
