@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import type { AskPrompt } from './mobile-native-chat-ask'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { nativeChatAskDismissKey, type AskPrompt } from './mobile-native-chat-ask'
+
+type AskDismissal = { sessionKey: string | null; askKey: string }
+type DetectedAsk = { sessionKey: string | null; askKey: string | null }
 
 /** Track the answered-ask key so the lingering live status doesn't re-show the
  *  same card. The agent emits a post-tool event with the same prompt right after
@@ -14,10 +17,10 @@ export function useMobileNativeChatAskDismiss(args: {
    *  `ask`: reading the gated prompt as the detected one is the resurfacing bug
    *  this hook exists to close. */
   detectedAsk: AskPrompt | null
-  /** Dismissals are scoped to the tab *and* provider session that showed the
-   *  card, so neither another tab nor a restarted session in the same tab can
-   *  have an identical question hidden by an answer that was never about it. */
+  /** Tab scope retains dismissals across tab switches. */
   scopeKey: string | null
+  /** Provider-session identity distinguishes restarts without growing the tab map. */
+  sessionKey: string | null
   /** True while the chat surface can actually observe the prompt. A null ask it
    *  cannot see — off-chat, or before a re-subscribed transcript lands — proves
    *  nothing and must not reset the dismissal; that reset resurfaced the card. */
@@ -27,24 +30,27 @@ export function useMobileNativeChatAskDismiss(args: {
   showAsk: boolean
   dismissAsk: () => void
 } {
-  const { ask, detectedAsk, scopeKey, observing } = args
-  const askKey = ask ? JSON.stringify(ask.questions) : null
-  const detectedAskKey = detectedAsk ? JSON.stringify(detectedAsk.questions) : null
-  const detectedAskKeysRef = useRef(new Map<string | null, string | null>())
-  const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, string>>(
+  const { ask, detectedAsk, scopeKey, sessionKey, observing } = args
+  const askKey = useMemo(() => nativeChatAskDismissKey(ask), [ask])
+  const detectedAskKey = useMemo(() => nativeChatAskDismissKey(detectedAsk), [detectedAsk])
+  const detectedByScopeRef = useRef(new Map<string | null, DetectedAsk>())
+  const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, AskDismissal>>(
     () => new Map()
   )
   useEffect(() => {
     if (observing) {
-      detectedAskKeysRef.current.set(scopeKey, detectedAskKey)
+      detectedByScopeRef.current.set(scopeKey, { sessionKey, askKey: detectedAskKey })
     }
-  }, [observing, detectedAskKey, scopeKey])
+  }, [observing, detectedAskKey, scopeKey, sessionKey])
   // A cleared or genuinely different detected prompt retires the old dismissal.
   useEffect(() => {
     if (observing) {
       setDismissedByScope((previous) => {
-        const dismissedKey = previous.get(scopeKey)
-        if (dismissedKey === undefined || dismissedKey === detectedAskKey) {
+        const dismissed = previous.get(scopeKey)
+        if (
+          dismissed === undefined ||
+          (dismissed.sessionKey === sessionKey && dismissed.askKey === detectedAskKey)
+        ) {
           return previous
         }
         const next = new Map(previous)
@@ -52,13 +58,20 @@ export function useMobileNativeChatAskDismiss(args: {
         return next
       })
     }
-  }, [observing, detectedAskKey, scopeKey])
-  const showAsk = askKey !== null && dismissedByScope.get(scopeKey) !== askKey
+  }, [observing, detectedAskKey, scopeKey, sessionKey])
+  const dismissed = dismissedByScope.get(scopeKey)
+  const showAsk =
+    askKey !== null && !(dismissed?.sessionKey === sessionKey && dismissed.askKey === askKey)
   const dismissAsk = (): void => {
-    // An answer may settle after the prompt cleared or was replaced. Only the
-    // still-current prompt may install a lasting dismissal.
-    if (askKey !== null && detectedAskKeysRef.current.get(scopeKey) === askKey) {
-      setDismissedByScope((previous) => new Map(previous).set(scopeKey, askKey))
+    const detected = detectedByScopeRef.current.get(scopeKey)
+    if (askKey !== null && detected?.sessionKey === sessionKey && detected.askKey === askKey) {
+      setDismissedByScope((previous) => {
+        const current = previous.get(scopeKey)
+        if (current?.sessionKey === sessionKey && current.askKey === askKey) {
+          return previous
+        }
+        return new Map(previous).set(scopeKey, { sessionKey, askKey })
+      })
     }
   }
 

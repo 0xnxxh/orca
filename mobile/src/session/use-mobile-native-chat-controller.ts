@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction
-} from 'react'
+import { useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { useMobileSessionViewMode } from './use-mobile-session-view-mode'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
@@ -16,7 +10,6 @@ import {
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
 import { detectAgentPermission } from './mobile-native-chat-permission'
 import { parseAgentQuestion } from './mobile-native-chat-question'
-import { openMobileNativeChatFile } from './mobile-native-chat-open-file'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
@@ -50,6 +43,10 @@ export type MobileNativeChatController = {
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   nativeChatAgentWorking: boolean
   nativeChatStreamingText?: string
+  /** Agent mid-turn, regardless of whether chat is the visible view. */
+  nativeChatStreamLive: boolean
+  /** Host/workspace/tab/session scope for stateful streaming suppression. */
+  nativeChatStreamScopeKey: string
   nativeChatPermission: ReturnType<typeof detectAgentPermission>
   nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
   /** The pending ask, already null while dismissed (dismissal lives here so it
@@ -59,7 +56,6 @@ export type MobileNativeChatController = {
   nativeChatAskKey: string | null
   /** Hide the current ask until a genuinely different question arrives. */
   dismissNativeChatAsk: () => void
-  handleNativeChatOpenFile: (relativePath: string) => void
   handleNativeChatAnswerAsk: (
     prompt: AskPrompt,
     selections: AskAnswerSelection[]
@@ -131,7 +127,12 @@ export function useMobileNativeChatController(args: {
   activeChatAgentRef.current = activeChatResolution?.agent ?? null
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
-  const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  const routeKey = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}`
+  const streamIdentity = `${routeKey}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  // Same chat, but keyed off the tab rather than the view-gated resolution:
+  // `streamIdentity` goes session-less the moment the user peeks at the terminal,
+  // and a scope that flips on a view toggle throws the gate's baseline away.
+  const streamScopeKey = `${routeKey}\0${activeSessionTab?.agentStatus?.providerSession?.id ?? ''}\0${activeHandleRef.current ?? ''}`
 
   const nativeChatSession = useMobileNativeChatSession({
     client,
@@ -167,6 +168,9 @@ export function useMobileNativeChatController(args: {
 
   const nativeChatStatus = activeChatResolution ? activeSessionTab?.agentStatus : null
   const nativeChatAgentWorking = nativeChatStatus?.state === 'working'
+  // Deliberately not gated on the chat view being visible: the streaming gate
+  // has to tell "hidden mid-turn" from "the turn ended".
+  const nativeChatStreamLive = activeSessionTab?.agentStatus?.state === 'working'
   // Throttle the streaming bubble: OpenCode emits a status frame per streamed
   // part, and each one re-renders and re-parses the whole accumulated markdown.
   const nativeChatStreamingText = useThrottledLatestValue(
@@ -183,36 +187,12 @@ export function useMobileNativeChatController(args: {
     status: nativeChatStatus,
     messages: nativeChatSession.messages
   })
-  // A view toggle or tab switch re-subscribes the transcript, so `messages` is
-  // empty until the read lands and the transcript-derived prompt reads as null.
-  // Believing that null retires a live dismissal — the same resurfacing bug the
-  // off-chat guard fixes. A detected prompt is observable on its own; a null one
-  // only counts once the read has settled.
-  //
-  // Settled means a read actually landed, not just `!transcriptLoading`: that
-  // flag covers the in-flight read alone, while the session hook also withholds
-  // `messages` when the client is gone ('idle') or the tab has not reported a
-  // provider session yet ('waiting-session') — both of which leave the flag false
-  // over an empty list that was never read.
-  //
-  // 'error' only qualifies while rows survive from an earlier read. The host's
-  // initial-drain error frame carries an empty list and is not terminal (a real
-  // snapshot follows once the read recovers), so an error before any read leaves
-  // `messages` never populated — exactly the never-read case this guard exists
-  // to reject. Rows can only be present once a read landed, so requiring them is
-  // never wrong in the resurfacing direction.
+  // A never-read transcript cannot prove that a dismissed prompt cleared.
   const nativeChatTranscriptSettled =
     nativeChatSession.status === 'ready' ||
     (nativeChatSession.status === 'error' && nativeChatSession.messages.length > 0)
   const nativeChatAskObservable =
     showNativeChat && (nativeChatDetectedAsk != null || nativeChatTranscriptSettled)
-  // Scope the dismissal to the transcript the card was answered on, not the tab
-  // alone: a restart, `/clear`, or resume swaps the provider session inside one
-  // tab, and the new session's first question is often byte-identical (same repo,
-  // same prompt, same template). Keyed by tab, the old answer read as "already
-  // dismissed" and the live card never rendered. Same `\0` shape as
-  // `streamIdentity` above, which is the identity the transcript itself tracks.
-  const nativeChatAskScopeKey = `${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}`
   const {
     askKey: nativeChatAskKey,
     showAsk: showNativeChatAsk,
@@ -220,24 +200,10 @@ export function useMobileNativeChatController(args: {
   } = useMobileNativeChatAskDismiss({
     ask: nativeChatAskPrompt,
     detectedAsk: nativeChatDetectedAsk,
-    scopeKey: nativeChatAskScopeKey,
+    scopeKey: activeSessionTabId,
+    sessionKey: activeChatSessionId,
     observing: nativeChatAskObservable
   })
-
-  const handleNativeChatOpenFile = useCallback(
-    (pathText: string) => {
-      if (!client) {
-        return
-      }
-      void openMobileNativeChatFile({
-        client,
-        worktreeId,
-        pathText,
-        terminal: activeHandleRef.current
-      })
-    },
-    [activeHandleRef, client, worktreeId]
-  )
 
   // Every chat write gates on both: the lease proves the input floor is ours, and
   // `connState` collapses a render before the lease does on disconnect.
@@ -321,12 +287,13 @@ export function useMobileNativeChatController(args: {
     nativeChatSession,
     nativeChatAgentWorking,
     nativeChatStreamingText,
+    nativeChatStreamLive,
+    nativeChatStreamScopeKey: streamScopeKey,
     nativeChatPermission,
     nativeChatQuestion,
     nativeChatAsk: showNativeChatAsk ? nativeChatAskPrompt : null,
     nativeChatAskKey,
     dismissNativeChatAsk,
-    handleNativeChatOpenFile,
     handleNativeChatAnswerAsk: answerAsk,
     handleNativeChatCancelAsk: cancelAsk,
     handleNativeChatRespondPermission: respond,

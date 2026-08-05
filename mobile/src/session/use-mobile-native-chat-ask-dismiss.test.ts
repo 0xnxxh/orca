@@ -24,11 +24,13 @@ describe('useMobileNativeChatAskDismiss', () => {
     prompt,
     detectedPrompt = prompt,
     scopeKey = 'tab-1',
+    sessionKey = 'session-1',
     observing = true
   }: {
     prompt: AskPrompt | null
     detectedPrompt?: AskPrompt | null
     scopeKey?: string | null
+    sessionKey?: string | null
     observing?: boolean
   }): null {
     renders += 1
@@ -36,6 +38,7 @@ describe('useMobileNativeChatAskDismiss', () => {
       ask: prompt,
       detectedAsk: detectedPrompt,
       scopeKey,
+      sessionKey,
       observing
     })
     return null
@@ -162,6 +165,15 @@ describe('useMobileNativeChatAskDismiss', () => {
 
     await update({ prompt: first, scopeKey: 'tab-2' })
     expect(state?.showAsk).toBe(false)
+  })
+
+  it('shows an identical prompt after the tab starts a new provider session', async () => {
+    await mount({ prompt: first, sessionKey: 'session-1' })
+    act(() => state?.dismissAsk())
+
+    await update({ prompt: first, sessionKey: 'session-2' })
+
+    expect(state?.showAsk).toBe(true)
   })
 
   it('reports nothing to show without a prompt', async () => {

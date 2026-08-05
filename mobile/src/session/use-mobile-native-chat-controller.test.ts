@@ -53,8 +53,12 @@ vi.mock('./use-mobile-native-chat-drafts', () => ({
 vi.mock('./use-mobile-native-chat-prompts', () => ({
   useMobileNativeChatPrompts: () => promptsState
 }))
+const answerSendArgs: { streamIdentity?: string }[] = []
 vi.mock('./use-mobile-native-chat-answer-send', () => ({
-  useMobileNativeChatAnswerSend: () => ({ answerAsk: vi.fn(), cancelPending: vi.fn() })
+  useMobileNativeChatAnswerSend: (args: { streamIdentity?: string }) => {
+    answerSendArgs.push(args)
+    return { answerAsk: vi.fn(), cancelPending: vi.fn() }
+  }
 }))
 vi.mock('./mobile-native-chat-permission-send', () => ({
   useMobileNativeChatPermissionSend: () => vi.fn()
@@ -712,5 +716,96 @@ describe('useMobileNativeChatController ask dismissal across a transcript reload
     step()
 
     expect(controller?.nativeChatAsk).toBeNull()
+  })
+})
+
+describe('useMobileNativeChatController streaming scope', () => {
+  let renderer: ReactTestRenderer | null = null
+  let controller: MobileNativeChatController | null = null
+  const clientStub = { sendRequest: vi.fn() }
+
+  const workingTab = {
+    type: 'terminal',
+    id: 'tab-1',
+    terminal: 'term-1',
+    launchAgent: 'claude',
+    agentStatus: {
+      state: 'working',
+      agentType: 'claude',
+      providerSession: { id: 'session-1' }
+    },
+    isActive: true
+  }
+
+  function Harness(): null {
+    controller = useMobileNativeChatController({
+      client: clientStub as unknown as RpcClient,
+      connState: 'connected',
+      hostId: 'h',
+      worktreeId: 'w',
+      activeSessionTab: workingTab as never,
+      activeSessionTabId: 'tab-1',
+      activeHandleRef: { current: 'term-1' },
+      deviceTokenRef: { current: null },
+      nativeChatTranscriptIsLocalReadable: true,
+      nativeChatInputLeaseReady: true,
+      onSendError: vi.fn(),
+      onSendResolved: vi.fn()
+    })
+    return null
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    viewMode.isTabChatView = () => true
+    const original = console.error
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
+      if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...a)
+    })
+    try {
+      act(() => {
+        renderer = create(createElement(Harness))
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    controller = null
+    viewMode.isTabChatView = () => true
+  })
+
+  it('holds the stream scope and liveness while the user peeks at the terminal', () => {
+    expect(controller?.showNativeChat).toBe(true)
+    const scopeKey = controller?.nativeChatStreamScopeKey
+    expect(scopeKey).toContain('session-1')
+    expect(controller?.nativeChatStreamLive).toBe(true)
+
+    viewMode.isTabChatView = () => false
+    act(() => renderer?.update(createElement(Harness)))
+
+    expect(controller?.showNativeChat).toBe(false)
+    expect(controller?.nativeChatAgentWorking).toBe(false)
+    expect(controller?.nativeChatStreamScopeKey).toBe(scopeKey)
+    expect(controller?.nativeChatStreamLive).toBe(true)
+  })
+
+  it('keeps the delayed-send route guard view-gated, unlike the stream scope', () => {
+    const before = answerSendArgs.at(-1)?.streamIdentity
+    expect(before).toBe(controller?.nativeChatStreamScopeKey)
+
+    viewMode.isTabChatView = () => false
+    act(() => renderer?.update(createElement(Harness)))
+
+    const after = answerSendArgs.at(-1)?.streamIdentity
+    expect(after).not.toBe(before)
+    expect(after).not.toContain('session-1')
+    expect(controller?.nativeChatStreamScopeKey).toBe(before)
   })
 })
