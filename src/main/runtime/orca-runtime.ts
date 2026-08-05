@@ -245,6 +245,10 @@ import {
   navigationTargetsHost,
   type RuntimeNavigationTarget
 } from '../../shared/runtime-navigation'
+import {
+  isAutomaticTabActivation,
+  type TabActivationIntent
+} from '../../shared/tab-activation-intent'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
@@ -1359,6 +1363,18 @@ type PtyForegroundAgentRefresh = {
   promise: Promise<boolean>
   startedAfterTitleObservation: number
   requestedAfterTitleObservation: number
+}
+
+type PtyForegroundProcessRead = {
+  controller: RuntimePtyController
+  process: string | null
+  available: boolean
+}
+
+type PtyForegroundProcessReadEntry = {
+  controller: RuntimePtyController
+  startedAfterTitleObservation: number
+  promise: Promise<PtyForegroundProcessRead>
 }
 
 function copySleepingAgentLaunchConfig(
@@ -2869,6 +2885,7 @@ export class OrcaRuntimeService {
   private cloneInFlightByPath = new Map<string, Promise<void>>()
   private agentDetector: AgentDetector | null = null
   private ptyForegroundAgentRefreshes = new Map<string, PtyForegroundAgentRefresh>()
+  private ptyForegroundProcessReads = new Map<string, PtyForegroundProcessReadEntry>()
   private ptyDelayedForegroundSnapshotTitleObservations = new Map<string, number>()
   private _orchestrationDb: OrchestrationDb | null = null
   private messageWaitersByHandle = new Map<string, Set<MessageWaiter>>()
@@ -6671,6 +6688,69 @@ export class OrcaRuntimeService {
     return next
   }
 
+  /**
+   * Retires each surface in the session partition of the host that owns its worktree.
+   * Why: an SSH pane's durable surface lives in that connection's partition; retiring it
+   * against the local partition strands the real ghost and bumps a foreign host's epoch.
+   * Returns null when nothing may be published because persistence is unavailable or failed.
+   */
+  private persistTerminalSurfaceRetirements(
+    retiredSurfaces: readonly RetiredTerminalSurface[]
+  ): { accepted: RetiredTerminalSurface[]; unpersisted: RetiredTerminalSurface[] } | null {
+    const surfacesByHostId = new Map<ExecutionHostId, RetiredTerminalSurface[]>()
+    for (const surface of retiredSurfaces) {
+      const hostId =
+        this.tryGetWorkspaceSessionHostIdForWorktree(surface.worktreeId) ?? LOCAL_EXECUTION_HOST_ID
+      const bucket = surfacesByHostId.get(hostId)
+      if (bucket) {
+        bucket.push(surface)
+      } else {
+        surfacesByHostId.set(hostId, [surface])
+      }
+    }
+    const accepted: RetiredTerminalSurface[] = []
+    const unpersisted: RetiredTerminalSurface[] = []
+    const pendingWrites: { hostId: ExecutionHostId; session: WorkspaceSessionState }[] = []
+    for (const [hostId, surfaces] of surfacesByHostId) {
+      const session = this.store?.getWorkspaceSession?.(hostId)
+      if (!session) {
+        unpersisted.push(...surfaces)
+        continue
+      }
+      // Why: publishing absence before its host membership fence is durable lets a crash or
+      // stale renderer write resurrect the retired surface.
+      if (!this.store?.setWorkspaceSession || !this.store.flushOrThrow) {
+        return null
+      }
+      let nextSession = session
+      const acceptedForHost: RetiredTerminalSurface[] = []
+      for (const surface of surfaces) {
+        const candidate = retireTerminalSurfaceFromPersistence(nextSession, surface)
+        if (candidate !== nextSession) {
+          acceptedForHost.push(surface)
+          nextSession = candidate
+        }
+      }
+      if (acceptedForHost.length === 0) {
+        continue
+      }
+      accepted.push(...acceptedForHost)
+      pendingWrites.push({ hostId, session: nextSession })
+    }
+    if (pendingWrites.length > 0) {
+      try {
+        for (const write of pendingWrites) {
+          this.store?.setWorkspaceSession?.(write.session, write.hostId)
+        }
+        this.store?.flushOrThrow?.()
+      } catch (error) {
+        console.error('[runtime] failed to persist terminal retirement:', error)
+        return null
+      }
+    }
+    return { accepted, unpersisted }
+  }
+
   private retireMobileSessionSurfacesForPty(
     ptyId: string,
     incarnationId: string,
@@ -6704,43 +6784,21 @@ export class OrcaRuntimeService {
     if (retiredSurfaces.length === 0) {
       return
     }
-    let publishableRetiredSurfaces = retiredSurfaces
-    const session = this.store?.getWorkspaceSession?.()
-    if (session) {
-      // Why: publishing absence before its host membership fence is durable lets a crash or
-      // stale renderer write resurrect the retired surface.
-      if (!this.store?.setWorkspaceSession || !this.store.flushOrThrow) {
-        return
-      }
-      let nextSession = session
-      const acceptedSurfaces: RetiredTerminalSurface[] = []
-      for (const surface of retiredSurfaces) {
-        const candidate = retireTerminalSurfaceFromPersistence(nextSession, surface)
-        if (candidate !== nextSession) {
-          acceptedSurfaces.push(surface)
-          nextSession = candidate
-        }
-      }
-      if (acceptedSurfaces.length === 0) {
-        return
-      }
-      try {
-        this.store.setWorkspaceSession(nextSession)
-        this.store.flushOrThrow()
-      } catch (error) {
-        console.error('[runtime] failed to persist terminal retirement:', error)
-        return
-      }
-      // Why: one repo epoch can cover multiple exits, but only surfaces individually accepted by persistence may disappear.
-      publishableRetiredSurfaces = acceptedSurfaces
-    } else {
-      for (const surface of retiredSurfaces) {
-        const repoId = getRepoIdFromWorktreeId(surface.worktreeId)
-        this.terminalTopologyRevisionByRepoId.set(
-          repoId,
-          (this.terminalTopologyRevisionByRepoId.get(repoId) ?? 0) + 1
-        )
-      }
+    const persisted = this.persistTerminalSurfaceRetirements(retiredSurfaces)
+    if (!persisted) {
+      return
+    }
+    for (const surface of persisted.unpersisted) {
+      const repoId = getRepoIdFromWorktreeId(surface.worktreeId)
+      this.terminalTopologyRevisionByRepoId.set(
+        repoId,
+        (this.terminalTopologyRevisionByRepoId.get(repoId) ?? 0) + 1
+      )
+    }
+    // Why: one repo epoch can cover multiple exits, but only surfaces individually accepted by persistence may disappear.
+    const publishableRetiredSurfaces = [...persisted.accepted, ...persisted.unpersisted]
+    if (publishableRetiredSurfaces.length === 0) {
+      return
     }
     for (const [worktreeId, snapshot] of this.mobileSessionTabsByWorktree) {
       const retired = retireTerminalSurfacesFromSnapshot({
@@ -7280,6 +7338,7 @@ export class OrcaRuntimeService {
       notifyClients?: boolean
       clientNavigationId?: string
       navigation?: RuntimeNavigationTarget
+      intent?: TabActivationIntent
     } = {}
   ): Promise<RuntimeMobileSessionTabsResult> {
     const navigation = opts.navigation ?? (opts.notifyClients === false ? 'caller' : 'all')
@@ -7321,6 +7380,10 @@ export class OrcaRuntimeService {
       const shouldMaterializePendingTerminal =
         publicTab?.type === 'terminal' &&
         publicTab.status !== 'ready' &&
+        // Why: opening a tab is the documented wake gesture for a slept pane
+        // (#11598), so only a background probe may be refused for one.
+        (!isAutomaticTabActivation(opts.intent) ||
+          !this.isDeliberatelyParkedPane(worktreeId, tab)) &&
         (!targetsHost ||
           !this.notifier?.focusTerminal ||
           this.shouldMaterializeHeadlessMobileSessionTab(snapshot!, tab))
@@ -7472,6 +7535,29 @@ export class OrcaRuntimeService {
       return projectClientSessionTabSelection(snapshot, selection).snapshot
     }
     return snapshot
+  }
+
+  /**
+   * Whether persistence proves this pane's PTY was deliberately taken down and parked
+   * (workspace sleep or completed-agent hibernation) rather than lost and awaiting reconnect.
+   * Why: `pending-handle` alone cannot tell those apart — a parked pane publishes it
+   * indefinitely — and respawning a parked pane re-launches its agent behind the user.
+   * Only an automatic activation consults this; a user opening the tab is the wake gesture.
+   */
+  private isDeliberatelyParkedPane(
+    worktreeId: string,
+    tab: RuntimeMobileSessionTerminalTab
+  ): boolean {
+    const record =
+      this.getWorkspaceSessionForWorktree(worktreeId)?.sleepingAgentSessionsByPaneKey?.[
+        makePaneKey(tab.parentTabId, tab.leafId)
+      ]
+    // Why: 'live'/'quit' captures describe a pane that was still running, so a reconnect
+    // must still mint its replacement PTY (#11542). Only a worktree-owned capture records
+    // a deliberate takedown the user did not ask to undo.
+    return (
+      record?.origin === 'worktree-sleep' && runtimeWorktreeIdsEqual(record.worktreeId, worktreeId)
+    )
   }
 
   private shouldMaterializeHeadlessMobileSessionTab(
@@ -8819,6 +8905,20 @@ export class OrcaRuntimeService {
         return undefined
       }
       return store.getWorktreeMeta(worktreeId)?.linkedIssue ?? null
+    },
+    getWorktreeLinkedIssueMeta: (worktreeId) => {
+      const store = this.store
+      if (!store?.getWorktreeMeta) {
+        return undefined
+      }
+      const meta = store.getWorktreeMeta(worktreeId)
+      return meta
+        ? {
+            linkedIssue: meta.linkedIssue,
+            linkedGitLabIssue: meta.linkedGitLabIssue,
+            linkedWorkItem: meta.linkedWorkItem
+          }
+        : null
     }
   })
 
@@ -10067,7 +10167,7 @@ export class OrcaRuntimeService {
           })
         },
         onAgentExited: () => {
-          this.recordTerminalSideEffectFact(ptyId, { kind: 'agent-exited' })
+          this.confirmPtyAgentExit(ptyId)
         },
         onCommandFinished: (exitCode: number | null) => {
           this.retirePtyAgentLaunchAuthority(ptyId)
@@ -16558,6 +16658,99 @@ export class OrcaRuntimeService {
     )
   }
 
+  private readPtyForegroundProcessFromController(
+    ptyId: string,
+    afterTitleObservation = 0
+  ): Promise<PtyForegroundProcessRead> | null {
+    const controller = this.ptyController
+    if (!controller) {
+      return null
+    }
+    const pending = this.ptyForegroundProcessReads.get(ptyId)
+    if (
+      pending?.controller === controller &&
+      pending.startedAfterTitleObservation >= afterTitleObservation
+    ) {
+      return pending.promise
+    }
+    if (pending?.controller === controller) {
+      return pending.promise.then(
+        () =>
+          this.readPtyForegroundProcessFromController(ptyId, afterTitleObservation) ?? {
+            controller,
+            process: null,
+            available: false
+          }
+      )
+    }
+    const unavailable: PtyForegroundProcessRead = {
+      controller,
+      process: null,
+      available: false
+    }
+    let processRead: Promise<string | null>
+    try {
+      processRead = Promise.resolve(controller.getForegroundProcess(ptyId))
+    } catch {
+      const entry: PtyForegroundProcessReadEntry = {
+        controller,
+        startedAfterTitleObservation: afterTitleObservation,
+        promise: Promise.resolve(unavailable)
+      }
+      entry.promise = entry.promise.finally(() => {
+        if (this.ptyForegroundProcessReads.get(ptyId) === entry) {
+          this.ptyForegroundProcessReads.delete(ptyId)
+        }
+      })
+      this.ptyForegroundProcessReads.set(ptyId, entry)
+      return entry.promise
+    }
+    let entry: PtyForegroundProcessReadEntry
+    const promise = processRead
+      .then((process) => ({ controller, process, available: true }))
+      .catch(() => unavailable)
+      .finally(() => {
+        if (this.ptyForegroundProcessReads.get(ptyId) === entry) {
+          this.ptyForegroundProcessReads.delete(ptyId)
+        }
+      })
+    entry = {
+      controller,
+      startedAfterTitleObservation: afterTitleObservation,
+      promise
+    }
+    this.ptyForegroundProcessReads.set(ptyId, entry)
+    return entry.promise
+  }
+
+  private confirmPtyAgentExit(ptyId: string): void {
+    const pty = this.ptysById.get(ptyId)
+    const titleObservedAt = pty?.lastOscTitleAt ?? null
+    const foregroundRead = this.readPtyForegroundProcessFromController(ptyId, titleObservedAt ?? 0)
+    if (!pty?.connected || !foregroundRead) {
+      this.recordTerminalSideEffectFact(ptyId, { kind: 'agent-exited' })
+      return
+    }
+    void foregroundRead.then((result) => {
+      const current = this.ptysById.get(ptyId)
+      if (current !== pty || !current.connected) {
+        return
+      }
+      if (current.lastOscTitleAt !== titleObservedAt && current.lastAgentStatus !== null) {
+        return
+      }
+      if (
+        result.controller === this.ptyController &&
+        result.available &&
+        recognizeAgentProcess(result.process) !== null
+      ) {
+        this.ptyTitleTrackersByPtyId.get(ptyId)?.tracker.restoreLastAgentExit()
+        return
+      }
+      this.recordTerminalSideEffectFact(ptyId, { kind: 'agent-exited' })
+    })
+  }
+
   /**
    * Schedules an asynchronous query to check which agent process is currently
    * running in the foreground of a PTY.
@@ -16620,7 +16813,10 @@ export class OrcaRuntimeService {
     const refresh = (async (): Promise<boolean> => {
       while (true) {
         entry.startedAfterTitleObservation = entry.requestedAfterTitleObservation
-        const foregroundAgentChanged = await this.loadPtyForegroundAgentFromController(ptyId)
+        const foregroundAgentChanged = await this.loadPtyForegroundAgentFromController(
+          ptyId,
+          entry.startedAfterTitleObservation
+        )
         if (
           foregroundAgentChanged ||
           entry.requestedAfterTitleObservation <= entry.startedAfterTitleObservation
@@ -16642,7 +16838,10 @@ export class OrcaRuntimeService {
    * Queries the PTY controller for the active foreground process, identifies if it
    * is a recognized agent, and updates the PTY's foreground agent state if changed.
    */
-  private async loadPtyForegroundAgentFromController(ptyId: string): Promise<boolean> {
+  private async loadPtyForegroundAgentFromController(
+    ptyId: string,
+    afterTitleObservation = 0
+  ): Promise<boolean> {
     if (!this.ptyController) {
       return false
     }
@@ -16656,12 +16855,15 @@ export class OrcaRuntimeService {
     if (pty.launchAgent) {
       return false
     }
-    let foregroundProcess: string | null
-    try {
-      foregroundProcess = await this.ptyController.getForegroundProcess(ptyId)
-    } catch {
+    const foregroundRead = this.readPtyForegroundProcessFromController(ptyId, afterTitleObservation)
+    if (!foregroundRead) {
       return false
     }
+    const result = await foregroundRead
+    if (result.controller !== this.ptyController || !result.available) {
+      return false
+    }
+    const foregroundProcess = result.process
     const foregroundAgent = foregroundProcess
       ? (recognizeAgentProcess(foregroundProcess)?.agent ?? null)
       : null
@@ -29941,7 +30143,6 @@ export class OrcaRuntimeService {
         ownerAgent
       )
       const liveTitleEvidence = leafTitle ?? ptyTitle
-      const liveTitleEvidenceClassification = classifyAgentTitle(liveTitleEvidence)
       // Why: renderer status can precede hook session identity, leaving native chat with no transcript address.
       const rendererStatusAgent =
         resolveCompatibleAgentTypeForOwner(tab.agentStatus?.agentType, ownerAgent) ??
@@ -29973,11 +30174,14 @@ export class OrcaRuntimeService {
       const hasLiveAgentSignal =
         normalizedTabAgentStatus?.interactivePrompt != null ||
         normalizedTabAgentStatus?.toolName != null
+      // Why: only shell/management evidence proves the agent released the pane
+      // (same predicate as the terminal-status API). A merely neutral live title
+      // — 'Terminal', an editor, a cwd — proves nothing, and treating it as
+      // completion published a synthetic `done` that fought the client's own
+      // live status on every republication.
       const keepFullAgentStatus =
         normalizedTabAgentStatus &&
-        (liveTitleEvidence === null ||
-          liveTitleEvidenceClassification === 'agent' ||
-          hasLiveAgentSignal)
+        (!terminalTitleBlocksExplicitAgentStatus(liveTitleEvidence) || hasLiveAgentSignal)
       const agentStatus = keepFullAgentStatus
         ? { agentStatus: normalizedTabAgentStatus }
         : // Why: idle live title → drop stale "working" (no spinner) but keep agent identity so native chat can still address the transcript.
@@ -30172,9 +30376,12 @@ export class OrcaRuntimeService {
       }
     }
     // Last resort: the pane's hook evidence is identity only (resume rows, stale
-    // rows, or a row the freshness gate rejected). `done` with a now-stamp is the
-    // honest projection — and it is what retires the card once the agent exits.
-    const now = pty?.lastOutputAt ?? Date.now()
+    // rows, or a row the freshness gate rejected). `done` is the honest
+    // projection — and it is what retires the card once the agent exits.
+    // Why not lastOutputAt: this state is title-derived, so it must be dated by
+    // its evidence. Stamping it with the byte stream made the frame advance on
+    // every output byte, so a paired client's live status could never outrank it.
+    const evidenceAt = pty?.lastOscTitleEpochMs ?? hookRow.providerSessionReceivedAt ?? Date.now()
     const agentType = ownerAgent ?? undefined
     return {
       agentStatus: {
@@ -30185,8 +30392,8 @@ export class OrcaRuntimeService {
               ? 'blocked'
               : 'done',
         prompt: '',
-        updatedAt: now,
-        stateStartedAt: now,
+        updatedAt: evidenceAt,
+        stateStartedAt: evidenceAt,
         paneKey,
         ...(terminalHandle ? { terminalHandle } : {}),
         ...(agentType ? { agentType } : {}),
