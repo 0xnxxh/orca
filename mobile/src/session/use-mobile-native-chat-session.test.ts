@@ -94,6 +94,13 @@ describe('useMobileNativeChatSession', () => {
         beforeOffset: 0
       })
     })
+    let invalidated: boolean | undefined
+    void completion?.then((result) => {
+      invalidated = result
+    })
+    await Promise.resolve()
+    expect(invalidated).toBe(false)
+
     await act(async () => {
       resolveEarlier({
         ok: true,

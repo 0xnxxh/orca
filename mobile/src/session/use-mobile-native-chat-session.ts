@@ -40,6 +40,10 @@ const MAX_MESSAGES = 2000
 type ReadSessionResult =
   | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
   | { error: string }
+
+type PageCompletion = {
+  resolveInvalidated: () => void
+}
 /** Subscribe to an agent's native-chat transcript over the paired connection.
  *  Reads a small recent window for a fast first paint, tails it for live turns,
  *  and pages in older history on demand. Read results replace the list (they are
@@ -93,6 +97,7 @@ export function useMobileNativeChatSession(args: {
   const sessionIdRef = useRef<string | null>(sessionId)
   sessionIdRef.current = sessionId
   const streamGenerationRef = useRef(0)
+  const pageCompletionRef = useRef<PageCompletion | null>(null)
   // Whether this subscription already delivered its base snapshot; later
   // snapshots on the same subscription are reconnect replays, not fresh bases.
   const snapshotSeenRef = useRef(false)
@@ -104,10 +109,17 @@ export function useMobileNativeChatSession(args: {
     setMessages(mergerRef.current.list)
   }, [])
 
+  const invalidatePageCompletion = useCallback(() => {
+    const completion = pageCompletionRef.current
+    pageCompletionRef.current = null
+    completion?.resolveInvalidated()
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     // Why: disconnect/agent/session loss must invalidate a page request before
     // the early idle/waiting return can clear the visible source.
+    invalidatePageCompletion()
     streamGenerationRef.current += 1
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
@@ -158,6 +170,7 @@ export function useMobileNativeChatSession(args: {
         if (applied.windowReplaced || frame.type === 'snapshot') {
           // Why: any authoritative window (and any replay merge) invalidates an
           // in-flight older-page request; stale results must not land on it.
+          invalidatePageCompletion()
           streamGenerationRef.current += 1
           loadingEarlierRef.current = false
           setLoadingEarlier(false)
@@ -179,6 +192,7 @@ export function useMobileNativeChatSession(args: {
         if (applied.cursorInvalidated) {
           // Fall back to a growing-tail read so history trimmed by live appends
           // cannot leave a gap between the retained window and the old cursor.
+          invalidatePageCompletion()
           streamGenerationRef.current += 1
           loadingEarlierRef.current = false
           setLoadingEarlier(false)
@@ -192,7 +206,7 @@ export function useMobileNativeChatSession(args: {
       cancelled = true
       unsubscribe()
     }
-  }, [client, agent, sessionId, transcriptPath, identity, setList])
+  }, [client, agent, sessionId, transcriptPath, identity, setList, invalidatePageCompletion])
 
   const loadEarlier = useCallback((): Promise<boolean> | null => {
     if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
@@ -212,7 +226,13 @@ export function useMobileNativeChatSession(args: {
     const firstMessageId = mergerRef.current.list[0]?.id ?? null
     loadingEarlierRef.current = true
     setLoadingEarlier(true)
-    return (async (): Promise<boolean> => {
+    let resolveInvalidated = (): void => {}
+    const invalidated = new Promise<boolean>((resolve) => {
+      resolveInvalidated = () => resolve(false)
+    })
+    const completionToken = { resolveInvalidated }
+    pageCompletionRef.current = completionToken
+    const read = (async (): Promise<boolean> => {
       try {
         const response = await client.sendRequest('nativeChat.readSession', {
           agent,
@@ -261,6 +281,13 @@ export function useMobileNativeChatSession(args: {
         }
       }
     })()
+    const completion = Promise.race([read, invalidated])
+    void completion.then(() => {
+      if (pageCompletionRef.current === completionToken) {
+        pageCompletionRef.current = null
+      }
+    })
+    return completion
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
   return {
