@@ -160,6 +160,10 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
 
       console.log(`invalidation measurement ${JSON.stringify(measurement)}`)
       expect(measurement.maxLagMs).toBeLessThan(1_000)
+      // Why: staying responsive isn't enough — invalidation must also leave the rows loaded
+      // instead of parking a section in its loading state.
+      expect(measurement.loadingRowCount).toBe(0)
+      expect(measurement.editorCount).toBeGreaterThan(0)
     } finally {
       rmSync(fixture.repoPath, { recursive: true, force: true })
     }

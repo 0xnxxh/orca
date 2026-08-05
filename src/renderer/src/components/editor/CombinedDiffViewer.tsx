@@ -314,6 +314,7 @@ export default function CombinedDiffViewer({
   const reloadTimersRef = useRef<Map<number, number>>(new Map())
   const loadSectionRef = useRef<(index: number) => Promise<void>>(async () => {})
   const retrySectionRef = useRef<(index: number) => void>(() => {})
+  const requestSectionReloadRef = useRef<(index: number) => void>(() => {})
   const updateCombinedDiffScrollbar = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container || container.scrollHeight <= container.clientHeight + 1) {
@@ -701,11 +702,16 @@ export default function CombinedDiffViewer({
             }))
           : null
 
+      if (generationRef.current !== gen) {
+        // Why: the generation reset already cleared the in-flight set, and a newer load for this
+        // index may own the entry now — deleting it here would hide that load from the guard above.
+        return
+      }
       loadingIndicesRef.current.delete(index)
-      if (
-        generationRef.current !== gen ||
-        (sectionLoadTokensRef.current.get(index) ?? 0) !== loadToken
-      ) {
+      if ((sectionLoadTokensRef.current.get(index) ?? 0) !== loadToken) {
+        // Why: an invalidation landed mid-flight and deferred its reload to this settle point, so
+        // the refetch happens once here instead of racing a second fetch against this one.
+        requestSectionReloadRef.current(index)
         return
       }
       const storedContent = getStoredTextDiffContent(result, largeDiffRenderLimit)
@@ -1048,9 +1054,13 @@ export default function CombinedDiffViewer({
         return
       }
       loadedIndicesRef.current.delete(index)
-      loadingIndicesRef.current.delete(index)
       invalidateCombinedDiffViewStateCache()
       sectionLoadTokensRef.current.set(index, (sectionLoadTokensRef.current.get(index) ?? 0) + 1)
+      if (loadingIndicesRef.current.has(index)) {
+        // Why: the in-flight load now carries a stale token, so it re-drives this reload when it
+        // settles. Scheduling one here would fetch the same large diff a second time.
+        return
+      }
       if (section.collapsed || !renderedIndicesRef.current.has(index)) {
         // Why: a rebase invalidates every touched path at once. Refetching off-screen sections is
         // unbounded work nobody can see; the row reloads on mount once it scrolls into view.
@@ -1072,6 +1082,7 @@ export default function CombinedDiffViewer({
     },
     [invalidateCombinedDiffViewStateCache]
   )
+  requestSectionReloadRef.current = requestCombinedDiffSectionReload
   const ensureCombinedDiffSectionLoaded = useCallback((index: number): void => {
     const section = sectionsRef.current[index]
     if (!shouldRequestCombinedDiffSectionLoad(section, loadingIndicesRef.current.has(index))) {
