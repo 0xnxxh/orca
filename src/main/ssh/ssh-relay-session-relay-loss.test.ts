@@ -132,13 +132,15 @@ const { registerSshFilesystemProvider, unregisterSshFilesystemProvider } =
   await import('../providers/ssh-filesystem-dispatch')
 const { getPtyIdsForConnection } = await import('../ipc/pty')
 
-describe('SshRelaySession relay loss on the final grace-time notify', () => {
+describe('SshRelaySession relay loss during setup', () => {
   /** Armed by a test so the *next* mux dies inside its grace-time notify. */
   let armGraceTimeFailure = false
+  let armProviderRegistrationFailure = false
 
   beforeEach(() => {
     vi.clearAllMocks()
     armGraceTimeFailure = false
+    armProviderRegistrationFailure = false
     muxRequestMock.mockReset()
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
     registeredPtyProvider.attachForReconnect.mockReset().mockResolvedValue({})
@@ -154,6 +156,7 @@ describe('SshRelaySession relay loss on the final grace-time notify', () => {
     session: SshRelaySession
     onRelayLost: ReturnType<typeof vi.fn>
     onReady: ReturnType<typeof vi.fn>
+    mockStore: ReturnType<typeof createMockDeps>['mockStore']
   } {
     const { mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
@@ -162,16 +165,21 @@ describe('SshRelaySession relay loss on the final grace-time notify', () => {
     session.setOnRelayLost(onRelayLost)
     session.setOnReady(onReady)
     // Arm once the mux exists; every attempt issues requests before the notify.
-    muxRequestMock.mockImplementation(async () => {
+    muxRequestMock.mockImplementation(async (method: string) => {
       const mux = session.getMux() as unknown as {
         failNotifyMethod: string | null
+        dispose: (reason: string) => void
       } | null
       if (mux && armGraceTimeFailure) {
         mux.failNotifyMethod = SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD
       }
+      if (mux && armProviderRegistrationFailure && method === 'git.listWorktrees') {
+        mux.dispose('connection_lost')
+        throw new Error('SSH connection lost, reconnecting...')
+      }
       return []
     })
-    return { session, onRelayLost, onReady }
+    return { session, onRelayLost, onReady, mockStore }
   }
 
   it('fails establish instead of reporting ready on a dead channel', async () => {
@@ -196,6 +204,26 @@ describe('SshRelaySession relay loss on the final grace-time notify', () => {
     onReady.mockClear()
 
     armGraceTimeFailure = true
+    await session.reconnect({} as SshConnection)
+
+    expect(session.getState()).not.toBe('ready')
+    expect(onReady).not.toHaveBeenCalled()
+    expect(onRelayLost).toHaveBeenCalledTimes(1)
+    expect(unregisterSshFilesystemProvider).toHaveBeenCalledWith('target-1')
+  })
+
+  it('routes a mux that dies during provider registration into relay-loss recovery', async () => {
+    const { session, onRelayLost, onReady, mockStore } = createSession()
+
+    await session.establish({} as SshConnection)
+    expect(session.getState()).toBe('ready')
+    onReady.mockClear()
+
+    vi.mocked(mockStore.getRepos).mockReturnValue([
+      { connectionId: 'target-1', path: '/repo' } as ReturnType<typeof mockStore.getRepos>[number]
+    ])
+    armProviderRegistrationFailure = true
+
     await session.reconnect({} as SshConnection)
 
     expect(session.getState()).not.toBe('ready')

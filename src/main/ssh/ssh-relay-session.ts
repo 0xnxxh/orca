@@ -119,6 +119,22 @@ const SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS = 10_000
 const SSH_PTY_REATTACH_RETRY_MIN_DELAY_MS = 50
 const SSH_PTY_REATTACH_RETRY_JITTER_MS = 200
 const SSH_SOURCE_RECOVERY_CANCELLATION_FAILED = 'ssh_source_recovery_cancellation_failed'
+
+// Why: superseded attempts stop quietly; a dead mux still owned by this attempt must enter recovery.
+function verifyRelayAttempt(
+  mux: SshChannelMultiplexer,
+  isAttemptCurrent: () => boolean,
+  phase: string
+): boolean {
+  if (!isAttemptCurrent()) {
+    return false
+  }
+  if (mux.isDisposed()) {
+    throw new Error(`Relay connection lost during ${phase}`)
+  }
+  return true
+}
+
 type PendingPtyReattach = {
   mux: SshChannelMultiplexer
   providerGeneration: number
@@ -432,14 +448,15 @@ export class SshRelaySession {
 
       const mux = new SshChannelMultiplexer(transport)
       this.mux = mux
-      const ownsAttempt = (): boolean => this.mux === mux && !mux.isDisposed() && !this.isDisposed()
+      const isAttemptCurrent = (): boolean => this.mux === mux && !this.isDisposed()
+      const shouldContinue = (): boolean => isAttemptCurrent() && !mux.isDisposed()
 
       const ptyConsumerSessionState = await this.openPtyConsumerSession(
         mux,
         serverBuildId,
-        ownsAttempt
+        shouldContinue
       )
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'consumer session setup')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -447,7 +464,7 @@ export class SshRelaySession {
       }
       this.ptyConsumerSessionState = ptyConsumerSessionState
       await this.rememberPtyConsumerRecovery(serverBuildId)
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'consumer recovery persistence')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -455,7 +472,7 @@ export class SshRelaySession {
       }
 
       await mux.request('session.resolveHome', { path: '~' })
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'home resolution')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -463,37 +480,35 @@ export class SshRelaySession {
       }
       const connectionIncarnation = randomUUID()
 
-      const registered = await this.registerProviders(mux, ownsAttempt, connectionIncarnation)
+      const registered = await this.registerProviders(mux, shouldContinue, connectionIncarnation)
       if (!registered) {
+        if (!verifyRelayAttempt(mux, isAttemptCurrent, 'provider registration')) {
+          if (!mux.isDisposed()) {
+            mux.dispose()
+          }
+          throw new Error('Session disposed during establish')
+        }
+        throw new Error('Relay provider registration stopped unexpectedly')
+      }
+
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'provider registration')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
         throw new Error('Session disposed during establish')
       }
 
-      // Why: registerProviders swallows mux errors, so an isDisposed check catches a transport that closed mid-registration before we reach 'ready'.
-      if (mux.isDisposed()) {
-        throw new Error('Relay connection lost during provider registration')
-      }
-
-      if (this.isDisposed()) {
-        this.teardownProviders('connection_lost')
-        throw new Error('Session disposed during establish')
-      }
-
       // Why: explicit disconnect keeps PTY ownership, so a later manual connect must reattach those remote PTYs.
-      await this.reattachKnownPtys(mux, ownsAttempt)
+      await this.reattachKnownPtys(mux, shouldContinue)
 
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'PTY reattach')) {
         throw new Error('Session disposed during establish')
       }
 
       this.configureRelayGraceTime(mux, graceTimeSeconds)
-      // Why: notify can dispose the mux synchronously (writer admission / transport throw), so re-check before latching 'ready' (#11953).
-      if (mux.isDisposed()) {
-        throw new Error('Relay connection lost during establish')
-      }
+      verifyRelayAttempt(mux, isAttemptCurrent, 'establish')
       this.watchMuxForRelayLoss(mux)
+      verifyRelayAttempt(mux, isAttemptCurrent, 'establish')
       this._state = 'ready'
       this.startPortScanning()
       this._onReady?.(this.targetId)
@@ -576,19 +591,19 @@ export class SshRelaySession {
       const mux = new SshChannelMultiplexer(transport)
       this.mux = mux
 
-      const ownsAttempt = (): boolean =>
+      const isAttemptCurrent = (): boolean =>
         this.mux === mux &&
-        !mux.isDisposed() &&
         this.abortController === abortController &&
         !abortController.signal.aborted &&
         !this.isDisposed()
+      const shouldContinue = (): boolean => isAttemptCurrent() && !mux.isDisposed()
 
       const ptyConsumerSessionState = await this.openPtyConsumerSession(
         mux,
         serverBuildId,
-        ownsAttempt
+        shouldContinue
       )
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'consumer session setup')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -596,7 +611,7 @@ export class SshRelaySession {
       }
       this.ptyConsumerSessionState = ptyConsumerSessionState
       await this.rememberPtyConsumerRecovery(serverBuildId)
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'consumer recovery persistence')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -604,7 +619,7 @@ export class SshRelaySession {
       }
 
       await mux.request('session.resolveHome', { path: '~' })
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'home resolution')) {
         if (!mux.isDisposed()) {
           mux.dispose()
         }
@@ -612,20 +627,21 @@ export class SshRelaySession {
       }
       const connectionIncarnation = randomUUID()
 
-      const registered = await this.registerProviders(mux, ownsAttempt, connectionIncarnation)
+      const registered = await this.registerProviders(mux, shouldContinue, connectionIncarnation)
       if (!registered) {
-        if (!mux.isDisposed()) {
-          mux.dispose()
+        if (!verifyRelayAttempt(mux, isAttemptCurrent, 'provider registration')) {
+          if (this.mux === mux) {
+            this.teardownProviders('shutdown')
+          } else if (!mux.isDisposed()) {
+            mux.dispose()
+          }
+          return
         }
-        return
-      }
-
-      if (mux.isDisposed()) {
-        throw new Error('Relay connection lost during provider registration')
+        throw new Error('Relay provider registration stopped unexpectedly')
       }
 
       // Why: dispose() during registration/attach already cleaned up, but this.mux was reassigned above — clean up the new mux so it doesn't leak.
-      if (!ownsAttempt()) {
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'provider registration')) {
         if (this.mux === mux) {
           this.teardownProviders('shutdown')
         } else if (!mux.isDisposed()) {
@@ -634,23 +650,16 @@ export class SshRelaySession {
         return
       }
 
-      await this.reattachKnownPtys(mux, ownsAttempt)
+      await this.reattachKnownPtys(mux, shouldContinue)
 
-      if (!ownsAttempt()) {
-        // Why: reattach swallows per-PTY errors, so a mux killed mid-reattach must take the failure
-        // path here or the session wedges in 'reconnecting' with no relay-loss watcher (#11953).
-        if (this.mux === mux && mux.isDisposed()) {
-          throw new Error('Relay connection lost during PTY reattach')
-        }
+      if (!verifyRelayAttempt(mux, isAttemptCurrent, 'PTY reattach')) {
         return
       }
 
       this.configureRelayGraceTime(mux, graceTimeSeconds)
-      // Why: notify can dispose the mux synchronously (writer admission / transport throw), so re-check before latching 'ready' (#11953).
-      if (mux.isDisposed()) {
-        throw new Error('Relay connection lost during reconnect')
-      }
+      verifyRelayAttempt(mux, isAttemptCurrent, 'reconnect')
       this.watchMuxForRelayLoss(mux)
+      verifyRelayAttempt(mux, isAttemptCurrent, 'reconnect')
       this._state = 'ready'
       this.startPortScanning()
       this._onReady?.(this.targetId)
