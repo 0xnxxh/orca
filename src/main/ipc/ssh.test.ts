@@ -264,7 +264,8 @@ import {
   getActiveMultiplexer,
   getSshConnectionManager,
   registerSshHandlers,
-  resetSshHandlerStateForTests
+  resetSshHandlerStateForTests,
+  type SshShutdownResult
 } from './ssh'
 import { RelayVersionMismatchError } from '../ssh/ssh-relay-version-mismatch-error'
 import {
@@ -674,6 +675,50 @@ describe('SSH IPC handlers', () => {
       'ssh-1',
       'detached'
     )
+  })
+
+  it('detaches the remaining sessions and still returns when one session throws mid-transition', async () => {
+    const targets: Record<string, SshTarget> = {
+      'ssh-1': { id: 'ssh-1', label: 'A', host: 'a.example.com', port: 22, username: 'deploy' },
+      'ssh-2': { id: 'ssh-2', label: 'B', host: 'b.example.com', port: 22, username: 'deploy' }
+    }
+    mockSshStore.getTarget.mockImplementation((id: string) => targets[id] ?? null)
+    mockConnectionManager.connect.mockResolvedValue({})
+    mockConnectionManager.getState.mockImplementation((targetId: string) => ({
+      targetId,
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    }))
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-2' })
+    mockConnectionManager.disconnectAll.mockClear().mockResolvedValue(undefined)
+    vi.mocked(mockStore.markSshRemotePtyLeasesForShutdown).mockClear()
+    // Why webContents.send: quit destroys the renderer, and that is what makes broadcastEmptyLists
+    // throw out of the pre-pass for whichever session reaches it first.
+    mockWindow.webContents.send.mockImplementation((_channel: string, payload: unknown) => {
+      if ((payload as { targetId?: string } | undefined)?.targetId === 'ssh-1') {
+        throw new Error('Object has been destroyed')
+      }
+    })
+    quitTeardownStartGate.tryStart({ preventDefault() {} })
+
+    // Why not-throw rather than a resolved promise: the caller is a non-async will-quit listener, so
+    // a synchronous throw escapes it and skips killAllPty, the watchers and store.flushAsync() — the
+    // very flush that persists the detached leases this pre-pass just staged.
+    let shutdown!: Promise<SshShutdownResult>
+    expect(() => {
+      shutdown = beginSshShutdown()
+    }).not.toThrow()
+    // Why asserted before the await: the real flush starts on the next synchronous line.
+    expect(mockStore.markSshRemotePtyLeasesForShutdown).toHaveBeenCalledWith('ssh-2', 'detached')
+
+    const result = await shutdown
+    expect(
+      result.errors.some(
+        (error) => error instanceof Error && error.message === 'Object has been destroyed'
+      )
+    ).toBe(true)
   })
 
   it('reports the target and phase left unfinished when the shutdown budget expires', async () => {

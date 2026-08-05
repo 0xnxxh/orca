@@ -1653,11 +1653,12 @@ function sshShutdownTasks(targetIds: readonly string[]): SshShutdownTask[] {
 
 async function drainSshShutdown(
   targetIds: readonly string[],
-  inFlight: readonly SshShutdownTask[]
+  inFlight: readonly SshShutdownTask[],
+  detachErrors: readonly unknown[] = []
 ): Promise<SshShutdownResult> {
   const deadline = Date.now() + SSH_SHUTDOWN_BUDGET_MS
   const unfinished: SshShutdownUnfinished[] = []
-  const errors: unknown[] = []
+  const errors: unknown[] = [...detachErrors]
   const runPhase = async (
     phase: SshShutdownPhase,
     tasks: readonly SshShutdownTask[]
@@ -1718,10 +1719,19 @@ export function beginSshShutdown(): Promise<SshShutdownResult> {
   const targetIds = [...activeSessions.keys()]
   // Why before any await: this is the whole point of the split. Each session marks its recovery lease
   // detached in memory now, and the final flush persists it — the remote PTYs keep running.
+  const detachErrors: unknown[] = []
   for (const session of activeSessions.values()) {
-    session.beginShutdownDetach()
+    // Why per-session: this runs synchronously inside a non-async will-quit listener, so one throw
+    // (teardownProviders -> webContents.send on a destroyed renderer, routine on quit) would escape
+    // it and skip every later session, the drain assignment, and the store flush that persists all
+    // of this. Collect and keep going; the drain reports them.
+    try {
+      session.beginShutdownDetach()
+    } catch (error) {
+      detachErrors.push(error)
+    }
   }
-  sshShutdownDrain = drainSshShutdown(targetIds, inFlight)
+  sshShutdownDrain = drainSshShutdown(targetIds, inFlight, detachErrors)
   return sshShutdownDrain
 }
 

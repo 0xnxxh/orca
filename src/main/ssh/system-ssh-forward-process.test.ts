@@ -335,12 +335,15 @@ describe('system SSH forward process', () => {
     expect(resolved).toBe(false)
 
     await vi.advanceTimersByTimeAsync(1)
-    await pending
 
+    // Why asserted before awaiting `pending`: dropping the post-kill bound is the regression this
+    // test exists to catch, and awaiting a promise that then never settles reports it as a 30s suite
+    // timeout instead of a failed assertion.
     // Why this is not a death claim: the promise resolving bounds teardown; nothing here records the
     // child as gone or drops state that assumes it is.
     expect(resolved).toBe(true)
     expect(child.kill).toHaveBeenCalledTimes(2)
+    await pending
   })
 
   it('clears the post-kill timer once the child exits after SIGKILL', async () => {
