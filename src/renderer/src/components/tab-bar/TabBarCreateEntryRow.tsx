@@ -96,7 +96,12 @@ export function EntryActionRow({
 function FilenameFirstPath({ path }: { path: string }): React.JSX.Element {
   const filename = basename(path)
   const directory = dirname(path)
-  const directoryLabel = directory === '.' ? '' : `${directory}${path.includes('\\') ? '\\' : '/'}`
+  const directoryLabel =
+    directory === '.'
+      ? ''
+      : directory.endsWith('/') || directory.endsWith('\\')
+        ? directory
+        : `${directory}${path.includes('\\') ? '\\' : '/'}`
 
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1">

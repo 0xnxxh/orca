@@ -69,4 +69,20 @@ describe('EntryActionRow', () => {
     expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('app/src/components/'))
     expect(container.querySelector('[data-tooltip-content]')?.textContent).toBe(filePath)
   })
+
+  it('does not duplicate the root separator for absolute root-level files', () => {
+    act(() => {
+      root.render(
+        createElement(EntryActionRow, {
+          id: 'root-file-result',
+          onClick: vi.fn(),
+          option: makeFileOption('/foo'),
+          selected: false
+        })
+      )
+    })
+
+    expect(container.querySelector('button')?.textContent).toContain('foo/')
+    expect(container.querySelector('button')?.textContent).not.toContain('foo//')
+  })
 })

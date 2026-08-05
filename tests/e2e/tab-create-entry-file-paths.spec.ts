@@ -3,7 +3,8 @@ import path from 'node:path'
 import { expect, test } from './helpers/orca-app'
 import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 
-const relativeFilePath = 'app/src/components/SecondaryNav.tsx'
+const relativeFilePath =
+  'packages/orca/src/renderer/src/components/navigation/worktree/secondary-nav/SecondaryNav.tsx'
 
 test('new-tab file results prioritize the filename and reveal the full path on hover', async ({
   orcaPage,
@@ -26,10 +27,10 @@ test('new-tab file results prioritize the filename and reveal the full path on h
   const row = orcaPage.locator('[role="option"]').filter({ hasText: 'Open file' }).first()
   await expect(row).toBeVisible()
   await expect(row).toContainText('SecondaryNav.tsx')
-  await expect(row).toContainText('app/src/components/')
+  await expect(row).toContainText('packages/orca/src/renderer/src/components/navigation/')
   const rowText = await row.textContent()
   expect(rowText?.indexOf('SecondaryNav.tsx')).toBeLessThan(
-    rowText?.indexOf('app/src/components/') ?? -1
+    rowText?.indexOf('packages/orca/src/renderer/src/components/navigation/') ?? -1
   )
 
   await row.hover({ force: true })
