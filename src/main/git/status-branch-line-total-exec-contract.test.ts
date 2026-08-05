@@ -8,15 +8,34 @@ import {
   invalidateGitBranchLineTotalInFlight
 } from '../../shared/git-branch-line-total'
 
+import type * as BranchLineTotal from '../../shared/git-branch-line-total'
 import type * as GitRunner from './runner'
 
 // Why: real git, spied argv. Every exec is recorded so the performance contract
 // ("no ranged diff unless asked", "one exec for concurrent callers") can be
 // asserted on the actual command list rather than on a stubbed return value.
-const { gitExecCalls, execHooks } = vi.hoisted(() => ({
+const { gitExecCalls, execHooks, coalescerJoins } = vi.hoisted(() => ({
   gitExecCalls: [] as string[][],
-  execHooks: { beforeExec: undefined as undefined | ((args: string[]) => Promise<void> | void) }
+  execHooks: { beforeExec: undefined as undefined | ((args: string[]) => Promise<void> | void) },
+  coalescerJoins: { count: 0, onJoin: undefined as undefined | (() => void) }
 }))
+
+vi.mock('../../shared/git-branch-line-total', async (importOriginal) => {
+  const actual = await importOriginal<typeof BranchLineTotal>()
+  return {
+    ...actual,
+    computeGitBranchLineTotal: (
+      input: Parameters<typeof BranchLineTotal.computeGitBranchLineTotal>[0]
+    ) => {
+      // The lease is taken synchronously inside, so counting after the call
+      // means a join is observable the instant it has happened.
+      const total = actual.computeGitBranchLineTotal(input)
+      coalescerJoins.count += 1
+      coalescerJoins.onJoin?.()
+      return total
+    }
+  }
+})
 
 vi.mock('./runner', async (importOriginal) => {
   const actual = await importOriginal<typeof GitRunner>()
@@ -88,6 +107,21 @@ function numstatCalls(): string[][] {
   return gitExecCalls.filter((args) => args.includes('--numstat'))
 }
 
+/** Resolves once `count` status passes have entered the branch-total coalescer. */
+function waitForCoalescerJoins(count: number): Promise<void> {
+  if (coalescerJoins.count >= count) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    coalescerJoins.onJoin = () => {
+      if (coalescerJoins.count >= count) {
+        coalescerJoins.onJoin = undefined
+        resolve()
+      }
+    }
+  })
+}
+
 function resetGitReadCaches(): void {
   clearEffectiveUpstreamStatusCacheForTests()
   clearSubmodulePathsCacheForTests()
@@ -98,11 +132,14 @@ function resetGitReadCaches(): void {
 beforeEach(() => {
   gitExecCalls.length = 0
   execHooks.beforeExec = undefined
+  coalescerJoins.count = 0
+  coalescerJoins.onJoin = undefined
   resetGitReadCaches()
 })
 
 afterEach(async () => {
   execHooks.beforeExec = undefined
+  coalescerJoins.onJoin = undefined
   resetGitReadCaches()
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -229,10 +266,12 @@ describe('branch line total exec budget', () => {
     const { repo, mergeBase } = await createFixtureRepo()
     // Why: `limit` is part of the status read key, so these two passes each run
     // their own `git status`; only the branch-total coalescer can merge the diff.
-    // Holding the first diff open guarantees the second pass reaches the lease.
+    // Hold the first diff exactly until the second pass has taken the lease: a
+    // fixed sleep would either release too early or, on a slow machine, outrun
+    // GIT_BRANCH_LINE_TOTAL_SOFT_DEADLINE_MS and publish without an exact total.
     execHooks.beforeExec = async (args) => {
       if (args.includes('--numstat') && args.at(-1) === '--') {
-        await new Promise((resolve) => setTimeout(resolve, 400))
+        await waitForCoalescerJoins(2)
       }
     }
 
