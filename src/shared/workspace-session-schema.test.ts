@@ -235,6 +235,11 @@ describe('parseWorkspaceSession', () => {
             title: 'Claude working',
             defaultTitle: 'Terminal 1',
             generatedTitle: 'Refactor auth',
+            providerNativeTitle: {
+              agent: 'codex',
+              sessionId: 'session-1',
+              title: 'Provider thread name'
+            },
             customTitle: null,
             color: null,
             sortOrder: 0,
@@ -253,6 +258,11 @@ describe('parseWorkspaceSession', () => {
             contentType: 'terminal',
             label: 'Claude working',
             generatedLabel: 'Refactor auth',
+            providerNativeTitle: {
+              agent: 'codex',
+              sessionId: 'session-1',
+              title: 'Provider thread name'
+            },
             customLabel: null,
             color: null,
             sortOrder: 0,
@@ -265,7 +275,13 @@ describe('parseWorkspaceSession', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.value.tabsByWorktree.wt[0].generatedTitle).toBe('Refactor auth')
+      expect(result.value.tabsByWorktree.wt[0].providerNativeTitle?.title).toBe(
+        'Provider thread name'
+      )
       expect(result.value.unifiedTabs?.wt[0].generatedLabel).toBe('Refactor auth')
+      expect(result.value.unifiedTabs?.wt[0].providerNativeTitle?.title).toBe(
+        'Provider thread name'
+      )
     }
   })
 

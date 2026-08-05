@@ -85,6 +85,8 @@ export type AiVaultSession = {
   agent: AiVaultAgent
   sessionId: string
   title: string
+  /** Provider-authored name only; excludes first-prompt and generic fallbacks. */
+  providerNativeTitle?: string
   cwd: string | null
   branch: string | null
   model: string | null

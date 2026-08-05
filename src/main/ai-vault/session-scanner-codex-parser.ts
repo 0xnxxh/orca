@@ -134,7 +134,7 @@ function consumeCodexRecordLine(state: CodexSessionParseState, line: string): vo
     }
     const metadataTitle = extractCodexSessionMetadataTitle(payload)
     if (metadataTitle) {
-      accumulator.title = metadataTitle
+      accumulator.title = accumulator.providerNativeTitle = metadataTitle
       state.titleSource = 'meta'
     }
     const cwd = extractString(payload.cwd)
@@ -251,6 +251,7 @@ async function finalizeCodexParseState(
     const indexedTitle = await args.titleReader?.(snapshot.accumulator.sessionId)
     if (indexedTitle) {
       snapshot.accumulator.title = indexedTitle
+      snapshot.accumulator.providerNativeTitle = indexedTitle
     }
   }
   return finalizeSession(snapshot.accumulator, platform, {

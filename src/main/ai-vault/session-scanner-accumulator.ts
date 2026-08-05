@@ -35,6 +35,7 @@ export function createAccumulator(args: {
     agent: args.agent,
     sessionId: args.sessionId,
     title: null,
+    providerNativeTitle: null,
     fallbackTitle: null,
     cwd: null,
     branch: null,
@@ -109,6 +110,9 @@ export function finalizeSession(
     agent: accumulator.agent,
     sessionId,
     title,
+    ...(accumulator.providerNativeTitle
+      ? { providerNativeTitle: accumulator.providerNativeTitle }
+      : {}),
     cwd: accumulator.cwd,
     branch: accumulator.branch,
     model: accumulator.model,

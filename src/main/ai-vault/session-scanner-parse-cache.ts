@@ -12,6 +12,7 @@ import { createCopilotSessionResumeState } from './session-scanner-copilot-parse
 import { createCursorSessionResumeState } from './session-scanner-cursor-parser'
 import { countSubagentTranscripts } from './session-scanner-subagent-transcripts'
 import type { ResumableSessionParseState, SessionFileCandidate } from './session-scanner-types'
+import { refreshCachedCodexProviderTitle } from './session-scanner-codex-cached-title'
 
 // Sized past the default recency cap (1000) plus the in-scope cap (2000) so a
 // full steady-state result set stays resident between forced rescans.
@@ -187,6 +188,9 @@ export async function parseAgentSessionFileCached(
       if (subagentTranscriptCount !== entry.session.subagentTranscriptCount) {
         entry.session = { ...entry.session, subagentTranscriptCount }
       }
+    }
+    if (entry.session && candidate.agent === 'codex') {
+      entry.session = await refreshCachedCodexProviderTitle(candidate, entry.session)
     }
     storeEntry(file.path, entry)
     return entry.session

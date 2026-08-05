@@ -38,6 +38,7 @@ const aiVaultSessionSchema = z.object({
   agent: z.enum(AI_VAULT_AGENTS),
   sessionId: z.string(),
   title: z.string(),
+  providerNativeTitle: z.string().optional(),
   cwd: z.string().nullable(),
   branch: z.string().nullable(),
   model: z.string().nullable(),

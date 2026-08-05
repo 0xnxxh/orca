@@ -72,6 +72,14 @@ const terminalTabSchema = z.object({
   title: z.string(),
   defaultTitle: z.string().optional(),
   generatedTitle: z.string().nullable().optional(),
+  providerNativeTitle: z
+    .object({
+      agent: z.enum(['claude', 'codex']),
+      sessionId: z.string(),
+      title: z.string()
+    })
+    .nullable()
+    .optional(),
   quickCommandLabel: z.string().nullable().optional(),
   customTitle: z.string().nullable(),
   color: z.string().nullable(),
@@ -112,6 +120,14 @@ const tabSchema = z.object({
   contentType: tabContentTypeSchema,
   label: z.string(),
   generatedLabel: z.string().nullable().optional(),
+  providerNativeTitle: z
+    .object({
+      agent: z.enum(['claude', 'codex']),
+      sessionId: z.string(),
+      title: z.string()
+    })
+    .nullable()
+    .optional(),
   quickCommandLabel: z.string().nullable().optional(),
   customLabel: z.string().nullable(),
   color: z.string().nullable(),

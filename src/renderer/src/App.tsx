@@ -48,6 +48,7 @@ import { isRemoteWorkspaceSnapshotApplyInProgress, useIpcEvents } from './hooks/
 import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
 import { AgentHibernationGate } from './components/AgentHibernationGate'
+import { ProviderNativeTabTitleSyncGate } from './components/ProviderNativeTabTitleSyncGate'
 import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
 import Sidebar from './components/Sidebar'
 import { shutdownBufferCaptures } from './components/terminal-pane/shutdown-buffer-captures'
@@ -2249,6 +2250,7 @@ function App(): React.JSX.Element {
             <MacosTccPromptNoticeHost />
             {/* Why: leaf-mounted retention sync keeps agent-status subscriptions out of the App render tree. */}
             <RetainedAgentsSyncGate />
+            <ProviderNativeTabTitleSyncGate />
             <AgentHibernationGate />
             {/* Why: workspace activation is a hot path; activeWorktreeId in reset keys would remount whole surfaces during wake. */}
             <RecoverableRenderErrorBoundary
