@@ -1054,6 +1054,7 @@ export function connectPanePty(
   // that follows this mount, so connect time is the only moment a pane can tell
   // a reveal remount from an in-place reattach.
   let mountFollowsTerminalPark = isTerminalTabParked(deps.tabId)
+  let authoritativeReattachGeneration = 0
   exposeE2eTerminalPtyOutputDebug()
   let disposed = false
   const structuralReplayCoordinator = createTerminalStructuralReplayCoordinator(pane.terminal)
@@ -4701,7 +4702,6 @@ export function connectPanePty(
             void window.api.pty.reportRendererSerializerReady?.(ptyId)
           }
         })
-        // The remote attach remains authoritative if this cosmetic prepaint fails.
         .catch(() => {})
     }
 
@@ -5147,6 +5147,7 @@ export function connectPanePty(
         // about to unmount — so skip the doomed respawn instead of racing it.
         return Promise.resolve(null)
       }
+      authoritativeReattachGeneration += 1
       clearPaneMode2031State()
       clearHiddenOutputRestoreState()
       // Why: a canceled old replay clear can preserve xterm's native
@@ -7753,7 +7754,6 @@ export function connectPanePty(
       return true
     }
 
-    let authoritativeReattachGeneration = 0
     let parkedSshSnapshotPrefetch: {
       ptyId: string
       fetch: () => Promise<PtyBufferSnapshot | null>
@@ -8264,6 +8264,7 @@ export function connectPanePty(
 
     const attachRetainedLegacyPty = (ptyId: string): boolean => {
       try {
+        authoritativeReattachGeneration += 1
         clearPaneMode2031State()
         clearHiddenOutputRestoreState()
         const outputCallbacks = captureTransportOutputCallbacks(reportError)
