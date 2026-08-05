@@ -3,7 +3,6 @@ import { FilePlus, FileText, Globe, Loader2, Smartphone, TerminalSquare } from '
 import { AgentIcon } from '@/lib/agent-catalog'
 import { basename, dirname } from '@/lib/path'
 import { cn } from '@/lib/utils'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 import type { ActiveOption } from './tab-create-entry-active-option'
 
@@ -48,6 +47,7 @@ export function EntryActionRow({
       id={id}
       role="option"
       aria-selected={selected}
+      title={presentation.prioritizeFilename ? presentation.detail : undefined}
       className={cn(
         'flex h-6 w-full items-center gap-1.5 rounded-[7px] px-1 text-left text-[11px] leading-5 outline-none',
         selected
@@ -75,22 +75,7 @@ export function EntryActionRow({
     </button>
   )
 
-  if (!presentation.prioritizeFilename) {
-    return actionRow
-  }
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{actionRow}</TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={4}
-        className="max-w-[min(90vw,600px)] break-all font-mono"
-      >
-        {presentation.detail}
-      </TooltipContent>
-    </Tooltip>
-  )
+  return actionRow
 }
 
 function FilenameFirstPath({ path }: { path: string }): React.JSX.Element {

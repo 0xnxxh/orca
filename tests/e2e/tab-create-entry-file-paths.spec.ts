@@ -6,7 +6,7 @@ import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } fro
 const relativeFilePath =
   'packages/orca/src/renderer/src/components/navigation/worktree/secondary-nav/SecondaryNav.tsx'
 
-test('new-tab file results prioritize the filename and reveal the full path on hover', async ({
+test('new-tab file results prioritize the filename and expose the full path natively', async ({
   orcaPage,
   testRepoPath
 }) => {
@@ -34,9 +34,7 @@ test('new-tab file results prioritize the filename and reveal the full path on h
   )
 
   await row.hover({ force: true })
-  await expect(
-    orcaPage.locator('[role="tooltip"]').filter({ hasText: relativeFilePath })
-  ).toBeVisible()
+  await expect(row).toHaveAttribute('title', relativeFilePath)
 
   const proofPath = process.env.ORCA_STA3424_PROOF_PATH
   if (proofPath) {
