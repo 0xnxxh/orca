@@ -7,6 +7,7 @@ import {
   MAX_LAG_TRAILS
 } from './task-page-github-work-item-quiet-adopt'
 import {
+  clearConfirmedAuthorityForItem,
   gcStickyHidesAbsentFromPages,
   getAllStickyHideEntries,
   getOrCreateQuietRevalidateState,
@@ -20,11 +21,41 @@ import type { TaskPageGitHubPatchWorkItem } from './task-page-github-work-item-m
 
 export { adoptQuietSearchFieldsForItem, LAG_BACKOFF_MS, LAG_WALL_BUDGET_MS, MAX_LAG_TRAILS }
 
-type QuietRunner = (queryKey: string) => Promise<readonly GitHubWorkItem[]>
-let quietRunner: QuietRunner | null = null
-export function setTaskPageQuietRevalidateRunner(runner: QuietRunner | null): void {
-  quietRunner = runner
+export type TaskPageQuietRevalidateScope = { queryKey: string; generation: number }
+
+export function advanceTaskPageQuietRevalidateScope(
+  scope: TaskPageQuietRevalidateScope,
+  queryKey: string
+): TaskPageQuietRevalidateScope {
+  return scope.queryKey === queryKey ? scope : { queryKey, generation: scope.generation + 1 }
 }
+
+export function isTaskPageQuietRevalidateScopeCurrent(
+  scope: TaskPageQuietRevalidateScope,
+  queryKey: string,
+  generation: number
+): boolean {
+  return scope.queryKey === queryKey && scope.generation === generation
+}
+
+export function isTaskPageQuietRevalidateRunCurrent(
+  scope: TaskPageQuietRevalidateScope,
+  queryKey: string,
+  generation: number,
+  capturedRefreshEpoch: number,
+  currentRefreshEpoch: number
+): boolean {
+  return (
+    isTaskPageQuietRevalidateScopeCurrent(scope, queryKey, generation) &&
+    capturedRefreshEpoch === currentRefreshEpoch
+  )
+}
+
+export function getTaskPageQuietRevalidateBackoffAttempt(attempts: Iterable<number>): number {
+  const eligible = [...attempts].filter((attempt) => attempt < MAX_LAG_TRAILS)
+  return eligible.length === 0 ? 0 : Math.max(...eligible)
+}
+
 export function settleQuietSearchRevalidate(args: {
   queryKey: string
   networkItems: readonly GitHubWorkItem[]
@@ -32,6 +63,7 @@ export function settleQuietSearchRevalidate(args: {
   patchWorkItem: TaskPageGitHubPatchWorkItem
   resolveSourceScope?: (item: GitHubWorkItem) => string | null
   sourceContextByRepoId?: ReadonlyMap<string, TaskSourceContext | null | undefined>
+  revalidatedItemKeys?: ReadonlySet<string>
 }): { needTrailing: boolean } {
   let needTrailing = false
   for (const serverItem of args.networkItems) {
@@ -57,6 +89,22 @@ export function settleQuietSearchRevalidate(args: {
   const pageKeys = new Set(
     args.networkItems.map((item) => taskPageGitHubItemKey(item.repoId, item.id))
   )
+  for (const [itemKey, entry] of getAllStickyHideEntries()) {
+    if (
+      entry.queryKey !== args.queryKey ||
+      pageKeys.has(itemKey) ||
+      !args.revalidatedItemKeys?.has(itemKey)
+    ) {
+      continue
+    }
+    const separator = itemKey.indexOf('\0')
+    if (
+      separator >= 0 &&
+      !hasPendingTaskPageGitHubOpsForItem(itemKey.slice(0, separator), itemKey.slice(separator + 1))
+    ) {
+      clearConfirmedAuthorityForItem(itemKey.slice(0, separator), itemKey.slice(separator + 1))
+    }
+  }
   const safeGcKeys = new Set(pageKeys)
   for (const [itemKey] of getAllStickyHideEntries()) {
     if (pageKeys.has(itemKey)) {
@@ -102,58 +150,22 @@ export function settleQuietSearchRevalidate(args: {
   notifyTaskPageGitHubMutationRegistry()
   return { needTrailing }
 }
-export async function scheduleTaskPageQuietRevalidate(queryKey: string): Promise<void> {
-  const state = getOrCreateQuietRevalidateState(queryKey)
-  if (state.inFlight || !quietRunner) {
-    return
-  }
-  state.inFlight = true
-  const runGeneration = state.dirtyGeneration
-  state.fetchStartedAtGeneration = runGeneration
-  try {
-    await quietRunner(queryKey)
-  } finally {
-    state.inFlight = false
-  }
-  const after = getOrCreateQuietRevalidateState(queryKey)
-  if (after.dirtyGeneration > runGeneration) {
-    // Why: mirror processTaskPageQuietRevalidateSettle — index the backoff by the
-    // worst lag attempt (Math.max), not the count of lagging keys, so several
-    // items each lagging once cannot jump the delay tier.
-    const lagValues = [...after.lagSkipAttempts.values()]
-    const attempts = lagValues.length === 0 ? 0 : Math.max(...lagValues)
-    const delay = LAG_BACKOFF_MS[Math.min(attempts, LAG_BACKOFF_MS.length - 1)] ?? 500
-    await new Promise((resolve) => setTimeout(resolve, delay))
-    await scheduleTaskPageQuietRevalidate(queryKey)
-  }
-}
-export async function processTaskPageQuietRevalidateSettle(args: {
+export function processTaskPageQuietRevalidateSettle(args: {
   queryKey: string
   networkItems: readonly GitHubWorkItem[]
   patchWorkItem: TaskPageGitHubPatchWorkItem
   resolveSourceScope?: (item: GitHubWorkItem) => string | null
   sourceContextByRepoId?: ReadonlyMap<string, TaskSourceContext | null | undefined>
-  scheduleTrailing?: boolean
-}): Promise<{ needTrailing: boolean }> {
+  revalidatedItemKeys?: ReadonlySet<string>
+}): { needTrailing: boolean } {
   const state = getOrCreateQuietRevalidateState(args.queryKey)
-  const G0 = state.fetchStartedAtGeneration
-  const result = settleQuietSearchRevalidate({
+  return settleQuietSearchRevalidate({
     queryKey: args.queryKey,
     networkItems: args.networkItems,
-    fetchStartedAtGeneration: G0,
+    fetchStartedAtGeneration: state.fetchStartedAtGeneration,
     patchWorkItem: args.patchWorkItem,
     resolveSourceScope: args.resolveSourceScope,
-    sourceContextByRepoId: args.sourceContextByRepoId
+    sourceContextByRepoId: args.sourceContextByRepoId,
+    revalidatedItemKeys: args.revalidatedItemKeys
   })
-  if (result.needTrailing && args.scheduleTrailing !== false) {
-    const lagValues = [...state.lagSkipAttempts.values()]
-    const attempts = lagValues.length === 0 ? 0 : Math.max(...lagValues)
-    const wallExceeded = Date.now() - state.lastConfirmAt > LAG_WALL_BUDGET_MS
-    if (attempts < MAX_LAG_TRAILS && !wallExceeded) {
-      const delay = LAG_BACKOFF_MS[Math.min(attempts, LAG_BACKOFF_MS.length - 1)] ?? 500
-      await new Promise((resolve) => setTimeout(resolve, delay))
-      await scheduleTaskPageQuietRevalidate(args.queryKey)
-    }
-  }
-  return result
 }

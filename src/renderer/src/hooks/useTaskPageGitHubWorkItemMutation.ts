@@ -1,50 +1,47 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { parseExecutionHostId } from '../../../shared/execution-host'
 import type { ParsedTaskQuery } from '../../../shared/task-query'
 import type { GitHubWorkItem } from '../../../shared/types'
-import {
-  getTaskSourceRuntimeSettings,
-  type TaskSourceContext
-} from '../../../shared/task-source-context'
-import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { useAppStore } from '@/store'
 import {
   beginTaskPageGitHubWorkItemMutation,
+  canStartTaskPageGitHubWorkItemMutation,
   confirmTaskPageGitHubWorkItemMutation,
-  isTaskPageGitHubMutationPendingKey,
   rollbackTaskPageGitHubWorkItemMutation
 } from '@/components/task-page-github-work-item-mutations'
 import type { TaskPageGitHubMutationIntent } from '@/components/task-page-github-work-item-mutation-patches'
+import type { TaskPageGitHubPatchWorkItem } from '@/components/task-page-github-work-item-mutation-types'
 import {
   getTaskPageGitHubSoftHiddenItemKeys,
   subscribeTaskPageGitHubMutationRegistry,
-  setTaskPageGitHubMutationQueryKey,
-  type TaskPageGitHubMutationKey
+  setTaskPageGitHubMutationQueryKey
 } from '@/components/task-page-github-work-item-mutation-registry'
 import { useMountedRef } from './useMountedRef'
 
 export type UseTaskPageGitHubWorkItemMutationArgs = {
-  appliedTaskSearch: string
   queryKey: string
   query: ParsedTaskQuery
   /** Local gh viewer login only; may be null. */
   viewerLogin: string | null
-  /**
-   * Bumps quietRefreshNonce (or equivalent) only — must not set tasksFiltering /
-   * must not use taskRefreshNonce (K23). When provided, also registers with
-   * the mutations quiet scheduler via scheduleTaskPageQuietRevalidate.
-   */
-  scheduleQuietRevalidate: () => void
+  patchWorkItem: TaskPageGitHubPatchWorkItem
 }
 
-function deriveSkipMeQualifiers(sourceContext?: TaskSourceContext | null): boolean {
+export function shouldSkipLocalViewerQualifiers(sourceContext?: TaskSourceContext | null): boolean {
   if (!sourceContext) {
     return false
   }
-  const settings = getTaskSourceRuntimeSettings(sourceContext)
-  const target = getActiveRuntimeTarget(settings)
   // Why: local gh viewer must not evaluate @me soft-hide for SSH/environment rows.
-  return target.kind === 'environment'
+  const hostKind = parseExecutionHostId(sourceContext.hostId)?.kind
+  if (hostKind === 'ssh' || hostKind === 'runtime') {
+    return true
+  }
+  const providerHost =
+    sourceContext.providerIdentity?.provider === 'github'
+      ? sourceContext.providerIdentity.host?.toLowerCase()
+      : undefined
+  return Boolean(providerHost && providerHost !== 'github.com')
 }
 
 export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkItemMutationArgs): {
@@ -57,11 +54,25 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
     errorToast: string
     serverEntityFromResult?: (result: unknown) => Partial<GitHubWorkItem> | undefined
   }) => Promise<'confirmed' | 'rolled_back' | 'stale'>
-  isPending: (key: TaskPageGitHubMutationKey) => boolean
+  isIntentPending: (input: {
+    item: GitHubWorkItem
+    intent: TaskPageGitHubMutationIntent
+    sourceContext?: TaskSourceContext | null
+  }) => boolean
   softHiddenItemKeys: ReadonlySet<string>
 } {
-  const patchWorkItem = useAppStore((s) => s.patchWorkItem)
+  const patchWorkItem = args.patchWorkItem
   const mountedRef = useMountedRef()
+  const activeQueryRef = useRef({
+    query: args.query,
+    queryKey: args.queryKey,
+    viewerLogin: args.viewerLogin
+  })
+  activeQueryRef.current = {
+    query: args.query,
+    queryKey: args.queryKey,
+    viewerLogin: args.viewerLogin
+  }
   const [softHiddenItemKeys, setSoftHiddenItemKeys] = useState<ReadonlySet<string>>(
     () => new Set(getTaskPageGitHubSoftHiddenItemKeys())
   )
@@ -77,11 +88,16 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
     })
   }, [])
 
-  const isPending = useCallback((key: TaskPageGitHubMutationKey) => {
-    return isTaskPageGitHubMutationPendingKey(key)
-  }, [])
+  const isIntentPending = useCallback(
+    (input: {
+      item: GitHubWorkItem
+      intent: TaskPageGitHubMutationIntent
+      sourceContext?: TaskSourceContext | null
+    }) => !canStartTaskPageGitHubWorkItemMutation(input),
+    []
+  )
 
-  const { query, queryKey, viewerLogin, scheduleQuietRevalidate } = args
+  const { query, queryKey, viewerLogin } = args
 
   const run = useCallback(
     async (input: {
@@ -93,7 +109,10 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
       errorToast: string
       serverEntityFromResult?: (result: unknown) => Partial<GitHubWorkItem> | undefined
     }): Promise<'confirmed' | 'rolled_back' | 'stale'> => {
-      const skipMeQualifiers = deriveSkipMeQualifiers(input.sourceContext)
+      if (!canStartTaskPageGitHubWorkItemMutation(input)) {
+        return 'stale'
+      }
+      const skipMeQualifiers = shouldSkipLocalViewerQualifiers(input.sourceContext)
       const began = beginTaskPageGitHubWorkItemMutation({
         item: input.item,
         intent: input.intent,
@@ -107,6 +126,7 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
 
       try {
         const result = await input.mutate()
+        const activeQuery = activeQueryRef.current
         const typed = result as { ok?: boolean; error?: string | { message?: string } } | void
         if (typed && typeof typed === 'object' && typed.ok === false) {
           const rolled = rollbackTaskPageGitHubWorkItemMutation({
@@ -114,9 +134,9 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
             generation: began.generation,
             patchWorkItem,
             sourceContext: input.sourceContext,
-            query,
-            queryKey,
-            viewerLogin,
+            query: activeQuery.query,
+            queryKey: activeQuery.queryKey,
+            viewerLogin: activeQuery.viewerLogin,
             item: input.item
           })
           if (rolled === 'rolled_back' && mountedRef.current) {
@@ -131,9 +151,9 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
 
         const serverEntity = input.serverEntityFromResult?.(result)
         const confirmed = confirmTaskPageGitHubWorkItemMutation(began.key, began.generation, {
-          query,
-          queryKey,
-          viewerLogin,
+          query: activeQuery.query,
+          queryKey: activeQuery.queryKey,
+          viewerLogin: activeQuery.viewerLogin,
           item: input.item,
           serverEntity,
           patchWorkItem,
@@ -142,8 +162,6 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
           scheduleQuiet: false
         })
         if (confirmed === 'confirmed') {
-          // Why: TaskPage owns the quiet fetch (K23); confirm already marked dirty.
-          scheduleQuietRevalidate()
           if (input.successToast && mountedRef.current) {
             toast.success(input.successToast)
           }
@@ -151,14 +169,15 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
         }
         return confirmed
       } catch (err) {
+        const activeQuery = activeQueryRef.current
         const rolled = rollbackTaskPageGitHubWorkItemMutation({
           key: began.key,
           generation: began.generation,
           patchWorkItem,
           sourceContext: input.sourceContext,
-          query,
-          queryKey,
-          viewerLogin,
+          query: activeQuery.query,
+          queryKey: activeQuery.queryKey,
+          viewerLogin: activeQuery.viewerLogin,
           item: input.item
         })
         if (rolled === 'rolled_back' && mountedRef.current) {
@@ -167,8 +186,8 @@ export function useTaskPageGitHubWorkItemMutation(args: UseTaskPageGitHubWorkIte
         return rolled
       }
     },
-    [query, queryKey, viewerLogin, scheduleQuietRevalidate, mountedRef, patchWorkItem]
+    [query, queryKey, viewerLogin, mountedRef, patchWorkItem]
   )
 
-  return { run, isPending, softHiddenItemKeys }
+  return { run, isIntentPending, softHiddenItemKeys }
 }

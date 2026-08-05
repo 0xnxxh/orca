@@ -10,8 +10,11 @@ import {
   getAllStickyHideEntries,
   getConfirmedListSnapshot,
   getLastConfirmedClientValue,
+  getTaskPageGitHubSoftHiddenItemKeys,
+  hasConfirmedAuthorityForItem,
   listPendingTaskPageGitHubOpsForItem,
   resolveItemSourceScope,
+  notifyTaskPageGitHubMutationRegistry,
   setSoftHiddenItemKeys,
   setStickyHideEntry,
   taskPageGitHubItemKey,
@@ -115,11 +118,15 @@ export function getRegistryMergedTaskPageGitHubWorkItem(
   }
 
   for (const family of ['assignees', 'reviewRequests'] as const) {
+    const familyOps = pendingListOpsForFamily(ops, family)
     let snapshot = getConfirmedListSnapshot(sourceScope, item.repoId, item.id, family)
+    if (!snapshot && familyOps.length === 0) {
+      continue
+    }
     if (!snapshot) {
       snapshot = stripFamilyPendingFromList(item, family, ops)
     }
-    const composed = applyTaskPageGitHubListOps(snapshot, pendingListOpsForFamily(ops, family))
+    const composed = applyTaskPageGitHubListOps(snapshot, familyOps)
     merged =
       family === 'assignees'
         ? { ...merged, assignees: composed }
@@ -190,7 +197,11 @@ export function rebuildSoftHiddenKeysFromPendingAndSticky(args: {
   for (const item of args.items) {
     const ops = listPendingTaskPageGitHubOpsForItem(item.repoId, item.id)
     const itemKey = taskPageGitHubItemKey(item.repoId, item.id)
-    if (ops.length === 0 && !next.has(itemKey)) {
+    if (
+      ops.length === 0 &&
+      !next.has(itemKey) &&
+      !hasConfirmedAuthorityForItem(item.repoId, item.id)
+    ) {
       continue
     }
     const sourceScope = ops[0]?.key.sourceScope ?? resolveItemSourceScope(item.repoId, item.id)
@@ -207,7 +218,12 @@ export function rebuildSoftHiddenKeysFromPendingAndSticky(args: {
       next.add(itemKey)
     }
   }
+  const current = getTaskPageGitHubSoftHiddenItemKeys()
+  if (next.size === current.size && [...next].every((itemKey) => current.has(itemKey))) {
+    return
+  }
   setSoftHiddenItemKeys(next)
+  notifyTaskPageGitHubMutationRegistry()
 }
 
 export function familiesFromPendingOp(op: PendingOp): string[] {

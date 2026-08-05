@@ -12,12 +12,13 @@ import {
   deletePendingTaskPageGitHubOp,
   getConfirmedListSnapshot,
   getPendingTaskPageGitHubOp,
+  getTaskPageGitHubMutationQueryKey,
   listPendingTaskPageGitHubOpsForItem,
   notifyTaskPageGitHubMutationRegistry,
   setConfirmedListSnapshot,
   setLastConfirmedClientValue,
-  getOrCreateQuietRevalidateState,
-  taskPageGitHubFamilyDirtyKey,
+  markTaskPageGitHubFamiliesDirty,
+  isTaskPageGitHubMutationQueryKeyCurrent,
   taskPageGitHubItemKey,
   type TaskPageGitHubMutationKey
 } from './task-page-github-work-item-mutation-registry'
@@ -128,22 +129,23 @@ export function confirmTaskPageGitHubWorkItemMutation(
       { sourceContext: opts.sourceContext }
     )
   }
-  recomputeSoftHideForItem({
-    item: { ...opts.item, ...merged },
-    sourceScope: key.sourceScope,
-    query: opts.query,
-    queryKey: opts.queryKey,
-    viewerLogin: opts.viewerLogin,
-    skipMeQualifiers,
-    updateSticky: true
-  })
-  const itemKey = taskPageGitHubItemKey(key.repoId, key.itemId)
-  const quiet = getOrCreateQuietRevalidateState(opts.queryKey)
-  quiet.dirtyGeneration += 1
-  quiet.lastConfirmAt = Date.now()
-  for (const family of familiesFromPendingOp(pending)) {
-    quiet.familyDirtyAt.set(taskPageGitHubFamilyDirtyKey(itemKey, family), quiet.dirtyGeneration)
+  if (isTaskPageGitHubMutationQueryKeyCurrent(opts.queryKey)) {
+    recomputeSoftHideForItem({
+      item: { ...opts.item, ...merged },
+      sourceScope: key.sourceScope,
+      query: opts.query,
+      queryKey: opts.queryKey,
+      viewerLogin: opts.viewerLogin,
+      skipMeQualifiers,
+      updateSticky: true
+    })
   }
+  const itemKey = taskPageGitHubItemKey(key.repoId, key.itemId)
+  markTaskPageGitHubFamiliesDirty(
+    getTaskPageGitHubMutationQueryKey() ?? opts.queryKey,
+    itemKey,
+    familiesFromPendingOp(pending)
+  )
   notifyTaskPageGitHubMutationRegistry()
   return 'confirmed'
 }
@@ -189,15 +191,17 @@ export function rollbackTaskPageGitHubWorkItemMutation(args: {
     )
   }
   const after = getRegistryMergedTaskPageGitHubWorkItem(args.item, args.key.sourceScope)
-  recomputeSoftHideForItem({
-    item: { ...args.item, ...after },
-    sourceScope: args.key.sourceScope,
-    query: args.query,
-    queryKey: args.queryKey,
-    viewerLogin: args.viewerLogin,
-    skipMeQualifiers,
-    updateSticky: true
-  })
+  if (isTaskPageGitHubMutationQueryKeyCurrent(args.queryKey)) {
+    recomputeSoftHideForItem({
+      item: { ...args.item, ...after },
+      sourceScope: args.key.sourceScope,
+      query: args.query,
+      queryKey: args.queryKey,
+      viewerLogin: args.viewerLogin,
+      skipMeQualifiers,
+      updateSticky: true
+    })
+  }
   notifyTaskPageGitHubMutationRegistry()
   return 'rolled_back'
 }

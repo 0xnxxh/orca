@@ -10,6 +10,35 @@ import {
 } from './task-page-github-work-item-mutation-registry'
 import type { TaskPageGitHubPatchWorkItem } from './task-page-github-work-item-mutation-types'
 
+export function patchTaskPageGitHubWorkItemPages(
+  pages: readonly (GitHubWorkItem[] | null)[],
+  itemKey: { id: string; repoId: string },
+  patch: Partial<GitHubWorkItem>,
+  shouldPatch?: (item: GitHubWorkItem) => boolean
+): (GitHubWorkItem[] | null)[] {
+  let changed = false
+  const nextPages = pages.map((page) => {
+    if (!page) {
+      return null
+    }
+    let pageChanged = false
+    const nextPage = page.map((item) => {
+      if (
+        item.id !== itemKey.id ||
+        item.repoId !== itemKey.repoId ||
+        (shouldPatch && !shouldPatch(item))
+      ) {
+        return item
+      }
+      changed = true
+      pageChanged = true
+      return { ...item, ...patch }
+    })
+    return pageChanged ? nextPage : page
+  })
+  return changed ? nextPages : (pages as (GitHubWorkItem[] | null)[])
+}
+
 /** Match each item to pending/confirmed authority by repoId + itemId + remembered sourceScope. */
 export function applyPendingTaskPageGitHubMutationsToItems(
   items: readonly GitHubWorkItem[]
@@ -78,6 +107,43 @@ export function materializeTaskPageItemList(args: {
   return [...byKey.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   )
+}
+
+export function reconcileTaskPagePagesAfterQuietRefresh(args: {
+  pages: readonly (GitHubWorkItem[] | null)[]
+  queryKey: string
+  authorityPage: number
+  authorityItems: readonly GitHubWorkItem[]
+  membershipChanged: boolean
+  visiblePage?: number
+  visibleItems?: readonly GitHubWorkItem[]
+}): (GitHubWorkItem[] | null)[] {
+  const next = [...args.pages]
+  const lastPage = args.visiblePage ?? args.authorityPage
+  while (next.length <= lastPage) {
+    next.push(null)
+  }
+  next[args.authorityPage] = materializeTaskPageItemList({
+    networkItems: args.authorityItems,
+    previousItems: args.pages[args.authorityPage] ?? [],
+    queryKey: args.queryKey
+  })
+  if (args.visiblePage !== undefined && args.visibleItems !== undefined) {
+    if (args.membershipChanged) {
+      for (let page = args.authorityPage + 1; page < args.visiblePage; page++) {
+        next[page] = null
+      }
+    }
+    next[args.visiblePage] = materializeTaskPageItemList({
+      networkItems: args.visibleItems,
+      previousItems: args.pages[args.visiblePage] ?? [],
+      queryKey: args.queryKey
+    })
+  }
+  if (args.membershipChanged) {
+    next.length = lastPage + 1
+  }
+  return next
 }
 
 /** In-place overlay per page; preserves multi-page structure; no retain. */

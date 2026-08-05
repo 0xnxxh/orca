@@ -27,5 +27,6 @@ export type BeginTaskPageGitHubWorkItemMutationResult = {
   generation: number
   opKey: string
   itemKey: string
+  families: string[]
   key: TaskPageGitHubMutationKey
 }

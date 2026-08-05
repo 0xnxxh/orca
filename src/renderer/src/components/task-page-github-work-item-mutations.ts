@@ -3,8 +3,12 @@ import {
   getTaskSourceCacheScope,
   type TaskSourceContext
 } from '../../../shared/task-source-context'
-import { buildTaskPageGitHubWorkItemMutationPatch } from './task-page-github-work-item-mutation-patches'
 import {
+  buildTaskPageGitHubWorkItemMutationPatch,
+  type TaskPageGitHubMutationIntent
+} from './task-page-github-work-item-mutation-patches'
+import {
+  familiesFromPendingOp,
   getRegistryMergedTaskPageGitHubWorkItem,
   recomputeSoftHideForItem,
   rebuildSoftHiddenKeysFromPendingAndSticky,
@@ -40,19 +44,31 @@ export {
   applyPendingTaskPageGitHubMutationsToItems,
   materializeTaskPageItemList,
   overlayPendingOnTaskPagePages,
-  reapplyPendingTaskPageGitHubMutationsToCache
+  patchTaskPageGitHubWorkItemPages,
+  reapplyPendingTaskPageGitHubMutationsToCache,
+  reconcileTaskPagePagesAfterQuietRefresh
 } from './task-page-github-work-item-mutation-pages'
 
 export {
   adoptQuietSearchFieldsForItem,
+  advanceTaskPageQuietRevalidateScope,
+  getTaskPageQuietRevalidateBackoffAttempt,
+  isTaskPageQuietRevalidateRunCurrent,
+  isTaskPageQuietRevalidateScopeCurrent,
   processTaskPageQuietRevalidateSettle,
-  scheduleTaskPageQuietRevalidate,
-  setTaskPageQuietRevalidateRunner,
   settleQuietSearchRevalidate,
   LAG_BACKOFF_MS,
   LAG_WALL_BUDGET_MS,
   MAX_LAG_TRAILS
 } from './task-page-github-work-item-quiet-revalidate'
+
+export type { TaskPageQuietRevalidateScope } from './task-page-github-work-item-quiet-revalidate'
+
+export {
+  clearTaskPageGitHubAuthorityAbsentFromLoadedItems,
+  clearTaskPageGitHubAuthorityThroughGeneration,
+  getTaskPageGitHubRevalidatableAuthorityItemKeys
+} from './task-page-github-work-item-authority-refresh'
 
 export {
   clearTaskPageGitHubConfirmedAuthority,
@@ -65,6 +81,7 @@ export {
 } from './task-page-github-work-item-mutation-lifecycle'
 
 export { getRegistryMergedTaskPageGitHubWorkItem } from './task-page-github-work-item-mutation-composition'
+export { rebuildSoftHiddenKeysFromPendingAndSticky } from './task-page-github-work-item-mutation-composition'
 
 export { setTaskPageGitHubMutationQueryKey, taskPageGitHubItemKey }
 
@@ -75,16 +92,56 @@ function resolveSourceScope(sourceContext?: TaskSourceContext | null): string | 
   return null
 }
 
+function resolveTaskPageGitHubMutation(args: {
+  item: GitHubWorkItem
+  intent: TaskPageGitHubMutationIntent
+  sourceContext?: TaskSourceContext | null
+}) {
+  const sourceScope = resolveSourceScope(args.sourceContext)
+  const base = getRegistryMergedTaskPageGitHubWorkItem(args.item, sourceScope)
+  return {
+    sourceScope,
+    built: buildTaskPageGitHubWorkItemMutationPatch(base, args.intent)
+  }
+}
+
+export function canStartTaskPageGitHubWorkItemMutation(args: {
+  item: GitHubWorkItem
+  intent: TaskPageGitHubMutationIntent
+  sourceContext?: TaskSourceContext | null
+}): boolean {
+  const { sourceScope, built } = resolveTaskPageGitHubMutation(args)
+  const key = {
+    sourceScope,
+    repoId: args.item.repoId,
+    itemId: args.item.id,
+    opKey: built.opKey
+  }
+  if (isTaskPageGitHubMutationPendingKey(key)) {
+    return false
+  }
+  const pending = listPendingTaskPageGitHubOpsForItem(args.item.repoId, args.item.id, sourceScope)
+  if (built.kind === 'list') {
+    const affectedLogins = new Set(built.listOp.logins)
+    return !pending.some(
+      (op) =>
+        op.listOp?.family === built.family &&
+        op.listOp.logins.some((login) => affectedLogins.has(login))
+    )
+  }
+  return !pending.some(
+    (op) =>
+      !op.listOp && familiesFromPendingOp(op).some((family) => built.families.includes(family))
+  )
+}
+
 export function beginTaskPageGitHubWorkItemMutation(
   args: BeginTaskPageGitHubWorkItemMutationArgs
 ): BeginTaskPageGitHubWorkItemMutationResult {
   setTaskPageGitHubMutationQueryKey(args.queryKey)
-  const sourceScope = resolveSourceScope(args.sourceContext)
+  const { sourceScope, built } = resolveTaskPageGitHubMutation(args)
   const skipMeQualifiers = args.skipMeQualifiers ?? false
-  const base = getRegistryMergedTaskPageGitHubWorkItem(args.item, sourceScope)
-  const built = buildTaskPageGitHubWorkItemMutationPatch(base, args.intent)
-
-  const key: TaskPageGitHubMutationKey = {
+  const key = {
     sourceScope,
     repoId: args.item.repoId,
     itemId: args.item.id,
@@ -144,6 +201,7 @@ export function beginTaskPageGitHubWorkItemMutation(
     generation,
     opKey: built.opKey,
     itemKey: taskPageGitHubItemKey(args.item.repoId, args.item.id),
+    families: built.families,
     key
   }
 }

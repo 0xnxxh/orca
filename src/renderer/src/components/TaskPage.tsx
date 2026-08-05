@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Why: repo selector, task-source controls, and task list stay co-located so their wiring reads in one place. */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -151,21 +151,36 @@ import { useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
 import { useTaskPageGitHubWorkItemMutation } from '@/hooks/useTaskPageGitHubWorkItemMutation'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import {
+  advanceTaskPageQuietRevalidateScope,
+  clearTaskPageGitHubAuthorityAbsentFromLoadedItems,
+  clearTaskPageGitHubAuthorityThroughGeneration,
+  getTaskPageQuietRevalidateBackoffAttempt,
+  getTaskPageGitHubRevalidatableAuthorityItemKeys,
+  isTaskPageQuietRevalidateRunCurrent,
+  isTaskPageQuietRevalidateScopeCurrent,
   LAG_BACKOFF_MS,
   LAG_WALL_BUDGET_MS,
   materializeTaskPageItemList,
   MAX_LAG_TRAILS,
   overlayPendingOnTaskPagePages,
+  patchTaskPageGitHubWorkItemPages,
   processTaskPageQuietRevalidateSettle,
-  reapplyPendingTaskPageGitHubMutationsToCache
+  reapplyPendingTaskPageGitHubMutationsToCache,
+  reconcileTaskPagePagesAfterQuietRefresh,
+  rebuildSoftHiddenKeysFromPendingAndSticky
 } from '@/components/task-page-github-work-item-mutations'
 import {
-  clearTaskPageGitHubConfirmedAuthority,
   getOrCreateQuietRevalidateState,
+  getTaskPageGitHubConfirmedAuthorityItemKeys,
   setTaskPageGitHubMutationQueryKey,
   taskPageGitHubItemKey
 } from '@/components/task-page-github-work-item-mutation-registry'
+import {
+  beginTaskPageQuietRevalidateRun,
+  finishTaskPageQuietRevalidateRun
+} from '@/components/task-page-github-work-item-quiet-state'
 import type { TaskPageGitHubMutationIntent } from '@/components/task-page-github-work-item-mutation-patches'
+import type { TaskPageGitHubPatchWorkItem } from '@/components/task-page-github-work-item-mutation-types'
 import GitHubItemDialog, { type ItemDialogTab } from '@/components/GitHubItemDialog'
 import PullRequestPage from '@/components/PullRequestPage'
 import GitLabItemDialog from '@/components/GitLabItemDialog'
@@ -436,10 +451,8 @@ const GITHUB_TASK_GRID_CLASS =
   'min-w-[790px] grid-cols-[72px_minmax(320px,1fr)_84px_100px_92px_122px]'
 const GITHUB_PR_TASK_GRID_CLASS =
   'min-w-[1020px] grid-cols-[72px_minmax(360px,2fr)_132px_128px_132px_92px_158px]'
-// Why: sticky ID/Title cells need an opaque fill so scrolled content doesn't
-// bleed through. Match the table canvas (bg-background) and accent hover used
-// by the rest of the row — not the old muted wash that made the list look muddy.
-const GITHUB_TASK_ROW_SURFACE_CLASS = 'bg-background'
+// Why: sticky cells need the row's opaque, animated surface to prevent bleed and hover flashes.
+const GITHUB_TASK_ROW_SURFACE_CLASS = 'bg-background transition-colors'
 const GITHUB_TASK_ROW_HOVER_SURFACE_CLASS = 'group-hover/github-task-row:bg-accent'
 const GITHUB_TASK_HEADER_SURFACE_CLASS =
   '[background:color-mix(in_srgb,var(--muted)_25%,var(--background))]'
@@ -561,14 +574,9 @@ function getTaskPageRepoCacheInput(repo: Repo): {
   }
 }
 
-// Why: the sticky header's bg must be opaque (GITHUB_TASK_HEADER_SURFACE_CLASS)
-// or vertically-scrolled rows bleed through it. These left-sticky cells
-// additionally need a ::before gap-cover so horizontally-scrolled header
-// columns don't show through the row's px-3 padding strip.
+// Why: opaque sticky headers and a padding-gap cover prevent vertical and horizontal bleed.
 const GITHUB_TASK_STICKY_ID_HEADER_CLASS = cn(
-  // Why: stretch to full row height so sticky fill covers the header band;
-  // flex centers the label without using grid items-center (which would shrink
-  // sticky cells and let scrolled content bleed at the edges).
+  // Why: full-height flex keeps the sticky fill from shrinking around its label.
   'sticky left-3 z-30 flex items-center before:absolute before:-left-3 before:top-0 before:bottom-0 before:w-3 before:bg-inherit',
   GITHUB_TASK_HEADER_SURFACE_CLASS
 )
@@ -1110,6 +1118,11 @@ type TaskPageGitHubWorkItemMutationRunner = {
     successToast?: string
     errorToast: string
   }) => Promise<'confirmed' | 'rolled_back' | 'stale'>
+  isIntentPending: (input: {
+    item: GitHubWorkItem
+    intent: TaskPageGitHubMutationIntent
+    sourceContext?: TaskSourceContext | null
+  }) => boolean
 }
 
 function GHStatusCell({
@@ -1127,6 +1140,7 @@ function GHStatusCell({
     createTaskPageGitHubStatusStateDraft(item)
   )
   const [open, setOpen] = useState(false)
+  const [statusUpdating, setStatusUpdating] = useState(false)
   const [duplicatePickerOpen, setDuplicatePickerOpen] = useState(false)
   const [duplicateSearch, setDuplicateSearch] = useState('')
   const [duplicateError, setDuplicateError] = useState<string | null>(null)
@@ -1193,6 +1207,11 @@ function GHStatusCell({
     setStatusStateDraft(resolvedStatusStateDraft)
   }
   const localState = resolvedStatusStateDraft.localState
+  const stateMutationPending = workItemMutation.isIntentPending({
+    item,
+    intent: { type: 'setState', state: localState === 'open' ? 'closed' : 'open' },
+    sourceContext
+  })
   const updateLocalState = useCallback(
     (nextState: GitHubWorkItem['state']) => {
       setStatusStateDraft((current) =>
@@ -1203,8 +1222,13 @@ function GHStatusCell({
   )
 
   const handleStateChange = useCallback(
-    (newState: 'open' | 'closed', closeAction?: TaskPageGitHubCloseAction) => {
-      if (newState === localState || item.type !== 'issue') {
+    async (newState: 'open' | 'closed', closeAction?: TaskPageGitHubCloseAction) => {
+      if (
+        statusUpdating ||
+        stateMutationPending ||
+        newState === localState ||
+        item.type !== 'issue'
+      ) {
         return
       }
       const parsedOwnerRepo = parsedIssueLink?.slug
@@ -1218,58 +1242,63 @@ function GHStatusCell({
       updateLocalState(newState)
       // Why: coordinator owns durable patch + soft-hide + quiet revalidate; keep
       // the status draft so one-frame flash is still covered until proven safe.
-      void workItemMutation.run({
-        item,
-        intent: { type: 'setState', state: newState, closeAction },
-        sourceContext,
-        errorToast: translate('auto.components.TaskPage.1c893195ac', 'Failed to update state'),
-        mutate: async () => {
-          const target = getActiveRuntimeTarget(sourceSettings)
-          // Why: issue rows can be sourced by owner/repo URL instead of the local
-          // repo context; slug-aware writes preserve close reasons and duplicates.
-          if (parsedOwnerRepo) {
-            return target.kind === 'environment'
-              ? callRuntimeRpc<{ ok?: boolean; error?: { message?: string } | string }>(
-                  target,
-                  'github.project.updateIssueBySlug',
-                  {
+      setStatusUpdating(true)
+      try {
+        await workItemMutation.run({
+          item,
+          intent: { type: 'setState', state: newState, closeAction },
+          sourceContext,
+          errorToast: translate('auto.components.TaskPage.1c893195ac', 'Failed to update state'),
+          mutate: async () => {
+            const target = getActiveRuntimeTarget(sourceSettings)
+            // Why: issue rows can be sourced by owner/repo URL instead of the local
+            // repo context; slug-aware writes preserve close reasons and duplicates.
+            if (parsedOwnerRepo) {
+              return target.kind === 'environment'
+                ? callRuntimeRpc<{ ok?: boolean; error?: { message?: string } | string }>(
+                    target,
+                    'github.project.updateIssueBySlug',
+                    {
+                      owner: parsedOwnerRepo.owner,
+                      repo: parsedOwnerRepo.repo,
+                      host: githubProjectHost(parsedOwnerRepo.host),
+                      number: item.number,
+                      updates
+                    },
+                    { timeoutMs: 30_000 }
+                  )
+                : window.api.gh.updateIssueBySlug({
                     owner: parsedOwnerRepo.owner,
                     repo: parsedOwnerRepo.repo,
                     host: githubProjectHost(parsedOwnerRepo.host),
                     number: item.number,
                     updates
-                  },
+                  })
+            }
+            if (!repo) {
+              throw new Error('No GitHub repository context available for this issue.')
+            }
+            const runtimeRepoId =
+              sourceContext?.provider === 'github' ? (sourceContext.repoId ?? repo.id) : repo.id
+            return target.kind === 'environment'
+              ? callRuntimeRpc<{ ok?: boolean; error?: string }>(
+                  target,
+                  'github.updateIssue',
+                  { repo: runtimeRepoId, number: item.number, updates },
                   { timeoutMs: 30_000 }
                 )
-              : window.api.gh.updateIssueBySlug({
-                  owner: parsedOwnerRepo.owner,
-                  repo: parsedOwnerRepo.repo,
-                  host: githubProjectHost(parsedOwnerRepo.host),
+              : window.api.gh.updateIssue({
+                  repoPath: repo.path,
+                  repoId: repo.id,
+                  sourceContext,
                   number: item.number,
                   updates
                 })
           }
-          if (!repo) {
-            throw new Error('No GitHub repository context available for this issue.')
-          }
-          const runtimeRepoId =
-            sourceContext?.provider === 'github' ? (sourceContext.repoId ?? repo.id) : repo.id
-          return target.kind === 'environment'
-            ? callRuntimeRpc<{ ok?: boolean; error?: string }>(
-                target,
-                'github.updateIssue',
-                { repo: runtimeRepoId, number: item.number, updates },
-                { timeoutMs: 30_000 }
-              )
-            : window.api.gh.updateIssue({
-                repoPath: repo.path,
-                repoId: repo.id,
-                sourceContext,
-                number: item.number,
-                updates
-              })
-        }
-      })
+        })
+      } finally {
+        setStatusUpdating(false)
+      }
       // Why: draft realigns from item.state via resolveTaskPageGitHubStatusStateDraft
       // when patchWorkItem (begin/rollback) updates the cache-backed row.
     },
@@ -1280,6 +1309,8 @@ function GHStatusCell({
       repo,
       sourceContext,
       sourceSettings,
+      stateMutationPending,
+      statusUpdating,
       updateLocalState,
       workItemMutation
     ]
@@ -1330,6 +1361,7 @@ function GHStatusCell({
       <PopoverTrigger asChild>
         <button
           type="button"
+          disabled={statusUpdating || stateMutationPending}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
           className={cn(
@@ -1825,6 +1857,15 @@ function GHAssigneesCell({
       }
       const userLoginKey = user.login.toLowerCase()
       const isOn = assignees.some((a) => a.login.toLowerCase() === userLoginKey)
+      if (
+        workItemMutation.isIntentPending({
+          item,
+          intent: { type: 'toggleAssignee', user },
+          sourceContext
+        })
+      ) {
+        return
+      }
       setPendingLogin(user.login)
       try {
         await workItemMutation.run({
@@ -2306,16 +2347,20 @@ function PRReviewCell({
     // Why: pre-network optimistic update via coordinator; local display follows
     // item.reviewRequests once patchWorkItem + reconcile land.
     const optimistic = buildRequestedReviewUsers(logins, reviewerCandidates, localReviewRequests)
+    const intent = {
+      type: 'addReviewers' as const,
+      logins,
+      candidates: reviewerCandidates
+    }
+    if (workItemMutation.isIntentPending({ item, intent, sourceContext })) {
+      return
+    }
     setLocalReviewRequests(optimistic)
     setSubmitting(true)
     try {
       const outcome = await workItemMutation.run({
         item,
-        intent: {
-          type: 'addReviewers',
-          logins,
-          candidates: reviewerCandidates
-        },
+        intent,
         sourceContext,
         successToast: translate('auto.components.TaskPage.8f06dbb9e5', 'Reviewer requested'),
         errorToast: translate('auto.components.TaskPage.dc67f69962', 'Failed to request reviewer'),
@@ -2366,6 +2411,10 @@ function PRReviewCell({
     if (logins.length === 0) {
       return
     }
+    const intent = { type: 'removeReviewers' as const, logins }
+    if (workItemMutation.isIntentPending({ item, intent, sourceContext })) {
+      return
+    }
     const removed = new Set(logins.map((login) => login.toLowerCase()))
     setLocalReviewRequests((current) =>
       current.filter((reviewer) => !removed.has(reviewer.login.toLowerCase()))
@@ -2374,7 +2423,7 @@ function PRReviewCell({
     try {
       const outcome = await workItemMutation.run({
         item,
-        intent: { type: 'removeReviewers', logins },
+        intent,
         sourceContext,
         successToast:
           logins.length === 1
@@ -2416,6 +2465,14 @@ function PRReviewCell({
   }
 
   const requestReviewer = async (reviewer: GitHubAssignableUser): Promise<void> => {
+    const intent: TaskPageGitHubMutationIntent = selectedReviewerLogins.has(
+      reviewer.login.toLowerCase()
+    )
+      ? { type: 'removeReviewers', logins: [reviewer.login] }
+      : { type: 'addReviewers', logins: [reviewer.login], candidates: reviewerCandidates }
+    if (workItemMutation.isIntentPending({ item, intent, sourceContext })) {
+      return
+    }
     // Close the popover immediately for responsiveness; the GitHub request/remove runs in the background and toasts on completion.
     setOpen(false)
     setReviewerInput('')
@@ -2758,7 +2815,23 @@ function PRMergeCell({
   const mergePresentation = presentGitHubPRMergeState(item)
   const mergeMethods = resolveGitHubPRMergeMethods(item.mergeMethodSettings)
   const prRepo = resolveTaskPullRequestRepo(item)
-  const mergeDisabled = !repo || merging || !mergePresentation.directMergeAvailable
+  const mergeMutationPending = workItemMutation.isIntentPending({
+    item,
+    intent: { type: 'merge' },
+    sourceContext
+  })
+  const autoMergeMutationPending = mergePresentation.autoMergeAction
+    ? workItemMutation.isIntentPending({
+        item,
+        intent: {
+          type: 'setAutoMerge',
+          enabled: mergePresentation.autoMergeAction.kind === 'enable'
+        },
+        sourceContext
+      })
+    : false
+  const mergeDisabled =
+    !repo || merging || mergeMutationPending || !mergePresentation.directMergeAvailable
 
   const handleMerge = async (method: GitHubPRMergeMethod): Promise<void> => {
     if (!repo || mergeDisabled) {
@@ -2822,7 +2895,7 @@ function PRMergeCell({
   }
 
   const handleAutoMerge = async (): Promise<void> => {
-    if (!repo || !mergePresentation.autoMergeAction) {
+    if (!repo || autoMergeMutationPending || !mergePresentation.autoMergeAction) {
       return
     }
     const enabled = mergePresentation.autoMergeAction.kind === 'enable'
@@ -2900,7 +2973,10 @@ function PRMergeCell({
       </Tooltip>
       <DropdownMenuContent align="start" onClick={(event) => event.stopPropagation()}>
         {mergePresentation.autoMergeAction && (
-          <DropdownMenuItem disabled={!repo || merging} onSelect={() => void handleAutoMerge()}>
+          <DropdownMenuItem
+            disabled={!repo || merging || autoMergeMutationPending}
+            onSelect={() => void handleAutoMerge()}
+          >
             <GitMerge className="size-4" />
             {mergePresentation.autoMergeAction.label}
           </DropdownMenuItem>
@@ -3828,6 +3904,10 @@ export default function TaskPage(): React.JSX.Element {
     return [page0]
   })
   const [currentPage, setCurrentPage] = useState(0)
+  const pagesRef = useRef(pages)
+  const currentPageRef = useRef(currentPage)
+  pagesRef.current = pages
+  currentPageRef.current = currentPage
   const [paginationLoading, setPaginationLoading] = useState(false)
   const [loadingTargetPage, setLoadingTargetPage] = useState<number | null>(null)
   const [countedTotalPages, setCountedTotalPages] = useState<number | null>(null)
@@ -3838,6 +3918,7 @@ export default function TaskPage(): React.JSX.Element {
   // Why: synchronous mirror of countedTotalPages — the empty-page branch needs
   // the committed value, not a click-time closure, and refs update immediately.
   const countedTotalPagesRef = useRef<number | null>(null)
+  const hardRefreshEpochRef = useRef(0)
   const fetchWorkItemsNextPage = useAppStore((s) => s.fetchWorkItemsNextPage)
   const countWorkItemsAcrossRepos = useAppStore((s) => s.countWorkItemsAcrossRepos)
 
@@ -3993,26 +4074,7 @@ export default function TaskPage(): React.JSX.Element {
       shouldPatch?: (item: GitHubWorkItem) => boolean
     ): void => {
       setPages((current) => {
-        let changed = false
-        const nextPages = current.map((page) => {
-          if (!page) {
-            return page
-          }
-          let pageChanged = false
-          const nextPage = page.map((item) => {
-            if (item.id !== itemKey.id || item.repoId !== itemKey.repoId) {
-              return item
-            }
-            if (shouldPatch && !shouldPatch(item)) {
-              return item
-            }
-            pageChanged = true
-            changed = true
-            return { ...item, ...patch }
-          })
-          return pageChanged ? nextPage : page
-        })
-        return changed ? nextPages : current
+        return patchTaskPageGitHubWorkItemPages(current, itemKey, patch, shouldPatch)
       })
     },
     []
@@ -5867,7 +5929,7 @@ export default function TaskPage(): React.JSX.Element {
     return `${githubMode}::${hostOrSetupIds.join(',')}::${repoIds.join(',')}::${appliedTaskSearch}`
   }, [appliedTaskSearch, githubMode, selectedRepos])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTaskPageGitHubMutationQueryKey(githubWorkItemMutationQueryKey)
   }, [githubWorkItemMutationQueryKey])
 
@@ -5894,13 +5956,59 @@ export default function TaskPage(): React.JSX.Element {
     setQuietRefreshNonce((current) => current + 1)
   }, [])
 
+  const patchCoordinatedGitHubWorkItem = useCallback(
+    (...args: Parameters<TaskPageGitHubPatchWorkItem>): void => {
+      const [id, patch, repoId, options] = args
+      useAppStore.getState().patchWorkItem(id, patch, repoId, options)
+      if (repoId) {
+        patchTaskPageWorkItemRows({ id, repoId }, patch)
+      }
+    },
+    [patchTaskPageWorkItemRows]
+  )
+
   const githubWorkItemMutation = useTaskPageGitHubWorkItemMutation({
-    appliedTaskSearch,
     queryKey: githubWorkItemMutationQueryKey,
     query: appliedTaskQuery,
     viewerLogin: githubViewerLogin,
-    scheduleQuietRevalidate
+    patchWorkItem: patchCoordinatedGitHubWorkItem
   })
+
+  useLayoutEffect(() => {
+    rebuildSoftHiddenKeysFromPendingAndSticky({
+      query: appliedTaskQuery,
+      queryKey: githubWorkItemMutationQueryKey,
+      viewerLogin: githubViewerLogin,
+      items: pages.flatMap((page) => page ?? [])
+    })
+  }, [appliedTaskQuery, githubViewerLogin, githubWorkItemMutationQueryKey, pages])
+
+  const observedQuietScopeRef = useRef({ queryKey: '', dirtyGeneration: -1 })
+  useEffect(() => {
+    if (taskSource !== 'github' || githubMode !== 'items') {
+      observedQuietScopeRef.current = { queryKey: '', dirtyGeneration: -1 }
+      return
+    }
+    const quietState = getOrCreateQuietRevalidateState(githubWorkItemMutationQueryKey)
+    const enteringScope = observedQuietScopeRef.current.queryKey !== githubWorkItemMutationQueryKey
+    const dirtyAdvanced = quietState.dirtyGeneration > observedQuietScopeRef.current.dirtyGeneration
+    observedQuietScopeRef.current = {
+      queryKey: githubWorkItemMutationQueryKey,
+      dirtyGeneration: quietState.dirtyGeneration
+    }
+    if (
+      getTaskPageGitHubConfirmedAuthorityItemKeys().size > 0 &&
+      (enteringScope || dirtyAdvanced)
+    ) {
+      scheduleQuietRevalidate()
+    }
+  }, [
+    githubMode,
+    githubWorkItemMutation.softHiddenItemKeys,
+    githubWorkItemMutationQueryKey,
+    scheduleQuietRevalidate,
+    taskSource
+  ])
 
   const selectedGitHubRepoExternalLink = useMemo(() => {
     if (selectedRepos.length !== 1) {
@@ -6396,14 +6504,14 @@ export default function TaskPage(): React.JSX.Element {
           }
           return
         }
-        setPages((previous) => {
-          const next = [...previous]
-          while (next.length <= target) {
-            next.push(null)
-          }
-          next[target] = overlayPendingOnTaskPagePages([items])[0] ?? []
-          return next
-        })
+        const nextPages = [...pagesRef.current]
+        while (nextPages.length <= target) {
+          nextPages.push(null)
+        }
+        nextPages[target] = overlayPendingOnTaskPagePages([items])[0] ?? []
+        pagesRef.current = nextPages
+        currentPageRef.current = target
+        setPages(nextPages)
         setCurrentPage(target)
       } catch (err) {
         console.error('Failed to load next page:', err)
@@ -6506,6 +6614,7 @@ export default function TaskPage(): React.JSX.Element {
         queryKey: githubWorkItemMutationQueryKey
       })
     ])
+    currentPageRef.current = 0
     setCurrentPage(0)
     setCountedTotalPages(null)
     countedTotalPagesRef.current = null
@@ -6523,6 +6632,12 @@ export default function TaskPage(): React.JSX.Element {
       workItemsInvalidationNonce !== lastFetchedInvalidationNonceRef.current
     lastFetchedInvalidationNonceRef.current = workItemsInvalidationNonce
     const forcedFetch = (forceRefresh && taskRefreshNonce > 0) || preferenceInvalidated
+    if (forcedFetch) {
+      hardRefreshEpochRef.current += 1
+    }
+    const forcedFetchAuthorityGeneration = forcedFetch
+      ? getOrCreateQuietRevalidateState(githubWorkItemMutationQueryKey).dirtyGeneration
+      : null
     const repoArgs = selectedRepos.map((r) => ({
       repoId: r.id,
       path: r.path,
@@ -6544,65 +6659,86 @@ export default function TaskPage(): React.JSX.Element {
     // Why: snapshot retrying keys at dispatch so an earlier settling effect doesn't wipe a newer retry's pending source.
     const dispatchedRetrySourceKeys = retryingSourceKeys
     void fetchWorkItemsAcrossRepos(repoArgs, githubPerRepoPageLimit, githubPageSize, q, {
-      ...deriveTaskPageGitHubWorkItemsFetchOptions(forcedFetch, shouldProbeOnLanding)
+      ...deriveTaskPageGitHubWorkItemsFetchOptions(forcedFetch, shouldProbeOnLanding),
+      ...(forcedFetch ? { requireComplete: true } : {})
     })
-      .then(({ items, failedCount: failed, githubUnavailable: unavailable }) => {
-        // Why: clear only the dispatch-time snapshot keys so an overlapping retry's newer source isn't wiped.
-        setRetryingSourceKeys((prev) => {
-          if (dispatchedRetrySourceKeys.size === 0) {
-            return prev
-          }
-          const next = new Set(prev)
-          for (const key of dispatchedRetrySourceKeys) {
-            next.delete(key)
-          }
-          return next
-        })
-        if (cancelled) {
-          return
-        }
-        // Why: user hard refresh (force) is design tier-3 — drop confirmed
-        // authority so search can adopt for non-pending families. Pending ops
-        // still overlay. Quiet path must NOT clear authority.
-        if (forcedFetch) {
-          clearTaskPageGitHubConfirmedAuthority()
-        }
-        // Why: best-effort cache re-apply after wholesale list replace (K4).
-        const sourceContextByRepoId = new Map(
-          repoArgs.map((r) => [r.repoId, r.sourceContext] as const)
-        )
-        reapplyPendingTaskPageGitHubMutationsToCache({
+      .then(
+        ({
           items,
-          patchWorkItem: useAppStore.getState().patchWorkItem,
-          sourceContextByRepoId
-        })
-        if (shouldProbeOnLanding) {
-          const replaceFirstPage = shouldReplaceTaskPageItemsAfterRefresh(page0Raw, items)
-          const resetPagination = shouldResetTaskPagePaginationAfterLandingRefresh(page0Raw, items)
-          setPages((current) =>
-            reconcileTaskPagePagesAfterLandingRefresh(current, items).map((page) =>
-              page ? (overlayPendingOnTaskPagePages([page])[0] ?? []) : null
+          failedCount: failed,
+          githubUnavailable: unavailable,
+          requestFailureCount = 0
+        }) => {
+          // Why: clear only the dispatch-time snapshot keys so an overlapping retry's newer source isn't wiped.
+          setRetryingSourceKeys((prev) => {
+            if (dispatchedRetrySourceKeys.size === 0) {
+              return prev
+            }
+            const next = new Set(prev)
+            for (const key of dispatchedRetrySourceKeys) {
+              next.delete(key)
+            }
+            return next
+          })
+          if (cancelled) {
+            return
+          }
+          // Why: user hard refresh (force) is design tier-3 — drop confirmed
+          // authority so search can adopt for non-pending families. Pending ops
+          // still overlay. Quiet path must NOT clear authority.
+          if (
+            forcedFetchAuthorityGeneration !== null &&
+            failed === 0 &&
+            requestFailureCount === 0 &&
+            !unavailable
+          ) {
+            clearTaskPageGitHubAuthorityThroughGeneration(
+              githubWorkItemMutationQueryKey,
+              forcedFetchAuthorityGeneration
             )
+          }
+          // Why: best-effort cache re-apply after wholesale list replace (K4).
+          const sourceContextByRepoId = new Map(
+            repoArgs.map((r) => [r.repoId, r.sourceContext] as const)
           )
-          if (replaceFirstPage || resetPagination) {
+          reapplyPendingTaskPageGitHubMutationsToCache({
+            items,
+            patchWorkItem: useAppStore.getState().patchWorkItem,
+            sourceContextByRepoId
+          })
+          if (shouldProbeOnLanding) {
+            const replaceFirstPage = shouldReplaceTaskPageItemsAfterRefresh(page0Raw, items)
+            const resetPagination = shouldResetTaskPagePaginationAfterLandingRefresh(
+              page0Raw,
+              items
+            )
+            setPages((current) =>
+              reconcileTaskPagePagesAfterLandingRefresh(current, items).map((page) =>
+                page ? (overlayPendingOnTaskPagePages([page])[0] ?? []) : null
+              )
+            )
+            if (replaceFirstPage || resetPagination) {
+              currentPageRef.current = 0
+              setCurrentPage(0)
+            }
+          } else {
+            setPages((previous) => [
+              materializeTaskPageItemList({
+                networkItems: items,
+                previousItems: previous.flatMap((page) => page ?? []),
+                queryKey: githubWorkItemMutationQueryKey
+              })
+            ])
+            currentPageRef.current = 0
             setCurrentPage(0)
           }
-        } else {
-          setPages((previous) => [
-            materializeTaskPageItemList({
-              networkItems: items,
-              previousItems: previous.flatMap((page) => page ?? []),
-              queryKey: githubWorkItemMutationQueryKey
-            })
-          ])
-          setCurrentPage(0)
+          setFailedCount(failed)
+          setGithubUnavailable(unavailable)
+          setTasksLoading(false)
+          setTasksRefreshing(false)
+          setTasksFiltering(false)
         }
-        setFailedCount(failed)
-        setGithubUnavailable(unavailable)
-        setTasksLoading(false)
-        setTasksRefreshing(false)
-        setTasksFiltering(false)
-      })
+      )
       .catch((err) => {
         // Why: fetchWorkItemsAcrossRepos swallows per-repo failures, so a reject here is IPC/programmer error — surface it.
         // Why: clear only the dispatch-time snapshot keys so an overlapping retry's newer source isn't wiped.
@@ -6671,6 +6807,15 @@ export default function TaskPage(): React.JSX.Element {
   // shared quietState (inFlight/trailingQueued), so a nonce-triggered re-render
   // must NOT cancel the in-flight run's trailing bookkeeping.
   const quietRevalidateMountedRef = useMountedRef()
+  const quietRevalidateOwnerRef = useRef<object>({})
+  const quietRevalidateScopeRef = useRef({
+    queryKey: githubWorkItemMutationQueryKey,
+    generation: 0
+  })
+  quietRevalidateScopeRef.current = advanceTaskPageQuietRevalidateScope(
+    quietRevalidateScopeRef.current,
+    githubWorkItemMutationQueryKey
+  )
 
   // Why: dedicated quiet revalidate path (K23) — never tasksFiltering / skeleton,
   // never blanks pages, never bumps taskRefreshNonce. Single-flight with backoff
@@ -6683,15 +6828,53 @@ export default function TaskPage(): React.JSX.Element {
       return
     }
     const quietState = getOrCreateQuietRevalidateState(githubWorkItemMutationQueryKey)
-    // Why: coalesce concurrent quiet requests so lag cannot stack force fetches.
-    if (quietState.inFlight) {
-      quietState.trailingQueued = true
+    const loadedItemKeys = new Set(
+      pagesRef.current.flatMap((page) =>
+        (page ?? []).map((item) => taskPageGitHubItemKey(item.repoId, item.id))
+      )
+    )
+    clearTaskPageGitHubAuthorityAbsentFromLoadedItems(loadedItemKeys)
+    if (getTaskPageGitHubConfirmedAuthorityItemKeys().size === 0) {
       return
     }
-    quietState.inFlight = true
-    quietState.trailingQueued = false
+    const quietRunGeneration = beginTaskPageQuietRevalidateRun(
+      quietState,
+      quietRevalidateOwnerRef.current
+    )
+    if (quietRunGeneration === null) {
+      return
+    }
     quietState.fetchStartedAtGeneration = quietState.dirtyGeneration
+    const scopeGeneration = quietRevalidateScopeRef.current.generation
+    const hardRefreshEpoch = hardRefreshEpochRef.current
+    const isCurrentQueryScope = (): boolean =>
+      isTaskPageQuietRevalidateScopeCurrent(
+        quietRevalidateScopeRef.current,
+        githubWorkItemMutationQueryKey,
+        scopeGeneration
+      )
+    const isCurrentScope = (): boolean =>
+      isTaskPageQuietRevalidateRunCurrent(
+        quietRevalidateScopeRef.current,
+        githubWorkItemMutationQueryKey,
+        scopeGeneration,
+        hardRefreshEpoch,
+        hardRefreshEpochRef.current
+      )
     const q = stripRepoQualifiers(appliedTaskSearch.trim())
+    const authorityItemKeys = getTaskPageGitHubRevalidatableAuthorityItemKeys(
+      githubWorkItemMutationQueryKey
+    )
+    const authorityPage = pages.findIndex((page) =>
+      page?.some((item) => authorityItemKeys.has(taskPageGitHubItemKey(item.repoId, item.id)))
+    )
+    const quietPage = authorityPage >= 0 ? authorityPage : currentPage
+    const visiblePage = currentPage > quietPage ? currentPage : undefined
+    const pageItemKeys = (page: number): Set<string> =>
+      new Set((pages[page] ?? []).map((item) => taskPageGitHubItemKey(item.repoId, item.id)))
+    const authorityPageItemKeys = pageItemKeys(quietPage)
+    const visiblePageItemKeys = visiblePage === undefined ? undefined : pageItemKeys(visiblePage)
+    const revalidatedItemKeys = new Set([...authorityPageItemKeys, ...(visiblePageItemKeys ?? [])])
     const repoArgs = selectedRepos.map((r) => ({
       repoId: r.id,
       path: r.path,
@@ -6699,44 +6882,148 @@ export default function TaskPage(): React.JSX.Element {
       sourceContext: getTaskPageRepoSourceContext(r, 'github')
     }))
     const sourceContextByRepoId = new Map(repoArgs.map((r) => [r.repoId, r.sourceContext] as const))
-    void fetchWorkItemsAcrossRepos(repoArgs, PER_REPO_FETCH_LIMIT, CROSS_REPO_DISPLAY_LIMIT, q, {
-      force: true,
-      noCache: true
-    })
-      .then(async ({ items }) => {
+    const fetchQuietPage = (page: number): Promise<GitHubWorkItem[]> =>
+      page === 0
+        ? fetchWorkItemsAcrossRepos(repoArgs, githubPerRepoPageLimit, githubPageSize, q, {
+            force: true,
+            noCache: true,
+            requireComplete: true,
+            allowStaleFallback: false
+          }).then((result) => {
+            if (result.failedCount > 0 || result.githubUnavailable) {
+              throw new Error('GitHub quiet revalidate did not receive a fresh complete result.')
+            }
+            return result.items
+          })
+        : fetchWorkItemsNextPage(
+            repoArgs,
+            githubPerRepoPageLimit,
+            githubPageSize,
+            q,
+            taskPageToGitHubApiPage(page),
+            { noCache: true, requireComplete: true }
+          ).then((result) => {
+            if (result.failedCount > 0 || result.errorTypes.length > 0) {
+              throw new Error('GitHub quiet revalidate did not receive a complete page result.')
+            }
+            return result.items
+          })
+    const quietFetch = Promise.all([
+      fetchQuietPage(quietPage),
+      ...(visiblePage === undefined ? [] : [fetchQuietPage(visiblePage)])
+    ]).then(([authorityItems, visibleItems]) => ({ authorityItems, visibleItems }))
+    let networkRetryDelay: number | null = null
+    void quietFetch
+      .then(async ({ authorityItems, visibleItems }) => {
         // Why: skip renderer state writes after unmount, but still let .finally
         // settle the shared quietState so a queued trailing is never stranded.
-        if (!quietRevalidateMountedRef.current) {
+        if (!quietRevalidateMountedRef.current || !isCurrentScope()) {
           return
         }
+        let fetchedVisiblePage = visiblePage
+        let fetchedVisibleItems = visibleItems
+        let fetchedVisiblePageItemKeys = visiblePageItemKeys
+        const latestVisiblePage =
+          currentPageRef.current > quietPage ? currentPageRef.current : undefined
+        if (latestVisiblePage !== undefined && latestVisiblePage !== fetchedVisiblePage) {
+          fetchedVisiblePage = latestVisiblePage
+          const latestVisiblePageItemKeys = new Set(
+            (pagesRef.current[latestVisiblePage] ?? []).map((item) =>
+              taskPageGitHubItemKey(item.repoId, item.id)
+            )
+          )
+          fetchedVisiblePageItemKeys = latestVisiblePageItemKeys
+          fetchedVisibleItems = await fetchQuietPage(latestVisiblePage)
+          for (const itemKey of latestVisiblePageItemKeys) {
+            revalidatedItemKeys.add(itemKey)
+          }
+          if (!quietRevalidateMountedRef.current || !isCurrentScope()) {
+            return
+          }
+        }
+        const liveVisiblePage =
+          currentPageRef.current > quietPage ? currentPageRef.current : undefined
+        const liveVisibleItems =
+          liveVisiblePage === undefined
+            ? undefined
+            : liveVisiblePage === fetchedVisiblePage
+              ? fetchedVisibleItems
+              : (pagesRef.current[liveVisiblePage] ?? [])
+        const liveVisiblePageItemKeys =
+          liveVisiblePage === undefined
+            ? undefined
+            : new Set(
+                (pagesRef.current[liveVisiblePage] ?? []).map((item) =>
+                  taskPageGitHubItemKey(item.repoId, item.id)
+                )
+              )
+        quietState.networkFailureAttempts = 0
+        const revalidatedItems = [
+          ...authorityItems,
+          ...(visibleItems ?? []),
+          ...(fetchedVisiblePage === visiblePage ? [] : (fetchedVisibleItems ?? []))
+        ]
         reapplyPendingTaskPageGitHubMutationsToCache({
-          items,
+          items: revalidatedItems,
           patchWorkItem: useAppStore.getState().patchWorkItem,
           sourceContextByRepoId
         })
-        const settle = await processTaskPageQuietRevalidateSettle({
+        const settle = processTaskPageQuietRevalidateSettle({
           queryKey: githubWorkItemMutationQueryKey,
-          networkItems: items,
+          networkItems: revalidatedItems,
           patchWorkItem: useAppStore.getState().patchWorkItem,
           sourceContextByRepoId,
-          // Why: TaskPage owns trailing via quietRefreshNonce + backoff below.
-          scheduleTrailing: false
+          revalidatedItemKeys
         })
-        setPages((previous) => [
-          materializeTaskPageItemList({
-            networkItems: items,
-            previousItems: previous.flatMap((page) => page ?? []),
-            queryKey: githubWorkItemMutationQueryKey
-          })
-        ])
-        const lagValues = [...quietState.lagSkipAttempts.values()]
-        const attempts = lagValues.length === 0 ? 0 : Math.max(...lagValues)
+        const networkItemKeys = new Set(
+          authorityItems.map((item) => taskPageGitHubItemKey(item.repoId, item.id))
+        )
+        const visibleNetworkItemKeys = new Set(
+          (liveVisibleItems ?? []).map((item) => taskPageGitHubItemKey(item.repoId, item.id))
+        )
+        const fetchedVisibleNetworkItemKeys = new Set(
+          (fetchedVisibleItems ?? []).map((item) => taskPageGitHubItemKey(item.repoId, item.id))
+        )
+        const membershipChanged =
+          networkItemKeys.size !== authorityPageItemKeys.size ||
+          [...networkItemKeys].some((key) => !authorityPageItemKeys.has(key)) ||
+          (fetchedVisiblePageItemKeys !== undefined &&
+            (fetchedVisibleNetworkItemKeys.size !== fetchedVisiblePageItemKeys.size ||
+              [...fetchedVisibleNetworkItemKeys].some(
+                (key) => !fetchedVisiblePageItemKeys.has(key)
+              ))) ||
+          (liveVisiblePageItemKeys !== undefined &&
+            (visibleNetworkItemKeys.size !== liveVisiblePageItemKeys.size ||
+              [...visibleNetworkItemKeys].some((key) => !liveVisiblePageItemKeys.has(key))))
+        const reconciledPages = reconcileTaskPagePagesAfterQuietRefresh({
+          pages: pagesRef.current,
+          queryKey: githubWorkItemMutationQueryKey,
+          authorityPage: quietPage,
+          authorityItems,
+          membershipChanged,
+          ...(liveVisiblePage === undefined || liveVisibleItems === undefined
+            ? {}
+            : { visiblePage: liveVisiblePage, visibleItems: liveVisibleItems })
+        })
+        pagesRef.current = reconciledPages
+        setPages(reconciledPages)
+        const attempts = getTaskPageQuietRevalidateBackoffAttempt(
+          quietState.lagSkipAttempts.values()
+        )
         const wallExceeded =
           quietState.lastConfirmAt > 0 && Date.now() - quietState.lastConfirmAt > LAG_WALL_BUDGET_MS
         // Why: a new mutation confirmed while this fetch was in flight (queued) is
         // fresh work and must always revalidate — only lag *retries* (needTrailing)
         // are bounded by attempts/wall so a stuck server can't spin forever.
-        const hasQueuedWork = quietState.trailingQueued
+        const hasQueuedWork =
+          quietState.trailingQueued ||
+          [...getTaskPageGitHubRevalidatableAuthorityItemKeys(githubWorkItemMutationQueryKey)].some(
+            (itemKey) =>
+              !revalidatedItemKeys.has(itemKey) &&
+              pages.some((page) =>
+                page?.some((item) => taskPageGitHubItemKey(item.repoId, item.id) === itemKey)
+              )
+          )
         quietState.trailingQueued = false
         const lagTrail = settle.needTrailing && attempts < MAX_LAG_TRAILS && !wallExceeded
         if ((hasQueuedWork || lagTrail) && quietRevalidateMountedRef.current) {
@@ -6744,7 +7031,7 @@ export default function TaskPage(): React.JSX.Element {
             ? 0
             : (LAG_BACKOFF_MS[Math.min(attempts, LAG_BACKOFF_MS.length - 1)] ?? 500)
           window.setTimeout(() => {
-            if (quietRevalidateMountedRef.current) {
+            if (quietRevalidateMountedRef.current && isCurrentScope()) {
               setQuietRefreshNonce((current) => current + 1)
             }
           }, delay)
@@ -6753,15 +7040,44 @@ export default function TaskPage(): React.JSX.Element {
       .catch((err) => {
         // Quiet revalidate soft-fails; keep optimistic/sticky state.
         console.error('Quiet GitHub work-item revalidate failed:', err)
+        if (quietRevalidateMountedRef.current && isCurrentScope()) {
+          quietState.networkFailureAttempts += 1
+          if (quietState.networkFailureAttempts <= 2) {
+            networkRetryDelay =
+              LAG_BACKOFF_MS[quietState.networkFailureAttempts - 1] ?? LAG_BACKOFF_MS[0]
+          }
+        }
       })
       .finally(() => {
-        quietState.inFlight = false
+        if (
+          !finishTaskPageQuietRevalidateRun(
+            quietState,
+            quietRevalidateOwnerRef.current,
+            quietRunGeneration
+          )
+        ) {
+          return
+        }
         // Why: drain a trailing queued from the shared quietState — not the old
         // per-render cancelled flag, which stranded the retry when a new nonce
         // arrived mid-flight. Gate the renderer bump on mount only.
-        if (quietState.trailingQueued && quietRevalidateMountedRef.current) {
+        if (
+          quietState.trailingQueued &&
+          quietRevalidateMountedRef.current &&
+          isCurrentQueryScope()
+        ) {
           quietState.trailingQueued = false
           setQuietRefreshNonce((current) => current + 1)
+        } else if (
+          networkRetryDelay !== null &&
+          quietRevalidateMountedRef.current &&
+          isCurrentScope()
+        ) {
+          window.setTimeout(() => {
+            if (quietRevalidateMountedRef.current && isCurrentScope()) {
+              setQuietRefreshNonce((current) => current + 1)
+            }
+          }, networkRetryDelay)
         }
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -9596,7 +9912,7 @@ export default function TaskPage(): React.JSX.Element {
                 <div
                   // Why: z-40 must beat the rows' sticky left cells (z-20); this stacking context's z sets the whole header's level.
                   className={cn(
-                    'sticky top-0 z-40 grid h-8 gap-3 border-b border-border/50 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground [&>span]:flex [&>span]:items-center',
+                    'sticky top-0 z-40 grid h-8 gap-3 border-b border-border/50 px-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground [&>span]:flex [&>span]:items-center',
                     GITHUB_TASK_HEADER_SURFACE_CLASS,
                     githubTaskGridClass
                   )}
@@ -9824,7 +10140,9 @@ export default function TaskPage(): React.JSX.Element {
                         : null
                       const githubTaskIdPill = (
                         <span
-                          className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 text-muted-foreground"
+                          // Why: no fill — a muted wash on the pill stacks on the
+                          // row's hover:bg-accent and reads as a second hover tint.
+                          className="inline-flex items-center gap-1 rounded-md border border-border/40 px-1.5 py-0.5 text-muted-foreground"
                           aria-label={`${item.type === 'pr' ? (isTaskPageGitHubDraftPR(item) ? 'Draft pull request' : 'Pull request') : 'Issue'} #${item.number}`}
                         >
                           {item.type === 'pr' ? (
@@ -9860,8 +10178,9 @@ export default function TaskPage(): React.JSX.Element {
                             }
                           }}
                           className={cn(
-                            // Why: hover uses bg-accent on both the row and sticky
-                            // ID/Title cells so left columns match the rest of the row.
+                            // Why: sticky ID/Title paint the same bg-background /
+                            // hover:bg-accent pair (with transition-colors) so the
+                            // left columns don't flash a separate hover wash.
                             // Grid stretch (default) keeps sticky fills full-height.
                             'group/github-task-row grid min-h-12 cursor-pointer gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                             githubTaskGridClass
@@ -10175,6 +10494,7 @@ export default function TaskPage(): React.JSX.Element {
                     loadingTarget={loadingTargetPage}
                     onPageChange={(page) => {
                       if (pages[page] !== null && pages[page] !== undefined) {
+                        currentPageRef.current = page
                         setCurrentPage(page)
                       } else {
                         void handleLoadNextPage(page)

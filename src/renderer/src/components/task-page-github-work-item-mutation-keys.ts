@@ -1,7 +1,7 @@
 import type {
   TaskPageGitHubListFamily,
   TaskPageGitHubMutationKey
-} from './task-page-github-work-item-mutation-registry'
+} from './task-page-github-work-item-registry-types'
 
 export function taskPageGitHubItemKey(repoId: string, itemId: string): string {
   return `${repoId}\0${itemId}`

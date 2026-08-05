@@ -1,57 +1,29 @@
-import type { GitHubAssignableUser, GitHubWorkItem } from '../../../shared/types'
-/** Whole-field replace keys (single RPC / single superseding generation). */
-export type TaskPageGitHubWholeField = 'state' | 'merge' | 'autoMerge'
-/**
- * Op-keyed list families: each independent login RPC gets its own generation.
- * Serialized as `assignees:${loginLower}` / `reviewRequests:${loginLower}`.
- */
-export type TaskPageGitHubListFamily = 'assignees' | 'reviewRequests'
-export type TaskPageGitHubMutationKey = {
-  sourceScope: string | null
-  repoId: string
-  itemId: string
-  /** e.g. 'state' | 'merge' | 'autoMerge' | 'assignees:alice' | 'reviewRequests:bob' */
-  opKey: string
-}
-export type PendingListOp = {
-  family: TaskPageGitHubListFamily
-  kind: 'add' | 'remove'
-  /** Length 1 for per-login; N for atomic multi-login batch. */
-  logins: string[]
-  users?: GitHubAssignableUser[]
-}
-export type PendingOp = {
-  generation: number
-  key: TaskPageGitHubMutationKey
-  previous: Partial<GitHubWorkItem>
-  next: Partial<GitHubWorkItem>
-  listOp?: PendingListOp
-  /** Frozen at begin for soft-hide recompute on confirm/rollback (K20). */
-  skipMeQualifiers: boolean
-  startedAt: number
-}
-export type StickyHideEntry = {
-  itemKey: string
-  sourceScope: string | null
-  queryKey: string
-  reason: 'filter_membership'
-}
-export type QuietRevalidateState = {
-  inFlight: boolean
-  /** Set when a quiet run is requested while another is in flight. */
-  trailingQueued: boolean
-  dirtyGeneration: number
-  fetchStartedAtGeneration: number
-  familyDirtyAt: Map<string, number>
-  lagSkipAttempts: Map<string, number>
-  lastConfirmAt: number
-}
+import type { GitHubAssignableUser } from '../../../shared/types'
+import type {
+  PendingOp,
+  StickyHideEntry,
+  TaskPageGitHubListFamily,
+  TaskPageGitHubMutationKey
+} from './task-page-github-work-item-registry-types'
+export type {
+  PendingListOp,
+  PendingOp,
+  StickyHideEntry,
+  TaskPageGitHubListFamily,
+  TaskPageGitHubMutationKey
+} from './task-page-github-work-item-registry-types'
 import {
   serializeTaskPageGitHubMutationKey,
   taskPageGitHubItemKey,
   taskPageGitHubLastConfirmedKey,
   taskPageGitHubSnapshotKey
 } from './task-page-github-work-item-mutation-keys'
+import { clearTaskPageGitHubQuietStates } from './task-page-github-work-item-quiet-state'
+export {
+  getOrCreateQuietRevalidateState,
+  markTaskPageGitHubFamiliesDirty,
+  type QuietRevalidateState
+} from './task-page-github-work-item-quiet-state'
 export {
   serializeTaskPageGitHubMutationKey,
   taskPageGitHubFamilyDirtyKey,
@@ -73,7 +45,6 @@ const lastConfirmedClientValues = new Map<string, unknown>()
 const itemSourceScopeByItemKey = new Map<string, string | null>()
 const stickyHideByItemKey = new Map<string, StickyHideEntry>()
 const softHiddenItemKeys = new Set<string>()
-const quietByQueryKey = new Map<string, QuietRevalidateState>()
 let mutationQueryKey: string | null = null
 export function subscribeTaskPageGitHubMutationRegistry(listener: Listener): () => void {
   listeners.add(listener)
@@ -89,6 +60,19 @@ export function notifyTaskPageGitHubMutationRegistry(): void {
 export function getTaskPageGitHubSoftHiddenItemKeys(): ReadonlySet<string> {
   return softHiddenItemKeys
 }
+export function getTaskPageGitHubConfirmedAuthorityItemKeys(): ReadonlySet<string> {
+  const keys = new Set<string>()
+  for (const itemKey of itemSourceScopeByItemKey.keys()) {
+    const separator = itemKey.indexOf('\0')
+    if (
+      separator >= 0 &&
+      hasConfirmedAuthorityForItem(itemKey.slice(0, separator), itemKey.slice(separator + 1))
+    ) {
+      keys.add(itemKey)
+    }
+  }
+  return keys
+}
 /**
  * Drop confirmed-client authority (not in-flight pending). Used when the user
  * hard-refreshes so search can adopt for non-pending families (design tier 3).
@@ -98,7 +82,6 @@ export function clearTaskPageGitHubConfirmedAuthority(): void {
   lastConfirmedClientValues.clear()
   itemSourceScopeByItemKey.clear()
 }
-
 /**
  * Sticky hides + confirmed authority are query-scoped. Changing query/repo set
  * clears them so a new filter does not inherit membership exits / lastConfirmed
@@ -118,13 +101,19 @@ export function setTaskPageGitHubMutationQueryKey(queryKey: string): void {
   // per queryKey/opKey over a session. A new query starts fresh, so drop the old
   // quiet states and any generation counters with no in-flight pending op (keys
   // with a live op must keep their counter so staleness detection stays valid).
-  quietByQueryKey.clear()
+  clearTaskPageGitHubQuietStates()
   for (const serialized of generations.keys()) {
     if (!pendingByKey.has(serialized)) {
       generations.delete(serialized)
     }
   }
   notifyTaskPageGitHubMutationRegistry()
+}
+export function isTaskPageGitHubMutationQueryKeyCurrent(queryKey: string): boolean {
+  return mutationQueryKey === queryKey
+}
+export function getTaskPageGitHubMutationQueryKey(): string | null {
+  return mutationQueryKey
 }
 export function getPendingTaskPageGitHubOp(key: TaskPageGitHubMutationKey): PendingOp | undefined {
   return pendingByKey.get(serializeTaskPageGitHubMutationKey(key))
@@ -237,6 +226,14 @@ export function setConfirmedListSnapshot(
   rememberItemSourceScope(repoId, itemId, sourceScope)
   confirmedSnapshots.set(taskPageGitHubSnapshotKey(sourceScope, repoId, itemId, family), [...users])
 }
+export function deleteConfirmedListSnapshot(
+  sourceScope: string | null,
+  repoId: string,
+  itemId: string,
+  family: TaskPageGitHubListFamily
+): void {
+  confirmedSnapshots.delete(taskPageGitHubSnapshotKey(sourceScope, repoId, itemId, family))
+}
 export function getLastConfirmedClientValue(
   sourceScope: string | null,
   repoId: string,
@@ -260,6 +257,23 @@ export function setLastConfirmedClientValue(
     value
   )
 }
+export function deleteLastConfirmedClientValue(
+  sourceScope: string | null,
+  repoId: string,
+  itemId: string,
+  family: string
+): void {
+  lastConfirmedClientValues.delete(
+    taskPageGitHubLastConfirmedKey(sourceScope, repoId, itemId, family)
+  )
+}
+export function clearConfirmedAuthorityForItem(repoId: string, itemId: string): void {
+  const sourceScope = resolveItemSourceScope(repoId, itemId)
+  deleteConfirmedListSnapshot(sourceScope, repoId, itemId, 'assignees')
+  deleteConfirmedListSnapshot(sourceScope, repoId, itemId, 'reviewRequests')
+  deleteLastConfirmedClientValue(sourceScope, repoId, itemId, 'state')
+  deleteLastConfirmedClientValue(sourceScope, repoId, itemId, 'autoMerge')
+}
 export function getStickyHideEntry(itemKey: string): StickyHideEntry | undefined {
   return stickyHideByItemKey.get(itemKey)
 }
@@ -268,9 +282,6 @@ export function setStickyHideEntry(entry: StickyHideEntry): void {
 }
 export function deleteStickyHideEntry(itemKey: string): void {
   stickyHideByItemKey.delete(itemKey)
-}
-export function clearAllStickyHideEntries(): void {
-  stickyHideByItemKey.clear()
 }
 export function getAllStickyHideEntries(): ReadonlyMap<string, StickyHideEntry> {
   return stickyHideByItemKey
@@ -287,22 +298,6 @@ export function updateSoftHiddenItemKey(itemKey: string, hide: boolean): void {
   } else {
     softHiddenItemKeys.delete(itemKey)
   }
-}
-export function getOrCreateQuietRevalidateState(queryKey: string): QuietRevalidateState {
-  let state = quietByQueryKey.get(queryKey)
-  if (!state) {
-    state = {
-      inFlight: false,
-      trailingQueued: false,
-      dirtyGeneration: 0,
-      fetchStartedAtGeneration: 0,
-      familyDirtyAt: new Map(),
-      lagSkipAttempts: new Map(),
-      lastConfirmAt: 0
-    }
-    quietByQueryKey.set(queryKey, state)
-  }
-  return state
 }
 export function gcStickyHidesAbsentFromPages(
   pageItemKeys: ReadonlySet<string>,
@@ -327,7 +322,7 @@ export function resetTaskPageGitHubMutationRegistryForTests(): void {
   itemSourceScopeByItemKey.clear()
   stickyHideByItemKey.clear()
   softHiddenItemKeys.clear()
-  quietByQueryKey.clear()
+  clearTaskPageGitHubQuietStates()
   mutationQueryKey = null
   listeners.clear()
 }

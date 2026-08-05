@@ -10,8 +10,8 @@ import {
   getLastConfirmedClientValue,
   getOrCreateQuietRevalidateState,
   listPendingTaskPageGitHubOpsForItem,
-  setConfirmedListSnapshot,
-  setLastConfirmedClientValue,
+  deleteConfirmedListSnapshot,
+  deleteLastConfirmedClientValue,
   taskPageGitHubFamilyDirtyKey,
   taskPageGitHubItemKey
 } from './task-page-github-work-item-mutation-registry'
@@ -58,7 +58,8 @@ export function adoptQuietSearchFieldsForItem(args: {
     family: string,
     adopt: () => void,
     matches: () => boolean,
-    hasClientAuthority: () => boolean
+    hasClientAuthority: () => boolean,
+    releaseClientAuthority: () => void
   ): void => {
     if (hasPendingForFamily(args.sourceScope, args.item.repoId, args.item.id, family)) {
       return
@@ -68,7 +69,8 @@ export function adoptQuietSearchFieldsForItem(args: {
       needTrailing = true
       return
     }
-    if (hasClientAuthority() && !matches()) {
+    const hasAuthority = hasClientAuthority()
+    if (hasAuthority && !matches()) {
       const lagKey = taskPageGitHubFamilyDirtyKey(itemKey, family)
       const attempts = (state.lagSkipAttempts.get(lagKey) ?? 0) + 1
       state.lagSkipAttempts.set(lagKey, attempts)
@@ -79,10 +81,11 @@ export function adoptQuietSearchFieldsForItem(args: {
       // K21: never force-accept lagging search.
       return
     }
-    if (!hasClientAuthority() || matches()) {
-      adopt()
-      state.lagSkipAttempts.delete(taskPageGitHubFamilyDirtyKey(itemKey, family))
+    adopt()
+    if (hasAuthority) {
+      releaseClientAuthority()
     }
+    state.lagSkipAttempts.delete(taskPageGitHubFamilyDirtyKey(itemKey, family))
   }
   tryFamily(
     'state',
@@ -90,13 +93,6 @@ export function adoptQuietSearchFieldsForItem(args: {
       args.patchWorkItem(args.item.id, { state: args.serverItem.state }, args.item.repoId, {
         sourceContext: args.sourceContext
       })
-      setLastConfirmedClientValue(
-        args.sourceScope,
-        args.item.repoId,
-        args.item.id,
-        'state',
-        args.serverItem.state
-      )
     },
     () => {
       const last = getLastConfirmedClientValue(
@@ -109,7 +105,8 @@ export function adoptQuietSearchFieldsForItem(args: {
     },
     () =>
       getLastConfirmedClientValue(args.sourceScope, args.item.repoId, args.item.id, 'state') !==
-      undefined
+      undefined,
+    () => deleteLastConfirmedClientValue(args.sourceScope, args.item.repoId, args.item.id, 'state')
   )
   tryFamily(
     'autoMerge',
@@ -119,13 +116,6 @@ export function adoptQuietSearchFieldsForItem(args: {
         { autoMergeEnabled: args.serverItem.autoMergeEnabled },
         args.item.repoId,
         { sourceContext: args.sourceContext }
-      )
-      setLastConfirmedClientValue(
-        args.sourceScope,
-        args.item.repoId,
-        args.item.id,
-        'autoMerge',
-        args.serverItem.autoMergeEnabled
       )
     },
     () => {
@@ -139,25 +129,20 @@ export function adoptQuietSearchFieldsForItem(args: {
     },
     () =>
       getLastConfirmedClientValue(args.sourceScope, args.item.repoId, args.item.id, 'autoMerge') !==
-      undefined
+      undefined,
+    () =>
+      deleteLastConfirmedClientValue(args.sourceScope, args.item.repoId, args.item.id, 'autoMerge')
   )
   for (const family of ['assignees', 'reviewRequests'] as const) {
+    const serverListValue =
+      family === 'assignees' ? args.serverItem.assignees : args.serverItem.reviewRequests
+    if (serverListValue === undefined) {
+      continue
+    }
     tryFamily(
       family,
       () => {
-        const serverList =
-          family === 'assignees'
-            ? freezeTaskPageGitHubUsers(args.serverItem.assignees ?? [])
-            : freezeTaskPageGitHubUsers(args.serverItem.reviewRequests ?? [])
-        // Why: list authority lives in confirmedSnapshots; lastConfirmedClientValue
-        // is scalar-only (state/autoMerge), so no list write here.
-        setConfirmedListSnapshot(
-          args.sourceScope,
-          args.item.repoId,
-          args.item.id,
-          family,
-          serverList
-        )
+        const serverList = freezeTaskPageGitHubUsers(serverListValue)
         args.patchWorkItem(
           args.item.id,
           family === 'assignees' ? { assignees: serverList } : { reviewRequests: serverList },
@@ -175,13 +160,12 @@ export function adoptQuietSearchFieldsForItem(args: {
         if (!snapshot) {
           return true
         }
-        const serverList =
-          family === 'assignees' ? args.serverItem.assignees : args.serverItem.reviewRequests
-        return loginSetsEqual(loginSetOfUsers(snapshot), loginSetOfUsers(serverList))
+        return loginSetsEqual(loginSetOfUsers(snapshot), loginSetOfUsers(serverListValue))
       },
       () =>
         getConfirmedListSnapshot(args.sourceScope, args.item.repoId, args.item.id, family) !==
-        undefined
+        undefined,
+      () => deleteConfirmedListSnapshot(args.sourceScope, args.item.repoId, args.item.id, family)
     )
   }
   return { needTrailing }

@@ -12,7 +12,8 @@ import {
   rollbackTaskPageGitHubWorkItemMutation,
   settleQuietSearchRevalidate,
   reapplyPendingTaskPageGitHubMutationsToCache,
-  clearTaskPageGitHubConfirmedAuthority
+  clearTaskPageGitHubConfirmedAuthority,
+  getTaskPageGitHubStickyHideForTests
 } from './task-page-github-work-item-mutations'
 import {
   getConfirmedListSnapshot,
@@ -22,7 +23,6 @@ import {
   resetTaskPageGitHubMutationRegistryForTests,
   taskPageGitHubItemKey
 } from './task-page-github-work-item-mutation-registry'
-import { getTaskPageGitHubStickyHideForTests } from './task-page-github-work-item-mutations'
 
 function query(overrides: Partial<ParsedTaskQuery> = {}): ParsedTaskQuery {
   return {
@@ -194,8 +194,8 @@ describe('TaskPage GitHub work item mutations', () => {
     ).toEqual([])
   })
 
-  it('adopt matching server list updates confirmedSnapshot; next begin keeps carol', () => {
-    const { patchWorkItem } = createPatchRecorder()
+  it('matching server list releases authority; next begin keeps server metadata', () => {
+    const { patches, patchWorkItem } = createPatchRecorder()
     // Seed confirmed snapshot [alice, carol] via sequential confirms.
     const empty = item({ assignees: [] })
     const addAlice = beginTaskPageGitHubWorkItemMutation({
@@ -242,7 +242,6 @@ describe('TaskPage GitHub work item mutations', () => {
       scheduleQuiet: false
     })
 
-    // Matching S=R search adopt freezes richer server list into snapshot (K21).
     const server = item({
       assignees: [
         { login: 'alice', name: 'Alice', avatarUrl: 'a2' },
@@ -261,8 +260,12 @@ describe('TaskPage GitHub work item mutations', () => {
     })
 
     const snap = getConfirmedListSnapshot(null, 'repo-1', 'issue:1', 'assignees')
-    expect(snap?.map((u) => u.login.toLowerCase()).sort()).toEqual(['alice', 'carol'])
-    expect(snap?.find((u) => u.login.toLowerCase() === 'carol')?.avatarUrl).toBe('c2')
+    expect(snap).toBeUndefined()
+    expect(
+      patches
+        .findLast((entry) => entry.patch.assignees !== undefined)
+        ?.patch.assignees?.find((u) => u.login === 'carol')?.avatarUrl
+    ).toBe('c2')
 
     beginTaskPageGitHubWorkItemMutation({
       item: server,
