@@ -3,7 +3,10 @@ import { rmSync } from 'node:fs'
 import type { Page } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { waitForSessionReady } from './helpers/store'
-import { createIsolatedStagedLocaleDiffRepo } from './large-diff-repro-fixtures'
+import {
+  createIsolatedManyFileStagedDiffRepo,
+  createIsolatedStagedLocaleDiffRepo
+} from './large-diff-repro-fixtures'
 
 async function addAndActivateRepo(orcaPage: Page, repoPath: string): Promise<string> {
   const repoId = await orcaPage.evaluate(async (pathToRepo: string) => {
@@ -157,6 +160,138 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
 
       console.log(`invalidation measurement ${JSON.stringify(measurement)}`)
       expect(measurement.maxLagMs).toBeLessThan(1_000)
+    } finally {
+      rmSync(fixture.repoPath, { recursive: true, force: true })
+    }
+  })
+
+  test('a rebase-style burst of external file changes keeps the diff responsive and loaded', async ({
+    orcaPage
+  }) => {
+    test.setTimeout(240_000)
+    await waitForSessionReady(orcaPage)
+    // Why: few but very large sections — the reported freeze is a *large* diff view,
+    // where every remount re-runs Monaco's diff over thousands of changed lines.
+    const fixture = createIsolatedManyFileStagedDiffRepo(8, 15_000)
+
+    try {
+      const worktreeId = await addAndActivateRepo(orcaPage, fixture.repoPath)
+
+      const opened = await orcaPage.evaluate(
+        async ({ wId, repoPath }) => {
+          const store = window.__store
+          if (!store) {
+            throw new Error('window.__store is not available')
+          }
+          const status = await window.api.git.status({ worktreePath: repoPath })
+          store.getState().setGitStatus(wId, status)
+          const staged = status.entries.filter((entry) => entry.area === 'staged')
+          store.getState().openAllDiffs(wId, repoPath, undefined, 'staged', staged)
+
+          const startedAt = performance.now()
+          let editorCount = 0
+          while (performance.now() - startedAt < 30_000) {
+            await new Promise((resolve) => window.setTimeout(resolve, 50))
+            editorCount = document.querySelectorAll('.monaco-diff-editor').length
+            if (editorCount > 0) {
+              await new Promise((resolve) => window.setTimeout(resolve, 1_500))
+              editorCount = document.querySelectorAll('.monaco-diff-editor').length
+              break
+            }
+          }
+          return { stagedCount: staged.length, editorCount }
+        },
+        { wId: worktreeId, repoPath: fixture.repoPath }
+      )
+      console.log(`staged diff opened for burst ${JSON.stringify(opened)}`)
+      expect(opened.editorCount).toBeGreaterThan(0)
+
+      const measurement = await orcaPage.evaluate(
+        async ({ wId, repoPath, relativePaths }) => {
+          const intervalMs = 50
+          type LagWindow = { maxLagMs: number; p95LagMs: number; sampleCount: number }
+          const startLagMeter = (): (() => LagWindow) => {
+            const samples: number[] = []
+            let last = performance.now()
+            let maxLagMs = 0
+            const timer = window.setInterval(() => {
+              const now = performance.now()
+              maxLagMs = Math.max(maxLagMs, Math.max(0, now - last - intervalMs))
+              samples.push(Math.max(0, now - last - intervalMs))
+              last = now
+            }, intervalMs)
+            return () => {
+              window.clearInterval(timer)
+              const sorted = [...samples].sort((a, b) => a - b)
+              return {
+                maxLagMs,
+                p95LagMs: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
+                sampleCount: samples.length
+              }
+            }
+          }
+
+          // Why: opening 8 huge Monaco diffs is itself expensive. Wait for the main thread to go
+          // quiet first, so the burst window reports invalidation cost and not open cost.
+          const stopSettle = startLagMeter()
+          const settleStartedAt = performance.now()
+          let settleWindows = 0
+          let quietWindows = 0
+          while (performance.now() - settleStartedAt < 60_000 && quietWindows < 2) {
+            const stopWindow = startLagMeter()
+            await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+            settleWindows += 1
+            quietWindows = stopWindow().maxLagMs < 100 ? quietWindows + 1 : 0
+          }
+          const settle = { ...stopSettle(), settleWindows }
+
+          const stopBurst = startLagMeter()
+          const startedAt = performance.now()
+          try {
+            // Why: a rebase rewrites the worktree in bursts. The watcher debounces per
+            // path, so each notification lands in its OWN task — never batched together.
+            for (let round = 0; round < 3; round += 1) {
+              for (const relativePath of relativePaths) {
+                window.setTimeout(() => {
+                  window.dispatchEvent(
+                    new CustomEvent('orca:editor-external-file-change', {
+                      detail: { worktreeId: wId, worktreePath: repoPath, relativePath }
+                    })
+                  )
+                }, 0)
+              }
+              await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 15_000))
+          } finally {
+            // no-op: burst meter stopped below so its window covers the awaits above
+          }
+          const burst = stopBurst()
+
+          const rows = Array.from(
+            document.querySelectorAll('[data-combined-diff-section-row]')
+          ) as HTMLElement[]
+          return {
+            elapsedMs: performance.now() - startedAt,
+            settle,
+            burst,
+            editorCount: document.querySelectorAll('.monaco-diff-editor').length,
+            sectionRowCount: rows.length,
+            stuckLoadingRowCount: rows.filter((row) => row.textContent?.includes('Loading diff'))
+              .length
+          }
+        },
+        {
+          wId: worktreeId,
+          repoPath: fixture.repoPath,
+          relativePaths: fixture.relativePaths
+        }
+      )
+
+      console.log(`external-change burst measurement ${JSON.stringify(measurement)}`)
+      expect(measurement.stuckLoadingRowCount).toBe(0)
+      expect(measurement.editorCount).toBeGreaterThan(0)
+      expect(measurement.burst.maxLagMs).toBeLessThan(1_000)
     } finally {
       rmSync(fixture.repoPath, { recursive: true, force: true })
     }
