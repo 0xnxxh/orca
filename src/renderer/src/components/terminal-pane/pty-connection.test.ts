@@ -20638,6 +20638,57 @@ describe('connectPanePty', () => {
     expect(api.pty.signal).toHaveBeenCalledWith('leaf-session', 'SIGWINCH')
   })
 
+  it('paints a parked SSH model before the remote connection settles', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const sshPtyId = toAppSshPtyId('conn-1', 'relay-pty-1')
+    const sshConnect = createDeferred<SshConnectionState | null>()
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    vi.mocked(window.api.ssh.connect).mockReturnValue(sshConnect.promise)
+    vi.mocked(window.api.pty.getMainBufferSnapshot).mockResolvedValue({
+      data: 'PARKED-SSH-PAINTED-WITHOUT-NETWORK\r\n',
+      cols: 101,
+      rows: 31,
+      seq: 123,
+      source: 'headless'
+    })
+    await parkTabForReveal('tab-1', sshPtyId)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: sshPtyId }] },
+      ptyIdsByTabId: { 'tab-1': [sshPtyId] },
+      repos: [{ id: 'repo1', connectionId: 'conn-1' }],
+      sshConnectionStates: new Map([['conn-1', { status: 'disconnected' }]]),
+      deferredSshReconnectTargets: ['conn-1'],
+      deferredSshSessionIdsByTabId: { 'tab-1': sshPtyId }
+    }
+
+    const pane = createPane(1)
+    const { writes } = captureCallbackTerminalWrites(pane)
+    const binding = connectPanePty(
+      pane as never,
+      createManager(1) as never,
+      createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId }
+      }) as never
+    )
+    await flushAsyncTicks(20)
+
+    expect(window.api.ssh.connect).toHaveBeenCalledWith({ targetId: 'conn-1' })
+    expect(window.api.pty.getMainBufferSnapshot).toHaveBeenCalledOnce()
+    expect(writes.join('')).toContain('PARKED-SSH-PAINTED-WITHOUT-NETWORK')
+    expect(transport.connect).not.toHaveBeenCalled()
+
+    binding.dispose()
+    sshConnect.resolve({
+      targetId: 'conn-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+  })
+
   it('restores configured paired scrollback after an ordinary park reveal', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const remotePtyId = 'remote:env-1@@terminal-1'
