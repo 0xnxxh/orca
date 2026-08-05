@@ -10,10 +10,12 @@ export type CodexSessionBackfillAuditWriter = (record: Record<string, unknown>) 
 
 export type CodexSessionBackfillAuditCoverage = {
   fileEventIds: Set<string>
+  diagnosticEventIds: Set<string>
   hasRunSummary: boolean
 }
 
 const HEAL_AUDIT_ACTIONS = new Set(['hardlink', 'copy', 'existing'])
+const DIAGNOSTIC_AUDIT_ACTIONS = new Set(['copy-unsupported', 'failed'])
 
 export function createCodexSessionBackfillAuditWriter(
   auditLogPath: string
@@ -63,6 +65,7 @@ export async function readCodexSessionBackfillAuditCoverage(
 ): Promise<CodexSessionBackfillAuditCoverage> {
   const coverage: CodexSessionBackfillAuditCoverage = {
     fileEventIds: new Set<string>(),
+    diagnosticEventIds: new Set<string>(),
     hasRunSummary: false
   }
   const input = createReadStream(auditLogPath, { encoding: 'utf-8' })
@@ -82,6 +85,13 @@ export async function readCodexSessionBackfillAuditCoverage(
           typeof record.fileEventId === 'string'
         ) {
           coverage.fileEventIds.add(record.fileEventId)
+        }
+        if (
+          typeof record.action === 'string' &&
+          DIAGNOSTIC_AUDIT_ACTIONS.has(record.action) &&
+          typeof record.diagnosticEventId === 'string'
+        ) {
+          coverage.diagnosticEventIds.add(record.diagnosticEventId)
         }
       } catch {
         // Torn audit tails are quarantined by the writer's leading newline.
@@ -105,6 +115,48 @@ export function createCodexSessionBackfillFileEventId(targetPath: string, stat: 
     .update('\0')
     .update(stableFileIdentity)
     .digest('hex')
+}
+
+export function createCodexSessionBackfillDiagnosticEventId(args: {
+  action: 'copy-unsupported' | 'failed'
+  source: string
+  target: string
+  sourceStat: Stats | null
+  errorCode?: string
+  linkErrorCode?: string
+}): string {
+  const sourceIdentity = args.sourceStat
+    ? [
+        args.sourceStat.dev,
+        args.sourceStat.ino,
+        args.sourceStat.birthtimeMs,
+        args.sourceStat.size,
+        args.sourceStat.mtimeMs,
+        args.sourceStat.ctimeMs
+      ].join('\0')
+    : 'unavailable'
+  return createHash('sha256')
+    .update(args.action)
+    .update('\0')
+    .update(normalizeRuntimePathForComparison(args.source))
+    .update('\0')
+    .update(normalizeRuntimePathForComparison(args.target))
+    .update('\0')
+    .update(sourceIdentity)
+    .update('\0')
+    .update(args.errorCode ?? '')
+    .update('\0')
+    .update(args.linkErrorCode ?? '')
+    .digest('hex')
+}
+
+export function describeCodexSessionBackfillErrorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return typeof code === 'string' && code
+    ? code
+    : error instanceof Error
+      ? error.name
+      : typeof error
 }
 
 export async function appendCodexSessionHealAuditRecord(

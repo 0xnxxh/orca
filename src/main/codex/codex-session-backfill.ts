@@ -10,6 +10,7 @@ import {
   readCodexSessionTargetStat,
   type CodexSessionBackfillAuditPass
 } from './codex-session-backfill-audit-pass'
+import { describeCodexSessionBackfillErrorCode } from './codex-session-backfill-audit'
 import {
   copySessionFileWithoutOverwrite,
   isAtomicNoReplaceUnsupportedError
@@ -300,21 +301,31 @@ async function backfillOneManagedSessionFile(
       }
       if (isAtomicNoReplaceUnsupportedError(copyError)) {
         summary.skippedUnsupportedFilesystemFiles += 1
-        await auditPass.appendRecord({
-          action: 'copy-unsupported',
-          source: managedSessionFilePath,
-          target: systemSessionFilePath
-        })
+        await auditPass.recordDiagnostic(
+          {
+            action: 'copy-unsupported',
+            source: managedSessionFilePath,
+            target: systemSessionFilePath,
+            errorCode: describeCodexSessionBackfillErrorCode(copyError),
+            linkErrorCode: describeCodexSessionBackfillErrorCode(linkError)
+          },
+          await readCodexSessionTargetStat(managedSessionFilePath)
+        )
         return
       }
       summary.failedFiles += 1
-      await auditPass.appendRecord({
-        action: 'failed',
-        source: managedSessionFilePath,
-        target: systemSessionFilePath,
-        error: describeError(copyError),
-        linkError: describeError(linkError)
-      })
+      await auditPass.recordDiagnostic(
+        {
+          action: 'failed',
+          source: managedSessionFilePath,
+          target: systemSessionFilePath,
+          error: describeError(copyError),
+          linkError: describeError(linkError),
+          errorCode: describeCodexSessionBackfillErrorCode(copyError),
+          linkErrorCode: describeCodexSessionBackfillErrorCode(linkError)
+        },
+        await readCodexSessionTargetStat(managedSessionFilePath)
+      )
     }
   }
 }

@@ -3,6 +3,7 @@ import { lstat } from 'node:fs/promises'
 import {
   appendCodexSessionHealAuditRecord,
   createCodexSessionBackfillAuditWriter,
+  createCodexSessionBackfillDiagnosticEventId,
   createCodexSessionBackfillFileEventId,
   readCodexSessionBackfillAuditCoverage,
   recordExistingCodexSessionForHeal,
@@ -23,6 +24,18 @@ export type CodexSessionBackfillAuditPass = {
     action: 'hardlink' | 'copy',
     source: string,
     target: string
+  ): Promise<void>
+  recordDiagnostic(
+    record: {
+      action: 'copy-unsupported' | 'failed'
+      source: string
+      target: string
+      error?: string
+      linkError?: string
+      errorCode?: string
+      linkErrorCode?: string
+    },
+    sourceStat: Stats | null
   ): Promise<void>
   finish(summary: CodexSessionBackfillSummary): Promise<void>
 }
@@ -73,6 +86,18 @@ export async function createCodexSessionBackfillAuditPass(
         if (fileEventId) {
           coverage.fileEventIds.add(fileEventId)
         }
+      }
+    },
+    async recordDiagnostic(record, sourceStat): Promise<void> {
+      const diagnosticEventId = createCodexSessionBackfillDiagnosticEventId({
+        ...record,
+        sourceStat
+      })
+      if (coverage.diagnosticEventIds.has(diagnosticEventId)) {
+        return
+      }
+      if (await appendRecord({ ...record, diagnosticEventId })) {
+        coverage.diagnosticEventIds.add(diagnosticEventId)
       }
     },
     async finish(summary): Promise<void> {

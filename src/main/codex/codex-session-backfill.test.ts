@@ -110,7 +110,9 @@ vi.mock('node:fs/promises', async () => {
         // Simulate a copy that fails after opening its destination, which is
         // the dangerous case for resumability rather than a preflight error.
         await actual.writeFile(args[1], 'partial copy\n', 'utf-8')
-        const error = new Error('EACCES: copy disabled for test') as NodeJS.ErrnoException
+        const error = new Error(
+          `EACCES: copy disabled for test, '${String(args[1])}'`
+        ) as NodeJS.ErrnoException
         error.code = 'EACCES'
         throw error
       }
@@ -173,6 +175,7 @@ type BackfillAuditRecord = {
   action: string
   target?: string
   fileEventId?: string
+  diagnosticEventId?: string
 }
 
 function readBackfillAuditRecords(): BackfillAuditRecord[] {
@@ -636,7 +639,59 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(first).toMatchObject({ skippedUnsupportedFilesystemFiles: 1, failedFiles: 0 })
     expect(existsSync(getMarkerPath())).toBe(true)
 
+    const firstAudit = readFileSync(getAuditLogPath(), 'utf-8')
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+    const repeated = await startCodexSessionBackfillInBackground()
+
+    expect(repeated).toMatchObject({ skippedUnsupportedFilesystemFiles: 1, failedFiles: 0 })
+    expect(readFileSync(getAuditLogPath(), 'utf-8')).toBe(firstAudit)
+
     expect(await startCodexSessionBackfillInBackground()).toBeNull()
+  })
+
+  it('keeps repeated unchanged per-file failures audit-stable', async () => {
+    fsMockState.failLink = true
+    fsMockState.failCopy = true
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+
+    const first = await startCodexSessionBackfillInBackground()
+    expect(first).toMatchObject({ failedFiles: 1 })
+    const firstAudit = readFileSync(getAuditLogPath(), 'utf-8')
+
+    const repeated = await startCodexSessionBackfillInBackground()
+
+    expect(repeated).toMatchObject({ failedFiles: 1 })
+    expect(readFileSync(getAuditLogPath(), 'utf-8')).toBe(firstAudit)
+  })
+
+  it('records a new failure event when the source file changes', async () => {
+    fsMockState.failLink = true
+    fsMockState.failCopy = true
+    const relativePath = join('2026', '05', '26', 'rollout-a.jsonl')
+    writeManagedSession(relativePath, '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+
+    writeManagedSession(relativePath, '{"id":"a","changed":true}\n')
+    await startCodexSessionBackfillInBackground()
+
+    const failedRecords = readBackfillAuditRecords().filter((record) => record.action === 'failed')
+    expect(failedRecords).toHaveLength(2)
+    expect(new Set(failedRecords.map((record) => record.diagnosticEventId)).size).toBe(2)
+  })
+
+  it('records a new failure event when the filesystem outcome changes', async () => {
+    fsMockState.failLink = true
+    fsMockState.failCopy = true
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+
+    fsMockState.failCopy = false
+    fsMockState.failInstallLinkTransiently = true
+    await startCodexSessionBackfillInBackground()
+
+    const failedRecords = readBackfillAuditRecords().filter((record) => record.action === 'failed')
+    expect(failedRecords).toHaveLength(2)
+    expect(new Set(failedRecords.map((record) => record.diagnosticEventId)).size).toBe(2)
   })
 
   it('leaves the marker unset when any file fails so the next startup retries', async () => {
