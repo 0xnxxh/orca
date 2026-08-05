@@ -20,7 +20,7 @@ export type MobileSourceControlSection<TEntry extends MobileGitStatusEntry = Mob
     data: TEntry[]
   }
 
-const AREA_ORDER: MobileGitStagingArea[] = ['unstaged', 'untracked', 'staged']
+const AREA_ORDER: MobileGitStagingArea[] = ['unstaged', 'staged']
 
 const AREA_TITLES: Record<MobileGitStagingArea, string> = {
   unstaged: t('mobileGitStatus.changes'),
@@ -60,7 +60,13 @@ export function buildMobileSourceControlSections<TEntry extends MobileGitStatusE
   return AREA_ORDER.map((area) => ({
     area,
     title: AREA_TITLES[area],
-    data: entries.filter((entry) => entry.area === area).sort(compareGitStatusEntries)
+    data: entries
+      .filter((entry) =>
+        area === 'unstaged'
+          ? entry.area === 'unstaged' || entry.area === 'untracked'
+          : entry.area === area
+      )
+      .sort(compareGitStatusEntries)
   })).filter((section) => section.data.length > 0)
 }
 

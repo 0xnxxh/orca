@@ -1266,7 +1266,7 @@
   },
   "mobileNativeChatAsk": {
     "next": "Next",
-    "send": "Send answer",
+    "send": "Submit",
     "cancel": "Cancel",
     "type": "Type your answer",
     "other": "Other…",
