@@ -4,12 +4,13 @@ import { link, lstat, mkdir, readFile, readlink, unlink, writeFile } from 'node:
 import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
-const execFileAsync = promisify(execFile)
 const runtimeHostIdentity = `runtime:${randomUUID()}`
 const runtimeProcessIdentity = `runtime:${randomUUID()}`
 let hostIdentityPromise: Promise<string> | undefined
 let bootIdentityPromise: Promise<string | undefined> | undefined
+let selfProcessIdentityPromise: Promise<string | null | undefined> | undefined
 const HOST_TOKEN_PATTERN = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i
+const WINDOWS_PROCESS_IDENTITY_TIMEOUT_MS = 5_000
 
 function getWindowsPowerShellPath(): string {
   return win32.join(
@@ -19,6 +20,10 @@ function getWindowsPowerShellPath(): string {
     'v1.0',
     'powershell.exe'
   )
+}
+
+function getWindowsRegistryPath(): string {
+  return win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe')
 }
 
 function hasCode(error: unknown, code: string): boolean {
@@ -112,17 +117,12 @@ async function readHostIdentity(): Promise<string> {
   }
   if (process.platform === 'win32') {
     try {
-      const { stdout } = await execFileAsync(
-        getWindowsPowerShellPath(),
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          "[string](Get-ItemPropertyValue -Path 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid)"
-        ],
+      const { stdout } = await promisify(execFile)(
+        getWindowsRegistryPath(),
+        ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'],
         { encoding: 'utf8', timeout: 1_000, windowsHide: true }
       )
-      const machineGuid = stdout.trim()
+      const machineGuid = /^\s*MachineGuid\s+REG_\w+\s+(.+?)\s*$/im.exec(stdout)?.[1]
       return machineGuid ? `win32:${machineGuid.toLowerCase()}` : runtimeHostIdentity
     } catch {
       return runtimeHostIdentity
@@ -130,10 +130,14 @@ async function readHostIdentity(): Promise<string> {
   }
   if (process.platform === 'darwin') {
     try {
-      const { stdout } = await execFileAsync('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], {
-        encoding: 'utf8',
-        timeout: 1_000
-      })
+      const { stdout } = await promisify(execFile)(
+        'ioreg',
+        ['-rd1', '-c', 'IOPlatformExpertDevice'],
+        {
+          encoding: 'utf8',
+          timeout: 1_000
+        }
+      )
       const platformId = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(stdout)?.[1]
       return platformId ? `darwin:${platformId}` : runtimeHostIdentity
     } catch {
@@ -155,7 +159,7 @@ export async function readBootIdentity(): Promise<string | undefined> {
 
   if (process.platform === 'darwin') {
     try {
-      const { stdout } = await execFileAsync('sysctl', ['-n', 'kern.bootsessionuuid'], {
+      const { stdout } = await promisify(execFile)('sysctl', ['-n', 'kern.bootsessionuuid'], {
         encoding: 'utf8',
         timeout: 1_000
       })
@@ -188,6 +192,14 @@ export function scopeManagedHookHostIdentity(
 export async function readManagedHookProcessIdentity(
   pid: number
 ): Promise<string | null | undefined> {
+  if (pid === process.pid) {
+    selfProcessIdentityPromise ??= readProcessIdentity(pid)
+    return await selfProcessIdentityPromise
+  }
+  return await readProcessIdentity(pid)
+}
+
+async function readProcessIdentity(pid: number): Promise<string | null | undefined> {
   if (process.platform === 'linux') {
     try {
       const [statLine, pidNamespace, bootIdentity] = await Promise.all([
@@ -209,7 +221,7 @@ export async function readManagedHookProcessIdentity(
 
   if (process.platform === 'win32') {
     try {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await promisify(execFile)(
         getWindowsPowerShellPath(),
         [
           '-NoProfile',
@@ -220,7 +232,7 @@ export async function readManagedHookProcessIdentity(
             `if (!$p) { 'missing'; exit 0 }; ` +
             `[string]([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds()`
         ],
-        { encoding: 'utf8', timeout: 1_000, windowsHide: true }
+        { encoding: 'utf8', timeout: WINDOWS_PROCESS_IDENTITY_TIMEOUT_MS, windowsHide: true }
       )
       const startedAt = stdout.trim()
       return startedAt === 'missing' ? null : startedAt ? `win32:${pid}:${startedAt}` : undefined
@@ -237,7 +249,7 @@ export async function readManagedHookProcessIdentity(
   bootIdentityPromise ??= readBootIdentity()
   const bootIdentity = await bootIdentityPromise
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await promisify(execFile)(
       'ps',
       ['-o', 'lstart=', '-o', 'command=', '-p', String(pid)],
       {

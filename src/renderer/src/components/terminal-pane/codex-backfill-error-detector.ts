@@ -1,8 +1,8 @@
 export const CODEX_BACKFILL_TIMEOUT_SIGNATURE = 'timed out waiting for state db backfill'
 
 export const CODEX_BACKFILL_RECOVERY_NOTICE = [
-  'Codex could not start because its session-history index was interrupted.',
-  'Orca is recovering the index in the background without modifying Codex’s database. Keep Orca open, then retry this pane in a few minutes.'
+  'Codex could not start because its session-history index is still incomplete.',
+  'Keep Orca open for a few minutes, then retry this pane. Orca attempts background recovery for managed local and WSL homes.'
 ].join('\n')
 
 const ANSI_ESCAPE_PATTERN =

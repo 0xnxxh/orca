@@ -71,7 +71,7 @@ async function loadWindowsIdentity() {
   Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
   const execFileAsync = vi.fn(async (_file: string, args: string[]) => ({
     stdout: args.join(' ').includes('MachineGuid')
-      ? 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE\r\n'
+      ? '\r\n    MachineGuid    REG_SZ    AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE\r\n'
       : '1777777777000\r\n'
   }))
   vi.doMock('node:util', () => ({ promisify: () => execFileAsync }))
@@ -193,13 +193,17 @@ describe('managed hook owner identity', () => {
   })
 
   it('uses machine and process creation identities on Windows', async () => {
-    const { identity } = await loadWindowsIdentity()
+    const { identity, execFileAsync } = await loadWindowsIdentity()
 
     await expect(identity.readManagedHookHostIdentity()).resolves.toBe(
       'win32:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     )
-    await expect(identity.readManagedHookProcessIdentity(123)).resolves.toBe(
-      'win32:123:1777777777000'
+    await expect(identity.readManagedHookProcessIdentity(process.pid)).resolves.toBe(
+      `win32:${process.pid}:1777777777000`
     )
+    await expect(identity.readManagedHookProcessIdentity(process.pid)).resolves.toBe(
+      `win32:${process.pid}:1777777777000`
+    )
+    expect(execFileAsync).toHaveBeenCalledTimes(2)
   })
 })
