@@ -321,6 +321,34 @@ describe('terminal.multiplex OutputSpan capability gate', () => {
     await current.dispatchPromise
   })
 
+  it('forces a mobile decision for every opcode in the shared table', () => {
+    // The drift guard. mobile/ is a separate workspace with a hand-copied enum, so
+    // adding an opcode to the shared table changes nothing on the phone and nothing
+    // fails. Each opcode must be classified here on purpose; a new one is neither
+    // "decodable" nor "gated" until someone says which, and this test says so.
+    const decodableByMobile = mobileDecodableOpcodes()
+    // Opcodes a host may never send to a mobile stream unless it negotiated them,
+    // or that only ever travel client -> host.
+    const notSentUnnegotiatedToMobile = new Set<number>([
+      TerminalStreamOpcode.Input,
+      TerminalStreamOpcode.Resize,
+      TerminalStreamOpcode.Subscribe,
+      TerminalStreamOpcode.Unsubscribe,
+      TerminalStreamOpcode.SnapshotRequest,
+      TerminalStreamOpcode.Ack,
+      TerminalStreamOpcode.ClaimViewport,
+      TerminalStreamOpcode.OutputSpan,
+      TerminalStreamOpcode.SetOutputPaused,
+      TerminalStreamOpcode.WriteUnavailable
+    ])
+
+    const unclassified = Object.values(TerminalStreamOpcode)
+      .filter((value): value is number => typeof value === 'number')
+      .filter((opcode) => !decodableByMobile.has(opcode))
+      .filter((opcode) => !notSentUnnegotiatedToMobile.has(opcode))
+    expect(unclassified).toEqual([])
+  })
+
   it('has the shipping desktop multiplexer declare the capability', () => {
     // Guards the other half of the gate: if the renderer stops advertising
     // outputSpan, the host silently downgrades every desktop stream.
