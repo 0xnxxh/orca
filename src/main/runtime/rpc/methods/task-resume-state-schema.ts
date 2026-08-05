@@ -1,6 +1,38 @@
 import { z } from 'zod'
+import { LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH } from '../../../../shared/linear-issue-attribute-filter'
+import {
+  LINEAR_DISPLAY_PROPERTIES,
+  LINEAR_GROUP_BY_OPTIONS,
+  LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
+  LINEAR_ORDER_BY_OPTIONS,
+  LINEAR_VIEW_MODES
+} from '../../../../shared/linear-issue-view-resume-state'
 import type { TaskResumeState as TaskResumeStateType } from '../../../../shared/types'
+import { LinearIssueAttributeFilterSchema } from './linear-issue-attribute-filter-schema'
 import type { AssertNoMissingKeys } from './ui-state-schema-parity'
+
+// Why: built from the shared catalogs and the existing bounded filter schema, so
+// adding a view option cannot leave paired clients rejected by a stale enum.
+const LinearIssueViewResumeState = z
+  .object({
+    viewMode: z.enum(LINEAR_VIEW_MODES),
+    groupBy: z.enum(LINEAR_GROUP_BY_OPTIONS),
+    orderBy: z.enum(LINEAR_ORDER_BY_OPTIONS),
+    displayProperties: z
+      .array(z.enum(LINEAR_DISPLAY_PROPERTIES))
+      .max(LINEAR_DISPLAY_PROPERTIES.length),
+    teamPropertyTouched: z.boolean(),
+    filtersByWorkspaceId: z
+      .record(
+        z.string().min(1).max(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH),
+        LinearIssueAttributeFilterSchema
+      )
+      .refine(
+        (filters) => Object.keys(filters).length <= LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
+        { message: `At most ${LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES} workspace filters` }
+      )
+  })
+  .strict()
 
 /** Tasks page-position state persisted through `ui.set`; mirrors `TaskResumeState`. */
 export const TaskResumeState = z
@@ -21,6 +53,7 @@ export const TaskResumeState = z
       })
       .strict()
       .optional(),
+    linearIssueView: LinearIssueViewResumeState.optional(),
     jiraPreset: z.enum(['assigned', 'reported', 'all', 'done']).optional(),
     jiraQuery: z.string().optional()
   })

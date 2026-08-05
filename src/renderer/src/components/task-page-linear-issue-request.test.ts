@@ -3,6 +3,7 @@ import {
   buildLinearIssueListReadArgs,
   buildLinearIssueListRequestSignature,
   isLinearIssueSearchActive,
+  shouldClearTeamDerivedFacets,
   shouldForceLinearIssueListRead,
   teamDerivedFacetsForPrimaryTeamChange
 } from './task-page-linear-issue-request'
@@ -62,6 +63,51 @@ describe('task-page-linear-issue-request', () => {
         previousFilterSignature: 'a',
         nextFilterSignature: 'a',
         refreshForced: false
+      })
+    ).toBe(false)
+  })
+
+  it('does not force the first read of a session, so a restored filter serves warm cache', () => {
+    expect(
+      shouldForceLinearIssueListRead({
+        previousFilterSignature: null,
+        nextFilterSignature: 'restored',
+        refreshForced: false
+      })
+    ).toBe(false)
+    expect(
+      shouldForceLinearIssueListRead({
+        previousFilterSignature: null,
+        nextFilterSignature: 'restored',
+        refreshForced: true
+      })
+    ).toBe(true)
+  })
+
+  it('clears team-derived facets only when the primary team changes within one workspace', () => {
+    expect(
+      shouldClearTeamDerivedFacets({
+        previous: { workspaceId: 'ws-1', teamId: 'team-a' },
+        next: { workspaceId: 'ws-1', teamId: 'team-b' }
+      })
+    ).toBe(true)
+    // Why: a workspace switch swaps in that workspace's own persisted filter.
+    expect(
+      shouldClearTeamDerivedFacets({
+        previous: { workspaceId: 'ws-1', teamId: 'team-a' },
+        next: { workspaceId: 'ws-2', teamId: 'team-b' }
+      })
+    ).toBe(false)
+    expect(
+      shouldClearTeamDerivedFacets({
+        previous: null,
+        next: { workspaceId: 'ws-1', teamId: 'team-a' }
+      })
+    ).toBe(false)
+    expect(
+      shouldClearTeamDerivedFacets({
+        previous: { workspaceId: 'ws-1', teamId: 'team-a' },
+        next: { workspaceId: 'ws-1', teamId: 'team-a' }
       })
     ).toBe(false)
   })

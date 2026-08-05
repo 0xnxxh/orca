@@ -5,6 +5,12 @@ import { JiraIcon } from '@/components/icons/JiraIcon'
 import { createLocalizedCatalog } from '@/i18n/localized-catalog'
 import { translate } from '@/i18n/i18n'
 import { getTaskPresetQuery } from '@/lib/new-workspace'
+import type {
+  LinearDisplayProperty,
+  LinearGroupBy,
+  LinearOrderBy,
+  LinearViewMode
+} from '../../../shared/linear-issue-view-resume-state'
 import type { TaskProvider, TaskViewPresetId } from '../../../shared/types'
 
 export type GitLabTaskFilter = 'opened' | 'merged' | 'closed' | 'all'
@@ -30,17 +36,15 @@ export type JiraPreset = { id: JiraPresetId; label: string }
 
 export type GitHubModeButton = { id: GitHubTaskKind | 'project'; label: string }
 
-export type LinearViewMode = 'list' | 'board'
 export type LinearMode = 'issues' | 'projects' | 'views' | 'in-orca'
-export type LinearGroupBy = 'none' | 'status' | 'assignee' | 'priority' | 'team'
-export type LinearOrderBy = 'priority' | 'updated' | 'identifier'
-export type LinearDisplayProperty =
-  | 'state'
-  | 'priority'
-  | 'assignee'
-  | 'team'
-  | 'labels'
-  | 'updated'
+// Why: re-exported from the persisted-state catalogs so the view options the user
+// picks and the ones TaskResumeState/the ui.set schema accept cannot drift.
+export type {
+  LinearDisplayProperty,
+  LinearGroupBy,
+  LinearOrderBy,
+  LinearViewMode
+} from '../../../shared/linear-issue-view-resume-state'
 
 export function LinearIcon({ className }: { className?: string }): React.JSX.Element {
   return (
