@@ -493,6 +493,31 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(existsSync(getMarkerPath())).toBe(false)
   })
 
+  it('keeps an invalidated active pass from recreating the completion marker', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+    let invalidated = false
+
+    const raced = await startCodexSessionBackfillInBackground({
+      shouldStop: () => {
+        if (!invalidated) {
+          invalidated = true
+          invalidateCodexSessionBackfillMarker(getMarkerPath())
+        }
+        return false
+      }
+    })
+
+    expect(raced).toMatchObject({ linkedFiles: 1, stopped: false })
+    expect(existsSync(getMarkerPath())).toBe(false)
+    const racedAudit = readFileSync(getAuditLogPath(), 'utf-8')
+
+    const recovered = await startCodexSessionBackfillInBackground()
+
+    expect(recovered).toMatchObject({ skippedExistingFiles: 1, failedHealAuditRecords: 0 })
+    expect(existsSync(getMarkerPath())).toBe(true)
+    expect(readFileSync(getAuditLogPath(), 'utf-8')).toBe(racedAudit)
+  })
+
   it('writes a completion marker and skips the walk on later runs', async () => {
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 

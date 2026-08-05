@@ -6,6 +6,11 @@ import type { CodexSessionBackfillSummary } from './codex-session-backfill-types
 // Why: bump to re-run the backfill for every host after a layout or semantics
 // change; the run itself stays skip-existing so re-runs never overwrite.
 const CODEX_SESSION_BACKFILL_MARKER_VERSION = 3
+let markerInvalidationGeneration = 0
+
+export function captureCodexSessionBackfillMarkerGeneration(): number {
+  return markerInvalidationGeneration
+}
 
 export function hasCompletedCodexSessionBackfillMarker(
   markerPath: string,
@@ -76,8 +81,13 @@ function managedSessionsRootHasRollout(managedSessionsRoot: string): boolean {
 export function writeCodexSessionBackfillMarker(
   markerPath: string,
   systemSessionsRoot: string,
-  summary: CodexSessionBackfillSummary
+  summary: CodexSessionBackfillSummary,
+  expectedGeneration: number
 ): void {
+  // Why: a launch can invalidate this pass before its delayed replacement begins.
+  if (expectedGeneration !== markerInvalidationGeneration) {
+    return
+  }
   mkdirSync(dirname(markerPath), { recursive: true })
   writeFileAtomically(
     markerPath,
@@ -95,6 +105,7 @@ export function writeCodexSessionBackfillMarker(
 }
 
 export function invalidateCodexSessionBackfillMarker(markerPath: string): void {
+  markerInvalidationGeneration += 1
   try {
     // Why: a managed-lane system-default launch can create new source
     // rollouts, so a prior one-time marker must not suppress the next opt-in.

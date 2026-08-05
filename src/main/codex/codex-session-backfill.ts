@@ -17,8 +17,9 @@ import {
 } from './codex-session-backfill-copy'
 import { listCodexSessionJsonlFilesIncrementally } from './codex-session-file-listing'
 import {
+  captureCodexSessionBackfillMarkerGeneration,
   hasCompletedCodexSessionBackfillMarker,
-  writeCodexSessionBackfillMarker
+  writeCodexSessionBackfillMarker as writeBackfillMarker
 } from './codex-session-backfill-marker'
 import type {
   CodexSessionBackfillOptions,
@@ -87,6 +88,7 @@ async function runCodexSessionBackfillOncePerHost(
   systemCodexHomePathOverride?: string
 ): Promise<CodexSessionBackfillSummary | null> {
   const paths = resolveCodexSessionBackfillPaths(systemCodexHomePathOverride)
+  const markerGeneration = captureCodexSessionBackfillMarkerGeneration()
   if (
     hasCompletedCodexSessionBackfillMarker(
       paths.markerPath,
@@ -106,7 +108,7 @@ async function runCodexSessionBackfillOncePerHost(
     summary.failedDirectories === 0 &&
     summary.failedHealAuditRecords === 0
   ) {
-    writeCodexSessionBackfillMarker(paths.markerPath, paths.systemSessionsRoot, summary)
+    writeBackfillMarker(paths.markerPath, paths.systemSessionsRoot, summary, markerGeneration)
   }
   return summary
 }
