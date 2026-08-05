@@ -83,6 +83,8 @@ export class FakeLogicalClient extends FakeSession implements StableLogicalRpcCl
   })
   suspendActiveSession = vi.fn(() => this.publishState('disconnected'))
   getActivePath = () => this.path
+  // This fake migrates instantly, so no dial is ever in flight to name.
+  getPendingPath = () => null
   getGeneration = () => this.generation
 }
 

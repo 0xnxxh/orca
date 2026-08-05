@@ -440,5 +440,10 @@ export function usePrimeHosts(): (hosts: HostProfile[]) => void {
 
 function clientActivePath(client: RpcClient | undefined): MobileConnectionPath {
   const logical = client as Partial<StableLogicalRpcClient> | undefined
-  return typeof logical?.getActivePath === 'function' ? logical.getActivePath() : 'lan'
+  if (typeof logical?.getActivePath !== 'function') {
+    return 'lan'
+  }
+  // Why: mid-migration the active path still names the session being replaced; the
+  // pending one is what the user is actually waiting on (F5).
+  return logical.getPendingPath?.() ?? logical.getActivePath()
 }
