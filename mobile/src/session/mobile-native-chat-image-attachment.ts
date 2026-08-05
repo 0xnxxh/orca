@@ -31,14 +31,14 @@ export type UploadNativeChatImagesDeps = {
 export async function uploadMobileNativeChatImages(
   source: MobileImageSource,
   { client, getConnectionId, pickImages, onUploadStart }: UploadNativeChatImagesDeps
-): Promise<Array<Omit<PendingNativeChatImage, 'id'>>> {
+): Promise<Omit<PendingNativeChatImage, 'id'>[]> {
   const picked = await pickImages(source)
   if (picked.length === 0) {
     return []
   }
   onUploadStart?.()
   const connectionId = await getConnectionId()
-  const uploaded: Array<Omit<PendingNativeChatImage, 'id'>> = []
+  const uploaded: Omit<PendingNativeChatImage, 'id'>[] = []
   for (const image of picked) {
     const path = await saveMobileClipboardImageAsTempFile(client, image.base64, { connectionId })
     // Prefer the picker's local URI for the thumbnail; fall back to an inline data
