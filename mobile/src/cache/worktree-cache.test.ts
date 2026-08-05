@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { setCachedWorktrees, getCachedWorktrees } from './worktree-cache'
+import { setCachedWorktrees, getCachedWorktrees, getProvenCachedWorktrees } from './worktree-cache'
 
 // Why: AC #8498 guarantees a reconnect refetch writes through the
 // same cache path the host detail screen seeds from, so a reconnect can't
@@ -39,5 +39,42 @@ describe('worktree-cache write-through', () => {
 
     // A fresh screen mount reads the cache — must see the connected set.
     expect(getCachedWorktrees(hostId)).toEqual(reconnected)
+  })
+})
+
+// Why (F7): home seeds this cache from a persisted cold-start snapshot as well as from a live
+// worktree.ps, and only the latter can prove a workspace *absent* — the Resume tap redirects
+// off that distinction, so a seeded entry must never look authoritative.
+describe('worktree-cache provenance', () => {
+  it('withholds unmarked writes from the proven reader', () => {
+    const hostId = 'host-seeded'
+    const seeded = [{ worktreeId: 'a' }]
+
+    setCachedWorktrees(hostId, seeded)
+
+    expect(getCachedWorktrees(hostId)).toEqual(seeded)
+    expect(getProvenCachedWorktrees(hostId)).toBeNull()
+  })
+
+  it('exposes a host-listed catalog to the proven reader', () => {
+    const hostId = 'host-proven'
+    const listed = [{ worktreeId: 'a' }, { worktreeId: 'b' }]
+
+    setCachedWorktrees(hostId, listed, { proven: true })
+
+    expect(getProvenCachedWorktrees(hostId)).toEqual(listed)
+  })
+
+  it('drops provenance when a seed overwrites a proven catalog', () => {
+    const hostId = 'host-downgraded'
+    setCachedWorktrees(hostId, [{ worktreeId: 'a' }], { proven: true })
+
+    setCachedWorktrees(hostId, [{ worktreeId: 'a' }])
+
+    expect(getProvenCachedWorktrees(hostId)).toBeNull()
+  })
+
+  it('reports nothing proven for a host it has never cached', () => {
+    expect(getProvenCachedWorktrees('host-never-seen')).toBeNull()
   })
 })
