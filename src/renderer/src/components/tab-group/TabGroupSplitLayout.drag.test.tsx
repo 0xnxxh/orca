@@ -209,14 +209,15 @@ describe('TabGroupSplitLayout divider drag', () => {
   it('ignores events from pointers that do not own the drag', async () => {
     await act(async () => {
       handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1 }))
+      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 350 }))
+      handle.dispatchEvent(pointerEvent('pointerdown', { pointerId: 2 }))
       handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 2, clientX: 300 }))
       handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 2 }))
     })
-    expect(firstPane.style.flex).toBe('0.5 1 0%')
+    expect(firstPane.style.flex).toBe('0.35 1 0%')
     expect(setTabGroupSplitRatioMock).not.toHaveBeenCalled()
 
     await act(async () => {
-      handle.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 350 }))
       handle.dispatchEvent(pointerEvent('pointerup', { pointerId: 1 }))
     })
     expect(setTabGroupSplitRatioMock).toHaveBeenCalledWith('wt-1', '', 0.35)

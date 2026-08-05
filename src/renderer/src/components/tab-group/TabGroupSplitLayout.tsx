@@ -34,6 +34,10 @@ function ResizeHandle({
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault()
+      // Why: a second pointer must not steal or finalize the active gesture.
+      if (activeResizeCleanupRef.current) {
+        return
+      }
       const handle = event.currentTarget
       const container = handle.parentElement
       if (!container) {
@@ -44,7 +48,6 @@ function ResizeHandle({
       if (!firstPane || !secondPane) {
         return
       }
-      activeResizeCleanupRef.current?.()
       onResizeStart()
       setDragging(true)
       handle.setPointerCapture(event.pointerId)
