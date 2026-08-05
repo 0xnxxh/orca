@@ -1,13 +1,13 @@
 import type { AiVaultAgent } from './ai-vault-types'
 
-export type ProviderNativeSessionTitle = {
+export type AiVaultSessionTitle = {
   agent: Extract<AiVaultAgent, 'claude' | 'codex'>
   sessionId: string
   title: string
 }
 
-export function isProviderNativeTitleAgent(
+export function isAiVaultTitleAgent(
   agent: string | null | undefined
-): agent is ProviderNativeSessionTitle['agent'] {
+): agent is AiVaultSessionTitle['agent'] {
   return agent === 'claude' || agent === 'codex'
 }

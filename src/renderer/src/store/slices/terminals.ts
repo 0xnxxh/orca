@@ -51,7 +51,7 @@ import type { SessionOptionValue } from '../../../../shared/native-chat-session-
 import { resolveLocalWindowsTerminalShellOverrideForTab } from '../../../../shared/local-windows-terminal-runtime'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
-import type { ProviderNativeSessionTitle } from '../../../../shared/provider-native-session-title'
+import type { AiVaultSessionTitle } from '../../../../shared/ai-vault-session-title'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
@@ -684,10 +684,7 @@ export type TerminalSlice = {
   setActiveTab: (tabId: string) => void
   setActiveTabForWorktree: (worktreeId: string, tabId: string) => void
   updateTabTitle: (tabId: string, title: string) => void
-  setProviderNativeTabTitle: (
-    tabId: string,
-    providerNativeTitle: ProviderNativeSessionTitle | null
-  ) => void
+  setAiVaultTabTitle: (tabId: string, aiVaultTitle: AiVaultSessionTitle | null) => void
   setGeneratedTabTitleFromAgentPrompt: (
     paneKey: string,
     prompt: string,
@@ -2066,7 +2063,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     })
   },
 
-  setProviderNativeTabTitle: (tabId, providerNativeTitle) => {
+  setAiVaultTabTitle: (tabId, aiVaultTitle) => {
     set((s) => {
       const ownerWorktreeId = getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
       if (!ownerWorktreeId) {
@@ -2075,20 +2072,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const tabs = s.tabsByWorktree[ownerWorktreeId] ?? []
       const current = tabs.find((tab) => tab.id === tabId)
       const sameTitle =
-        current?.providerNativeTitle?.agent === providerNativeTitle?.agent &&
-        current?.providerNativeTitle?.sessionId === providerNativeTitle?.sessionId &&
-        current?.providerNativeTitle?.title === providerNativeTitle?.title
+        current?.aiVaultTitle?.agent === aiVaultTitle?.agent &&
+        current?.aiVaultTitle?.sessionId === aiVaultTitle?.sessionId &&
+        current?.aiVaultTitle?.title === aiVaultTitle?.title
       if (!current || sameTitle) {
         return s
       }
-      const ownerTabs = tabs.map((tab) =>
-        tab.id === tabId ? { ...tab, providerNativeTitle } : tab
-      )
+      const ownerTabs = tabs.map((tab) => (tab.id === tabId ? { ...tab, aiVaultTitle } : tab))
       const unifiedTabs = s.unifiedTabsByWorktree[ownerWorktreeId] ?? []
       const nextUnifiedTabs = unifiedTabs.map((tab) =>
-        tab.contentType === 'terminal' && tab.entityId === tabId
-          ? { ...tab, providerNativeTitle }
-          : tab
+        tab.contentType === 'terminal' && tab.entityId === tabId ? { ...tab, aiVaultTitle } : tab
       )
       scheduleRuntimeGraphSync()
       return {
@@ -3955,10 +3948,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
                 .filter((tab) => tab.contentType === 'terminal' && tab.quickCommandLabel?.trim())
                 .map((tab) => [tab.entityId, tab.quickCommandLabel!.trim()])
             )
-            const providerNativeTitleByTerminalId = new Map(
+            const aiVaultTitleByTerminalId = new Map(
               (session.unifiedTabs?.[worktreeId] ?? [])
-                .filter((tab) => tab.contentType === 'terminal' && tab.providerNativeTitle)
-                .map((tab) => [tab.entityId, tab.providerNativeTitle!])
+                .filter((tab) => tab.contentType === 'terminal' && tab.aiVaultTitle)
+                .map((tab) => [tab.entityId, tab.aiVaultTitle!])
             )
             return [
               worktreeId,
@@ -3971,12 +3964,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
                 .map((tab, index) => {
                   const quickCommandLabel =
                     tab.quickCommandLabel?.trim() || quickCommandLabelByTerminalId.get(tab.id)
-                  const providerNativeTitle =
-                    tab.providerNativeTitle ?? providerNativeTitleByTerminalId.get(tab.id)
+                  const aiVaultTitle = tab.aiVaultTitle ?? aiVaultTitleByTerminalId.get(tab.id)
                   return {
                     ...clearTransientTerminalState(tab, index),
                     ...(quickCommandLabel ? { quickCommandLabel } : {}),
-                    ...(providerNativeTitle ? { providerNativeTitle } : {}),
+                    ...(aiVaultTitle ? { aiVaultTitle } : {}),
                     sortOrder: index,
                     pendingActivationSpawn: true
                   }

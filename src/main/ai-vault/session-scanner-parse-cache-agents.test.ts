@@ -196,7 +196,6 @@ describe('codex-specific resume behavior', () => {
     )
     expect(stats.reused).toBe(1)
     expect(renamed?.title).toBe('Indexed thread title')
-    expect(renamed?.providerNativeTitle).toBe('Indexed thread title')
     expect(renamed).toEqual(
       await parseAgentSessionFile(await candidateFor('codex', path, codexHome), process.platform)
     )

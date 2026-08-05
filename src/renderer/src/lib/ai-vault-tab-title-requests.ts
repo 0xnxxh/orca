@@ -1,25 +1,24 @@
 import type { AgentProviderSessionMetadata } from '../../../shared/agent-session-resume'
 import type { AgentType } from '../../../shared/agent-status-types'
+import type { AiVaultSessionTitle } from '../../../shared/ai-vault-session-title'
+import { isAiVaultTitleAgent } from '../../../shared/ai-vault-session-title'
 import type { ExecutionHostId } from '../../../shared/execution-host'
-import {
-  isProviderNativeTitleAgent,
-  type ProviderNativeSessionTitle
-} from '../../../shared/provider-native-session-title'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
 import type { TerminalTab } from '../../../shared/types'
-import type { AppState } from '@/store/types'
 import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
+import type { AppState } from '@/store/types'
 
-export type ProviderNativeTitleRequest = {
-  agent: ProviderNativeSessionTitle['agent']
+export type AiVaultTitleRequest = {
+  agent: AiVaultSessionTitle['agent']
   executionHostId: ExecutionHostId
   providerSession: AgentProviderSessionMetadata
+  refresh: boolean
   scopePath: string | null
   tabId: string
   worktreeId: string
 }
 
-type RequestCandidate = ProviderNativeTitleRequest & { priority: number }
+type RequestCandidate = AiVaultTitleRequest & { priority: number }
 
 function tabIdFromPaneKey(paneKey: string, tabId?: string): string | null {
   return tabId?.trim() || parsePaneKey(paneKey)?.tabId || null
@@ -39,11 +38,12 @@ function registerCandidate(
     paneKey: string
     priority: number
     providerSession: AgentProviderSessionMetadata | undefined
+    refresh: boolean
     tabId?: string
     worktreeId?: string
   }
 ): void {
-  if (!isProviderNativeTitleAgent(args.agent) || !args.providerSession?.id) {
+  if (!isAiVaultTitleAgent(args.agent) || !args.providerSession?.id) {
     return
   }
   const tabId = tabIdFromPaneKey(args.paneKey, args.tabId)
@@ -62,6 +62,7 @@ function registerCandidate(
     agent: args.agent,
     executionHostId,
     providerSession: args.providerSession,
+    refresh: args.refresh,
     scopePath,
     tabId,
     worktreeId,
@@ -69,7 +70,7 @@ function registerCandidate(
   })
 }
 
-export function collectProviderNativeTitleRequests(state: AppState): ProviderNativeTitleRequest[] {
+export function collectAiVaultTitleRequests(state: AppState): AiVaultTitleRequest[] {
   const tabsById = new Map(
     Object.values(state.tabsByWorktree)
       .flat()
@@ -83,6 +84,7 @@ export function collectProviderNativeTitleRequests(state: AppState): ProviderNat
       paneKey: entry.entry.paneKey,
       priority: 10,
       providerSession: entry.entry.providerSession,
+      refresh: false,
       tabId: entry.entry.tabId,
       worktreeId: entry.worktreeId
     })
@@ -93,6 +95,7 @@ export function collectProviderNativeTitleRequests(state: AppState): ProviderNat
       paneKey: record.paneKey,
       priority: 20,
       providerSession: record.providerSession,
+      refresh: false,
       tabId: record.tabId,
       worktreeId: record.worktreeId
     })
@@ -103,6 +106,7 @@ export function collectProviderNativeTitleRequests(state: AppState): ProviderNat
       paneKey: entry.paneKey,
       priority: 30,
       providerSession: entry.providerSession,
+      refresh: true,
       tabId: entry.tabId,
       worktreeId: entry.worktreeId
     })

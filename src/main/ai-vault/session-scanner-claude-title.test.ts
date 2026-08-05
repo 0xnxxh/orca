@@ -69,14 +69,6 @@ describe('scanAiVaultSessions Claude title selection', () => {
       'Updated karma discussion title',
       'User set title'
     ])
-    expect(
-      Object.fromEntries(
-        result.sessions.map((session) => [session.sessionId, session.providerNativeTitle])
-      )
-    ).toEqual({
-      generated: 'Updated karma discussion title',
-      custom: 'User set title'
-    })
   })
 
   it('excludes Claude Task subagent transcripts from the session list', async () => {

@@ -72,7 +72,7 @@ const terminalTabSchema = z.object({
   title: z.string(),
   defaultTitle: z.string().optional(),
   generatedTitle: z.string().nullable().optional(),
-  providerNativeTitle: z
+  aiVaultTitle: z
     .object({
       agent: z.enum(['claude', 'codex']),
       sessionId: z.string(),
@@ -120,7 +120,7 @@ const tabSchema = z.object({
   contentType: tabContentTypeSchema,
   label: z.string(),
   generatedLabel: z.string().nullable().optional(),
-  providerNativeTitle: z
+  aiVaultTitle: z
     .object({
       agent: z.enum(['claude', 'codex']),
       sessionId: z.string(),

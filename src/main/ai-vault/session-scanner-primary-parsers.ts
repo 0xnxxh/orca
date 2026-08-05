@@ -84,7 +84,6 @@ export function consumeClaudeSessionLine(state: ClaudeSessionParseState, line: s
 
   if (record.type === 'custom-title') {
     accumulator.title = normalizeTitleText(extractString(record.customTitle) ?? '')
-    accumulator.providerNativeTitle = accumulator.title
     return
   }
 
@@ -186,7 +185,6 @@ export async function finalizeClaudeSessionParseState(
       snapshot.accumulator.filePath
     )
   }
-  snapshot.accumulator.providerNativeTitle = snapshot.accumulator.title || snapshot.generatedTitle
   return finalizeSession(snapshot.accumulator, platform, options)
 }
 

@@ -24,7 +24,6 @@ describe('parseAiVaultListResult', () => {
       sessions: [
         {
           ...validSession(),
-          providerNativeTitle: 'Provider title',
           previewMessagesTruncated: true,
           firstUserPrompt: 'first',
           lastUserPrompt: 'last'
@@ -36,7 +35,6 @@ describe('parseAiVaultListResult', () => {
 
     expect(parsed.sessions[0]).toMatchObject({
       previewMessagesTruncated: true,
-      providerNativeTitle: 'Provider title',
       firstUserPrompt: 'first',
       lastUserPrompt: 'last'
     })

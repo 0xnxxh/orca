@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
+import { startAiVaultTabTitleSync } from '@/lib/ai-vault-tab-title-sync'
 import { useAppStore } from '@/store'
-import { startProviderNativeTabTitleSync } from '@/lib/provider-native-tab-title-sync'
 
-export function ProviderNativeTabTitleSyncGate(): null {
+export function AiVaultTabTitleSyncGate(): null {
   useEffect(
     () =>
-      startProviderNativeTabTitleSync({
+      startAiVaultTabTitleSync({
         getState: useAppStore.getState,
         subscribe: useAppStore.subscribe,
         listSessions: (args) => window.api.aiVault.listSessions(args)

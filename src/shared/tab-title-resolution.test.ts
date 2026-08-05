@@ -78,7 +78,7 @@ describe('tab title resolution', () => {
       resolveTerminalTabTitle(
         {
           customTitle: null,
-          providerNativeTitle: {
+          aiVaultTitle: {
             agent: 'codex',
             sessionId: 'codex-session',
             title: 'Repair provider-native tab titles'
@@ -90,8 +90,8 @@ describe('tab title resolution', () => {
     ).toBe('Repair provider-native tab titles')
   })
 
-  it('keeps manual and quick-command labels ahead of provider-native titles', () => {
-    const providerNativeTitle = {
+  it('keeps manual and quick-command labels ahead of AI Vault titles', () => {
+    const aiVaultTitle = {
       agent: 'claude' as const,
       sessionId: 'claude-session',
       title: 'Claude conversation'
@@ -101,7 +101,7 @@ describe('tab title resolution', () => {
         {
           customTitle: 'Manual label',
           quickCommandLabel: 'Run tests',
-          providerNativeTitle,
+          aiVaultTitle,
           title: 'claude working'
         },
         false
@@ -112,7 +112,7 @@ describe('tab title resolution', () => {
         {
           customTitle: null,
           quickCommandLabel: 'Run tests',
-          providerNativeTitle,
+          aiVaultTitle,
           title: 'claude working'
         },
         false
@@ -121,7 +121,7 @@ describe('tab title resolution', () => {
   })
 
   it('keeps OpenCode native and Orca-generated title behavior intact', () => {
-    const providerNativeTitle = {
+    const aiVaultTitle = {
       agent: 'codex' as const,
       sessionId: 'codex-session',
       title: 'Codex conversation'
@@ -130,7 +130,7 @@ describe('tab title resolution', () => {
       resolveTerminalTabTitle(
         {
           customTitle: null,
-          providerNativeTitle,
+          aiVaultTitle,
           generatedTitle: 'Orca generated',
           title: 'OC | OpenCode native'
         },

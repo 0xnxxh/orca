@@ -103,7 +103,6 @@ export type SessionAccumulator = {
   agent: AiVaultAgent
   sessionId: string
   title: string | null
-  providerNativeTitle: string | null
   fallbackTitle: string | null
   cwd: string | null
   branch: string | null
