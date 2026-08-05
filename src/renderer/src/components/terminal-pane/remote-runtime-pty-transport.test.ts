@@ -535,7 +535,8 @@ describe('createRemoteRuntimePtyTransport', () => {
     expect(
       runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.create')
     ).toHaveLength(1)
-    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+    expect(transport.getRecoveryState?.().phase).toBe('disconnected')
     transport.destroy?.()
   })
 
