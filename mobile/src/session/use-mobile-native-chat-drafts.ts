@@ -10,29 +10,19 @@ import {
   normalizedUserText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
+import {
+  appendMobileNativeChatPending,
+  combineMobileNativeChatPending,
+  mergeWaitingSessionPending,
+  removeWaitingSessionPending,
+  type MobileNativeChatPendingMessage,
+  type MobileNativeChatSendOrigin
+} from './mobile-native-chat-pending-echo'
 import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
 import { useMobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 
-export type MobileNativeChatPendingMessage = {
-  id: string
-  text: string
-  expectedOccurrence: number
-  /** Local preview URIs of images ridden along on the send, rendered as thumbnails
-   *  on the echo bubble so the sent photo shows before the transcript catches up. */
-  images?: string[]
-  /** Transcript tail when sent — an image-only echo (no text to match) reconciles
-   *  against new `[Image: source: …]` echo turns after this id, so pagination,
-   *  agent replies, and unrelated text echoes can't clear it early. */
-  baselineTailMessageId: string | null
-}
-export type MobileNativeChatSendOrigin = {
-  draftKey: string
-  pendingKey: string | null
-  normalizedText: string
-  baselineOccurrences: number
-  baselineTailMessageId: string | null
-}
+export type { MobileNativeChatPendingMessage, MobileNativeChatSendOrigin }
 
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
 const NO_IMAGE_PREVIEWS: Record<string, string[]> = {}
@@ -96,6 +86,9 @@ export function useMobileNativeChatDrafts(args: {
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [pendingBySession, setPendingBySession] = useState<
+    Record<string, MobileNativeChatPendingMessage[]>
+  >({})
+  const [pendingWaitingForSession, setPendingWaitingForSession] = useState<
     Record<string, MobileNativeChatPendingMessage[]>
   >({})
   const [imagePreviewsBySession, setImagePreviewsBySession] = useState<
@@ -172,36 +165,21 @@ export function useMobileNativeChatDrafts(args: {
 
   const acceptSend = useCallback(
     (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => {
-      // Why: the first prompt can be sent before the provider reports a session
-      // id; wait for an id before keying an optimistic echo.
-      if (!origin.pendingKey) {
+      if (!origin.pendingKey && !images?.length) {
         return
       }
-      const pendingKey = origin.pendingKey
       pendingCounterRef.current += 1
-      setPendingBySession((previous) => {
-        const current = previous[pendingKey] ?? NO_PENDING_MESSAGES
-        const earlierOutstanding = current.filter(
-          (pending) =>
-            pending.text.trim() === origin.normalizedText &&
-            pending.expectedOccurrence > origin.baselineOccurrences
-        ).length
-        // Empty image sends reconcile by send ordinal after their shared tail.
-        const expectedImageEchoOrdinal =
-          current.filter((pending) => pending.text.trim() === '' && pending.images?.length).length +
-          1
-        const pending: MobileNativeChatPendingMessage = {
-          id: `pending-${pendingCounterRef.current}`,
-          text,
-          expectedOccurrence:
-            origin.normalizedText === ''
-              ? expectedImageEchoOrdinal
-              : origin.baselineOccurrences + earlierOutstanding + 1,
-          baselineTailMessageId: origin.baselineTailMessageId,
-          ...(images && images.length > 0 ? { images } : {})
-        }
-        return { ...previous, [pendingKey]: [...current, pending] }
-      })
+      const id = `pending-${pendingCounterRef.current}`
+      const key = origin.pendingKey
+      if (key) {
+        setPendingBySession((previous) =>
+          appendMobileNativeChatPending(previous, key, id, origin, text, images)
+        )
+      } else {
+        setPendingWaitingForSession((previous) =>
+          appendMobileNativeChatPending(previous, origin.draftKey, id, origin, text, images)
+        )
+      }
     },
     []
   )
@@ -275,9 +253,26 @@ export function useMobileNativeChatDrafts(args: {
     }
   }, [])
 
-  const pending = pendingKey
+  const waitingForSession = draftKey
+    ? (pendingWaitingForSession[draftKey] ?? NO_PENDING_MESSAGES)
+    : NO_PENDING_MESSAGES
+  useEffect(() => {
+    if (!draftKey || !pendingKey || waitingForSession.length === 0) {
+      return
+    }
+    const movedIds = new Set(waitingForSession.map((item) => item.id))
+    setPendingBySession((previous) =>
+      mergeWaitingSessionPending(previous, pendingKey, waitingForSession)
+    )
+    setPendingWaitingForSession((previous) =>
+      removeWaitingSessionPending(previous, draftKey, movedIds)
+    )
+  }, [draftKey, pendingKey, waitingForSession])
+
+  const sessionPending = pendingKey
     ? (pendingBySession[pendingKey] ?? NO_PENDING_MESSAGES)
     : NO_PENDING_MESSAGES
+  const pending = combineMobileNativeChatPending(sessionPending, waitingForSession)
   useEffect(() => {
     if (!pendingKey) {
       return
