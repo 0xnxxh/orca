@@ -511,6 +511,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     () => reconcilePaletteFilter(rawFilter, filterModel),
     [rawFilter, filterModel]
   )
+  // Why persist the prune: otherwise a dropped id lives on in rawFilter and
+  // silently re-activates — with no chip on screen — if its host or project
+  // comes back. Same-reference return on a no-op keeps this from re-rendering.
+  useEffect(() => {
+    setRawFilter((current) => reconcilePaletteFilter(current, filterModel))
+  }, [filterModel])
   const filterActive = isPaletteFilterActive(filter)
   const hostFilterActive = filter.hostIds.length > 0
   const filterPredicate = useMemo(
@@ -1795,7 +1801,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     // No-op: focus handled in the visible effect before Radix; exists only to satisfy the prop API.
   }, [])
 
-  const resultCount = selectableItems.length
+  // Why the split: on a query the render cap hides matches, so announcing the
+  // visible slice under-reports "results found". The empty-query list renders
+  // only its two capped sections, so there the visible count is the truth.
+  const resultCount = hasQuery
+    ? worktreeItems.length + projectTargetItems.length + middleItems.length + openTabItems.length
+    : selectableItems.length
   const emptyState = (() => {
     // Why: a filter is the most likely reason a familiar query returns nothing,
     // so name it before any other explanation and point at the way out.

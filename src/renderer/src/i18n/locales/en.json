@@ -132,7 +132,8 @@
       "moreOptions": "{{value0}} more - keep typing to narrow",
       "selectAllMatching": "Select all matching ({{value0}})",
       "selectedCollapsed": "{{value0}} selected — remove via chips or Clear",
-      "clearField": "Clear {{value0}}",
+      "clearHosts": "Clear hosts",
+      "clearProjects": "Clear projects",
       "back": "Back",
       "ariaActive": "Filter: {{value0}} active."
     }

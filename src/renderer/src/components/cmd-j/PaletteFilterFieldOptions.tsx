@@ -92,14 +92,19 @@ export function PaletteFilterFieldOptions({
     [group.options, selected, normalizedQuery, rankMode]
   )
 
-  const scrollRef = useRef<HTMLDivElement>(null)
+  // State, not a ref: the scroller unmounts on an empty list, and the wheel
+  // listener has to re-attach to the node that replaces it.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const [activeIndex, setActiveIndex] = useState(0)
+  const [highlightIndex, setHighlightIndex] = useState(0)
 
-  // Reset highlight when the ranked list identity changes (search/selection).
+  // Why not the ranked list identity: a toggle re-ranks, so that would yank the
+  // cursor back to the top mid multi-select. Only a new query or field moves it.
   useEffect(() => {
-    setActiveIndex(0)
-  }, [ranked.ordered])
+    setHighlightIndex(0)
+  }, [normalizedQuery, group.field])
+  // The stored index can outlive the rows it pointed at when the list shrinks.
+  const activeIndex = Math.min(highlightIndex, Math.max(0, ranked.ordered.length - 1))
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -107,7 +112,7 @@ export function PaletteFilterFieldOptions({
 
   const virtualizer = useVirtualizer({
     count: ranked.ordered.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollEl,
     estimateSize: () => FILTER_OPTION_ROW_HEIGHT,
     overscan: 8,
     getItemKey: (index) => ranked.ordered[index]?.id ?? index
@@ -115,7 +120,7 @@ export function PaletteFilterFieldOptions({
 
   // Same wheel workaround as CommandList: Radix remove-scroll cancels wheel on portaled content.
   useEffect(() => {
-    const el = scrollRef.current
+    const el = scrollEl
     if (!el) {
       return
     }
@@ -128,24 +133,24 @@ export function PaletteFilterFieldOptions({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [scrollEl])
 
   const moveActive = useCallback(
     (delta: number) => {
       if (ranked.ordered.length === 0) {
         return
       }
-      setActiveIndex((current) => {
-        const next = Math.max(0, Math.min(ranked.ordered.length - 1, current + delta))
-        virtualizer.scrollToIndex(next, { align: 'auto' })
-        return next
-      })
+      const next = Math.max(0, Math.min(ranked.ordered.length - 1, activeIndex + delta))
+      virtualizer.scrollToIndex(next, { align: 'auto' })
+      setHighlightIndex(next)
     },
-    [ranked.ordered.length, virtualizer]
+    [activeIndex, ranked.ordered.length, virtualizer]
   )
 
   const handleListKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
+    // Space toggles only from the listbox; in the search input it stays a
+    // typeable character, and labels like "Delta Host" need it.
+    (event: React.KeyboardEvent, allowSpaceToToggle = true) => {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         moveActive(1)
@@ -156,7 +161,7 @@ export function PaletteFilterFieldOptions({
         moveActive(-1)
         return
       }
-      if (event.key === 'Enter' || event.key === ' ') {
+      if (event.key === 'Enter' || (allowSpaceToToggle && event.key === ' ')) {
         const option = ranked.ordered[activeIndex]
         if (!option) {
           return
@@ -176,6 +181,12 @@ export function PaletteFilterFieldOptions({
     group.field === 'host'
       ? translate('worktreeJumpPalette.filter.noHosts', 'No matching hosts')
       : translate('worktreeJumpPalette.filter.noProjects', 'No matching projects')
+  // Why a dedicated string per field: lowercasing a translated heading breaks in
+  // languages that capitalize nouns mid-sentence (German "Projekte").
+  const clearLabel =
+    group.field === 'host'
+      ? translate('worktreeJumpPalette.filter.clearHosts', 'Clear hosts')
+      : translate('worktreeJumpPalette.filter.clearProjects', 'Clear projects')
 
   const canSelectAll = ranked.unselectedCount > 0
   const canClear = ranked.selectedCount > 0
@@ -209,7 +220,7 @@ export function PaletteFilterFieldOptions({
           ref={inputRef}
           value={optionQuery}
           onChange={(event) => onOptionQueryChange(event.target.value)}
-          onKeyDown={handleListKeyDown}
+          onKeyDown={(event) => handleListKeyDown(event, false)}
           placeholder={searchPlaceholder}
           className="h-9 w-full bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
           aria-label={searchPlaceholder}
@@ -229,9 +240,7 @@ export function PaletteFilterFieldOptions({
             onClick={onClearField}
             className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            {translate('worktreeJumpPalette.filter.clearField', 'Clear {{value0}}', {
-              value0: group.heading.toLowerCase()
-            })}
+            {clearLabel}
           </button>
         </div>
       ) : null}
@@ -239,7 +248,7 @@ export function PaletteFilterFieldOptions({
         <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">{emptyLabel}</div>
       ) : (
         <div
-          ref={scrollRef}
+          ref={setScrollEl}
           role="listbox"
           aria-multiselectable="true"
           aria-label={group.heading}
@@ -298,9 +307,7 @@ export function PaletteFilterFieldOptions({
               onClick={onClearField}
               className="rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
             >
-              {translate('worktreeJumpPalette.filter.clearField', 'Clear {{value0}}', {
-                value0: group.heading.toLowerCase()
-              })}
+              {clearLabel}
             </button>
           ) : null}
         </div>
