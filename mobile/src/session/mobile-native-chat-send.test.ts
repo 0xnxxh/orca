@@ -340,7 +340,7 @@ describe('clearMobileNativeChatInput', () => {
     const clearInput = buildAgentTuiClearInputForText('Linked Linear issue: ABC-123\nhttps://x')
     await expect(
       clearMobileNativeChatInput({ client, terminal: 'term', clearInput })
-    ).resolves.toBe(true)
+    ).resolves.toBe('accepted')
     expect(params(client)).toMatchObject({ text: clearInput, enter: false })
   })
 
@@ -353,7 +353,26 @@ describe('clearMobileNativeChatInput', () => {
     })
     await expect(
       clearMobileNativeChatInput({ client, terminal: 'term', clearInput: '\x15' })
-    ).resolves.toBe(false)
+    ).resolves.toBe('rejected')
+  })
+
+  it('preserves an interactive prompt rejection from a guarded clear', async () => {
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: { send: { accepted: false, refusedReason: 'interactive-prompt' } },
+      _meta: { runtimeId: 'runtime' }
+    })
+
+    await expect(
+      clearMobileNativeChatInput({
+        client,
+        terminal: 'term',
+        clearInput: '\x15',
+        guardInteractivePrompt: true
+      })
+    ).resolves.toBe('interactive-prompt')
+    expect(params(client)).toMatchObject({ nativeChat: true })
   })
 
   it('refuses to start an underfunded clear rather than half-clearing', async () => {
@@ -365,7 +384,7 @@ describe('clearMobileNativeChatInput', () => {
         clearInput: '\x15',
         deadline: Date.now() + 10
       })
-    ).resolves.toBe(false)
+    ).resolves.toBe('rejected')
     expect(client.sendRequest).not.toHaveBeenCalled()
   })
 })

@@ -40,6 +40,7 @@ type MobileNativeChatSendArgs = {
  *  desktop (ack loss after a write, or a cutover that cannot tell whether the
  *  frame was written) — callers must not present it as a definite send failure. */
 export type MobileNativeChatSendOutcome = 'accepted' | 'rejected' | 'unknown' | 'interactive-prompt'
+export type MobileNativeChatClearOutcome = Exclude<MobileNativeChatSendOutcome, 'unknown'>
 
 /** Without an explicit timeout `sendRequest` waits for reconnect indefinitely, and
  *  the composer holds `sending` (send arrow dimmed, no error) for as long as it
@@ -119,11 +120,11 @@ export async function clearMobileNativeChatInput(args: {
   guardInteractivePrompt?: boolean
   mobileClient?: MobileTerminalClient
   deadline?: number
-}): Promise<boolean> {
+}): Promise<MobileNativeChatClearOutcome> {
   const timeoutMs =
     args.deadline === undefined ? MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS : args.deadline - Date.now()
   if (timeoutMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
-    return false
+    return 'rejected'
   }
   try {
     const response = await args.client.sendRequest(
@@ -137,9 +138,14 @@ export async function clearMobileNativeChatInput(args: {
       },
       { timeoutMs, budgetSpansConnect: true }
     )
-    return isTerminalSendRpcAccepted(response)
+    if (isTerminalSendRpcAccepted(response)) {
+      return 'accepted'
+    }
+    return getTerminalSendRpcRefusedReason(response) === 'interactive-prompt'
+      ? 'interactive-prompt'
+      : 'rejected'
   } catch {
     // A failed clear must not send the body on top of an uncleared line.
-    return false
+    return 'rejected'
   }
 }

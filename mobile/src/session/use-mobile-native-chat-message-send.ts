@@ -135,7 +135,7 @@ export function useMobileNativeChatMessageSend(args: {
       // than pasting on top of an uncleared line.
       const seededLaunchDraft = readSeededLaunchDraftSeed()
       if (seededLaunchDraft && !images?.length) {
-        const cleared = await clearMobileNativeChatInput({
+        const clearOutcome = await clearMobileNativeChatInput({
           client,
           terminal: handle,
           clearInput: buildAgentTuiClearInputForText(seededLaunchDraft.text),
@@ -145,11 +145,15 @@ export function useMobileNativeChatMessageSend(args: {
             ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
             : {})
         })
-        if (!cleared) {
+        if (clearOutcome !== 'accepted') {
           if (syncComposer) {
             restoreRejectedDraft(origin, text)
           }
-          onSendError('Message not sent')
+          onSendError(
+            clearOutcome === 'interactive-prompt'
+              ? 'Finish the terminal prompt before sending'
+              : 'Message not sent'
+          )
           return 'rejected'
         }
       }

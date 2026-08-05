@@ -90,7 +90,7 @@ describe('useMobileNativeChatMessageSend', () => {
     sendWithOutcome.mockReset()
     sendWithOutcome.mockResolvedValue('accepted')
     clearInputWrite.mockReset()
-    clearInputWrite.mockResolvedValue(true)
+    clearInputWrite.mockResolvedValue('accepted')
     acceptSend.mockReset()
     holdUnconfirmedSend.mockReset()
     restoreRejectedDraft.mockReset()
@@ -131,7 +131,7 @@ describe('useMobileNativeChatMessageSend', () => {
 
   it('aborts without sending the body when the clear is rejected', async () => {
     // Sending on top of an uncleared line is exactly the concatenation bug.
-    clearInputWrite.mockResolvedValue(false)
+    clearInputWrite.mockResolvedValue('rejected')
     mount(() => ({ text: DRAFT, createdAt: 1 }))
     let result: boolean | undefined
     await act(async () => {
@@ -139,6 +139,22 @@ describe('useMobileNativeChatMessageSend', () => {
     })
     expect(result).toBe(false)
     expect(sendWithOutcome).not.toHaveBeenCalled()
+  })
+
+  it('reports an interactive prompt rejected while clearing a seeded launch draft', async () => {
+    clearInputWrite.mockResolvedValue('interactive-prompt')
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
+
+    let result: boolean | undefined
+    await act(async () => {
+      result = await api!.send('hello')
+    })
+
+    expect(result).toBe(false)
+    expect(restoreRejectedDraft).toHaveBeenCalledTimes(1)
+    expect(sendWithOutcome).not.toHaveBeenCalled()
+    expect(acceptSend).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Finish the terminal prompt before sending')
   })
 
   it('drops the body write\u2019s own Ctrl+U prefix once the dedicated clear ran', async () => {
