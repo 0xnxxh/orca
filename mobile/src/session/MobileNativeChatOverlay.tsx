@@ -43,6 +43,7 @@ export function MobileNativeChatOverlay({
   return (
     <View style={styles.overlay}>
       <MobileNativeChatView
+        conversationIdentity={controller.nativeChatIdentity}
         messages={session.messages}
         status={session.status}
         error={session.error}

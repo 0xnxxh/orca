@@ -66,12 +66,14 @@ vi.mock('./MobileNativeChatComposer', async () => {
 })
 
 type Overrides = {
+  conversationIdentity?: string
   messages?: Parameters<typeof MobileNativeChatView>[0]['messages']
   sendErrorMessage?: string | null
   onClearSendError?: () => void
   inputLockReason?: 'disconnected' | 'waiting' | null
   hasMore?: boolean
   loadingEarlier?: boolean
+  onLoadEarlier?: () => boolean
   onSend?: (text: string) => Promise<boolean>
 }
 
@@ -105,6 +107,7 @@ describe('MobileNativeChatView', () => {
       await act(async () => {
         renderer = create(
           createElement(MobileNativeChatView, {
+            conversationIdentity: 'test-conversation',
             messages: [],
             status: 'ready',
             onSend: overrides.onSend ?? vi.fn().mockResolvedValue(true),
@@ -124,6 +127,7 @@ describe('MobileNativeChatView', () => {
     await act(async () => {
       renderer?.update(
         createElement(MobileNativeChatView, {
+          conversationIdentity: 'test-conversation',
           messages: [],
           status: 'ready',
           onSend: vi.fn().mockResolvedValue(true),
@@ -199,7 +203,21 @@ describe('MobileNativeChatView', () => {
   }
   const older = { ...message, id: 'older', blocks: [{ type: 'text' as const, text: 'older' }] }
 
-  it('does not defeat prepend anchoring when a short list was also at bottom', async () => {
+  function list(): ReactTestInstance {
+    return renderer!.root.find((node) => node.type === 'FlatList')
+  }
+
+  function scroll(offset: number, contentHeight: number, viewportHeight: number): void {
+    list().props.onScroll({
+      nativeEvent: {
+        contentOffset: { y: offset },
+        contentSize: { height: contentHeight },
+        layoutMeasurement: { height: viewportHeight }
+      }
+    })
+  }
+
+  it('anchors a prepend and stays detached until the user returns to the tail', async () => {
     vi.useFakeTimers()
     try {
       await render({ messages: [message], hasMore: true })
@@ -207,84 +225,159 @@ describe('MobileNativeChatView', () => {
       scrollToEnd.mockClear()
 
       await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      // The spinner swapping in resizes the header — that layout pass must not
-      // consume the hold, since the page has not arrived yet.
-      const spinnerList = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => spinnerList.props.onContentSizeChange())
-
+      act(() => list().props.onContentSizeChange(0, 600))
       await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      expect(list.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.runAllTimersAsync())
+      expect(list().props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 })
+      act(() => list().props.onContentSizeChange(0, 1200))
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
 
-      expect(scrollToEnd).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('holds position when an unrelated render lands before the layout pass', async () => {
-    vi.useFakeTimers()
-    try {
-      await render({ messages: [message], hasMore: true })
-      await act(async () => vi.runAllTimersAsync())
-      scrollToEnd.mockClear()
-
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      // A streaming tick or keystroke re-renders before the native content-size
-      // event lands — the hold has to outlive it, or the anchoring is undone.
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.runAllTimersAsync())
-
-      expect(scrollToEnd).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('drops an already-armed tail-follow when a page starts before it fires', async () => {
-    vi.useFakeTimers()
-    try {
-      await render({ messages: [message], hasMore: true })
-      await act(async () => vi.runAllTimersAsync())
-      scrollToEnd.mockClear()
-
-      // A message lands, arming the 60ms tail-follow; the reader taps "Load
-      // earlier" inside that window, so the scroll must be abandoned.
       const appended = { ...message, id: 'appended' }
-      await update({ messages: [message, appended], hasMore: true })
-      await act(async () => vi.advanceTimersByTimeAsync(30))
+      await update({ messages: [older, message, appended], hasMore: false })
+      act(() => list().props.onContentSizeChange(0, 1400))
+      await act(async () => vi.runAllTimersAsync())
+      expect(scrollToEnd).not.toHaveBeenCalled()
+
+      act(() => {
+        list().props.onScrollBeginDrag()
+        scroll(800, 1400, 600)
+        list().props.onScrollEndDrag()
+      })
+      const latest = { ...message, id: 'latest' }
+      await update({ messages: [older, message, appended, latest], hasMore: false })
+      act(() => list().props.onContentSizeChange(0, 1500))
+
+      expect(scrollToEnd).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not follow new output during an arbitrarily slow history request', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      const appended = { ...message, id: 'appended' }
       await update({ messages: [message, appended], hasMore: true, loadingEarlier: true })
+      act(() => list().props.onContentSizeChange(0, 900))
+      await act(async () => vi.runAllTimersAsync())
+
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels an armed tail-follow before requesting history', async () => {
+    vi.useFakeTimers()
+    try {
+      const onLoadEarlier = vi.fn(() => true)
+      await render({ messages: [message], hasMore: true, onLoadEarlier })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      const appended = { ...message, id: 'appended' }
+      await update({ messages: [message, appended], hasMore: true, onLoadEarlier })
+      await act(async () => vi.advanceTimersByTimeAsync(30))
+      act(() => list().props.ListHeaderComponent.props.onPress())
       await act(async () => vi.advanceTimersByTimeAsync(60))
 
+      expect(onLoadEarlier).toHaveBeenCalledOnce()
       expect(scrollToEnd).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('releases the hold when a page prepends nothing', async () => {
+  it('auto-pages only from a gesture without reattaching a short transcript', async () => {
+    vi.useFakeTimers()
+    try {
+      const onLoadEarlier = vi.fn(() => true)
+      await render({ messages: [message], hasMore: true, onLoadEarlier })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      act(() => scroll(0, 600, 600))
+      expect(onLoadEarlier).not.toHaveBeenCalled()
+
+      act(() => {
+        list().props.onScrollBeginDrag()
+        scroll(0, 600, 600)
+      })
+      await update({ messages: [message], hasMore: true, loadingEarlier: true, onLoadEarlier })
+      await update({ messages: [older, message], hasMore: false, onLoadEarlier })
+      act(() => {
+        list().props.onScrollEndDrag()
+        list().props.onContentSizeChange(0, 1200)
+      })
+      await act(async () => vi.runAllTimersAsync())
+
+      expect(onLoadEarlier).toHaveBeenCalledOnce()
+      expect(scrollToEnd).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not mistake programmatic momentum for a user gesture', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message] })
+      await act(async () => vi.runAllTimersAsync())
+      scrollToEnd.mockClear()
+
+      act(() => {
+        list().props.onMomentumScrollBegin()
+        scroll(0, 1200, 600)
+        list().props.onMomentumScrollEnd()
+      })
+      await update({ messages: [message, { ...message, id: 'appended' }] })
+      act(() => list().props.onContentSizeChange(0, 1400))
+
+      expect(scrollToEnd).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets scroll-to-latest override an in-flight history detach', async () => {
     vi.useFakeTimers()
     try {
       await render({ messages: [message], hasMore: true })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      // A failed/empty page clears `loadingEarlier` without prepending, so the
-      // hold has to lapse on its own or tail-follow is disabled for good.
       await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [message], hasMore: true, loadingEarlier: false })
+      act(() => scroll(0, 1200, 600))
+      const latest = renderer!.root.find(
+        (node) => node.props.accessibilityLabel === 'Scroll to latest'
+      )
+      act(() => latest.props.onPress())
+      expect(scrollToEnd).toHaveBeenLastCalledWith({ animated: true })
+
+      scrollToEnd.mockClear()
+      await update({ messages: [older, message], hasMore: false })
+      act(() => list().props.onContentSizeChange(0, 1400))
+
+      expect(scrollToEnd).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restores tail-follow when a history request makes no progress', async () => {
+    vi.useFakeTimers()
+    try {
+      await render({ messages: [message], hasMore: true })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      const appended = { ...message, id: 'appended' }
-      await update({ messages: [message, appended], hasMore: true })
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
+      await update({ messages: [message], hasMore: true, loadingEarlier: true })
+      await update({ messages: [message], hasMore: true, loadingEarlier: false })
       await act(async () => vi.runAllTimersAsync())
 
       expect(scrollToEnd).toHaveBeenCalled()
@@ -293,76 +386,25 @@ describe('MobileNativeChatView', () => {
     }
   })
 
-  it('keeps holding across the later layout passes a page settles through', async () => {
+  it('restores tail-follow when a history request is rejected synchronously', async () => {
     vi.useFakeTimers()
     try {
-      await render({ messages: [message], hasMore: true })
+      const onLoadEarlier = vi.fn(() => false)
+      await render({ messages: [message], hasMore: true, onLoadEarlier })
       await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      // One prepend emits several content-size events as its cells measure and
-      // the list revises its spacer estimates, so a hold that any single pass
-      // could retire would let the next one scroll to the bottom.
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.advanceTimersByTimeAsync(120))
-      act(() => list.props.onContentSizeChange())
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.advanceTimersByTimeAsync(120))
+      act(() => list().props.ListHeaderComponent.props.onPress())
+      await act(async () => vi.runAllTimersAsync())
 
-      expect(scrollToEnd).not.toHaveBeenCalled()
+      expect(onLoadEarlier).toHaveBeenCalledOnce()
+      expect(scrollToEnd).toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('re-holds when the page outlives the first hold', async () => {
-    vi.useFakeTimers()
-    try {
-      await render({ messages: [message], hasMore: true })
-      await act(async () => vi.runAllTimersAsync())
-      scrollToEnd.mockClear()
-
-      // A slow round trip outlasts the hold armed at tap time, so delivery has
-      // to arm its own — otherwise the prepend lands unprotected.
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await act(async () => vi.advanceTimersByTimeAsync(600))
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.advanceTimersByTimeAsync(100))
-
-      expect(scrollToEnd).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('measures the hold from delivery rather than from the tap', async () => {
-    vi.useFakeTimers()
-    try {
-      await render({ messages: [message], hasMore: true })
-      await act(async () => vi.runAllTimersAsync())
-      scrollToEnd.mockClear()
-
-      // The tap's own hold must not clip the delivery hold short: the layout
-      // passes that matter start when the page lands, not when it was asked for.
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await act(async () => vi.advanceTimersByTimeAsync(200))
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      await act(async () => vi.advanceTimersByTimeAsync(350))
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
-
-      expect(scrollToEnd).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('does not scroll to a message that arrived while the reader was held', async () => {
+  it('resets tail-follow when the conversation changes', async () => {
     vi.useFakeTimers()
     try {
       await render({ messages: [message], hasMore: true })
@@ -371,39 +413,14 @@ describe('MobileNativeChatView', () => {
 
       await update({ messages: [message], hasMore: true, loadingEarlier: true })
       await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      // The agent speaks late in the hold. Arming the tail-follow anyway would
-      // let it fire just after the hold lapses and yank the reader off the
-      // history they asked for.
-      await act(async () => vi.advanceTimersByTimeAsync(470))
-      const appended = { ...message, id: 'appended' }
-      await update({ messages: [older, message, appended], hasMore: false })
-      await act(async () => vi.advanceTimersByTimeAsync(100))
-
-      expect(scrollToEnd).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('still follows the tail once the history page has settled', async () => {
-    vi.useFakeTimers()
-    try {
-      await render({ messages: [message], hasMore: true })
-      await act(async () => vi.runAllTimersAsync())
-      // Drive a real paging cycle first: a hold that never lapses would leave
-      // the chat permanently unable to follow the agent.
-      await update({ messages: [message], hasMore: true, loadingEarlier: true })
-      await update({ messages: [older, message], hasMore: false, loadingEarlier: false })
-      const settled = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => settled.props.onContentSizeChange())
-      await act(async () => vi.runAllTimersAsync())
       scrollToEnd.mockClear()
 
-      const appended = { ...message, id: 'appended' }
-      await update({ messages: [older, message, appended], hasMore: false })
-      const list = renderer!.root.find((node) => node.type === 'FlatList')
-      act(() => list.props.onContentSizeChange())
-      await act(async () => vi.advanceTimersByTimeAsync(100))
+      await update({
+        conversationIdentity: 'next-conversation',
+        messages: [message, { ...message, id: 'next' }],
+        hasMore: false
+      })
+      await act(async () => vi.runAllTimersAsync())
 
       expect(scrollToEnd).toHaveBeenCalled()
     } finally {

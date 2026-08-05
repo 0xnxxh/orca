@@ -25,7 +25,7 @@ export type MobileNativeChatSession = {
   /** Whether an older-history page is currently loading. */
   loadingEarlier: boolean
   /** Grow the window to page in older history. */
-  loadEarlier: () => void
+  loadEarlier: () => boolean
 }
 
 // Stable empty reference so a not-yet-current read doesn't churn consumers.
@@ -181,9 +181,9 @@ export function useMobileNativeChatSession(args: {
     }
   }, [client, agent, sessionId, transcriptPath, identity, setList])
 
-  const loadEarlier = useCallback(() => {
+  const loadEarlier = useCallback((): boolean => {
     if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
-      return
+      return false
     }
     // Capture the session this page belongs to; a swap underneath us must not
     // apply this read's result onto the new session (mirrors desktop's guard).
@@ -193,7 +193,7 @@ export function useMobileNativeChatSession(args: {
     const pageLimit = nextLimit - limitRef.current
     if (pageLimit <= 0) {
       setHasMore(false)
-      return
+      return false
     }
     const beforeOffset = beforeOffsetRef.current
     loadingEarlierRef.current = true
@@ -244,6 +244,7 @@ export function useMobileNativeChatSession(args: {
         }
       }
     })()
+    return true
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
   return {

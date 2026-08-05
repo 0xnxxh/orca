@@ -76,7 +76,15 @@ describe('useMobileNativeChatSession', () => {
       return () => {}
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
-    act(() => state?.loadEarlier())
+    let started: boolean | undefined
+    let duplicate: boolean | undefined
+    act(() => {
+      started = state?.loadEarlier()
+      duplicate = state?.loadEarlier()
+    })
+
+    expect(started).toBe(true)
+    expect(duplicate).toBe(false)
 
     await act(async () => {
       emit({

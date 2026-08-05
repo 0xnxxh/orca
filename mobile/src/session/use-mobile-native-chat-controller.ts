@@ -43,6 +43,7 @@ export type MobileNativeChatController = {
   showNativeChatRef: MutableRefObject<boolean>
   /** Resolved agent for the active chat tab (names the empty-state copy). */
   nativeChatAgent: string | null
+  nativeChatIdentity: string
   chatComposerText: string
   setChatComposerText: Dispatch<SetStateAction<string>>
   chatPending: MobileNativeChatPendingMessage[]
@@ -125,6 +126,7 @@ export function useMobileNativeChatController(args: {
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
   const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  const nativeChatIdentity = `${streamIdentity}\0${activeChatResolution?.agent ?? ''}\0${activeChatResolution?.transcriptPath ?? ''}`
 
   const nativeChatSession = useMobileNativeChatSession({
     client,
@@ -267,6 +269,7 @@ export function useMobileNativeChatController(args: {
     showNativeChat,
     showNativeChatRef,
     nativeChatAgent: activeChatResolution?.agent ?? null,
+    nativeChatIdentity,
     chatComposerText,
     setChatComposerText,
     chatPending,
