@@ -66,6 +66,21 @@ describe('useMobileDiffReviewDiffLoading', () => {
     renderer = null
   })
 
+  it('keeps the loaded diff when the reconnect refetch rejects', async () => {
+    loadDiff
+      .mockResolvedValueOnce(readyDiff('before the drop'))
+      .mockRejectedValueOnce(new Error('diff fetch failed'))
+
+    await render('connected')
+    expect(diffState).toMatchObject({ kind: 'ready' })
+
+    await update('reconnecting')
+    await update('connected')
+    // Why (F10): a failed refetch must not erase the diff (or hunk context) on screen.
+    expect(diffState).toMatchObject({ kind: 'ready', lines: [{ text: 'before the drop' }] })
+    expect(loadDiff).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the loaded diff through a disconnect and its reconnect refetch', async () => {
     let releaseRefetch: (() => void) | null = null
     loadDiff.mockResolvedValueOnce(readyDiff('before the drop')).mockImplementationOnce(

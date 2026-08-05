@@ -60,11 +60,14 @@ export function useMobileDiffReviewDiffLoading(input: DiffLoadingInput): ReviewD
       })
       .catch((err: unknown) => {
         if (!stale) {
-          setDiffState({
-            kind: 'error',
-            itemKey,
-            message: err instanceof Error ? err.message : 'Unable to load diff'
-          })
+          // Why (F10): a rejected reconnect refetch must not erase the diff on screen.
+          setDiffState(
+            keepLoadedDiff({
+              kind: 'error',
+              itemKey,
+              message: err instanceof Error ? err.message : 'Unable to load diff'
+            })
+          )
         }
       })
     return () => {
