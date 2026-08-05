@@ -1,6 +1,11 @@
 import type { BrowserScreencastFrame } from './browser-screencast-protocol'
 import type { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
-import type { ConnectionLogSink, ConnectionState, RpcResponse } from './types'
+import type {
+  ConnectionLogSink,
+  ConnectionState,
+  ForegroundNudgeReason,
+  RpcResponse
+} from './types'
 
 export type SendRequestOptions = {
   timeoutMs?: number
@@ -39,7 +44,7 @@ export type RpcClient = {
   getLastConnectedAt: () => number | null
   getRpcUnresponsiveSince?: () => number | null
   onStateChange: (listener: (state: ConnectionState) => void) => () => void
-  notifyForeground: () => void
+  notifyForeground: (reason?: ForegroundNudgeReason) => void
   close: () => void
 }
 

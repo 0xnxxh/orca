@@ -43,9 +43,11 @@ export function openHostLogicalClient(
     closeLogical()
   }
   const notifyLogicalForeground = logical.notifyForeground
-  logical.notifyForeground = () => {
-    endpointLifecycle.setForeground(true)
-    notifyLogicalForeground()
+  logical.notifyForeground = (reason = 'focus') => {
+    // Why: a nudge while already foreground must not re-enter setForeground —
+    // that path suspended healthy relays; the supervisor probes or replaces instead.
+    endpointLifecycle.nudge(reason)
+    notifyLogicalForeground(reason)
   }
   return logical
 }

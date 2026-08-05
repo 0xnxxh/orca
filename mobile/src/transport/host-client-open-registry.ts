@@ -14,6 +14,11 @@ export class HostClientOpenRegistry {
       : null
   }
 
+  hasActive(hostId: string): boolean {
+    const ticket = this.pending.get(hostId)
+    return Boolean(ticket && !ticket.cancelled)
+  }
+
   register(hostId: string, profileVersion: number, promise: Promise<void>): HostClientOpenTicket {
     const previous = this.pending.get(hostId)
     if (previous) {

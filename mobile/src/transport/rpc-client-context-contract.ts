@@ -14,6 +14,7 @@ export type RpcClientContextValue = {
   ) => Promise<void>
   closeHost: (hostId: string) => void
   getState: (hostId: string) => ConnectionState
+  getKnownState: (hostId: string) => ConnectionState | null
   getReconnectAttempt: (hostId: string) => number
   getLastConnectedAt: (hostId: string) => number | null
   getRpcUnresponsiveSince: (hostId: string) => number | null

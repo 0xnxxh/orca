@@ -2,7 +2,6 @@ import { Platform } from 'react-native'
 import {
   DeviceCredentialInstalledSchema,
   PairingGetEndpointsResultSchema,
-  type DeviceCredentialInstalled,
   type MobileRelayEndpoint
 } from '../../../src/shared/mobile-relay-credential-contract'
 import { connect, type ConnectOptions } from './rpc-client'
@@ -30,6 +29,9 @@ import { racePairingCandidates, type PairingCandidate } from './pairing-candidat
 import { resolvePairingInviteThroughDirector } from './mobile-relay-invite-director'
 import { createRecoveringPairingRelayCandidate } from './pairing-relay-candidate'
 import { relayWebSocketUrl } from './mobile-endpoint-supervisor-support'
+import { createPairingRelayLogger } from './pairing-relay-log'
+import { redactSocketEndpoint } from './socket-event-debug'
+import { assertCommittedInstall, assertPairingActive } from './pairing-install-verification'
 
 export type PreProfilePairingAttempt = {
   readonly result: Promise<{ hostId: string }>
@@ -138,7 +140,7 @@ async function runPairing(
     offer.publicKeyB64,
     `host-${now}`
   )
-  assertActive(isDisposed)
+  assertPairingActive(isDisposed)
   let journal: MobileRelayPairingJournal | null = null
   if (offer.relay && dependencies.platform !== 'web') {
     journal = createMobileRelayPairingJournal({
@@ -148,7 +150,7 @@ async function runPairing(
       now
     })
     await dependencies.saveJournal(journal)
-    assertActive(isDisposed)
+    assertPairingActive(isDisposed)
   }
 
   const directClient = dependencies.connectDirect(
@@ -159,14 +161,21 @@ async function runPairing(
   )
   clients.add(directClient)
   const candidates: PairingCandidate[] = [{ path: 'direct', client: directClient }]
+  const log = createPairingRelayLogger(connectOptions?.onLog)
   if (journal) {
+    log(
+      'info',
+      'Relay: pairing candidate started',
+      redactSocketEndpoint(journal.metadata.relay.cellUrl)
+    )
     const relayClient = createRecoveringPairingRelayCandidate({
       journal,
-      connect: (relay) =>
+      connect: (relay, onLog) =>
         dependencies.connectRelay({
           relay,
           deviceToken: offer.deviceToken,
-          desktopPublicKeyB64: offer.publicKeyB64
+          desktopPublicKeyB64: offer.publicKeyB64,
+          onLog
         }),
       resolveDirector: (relay) => dependencies.resolveInviteDirector({ relay }),
       persistMove: async (relay) => {
@@ -183,13 +192,15 @@ async function runPairing(
         }
         await dependencies.updateJournal(journal.metadata.journalId, () => journal!.metadata)
       },
-      now: dependencies.now
+      now: dependencies.now,
+      onLog: connectOptions?.onLog
     })
     clients.add(relayClient)
     candidates.push({ path: 'relay', client: relayClient })
   }
   const winner = await racePairingCandidates(candidates)
-  assertActive(isDisposed)
+  log('success', 'Pairing path selected', `winner: ${winner.path}`)
+  assertPairingActive(isDisposed)
 
   if (!journal) {
     await publishHostProfileTransaction(
@@ -239,7 +250,7 @@ async function runPairing(
   if (!endpoints.relay) {
     throw new Error('desktop returned no relay endpoint after credential install')
   }
-  assertActive(isDisposed)
+  assertPairingActive(isDisposed)
   const committedJournal = journal
   const host = relayHost(committedJournal, endpoints.relay)
   await publishHostProfileTransaction(
@@ -294,26 +305,4 @@ function requireSuccess(response: RpcResponse): unknown {
 
 function isMethodNotFound(response: RpcResponse): boolean {
   return !response.ok && response.error.code === 'method_not_found'
-}
-
-function assertCommittedInstall(
-  status:
-    | { state: 'not-found' }
-    | { state: 'committed'; result: DeviceCredentialInstalled }
-    | undefined,
-  installed: DeviceCredentialInstalled
-): void {
-  if (
-    !status ||
-    status.state !== 'committed' ||
-    JSON.stringify(status.result) !== JSON.stringify(installed)
-  ) {
-    throw new Error('relay credential install was not authoritatively reconciled')
-  }
-}
-
-function assertActive(isDisposed: () => boolean): void {
-  if (isDisposed()) {
-    throw new Error('mobile pairing cancelled')
-  }
 }
