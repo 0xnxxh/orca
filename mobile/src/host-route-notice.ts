@@ -21,3 +21,18 @@ export function hostRouteNoticeMessage(notice: string | undefined): string | nul
 export function hostRouteWithNotice(hostId: string, notice: HostRouteNotice): string {
   return `/h/${encodeURIComponent(hostId)}?notice=${notice}`
 }
+
+/** The banner the host screen should draw, if any.
+ *  `embedded` is the tablet sidebar, which shares the route with the routed screen — one
+ *  bounce must not draw two banners. `dismissed` is keyed by code rather than a boolean so
+ *  closing one notice cannot swallow a later, different one. */
+export function visibleHostRouteNotice(
+  embedded: boolean,
+  notice: string | undefined,
+  dismissed: string | null
+): string | null {
+  if (embedded || (notice && notice === dismissed)) {
+    return null
+  }
+  return hostRouteNoticeMessage(notice)
+}

@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { selectHomeResumeCard, type HomeResumeCardInput } from './home-resume-card'
+import {
+  isResumeTargetConfirmedMissing,
+  selectHomeResumeCard,
+  type HomeResumeCardInput
+} from './home-resume-card'
 import type { HomeWorktreeSummary, HostWorktreeInfo } from './home-worktree-info'
 
 const homeSource = readFileSync(new URL('../../app/index.tsx', import.meta.url), 'utf8')
@@ -127,5 +131,45 @@ describe('home resume card', () => {
     const resumeCard = homeSource.slice(start, end)
     expect(resumeCard).toContain('disabled={!resumeCard.actionable}')
     expect(resumeCard).toContain('!resumeCard.actionable && styles.cardDisabled')
+  })
+})
+
+// Why (F7): the card is drawn from a snapshot that can name a workspace the desktop deleted
+// while the phone was away, and tapping it lands on a session screen whose every RPC fails.
+describe('isResumeTargetConfirmedMissing', () => {
+  const card = {
+    hostId: 'host-1',
+    worktree: worktree('repo::/tmp/wt'),
+    actionable: true
+  } as const
+
+  it('confirms a target the host listed without', () => {
+    expect(isResumeTargetConfirmedMissing(card, [{ worktreeId: 'repo::/tmp/other' }])).toBe(true)
+  })
+
+  it('clears a target present in the listing', () => {
+    expect(
+      isResumeTargetConfirmedMissing(card, [
+        { worktreeId: 'repo::/tmp/other' },
+        { worktreeId: 'repo::/tmp/wt' }
+      ])
+    ).toBe(false)
+  })
+
+  // An unproven catalog is silence, not evidence — the session screen bounces later instead.
+  it('never confirms without a proven catalog', () => {
+    expect(isResumeTargetConfirmedMissing(card, null)).toBe(false)
+  })
+
+  it('confirms the target when the host proves it has no workspaces at all', () => {
+    expect(isResumeTargetConfirmedMissing(card, [])).toBe(true)
+  })
+
+  it('exempts synthetic routes the catalog can never list', () => {
+    const folder = { ...card, worktree: worktree('folder:/Users/x/dir') }
+    const floating = { ...card, worktree: worktree('global-floating-terminal') }
+
+    expect(isResumeTargetConfirmedMissing(folder, [])).toBe(false)
+    expect(isResumeTargetConfirmedMissing(floating, [])).toBe(false)
   })
 })

@@ -56,7 +56,7 @@ import { BottomDrawer } from '../../../src/components/BottomDrawer'
 import { useHostProtocolGates } from '../../../src/components/HostProtocolGate'
 import { AuthFailedBanner } from '../../../src/components/AuthFailedBanner'
 import { HostRouteNoticeBanner } from '../../../src/components/HostRouteNoticeBanner'
-import { hostRouteNoticeMessage } from '../../../src/host-route-notice'
+import { visibleHostRouteNotice } from '../../../src/host-route-notice'
 import { MobileSearchField } from '../../../src/components/MobileSearchField'
 import { WorkspaceDetailPlaceholder } from '../../../src/components/WorkspaceDetailPlaceholder'
 import { getCachedWorktrees, setCachedWorktrees } from '../../../src/cache/worktree-cache'
@@ -122,11 +122,9 @@ export function HostScreen({
   const params = useLocalSearchParams<{ hostId: string; action?: string; notice?: string }>()
   const hostId = hostIdProp ?? params.hostId
   const action = actionProp ?? params.action
-  const [noticeDismissed, setNoticeDismissed] = useState(false)
-  // Why not embedded: the tablet sidebar and the routed screen are both HostScreen on the
-  // same route, and one bounce must not draw two banners.
-  const routeNotice =
-    embedded || noticeDismissed ? null : hostRouteNoticeMessage(params.notice?.trim())
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
+  const noticeParam = params.notice?.trim()
+  const routeNotice = visibleHostRouteNotice(embedded, noticeParam, dismissedNotice)
   const router = useRouter()
   const pathname = usePathname()
   const insets = useSafeAreaInsets()
@@ -1109,7 +1107,10 @@ export function HostScreen({
 
       {/* Why a bounced route landed here (e.g. the workspace was deleted on the desktop). */}
       {routeNotice && (
-        <HostRouteNoticeBanner message={routeNotice} onDismiss={() => setNoticeDismissed(true)} />
+        <HostRouteNoticeBanner
+          message={routeNotice}
+          onDismiss={() => setDismissedNotice(noticeParam ?? null)}
+        />
       )}
 
       {/* Search bar */}
