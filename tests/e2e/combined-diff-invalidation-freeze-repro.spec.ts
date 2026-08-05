@@ -298,8 +298,12 @@ test.describe('Combined diff invalidation freeze repro (STA-3420)', () => {
       expect(measurement.stuckLoadingRowCount).toBe(0)
       expect(measurement.editorCount).toBeGreaterThan(0)
       // Why: before the fix this window blocked continuously — p95 3963ms, 16 samples in 23s.
-      expect(measurement.burst.p95LagMs).toBeLessThan(100)
-      expect(measurement.burst.sampleCount).toBeGreaterThan(measurement.expectedSampleCount * 0.85)
+      // Every limit rides the identical idle window so a slow machine's floor can't fail the test;
+      // the allowances on top are what the burst itself is permitted to add.
+      expect(measurement.burst.p95LagMs).toBeLessThan(measurement.baseline.p95LagMs + 100)
+      expect(measurement.burst.sampleCount).toBeGreaterThan(
+        Math.min(measurement.baseline.sampleCount, measurement.expectedSampleCount) * 0.85
+      )
       // Why: peak lag tracks the idle floor of this fixture, not invalidation; only a regression
       // that adds a full extra second of blocking on top of that floor is this bug returning.
       expect(measurement.burst.maxLagMs).toBeLessThan(

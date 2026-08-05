@@ -16,30 +16,47 @@ function textDiff(originalContent: string, modifiedContent: string): GitDiffResu
   }
 }
 
+function limitedRenderLimit(
+  overrides: Partial<Extract<LargeDiffRenderLimit, { limited: true }>> = {}
+): LargeDiffRenderLimit {
+  return {
+    limited: true,
+    reason: 'line-count',
+    lineCounts: null,
+    characterCount: 0,
+    limits: { maxLinesPerSide: 1, maxCombinedCharacters: 1 },
+    ...overrides
+  }
+}
+
 function renderLimit(limited: boolean): LargeDiffRenderLimit {
   return limited
-    ? {
-        limited: true,
-        reason: 'line-count',
-        lineCounts: null,
-        characterCount: 0,
-        limits: { maxLinesPerSide: 1, maxCombinedCharacters: 1 }
-      }
+    ? limitedRenderLimit()
     : { limited: false, lineCounts: { original: 1, modified: 1 }, characterCount: 2 }
 }
 
 function loaded(
   originalContent: string,
   modifiedContent: string,
-  overrides: { error?: string; limited?: boolean; diffResult?: GitDiffResult } = {}
+  overrides: {
+    error?: string
+    limited?: boolean
+    diffResult?: GitDiffResult
+    largeDiffRenderLimit?: LargeDiffRenderLimit
+  } = {}
 ): Parameters<typeof isUnchangedDiffSectionReload>[0] {
   return {
     diffResult: overrides.diffResult ?? textDiff(originalContent, modifiedContent),
     error: overrides.error,
-    largeDiffRenderLimit: renderLimit(overrides.limited ?? false),
+    largeDiffRenderLimit: overrides.largeDiffRenderLimit ?? renderLimit(overrides.limited ?? false),
     originalContent,
     modifiedContent
   }
+}
+
+// Limited sections store empty content, so every case below turns on render-limit metadata alone.
+function limited(largeDiffRenderLimit: LargeDiffRenderLimit) {
+  return loaded('', '', { largeDiffRenderLimit })
 }
 
 describe('combined diff section load state', () => {
@@ -99,6 +116,55 @@ describe('isUnchangedDiffSectionReload', () => {
   it('commits when the render limit crosses the fallback boundary', () => {
     expect(
       isUnchangedDiffSectionReload(loaded('a', 'b'), loaded('a', 'b', { limited: true }))
+    ).toBe(false)
+  })
+
+  it('skips a limited reload whose render-limit metadata is identical', () => {
+    const unchanged = limitedRenderLimit({ lineCounts: { original: 400_000, modified: 400_000 } })
+    expect(isUnchangedDiffSectionReload(limited(unchanged), limited(unchanged))).toBe(true)
+  })
+
+  it('commits when a limited reload moves line counts', () => {
+    expect(
+      isUnchangedDiffSectionReload(
+        limited(limitedRenderLimit({ lineCounts: { original: 400_000, modified: 400_000 } })),
+        limited(limitedRenderLimit({ lineCounts: { original: 400_000, modified: 401_000 } }))
+      )
+    ).toBe(false)
+    expect(
+      isUnchangedDiffSectionReload(
+        limited(limitedRenderLimit({ lineCounts: null })),
+        limited(limitedRenderLimit({ lineCounts: { original: 400_000, modified: 400_000 } }))
+      )
+    ).toBe(false)
+  })
+
+  it('commits when a limited reload moves the character count or reason', () => {
+    expect(
+      isUnchangedDiffSectionReload(
+        limited(limitedRenderLimit({ characterCount: 7_000_000 })),
+        limited(limitedRenderLimit({ characterCount: 9_000_000 }))
+      )
+    ).toBe(false)
+    expect(
+      isUnchangedDiffSectionReload(
+        limited(limitedRenderLimit({ reason: 'line-count' })),
+        limited(limitedRenderLimit({ reason: 'character-count' }))
+      )
+    ).toBe(false)
+  })
+
+  it('commits when a limited reload stops reporting line counts as a floor', () => {
+    expect(
+      isUnchangedDiffSectionReload(
+        limited(
+          limitedRenderLimit({
+            lineCounts: { original: 120_001, modified: 0 },
+            lineCountsAreMinimum: { original: true, modified: false }
+          })
+        ),
+        limited(limitedRenderLimit({ lineCounts: { original: 120_001, modified: 0 } }))
+      )
     ).toBe(false)
   })
 
