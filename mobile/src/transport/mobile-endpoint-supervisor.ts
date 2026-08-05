@@ -4,7 +4,6 @@ import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
 import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
 import {
-  dialRelayThroughDirectorFallback,
   persistRelayHost,
   suspendRelayIfStillConnected
 } from './mobile-endpoint-supervisor-support'
@@ -16,6 +15,7 @@ import {
 } from './mobile-relay-credential-rotation'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
 import { MobileRelayFocusProbe } from './mobile-relay-focus-probe'
+import { MobileRelayDirectGraceTimer } from './mobile-relay-direct-grace-timer'
 import { MobileRelaySessionEstablisher } from './mobile-relay-session-establisher'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { ForegroundNudgeReason, HostProfile } from './types'
@@ -40,6 +40,7 @@ export class MobileEndpointSupervisor {
   private readonly leaseRotation: RelayLeaseRotationTimer
   private readonly logRelay: RelayRecoveryLog
   private readonly directProbe: DirectReturnProbe
+  private readonly directGrace: MobileRelayDirectGraceTimer
   private readonly sessionEstablisher: MobileRelaySessionEstablisher
 
   constructor(
@@ -69,6 +70,12 @@ export class MobileEndpointSupervisor {
       this.relayRotationPending = true
       void this.recoverRelay(true)
     })
+    // Why: the race owns recovery exactly like a network-change replacement — its
+    // failure must book the shared cooldown. recoverRelay's own guards already
+    // cover stopped/background/no-relay, so the timer needs no scope check.
+    this.directGrace = new MobileRelayDirectGraceTimer(dependencies, logical, () => {
+      void this.recoverRelay(true, true)
+    })
     this.sessionEstablisher = new MobileRelaySessionEstablisher({
       logical,
       controller: this.relayReconnect,
@@ -78,6 +85,10 @@ export class MobileEndpointSupervisor {
       isActive: () => !this.stopped && this.foreground,
       isForeground: () => this.foreground,
       relay: () => this.host.relay,
+      resolveRelay: dependencies.resolveRelay,
+      persistResolvedRelay: async (resolved) => {
+        this.host = await persistRelayHost(this.host, resolved, dependencies.saveHost)
+      },
       bundle: () => this.bundle,
       adoptBundle: (bundle) => {
         this.bundle = bundle
@@ -127,6 +138,7 @@ export class MobileEndpointSupervisor {
     }
     this.unsubscribeState = this.logical.onStateChange((state) => {
       if (state === 'connected') {
+        this.directGrace.clear()
         if (this.logical.getActivePath() !== 'relay') {
           void this.rotateCredentialIfNeeded(this.relayReconnect.resetForDirectConnection())
         }
@@ -143,6 +155,7 @@ export class MobileEndpointSupervisor {
       await this.recoverRelay()
     } else {
       this.directProbe.schedule()
+      this.directGrace.arm()
     }
   }
 
@@ -152,12 +165,14 @@ export class MobileEndpointSupervisor {
     if (foreground) {
       this.relayReconnect.handleForeground(this.logical, wasForeground)
       this.directProbe.schedule(0)
+      this.directGrace.arm()
     } else {
       // Why: background phones must not hold billed relay data splices.
       this.relayReconnect.suspendActiveRelay(this.logical)
       this.directProbe.clear()
       this.relayReconnect.clear()
       this.leaseRotation.clear()
+      this.directGrace.clear()
     }
   }
 
@@ -185,13 +200,17 @@ export class MobileEndpointSupervisor {
     this.directProbe.clear()
     this.relayReconnect.clear()
     this.leaseRotation.clear()
+    this.directGrace.clear()
   }
 
-  // suspectActive: the caller believes the live relay socket may be half-open (network
-  // change). Dial the replacement make-before-break — the dot stays green — and only
-  // bring the old session down when no replacement can be established.
-  private async recoverRelay(forceReplacement = false, suspectActive = false): Promise<void> {
-    // Why: connecting/handshaking is live direct progress; a relay dial would race it.
+  // forceReplacement: dial past the "direct still looks live" guard — a lease
+  // rotation, a network-change replacement, or the happy-eyeballs grace race.
+  // ownsRecovery: this dial is the connection's only hope, so a failure books the
+  // shared cooldown and any session left stale-'connected' by a half-open socket
+  // comes down; lease rotation clears it because armRetry owns its own retry.
+  private async recoverRelay(forceReplacement = false, ownsRecovery = false): Promise<void> {
+    // Why: connecting/handshaking is live direct progress; an unforced relay dial
+    // would race it before the grace timer has given direct its head start.
     if (
       this.stopped ||
       !this.foreground ||
@@ -204,7 +223,7 @@ export class MobileEndpointSupervisor {
     // Why: revival and lease timers can overlap resume failures; one shared cooldown
     // prevents PEER_DROPPED/LIMIT_EXCEEDED reconnect churn.
     if (this.relayReconnect.shouldDefer()) {
-      if (suspectActive) {
+      if (ownsRecovery) {
         // Why: the armed retry runs unforced and dead-ends on a stale 'connected'.
         suspendRelayIfStillConnected(this.relayReconnect, this.logical)
       }
@@ -231,13 +250,13 @@ export class MobileEndpointSupervisor {
             : 'no relay credential bundle; slow reprobe armed'
         )
         this.relayReconnect.armCredentialReprobe()
-        if (suspectActive) {
+        if (ownsRecovery) {
           suspendRelayIfStillConnected(this.relayReconnect, this.logical)
         }
         return
       }
       for (const credential of selection.credentials) {
-        const result = await this.tryRelayCredential(credential)
+        const result = await this.sessionEstablisher.dial(credential)
         if (result.ok) {
           retryAfterOperation = this.logical.getState() !== 'connected'
           return
@@ -256,9 +275,9 @@ export class MobileEndpointSupervisor {
       }
       // Why: cleanup may happen while a relay dial is awaiting the network;
       // record its outcome without recreating a foreground retry timer.
-      const scheduleRetry = (!forceReplacement || suspectActive) && this.foreground && !this.stopped
+      const scheduleRetry = (!forceReplacement || ownsRecovery) && this.foreground && !this.stopped
       this.relayReconnect.registerFailure(lastError, scheduleRetry)
-      if (suspectActive) {
+      if (ownsRecovery) {
         suspendRelayIfStillConnected(this.relayReconnect, this.logical)
       }
     } finally {
@@ -271,21 +290,6 @@ export class MobileEndpointSupervisor {
         void this.recoverRelay()
       }
     }
-  }
-
-  private tryRelayCredential(credential: {
-    token: string
-    version: number
-  }): Promise<{ ok: true } | { ok: false; error: Error }> {
-    return dialRelayThroughDirectorFallback({
-      resumeToken: credential.token,
-      relay: () => this.host.relay,
-      dial: () => this.sessionEstablisher.establish(credential),
-      resolveRelay: this.dependencies.resolveRelay,
-      persistResolvedRelay: async (resolved) => {
-        this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
-      }
-    })
   }
 
   private async rotateCredentialIfNeeded(force = false): Promise<void> {

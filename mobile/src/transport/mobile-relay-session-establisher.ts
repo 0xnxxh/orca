@@ -1,16 +1,22 @@
 import type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
-import { encodeBase64Url, toError } from './mobile-endpoint-supervisor-support'
+import {
+  dialRelayThroughDirectorFallback,
+  encodeBase64Url,
+  toError
+} from './mobile-endpoint-supervisor-support'
 import { persistResumeConfirmation } from './mobile-relay-credential-rotation'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
 import type { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
+import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
 import type { HostProfile } from './types'
 
 type EstablishResult = { ok: true } | { ok: false; error: Error }
 
-// Turns one relay credential into the active runtime session: open the cell
-// socket, migrate the logical client onto it, then persist the resume
-// confirmation and re-arm the supervisor's timers.
+// Turns one relay credential into the active runtime session: resolve the cell
+// assignment if the director rejects the cached one, open the cell socket,
+// migrate the logical client onto it, then persist the resume confirmation and
+// re-arm the supervisor's timers.
 export class MobileRelaySessionEstablisher {
   constructor(
     private readonly args: {
@@ -22,6 +28,8 @@ export class MobileRelaySessionEstablisher {
       isActive: () => boolean
       isForeground: () => boolean
       relay: () => HostProfile['relay']
+      resolveRelay: MobileEndpointSupervisorDependencies['resolveRelay']
+      persistResolvedRelay: (resolved: MobileRelayEndpoint) => Promise<void>
       bundle: () => MobileRelayCredentialBundle | null
       adoptBundle: (bundle: MobileRelayCredentialBundle) => void
       // Hysteresis stamp + rotation-pending clear + recovery log line.
@@ -32,7 +40,22 @@ export class MobileRelaySessionEstablisher {
     }
   ) {}
 
-  async establish(credential: { token: string; version: number }): Promise<EstablishResult> {
+  // One credential attempt: a director-class failure re-resolves the cell
+  // assignment, persists it, and dials once more against the authoritative target.
+  dial(credential: { token: string; version: number }): Promise<EstablishResult> {
+    return dialRelayThroughDirectorFallback({
+      resumeToken: credential.token,
+      relay: this.args.relay,
+      dial: () => this.establish(credential),
+      resolveRelay: this.args.resolveRelay,
+      persistResolvedRelay: this.args.persistResolvedRelay
+    })
+  }
+
+  private async establish(credential: {
+    token: string
+    version: number
+  }): Promise<EstablishResult> {
     const { args } = this
     const relay = args.relay()
     const bundle = args.bundle()

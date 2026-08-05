@@ -825,6 +825,86 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('races a relay dial when the direct dial stalls unauthenticated', async () => {
+    const logical = new FakeLogicalClient('connecting', 'lan')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(2_499)
+    expect(deps.openRelay).not.toHaveBeenCalled()
+    expect(logical.getState()).toBe('connecting')
+
+    // The direct dial never authenticates; the relay wins the race through migrateTo.
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => expect(logical.getActivePath()).toBe('relay'))
+    expect(logical.migrateTo).toHaveBeenCalledWith(expect.any(FakeRelaySession), 'relay')
+    supervisor.stop()
+  })
+
+  it('cancels the grace race when the direct dial authenticates first', async () => {
+    const logical = new FakeLogicalClient('connecting', 'lan')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    logical.publishState('connected')
+    expect(vi.getTimerCount()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(deps.openRelay).not.toHaveBeenCalled()
+    expect(logical.getActivePath()).toBe('lan')
+    supervisor.stop()
+  })
+
+  it('never races a relay dial against a desktop with no relay endpoint', async () => {
+    const logical = new FakeLogicalClient('connecting', 'lan')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, { ...host, relay: undefined }, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(deps.openRelay).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    supervisor.stop()
+  })
+
+  it('drops the pending grace race when the phone backgrounds', async () => {
+    const logical = new FakeLogicalClient('connecting', 'lan')
+    const deps = dependencies()
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    supervisor.setForeground(false)
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(deps.openRelay).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    supervisor.stop()
+  })
+
+  it('books the shared cooldown when the grace race loses its dial', async () => {
+    const logical = new FakeLogicalClient('connecting', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const deps = dependencies({ openRelay, randomBytes: () => new Uint8Array([128, 0]) })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    // The armed retry runs unforced, so it yields to the still-progressing direct
+    // dial: the race gets one attempt, never a socket-per-cooldown loop.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    // Direct finally gives up: ordinary recovery still owns the failure.
+    logical.publishState('reconnecting')
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(2))
+    supervisor.stop()
+  })
+
   it('releases a background relay session and reconnects it on foreground', async () => {
     const logical = new FakeLogicalClient('connected', 'relay')
     const deps = dependencies()
