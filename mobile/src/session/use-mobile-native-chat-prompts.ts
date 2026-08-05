@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { AgentStatusEntry } from '../../../src/shared/agent-status-types'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
-import { extractPendingAsk, parseAskFromStatus } from './mobile-native-chat-ask'
+import { parseAskFromStatus, resolveNativeChatAsk } from './mobile-native-chat-ask'
 import { detectAgentPermission, parseApprovalFromStatus } from './mobile-native-chat-permission'
 import { parseAgentQuestion } from './mobile-native-chat-question'
 
@@ -40,17 +40,19 @@ export function useMobileNativeChatPrompts(args: {
     () => parseAskFromStatus(status?.interactivePrompt, status?.toolName),
     [status?.interactivePrompt, status?.toolName]
   )
-  // A held transcript is a cache, not settled history: the ask it still shows may
-  // have been answered elsewhere, and this card writes to the agent's TUI. The
-  // live `askFromStatus` path is unaffected, so a truly pending card stays put.
-  const askFromMessages = useMemo(
-    () => (askFromStatus || transcriptLoading ? null : extractPendingAsk(messages)),
+  const ask = useMemo(
+    () =>
+      resolveNativeChatAsk({
+        liveAsk: askFromStatus,
+        messages,
+        transcriptSettled: !transcriptLoading
+      }),
     [askFromStatus, transcriptLoading, messages]
   )
 
   return {
     permission,
     question,
-    ask: enabled ? (askFromStatus ?? askFromMessages) : null
+    ask: enabled ? ask : null
   }
 }

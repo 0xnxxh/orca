@@ -4,7 +4,7 @@ import {
   type NativeChatBlock,
   type NativeChatMessage
 } from './native-chat-types'
-import { extractPendingAsk, parseAskFromStatus } from './native-chat-ask'
+import { extractPendingAsk, parseAskFromStatus, resolveNativeChatAsk } from './native-chat-ask'
 
 function message(id: string, blocks: NativeChatBlock[]): NativeChatMessage {
   return { id, role: 'assistant', blocks, timestamp: 1, source: 'transcript' }
@@ -162,5 +162,25 @@ describe('parseAskFromStatus', () => {
       JSON.stringify({ questions: [{ question: 'Pick', options: ['a', 'b'] }] })
     )
     expect(prompt?.questions[0]?.options.map((o) => o.label)).toEqual(['a', 'b'])
+  })
+})
+
+describe('resolveNativeChatAsk', () => {
+  const transcript = [message('m1', [call('AskUserQuestion', QUESTIONS_INPUT)])]
+
+  it('withholds transcript state until the read settles', () => {
+    expect(
+      resolveNativeChatAsk({ liveAsk: null, messages: transcript, transcriptSettled: false })
+    ).toBeNull()
+    expect(
+      resolveNativeChatAsk({ liveAsk: null, messages: transcript, transcriptSettled: true })
+    )?.toMatchObject(QUESTIONS_INPUT)
+  })
+
+  it('keeps a live ask authoritative while transcript history is unsettled', () => {
+    const liveAsk = { questions: [{ question: 'Live?', options: [], multiSelect: false }] }
+    expect(resolveNativeChatAsk({ liveAsk, messages: transcript, transcriptSettled: false })).toBe(
+      liveAsk
+    )
   })
 })
