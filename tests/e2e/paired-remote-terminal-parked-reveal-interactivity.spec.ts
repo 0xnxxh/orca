@@ -482,3 +482,76 @@ test('paired client keeps revealed remote terminals interactive', async ({
     await client.dispose()
   }
 })
+
+test('paired client fast-paints a parked terminal before the runtime responds', async ({
+  orcaPage
+}, testInfo) => {
+  test.setTimeout(180_000)
+  const offer = await createRuntimeDesktopPairingOffer(orcaPage)
+  const previousParkDelay = process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS
+  process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS = String(PARK_DELAY_MS)
+  const client = await launchPairedElectronClient(offer, testInfo, 'parked-fast-paint')
+  const createdTerminals: string[] = []
+  try {
+    const worktreeId = await orcaPage.evaluate(() => {
+      const id = window.__store?.getState().activeWorktreeId
+      if (!id) {
+        throw new Error('headed host has no active worktree')
+      }
+      return id
+    })
+    await expect
+      .poll(
+        () =>
+          client.page.evaluate(
+            (id) =>
+              window.__store
+                ?.getState()
+                .allWorktrees()
+                .some((worktree) => worktree.id === id) ?? false,
+            worktreeId
+          ),
+        { timeout: 60_000, message: 'paired client never saw the host worktree' }
+      )
+      .toBe(true)
+    await client.page.evaluate((id) => {
+      const state = window.__store?.getState()
+      state?.setActiveView('terminal')
+      state?.setActiveWorktree(id)
+    }, worktreeId)
+
+    const { target, decoys } = await seedScenario(client, worktreeId)
+    createdTerminals.push(target.terminal, ...decoys.map((decoy) => decoy.terminal))
+    await openClientTab(client.page, worktreeId, decoys[0].webTabId)
+    await openClientTab(client.page, worktreeId, decoys[1].webTabId)
+    await waitForTabParked(client.page, target.webTabId, { parkDelayMs: PARK_DELAY_MS })
+    await client.page.evaluate(async (selector) => {
+      await window.api.runtimeEnvironments.disconnect({ selector })
+    }, client.environmentId)
+
+    const startedAt = Date.now()
+    await openClientTab(client.page, worktreeId, target.webTabId)
+    expect(
+      await waitForPaneMarker(client.page, target.webTabId, 'READY:', 2_000),
+      'cold-parked viewport stayed blank while the paired runtime was disconnected'
+    ).toBe(true)
+    console.log(`[paired-reveal] cached viewport painted in ${Date.now() - startedAt}ms`)
+  } finally {
+    await client.page
+      .evaluate(async (selector) => {
+        await window.api.runtimeEnvironments.connect({ selector })
+      }, client.environmentId)
+      .catch(() => undefined)
+    for (const terminal of createdTerminals) {
+      await callEnvironment(client.page, client.environmentId, 'terminal.closeTab', {
+        terminal
+      }).catch(() => undefined)
+    }
+    if (previousParkDelay === undefined) {
+      delete process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS
+    } else {
+      process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS = previousParkDelay
+    }
+    await client.dispose()
+  }
+})

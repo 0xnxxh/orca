@@ -8527,6 +8527,37 @@ describe('connectPanePty', () => {
     )
   })
 
+  it('resets cached parked terminal modes before authoritative snapshot replay', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    enableActiveRuntimeEnvironment()
+    const remotePtyId = 'remote:env-1@@terminal-1'
+    const transport = createMockTransport(remotePtyId)
+    const replayCallback: { current: ((data: string) => void) | null } = { current: null }
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      replayCallback.current = callbacks.onReplayData ?? null
+      return { id: remotePtyId, replay: '' }
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    pane.container.dataset.parkedViewportFrame = 'true'
+    pane.terminal.write = vi.fn((_data: string, callback?: () => void) => {
+      callback?.()
+    })
+
+    const binding = connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks(6)
+    replayCallback.current?.('authoritative snapshot')
+    await flushAsyncTicks(12)
+
+    const writes = pane.terminal.write.mock.calls.map(([data]) => data)
+    expect(writes.indexOf('\x1bc')).toBeGreaterThanOrEqual(0)
+    expect(writes.indexOf('\x1bc')).toBeLessThan(writes.indexOf('authoritative snapshot'))
+    expect(writes).not.toContain('\x1b[2J\x1b[3J\x1b[H')
+    expect(pane.container.dataset.parkedViewportFrame).toBeUndefined()
+    binding.dispose()
+  })
+
   it('resizes the pane to the snapshot grid before replaying daemon snapshot bytes (bug #7279)', async () => {
     // Why: the daemon serializes soft-wrapped lines flat, so reattach must resize xterm to the snapshot grid before writing, or rows rewrap wrong.
     const { connectPanePty } = await import('./pty-connection')

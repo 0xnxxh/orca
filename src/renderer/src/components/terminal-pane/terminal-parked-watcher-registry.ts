@@ -9,6 +9,10 @@
  */
 import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
+import type {
+  ParkedTerminalViewportFrame,
+  ParkedTerminalViewportFrameByLeaf
+} from './terminal-parked-viewport-frame'
 
 export type ParkedTerminalPaneCapture = {
   ptyId: string | null
@@ -17,6 +21,7 @@ export type ParkedTerminalPaneCapture = {
   /** Stable terminal-layout leaf UUID (paneKey attribution). */
   leafId: string
   drivesTabTitle: boolean
+  viewportFrame?: ParkedTerminalViewportFrame
 }
 
 export type CapturedTabPanes = { worktreeId: string; panes: ParkedTerminalPaneCapture[] }
@@ -65,6 +70,32 @@ export function terminalWatcherLiveWorkspaceIds(workspaceIds: Iterable<string>):
  */
 export function isTerminalTabParked(tabId: string): boolean {
   return (parkedWatchersByTabId.get(tabId)?.disposersByPtyId.size ?? 0) > 0
+}
+
+export function consumeParkedTerminalViewportFrames(
+  tabId: string,
+  expectedPtyIdsByLeafId: Readonly<Record<string, string>>,
+  fallbackPtyId: string | null
+): ParkedTerminalViewportFrameByLeaf[] {
+  const capture = capturedPanesByTabId.get(tabId)
+  if (!capture) {
+    return []
+  }
+  const useFallback = capture.panes.length === 1
+  const frames = isTerminalTabParked(tabId)
+    ? capture.panes.flatMap((pane) => {
+        const expectedPtyId =
+          expectedPtyIdsByLeafId[pane.leafId] ?? (useFallback ? fallbackPtyId : null)
+        return pane.viewportFrame && expectedPtyId && pane.ptyId === expectedPtyId
+          ? [{ leafId: pane.leafId, frame: pane.viewportFrame }]
+          : []
+      })
+    : []
+  capturedPanesByTabId.set(tabId, {
+    ...capture,
+    panes: capture.panes.map(({ viewportFrame: _viewportFrame, ...pane }) => pane)
+  })
+  return frames
 }
 
 export function disposeParkedTabWatchers(tabId: string): void {

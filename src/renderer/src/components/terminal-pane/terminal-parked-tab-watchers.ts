@@ -24,15 +24,20 @@ import {
 import { collapseParkedExitedLeaf, startParkedPtyWatcher } from './terminal-parked-pty-watcher'
 import {
   capturedPanesByTabId,
+  consumeParkedTerminalViewportFrames,
   disposeParkedTabWatchers,
   parkedWatchersByTabId,
   type ParkedTabWatcherEntry,
   type ParkedTerminalPaneCapture
 } from './terminal-parked-watcher-registry'
+import type { PaneManager } from '@/lib/pane-manager/pane-manager'
+import type { ReplayingPanesRef } from './replay-guard'
+import { replayParkedTerminalViewportFrames } from './terminal-parked-viewport-frame'
 
 // Why: re-export so callers keep one import surface; the registry split only breaks the store-slice import cycle.
 export {
   captureParkedTerminalPaneCandidates,
+  consumeParkedTerminalViewportFrames,
   disposeAllParkedTerminalWatchers,
   disposeRemovedWorktreeParkedTerminalWatchers,
   disposeParkedTerminalWatchersForPtyIds,
@@ -48,6 +53,29 @@ export {
 } from './terminal-parked-watcher-reconciliation'
 export type { ParkableTerminalTabModel } from './terminal-parked-watcher-reconciliation'
 export type ParkedTerminalPtyEligibility = (ptyId: string) => boolean
+
+export function replayParkedTerminalViewportForTab(args: {
+  manager: PaneManager
+  paneByLeafId: ReadonlyMap<string, number>
+  replayingPanesRef: ReplayingPanesRef
+  tabId: string
+  worktreeId: string
+}): number {
+  const state = useAppStore.getState()
+  const tab = state.tabsByWorktree[args.worktreeId]?.find(
+    (candidate) => candidate.id === args.tabId
+  )
+  return replayParkedTerminalViewportFrames({
+    manager: args.manager,
+    frames: consumeParkedTerminalViewportFrames(
+      args.tabId,
+      state.terminalLayoutsByTabId[args.tabId]?.ptyIdsByLeafId ?? {},
+      tab?.ptyId ?? null
+    ),
+    paneByLeafId: args.paneByLeafId,
+    replayingPanesRef: args.replayingPanesRef
+  })
+}
 
 const allowOrdinaryParkRestore = (ptyId: string): boolean =>
   isRemoteRuntimePtyId(ptyId) ||

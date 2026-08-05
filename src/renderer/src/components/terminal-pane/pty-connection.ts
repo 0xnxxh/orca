@@ -272,6 +272,7 @@ import {
 } from './command-code-done-settle'
 import { canCommandCodeOutputOwnPane } from './command-code-output-ownership'
 import { isTerminalTabParked } from './terminal-parked-watcher-registry'
+import { consumeParkedTerminalViewportFrameMarker } from './terminal-parked-viewport-frame'
 import {
   getExecutionHostIdForWorktree,
   getSettingsForWorktreeRuntimeOwner
@@ -5692,7 +5693,9 @@ export function connectPanePty(
         // xterm. Local eager replay decides this earlier so metadata-only frames
         // can keep restored scrollback while still using the replay guard.
         if (clearBeforeReplay) {
-          await writeReplayDataAsync('\x1b[2J\x1b[3J\x1b[H')
+          await writeReplayDataAsync(
+            consumeParkedTerminalViewportFrameMarker(pane) ? '\x1bc' : '\x1b[2J\x1b[3J\x1b[H'
+          )
           if (!isCurrentPayload()) {
             continue
           }

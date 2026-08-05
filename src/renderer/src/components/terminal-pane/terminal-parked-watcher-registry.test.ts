@@ -9,6 +9,7 @@ import {
 } from './pty-pre-handler-buffer'
 import {
   capturedPanesByTabId,
+  consumeParkedTerminalViewportFrames,
   parkedWatchersByTabId,
   pruneParkedTerminalWatchers,
   terminalWatcherLiveWorkspaceIds
@@ -89,5 +90,59 @@ describe('terminal parked watcher registry removal', () => {
     expect(parkedWatchersByTabId.has(FLOATING_TAB_ID)).toBe(true)
     expect(capturedPanesByTabId.has(FLOATING_TAB_ID)).toBe(true)
     expect(floatingDispose).not.toHaveBeenCalled()
+  })
+
+  it('consumes a matching parked viewport frame exactly once', () => {
+    const frame = { data: 'cached viewport', cols: 120, rows: 40 }
+    capturedPanesByTabId.set(TAB_ID, {
+      worktreeId: 'removed-worktree',
+      panes: [
+        {
+          ptyId: PTY_ID,
+          paneId: 1,
+          leafId: 'leaf-1',
+          drivesTabTitle: true,
+          viewportFrame: frame
+        }
+      ]
+    })
+    parkedWatchersByTabId.set(TAB_ID, {
+      worktreeId: 'removed-worktree',
+      tabPtyId: PTY_ID,
+      paneIdByPtyId: new Map([[PTY_ID, 1]]),
+      disposersByPtyId: new Map([[PTY_ID, vi.fn()]])
+    })
+
+    expect(consumeParkedTerminalViewportFrames(TAB_ID, { 'leaf-1': PTY_ID }, null)).toEqual([
+      { leafId: 'leaf-1', frame }
+    ])
+    expect(consumeParkedTerminalViewportFrames(TAB_ID, { 'leaf-1': PTY_ID }, null)).toEqual([])
+    expect(capturedPanesByTabId.get(TAB_ID)?.panes[0]).not.toHaveProperty('viewportFrame')
+  })
+
+  it('drops a cached viewport when the parked PTY identity changed', () => {
+    capturedPanesByTabId.set(TAB_ID, {
+      worktreeId: 'removed-worktree',
+      panes: [
+        {
+          ptyId: PTY_ID,
+          paneId: 1,
+          leafId: 'leaf-1',
+          drivesTabTitle: true,
+          viewportFrame: { data: 'stale viewport', cols: 80, rows: 24 }
+        }
+      ]
+    })
+    parkedWatchersByTabId.set(TAB_ID, {
+      worktreeId: 'removed-worktree',
+      tabPtyId: 'replacement-pty',
+      paneIdByPtyId: new Map([['replacement-pty', 1]]),
+      disposersByPtyId: new Map([['replacement-pty', vi.fn()]])
+    })
+
+    expect(
+      consumeParkedTerminalViewportFrames(TAB_ID, { 'leaf-1': 'replacement-pty' }, null)
+    ).toEqual([])
+    expect(capturedPanesByTabId.get(TAB_ID)?.panes[0]).not.toHaveProperty('viewportFrame')
   })
 })

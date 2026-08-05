@@ -122,7 +122,11 @@ import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import { markTerminalPinnedViewport } from '@/lib/pane-manager/terminal-scroll-intent'
 import { syncTerminalScrollIntentSoon } from '@/lib/pane-manager/terminal-scroll-intent-settle'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
-import { captureParkedTerminalPaneCandidates } from './terminal-parked-tab-watchers'
+import {
+  captureParkedTerminalPaneCandidates,
+  replayParkedTerminalViewportForTab
+} from './terminal-parked-tab-watchers'
+import { captureParkedTerminalPanes } from './terminal-parked-viewport-frame'
 import { e2eConfig } from '@/lib/e2e-config'
 import {
   PRIMARY_SELECTION_MAX_LENGTH,
@@ -1500,6 +1504,13 @@ export function useTerminalPaneLifecycle({
       replayingPanesRef,
       restoredViewportBlankingPanesRef
     )
+    replayParkedTerminalViewportForTab({
+      manager,
+      paneByLeafId: restoredPaneByLeafId,
+      replayingPanesRef,
+      tabId,
+      worktreeId
+    })
     const hasScrollbackRefs = Boolean(initialLayoutRef.current.scrollbackRefsByLeafId)
     if (
       restoredBuffers &&
@@ -1745,12 +1756,7 @@ export function useTerminalPaneLifecycle({
       captureParkedTerminalPaneCandidates(
         tabId,
         worktreeId,
-        manager.getPanes().map((capturedPane) => ({
-          ptyId: paneTransports.get(capturedPane.id)?.getPtyId() ?? null,
-          paneId: capturedPane.id,
-          leafId: capturedPane.leafId,
-          drivesTabTitle: manager.getActivePane()?.id === capturedPane.id
-        }))
+        captureParkedTerminalPanes(manager, paneTransports)
       )
       for (const transport of paneTransports.values()) {
         const ptyId = transport.getPtyId()
