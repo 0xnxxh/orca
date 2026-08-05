@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR,
   PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR,
+  PTY_CONSUMER_OWNER_HELD_SELF_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
 } from '../../shared/pty-consumer-session'
 import {
   isSshOwnerAdmissionBlocked,
   retrySshOwnerRecoveryWhileBlocked,
-  SSH_OWNER_HELD_DISCONNECTED_WAIT_MS
+  SSH_OWNER_HELD_DISCONNECTED_WAIT_MS,
+  SSH_OWNER_HELD_SELF_WAIT_MS
 } from './ssh-owner-recovery-retry'
 
 function publicationPendingError(): Error & { code: number } {
@@ -163,6 +165,61 @@ describe('SSH owner recovery retry', () => {
     await heldRejection
 
     expect(exhausted).toEqual(['publication-pending', 'disconnected-holder'])
+  })
+
+  it('starts each budget when its own phase begins', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    let disconnectedAttempts = 0
+    const attempt = vi.fn<() => Promise<string>>().mockImplementation(async () => {
+      // A publication that takes longer to settle than the whole disconnected budget.
+      if (Date.now() - start < SSH_OWNER_HELD_DISCONNECTED_WAIT_MS + 100) {
+        throw publicationPendingError()
+      }
+      return disconnectedAttempts++ < 3
+        ? Promise.reject(heldError(PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR))
+        : 'recovered'
+    })
+
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate(), 30_000)
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    // Why this fails on eagerly computed deadlines: the disconnected budget would have started at
+    // entry and be long gone by the time the first -32045 arrives, giving that phase zero attempts.
+    await expect(recovery).resolves.toBe('recovered')
+    expect(disconnectedAttempts).toBeGreaterThan(1)
+  })
+
+  it("treats the client's own attached connection as transient, not blocked", async () => {
+    vi.useFakeTimers()
+    const selfError = heldError(PTY_CONSUMER_OWNER_HELD_SELF_ERROR)
+    const attempt = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(selfError)
+      .mockResolvedValue('recovered')
+
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate())
+    await vi.advanceTimersByTimeAsync(25)
+
+    await expect(recovery).resolves.toBe('recovered')
+    // Why not blocked: in a one-app deployment the incumbent is this client's own zombie, so parking
+    // the target in 'error' with no retry strands the user until they restart the app.
+    expect(isSshOwnerAdmissionBlocked(selfError)).toBe(false)
+  })
+
+  it('lets an exhausted self-holder fall through to ordinary reconnect backoff', async () => {
+    vi.useFakeTimers()
+    const selfError = heldError(PTY_CONSUMER_OWNER_HELD_SELF_ERROR)
+    const attempt = vi.fn<() => Promise<never>>().mockRejectedValue(selfError)
+
+    const recovery = retrySshOwnerRecoveryWhileBlocked(attempt, openGate())
+    const rejection = expect(recovery).rejects.toBe(selfError)
+    await vi.advanceTimersByTimeAsync(SSH_OWNER_HELD_SELF_WAIT_MS)
+    await rejection
+
+    // The error still surfaces, but unblocked — the relay-lost ladder retries it on backoff, which is
+    // how this recovered before owner admission became explicit.
+    expect(isSshOwnerAdmissionBlocked(selfError)).toBe(false)
   })
 
   it('stops waiting when the relay channel closes', async () => {

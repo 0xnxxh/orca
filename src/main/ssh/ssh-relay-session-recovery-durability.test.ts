@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR,
+  PTY_CONSUMER_OWNER_HELD_SELF_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
 } from '../../shared/pty-consumer-session'
@@ -305,6 +306,36 @@ describe('SshRelaySession consumer recovery durability', () => {
     expect(onTerminal.mock.calls[0]?.[1]?.message).toContain('owns the remote terminals')
     expect(mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
     expect(openConsumerSessionMock).toHaveBeenCalledTimes(2)
+    session.dispose()
+  })
+
+  it("routes this client's own attached connection to relay-lost recovery, not to a parked error", async () => {
+    const targetId = 'target-owner-held-self'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+    const onTerminal = vi.fn()
+    const onRelayLost = vi.fn()
+    session.setOnTerminalRelayError(onTerminal)
+    session.setOnRelayLost(onRelayLost)
+    await session.establish(mockConn)
+
+    // The incumbent is this app's own half-open connection, which the relay has not yet observed
+    // closing — the ordinary single-app case, since only SshRelaySession ever requests session-owner.
+    openConsumerSessionMock.mockRejectedValue(
+      Object.assign(
+        new Error("PTY session owner is held by this client's own earlier connection"),
+        {
+          code: PTY_CONSUMER_OWNER_HELD_SELF_ERROR
+        }
+      )
+    )
+    await session.reconnect(mockConn)
+
+    // Why not terminal: parking here clears backoff and never retries, so the user stays locked out
+    // of their own session until they restart the app. Backoff is what lets keepalive reap the zombie.
+    expect(onTerminal).not.toHaveBeenCalled()
+    expect(onRelayLost).toHaveBeenCalled()
+    expect(mockStore.removeSshPtyConsumerRecovery).not.toHaveBeenCalled()
     session.dispose()
   })
 

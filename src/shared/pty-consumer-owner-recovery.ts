@@ -36,6 +36,20 @@ export function matchesPtyConsumerOwnerClaim(
   )
 }
 
+// Why identity without the lease, next to the claim match above: a client that lost its recovery
+// record still knows its own instance id, and against an incumbent carrying that id the incumbent is
+// its own earlier connection. Enough to call a refusal transient; never enough to hand over a claim.
+export function isPtyConsumerOwnerSameClient(
+  hello: PtyConsumerSessionHello,
+  authentication: PtyConsumerAuthentication,
+  current: IncumbentOwner
+): boolean {
+  return (
+    hello.clientInstanceId === current.clientInstanceId &&
+    authentication.principal === current.principal
+  )
+}
+
 export function assertPtyConsumerOwnerRecovery(
   hello: PtyConsumerSessionHello,
   authentication: PtyConsumerAuthentication,

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PTY_CONSUMER_OWNER_GRACE_MS,
+  PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR,
+  PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR
 } from '../shared/pty-consumer-session'
 import { RelayDispatcher, type RelayClientSessionIdentity } from './dispatcher'
@@ -133,6 +135,79 @@ describe('SshPtyConsumerSessionAdapter', () => {
       ownerGeneration: 2
     })
   })
+
+  it.each([['peer-closed'], ['local']] as const)(
+    'shortens a refused owner grace only for a %s detach',
+    async (cause) => {
+      // Why only Date: flushRequests rides setImmediate, which fake timers would otherwise capture.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      dispatcher = new RelayDispatcher(
+        (_data, onSettled) => {
+          onSettled({ ok: true })
+          return true
+        },
+        { supportsWriteCallback: true },
+        endpointIdentity
+      )
+      new SshPtyConsumerSessionAdapter(dispatcher, 'build-a')
+
+      const ownerWrites: Buffer[] = []
+      const ownerId = dispatcher.attachClient(
+        (data, onSettled) => {
+          ownerWrites.push(Buffer.from(data))
+          onSettled({ ok: true })
+          return true
+        },
+        { supportsWriteCallback: true },
+        endpointIdentity
+      )
+      dispatcher.feedClient(ownerId, openFrame(1))
+      await flushRequests()
+      expect(responseResult(ownerWrites[0])).toMatchObject({ role: 'session-owner' })
+
+      dispatcher.detachClient(ownerId, cause)
+
+      const rivalWrites: Buffer[] = []
+      const rivalId = dispatcher.attachClient(
+        (data, onSettled) => {
+          rivalWrites.push(Buffer.from(data))
+          onSettled({ ok: true })
+          return true
+        },
+        { supportsWriteCallback: true },
+        { ...endpointIdentity, principal: 'competitor' }
+      )
+      // The first refusal is what applies the floor, so it has to happen before the clock moves.
+      dispatcher.feedClient(rivalId, openFrame(2))
+      await flushRequests()
+      expect(responseError(rivalWrites[0])).toMatchObject({
+        code: PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR
+      })
+
+      vi.setSystemTime(Date.now() + PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS + 1)
+      const retryId = dispatcher.attachClient(
+        (data, onSettled) => {
+          rivalWrites.push(Buffer.from(data))
+          onSettled({ ok: true })
+          return true
+        },
+        { supportsWriteCallback: true },
+        { ...endpointIdentity, principal: 'competitor' }
+      )
+      dispatcher.feedClient(retryId, openFrame(3))
+      await flushRequests()
+
+      // Why this pair is the whole point of the cause: a socket that ended is evidence the owner is
+      // gone, and a queue the relay overran is not. Only the first may cost the incumbent its claim.
+      if (cause === 'peer-closed') {
+        expect(responseResult(rivalWrites[1])).toMatchObject({ role: 'session-owner' })
+      } else {
+        expect(responseError(rivalWrites[1])).toMatchObject({
+          code: PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR
+        })
+      }
+    }
+  )
 
   it('rejects an unproved constructor stream as an owner principal', async () => {
     const writes: Buffer[] = []

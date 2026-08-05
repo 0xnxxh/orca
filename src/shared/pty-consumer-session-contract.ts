@@ -9,9 +9,19 @@ export const PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR = -32043
 // holders need opposite client behavior — an attached incumbent blocks, a disconnected one is transient.
 export const PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR = -32044
 export const PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR = -32045
+// Why a third code: only `SshRelaySession` requests session-owner and every endpoint-credential socket
+// shares one principal, so an attached incumbent carrying the requester's own clientInstanceId is that
+// client's own half-open connection the relay never saw close — transient, not another client's claim.
+export const PTY_CONSUMER_OWNER_HELD_SELF_ERROR = -32046
 // Why: a disconnected incumbent keeps at most this much of its remaining grace once a different
 // owner-capable client asks, so admission converges inside one bounded retry instead of the full grace.
 export const PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS = 250
+
+// Why the grace floor needs this: shortening a grace is only safe against an owner the relay has
+// evidence is gone, and that evidence exists only where the transport ended on the peer's side. A
+// teardown the relay itself initiated — backpressure, a decode fault — proves nothing about liveness,
+// so 'local' is the default and never shortens anything.
+export type PtyConsumerCloseCause = 'peer-closed' | 'local'
 
 export type PtyConsumerRole = 'session-owner' | 'subscriber'
 

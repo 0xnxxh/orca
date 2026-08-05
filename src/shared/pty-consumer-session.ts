@@ -4,9 +4,11 @@ import {
   PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR,
   PTY_CONSUMER_OWNER_HELD_DISCONNECTED_ERROR,
   PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS,
+  PTY_CONSUMER_OWNER_HELD_SELF_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
   type PtyConsumerAuthentication,
+  type PtyConsumerCloseCause,
   type PtyConsumerDisplacedOwner,
   type PtyConsumerSessionAdmission,
   type PtyConsumerSessionGrant,
@@ -20,6 +22,7 @@ import {
 } from './pty-consumer-session-capabilities'
 import {
   assertPtyConsumerOwnerRecovery,
+  isPtyConsumerOwnerSameClient,
   matchesPtyConsumerOwnerClaim
 } from './pty-consumer-owner-recovery'
 
@@ -42,6 +45,7 @@ type OwnerRecord = {
   resumed: boolean
   state: 'pending' | 'active' | 'disconnected'
   disconnectedAt?: number
+  disconnectCause?: PtyConsumerCloseCause
   replaces?: OwnerRecord
 }
 
@@ -109,7 +113,9 @@ export class PtyConsumerSession {
     return this.admissionFor(client, this.displacedOwnerFor(owner))
   }
 
-  close(connectionId: string): void {
+  // Why the cause defaults to 'local': it only ever widens the grace this record keeps, so a caller
+  // that cannot prove the peer's transport ended gets the answer that costs a live owner nothing.
+  close(connectionId: string, cause: PtyConsumerCloseCause = 'local'): void {
     const client = this.clients.get(connectionId)
     if (!client) {
       return
@@ -124,7 +130,12 @@ export class PtyConsumerSession {
       ) {
         this.owner = {
           ...this.owner,
-          replaces: { ...this.owner.replaces, state: 'disconnected', disconnectedAt: this.now() }
+          replaces: {
+            ...this.owner.replaces,
+            state: 'disconnected',
+            disconnectedAt: this.now(),
+            disconnectCause: cause
+          }
         }
       }
       return
@@ -136,7 +147,8 @@ export class PtyConsumerSession {
     this.owner = {
       ...this.owner,
       state: 'disconnected',
-      disconnectedAt: this.now()
+      disconnectedAt: this.now(),
+      disconnectCause: cause
     }
   }
 
@@ -212,7 +224,7 @@ export class PtyConsumerSession {
       return this.newOwner(hello, authentication, null)
     }
     if (!matchesPtyConsumerOwnerClaim(hello, authentication, current)) {
-      this.refuseHeldOwner(current)
+      this.refuseHeldOwner(hello, authentication, current)
     }
     assertPtyConsumerOwnerRecovery(hello, authentication, current)
     // Why an active owner is displaced rather than refused: the resume proof matched this owner's
@@ -225,7 +237,11 @@ export class PtyConsumerSession {
   // Why an owner-capable request is refused rather than demoted: a subscriber grant is unusable to a
   // client that needs to drive the PTY, and it arrives shaped like success. A coded refusal lets the
   // caller retry the transient case and stop on the blocked one.
-  private refuseHeldOwner(current: OwnerRecord): never {
+  private refuseHeldOwner(
+    hello: PtyConsumerSessionHello,
+    authentication: PtyConsumerAuthentication,
+    current: OwnerRecord
+  ): never {
     if (current.state === 'pending') {
       throwOwnerError(
         'Owner grant publication is still pending',
@@ -233,6 +249,16 @@ export class PtyConsumerSession {
       )
     }
     if (current.state === 'active') {
+      // Why identity without the lease: a client that lost its proof — a fresh process, a dropped
+      // recovery record — still knows who it is. Against an incumbent carrying its own instance id
+      // the honest answer is "your other connection is still registered", which resolves itself once
+      // the relay notices that socket. Blocking here strands the single-app case forever.
+      if (isPtyConsumerOwnerSameClient(hello, authentication, current)) {
+        throwOwnerError(
+          "PTY session owner is held by this client's own earlier connection",
+          PTY_CONSUMER_OWNER_HELD_SELF_ERROR
+        )
+      }
       throwOwnerError(
         'PTY session owner is held by an attached connection',
         PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR
@@ -245,10 +271,16 @@ export class PtyConsumerSession {
     )
   }
 
-  // Why this is safe to shorten: the incumbent reached 'disconnected' only by an observed transport
-  // close, and expiring an owner record hands over admission — it never stops the remote PTY. The
-  // incumbent's own reconnect still wins outright, because a matching proof never reaches this branch.
+  // Why only a peer-closed disconnect may shorten this: the floor is a bet that the incumbent is gone,
+  // and the relay tears a client's socket down for its own reasons too — a full lane queue is the
+  // signature of an owner that is alive but not draining fast enough. No owner completes a reconnect
+  // ladder in 250 ms, so clamping on a teardown we initiated hands a live owner's admission away and
+  // it can never get it back. Expiring a record never stops the remote PTY, but it does cost the user
+  // every route back to it.
   private clampDisconnectedOwnerGrace(current: OwnerRecord): void {
+    if (current.disconnectCause !== 'peer-closed') {
+      return
+    }
     const floorStart =
       this.now() - Math.max(this.ownerGraceMs - PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS, 0)
     if ((current.disconnectedAt ?? 0) <= floorStart) {
