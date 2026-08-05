@@ -256,10 +256,6 @@ export function MobileNativeChatView({
   const rawLockReason = inputLockReason ?? null
   const rawLockHeld = rawLockReason !== null
   const [lockHeld, setLockHeld] = useState(false)
-  const lastLockReasonRef = useRef(rawLockReason)
-  if (rawLockReason !== null) {
-    lastLockReasonRef.current = rawLockReason
-  }
   useEffect(() => {
     if (rawLockHeld === lockHeld) {
       return
@@ -267,7 +263,7 @@ export function MobileNativeChatView({
     const timer = setTimeout(() => setLockHeld(rawLockHeld), INPUT_LOCK_SETTLE_MS)
     return () => clearTimeout(timer)
   }, [lockHeld, rawLockHeld])
-  const lockReason = lockHeld ? lastLockReasonRef.current : null
+  const lockReason = lockHeld ? (rawLockReason ?? 'waiting') : null
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
