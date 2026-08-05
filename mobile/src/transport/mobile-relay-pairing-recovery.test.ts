@@ -229,21 +229,21 @@ describe('mobile relay pairing recovery', () => {
     })
     const deps = {
       ...dependencies({ journal: saved, connectRelay: vi.fn(() => unreachable) }),
-      now: () => saved.metadata.relay.inviteExpiresAt + 1
+      now: () => saved.metadata.relay.inviteExpiresAt + 10 * 60 * 1000 + 1
     }
 
     await expect(recoverMobileRelayPairing(deps)).resolves.toBe('abandoned')
     expect(deps.clearJournal).toHaveBeenCalledWith(saved.metadata.journalId)
   })
 
-  it('keeps a journal whose invite can still reconcile', async () => {
+  it('keeps a just-expired journal so a brief outage cannot discard it', async () => {
     const saved = journal()
     const unreachable = client(async () => {
       throw new Error('relay unreachable')
     })
     const deps = {
       ...dependencies({ journal: saved, connectRelay: vi.fn(() => unreachable) }),
-      now: () => saved.metadata.relay.inviteExpiresAt - 1
+      now: () => saved.metadata.relay.inviteExpiresAt + 1
     }
 
     await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')

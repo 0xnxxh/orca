@@ -57,6 +57,10 @@ const defaultDependencies: RecoveryDependencies = {
   platform: Platform.OS
 }
 
+// One full invite lifetime past expiry, so a momentary outage never discards a
+// journal that a later launch could still reconcile.
+const ABANDON_GRACE_MS = 10 * 60 * 1000
+
 let recoveryPromise: Promise<MobileRelayPairingRecoveryResult> | null = null
 
 export function recoverMobileRelayPairing(
@@ -141,8 +145,10 @@ async function runRecovery(
   // Why: past invite expiry no credential can still establish what happened, so
   // retaining the journal cannot reconcile anything — it only fails every later
   // pairing with "recovery pending" forever. Re-pairing mints a fresh device and
-  // any uncommitted server-side install expires on its own.
-  if (journal.metadata.relay.inviteExpiresAt <= dependencies.now()) {
+  // any uncommitted server-side install expires on its own. The extra invite
+  // lifetime of slack keeps a brief relay outage from discarding a journal whose
+  // resume credential would have reconciled it on the next launch.
+  if (journal.metadata.relay.inviteExpiresAt + ABANDON_GRACE_MS <= dependencies.now()) {
     await dependencies.clearJournal(journal.metadata.journalId).catch(() => {})
     return 'abandoned'
   }
