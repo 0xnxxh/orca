@@ -2901,6 +2901,14 @@ export type PreloadApi = {
       requestToken?: string
     }) => Promise<GitStatusResult>
     cancelStatus: (args: { requestToken: string }) => Promise<void>
+    setStatusUpstreamRefWatch: (args: {
+      worktreeId: string
+      worktreePath: string
+      executionHostId: string
+      connectionId?: string
+      branch?: string
+      upstreamName?: string
+    }) => Promise<void>
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string

@@ -3234,6 +3234,14 @@ const api = {
     }): Promise<unknown> => ipcRenderer.invoke('git:status', args),
     cancelStatus: (args: { requestToken: string }): Promise<void> =>
       ipcRenderer.invoke('git:cancelStatus', args),
+    setStatusUpstreamRefWatch: (args: {
+      worktreeId: string
+      worktreePath: string
+      executionHostId: string
+      connectionId?: string
+      branch?: string
+      upstreamName?: string
+    }): Promise<void> => ipcRenderer.invoke('git:setStatusUpstreamRefWatch', args),
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string
