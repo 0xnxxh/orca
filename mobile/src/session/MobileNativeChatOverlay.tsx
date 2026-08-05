@@ -96,6 +96,7 @@ export function MobileNativeChatOverlay({
         onClearSendError={onClearSendError}
         filePaths={controller.nativeChatFilePaths}
         onNeedFiles={controller.loadNativeChatFiles}
+        sessionOptions={controller.nativeChatSessionOptions}
         keyboardInset={keyboardInset}
       />
     </View>
