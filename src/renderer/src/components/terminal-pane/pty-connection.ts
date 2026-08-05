@@ -121,6 +121,7 @@ import {
   POST_REPLAY_LIVE_SNAPSHOT_RESET,
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
+  POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -5528,7 +5529,11 @@ export function connectPanePty(
       })
     }
 
-    const reattachReplayResetSequence = (payload: string, ownerProcessEnded = false): string => {
+    const reattachReplayResetSequence = (
+      payload: string,
+      ownerProcessEnded = false,
+      isAlternateScreen?: boolean
+    ): string => {
       // Why a cold restore overrides the agent signal: liveness is read from the
       // pane's status and title, both of which are persisted, so after a cold
       // restore they describe the process that died. Preserving "its" modes arms
@@ -5537,8 +5542,13 @@ export function connectPanePty(
       if (ownerProcessEnded) {
         return POST_REPLAY_MODE_RESET
       }
-      return shouldPreserveAgentReattachModes()
-        ? buildPostReplayLiveAgentReattachReset(payload)
+      if (shouldPreserveAgentReattachModes()) {
+        return buildPostReplayLiveAgentReattachReset(payload)
+      }
+      // Why: an alt-screen pane is a live TUI Orca just does not recognise as an agent, and the
+      // replay already re-armed its mouse modes — keep them instead of wiping them (#8291).
+      return (isAlternateScreen ?? kittyKeyboardModes.isAlternateScreen)
+        ? POST_REPLAY_REATTACH_RESET_KEEP_MOUSE
         : POST_REPLAY_REATTACH_RESET
     }
 
@@ -8056,7 +8066,11 @@ export function connectPanePty(
           writeReplayData(connectResult.snapshot)
           // Snapshot reattach keeps a live session, so drop only renderer-owned state instead of the broader mode reset — unless this is a cold restore, whose owner is gone.
           writeReplayData(
-            reattachReplayResetSequence(connectResult.snapshot, Boolean(connectResult.coldRestore))
+            reattachReplayResetSequence(
+              connectResult.snapshot,
+              Boolean(connectResult.coldRestore),
+              connectResult.isAlternateScreen
+            )
           )
           if (connectResult.pendingEscapeTailAnsi) {
             // Why last: re-arm the dangling mid-escape after the reset (whose ESC would abort it) so the live continuation completes it (#7329).
@@ -8111,7 +8125,11 @@ export function connectPanePty(
               writeReplayData(replayChunk)
             }
             writeReplayData(
-              reattachReplayResetSequence(modelData, Boolean(connectResult?.coldRestore))
+              reattachReplayResetSequence(
+                modelData,
+                Boolean(connectResult?.coldRestore),
+                modelSnapshot.alternateScreen ?? connectResult?.isAlternateScreen
+              )
             )
             if (modelSnapshot.pendingEscapeTailAnsi) {
               // Why last: re-arm the dangling mid-escape after the reset so the live continuation completes it (#7329).
@@ -8132,7 +8150,11 @@ export function connectPanePty(
             kittyKeyboardModes.scanReplay(connectResult.replay)
             writeReplayData(connectResult.replay)
             writeReplayData(
-              reattachReplayResetSequence(connectResult.replay, Boolean(connectResult.coldRestore))
+              reattachReplayResetSequence(
+                connectResult.replay,
+                Boolean(connectResult.coldRestore),
+                connectResult.isAlternateScreen
+              )
             )
             sendFocusedReattachFocusInAfterReplay(ptyId, attemptGeneration)
             if (connectResult.coldRestore) {
