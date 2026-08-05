@@ -112,8 +112,8 @@ import {
   buildSourceControlDisplaySections,
   getSourceControlSectionViewAction,
   mergeUntrackedIntoChanges,
-  resolveSourceControlGroupOrder,
   SOURCE_CONTROL_AREAS,
+  SOURCE_CONTROL_GROUP_ORDER,
   type SourceControlDisplaySectionId,
   type SourceControlEntryGroups,
   type SourceControlSectionArea
@@ -1053,7 +1053,6 @@ function SourceControlInner(): React.JSX.Element {
     settings?.sourceControlViewMode
   )
   const sourceControlViewMode = persistedSourceControlViewMode
-  const sourceControlGroupOrder = resolveSourceControlGroupOrder(settings?.sourceControlGroupOrder)
   const [collapsedTreeDirs, setCollapsedTreeDirs] = useState<Set<string>>(new Set())
   const [baseRefDialogOpen, setBaseRefDialogOpen] = useState(false)
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscardConfirmation | null>(null)
@@ -1776,12 +1775,12 @@ function SourceControlInner(): React.JSX.Element {
   )
 
   const displaySections = useMemo(
-    () => buildSourceControlDisplaySections(mergedFilteredGrouped, sourceControlGroupOrder),
-    [mergedFilteredGrouped, sourceControlGroupOrder]
+    () => buildSourceControlDisplaySections(mergedFilteredGrouped, SOURCE_CONTROL_GROUP_ORDER),
+    [mergedFilteredGrouped]
   )
   const unfilteredDisplaySections = useMemo(
-    () => buildSourceControlDisplaySections(mergedGrouped, sourceControlGroupOrder),
-    [mergedGrouped, sourceControlGroupOrder]
+    () => buildSourceControlDisplaySections(mergedGrouped, SOURCE_CONTROL_GROUP_ORDER),
+    [mergedGrouped]
   )
   const unfilteredDisplaySectionsById = useMemo(
     () => new Map(unfilteredDisplaySections.map((section) => [section.id, section])),

@@ -19,12 +19,6 @@ import {
   getKeepLocalMainUpToDateTitle
 } from './keep-local-main-up-to-date-setting'
 import { translate } from '@/i18n/i18n'
-import {
-  SourceControlGroupOrderSetting,
-  sourceControlGroupOrderMatchesSearch
-} from './SourceControlGroupOrderSetting'
-
-export { SourceControlGroupOrderSetting } from './SourceControlGroupOrderSetting'
 
 export { getGitPaneSearchEntries }
 
@@ -230,13 +224,6 @@ export function GitPane({
           />
         </button>
       </SearchableSetting>
-    ) : null,
-    sourceControlGroupOrderMatchesSearch(searchQuery) ? (
-      <SourceControlGroupOrderSetting
-        key="source-control-group-order"
-        settings={settings}
-        updateSettings={updateSettings}
-      />
     ) : null,
     compareAgainstUpstreamMatchesSearch(searchQuery) ? (
       <CompareAgainstUpstreamSetting

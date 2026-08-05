@@ -1,5 +1,4 @@
-import { normalizeSourceControlGroupOrder } from '../../../../shared/source-control-group-order'
-import type { GitStatusEntry, SourceControlGroupOrder } from '../../../../shared/types'
+import type { GitStatusEntry } from '../../../../shared/types'
 
 export const SOURCE_CONTROL_AREAS = ['unstaged', 'staged', 'untracked'] as const
 export type SourceControlSectionArea = (typeof SOURCE_CONTROL_AREAS)[number]
@@ -22,16 +21,11 @@ export type SourceControlSectionViewAction =
   | { kind: 'conflict-review'; entries: SourceControlConflictReviewEntry[] }
   | { kind: 'combined-diff'; area?: SourceControlSectionArea; entries: GitStatusEntry[] }
 
-const ORDER_BY_PRESET: Record<SourceControlGroupOrder, readonly SourceControlSectionArea[]> = {
-  'changes-first': ['unstaged', 'staged', 'untracked'],
-  'staged-first': ['staged', 'unstaged', 'untracked']
-}
-
-export function resolveSourceControlGroupOrder(
-  value: SourceControlGroupOrder | null | undefined
-): readonly SourceControlSectionArea[] {
-  return ORDER_BY_PRESET[normalizeSourceControlGroupOrder(value)]
-}
+export const SOURCE_CONTROL_GROUP_ORDER: readonly SourceControlSectionArea[] = [
+  'staged',
+  'unstaged',
+  'untracked'
+]
 
 export function mergeUntrackedIntoChanges(
   groups: SourceControlEntryGroups

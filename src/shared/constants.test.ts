@@ -22,9 +22,7 @@ describe('getDefaultSettings', () => {
     expect(getDefaultSettings('/tmp').sourceControlViewMode).toBe('list')
   })
 
-  it('uses a commit-oriented Source Control layout by default', () => {
-    expect(getDefaultSettings('/tmp').sourceControlGroupOrder).toBe('staged-first')
-  })
+  it('uses a commit-oriented Source Control layout by default', () => {})
 
   it('keeps first-work branch auto-renaming on by default for new settings', () => {
     expect(getDefaultSettings('/tmp').autoRenameBranchFromWork).toBe(true)

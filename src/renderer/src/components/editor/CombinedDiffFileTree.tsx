@@ -22,10 +22,9 @@ import {
 import { CombinedDiffFileTreeRow, type CombinedDiffTreeNode } from './combined-diff-file-tree-row'
 import { useCombinedDiffFileTreeResize } from './use-combined-diff-file-tree-resize'
 import { translate } from '@/i18n/i18n'
-import { useAppStore } from '@/store'
 import {
   mergeUntrackedIntoChanges,
-  resolveSourceControlGroupOrder,
+  SOURCE_CONTROL_GROUP_ORDER,
   type SourceControlEntryGroups
 } from '@/components/right-sidebar/source-control-section-order'
 
@@ -109,8 +108,6 @@ export function CombinedDiffFileTree({
   onCollapsedChange: (collapsed: boolean) => void
   onNavigate: (entry: CombinedDiffFileTreeEntry) => void
 }): React.JSX.Element | null {
-  const settings = useAppStore((state) => state.settings)
-  const areaOrder = resolveSourceControlGroupOrder(settings?.sourceControlGroupOrder)
   const [collapsedDirectoryKeys, setCollapsedDirectoryKeys] = React.useState<Set<string>>(
     () => new Set()
   )
@@ -169,9 +166,9 @@ export function CombinedDiffFileTree({
   const uncommittedGroups = React.useMemo(
     () =>
       mode === 'all' || mode === 'uncommitted'
-        ? buildUncommittedRows(filteredEntries, collapsedDirectoryKeys, areaOrder)
+        ? buildUncommittedRows(filteredEntries, collapsedDirectoryKeys, SOURCE_CONTROL_GROUP_ORDER)
         : [],
-    [areaOrder, collapsedDirectoryKeys, filteredEntries, mode]
+    [collapsedDirectoryKeys, filteredEntries, mode]
   )
   const branchRows = React.useMemo(
     () =>
