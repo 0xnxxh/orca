@@ -1450,16 +1450,19 @@ describe('pane terminal output scheduler', () => {
     const firstCredit = vi.fn()
     const secondCredit = vi.fn()
     const echoCredit = vi.fn()
+    const droppedDenseOutput = vi.fn()
 
     writeTerminalOutput(terminal, denseChunk, {
       foreground: true,
       latencySensitive: false,
-      ackCredit: firstCredit
+      ackCredit: firstCredit,
+      onDenseSgrBacklogDropped: droppedDenseOutput
     })
     writeTerminalOutput(terminal, denseChunk, {
       foreground: true,
       latencySensitive: false,
-      ackCredit: secondCredit
+      ackCredit: secondCredit,
+      onDenseSgrBacklogDropped: droppedDenseOutput
     })
     writeTerminalOutput(terminal, '__PRIOR_ECHO__', {
       foreground: true,
@@ -1474,11 +1477,46 @@ describe('pane terminal output scheduler', () => {
     vi.runAllTimers()
 
     const output = terminal.write.mock.calls.map(([data]) => data).join('')
-    expect(output).toBe('__PRIOR_ECHO____ECHO__')
+    expect(output).toBe('\x18\x1b[0m__PRIOR_ECHO____ECHO__')
     expect(output).not.toContain(denseChunk)
     expect(firstCredit).toHaveBeenCalledTimes(1)
     expect(secondCredit).toHaveBeenCalledTimes(1)
     expect(echoCredit).toHaveBeenCalledTimes(1)
+    expect(droppedDenseOutput).toHaveBeenCalledWith(`${denseChunk}${denseChunk}`)
+  })
+
+  it('retains only a dense chunk partial escape before ordinary output', async () => {
+    vi.useFakeTimers()
+    const { prioritizeTerminalInput, writeTerminalOutput } = await loadScheduler()
+    const terminal = createTerminal()
+    const densePrefix = `${Array.from(
+      { length: 2_048 },
+      (_value, index) => `\x1b[38;5;${index % 216}mX\x1b[0m`
+    ).join('')}\x1b[`
+    const droppedDenseOutput = vi.fn()
+
+    const droppableDense = densePrefix.slice(0, -2)
+    writeTerminalOutput(terminal, droppableDense, {
+      foreground: true,
+      latencySensitive: false,
+      onDenseSgrBacklogDropped: droppedDenseOutput
+    })
+    writeTerminalOutput(terminal, densePrefix, {
+      foreground: true,
+      latencySensitive: false
+    })
+    writeTerminalOutput(terminal, 'c__ECHO__', {
+      foreground: true,
+      latencySensitive: false
+    })
+
+    expect(prioritizeTerminalInput(terminal)).toBe(true)
+    vi.runAllTimers()
+
+    expect(terminal.write.mock.calls.map(([data]) => data).join('')).toBe(
+      '\x18\x1b[0m\x1b[c__ECHO__'
+    )
+    expect(droppedDenseOutput).toHaveBeenCalledWith(`${droppableDense}${densePrefix}`)
   })
 
   it('admits only one dense SGR slice until xterm reports parse completion', async () => {
@@ -1504,6 +1542,23 @@ describe('pane terminal output scheduler', () => {
     parsedCallbacks.shift()?.()
     vi.advanceTimersByTime(0)
     expect(terminal.write).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps draining background dense SGR without parse-clock blocking', async () => {
+    vi.useFakeTimers()
+    const { writeTerminalOutput } = await loadScheduler()
+    const terminal = createTerminal()
+    terminal.write.mockImplementation(() => undefined)
+    const dense = Array.from(
+      { length: 4_096 },
+      (_value, index) => `\x1b[38;5;${index % 216}mX\x1b[0m`
+    ).join('')
+
+    writeTerminalOutput(terminal, dense, { foreground: false })
+    vi.advanceTimersByTime(200)
+
+    expect(terminal.write.mock.calls.length).toBeGreaterThan(1)
+    expect(terminal.write.mock.calls.map(([data]) => data).join('')).toBe(dense)
   })
 
   it('releases dense parse pacing when terminal output is discarded', async () => {

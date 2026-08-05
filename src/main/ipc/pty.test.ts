@@ -16426,9 +16426,7 @@ describe('registerPtyHandlers', () => {
         .filter(([channel]) => channel === 'pty:data')
         .map(([, payload]) => payload as { data: string; rawLength?: number; transformed?: true })
       const delivered = payloads.map(({ data }) => data).join('')
-      expect(delivered.length).toBe(dense.length)
-      expect(delivered.slice(0, 512)).toBe(dense.slice(0, 512))
-      expect(delivered.slice(-512)).toBe(dense.slice(-512))
+      expect(delivered).toBe(dense)
       expect(payloads.reduce((sum, payload) => sum + (payload.rawLength ?? 0), 0)).toBe(
         dense.length
       )
@@ -16576,7 +16574,7 @@ describe('registerPtyHandlers', () => {
     })
   })
 
-  it('rejects malformed and cross-window pty write IPC before provider writes', async () => {
+  it('accepts an explicit false backlog flag but rejects malformed and cross-window writes', async () => {
     const mockProc = createMockProc()
     spawnMock.mockReturnValue(mockProc.proc)
     registerPtyHandlers(mainWindow as never)
@@ -16606,9 +16604,10 @@ describe('registerPtyHandlers', () => {
         data: 'x',
         rendererBacklogDropped: false
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(writeAccepted(foreignWindowIpcEvent, { id: result.id, data: 'x' })).toBe(false)
-    expect(mockProc.proc.write).not.toHaveBeenCalled()
+    expect(mockProc.proc.write).toHaveBeenNthCalledWith(1, 'x')
+    expect(mockProc.proc.write).toHaveBeenNthCalledWith(2, 'x')
   })
 
   it('silently drops writes to a live PTY after ownership loss until pty:listSessions rebuilds it (frozen-terminal repro)', async () => {

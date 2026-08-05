@@ -12007,7 +12007,7 @@ describe('connectPanePty', () => {
       enableMainAuthority()
       const deps = createDeps({ isVisibleRef: { current: true } })
       const terminalTarget = createKeyboardEventTarget()
-      const { pane, transport } = await connectHiddenPane(deps, terminalTarget.target)
+      const { pane, transport, dataCallback } = await connectHiddenPane(deps, terminalTarget.target)
       const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
         typeof vi.fn
       >
@@ -12017,22 +12017,18 @@ describe('connectPanePty', () => {
         rows: 30,
         seq: 64
       })
-      const dense = Array.from(
+      const dense = `\x1b[c${Array.from(
         { length: 4_096 },
         (_value, index) => `\x1b[38;5;${index % 216}mX\x1b[0m`
-      ).join('')
-      const { writeTerminalOutput } =
-        await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+      ).join('')}`
 
       vi.useFakeTimers()
       try {
-        writeTerminalOutput(pane.terminal as never, dense, {
-          foreground: true,
-          latencySensitive: false
-        })
+        dataCallback(dense)
         terminalTarget.dispatch(keyEvent({ key: 'a' }))
         sendTerminalInputThroughPane(pane, 'a')
         expect(transport.sendInput).toHaveBeenCalledWith('a', true)
+        expect(transport.sendInputImmediate).toHaveBeenCalledWith(DEFAULT_DA1_RESPONSE)
         vi.advanceTimersByTime(499)
         await flushAsyncTicks(4)
         expect(getMainBufferSnapshot).not.toHaveBeenCalled()

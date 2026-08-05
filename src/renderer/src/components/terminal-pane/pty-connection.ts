@@ -6434,6 +6434,7 @@ export function connectPanePty(
         // Why: every scheduler write claims one child so a split delivery is credited only after all children parse or discard.
         ackCredit: takeCurrentTerminalDeliveryCredit() ?? undefined,
         onBackgroundBacklogDropped: markHiddenOutputRestoreNeeded,
+        onDenseSgrBacklogDropped: salvageRendererQueriesFromDiscardedRestoreData,
         latencySensitive:
           !foreground || parseHiddenStartupOutput
             ? true

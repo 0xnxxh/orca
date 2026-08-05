@@ -45,4 +45,11 @@ describe('dense terminal SGR classification', () => {
 
     expect(`${stripped}__ECHO__`).toBe('\x18\x1b[0mred\x1b[38;5\x18\x1b[0m__ECHO__')
   })
+
+  it('stops at an unterminated CSI tail', () => {
+    const tail = `\x1b[${'1;'.repeat(64 * 1024)}`
+
+    expect(isDenseTerminalSgr(tail)).toBe(false)
+    expect(stripTerminalSgr(`\x1b[31mred${tail}`)).toBe(`\x18\x1b[0mred${tail}\x18\x1b[0m`)
+  })
 })

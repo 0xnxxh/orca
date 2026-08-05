@@ -23,6 +23,10 @@ import {
   TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS,
   terminalOutputBacklogCapChars
 } from '../../../../shared/terminal-scrollback-policy'
+import {
+  extractPartialEscapeTail,
+  MAX_PARTIAL_ESCAPE_TAIL_LENGTH
+} from '../../../../shared/terminal-partial-escape-tail'
 import { isDenseTerminalSgr } from '../../../../shared/terminal-sgr-load'
 
 type TerminalOutputTarget = ForegroundTerminalOutputTarget
@@ -39,6 +43,7 @@ type WriteTerminalOutputOptions = {
   /** Parse-deferred delivery ACK (terminal-pty-ack-gate). MUST be invoked when the chunk is parsed OR discarded by any drop path; fire-once, so double invocation is safe but omission permanently shrinks main's in-flight window. */
   ackCredit?: () => void
   onBackgroundBacklogDropped?: () => void
+  onDenseSgrBacklogDropped?: (data: string) => void
   latencySensitive?: boolean
   forceForegroundRefresh?: boolean
   followupForegroundRefresh?: boolean
@@ -79,6 +84,7 @@ type QueueEntry = {
   chunkIndex: number
   queuedChars: number
   onBackgroundBacklogDropped?: () => void
+  onDenseSgrBacklogDropped?: (data: string) => void
   backgroundBacklogDropped: boolean
   denseSgrQueuedChars: number
   highPriority: boolean
@@ -322,6 +328,7 @@ function createQueueEntry(
     chunkIndex: 0,
     queuedChars: 0,
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
+    onDenseSgrBacklogDropped: options.onDenseSgrBacklogDropped,
     backgroundBacklogDropped: false,
     denseSgrQueuedChars: 0,
     highPriority: true,
@@ -793,17 +800,51 @@ function replaceBacklogWithWarning(
   }
 }
 
-function dropDenseSgrChunksForInput(entry: QueueEntry): void {
+function dropDenseSgrChunksForInput(entry: QueueEntry): boolean {
   const retained: QueueChunk[] = []
   let droppedChars = 0
+  let droppedRun: QueueChunk[] = []
+  const flushDroppedRun = (): void => {
+    if (droppedRun.length === 0) {
+      return
+    }
+    const finalChunk = droppedRun.at(-1)
+    if (!finalChunk) {
+      return
+    }
+    const data = droppedRun.map((chunk) => chunk.data).join('')
+    const tail = extractPartialEscapeTail(data)
+    const preservedTail = tail.length <= MAX_PARTIAL_ESCAPE_TAIL_LENGTH ? tail : ''
+    for (const chunk of droppedRun) {
+      chunk.ackCredit?.()
+    }
+    try {
+      entry.onDenseSgrBacklogDropped?.(data)
+    } catch (error) {
+      console.warn('[terminal] failed to salvage queries from dropped dense output', error)
+    }
+    retained.push({
+      ...finalChunk,
+      data: `\x18\x1b[0m${preservedTail}`,
+      denseSgr: false,
+      onParsed: undefined,
+      ackCredit: undefined
+    })
+    droppedRun = []
+  }
   for (let index = entry.chunkIndex; index < entry.chunks.length; index += 1) {
     const chunk = entry.chunks[index]
     if (chunk.denseSgr) {
       droppedChars += chunk.data.length
-      chunk.ackCredit?.()
+      droppedRun.push(chunk)
     } else {
+      flushDroppedRun()
       retained.push(chunk)
     }
+  }
+  flushDroppedRun()
+  if (droppedChars === 0) {
+    return false
   }
   recordRendererCrashBreadcrumb('terminal_input_dense_backlog_dropped', {
     droppedChars,
@@ -813,7 +854,7 @@ function dropDenseSgrChunksForInput(entry: QueueEntry): void {
   clearForegroundCoalesce(entry)
   entry.chunks = retained
   entry.chunkIndex = 0
-  entry.queuedChars = Math.max(0, entry.queuedChars - droppedChars)
+  entry.queuedChars = retained.reduce((total, chunk) => total + chunk.data.length, 0)
   entry.denseSgrQueuedChars = 0
   entry.highPriority = retained.length > 0
   entry.foregroundHold = false
@@ -821,6 +862,7 @@ function dropDenseSgrChunksForInput(entry: QueueEntry): void {
     debugState.droppedBacklogCount++
   }
   recordQueueDebugPressure()
+  return true
 }
 
 function hasQueuedChunks(entry: QueueEntry): boolean {
@@ -966,7 +1008,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     discardTerminalOutput(entry.terminal)
     return null
   }
-  const paceByParse = entry.denseSgrQueuedChars > 0
+  const paceByParse = entry.highPriority && entry.denseSgrQueuedChars > 0
   const queuedWrite = takeQueuedChunk(
     entry,
     paceByParse ? DENSE_SGR_CHUNK_CHARS : BACKGROUND_CHUNK_CHARS
@@ -1129,6 +1171,7 @@ export function writeTerminalOutput(
     ) {
       const queued = entry ?? createQueueEntry(terminal, options)
       queued.onBackgroundBacklogDropped = options.onBackgroundBacklogDropped
+      queued.onDenseSgrBacklogDropped ??= options.onDenseSgrBacklogDropped
       queued.highPriority = true
       queuedByTerminal.set(terminal, queued)
       enqueueChunk(queued, data, {
@@ -1228,6 +1271,7 @@ export function writeTerminalOutput(
         queuedByTerminal.set(terminal, queued)
       } else {
         queued.onBackgroundBacklogDropped = options.onBackgroundBacklogDropped
+        queued.onDenseSgrBacklogDropped ??= options.onDenseSgrBacklogDropped
         queued.highPriority = true
       }
       enqueueChunk(queued, data, {
@@ -1292,6 +1336,7 @@ export function writeTerminalOutput(
     queuedByTerminal.set(terminal, entry)
   } else {
     entry.onBackgroundBacklogDropped = options.onBackgroundBacklogDropped
+    entry.onDenseSgrBacklogDropped ??= options.onDenseSgrBacklogDropped
   }
   enqueueChunk(entry, data, {
     beforeWrite: options.beforeWrite,
@@ -1315,7 +1360,9 @@ export function prioritizeTerminalInput(terminal: TerminalOutputTarget): boolean
   if (!entry || entry.denseSgrQueuedChars <= INPUT_ECHO_DENSE_BACKLOG_CHARS) {
     return false
   }
-  dropDenseSgrChunksForInput(entry)
+  if (!dropDenseSgrChunksForInput(entry)) {
+    return false
+  }
   scheduleDrain(0)
   return true
 }

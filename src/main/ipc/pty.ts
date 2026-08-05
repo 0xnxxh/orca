@@ -3107,8 +3107,8 @@ export function registerPtyHandlers(
       (pending.droppedOutput === true
         ? pending.denseSgrDrop !== true
         : pending.data.length <= INTERACTIVE_DENSE_BACKLOG_DROP_CHARS ||
-          !isDenseTerminalSgr(pending.data) ||
-          pending.projectionAdmissionIds !== undefined)
+          pending.projectionAdmissionIds !== undefined ||
+          !isDenseTerminalSgr(pending.data))
     ) {
       return false
     }
@@ -6732,7 +6732,7 @@ export function registerPtyHandlers(
     }
   }
 
-  type PtyWritePayload = { id: string; data: string; rendererBacklogDropped?: true }
+  type PtyWritePayload = { id: string; data: string; rendererBacklogDropped?: boolean }
   type PtyViewportClaimPayload = { id: string; cols: number; rows: number }
 
   const isPtyWritePayload = (value: unknown): value is PtyWritePayload =>
@@ -6742,7 +6742,7 @@ export function registerPtyHandlers(
     (value as { id: string }).id.length > 0 &&
     typeof (value as { data?: unknown }).data === 'string' &&
     ((value as { rendererBacklogDropped?: unknown }).rendererBacklogDropped === undefined ||
-      (value as { rendererBacklogDropped?: unknown }).rendererBacklogDropped === true)
+      typeof (value as { rendererBacklogDropped?: unknown }).rendererBacklogDropped === 'boolean')
 
   const isPtyViewportClaimPayload = (value: unknown): value is PtyViewportClaimPayload =>
     typeof value === 'object' &&
@@ -6764,6 +6764,14 @@ export function registerPtyHandlers(
     !mainWindow.isDestroyed() &&
     !(typeof mainWebContents.isDestroyed === 'function' && mainWebContents.isDestroyed())
 
+  const notePtyInputForWrite = (args: PtyWritePayload): void => {
+    notePtyInput(args.id, performance.now())
+    if (args.rendererBacklogDropped) {
+      interactiveDenseProtectionPtys.add(args.id)
+    }
+    prioritizePendingPtyDataForInput(args.id)
+  }
+
   const writePtyInput = (args: PtyWritePayload): boolean | Promise<boolean> => {
     // Why: mobile-presence-lock defense-in-depth — the renderer's onData guard can let one keystroke slip during the state-flip lag, so catch it server-side. See docs/mobile-presence-lock.md.
     if (runtime?.getDriver(args.id).kind === 'mobile') {
@@ -6774,12 +6782,7 @@ export function registerPtyHandlers(
       return false
     }
     try {
-      const now = performance.now()
-      notePtyInput(args.id, now)
-      if (args.rendererBacklogDropped) {
-        interactiveDenseProtectionPtys.add(args.id)
-      }
-      prioritizePendingPtyDataForInput(args.id)
+      notePtyInputForWrite(args)
       if (visibleRendererPtys.has(args.id)) {
         clearHiddenRendererResizeOutput(args.id)
       }
@@ -6802,12 +6805,7 @@ export function registerPtyHandlers(
       return false
     }
     try {
-      const now = performance.now()
-      notePtyInput(args.id, now)
-      if (args.rendererBacklogDropped) {
-        interactiveDenseProtectionPtys.add(args.id)
-      }
-      prioritizePendingPtyDataForInput(args.id)
+      notePtyInputForWrite(args)
       if (visibleRendererPtys.has(args.id)) {
         clearHiddenRendererResizeOutput(args.id)
       }
