@@ -283,6 +283,14 @@ export function NativeChatMessageList({
   // Capture the pre-render scroll height so the layout effect can restore the
   // user's position (no jump) instead of letting the browser keep scrollTop.
   const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const loadEarlierWithAnchor = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) {
+      return
+    }
+    prependAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+    loadEarlier()
+  }, [loadEarlier])
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
@@ -296,10 +304,9 @@ export function NativeChatMessageList({
     // Near the top — page in older history, anchoring the current position so the
     // prepend doesn't yank the view.
     if (geometry.scrollTop < 80 && canAutoLoadEarlier(hasMore, loadingEarlier, loadEarlierError)) {
-      prependAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
-      loadEarlier()
+      loadEarlierWithAnchor()
     }
-  }, [hasMore, loadingEarlier, loadEarlierError, loadEarlier])
+  }, [hasMore, loadingEarlier, loadEarlierError, loadEarlierWithAnchor])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -329,6 +336,12 @@ export function NativeChatMessageList({
   // Re-pin to the bottom when new content arrives, but only if the user hasn't
   // scrolled up. Layout effect so the jump happens before paint (no flicker).
   // When an older page just prepended, restore the prior position instead.
+  useLayoutEffect(() => {
+    if (loadEarlierError) {
+      prependAnchorRef.current = null
+    }
+  }, [loadEarlierError])
+
   useLayoutEffect(() => {
     const el = scrollRef.current
     if (el && prependAnchorRef.current) {
@@ -391,7 +404,7 @@ export function NativeChatMessageList({
             <NativeChatLoadEarlierButton
               loadingEarlier={loadingEarlier}
               loadEarlierError={loadEarlierError}
-              onLoadEarlier={loadEarlier}
+              onLoadEarlier={loadEarlierWithAnchor}
             />
           ) : null}
           {messages.map((message) => (
