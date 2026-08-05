@@ -96,10 +96,14 @@ export function useMobileDiffReviewController(input: ControllerInput) {
       setActionError(nextState.kind === 'ready' ? (nextState.branchError ?? null) : null)
     } catch (err) {
       if (isCurrent()) {
-        setScreenState({
-          kind: 'error',
-          message: err instanceof Error ? err.message : 'Unable to load review'
-        })
+        // Why (F10): a failed refresh after reconnect must not destroy the review
+        // already on screen; the error state is for a screen with nothing to show.
+        setScreenState(
+          keepReady({
+            kind: 'error',
+            message: err instanceof Error ? err.message : 'Unable to load review'
+          })
+        )
       }
     }
   }, [client, connState, worktreeId])

@@ -14,7 +14,7 @@ import {
   rotateMobileRelayCredential
 } from './mobile-relay-credential-rotation'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
-import { MobileRelayFocusProbe } from './mobile-relay-focus-probe'
+import { MobileEndpointNudgeRouter } from './mobile-endpoint-nudge-router'
 import { MobileRelayDirectGraceTimer } from './mobile-relay-direct-grace-timer'
 import { MobileRelaySessionEstablisher } from './mobile-relay-session-establisher'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
@@ -31,7 +31,8 @@ export class MobileEndpointSupervisor {
   private stopped = false
   private foreground = true
   private operationInFlight = false
-  private readonly focusProbe: MobileRelayFocusProbe
+  private pendingReplace = false
+  private readonly nudgeRouter: MobileEndpointNudgeRouter
   private credentialRotationInFlight = false
   private relayRotationPending = false
   private unsubscribeState: (() => void) | null = null
@@ -56,15 +57,20 @@ export class MobileEndpointSupervisor {
     })
     this.logRelay = createRelayRecoveryLog(dependencies.now, dependencies.onLog)
     this.relayReconnect = new RelayReconnectController(dependencies, this.recoverRelay.bind(this))
-    this.focusProbe = new MobileRelayFocusProbe({
+    this.nudgeRouter = new MobileEndpointNudgeRouter({
       logical,
+      controller: this.relayReconnect,
       now: dependencies.now,
-      canProbe: () => !this.stopped && this.foreground,
-      onDead: (detail) => {
+      isStopped: () => this.stopped,
+      isForeground: () => this.foreground,
+      setForeground: (foreground) => this.setForeground(foreground),
+      replaceRelay: () => void this.recoverRelay(true, true),
+      recoverAfterDeadProbe: (detail) => {
         this.logRelay('relay probe failed; recovering', detail)
         suspendRelayIfStillConnected(this.relayReconnect, this.logical)
         void this.recoverRelay()
-      }
+      },
+      scheduleDirectProbe: () => this.directProbe.schedule(0)
     })
     this.leaseRotation = new RelayLeaseRotationTimer(dependencies, () => {
       this.relayRotationPending = true
@@ -102,7 +108,9 @@ export class MobileEndpointSupervisor {
         this.leaseRotation.scheduleFromLease(this.stopped || !this.foreground ? null : expiry),
       scheduleDirectProbe: () => this.directProbe.schedule(),
       onBookkeepingError: (error) =>
-        this.logRelay('relay bookkeeping failed after migration', error.message.slice(0, 80))
+        this.logRelay('relay bookkeeping failed after migration', error.message.slice(0, 80)),
+      onDialFailure: (error) =>
+        this.logRelay('relay dial failed', `${error.name}: ${String(error.message).slice(0, 80)}`)
     })
     this.directProbe = new DirectReturnProbe(dependencies, {
       hysteresis: this.hysteresis,
@@ -121,7 +129,11 @@ export class MobileEndpointSupervisor {
       },
       afterProbe: () => {
         this.operationInFlight = false
-        if (this.relayRotationPending || this.logical.getState() !== 'connected') {
+        if (
+          this.pendingReplace ||
+          this.relayRotationPending ||
+          this.logical.getState() !== 'connected'
+        ) {
           void this.recoverRelay(this.relayRotationPending)
         }
       }
@@ -179,20 +191,7 @@ export class MobileEndpointSupervisor {
   }
 
   nudge(reason: ForegroundNudgeReason): void {
-    if (this.stopped) {
-      return
-    }
-    if (!this.foreground) {
-      this.setForeground(true)
-      return
-    }
-    const verdict = this.relayReconnect.handleActiveNudge(this.logical, reason)
-    if (verdict === 'probe') {
-      void this.focusProbe.probe()
-    } else if (verdict === 'replace') {
-      void this.recoverRelay(true, true)
-    }
-    this.directProbe.schedule(0)
+    this.nudgeRouter.nudge(reason)
   }
 
   stop(): void {
@@ -211,23 +210,32 @@ export class MobileEndpointSupervisor {
   // shared cooldown and any session left stale-'connected' by a half-open socket
   // comes down; lease rotation clears it because armRetry owns its own retry.
   private async recoverRelay(forceReplacement = false, ownsRecovery = false): Promise<void> {
+    if (this.stopped || !this.foreground || !this.host.relay) {
+      return
+    }
+    if (this.operationInFlight) {
+      // Why: a 12s direct probe can own the mutex when a network handoff lands;
+      // afterProbe replays the queued replacement so the signal is never lost.
+      this.pendingReplace ||= forceReplacement && ownsRecovery
+      return
+    }
+    if (this.pendingReplace) {
+      this.pendingReplace = false
+      forceReplacement = true
+      ownsRecovery = true
+    }
     // Why: connecting/handshaking is live direct progress; an unforced relay dial
     // would race it before the grace timer has given direct its head start.
-    if (
-      this.stopped ||
-      !this.foreground ||
-      this.operationInFlight ||
-      !this.host.relay ||
-      (!forceReplacement && !this.relayReconnect.needsRecovery(this.logical.getState()))
-    ) {
+    if (!forceReplacement && !this.relayReconnect.needsRecovery(this.logical.getState())) {
       return
     }
     // Why: revival and lease timers can overlap resume failures; one shared cooldown
     // prevents PEER_DROPPED/LIMIT_EXCEEDED reconnect churn.
     if (this.relayReconnect.shouldDefer()) {
       if (ownsRecovery) {
-        // Why: the armed retry runs unforced and dead-ends on a stale 'connected'.
-        suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+        // Why: never tear down a session no dial has disproven — the intent stays
+        // queued so the armed retry runs forced once the cooldown lapses.
+        this.pendingReplace = true
       }
       this.logRelay('recovery deferred by cooldown or gate')
       return
@@ -253,28 +261,25 @@ export class MobileEndpointSupervisor {
         )
         this.relayReconnect.armCredentialReprobe()
         if (ownsRecovery) {
-          suspendRelayIfStillConnected(this.relayReconnect, this.logical)
+          // Why: no dial happened — keep the session and the intent; the reprobe
+          // runs forced and replaces make-before-break once a credential exists.
+          this.pendingReplace = true
         }
         return
       }
-      for (const credential of selection.credentials) {
-        const result = await this.sessionEstablisher.dial(credential)
-        if (result.ok) {
-          retryAfterOperation = this.logical.getState() !== 'connected'
-          return
-        }
-        lastError = result.error
-        this.logRelay(
-          'relay dial failed',
-          `${result.error.name}: ${String(result.error.message).slice(0, 80)}`
-        )
-        if (this.relayReconnect.shouldTryGraceAfterRelayFailure(result.error)) {
-          // Why: a rejected version stays invalid; retry only the grace credential.
-          this.relayReconnect.recordRejectedCredential(credential.version)
-        } else {
-          break
-        }
+      const dialed = await this.sessionEstablisher.dialEligible(selection.credentials)
+      if (dialed.outcome === 'established') {
+        // Why: a fresh socket satisfies any replacement intent queued mid-dial.
+        this.pendingReplace = false
+        retryAfterOperation = this.logical.getState() !== 'connected'
+        return
       }
+      if (dialed.outcome === 'aborted') {
+        // Why: direct won the race or the supervisor went inactive — not a
+        // failure; booking backoff would delay the next genuine recovery.
+        return
+      }
+      lastError = dialed.error
       // Why: cleanup may happen while a relay dial is awaiting the network;
       // record its outcome without recreating a foreground retry timer.
       const scheduleRetry = (!forceReplacement || ownsRecovery) && this.foreground && !this.stopped

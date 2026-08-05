@@ -36,7 +36,14 @@ type PendingRequest = {
 }
 
 export type StableLogicalRpcClient = RpcClient & {
-  migrateTo(session: RpcClient, path: MobileConnectionPath, timeoutMs?: number): Promise<void>
+  migrateTo(
+    session: RpcClient,
+    path: MobileConnectionPath,
+    timeoutMs?: number,
+    // Checked after the replacement authenticates, before the swap — lets a racing
+    // caller withdraw when another path won while this dial was in flight.
+    shouldAbort?: () => boolean
+  ): Promise<void>
   suspendActiveSession(): void
   getActivePath(): MobileConnectionPath
   // Non-null only while a migration dial is publishing its own phases — the path the
@@ -188,7 +195,7 @@ export function createStableLogicalRpcClient(
       publishState('disconnected')
     },
 
-    async migrateTo(nextSession, path, timeoutMs = 12_000) {
+    async migrateTo(nextSession, path, timeoutMs = 12_000, shouldAbort) {
       if (closed) {
         nextSession.close()
         throw new Error('Client closed')
@@ -214,6 +221,11 @@ export function createStableLogicalRpcClient(
         await waitForAuthenticated(nextSession, timeoutMs)
         if (closed) {
           throw new Error('Client closed')
+        }
+        // Why: cutting over anyway would close a live winner and strand the user
+        // on the slower path (the happy-eyeballs race is first-authenticated-wins).
+        if (shouldAbort?.()) {
+          throw new Error('migration superseded')
         }
       } catch (error) {
         endDialForwarding(forwarder, true)

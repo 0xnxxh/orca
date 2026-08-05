@@ -286,6 +286,12 @@ describe('useLiveWorktreeName request volume', () => {
       _meta: { runtimeId: 'runtime-1' }
     })
     await mount()
+    // Why: a transient desktop repo-scan rejection also answers selector_not_found,
+    // so one miss stays unproven; only the confirming poll may say 'missing'.
+    expect(resolution).toBe('unknown')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000)
+    })
     expect(resolution).toBe('missing')
 
     act(() => renderer?.unmount())

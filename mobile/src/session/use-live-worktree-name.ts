@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
 import type { RuntimeClientEventStreamMessage } from '../../../src/shared/runtime-client-events'
 import { getRepoIdFromWorktreeId } from '../../../src/shared/worktree-id'
@@ -46,6 +46,10 @@ export function useLiveWorktreeName({
     worktreeId: string
     resolution: WorktreeShowResolution
   }>(() => ({ worktreeId, resolution: 'unknown' }))
+  // Why: a transient desktop repo-scan rejection collapses the catalog to zero rows and
+  // answers selector_not_found for a live worktree — one miss is suspicion, not proof.
+  // The fallback poll guarantees a confirming read (a failed show never stops it).
+  const missingStreakRef = useRef({ worktreeId, count: 0 })
 
   useEffect(() => {
     setWorktreeName((current) =>
@@ -90,7 +94,17 @@ export function useLiveWorktreeName({
           if (stale || generation !== refreshGeneration) {
             return
           }
-          const resolution = classifyWorktreeShowResponse(response)
+          const classified = classifyWorktreeShowResponse(response)
+          const streak = missingStreakRef.current
+          missingStreakRef.current = {
+            worktreeId,
+            count:
+              classified === 'missing'
+                ? (streak.worktreeId === worktreeId ? streak.count : 0) + 1
+                : 0
+          }
+          const resolution =
+            classified === 'missing' && missingStreakRef.current.count < 2 ? 'unknown' : classified
           setResolved((current) =>
             current.worktreeId === worktreeId && current.resolution === resolution
               ? current

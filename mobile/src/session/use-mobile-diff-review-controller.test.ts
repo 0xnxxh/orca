@@ -100,6 +100,23 @@ describe('useMobileDiffReviewController', () => {
     expect(screenState).toMatchObject({ kind: 'ready', status: { branch: 'feature/two' } })
   })
 
+  it('keeps the loaded review when the reconnect reload rejects', async () => {
+    loadSnapshot
+      .mockResolvedValueOnce(readySnapshot('feature/one'))
+      .mockRejectedValueOnce(new Error('snapshot fetch failed'))
+
+    await act(async () => {
+      renderer = create(createElement(Probe, { connState: 'connected' }))
+      await Promise.resolve()
+    })
+    expect(screenState).toMatchObject({ kind: 'ready' })
+
+    await update('reconnecting')
+    await update('connected')
+    // Why (F10): a failed refresh must not replace the review on screen with an error.
+    expect(screenState).toMatchObject({ kind: 'ready', status: { branch: 'feature/one' } })
+  })
+
   it('waits for the desktop when the drop lands before the review loads', async () => {
     loadSnapshot.mockReturnValueOnce(new Promise(() => {}))
 

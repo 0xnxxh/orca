@@ -14,6 +14,10 @@ import type { HostProfile } from './types'
 
 type EstablishResult = { ok: true } | { ok: false; error: Error }
 
+function directWon(logical: StableLogicalRpcClient): boolean {
+  return logical.getActivePath() !== 'relay' && logical.getState() === 'connected'
+}
+
 // Turns one relay credential into the active runtime session: resolve the cell
 // assignment if the director rejects the cached one, open the cell socket,
 // migrate the logical client onto it, then persist the resume confirmation and
@@ -39,8 +43,36 @@ export class MobileRelaySessionEstablisher {
       scheduleLease: (expiry: number | null) => void
       scheduleDirectProbe: () => void
       onBookkeepingError: (error: Error) => void
+      onDialFailure: (error: Error) => void
     }
   ) {}
+
+  // Tries each eligible credential until one establishes. Only a grace-repairable
+  // failure (BAD_OUTER_CREDENTIAL) moves on to the next credential.
+  async dialEligible(
+    credentials: Array<{ token: string; version: number }>
+  ): Promise<
+    { outcome: 'established' } | { outcome: 'aborted' } | { outcome: 'failed'; error: Error | null }
+  > {
+    let lastError: Error | null = null
+    for (const credential of credentials) {
+      const result = await this.dial(credential)
+      if (result.ok) {
+        return { outcome: 'established' }
+      }
+      if (result.error instanceof RelayDialAbortedError) {
+        return { outcome: 'aborted' }
+      }
+      lastError = result.error
+      this.args.onDialFailure(result.error)
+      if (!this.args.controller.shouldTryGraceAfterRelayFailure(result.error)) {
+        break
+      }
+      // Why: a rejected version stays invalid; retry only the grace credential.
+      this.args.controller.recordRejectedCredential(credential.version)
+    }
+    return { outcome: 'failed', error: lastError }
+  }
 
   // One credential attempt: a director-class failure re-resolves the cell
   // assignment, persists it, and dials once more against the authoritative target.
@@ -71,8 +103,13 @@ export class MobileRelaySessionEstablisher {
       `confirm-${encodeBase64Url(args.randomBytes(16))}`
     )
     try {
-      await args.logical.migrateTo(session, 'relay')
+      // Why: if an authenticated non-relay session appears while this dial is in
+      // flight (the grace race), withdraw instead of cutting over the winner.
+      await args.logical.migrateTo(session, 'relay', undefined, () => directWon(args.logical))
     } catch (error) {
+      if (directWon(args.logical)) {
+        return { ok: false, error: new RelayDialAbortedError() }
+      }
       return { ok: false, error: session.getFailure() ?? toError(error) }
     }
     args.controller.setActiveSession(session)

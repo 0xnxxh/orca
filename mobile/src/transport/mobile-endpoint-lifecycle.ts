@@ -65,6 +65,11 @@ export function startMobileEndpointLifecycle(
       owner.setForeground(next)
     },
     nudge(reason) {
+      // Why: a focus nudge can precede the AppState listener; keep the closure in
+      // sync or a later supervisor swap would start with a stale background flag.
+      if (reason !== 'network-change') {
+        foreground = true
+      }
       owner.nudge(reason)
     },
     stop() {
