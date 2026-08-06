@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ManagedPane, ManagedPaneInternal } from './pane-manager-types'
 import { toPublicPane } from './pane-public-view'
+import { canApplyPaneMetricOptions, canMeasurePaneForFit } from './pane-fit-measurability'
 import {
   applyOrDeferPaneMetricOptions,
   flushDeferredPaneMetricOptions,
@@ -136,5 +137,31 @@ describe('pane-metric-options-deferral', () => {
 
     expect(hasDeferredPaneMetricOptions(pane)).toBe(false)
     expect(pane.terminal.options.fontSize).toBeUndefined()
+  })
+})
+
+describe('canApplyPaneMetricOptions gating', () => {
+  function makeSizedPane(rect: { width: number; height: number }, cols: number): ManagedPane {
+    return {
+      id: 2,
+      terminal: { options: {} },
+      container: { getBoundingClientRect: () => rect },
+      fitAddon: { proposeDimensions: () => ({ cols, rows: 20 }) }
+    } as unknown as ManagedPane
+  }
+
+  it('applies to a pane clamped narrow by a divider drag', () => {
+    // 50px is the divider clamp: over the pixel floor but ~5 cols, under the
+    // fit floor. Gating on the fit floor would strand it on a stale font,
+    // because it never hides and its box never changes.
+    expect(canApplyPaneMetricOptions(makeSizedPane({ width: 50, height: 600 }, 5))).toBe(true)
+  })
+
+  it('still defers on a near-zero box (hidden pane / worktree-switch overlay)', () => {
+    expect(canApplyPaneMetricOptions(makeSizedPane({ width: 0, height: 0 }, 0))).toBe(false)
+  })
+
+  it('leaves the cols/rows floor on the fit itself', () => {
+    expect(canMeasurePaneForFit(makeSizedPane({ width: 50, height: 600 }, 5))).toBe(false)
   })
 })

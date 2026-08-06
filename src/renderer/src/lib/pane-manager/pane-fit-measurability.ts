@@ -20,13 +20,18 @@ export function getProposedPaneDimensions(
   }
 }
 
-export function canMeasurePaneForFit(pane: ManagedPane): boolean {
+function hasPaneFitPixelBox(pane: ManagedPane): boolean {
   const measure = pane.container?.getBoundingClientRect
-  if (typeof measure === 'function') {
-    const rect = measure.call(pane.container)
-    if (rect.width < MIN_PANE_FIT_WIDTH_PX || rect.height < MIN_PANE_FIT_HEIGHT_PX) {
-      return false
-    }
+  if (typeof measure !== 'function') {
+    return true
+  }
+  const rect = measure.call(pane.container)
+  return rect.width >= MIN_PANE_FIT_WIDTH_PX && rect.height >= MIN_PANE_FIT_HEIGHT_PX
+}
+
+export function canMeasurePaneForFit(pane: ManagedPane): boolean {
+  if (!hasPaneFitPixelBox(pane)) {
+    return false
   }
   const dims = getProposedPaneDimensions(pane)
   if (!dims) {
@@ -37,8 +42,14 @@ export function canMeasurePaneForFit(pane: ManagedPane): boolean {
   return dims.cols >= MIN_PANE_FIT_COLS && dims.rows >= MIN_PANE_FIT_ROWS
 }
 
+/** Why only the pixel box, not the fit floor: a pane held at the 50px divider
+ *  clamp proposes ~5 cols, so the fit floor would reject it forever — it never
+ *  hides and its box never changes, so nothing would flush and it would render
+ *  a stale font until widened. A hidden pane or the transient worktree-switch
+ *  overlay is near-zero, so the pixel floor still defers those. The cols/rows
+ *  floor stays where it belongs: on the fit. */
 export function canApplyPaneMetricOptions(pane: ManagedPane): boolean {
-  return !isManagedPaneDisplayNone(pane) && canMeasurePaneForFit(pane)
+  return !isManagedPaneDisplayNone(pane) && hasPaneFitPixelBox(pane)
 }
 
 /** Why the pending check comes first: it is an O(1) WeakMap lookup, while the
