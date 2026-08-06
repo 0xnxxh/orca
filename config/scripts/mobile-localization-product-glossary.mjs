@@ -18,6 +18,34 @@ export const EXACT_LANGUAGE_NEUTRAL_KEYS = new Set([
 ])
 
 export const REVIEWED_KEY_TRANSLATIONS = new Map([
+  ['connectionHealth.cannotConnect', { es: 'No se puede conectar' }],
+  [
+    'home.agent',
+    {
+      es: 'Tiempo de agentes',
+      ja: 'エージェントの稼働時間',
+      ko: '에이전트 시간',
+      zh: '智能体用时'
+    }
+  ],
+  [
+    'home.agents',
+    {
+      es: 'Agentes iniciados',
+      ja: '起動したエージェント',
+      ko: '시작된 에이전트',
+      zh: '已启动智能体'
+    }
+  ],
+  [
+    'home.pairingDescription',
+    {
+      es: 'Empareja Orca con tu computadora para consultar tus agentes, acceder a cualquier terminal y avanzar el trabajo desde tu teléfono.',
+      ja: 'コンピュータ上の Orca とペアリングすると、エージェントの状況を確認し、任意のターミナルにアクセスして、スマートフォンから作業を進められます。',
+      ko: '컴퓨터의 Orca와 페어링하여 에이전트 상태를 확인하고, 원하는 터미널에 접속하고, 휴대폰에서 작업을 진행하세요.',
+      zh: '将手机与计算机上的 Orca 配对，即可查看智能体状态、进入任意终端，并通过手机推进工作。'
+    }
+  ],
   [
     'task.gitHubReportsMergeConflictsOpen',
     { es: 'GitHub informa de conflictos de fusión. Abre GitHub para continuar.' }
