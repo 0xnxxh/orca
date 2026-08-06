@@ -91,7 +91,7 @@ export function FilePathCursorTooltip({
         sideOffset={offset.side}
         alignOffset={offset.align}
         showArrow={false}
-        className="max-w-[420px] rounded-md border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-words text-popover-foreground shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+        className="max-w-[min(90vw,800px)] rounded-md border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-words text-popover-foreground shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
       >
         {path}
       </TooltipContent>
