@@ -30,6 +30,12 @@
  * Values below were recorded from a live run under `com.apple.inputmethod.Korean.2SetKorean`;
  * see `11914-c3-live-preedit-visibility.txt` in the lane capture directory. That capture is
  * gitignored and is cited, never imported.
+ *
+ * Correction to this file's own landing commit (19a8d133db7), which said the spec had not been
+ * executed in this form: it has. It passes on real hardware — 1 passed, 9.1s, rc=0 — and the
+ * teeth check above was run against it rather than reasoned about. Both logs are sealed
+ * alongside the capture. An earlier teeth attempt that injected the CSS mid-run tripped the
+ * `hasActiveClass` poll instead of the rect assertion; it is inconclusive and excluded.
  */
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
