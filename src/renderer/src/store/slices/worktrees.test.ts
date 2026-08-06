@@ -1766,12 +1766,15 @@ describe('fetchWorktrees', () => {
     store.setState({ repos: [sshRepo], sshConnectionStates: new Map() } as Partial<AppState>)
     await store.getState().fetchWorktrees(sshRepo.id)
 
+    // The non-authoritative fallback saw the same absence but must not act on it.
+    expect(forgetRemovedForExecutionHostMock).not.toHaveBeenCalled()
+
     worktreeListMock.mockResolvedValueOnce([live])
     store.setState({ sshConnectionStates: connectedStates } as Partial<AppState>)
     await store.getState().fetchWorktrees(sshRepo.id)
 
     // Why: the renderer's suppression memory dies with the reload, so the metadata itself has to go.
-    expect(forgetRemovedForExecutionHostMock).toHaveBeenCalledWith({
+    expect(forgetRemovedForExecutionHostMock).toHaveBeenCalledExactlyOnceWith({
       repoId: sshRepo.id,
       executionHostId: 'ssh:ssh-1',
       worktreeIds: [deletedOnRemote.id]
