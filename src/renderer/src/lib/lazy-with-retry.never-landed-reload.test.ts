@@ -153,20 +153,36 @@ describe('loadLazyWithRetry when the recovery reload never lands', () => {
   })
 
   it('bounds the exhaustion dedupe set so a hostile error name cannot grow it forever', async () => {
-    installBreadcrumbSink()
+    const breadcrumbs = installBreadcrumbSink()
     // error.name is library-controlled, so drive far more distinct keys than the cap.
     window.sessionStorage.setItem(RELOAD_GUARD_KEY, 'doc-before-the-reload')
-    for (let index = 0; index < 200; index += 1) {
+    const failWithName = (name: string): void => {
       const error = new SyntaxError("Unexpected token '}'")
-      error.name = `SyntaxError${index}`
+      error.name = name
       void loadLazyWithRetry(() => Promise.reject(error), {
         retries: 0,
         reloadKey: 'right-sidebar'
       }).catch(() => undefined)
     }
+    for (let index = 0; index < 200; index += 1) {
+      failWithName(`SyntaxError${index}`)
+    }
     await vi.advanceTimersByTimeAsync(0)
 
     expect(getRecordedExhaustionKeyCountForTest()).toBeLessThanOrEqual(128)
+
+    // Eviction must be oldest-first, not wholesale: key 100 is among the newest
+    // 128 so it is still deduped. Clearing the set on overflow would drop it and
+    // let a repeat burst re-flush the 30-entry breadcrumb ring.
+    const before = breadcrumbs.filter(
+      (crumb) => crumb.name === 'lazy_chunk_recovery_exhausted'
+    ).length
+    failWithName('SyntaxError100')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(
+      breadcrumbs.filter((crumb) => crumb.name === 'lazy_chunk_recovery_exhausted')
+    ).toHaveLength(before)
   })
 
   it('leaves no guard behind that would block a later document from recovering', async () => {
