@@ -81,6 +81,12 @@ const HOST_ONE_RELAY_BUNDLE = {
   }
 }
 
+function scheduledCleanup(hostId: string): (id: string) => Promise<void> {
+  const cleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === hostId)?.[1]
+  expect(cleanup).toBeTypeOf('function')
+  return cleanup as (id: string) => Promise<void>
+}
+
 describe('host-store list mutations', () => {
   let storedHostsRaw: string
   let storedOverlayRaw: string | null
@@ -205,6 +211,9 @@ describe('host-store list mutations', () => {
     })
 
     expect(JSON.parse(storedHostsRaw)).toEqual([{ ...HOST_ONE, endpoint: 'ws://127.0.0.1:3' }])
+    expect(recordCleanupIntentMock.mock.invocationCallOrder[0]).toBeLessThan(
+      asyncStorageMock.setItem.mock.invocationCallOrder[0]!
+    )
     expect(scheduleCleanupMock).toHaveBeenCalledWith('host-duplicate', expect.any(Function))
   })
 
@@ -222,6 +231,7 @@ describe('host-store list mutations', () => {
     ).rejects.toThrow('keychain write failed')
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, duplicate])
+    expect(cancelCleanupMock).toHaveBeenCalledWith(duplicate.id)
     expect(scheduleCleanupMock).not.toHaveBeenCalled()
   })
 
@@ -272,12 +282,10 @@ describe('host-store list mutations', () => {
     }
     storedHostsRaw = JSON.stringify([HOST_ONE, duplicate])
     await saveHost({ ...HOST_ONE, deviceToken: 'token-a' })
-    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === duplicate.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const staleCleanup = scheduledCleanup(duplicate.id)
 
     await saveHost({ ...duplicate, deviceToken: 'token-b' })
-    await staleCleanup?.(duplicate.id)
+    await staleCleanup(duplicate.id)
 
     expect(JSON.parse(storedHostsRaw)).toEqual([duplicate])
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
@@ -285,36 +293,30 @@ describe('host-store list mutations', () => {
 
   it('does not let stale removal cleanup delete a replacement relay bundle before publication', async () => {
     await removeHost(HOST_ONE.id)
-    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const staleCleanup = scheduledCleanup(HOST_ONE.id)
     await writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)
 
-    await expect(staleCleanup?.(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
+    await expect(staleCleanup(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
 
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
 
   it('keeps stale cleanup pending when a replacement relay write fails', async () => {
     await removeHost(HOST_ONE.id)
-    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const staleCleanup = scheduledCleanup(HOST_ONE.id)
     secureStoreMock.setItemAsync.mockRejectedValueOnce(new Error('keychain write failed'))
 
     await expect(writeMobileRelayCredentialBundle(HOST_ONE_RELAY_BUNDLE)).rejects.toThrow(
       'keychain write failed'
     )
-    await expect(staleCleanup?.(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
+    await expect(staleCleanup(HOST_ONE.id)).rejects.toThrow('credential write superseded cleanup')
 
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
 
   it('stops stale cleanup when a replacement relay write starts during token deletion', async () => {
     await removeHost(HOST_ONE.id)
-    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const staleCleanup = scheduledCleanup(HOST_ONE.id)
     let releaseTokenDelete: () => void = () => {}
     secureStoreMock.deleteItemAsync.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -322,7 +324,7 @@ describe('host-store list mutations', () => {
       })
     )
 
-    const cleanup = staleCleanup?.(HOST_ONE.id)
+    const cleanup = staleCleanup(HOST_ONE.id)
     await vi.waitFor(() => {
       expect(secureStoreMock.deleteItemAsync).toHaveBeenCalledWith(
         'orca.host-token.host-1',
@@ -342,9 +344,7 @@ describe('host-store list mutations', () => {
 
   it('rechecks the write generation immediately before starting credential deletion', async () => {
     await removeHost(HOST_ONE.id)
-    const staleCleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const staleCleanup = scheduledCleanup(HOST_ONE.id)
     let resolveCleanupRead: (raw: string) => void = () => {}
     const cleanupRead = new Promise<string>((resolve) => {
       resolveCleanupRead = resolve
@@ -364,7 +364,7 @@ describe('host-store list mutations', () => {
       return null
     })
 
-    const cleanup = staleCleanup?.(HOST_ONE.id)
+    const cleanup = staleCleanup(HOST_ONE.id)
     await vi.waitFor(() => expect(cleanupReadStarted).toBe(true))
     let bundleWrite: Promise<void> | null = null
     resolveCleanupRead(storedHostsRaw)
@@ -450,6 +450,15 @@ describe('host-store list mutations', () => {
     expect(scheduleCleanupMock).toHaveBeenCalledWith(HOST_ONE.id, expect.any(Function))
   })
 
+  it('cancels write-ahead cleanup when host metadata removal fails', async () => {
+    asyncStorageMock.setItem.mockRejectedValueOnce(new Error('metadata write failed'))
+
+    await expect(removeHost(HOST_ONE.id)).rejects.toThrow('metadata write failed')
+
+    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_ONE, HOST_TWO])
+    expect(cancelCleanupMock).toHaveBeenCalledWith(HOST_ONE.id)
+  })
+
   it('does not cancel cleanup from a removal committed during a stalled save', async () => {
     let releaseTokenWrite: () => void = () => {}
     secureStoreMock.setItemAsync.mockReturnValueOnce(
@@ -487,11 +496,9 @@ describe('host-store list mutations', () => {
 
   it('deletes an unpaired credential when cleanup runs without a newer write', async () => {
     await removeHost(HOST_ONE.id)
-    const cleanup = scheduleCleanupMock.mock.calls.find(([id]) => id === HOST_ONE.id)?.[1] as
-      | ((hostId: string) => Promise<void>)
-      | undefined
+    const cleanup = scheduledCleanup(HOST_ONE.id)
 
-    await cleanup?.(HOST_ONE.id)
+    await cleanup(HOST_ONE.id)
 
     expect(secureStoreMock.deleteItemAsync).toHaveBeenCalledWith(
       'orca.host-token.host-1',
@@ -499,7 +506,7 @@ describe('host-store list mutations', () => {
     )
   })
 
-  it('merges v2 endpoints only onto an existing legacy base host', async () => {
+  it('keeps a concurrently re-published orphan overlay authoritative', async () => {
     const overlay: MobileRelayHostOverlay = {
       v: 2,
       hostId: HOST_ONE.id,
@@ -522,8 +529,26 @@ describe('host-store list mutations', () => {
       }
     }
     storedOverlayRaw = JSON.stringify([overlay, { ...overlay, hostId: 'removed-by-old-build' }])
+    let releaseCleanup: () => void = () => {}
+    scheduleCleanupMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releaseCleanup = resolve
+      })
+    )
 
-    const hosts = await loadHosts()
+    const hostsLoad = loadHosts()
+    await vi.waitFor(() => expect(scheduleCleanupMock).toHaveBeenCalled())
+    await saveHost({
+      ...HOST_ONE,
+      id: 'removed-by-old-build',
+      publicKeyB64: 'restored-key',
+      deviceToken: 'restored-token',
+      endpoints: overlay.endpoints,
+      relayHostId: overlay.relayHostId,
+      relay: overlay.relay
+    })
+    releaseCleanup()
+    const hosts = await hostsLoad
 
     expect(hosts.find(({ id }) => id === HOST_ONE.id)).toMatchObject({
       endpoints: overlay.endpoints,
@@ -531,6 +556,10 @@ describe('host-store list mutations', () => {
       relay: overlay.relay
     })
     expect(hosts.some(({ id }) => id === 'removed-by-old-build')).toBe(false)
+    expect(JSON.parse(storedOverlayRaw!)).toContainEqual({
+      ...overlay,
+      hostId: 'removed-by-old-build'
+    })
   })
 
   it('refuses to resurrect a removed host during relay upgrade publication', async () => {
@@ -560,7 +589,9 @@ describe('host-store list mutations', () => {
       expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
     })
     expect(settled).toBe(false)
-    expect(scheduleCleanupMock).toHaveBeenCalledOnce()
+    expect(recordCleanupIntentMock.mock.invocationCallOrder[0]).toBeLessThan(
+      asyncStorageMock.setItem.mock.invocationCallOrder[0]!
+    )
 
     resolveSchedule?.()
     await removal
