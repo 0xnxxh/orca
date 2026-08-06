@@ -95,7 +95,7 @@ export function LocalNetworkConnectionTest(): React.JSX.Element {
   }
 
   return (
-    <div className="border-t border-border/60 bg-muted/10 px-4 py-3 pl-11">
+    <div className="mr-4 mb-3 ml-11 rounded-lg border border-border/60 bg-muted/25 px-4 py-3 shadow-xs">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-[240px] flex-1 space-y-1">
           <div className="text-sm font-medium">
