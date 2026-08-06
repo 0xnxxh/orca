@@ -13,12 +13,12 @@ import type { TerminalTab } from '../../../../shared/types'
 // was built for. Reveal cost is a flat ~170ms remount regardless of buffer
 // size, so cutting remount *frequency* beats shaving replay.
 export const TERMINAL_WORKTREE_COLD_PARK_DELAY_MS = 30_000
-export const TERMINAL_WORKTREE_HOT_RETAIN_MS = 15 * 60_000
-export const TERMINAL_WORKTREE_HOT_RETAIN_LIMIT = 8
+export const TERMINAL_WORKTREE_HOT_RETAIN_MS = 5 * 60_000
+export const TERMINAL_WORKTREE_HOT_RETAIN_LIMIT = 4
 export const TERMINAL_WORKTREE_PARK_DELAY_MS = TERMINAL_WORKTREE_COLD_PARK_DELAY_MS
 export const TERMINAL_TAB_COLD_PARK_DELAY_MS = 30_000
-export const TERMINAL_TAB_HOT_RETAIN_MS = 15 * 60_000
-export const TERMINAL_TAB_HOT_RETAIN_LIMIT = 12
+export const TERMINAL_TAB_HOT_RETAIN_MS = 5 * 60_000
+export const TERMINAL_TAB_HOT_RETAIN_LIMIT = 6
 
 // Why: tests override these per call (instead of process.env reads inside the
 // module) to shrink the 30s hysteresis to test-friendly durations.

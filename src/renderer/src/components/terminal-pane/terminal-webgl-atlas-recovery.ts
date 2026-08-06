@@ -18,6 +18,7 @@ const TERMINAL_OUTPUT_RECOVERY_REFILL_INTERVAL_MS = 6_000
 
 let terminalOutputRecoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let terminalOutputRecoveryRetryTimer: ReturnType<typeof setTimeout> | null = null
+let terminalPresentDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let terminalOutputRecoveryWipeTokens = TERMINAL_OUTPUT_RECOVERY_BURST_WIPES
 let terminalOutputRecoveryTokensRefilledAt: number | null = null
 let terminalOutputRecoveryLastWipeAt: number | null = null
@@ -95,6 +96,16 @@ export function scheduleTerminalWebglAtlasRecovery(): void {
   }, TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
 }
 
+export function scheduleTerminalWebglPresent(): void {
+  if (terminalPresentDebounceTimer != null) {
+    globalThis.clearTimeout(terminalPresentDebounceTimer)
+  }
+  terminalPresentDebounceTimer = globalThis.setTimeout(() => {
+    terminalPresentDebounceTimer = null
+    presentPanesWithoutAtlasClear()
+  }, TERMINAL_OUTPUT_RECOVERY_QUIET_MS)
+}
+
 function scheduleTerminalOutputRecoveryRetry(delayMs: number): void {
   terminalOutputRecoveryRetryTimer = globalThis.setTimeout(() => {
     terminalOutputRecoveryRetryTimer = null
@@ -128,6 +139,10 @@ export function resetTerminalWebglAtlasRecoveryBudgetForTesting(): void {
     globalThis.clearTimeout(terminalOutputRecoveryRetryTimer)
   }
   terminalOutputRecoveryRetryTimer = null
+  if (terminalPresentDebounceTimer != null) {
+    globalThis.clearTimeout(terminalPresentDebounceTimer)
+  }
+  terminalPresentDebounceTimer = null
   terminalOutputRecoveryWipeTokens = TERMINAL_OUTPUT_RECOVERY_BURST_WIPES
   terminalOutputRecoveryTokensRefilledAt = null
   terminalOutputRecoveryLastWipeAt = null

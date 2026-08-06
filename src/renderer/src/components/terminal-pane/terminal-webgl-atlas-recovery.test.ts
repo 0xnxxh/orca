@@ -8,6 +8,7 @@ import {
   scheduleImagePasteWebglAtlasRecovery,
   scheduleTabRevealWebglAtlasRecovery,
   scheduleTerminalWebglAtlasRecovery,
+  scheduleTerminalWebglPresent,
   TERMINAL_OUTPUT_RECOVERY_QUIET_MS
 } from './terminal-webgl-atlas-recovery'
 
@@ -200,6 +201,24 @@ describe('terminal WebGL atlas recovery', () => {
       vi.advanceTimersByTime(50)
     }
 
+    expect(manager.resetWebglTextureAtlases).not.toHaveBeenCalled()
+    expect(manager.refreshAllPanes).not.toHaveBeenCalled()
+  })
+
+  it('repaints settled rewrites without clearing the shared atlas', () => {
+    vi.useFakeTimers()
+    const manager = registerManager()
+
+    scheduleTerminalWebglPresent()
+    scheduleTerminalWebglPresent()
+    vi.advanceTimersByTime(TERMINAL_OUTPUT_RECOVERY_QUIET_MS - 1)
+
+    expect(manager.scheduleRevealPresent).not.toHaveBeenCalled()
+    expect(manager.resetWebglTextureAtlases).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+
+    expect(manager.scheduleRevealPresent).toHaveBeenCalledOnce()
     expect(manager.resetWebglTextureAtlases).not.toHaveBeenCalled()
     expect(manager.refreshAllPanes).not.toHaveBeenCalled()
   })

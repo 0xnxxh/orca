@@ -233,7 +233,10 @@ import { createCommandCodeOutputStatusDetector } from '../../../../shared/comman
 import type { PtyDataMeta } from './pty-dispatcher'
 import { getEagerPtyBufferHandle } from './pty-dispatcher'
 import { createTerminalGitHubPRLinkDetector } from '../../../../shared/terminal-github-pr-link-detector'
-import { scheduleTerminalWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
+import {
+  scheduleTerminalWebglAtlasRecovery,
+  scheduleTerminalWebglPresent
+} from './terminal-webgl-atlas-recovery'
 import {
   CONPTY_DA1_RESPONSE,
   DEFAULT_DA1_RESPONSE,
@@ -6326,8 +6329,8 @@ export function connectPanePty(
       return decision.prefersRenderRefresh
     }
 
-    // Why: Vim-style rewrites leave stale WebGL glyphs until the atlas rebuilds; alt-screen membership is only authoritative post-parse (enter/exit can split chunks), so capture pre-parse and decide at parse completion.
-    function alternateScreenRewriteAtlasRecoveryOnParsed(): () => void {
+    // Why: alt-screen membership is only authoritative post-parse because enter/exit sequences can split across chunks.
+    function alternateScreenRewritePresentOnParsed(): () => void {
       const wasAlternateScreenBuffer = pane.terminal.buffer.active.type === 'alternate'
       const switchesBeforeParse = alternateScreenBufferSwitches
       return () => {
@@ -6336,7 +6339,7 @@ export function connectPanePty(
           alternateScreenBufferSwitches !== switchesBeforeParse ||
           pane.terminal.buffer.active.type === 'alternate'
         ) {
-          scheduleTerminalWebglAtlasRecovery()
+          scheduleTerminalWebglPresent()
         }
       }
     }
@@ -6464,7 +6467,7 @@ export function connectPanePty(
         ? recoverWebglAtlasAfterParse
           ? scheduleTerminalWebglAtlasRecovery
           : renderRefreshDecision.inPlaceRewrite
-            ? alternateScreenRewriteAtlasRecoveryOnParsed()
+            ? alternateScreenRewritePresentOnParsed()
             : undefined
         : undefined
       const foregroundRenderRefreshNeeded = renderRefreshDecision.refresh
