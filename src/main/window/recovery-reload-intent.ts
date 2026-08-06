@@ -91,9 +91,15 @@ export function createRecoveryReloadIntent({
     kind: 'ordinary' | 'recovery',
     token?: string
   ): void => {
-    refreshArm(state)
+    const existing = refreshArm(state)
     if (state.pendingLoad) {
       state.pendingLoad = { ...state.pendingLoad, kind: 'unknown' }
+    }
+    // Overlapping arms: the next navigation belongs to neither, so refuse to guess.
+    if (existing) {
+      state.arm = null
+      state.nextNavigationUnknown = true
+      return
     }
     state.arm = {
       kind,
@@ -112,6 +118,20 @@ export function createRecoveryReloadIntent({
     },
     armOrdinary(webContentsId) {
       armNavigation(getState(webContentsId), 'ordinary')
+    },
+    cancelOrdinary(webContentsId) {
+      const state = getState(webContentsId)
+      const arm = refreshArm(state)
+      if (arm?.kind === 'ordinary') {
+        state.arm = null
+        state.nextNavigationUnknown = false
+        return true
+      }
+      if (state.pendingLoad?.kind === 'ordinary') {
+        state.pendingLoad = { ...state.pendingLoad, kind: 'unknown' }
+        return true
+      }
+      return false
     },
     cancel(webContentsId, token) {
       const state = getState(webContentsId)
