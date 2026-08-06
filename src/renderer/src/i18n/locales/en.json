@@ -14939,7 +14939,9 @@
       },
       "filters": {
         "showStates": "Agent states",
-        "canvasSummary": "{{shown}} of {{total}} agents shown"
+        "canvasSummary": "{{shown}} of {{total}} agents shown",
+        "agentlessWorkspaces": "Workspaces without agents",
+        "workspaceVisibility": "Map content"
       },
       "liveContainmentMap": "Live containment map",
       "hostFilter": "Host filter",
@@ -14960,7 +14962,8 @@
       "projectCount": "{{agents}} agents · {{workspaces}} workspaces",
       "agentCount": "{{count}} agents",
       "agentCount_one": "{{count}} agent",
-      "agentCount_other": "{{count}} agents"
+      "agentCount_other": "{{count}} agents",
+      "noWorkspaceAgents": "No agents in this workspace."
     },
     "placeholder": {
       "title": "Agent dashboard",
