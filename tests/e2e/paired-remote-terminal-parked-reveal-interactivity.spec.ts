@@ -341,6 +341,24 @@ async function readPaneForegroundPixels(page: Page, webTabId: string): Promise<n
   return countForegroundPixels(await page.screenshot({ clip }))
 }
 
+async function waitForPaneForegroundPixels(
+  page: Page,
+  webTabId: string,
+  minimum: number,
+  budgetMs: number
+): Promise<number> {
+  const deadline = Date.now() + budgetMs
+  let foregroundPixels = 0
+  do {
+    foregroundPixels = Math.max(foregroundPixels, await readPaneForegroundPixels(page, webTabId))
+    if (foregroundPixels > minimum) {
+      return foregroundPixels
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  } while (Date.now() < deadline)
+  return foregroundPixels
+}
+
 function readPtyGridFromContent(content: string): { cols: number; rows: number } | null {
   const sizes = [...content.matchAll(/(?:READY|SIZE):(\d+)x(\d+)/g)]
   const last = sizes.at(-1)
@@ -630,7 +648,12 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
       'cold-parked viewport stayed blank while the paired runtime was disconnected'
     ).toBe(true)
     expect(
-      await readPaneForegroundPixels(client.page, target.webTabId),
+      await waitForPaneForegroundPixels(
+        client.page,
+        target.webTabId,
+        1_000,
+        Math.max(1, 2_000 - (Date.now() - startedAt))
+      ),
       'cached viewport reached the buffer but did not paint terminal pixels'
     ).toBeGreaterThan(1_000)
     console.log(`[paired-reveal] cached viewport painted in ${Date.now() - startedAt}ms`)
