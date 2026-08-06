@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ORCA_RENDERER_UNLOAD_PREVENTED_EVENT } from '../../../shared/renderer-shutdown-events'
 import {
+  getRecordedExhaustionKeyCountForTest,
   isLazyChunkLoadError,
   loadLazyWithRetry,
   resetLazyChunkReloadRequestsForTest
@@ -149,6 +150,23 @@ describe('loadLazyWithRetry when the recovery reload never lands', () => {
     expect(vetoed?.data.outcome).toBe('unload-vetoed')
     // A veto is still an attempted-and-failed recovery, so it is contained too.
     expect(isLazyChunkLoadError(await settled)).toBe(true)
+  })
+
+  it('bounds the exhaustion dedupe set so a hostile error name cannot grow it forever', async () => {
+    installBreadcrumbSink()
+    // error.name is library-controlled, so drive far more distinct keys than the cap.
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, 'doc-before-the-reload')
+    for (let index = 0; index < 200; index += 1) {
+      const error = new SyntaxError("Unexpected token '}'")
+      error.name = `SyntaxError${index}`
+      void loadLazyWithRetry(() => Promise.reject(error), {
+        retries: 0,
+        reloadKey: 'right-sidebar'
+      }).catch(() => undefined)
+    }
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(getRecordedExhaustionKeyCountForTest()).toBeLessThanOrEqual(128)
   })
 
   it('leaves no guard behind that would block a later document from recovering', async () => {

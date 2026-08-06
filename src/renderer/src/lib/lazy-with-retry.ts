@@ -100,11 +100,15 @@ function clearChunkReloadGuard(): void {
 const MAX_RELOAD_REQUESTS_PER_DOCUMENT = 2
 let reloadRequestsThisDocument = 0
 let reloadRequestInFlight = false
+const MAX_RECORDED_EXHAUSTION_KEYS = 128
 // One breadcrumb per reloadKey + outcome + error name (unkeyed call sites share
 // 'unknown'): a corrupt shared chunk can fail dozens of sibling imports at once,
 // which would otherwise flush the 30-entry breadcrumb ring.
-const MAX_RECORDED_EXHAUSTION_KEYS = 128
 const recordedExhaustionKeys = new Set<string>()
+
+export function getRecordedExhaustionKeyCountForTest(): number {
+  return recordedExhaustionKeys.size
+}
 
 export function resetLazyChunkReloadRequestsForTest(): void {
   reloadRequestsThisDocument = 0
