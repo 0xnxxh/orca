@@ -24,6 +24,7 @@ export function ManageSessionsSection(): React.JSX.Element {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [pendingKillSession, setPendingKillSession] = useState<PtyManagementSession | null>(null)
   const [busyKind, setBusyKind] = useState<ConfirmKind | null>(null)
+  const [attributionRefreshRevision, setAttributionRefreshRevision] = useState(0)
   const optimisticRollback = useRef<PtyManagementSession[] | null>(null)
   const isMounted = useRef(true)
   const mutationInFlight = useRef(false)
@@ -128,6 +129,7 @@ export function ManageSessionsSection(): React.JSX.Element {
     },
     onRestartSettled: () => {
       notifyDaemonSessionInventoryInvalidated()
+      setAttributionRefreshRevision((revision) => revision + 1)
       void refresh()
     }
   })
@@ -212,7 +214,10 @@ export function ManageSessionsSection(): React.JSX.Element {
         className="space-y-3"
         id={MANAGE_SESSIONS_SECTION_ID}
       >
-        <TerminalTccAttributionNotice showManageSessionsButton={false} />
+        <TerminalTccAttributionNotice
+          showManageSessionsButton={false}
+          refreshRevision={attributionRefreshRevision}
+        />
         <ManageSessionsTable
           sessions={sessions}
           hasLoadedOnce={hasLoadedOnce}

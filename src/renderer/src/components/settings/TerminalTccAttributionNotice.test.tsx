@@ -98,6 +98,20 @@ it('hides the navigation button on the Manage Sessions surface itself', async ()
   expect(container.querySelector('button')).toBeNull()
 })
 
+it('refreshes the warning after the daemon restart remedy settles', async () => {
+  stubAttributionHealth('severed')
+  await act(async () => {
+    root.render(<TerminalTccAttributionNotice refreshRevision={0} />)
+  })
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+
+  stubAttributionHealth('intact')
+  await act(async () => {
+    root.render(<TerminalTccAttributionNotice refreshRevision={1} />)
+  })
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+})
+
 it('fails closed when the attribution probe is unavailable', async () => {
   Object.assign(window, { api: { pty: {} } })
   await act(async () => {

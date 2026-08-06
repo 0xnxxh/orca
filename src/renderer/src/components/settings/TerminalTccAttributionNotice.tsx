@@ -13,7 +13,7 @@ export const MANAGE_SESSIONS_SECTION_ID = 'terminal-manage-sessions'
  * covering every daemon-hosted terminal (osascript -25211) with no OS-side signal —
  * so the remedy has to be surfaced here, next to the permissions it breaks (STA-3491).
  */
-export function useMacTccAttributionSevered(): boolean {
+export function useMacTccAttributionSevered(refreshRevision = 0): boolean {
   const [severed, setSevered] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -33,7 +33,7 @@ export function useMacTccAttributionSevered(): boolean {
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [refresh])
+  }, [refresh, refreshRevision])
 
   return severed
 }
@@ -41,8 +41,10 @@ export function useMacTccAttributionSevered(): boolean {
 export function TerminalTccAttributionNotice(props: {
   /** The Manage Sessions surface hosts the fix itself, so it hides the navigation button. */
   showManageSessionsButton?: boolean
+  /** Increment after a daemon replacement attempt so the remedy state is re-checked. */
+  refreshRevision?: number
 }): React.JSX.Element | null {
-  const severed = useMacTccAttributionSevered()
+  const severed = useMacTccAttributionSevered(props.refreshRevision)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const setSettingsSearchQuery = useAppStore((s) => s.setSettingsSearchQuery)

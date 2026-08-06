@@ -201,7 +201,8 @@ describe('parseDaemonPidFile', () => {
       appVersion: null,
       launchNonce: null,
       linuxStartTicks: null,
-      bootId: null
+      bootId: null,
+      spawnerExecPath: null
     })
   })
 
@@ -219,7 +220,8 @@ describe('parseDaemonPidFile', () => {
       appVersion: '1.2.3',
       launchNonce: null,
       linuxStartTicks: null,
-      bootId: null
+      bootId: null,
+      spawnerExecPath: null
     })
   })
 
@@ -248,7 +250,8 @@ describe('parseDaemonPidFile', () => {
       appVersion: null,
       launchNonce: null,
       linuxStartTicks: null,
-      bootId: null
+      bootId: null,
+      spawnerExecPath: null
     })
   })
 
@@ -263,7 +266,8 @@ describe('parseDaemonPidFile', () => {
       appVersion: null,
       launchNonce: null,
       linuxStartTicks: null,
-      bootId: null
+      bootId: null,
+      spawnerExecPath: null
     })
     expect(parseDaemonPidFile('  12345\n')).toEqual({
       pid: 12345,
@@ -272,7 +276,8 @@ describe('parseDaemonPidFile', () => {
       appVersion: null,
       launchNonce: null,
       linuxStartTicks: null,
-      bootId: null
+      bootId: null,
+      spawnerExecPath: null
     })
   })
 

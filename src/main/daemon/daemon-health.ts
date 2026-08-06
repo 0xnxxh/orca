@@ -419,16 +419,7 @@ export function getProcessStartedAtMs(pid: number): number | null {
     return null
   }
 
-  try {
-    const output = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf8',
-      timeout: 2_000
-    }).trim()
-    const startedAtMs = Date.parse(output)
-    return Number.isFinite(startedAtMs) ? startedAtMs : null
-  } catch {
-    return null
-  }
+  return getPsProcessIdentity(pid)?.startedAtMs ?? null
 }
 
 export function startTimeMatches(pid: number, expectedStartedAtMs: number | null): boolean {
@@ -457,6 +448,29 @@ const execFileAsync = promisify(execFile)
 export type WindowsProcessIdentity = {
   commandLine: string
   startedAtMs: number | null
+}
+
+type PsProcessIdentity = {
+  commandLine: string
+  startedAtMs: number | null
+}
+
+function getPsProcessIdentity(pid: number): PsProcessIdentity | null {
+  try {
+    const output = execFileSync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 2_000
+    })
+    // BSD ps formats lstart as a fixed-width 24-character timestamp.
+    const startedAtMs = Date.parse(output.slice(0, 24))
+    const commandLine = output.slice(24).trim()
+    return {
+      commandLine,
+      startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : null
+    }
+  } catch {
+    return null
+  }
 }
 
 export function parseWindowsProcessIdentityJson(stdout: string): WindowsProcessIdentity | null {
@@ -551,18 +565,14 @@ async function isDaemonProcess(
       commandLineMatchesDaemon(cmdline, socketPath, tokenPath) && startTimeMatches(pid, startedAtMs)
     )
   } catch {
-    try {
-      const output = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-        encoding: 'utf8',
-        timeout: 2_000
-      })
-      return (
-        commandLineMatchesDaemon(output, socketPath, tokenPath) &&
-        startTimeMatches(pid, startedAtMs)
-      )
-    } catch {
+    const identity = getPsProcessIdentity(pid)
+    if (!identity) {
       return false
     }
+    return (
+      commandLineMatchesDaemon(identity.commandLine, socketPath, tokenPath) &&
+      startTimesWithinTolerance(identity.startedAtMs, startedAtMs, START_TIME_TOLERANCE_MS)
+    )
   }
 }
 
@@ -574,14 +584,7 @@ async function getDaemonCommandLine(pid: number): Promise<string | null> {
   try {
     return readFileSync(`/proc/${pid}/cmdline`, 'utf8')
   } catch {
-    try {
-      return execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-        encoding: 'utf8',
-        timeout: 2_000
-      })
-    } catch {
-      return null
-    }
+    return getPsProcessIdentity(pid)?.commandLine ?? null
   }
 }
 
@@ -687,13 +690,17 @@ export async function getMacDaemonTccAttributionHealth(
   if (!parsedPid) {
     return 'unknown'
   }
+  // Packaged updates can replace the bundle at the same path, so path existence
+  // alone cannot prove the recorded spawning binary still backs this daemon.
+  if (
+    packagedAppVersion !== null &&
+    parsedPid.appVersion !== null &&
+    parsedPid.appVersion !== packagedAppVersion
+  ) {
+    return 'severed'
+  }
   if (parsedPid.spawnerExecPath) {
     return existsSync(parsedPid.spawnerExecPath) ? 'intact' : 'severed'
-  }
-  // Legacy pid files carry no spawner path. A packaged version change still proves the
-  // spawning bundle was replaced (the updater deletes the old binary), so flag those.
-  if (packagedAppVersion !== null && parsedPid.appVersion !== null) {
-    return parsedPid.appVersion === packagedAppVersion ? 'unknown' : 'severed'
   }
   return 'unknown'
 }

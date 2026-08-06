@@ -120,6 +120,20 @@ describe('macOS daemon TCC attribution health', () => {
     })
   })
 
+  it('reports severed after a packaged update reuses the spawning binary path', async () => {
+    if (process.platform !== 'darwin') {
+      return
+    }
+    await withDaemonLikeProcess(async (writePidFile) => {
+      const spawnerPath = join(dir, 'Orca')
+      writeFileSync(spawnerPath, '', 'utf8')
+      writePidFile({ spawnerExecPath: spawnerPath, appVersion: '1.2.2' })
+      expect(await getMacDaemonTccAttributionHealth(dir, socketPath, tokenPath, '1.2.3')).toBe(
+        'severed'
+      )
+    })
+  })
+
   it('flags legacy records only on a packaged app-version change', async () => {
     if (process.platform !== 'darwin') {
       return
