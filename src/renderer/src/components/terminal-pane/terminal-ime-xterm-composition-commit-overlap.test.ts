@@ -21,6 +21,26 @@
 //    the timer cleared _pendingCompositionStart; handleCompositionInput passes the first
 //    check, then reads the cleared sentinel and substitutes '' for the data.
 //
+//    THIS IS BROADER THAN THE Cmd FRAMING ABOVE. A differential run through Japanese
+//    multi-segment conversion found shipped behaviour swallows an ordinary Latin key
+//    typed one macrotask after a conversion commit: type a segment, convert, then press
+//    `a`, and the `a` is lost. No modifier, no exotic gesture — every Japanese user who
+//    keeps typing straight after converting. Korean surfaced it first only because
+//    2-Set composes on nearly every keystroke.
+//
+//    The suppression is NOT a defect on its own: it de-duplicates IMEs that deliver
+//    their commit insertText a task after compositionend (IBus, Mozc), which
+//    terminal-stock-composition.test.ts pins. This swallow is that dedup's false
+//    positive. The two events are structurally identical — same inputType, same
+//    composed, same preceding 229 keydown — and differ only in payload, so no
+//    flag-timing change separates them. A redesign was built and measured: it fixes
+//    this and duplicates on IBus. A content-aware variant fixes both at +5 lines but
+//    flips a reported row's test, and is blocked regardless while the patch cannot be
+//    regenerated. See .tmp/ime-handoff/swarm-scratch/lane-group-e-redesign/.
+//
+//    The Japanese arrays in that differential are EXPLICITLY AUTHORED, not observed —
+//    no Japanese DOM composition trace exists in this corpus.
+//
 // Four things a future reader must not misread:
 //   1. No reporter has filed either of these. #12164 was considered and rejected: its
 //      comment 1 is untyped agent OUTPUT doubling on the wide-glyph repaint path, and
