@@ -72,10 +72,18 @@ function pressReturnChord(processId: number, modifier: 'shift' | 'control'): voi
 
 function readActiveComposition(
   page: Parameters<typeof focusActiveTerminalInput>[0]
-): Promise<string> {
+): Promise<string | null> {
+  // Why: the macOS preedit lives in xterm's `.composition-view`, NOT in the helper textarea's
+  // `.value` — CompositionHelper sets `_compositionView.textContent` and adds `.active`
+  // (@xterm/xterm CompositionHelper.ts:73-74). Reading `.value` returns '' during composition, so
+  // a control built on it can never pass. Returns null when the element is absent so an absent
+  // composition is distinguishable from an empty one.
   return page.evaluate(() => {
-    const textarea = document.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea')
-    return textarea?.value ?? ''
+    const textarea = document.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea:focus')
+    const composition = textarea?.parentElement?.querySelector<HTMLElement>(
+      '.composition-view.active'
+    )
+    return composition?.textContent?.replaceAll('\u200e', '') ?? null
   })
 }
 
@@ -85,9 +93,22 @@ test.describe('Native macOS 2-Set Korean terminal chord commit @headful', () => 
     'Requires macOS with 2-Set Korean available and Accessibility access'
   )
 
+  // `renderer` is what onData emits; `pty` is what the child reads after the tty converts CR to LF.
+  // Asserting both makes the conversion evidence that the capture reached past the renderer, rather
+  // than a constant a later reader "corrects" back to the renderer form.
   for (const chord of [
-    { name: 'Shift+Enter', modifier: 'shift' as const, expected: '하 하 하\u001b\r' },
-    { name: 'Ctrl+Enter', modifier: 'control' as const, expected: '하 하 하\u001b[13;5u' }
+    {
+      name: 'Shift+Enter',
+      modifier: 'shift' as const,
+      renderer: '하 하 하\u001b\r',
+      pty: '하 하 하\u001b\n'
+    },
+    {
+      name: 'Ctrl+Enter',
+      modifier: 'control' as const,
+      renderer: '하 하 하\u001b[13;5u',
+      pty: '하 하 하\u001b[13;5u'
+    }
   ]) {
     test(`commits the preedit before physical ${chord.name}`, async ({
       electronApp,
@@ -131,10 +152,11 @@ test.describe('Native macOS 2-Set Korean terminal chord commit @headful', () => 
         typeNativeKeyCodes(processId, HA_HA_HA_KEY_CODES.slice(2))
         pressReturnChord(processId, chord.modifier)
 
-        // Preserved verbatim from korean-ime-terminal-shift-enter-commit.spec.ts:364 and :383 —
-        // these byte expectations already pass; only how the bytes were produced changes.
+        // The sibling spec's :364/:383 assert at the RENDERER (onData), where the terminator is CR.
+        // This reads the PTY child, so the tty has already converted CR to LF — see #11936/#11951,
+        // where that conversion is the standing proof a capture reached past the renderer.
         expect(await waitForTerminalImeBytes(orcaPage, reader)).toEqual([
-          Buffer.from(chord.expected).toString('hex')
+          Buffer.from(chord.pty).toString('hex')
         ])
       } finally {
         removeTerminalImeByteReader(reader)
