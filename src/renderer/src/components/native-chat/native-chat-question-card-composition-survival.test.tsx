@@ -190,7 +190,14 @@ function setInteractivePrompt(prompt: string | null, rendered: ReturnType<typeof
  *  `value` without this is what made the loss look real. */
 function composeFrame(el: HTMLTextAreaElement, value: string, data: string): void {
   fireEvent.compositionUpdate(el, { data })
-  fireEvent.input(el, { target: { value }, inputType: 'insertCompositionText', data })
+  // `isComposing` is set as well as `inputType`: a gate on either one is a plausible
+  // regression, and omitting it silently exempted the `isComposing` variant.
+  fireEvent.input(el, {
+    target: { value },
+    inputType: 'insertCompositionText',
+    data,
+    isComposing: true
+  })
 }
 
 describe('native chat question card vs an in-flight composition', () => {
@@ -257,7 +264,10 @@ describe('native chat question card vs an in-flight composition', () => {
 
     // The mechanism, pinned directly: onChange fires on composition `input`
     // frames, so the draft cache — not the unmounted DOM node — is what carries
-    // the preedit across the swap. Gating onChange on `isComposing` breaks here.
+    // the preedit across the swap. Gating onChange on either `isComposing` or
+    // `inputType` breaks here — the frames now carry both, so neither gate is
+    // exempt. Previously only `inputType` was set, so an `isComposing` gate
+    // passed this suite untouched despite the claim.
     setInteractivePrompt(ASK_USER_QUESTION, rendered)
     expect(readNativeChatDraftCache(PANE_KEY)).toBe('가')
   })
