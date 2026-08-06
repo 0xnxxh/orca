@@ -100,13 +100,21 @@ function clearChunkReloadGuard(): void {
 const MAX_RELOAD_REQUESTS_PER_DOCUMENT = 2
 let reloadRequestsThisDocument = 0
 let reloadRequestInFlight = false
+// One breadcrumb per reloadKey + outcome + error name (unkeyed call sites share
+// 'unknown'): a corrupt shared chunk can fail dozens of sibling imports at once,
+// which would otherwise flush the 30-entry breadcrumb ring.
+const recordedExhaustionKeys = new Set<string>()
 
 export function resetLazyChunkReloadRequestsForTest(): void {
   reloadRequestsThisDocument = 0
   reloadRequestInFlight = false
+  recordedExhaustionKeys.clear()
 }
 
-type ReloadBreadcrumbName = 'lazy_chunk_reload' | 'lazy_chunk_reload_vetoed'
+type ReloadBreadcrumbName =
+  | 'lazy_chunk_reload'
+  | 'lazy_chunk_reload_vetoed'
+  | 'lazy_chunk_recovery_exhausted'
 
 function recordReloadBreadcrumb(
   name: ReloadBreadcrumbName,
@@ -130,6 +138,32 @@ function recordReloadBreadcrumb(
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Names a corrupt-chunk failure that recovery can no longer act on, so the error
+ * boundary contains it instead of filing a react-error-boundary crash. Genuine
+ * logic bugs are not dynamic-import failures and stay raw so they keep reporting.
+ */
+function exhaustedRecoveryFailure(
+  lastError: unknown,
+  reloadKey: string,
+  failureMessage: string,
+  outcome: string,
+  // Set when the caller already recorded a vetoed breadcrumb for this outcome;
+  // the 30-entry ring is the only diagnostic left, so it must not self-evict.
+  alreadyRecorded = false
+): unknown {
+  if (!isKnownDynamicImportFailure(lastError)) {
+    return lastError
+  }
+  const failureName = lastError instanceof Error ? lastError.name : 'unknown'
+  const crumbKey = `${reloadKey}:${outcome}:${failureName}`
+  if (!alreadyRecorded && !recordedExhaustionKeys.has(crumbKey)) {
+    recordedExhaustionKeys.add(crumbKey)
+    recordReloadBreadcrumb('lazy_chunk_recovery_exhausted', reloadKey, failureMessage, outcome)
+  }
+  return new LazyChunkLoadError(lastError, reloadKey)
+}
+
 function isKnownDynamicImportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false
@@ -140,11 +174,14 @@ function isKnownDynamicImportFailure(error: unknown): boolean {
   }
 
   // Why: a stale/truncated/corrupt chunk parses as invalid JS, so import()
-  // rejects with a native SyntaxError ("Unexpected token ')'", "Unexpected end
-  // of input", …). That reaches this catch only from the chunk's fetch+parse
-  // phase — a recoverable corrupt-chunk failure. Genuine module-evaluation
-  // logic bugs throw ordinary Errors (still surfaced raw) or fail later during
-  // React render (outside this load path), so they are unaffected.
+  // rejects with a native SyntaxError ("Unexpected token '}'", "Unexpected
+  // string", "Illegal return statement", …  — all four observed in shipped
+  // reports). That reaches this catch only from the chunk's fetch+parse phase.
+  // Trade-off: a SyntaxError thrown while *evaluating* a lazily imported module
+  // (e.g. a top-level JSON.parse) is indistinguishable here by message, so it is
+  // contained too. Stack-frame discrimination was tried and rejected: parser
+  // errors carry no frames today, but that is not guaranteed across V8 versions
+  // and a false negative silently restores the crash this guards against.
   if (error.name === 'SyntaxError') {
     return true
   }
@@ -190,6 +227,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     reloadRequestsThisDocument < MAX_RELOAD_REQUESTS_PER_DOCUMENT
   ) {
     if (!markChunkReloadAttempted()) {
+      // No recovery was attempted, so keep normal reporting rather than containing.
       throw lastError
     }
     reloadRequestsThisDocument += 1
@@ -204,19 +242,25 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       clearChunkReloadGuard()
       recordReloadBreadcrumb('lazy_chunk_reload_vetoed', reloadKey, failureMessage, outcome)
     }
-    throw lastError
+    // The reload was this document's last recovery step for this chunk, whether it
+    // was refused outright or simply never navigated.
+    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, outcome, true)
   }
 
-  if (reloadGuardState === 'reload-landed' && isKnownDynamicImportFailure(lastError)) {
-    throw new LazyChunkLoadError(lastError, reloadKey)
+  if (reloadGuardState === 'reload-landed') {
+    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-landed')
   }
 
-  if (
-    reloadGuardState === 'reload-not-landed' &&
-    !reloadRequestInFlight &&
-    isKnownDynamicImportFailure(lastError)
-  ) {
-    // Record the veto beside the resulting crash report before the ring can evict it.
+  if (reloadGuardState === 'reload-not-landed') {
+    if (reloadRequestInFlight) {
+      // A sibling chunk failing under a pending reload cannot request its own.
+      throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-in-flight')
+    }
+    if (!isKnownDynamicImportFailure(lastError)) {
+      // An unrelated failure must not clear a guard it did not set.
+      throw lastError
+    }
+    // Record the veto beside the resulting report before the ring can evict it.
     clearChunkReloadGuard()
     recordReloadBreadcrumb(
       'lazy_chunk_reload_vetoed',
@@ -224,9 +268,16 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       failureMessage,
       'guard-not-landed'
     )
+    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'guard-not-landed', true)
   }
 
-  // Without a proven reload, preserve normal error-reporting behavior.
+  if (reloadGuardState === 'not-attempted') {
+    // The per-document reload cap is spent; further failures cannot recover.
+    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-cap-reached')
+  }
+
+  // No window or no usable storage: recovery was never attempted, so preserve
+  // normal error reporting instead of containing a failure we never acted on.
   throw lastError
 }
 
