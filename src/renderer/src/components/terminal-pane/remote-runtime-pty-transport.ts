@@ -86,7 +86,6 @@ import { getRuntimeEnvironmentRevision } from '@/runtime/runtime-environment-rev
 
 const REMOTE_TERMINAL_INPUT_FLUSH_MS = 8
 const REMOTE_TERMINAL_VIEWPORT_FLUSH_MS = 33
-const REMOTE_TERMINAL_CONNECTING_INPUT_MAX_CHARS = 256 * 1024
 const HOST_SESSION_ATTACH_POLL_MS = 150
 const HOST_SESSION_REPLACEMENT_POLL_MAX_MS = 1_000
 const HOST_SESSION_ATTACH_TIMEOUT_MS = 15_000
@@ -170,14 +169,7 @@ export function createRemoteRuntimePtyTransport(
   let attachmentReady = false
   let destroyed = false
   let terminalEnded = false
-  let connecting = isWebTerminalSurfaceTabId(tabId ?? '')
-  // Why: cached park frames paint before host authority resolves, so bounded typing waits for the verified subscription instead of disappearing.
-  let acceptsInputWhileConnecting = connecting
-  let inputQueuedWhileConnecting = ''
-  let inputQueuedWhileConnectingChars = 0
-  let inputQueuedWhileConnectingGeneration = 0
-  let inputQueuedWhileConnectingFlushActive = false
-  let inputQueuedWhileConnectingWaiters: ((accepted: boolean) => void)[] = []
+  let connecting = false
   const attachmentReadyWaiters = new Set<(ready: boolean) => void>()
   // Why: transport methods overlap during remounts; only the latest pane lifecycle may install a returned PTY.
   let lifecycleEpoch = 0
@@ -210,85 +202,6 @@ export function createRemoteRuntimePtyTransport(
   let sameHandleEndReuseAttachedAt: number | null = null
   let attachGeneration = 0
   let subscriptionGeneration = 0
-
-  function clearInputQueuedWhileConnecting(): void {
-    inputQueuedWhileConnectingGeneration += 1
-    acceptsInputWhileConnecting = false
-    inputQueuedWhileConnecting = ''
-    inputQueuedWhileConnectingChars = 0
-    inputQueuedWhileConnectingFlushActive = false
-    for (const resolve of inputQueuedWhileConnectingWaiters) {
-      resolve(false)
-    }
-    inputQueuedWhileConnectingWaiters = []
-  }
-
-  function queueInputWhileConnecting(
-    data: string,
-    resolveAccepted?: (accepted: boolean) => void
-  ): boolean {
-    if (
-      !acceptsInputWhileConnecting ||
-      (!connecting && !inputQueuedWhileConnectingFlushActive) ||
-      recoveryBlocksIo() ||
-      inputQueuedWhileConnectingChars + data.length > REMOTE_TERMINAL_CONNECTING_INPUT_MAX_CHARS
-    ) {
-      return false
-    }
-    inputQueuedWhileConnecting += data
-    inputQueuedWhileConnectingChars += data.length
-    if (resolveAccepted) {
-      inputQueuedWhileConnectingWaiters.push(resolveAccepted)
-    }
-    return true
-  }
-
-  async function drainInputQueuedWhileConnecting(generation: number): Promise<void> {
-    while (generation === inputQueuedWhileConnectingGeneration) {
-      const queuedInput = inputQueuedWhileConnecting
-      const acceptedWaiters = inputQueuedWhileConnectingWaiters
-      if (!queuedInput) {
-        acceptsInputWhileConnecting = false
-        inputQueuedWhileConnectingFlushActive = false
-        return
-      }
-      inputQueuedWhileConnecting = ''
-      inputQueuedWhileConnectingWaiters = []
-      const accepted = acceptedWaiters.length
-        ? await sendInputAcceptedToRuntime(queuedInput, true)
-        : inputBatcher.push(queuedInput)
-      if (generation !== inputQueuedWhileConnectingGeneration) {
-        for (const resolve of acceptedWaiters) {
-          resolve(false)
-        }
-        return
-      }
-      inputQueuedWhileConnectingChars -= queuedInput.length
-      for (const resolve of acceptedWaiters) {
-        resolve(accepted)
-      }
-      if (!accepted && acceptedWaiters.length === 0) {
-        notifyWriteUnavailable()
-      }
-    }
-  }
-
-  function flushInputQueuedWhileConnecting(): void {
-    if (
-      !acceptsInputWhileConnecting ||
-      inputQueuedWhileConnectingFlushActive ||
-      !attachmentReady ||
-      !connected ||
-      !handle ||
-      recoveryBlocksIo() ||
-      !multiplexedStream
-    ) {
-      return
-    }
-    inputQueuedWhileConnectingFlushActive = true
-    const generation = inputQueuedWhileConnectingGeneration
-    void drainInputQueuedWhileConnecting(generation)
-  }
 
   function setAttachmentReady(ready: boolean): void {
     attachmentReady = ready
@@ -334,7 +247,6 @@ export function createRemoteRuntimePtyTransport(
       clearPublishedHandleWait()
     }
     if (recovery.currentPhase === 'disconnected') {
-      clearInputQueuedWhileConnecting()
       autoRecoveryWindowSpent = true
       // Why: cached pixels may remain, but no stream from the exhausted epoch may keep delivering or accepting terminal traffic.
       subscriptionGeneration += 1
@@ -1283,17 +1195,7 @@ export function createRemoteRuntimePtyTransport(
     return recovery.isActive || recovery.currentPhase === 'disconnected'
   }
 
-  async function sendInputAcceptedToRuntime(
-    data: string,
-    bypassConnectingQueue = false
-  ): Promise<boolean> {
-    if (data && acceptsInputWhileConnecting && !bypassConnectingQueue) {
-      return new Promise((resolve) => {
-        if (!queueInputWhileConnecting(data, resolve)) {
-          resolve(false)
-        }
-      })
-    }
+  async function sendInputAcceptedToRuntime(data: string): Promise<boolean> {
     const targetHandle = handle
     if (!connected || !targetHandle || recoveryBlocksIo()) {
       return false
@@ -1463,7 +1365,6 @@ export function createRemoteRuntimePtyTransport(
     recovery.cancel()
     resetRecoveryReplacementPolicy()
     resetSameHandleEndReuse()
-    clearInputQueuedWhileConnecting()
     connected = false
     connecting = false
     terminalEnded = true
@@ -1593,7 +1494,6 @@ export function createRemoteRuntimePtyTransport(
       return
     }
     connecting = false
-    clearInputQueuedWhileConnecting()
     emitRecoveryState()
     surfaceErrorMessage(message)
   }
@@ -1901,7 +1801,6 @@ export function createRemoteRuntimePtyTransport(
           emitRecoveryState()
           storedCallbacks.onConnect?.()
           storedCallbacks.onStatus?.('shell')
-          flushInputQueuedWhileConnecting()
         },
         onEnd: () => {
           if (!isCurrentSubscription()) {
@@ -1922,7 +1821,6 @@ export function createRemoteRuntimePtyTransport(
           unregisterShutdownHandlers(subscribedPtyId)
           connected = false
           connecting = false
-          clearInputQueuedWhileConnecting()
           handle = null
           remotePtyId = null
           multiplexedStream = null
@@ -1980,7 +1878,6 @@ export function createRemoteRuntimePtyTransport(
             }
           } else {
             connecting = false
-            clearInputQueuedWhileConnecting()
             recovery.cancel()
             setAttachmentUnavailable()
             emitRecoveryState()
@@ -2028,22 +1925,16 @@ export function createRemoteRuntimePtyTransport(
     ) {
       nextStream.resize(desiredViewport.cols, desiredViewport.rows)
     }
-    flushInputQueuedWhileConnecting()
   }
 
   const transport: PtyTransport = {
     async connect(options) {
       cancelTerminalCreateRetryWait()
-      const acceptsPreConnectInput = lifecycleEpoch === 0 && acceptsInputWhileConnecting
       const connectLifecycleEpoch = ++lifecycleEpoch
       const createEnvironmentId = currentRuntimeEnvironmentId
       lastConnectOptions = options
       lastAttachOptions = null
       lastSurfacedErrorMessage = null
-      if (!acceptsPreConnectInput) {
-        clearInputQueuedWhileConnecting()
-      }
-      acceptsInputWhileConnecting = isWebTerminalSurfaceTabId(tabId ?? '')
       storedCallbacks = options.callbacks
       resetRecoveryReplacementPolicy()
       resetSameHandleEndReuse()
@@ -2051,22 +1942,12 @@ export function createRemoteRuntimePtyTransport(
       connecting = true
       emitRecoveryState(true)
       if (destroyed || !worktreeId) {
-        clearInputQueuedWhileConnecting()
         return
       }
 
       try {
         if (isWebTerminalSurfaceTabId(tabId ?? '')) {
-          const result = await attachHostSessionMirror(
-            options,
-            true,
-            undefined,
-            connectLifecycleEpoch
-          )
-          if (!result && lifecycleEpoch === connectLifecycleEpoch) {
-            clearInputQueuedWhileConnecting()
-          }
-          return result
+          return await attachHostSessionMirror(options, true, undefined, connectLifecycleEpoch)
         }
 
         if (options.sessionId && !getRemoteRuntimeTerminalHandle(options.sessionId)) {
@@ -2190,7 +2071,6 @@ export function createRemoteRuntimePtyTransport(
         if (!created) {
           if (!destroyed && lifecycleEpoch === connectLifecycleEpoch) {
             connecting = false
-            clearInputQueuedWhileConnecting()
             recovery.markDisconnected()
           }
           return
@@ -2276,9 +2156,6 @@ export function createRemoteRuntimePtyTransport(
             surfaceErrorMessage(message)
           }
         }
-        if (lifecycleEpoch === connectLifecycleEpoch) {
-          clearInputQueuedWhileConnecting()
-        }
         return undefined
       }
     },
@@ -2293,7 +2170,6 @@ export function createRemoteRuntimePtyTransport(
       clearPublishedHandleWait()
       lastAttachOptions = options
       lastSurfacedErrorMessage = null
-      clearInputQueuedWhileConnecting()
       storedCallbacks = options.callbacks
       terminalEnded = false
       connecting = true
@@ -2394,7 +2270,6 @@ export function createRemoteRuntimePtyTransport(
       clearPublishedHandleWait()
       inputBatcher.flush()
       inputBatcher.clear()
-      clearInputQueuedWhileConnecting()
       viewportBatcher.flush()
       outputProcessor.clearAccumulatedState()
       if (!connected && !handle) {
@@ -2427,7 +2302,6 @@ export function createRemoteRuntimePtyTransport(
       clearPublishedHandleWait()
       inputBatcher.flush()
       inputBatcher.clear()
-      clearInputQueuedWhileConnecting()
       viewportBatcher.flush()
       outputProcessor.clearAccumulatedState()
       unregisterShutdownHandlers(remotePtyId)
@@ -2441,9 +2315,6 @@ export function createRemoteRuntimePtyTransport(
     },
 
     sendInput(data: string): boolean {
-      if (acceptsInputWhileConnecting) {
-        return data ? queueInputWhileConnecting(data) : false
-      }
       if (!connected || !handle || recoveryBlocksIo()) {
         return false
       }
@@ -2650,7 +2521,6 @@ export function createRemoteRuntimePtyTransport(
       this.disconnect()
       recovery.dispose()
       inputBatcher.clear()
-      clearInputQueuedWhileConnecting()
       viewportBatcher.clear()
     }
   }

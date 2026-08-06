@@ -8530,53 +8530,6 @@ describe('connectPanePty', () => {
     )
   })
 
-  it('resets cached parked terminal modes before authoritative snapshot replay', async () => {
-    const { connectPanePty } = await import('./pty-connection')
-    enableActiveRuntimeEnvironment()
-    const remotePtyId = 'remote:env-1@@terminal-1'
-    const transport = createMockTransport(remotePtyId)
-    const replayCallback: { current: ConnectCallbacks['onReplayData'] | null } = {
-      current: null
-    }
-    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-      replayCallback.current = callbacks.onReplayData ?? null
-      return { id: remotePtyId, replay: '' }
-    })
-    transportFactoryQueue.push(transport)
-
-    const pane = createPane(1)
-    pane.container.dataset.parkedViewportFrame = 'true'
-    pane.terminal.resize.mockImplementation((cols: number, rows: number) => {
-      pane.terminal.cols = cols
-      pane.terminal.rows = rows
-    })
-    pane.fitAddon.proposeDimensions.mockReturnValue({ cols: 120, rows: 40 })
-    pane.fitAddon.fit.mockImplementation(() => pane.terminal.resize(120, 40))
-    const writeGrids: { data: string; cols: number; rows: number }[] = []
-    pane.terminal.write = vi.fn((data: string, callback?: () => void) => {
-      writeGrids.push({ data, cols: pane.terminal.cols, rows: pane.terminal.rows })
-      callback?.()
-    })
-
-    const binding = connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
-    await flushAsyncTicks(6)
-    replayCallback.current?.('authoritative snapshot', { snapshotCols: 80, snapshotRows: 24 })
-    await flushAsyncTicks(12)
-
-    const writes = pane.terminal.write.mock.calls.map(([data]) => data)
-    expect(pane.terminal.resize.mock.calls).toContainEqual([80, 24])
-    expect(pane.terminal.resize.mock.calls.at(-1)).toEqual([120, 40])
-    expect(writeGrids.find((write) => write.data === 'authoritative snapshot')).toMatchObject({
-      cols: 80,
-      rows: 24
-    })
-    expect(writes.indexOf('\x1bc')).toBeGreaterThanOrEqual(0)
-    expect(writes.indexOf('\x1bc')).toBeLessThan(writes.indexOf('authoritative snapshot'))
-    expect(writes).not.toContain('\x1b[2J\x1b[3J\x1b[H')
-    expect(pane.container.dataset.parkedViewportFrame).toBeUndefined()
-    binding.dispose()
-  })
-
   it('resizes the pane to the snapshot grid before replaying daemon snapshot bytes (bug #7279)', async () => {
     // Why: the daemon serializes soft-wrapped lines flat, so reattach must resize xterm to the snapshot grid before writing, or rows rewrap wrong.
     const { connectPanePty } = await import('./pty-connection')
@@ -20641,22 +20594,14 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).toHaveBeenCalledWith('a')
   })
 
-  it('drops parser replies but forwards real user input during replay', async () => {
+  // Why: xterm auto-replies during replay must not count as user interaction, or a BELed pane would self-dismiss unseen.
+  it('does not clear unread when onData fires during replay', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transportFactoryQueue.push(transport)
 
     const pane = createPane(1)
     let onDataHandler: ((data: string) => void) | null = null
-    let userInputListener: (() => void) | null = null
-    ;(pane.terminal as unknown as { _core: unknown })._core = {
-      coreService: {
-        onUserInput: vi.fn((listener: () => void) => {
-          userInputListener = listener
-          return { dispose: vi.fn() }
-        })
-      }
-    }
     pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
       onDataHandler = handler
       return { dispose: vi.fn() }
@@ -20667,24 +20612,13 @@ describe('connectPanePty', () => {
 
     connectPanePty(pane as never, manager as never, deps as never)
 
-    if (!onDataHandler || !userInputListener) {
-      throw new Error('expected terminal input handlers to be registered')
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
     }
     ;(onDataHandler as (data: string) => void)('\x1b[?1;2c')
 
-    expect(transport.sendInput).not.toHaveBeenCalled()
     expect(deps.clearTerminalTabUnread).not.toHaveBeenCalled()
     expect(deps.clearWorktreeUnread).not.toHaveBeenCalled()
-
-    ;(userInputListener as () => void)()
-    await Promise.resolve()
-    ;(onDataHandler as (data: string) => void)('\x1b[?6c')
-    expect(transport.sendInput).not.toHaveBeenCalled()
-
-    ;(userInputListener as () => void)()
-    ;(onDataHandler as (data: string) => void)('a')
-
-    expect(transport.sendInput).toHaveBeenCalledWith('a')
   })
 
   // Why: on a stale-codex pane (pending account-switch restart), onData bytes must not count as user interaction; production also blocks sendInput here.
