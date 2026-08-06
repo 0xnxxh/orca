@@ -2,7 +2,7 @@
 import type { PaneManager, ManagedPane } from '@/lib/pane-manager/pane-manager'
 import type { ManagedPaneInternal } from '@/lib/pane-manager/pane-manager-types'
 import type { IBuffer, IDisposable } from '@xterm/xterm'
-import { resolveCursorAgentImeAnchor } from '@/lib/pane-manager/terminal-ime-anchor'
+import { viewportShowsParkedCursorAgentScreen } from './cursor-agent-parked-screen'
 import { detectAgentStatusFromTitle, agentTypeToIconAgent, isClaudeAgent } from '@/lib/agent-status'
 import { reportWorkerTerminalUserInput } from '@/lib/worker-terminal-takeover-report'
 import { resolvePaneTitleDecision } from './terminal-title-evidence'
@@ -421,15 +421,13 @@ function parsedViewportShowsParkedCursorAgentScreen(
   ) {
     return null
   }
-  return (
-    resolveCursorAgentImeAnchor({
-      buffer,
-      rows: terminal.rows,
-      cols: terminal.cols,
-      cursorX: buffer.cursorX,
-      cursorY: buffer.cursorY
-    }) !== null
-  )
+  return viewportShowsParkedCursorAgentScreen({
+    buffer,
+    rows: terminal.rows,
+    cols: terminal.cols,
+    cursorX: buffer.cursorX,
+    cursorY: buffer.cursorY
+  })
 }
 
 function terminalHasFocusReportingEnabled(terminal: TerminalWithFocusMode): boolean {
