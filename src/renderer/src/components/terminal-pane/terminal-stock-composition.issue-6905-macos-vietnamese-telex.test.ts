@@ -1,17 +1,19 @@
 // @vitest-environment happy-dom
 //
+// ENGINE CAVEAT — the first thing to read, because it is what this file does NOT establish.
+// The capture replayed below used the macOS BUILT-IN Simple Telex input source. The reporter of
+// #6905 named UniKey, iBus Bamboo and fcitx-bamboo; UniKey is Windows-only and the other two are
+// Linux-only, so none of them can run on the platform they declared, and WHICH macOS Vietnamese
+// engine they actually used is unconfirmed (built-in Simple Telex vs. a third-party engine such as
+// OpenKey / EVKey / GoTiengViet). That open question is what gates this row's remaining criteria.
+// This file pins the commit mechanism on the affected platform. It certifies NO engine, and in
+// particular it does not certify the reporter's. The row's wording says "Telex or VNI"; the
+// capture is Telex only, so nothing here covers VNI either. Do not cite it as Vietnamese-IME
+// coverage.
+//
 // Source: GitHub #6905, "[Bug]: Vietnamese IME Input Broken in Terminal", reporter `dony-omg`.
 // The issue template's structured platform field reads `macOS`, corroborated by the maintainer
 // `os:macos` label.
-//
-// ENGINE CAVEAT — read before citing this file. The capture replayed below used the macOS
-// BUILT-IN Simple Telex input source. The reporter named UniKey, iBus Bamboo and fcitx-bamboo;
-// UniKey is Windows-only and the other two are Linux-only, so none of them can run on the platform
-// they declared, and WHICH macOS Vietnamese engine they actually used is unconfirmed (built-in
-// Simple Telex vs. a third-party engine such as OpenKey / EVKey / GoTiengViet). This file pins the
-// commit mechanism on the affected platform. It certifies NO engine, and in particular it does not
-// certify the reporter's. The row's wording says "Telex or VNI"; the capture is Telex only, so
-// nothing here covers VNI either.
 //
 // Recorded shape: `evidence/macos-6905-simple-telex-2026-08-06/` (cited by bundle directory, not
 // filename — two bundles in that corpus carry same-named files with different contents), file
@@ -34,20 +36,26 @@
 //
 // Unlike the sibling #11504 file, these assertions pin CORRECT behaviour — #6905 is NOT
 // reproducible at HEAD, so this is a regression guard rather than a defect pin. It is not vacuous:
-// a narrow mutation of the commit range in the owner it exercises — @xterm/xterm's
-// `CompositionHelper._finalizeComposition`, the `waitForPropagation` branch, line 201 of
-// `src/browser/input/CompositionHelper.ts` in the resolved install
-// (`patch_hash=f4db57f4b724063e5888942227a36be616e72f05bc9fde69204d4689ae253f3e`) — fails these
-// arms in two directions matching the reporter's two named observables. Measured, not inferred,
-// against copies of that bundle aliased in (node_modules was not written):
-//   - range END collapsed onto its start -> 3 failed. Both Telex commits slice to '', so the
-//     first arm sees `[]` where it expects `['tiếng ']`. This is the mutation recorded in
-//     `evidence/6905-telex-current-owner-mutation/`, rebuilt against `lib/xterm.mjs`, the bundle
-//     the loader actually resolves, rather than that run's `lib/xterm.js`.
-//   - range START collapsed to 0 -> 2 failed. The first word is unaffected; the second commit
-//     re-slices from the start of the textarea and emits `'tiếng việt'` in place of `'việt'`.
-// Both mutants still pass the ASCII assertion in the third test, failing it only on the Vietnamese
-// precondition that follows — that is what makes them narrow rather than a broken build.
+// the owner it exercises is @xterm/xterm's `CompositionHelper._finalizeComposition` in the
+// resolved install (`patch_hash=f4db57f4b724063e5888942227a36be616e72f05bc9fde69204d4689ae253f3e`,
+// `src/browser/input/CompositionHelper.ts`, 263 lines), and narrowing its commit range fails these
+// arms in the reporter's own two directions. Measured against copies of that bundle aliased in,
+// not inferred; node_modules was not written:
+//   - DEFERRED branch (line 201), range END collapsed onto its start -> 3 failed. Both Telex
+//     commits slice to '', so the first arm sees `[]` where it expects `['tiếng ']`. The
+//     "garbled / never arrives" direction.
+//   - DEFERRED branch (line 201), range START collapsed to 0 -> 2 failed. The first word is
+//     unaffected; the second commit re-slices from the start of the textarea and emits
+//     `'tiếng việt'` in place of `'việt'`. The "duplicated" direction.
+//   - IMMEDIATE branch (line 159), range end collapsed onto its start -> 3 PASSED, i.e. invisible
+//     here, and deliberately kept as the null control. This shape never enters that branch: every
+//     keydown during a live composition in the capture is keyCode 229, so xterm's exemption holds
+//     and both commits arrive via `compositionend`. It matters because
+//     `evidence/6905-telex-current-owner-mutation/` names the IMMEDIATE branch — so that retained
+//     mutation, applied faithfully to the bundle the loader resolves, does not discriminate this
+//     row at all.
+// Both live mutants still pass the ASCII assertion in the third test, failing it only on the
+// Vietnamese precondition that follows — that is what makes them narrow rather than a broken build.
 import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
