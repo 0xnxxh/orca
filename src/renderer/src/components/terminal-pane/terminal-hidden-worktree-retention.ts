@@ -127,7 +127,7 @@ export function selectRetentionForceParkedTerminalWorktrees(
   })
   // Why re-applied here: selectIdsBeyondHotRetain spares the last-active id from
   // its clock too, which is right for the warm cap (instant return after a
-  // meeting) but makes "none past 45 minutes" false for a lone hidden worktree.
+  // meeting) but makes "none past 15 minutes" false for a lone hidden worktree.
   for (const candidate of candidates) {
     if (args.nowMs - candidate.hiddenSinceMs >= retentionTtlMs) {
       forceParkedIds.add(candidate.id)

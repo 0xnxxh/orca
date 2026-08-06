@@ -7,9 +7,9 @@ import type { TerminalTab } from '../../../../shared/types'
 
 // Why: cold-park hysteresis keeps a hidden pane mounted for 30s so quick tab
 // flips never pay a re-hydrate; hot-retain keeps a bounded recently-visible
-// working set warm for 15 minutes beyond that. The cap (not the clock) is the
-// primary evictor — 8 worktrees covers the ordinary working set at ~4-5MB
-// renderer floor each, so parking only engages for the many-worktree tail it
+// working set warm for 5 minutes beyond that. The cap (not the clock) is the
+// primary evictor — 4 worktrees covers the ordinary working set, so parking
+// only engages for the many-worktree tail it
 // was built for. Reveal cost is a flat ~170ms remount regardless of buffer
 // size, so cutting remount *frequency* beats shaving replay.
 export const TERMINAL_WORKTREE_COLD_PARK_DELAY_MS = 30_000

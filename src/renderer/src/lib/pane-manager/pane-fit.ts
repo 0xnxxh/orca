@@ -231,7 +231,7 @@ function pruneStaleSafeFitContinuations(pane: ManagedPane): void {
     return
   }
   for (const [operationKey, pending] of operations) {
-    if (!pending.shouldContinue()) {
+    if (!pending.shouldContinue() || isManagedPaneDisplayNone(pane)) {
       settlePendingSafeFitContinuation(pane, operationKey, pending, false)
     }
   }

@@ -236,6 +236,32 @@ describe('safeFitAndThen unmeasurable-pane retry', () => {
     expect(recordRendererCrashBreadcrumb).not.toHaveBeenCalled()
     await expect(handle.completion).resolves.toBe(false)
   })
+
+  it('stops retrying when a pane becomes display none', async () => {
+    vi.mocked(recordRendererCrashBreadcrumb).mockClear()
+    const pane = createPane({ rect: { width: 0, height: 0 } })
+    const container = (pane as unknown as ManagedPaneInternal).xtermContainer
+    let display = 'block'
+    Object.assign(container, {
+      ownerDocument: {
+        defaultView: { getComputedStyle: () => ({ display }) }
+      },
+      parentElement: null
+    })
+    const continuation = vi.fn()
+
+    const handle = safeFitAndThen(pane, 'reattach-pty-resize', continuation, {
+      retryIfUnmeasurable: true
+    })
+    display = 'none'
+    flushAnimationFrames()
+    vi.advanceTimersByTime(16)
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce()
+    expect(continuation).not.toHaveBeenCalled()
+    expect(recordRendererCrashBreadcrumb).not.toHaveBeenCalled()
+    await expect(handle.completion).resolves.toBe(false)
+  })
 })
 
 describe('paneFitClientSizeChanged (reveal fit gate)', () => {
