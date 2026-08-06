@@ -70,7 +70,6 @@ export async function pasteMobileNativeChatImagePaths({
         terminal,
         text,
         enter: false,
-        nativeChat: true,
         ...clientField
       },
       // The remaining budget covers the reconnect wait too; a fresh post-connect

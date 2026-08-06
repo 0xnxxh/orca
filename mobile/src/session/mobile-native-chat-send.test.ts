@@ -61,39 +61,6 @@ describe('sendMobileNativeChatMessage', () => {
     ).resolves.toBe(false)
   })
 
-  it('reports an interactive prompt rejection for guarded native-chat sends', async () => {
-    const client = clientWithResponse({
-      id: 'request',
-      ok: true,
-      result: {
-        send: {
-          accepted: false,
-          refusedReason: 'interactive-prompt'
-        }
-      },
-      _meta: { runtimeId: 'runtime' }
-    })
-
-    await expect(
-      sendMobileNativeChatMessageWithOutcome({
-        client,
-        terminal: 'term',
-        text: 'hello',
-        guardInteractivePrompt: true
-      })
-    ).resolves.toBe('interactive-prompt')
-    expect(client.sendRequest).toHaveBeenCalledWith(
-      'terminal.send',
-      {
-        terminal: 'term',
-        text: 'hello',
-        enter: true,
-        nativeChat: true
-      },
-      { timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS, budgetSpansConnect: true }
-    )
-  })
-
   it('returns false when the RPC fails', async () => {
     const client = {
       sendRequest: vi.fn().mockRejectedValue(new Error('disconnected'))
@@ -340,7 +307,7 @@ describe('clearMobileNativeChatInput', () => {
     const clearInput = buildAgentTuiClearInputForText('Linked Linear issue: ABC-123\nhttps://x')
     await expect(
       clearMobileNativeChatInput({ client, terminal: 'term', clearInput })
-    ).resolves.toBe('accepted')
+    ).resolves.toBe(true)
     expect(params(client)).toMatchObject({ text: clearInput, enter: false })
   })
 
@@ -353,26 +320,7 @@ describe('clearMobileNativeChatInput', () => {
     })
     await expect(
       clearMobileNativeChatInput({ client, terminal: 'term', clearInput: '\x15' })
-    ).resolves.toBe('rejected')
-  })
-
-  it('preserves an interactive prompt rejection from a guarded clear', async () => {
-    const client = clientWithResponse({
-      id: 'request',
-      ok: true,
-      result: { send: { accepted: false, refusedReason: 'interactive-prompt' } },
-      _meta: { runtimeId: 'runtime' }
-    })
-
-    await expect(
-      clearMobileNativeChatInput({
-        client,
-        terminal: 'term',
-        clearInput: '\x15',
-        guardInteractivePrompt: true
-      })
-    ).resolves.toBe('interactive-prompt')
-    expect(params(client)).toMatchObject({ nativeChat: true })
+    ).resolves.toBe(false)
   })
 
   it('refuses to start an underfunded clear rather than half-clearing', async () => {
@@ -384,7 +332,7 @@ describe('clearMobileNativeChatInput', () => {
         clearInput: '\x15',
         deadline: Date.now() + 10
       })
-    ).resolves.toBe('rejected')
+    ).resolves.toBe(false)
     expect(client.sendRequest).not.toHaveBeenCalled()
   })
 })

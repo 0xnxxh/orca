@@ -325,6 +325,8 @@ export type AgentHookEventPayload = {
   promptInteractionKey?: string
   /** Raw agent hook event name, used by main-process transition guards. */
   hookEventName?: string
+  /** SHA-256 of a live UserPromptSubmit's full raw prompt before preview truncation. */
+  submittedPromptDigest?: string
   /** Claude's provider-owned user-prompt UUID. */
   providerPromptId?: string
   /** Active Claude compact generation, keyed by provider prompt identity. */
@@ -4161,6 +4163,14 @@ export function normalizeHookPayload(
   }
   const extractedPrompt = extractPromptText(hookPayload as Record<string, unknown>)
   const promptText = extractedPrompt.text
+  const rawSubmittedPrompt =
+    extractedPrompt.source && typeof hookPayloadRecord[extractedPrompt.source] === 'string'
+      ? (hookPayloadRecord[extractedPrompt.source] as string)
+      : promptText
+  const submittedPromptDigest =
+    (source === 'codex' || source === 'claude') && eventName === 'UserPromptSubmit'
+      ? `sha256:${createHash('sha256').update(rawSubmittedPrompt).digest('hex')}`
+      : undefined
   let resolvedPromptText = promptText
   let hasTranscriptPromptEvidence = false
   // Why: exhaustive switch so a new AgentHookSource fails typecheck here instead of silently misrouting.
@@ -4310,6 +4320,7 @@ export function normalizeHookPayload(
               ),
         promptInteractionKey,
         hookEventName: typeof eventName === 'string' ? eventName : undefined,
+        submittedPromptDigest,
         providerPromptId,
         compactTrigger,
         toolUseId: readFirstString(hookPayloadRecord, ['tool_use_id', 'toolUseId']),

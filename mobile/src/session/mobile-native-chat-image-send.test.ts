@@ -50,7 +50,6 @@ describe('pasteMobileNativeChatImagePaths', () => {
         terminal: 'term-1',
         text: '\x15',
         enter: false,
-        nativeChat: true,
         client: { id: 'device-9', type: 'mobile' }
       }
     })

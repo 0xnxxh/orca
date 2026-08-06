@@ -1,10 +1,7 @@
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import {
-  getTerminalSendRpcRefusedReason,
-  isTerminalSendRpcAccepted
-} from '../terminal/terminal-send-rpc-response'
+import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
 
 type MobileTerminalClient = {
   id: string
@@ -27,7 +24,6 @@ type MobileNativeChatSendArgs = {
   text: string
   enter?: boolean
   clearInputFirst?: boolean
-  guardInteractivePrompt?: boolean
   /** Exact host launch draft this submitting write resolves when accepted. */
   resolvedLaunchDraft?: { text: string; createdAt: number }
   mobileClient?: MobileTerminalClient
@@ -39,8 +35,7 @@ type MobileNativeChatSendArgs = {
 /** 'unknown' = the RPC failed without proof the request never reached the
  *  desktop (ack loss after a write, or a cutover that cannot tell whether the
  *  frame was written) — callers must not present it as a definite send failure. */
-export type MobileNativeChatSendOutcome = 'accepted' | 'rejected' | 'unknown' | 'interactive-prompt'
-export type MobileNativeChatClearOutcome = Exclude<MobileNativeChatSendOutcome, 'unknown'>
+export type MobileNativeChatSendOutcome = 'accepted' | 'rejected' | 'unknown'
 
 /** Without an explicit timeout `sendRequest` waits for reconnect indefinitely, and
  *  the composer holds `sending` (send arrow dimmed, no error) for as long as it
@@ -71,7 +66,6 @@ export async function sendMobileNativeChatMessageWithOutcome(
         terminal: args.terminal,
         text: args.clearInputFirst ? `${CLEAR_UNSUBMITTED_INPUT}${args.text}` : args.text,
         enter: args.enter ?? true,
-        ...(args.guardInteractivePrompt ? { nativeChat: true } : {}),
         ...(args.resolvedLaunchDraft ? { resolvedLaunchDraft: args.resolvedLaunchDraft } : {}),
         ...(args.mobileClient ? { client: args.mobileClient } : {})
       },
@@ -80,12 +74,7 @@ export async function sendMobileNativeChatMessageWithOutcome(
       // pins the composer for twice as long.
       { timeoutMs, budgetSpansConnect: true }
     )
-    if (isTerminalSendRpcAccepted(response)) {
-      return 'accepted'
-    }
-    return getTerminalSendRpcRefusedReason(response) === 'interactive-prompt'
-      ? 'interactive-prompt'
-      : 'rejected'
+    return isTerminalSendRpcAccepted(response) ? 'accepted' : 'rejected'
   } catch (error) {
     // Why: a logical relay↔direct cutover rejects the in-flight send without
     // knowing whether its frame reached the wire (the desktop may have delivered
@@ -117,14 +106,13 @@ export async function clearMobileNativeChatInput(args: {
   client: RpcClient
   terminal: string
   clearInput: string
-  guardInteractivePrompt?: boolean
   mobileClient?: MobileTerminalClient
   deadline?: number
-}): Promise<MobileNativeChatClearOutcome> {
+}): Promise<boolean> {
   const timeoutMs =
     args.deadline === undefined ? MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS : args.deadline - Date.now()
   if (timeoutMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
-    return 'rejected'
+    return false
   }
   try {
     const response = await args.client.sendRequest(
@@ -133,19 +121,13 @@ export async function clearMobileNativeChatInput(args: {
         terminal: args.terminal,
         text: args.clearInput,
         enter: false,
-        ...(args.guardInteractivePrompt ? { nativeChat: true } : {}),
         ...(args.mobileClient ? { client: args.mobileClient } : {})
       },
       { timeoutMs, budgetSpansConnect: true }
     )
-    if (isTerminalSendRpcAccepted(response)) {
-      return 'accepted'
-    }
-    return getTerminalSendRpcRefusedReason(response) === 'interactive-prompt'
-      ? 'interactive-prompt'
-      : 'rejected'
+    return isTerminalSendRpcAccepted(response)
   } catch {
     // A failed clear must not send the body on top of an uncleared line.
-    return 'rejected'
+    return false
   }
 }

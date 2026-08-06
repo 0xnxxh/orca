@@ -89,8 +89,6 @@ export function useMobileNativeChatMessageSend(args: {
       const origin = captureSendOrigin(text)
       const agent = agentRef.current
       const recordCommand = commandSendRef.current
-      const classification = classifyMobileNativeChatSend(agent, text)
-      const guardInteractivePrompt = syncComposer && classification === 'chat'
       // Why: the lease collapses one render after `connState`, so a question-card
       // answer (which reaches this send directly) would otherwise burn the whole
       // 15s heal+send budget waiting on a socket that is already gone.
@@ -135,25 +133,20 @@ export function useMobileNativeChatMessageSend(args: {
       // than pasting on top of an uncleared line.
       const seededLaunchDraft = readSeededLaunchDraftSeed()
       if (seededLaunchDraft && !images?.length) {
-        const clearOutcome = await clearMobileNativeChatInput({
+        const cleared = await clearMobileNativeChatInput({
           client,
           terminal: handle,
           clearInput: buildAgentTuiClearInputForText(seededLaunchDraft.text),
-          guardInteractivePrompt,
           deadline,
           ...(deviceTokenRef.current
             ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
             : {})
         })
-        if (clearOutcome !== 'accepted') {
+        if (!cleared) {
           if (syncComposer) {
             restoreRejectedDraft(origin, text)
           }
-          onSendError(
-            clearOutcome === 'interactive-prompt'
-              ? 'Finish the terminal prompt before sending'
-              : 'Message not sent'
-          )
+          onSendError('Message not sent')
           return 'rejected'
         }
       }
@@ -161,7 +154,6 @@ export function useMobileNativeChatMessageSend(args: {
         client,
         terminal: handle,
         text,
-        guardInteractivePrompt,
         // Why: pre-clear only when nothing was deliberately pasted first. The heal
         // above fires only for terminals a mobile image paste marked, so a desktop
         // launch-draft prefill parked on the input line would otherwise glue onto
@@ -191,6 +183,7 @@ export function useMobileNativeChatMessageSend(args: {
       // TUI, not the conversation — the transcript never echoes it as a user
       // turn, so an optimistic bubble would sit at "Queued" forever and the
       // unconfirmed hold could never observe a landing.
+      const classification = classifyMobileNativeChatSend(agent, text)
       if (outcome === 'unknown') {
         if (classification === 'chat') {
           // Why: an ack-lost send usually WAS delivered (issue seen on cellular
@@ -200,13 +193,6 @@ export function useMobileNativeChatMessageSend(args: {
           )
         }
         return 'unknown'
-      }
-      if (outcome === 'interactive-prompt') {
-        if (syncComposer) {
-          restoreRejectedDraft(origin, text)
-        }
-        onSendError('Finish the terminal prompt before sending')
-        return 'rejected'
       }
       if (outcome === 'rejected') {
         if (syncComposer) {

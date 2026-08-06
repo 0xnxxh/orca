@@ -14812,8 +14812,7 @@
           "max": "Max",
           "on": "On",
           "off": "Off"
-        },
-        "finishTerminalPrompt": "Finish the terminal prompt before sending"
+        }
       },
       "tool": {
         "running": "Running…",
@@ -14823,6 +14822,10 @@
       },
       "status": {
         "responding": "Agent is responding"
+      },
+      "deliveryRecovery": {
+        "title": "Message wasn’t sent",
+        "description": "The terminal may be waiting for input. Your message is still in the composer."
       },
       "jumpToLatest": "Jump to latest",
       "toggle": {

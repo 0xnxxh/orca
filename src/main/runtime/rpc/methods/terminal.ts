@@ -380,13 +380,8 @@ async function commitMobileInputFloorClaim(claim: MobileInputFloorClaimHolder): 
   }
 }
 
-function getTerminalSendGuardRefusedReason(
-  error: unknown
-): 'no-agent' | 'permission' | 'interactive-prompt' | undefined {
+function getTerminalSendGuardRefusedReason(error: unknown): 'no-agent' | 'permission' | undefined {
   const message = error instanceof Error ? error.message : String(error)
-  if (message.includes('terminal_guard_interactive_prompt')) {
-    return 'interactive-prompt'
-  }
   if (message.includes('terminal_guard_permission')) {
     return 'permission'
   }
@@ -889,7 +884,6 @@ const TerminalSend = TerminalHandle.extend({
   text: OptionalString,
   enter: z.unknown().optional(),
   interrupt: z.unknown().optional(),
-  nativeChat: z.literal(true).optional(),
   resolvedLaunchDraft: z
     .object({
       text: z.string(),
@@ -1228,7 +1222,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           !isTerminalQueryReply(params.text) ||
           params.enter === true ||
           params.interrupt === true ||
-          params.nativeChat === true ||
           params.requireAgentStatus !== undefined ||
           params.client?.type !== 'mobile' ||
           !queryReplyClientId ||
@@ -1300,34 +1293,23 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           }
         }
       }
-      // Why: guarded sends recheck terminal identity and prompt state immediately before each PTY write.
+      // Why: recheck permission/no-agent state immediately before accepting the PTY write.
       const assertSendPreconditions =
-        params.requireAgentStatus === 'sendable' || params.nativeChat === true
+        params.requireAgentStatus === 'sendable'
           ? async (ptyId?: string): Promise<void> => {
-              const assertWritable = (): void => {
-                assertTerminalSendExactPtyBinding(runtime, params.terminal, ptyId)
-                if (ptyId && isTerminalInputLockedForClient(runtime, ptyId, params.client)) {
-                  throw new Error('terminal_guard_not_writable')
+              await assertTerminalAgentSendable({
+                runtime,
+                handle: params.terminal,
+                assertWritable: () => {
+                  assertTerminalSendExactPtyBinding(runtime, params.terminal, ptyId)
+                  if (ptyId && isTerminalInputLockedForClient(runtime, ptyId, params.client)) {
+                    throw new Error('terminal_guard_not_writable')
+                  }
                 }
-              }
-              if (params.requireAgentStatus === 'sendable') {
-                await assertTerminalAgentSendable({
-                  runtime,
-                  handle: params.terminal,
-                  assertWritable
-                })
-              } else {
-                assertWritable()
-              }
-              if (
-                params.nativeChat === true &&
-                runtime.getTerminalWaitBlockedReason(params.terminal) !== null
-              ) {
-                throw new Error('terminal_guard_interactive_prompt')
-              }
+              })
             }
           : undefined
-      if (assertSendPreconditions) {
+      if (params.requireAgentStatus === 'sendable') {
         try {
           await assertSendPreconditions?.(leaf?.ptyId ?? undefined)
         } catch (error) {

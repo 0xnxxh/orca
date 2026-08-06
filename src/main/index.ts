@@ -1425,6 +1425,7 @@ function openMainWindow(): BrowserWindow {
       providerSession,
       providerSessionOnly,
       promptInteractionKey,
+      promptSubmission,
       restoredUnconfirmed,
       isReplay
     }) => {
@@ -1462,6 +1463,7 @@ function openMainWindow(): BrowserWindow {
         stateStartedAt,
         ...(providerSession ? { providerSession } : {}),
         ...(promptInteractionKey ? { promptInteractionKey } : {}),
+        ...(promptSubmission ? { promptSubmission } : {}),
         ...(restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
         ...(orchestration ? { orchestration } : {})
       })
@@ -2363,6 +2365,8 @@ void app.whenReady().then(async () => {
     // Why: worktree.ps pulls hook-reported agent status (same source as the desktop sidebar) at query time so mobile shows the same agents.
     getAgentStatusSnapshot: () =>
       agentHookServer.getStatusSnapshot().filter((entry) => entry.providerSessionOnly !== true),
+    getAgentPromptSubmissionsForPane: (paneKey) =>
+      hookStatusChangedSessionTabs.getPromptSubmissions(paneKey),
     // Why: the filter above hides resume-identity rows from the live-agent views, but
     // those rows carry the provider session mobile native chat addresses transcripts
     // by — Pi publishes identity that way and would otherwise be unreachable.

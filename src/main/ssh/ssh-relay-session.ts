@@ -1444,6 +1444,7 @@ export class SshRelaySession {
         hasExplicitPrompt?: unknown
         promptInteractionKey?: unknown
         hookEventName?: unknown
+        submittedPromptDigest?: unknown
         source?: unknown
         providerPromptId?: unknown
         compactTrigger?: unknown
@@ -1476,6 +1477,10 @@ export class SshRelaySession {
               : undefined,
           hookEventName:
             typeof envelope.hookEventName === 'string' ? envelope.hookEventName : undefined,
+          submittedPromptDigest:
+            typeof envelope.submittedPromptDigest === 'string'
+              ? envelope.submittedPromptDigest
+              : undefined,
           source: envelope.source,
           providerPromptId: envelope.providerPromptId,
           compactTrigger: envelope.compactTrigger,

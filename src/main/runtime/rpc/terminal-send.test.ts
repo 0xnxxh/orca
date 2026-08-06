@@ -615,40 +615,6 @@ describe('terminal send RPC', () => {
     expect(beginMobileInputFloor).not.toHaveBeenCalled()
   })
 
-  it('refuses native-chat sends while the terminal has an interactive prompt', async () => {
-    const runtime = stubRuntime({
-      resolveLiveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-1' }),
-      getDriver: vi.fn().mockReturnValue({ kind: 'mobile', clientId: 'mobile-1' }),
-      getTerminalWaitBlockedReason: vi.fn().mockReturnValue('codex-interactive-prompt'),
-      sendTerminal: vi.fn()
-    })
-    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
-
-    const response = await dispatcher.dispatch(
-      makeRequest('terminal.send', {
-        terminal: 'terminal-1',
-        text: 'hello',
-        enter: true,
-        nativeChat: true,
-        client: { id: 'mobile-1', type: 'mobile' }
-      })
-    )
-
-    expect(response).toMatchObject({
-      ok: true,
-      result: {
-        send: {
-          handle: 'terminal-1',
-          accepted: false,
-          bytesWritten: 0,
-          refusedReason: 'interactive-prompt'
-        }
-      }
-    })
-    expect(runtime.sendTerminal).not.toHaveBeenCalled()
-    expect(runtime.beginMobileInputFloor).not.toHaveBeenCalled()
-  })
-
   it('allows guarded terminal sends when the agent is sendable', async () => {
     const runtime = stubRuntime({
       resolveLiveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-1' }),
