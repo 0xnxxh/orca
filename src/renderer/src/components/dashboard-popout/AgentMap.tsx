@@ -6,7 +6,8 @@ import type {
   DashboardCard,
   DashboardCardHostKind,
   DashboardSleepWorkspaceArgs,
-  DashboardSpawnAgentArgs
+  DashboardSpawnAgentArgs,
+  DashboardWorkspace
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import type { TuiAgent } from '../../../../shared/types'
@@ -21,6 +22,7 @@ import './agent-map.css'
 
 type AgentMapProps = {
   cards: DashboardCard[]
+  workspaces?: DashboardWorkspace[]
   repoIconsByRepoId?: Record<string, RepoIcon | null>
   now: number
   className?: string
@@ -32,7 +34,7 @@ type AgentMapProps = {
   launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
-  onOpenTerminal: (card: DashboardCard, side: 'left' | 'right') => void
+  onOpenTerminal: (card: DashboardCard) => void
   onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
 }
@@ -44,6 +46,7 @@ const ALL_AGENT_STATES: ReadonlySet<AgentMapState> = new Set<AgentMapState>([
   'done',
   'idle'
 ])
+const EMPTY_WORKSPACES: DashboardWorkspace[] = []
 
 function hostFilterLabel(filter: AgentMapHostFilter): string {
   switch (filter) {
@@ -62,6 +65,7 @@ function hostFilterLabel(filter: AgentMapHostFilter): string {
 
 export function AgentMap({
   cards,
+  workspaces = EMPTY_WORKSPACES,
   repoIconsByRepoId,
   now,
   className,
@@ -88,8 +92,11 @@ export function AgentMap({
     for (const card of cards) {
       counts[card.hostKind ?? 'local'] += 1
     }
+    for (const workspace of workspaces) {
+      counts[workspace.hostKind] += 1
+    }
     return counts
-  }, [cards])
+  }, [cards, workspaces])
   const visibleCards = useMemo(
     () =>
       filterAgentMapCards({
@@ -99,9 +106,16 @@ export function AgentMap({
       }),
     [cards, enabledStates, hostFilter]
   )
+  const visibleWorkspaces = useMemo(
+    () =>
+      hostFilter === 'all'
+        ? workspaces
+        : workspaces.filter((workspace) => workspace.hostKind === hostFilter),
+    [hostFilter, workspaces]
+  )
   const layoutResult = useMemo(
-    () => updateAgentMapLayout(layoutCacheRef.current, visibleCards, now),
-    [visibleCards, now]
+    () => updateAgentMapLayout(layoutCacheRef.current, visibleCards, now, visibleWorkspaces),
+    [visibleCards, visibleWorkspaces, now]
   )
   useEffect(() => {
     layoutCacheRef.current = layoutResult.cache

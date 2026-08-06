@@ -138,7 +138,7 @@ function resolveRestoredBounds(store: Store | null): {
  */
 export function createOrFocusDashboardPopout(
   store: Store | null,
-  view: string = DEFAULT_VIEW,
+  view?: string,
   options: { getKeybindings?: () => KeybindingOverrides | undefined } = {}
 ): BrowserWindow {
   if (dashboardPopoutWindow && !dashboardPopoutWindow.isDestroyed()) {
@@ -146,8 +146,13 @@ export function createOrFocusDashboardPopout(
       dashboardPopoutWindow.restore()
     }
     dashboardPopoutWindow.focus()
+    if (view) {
+      dashboardPopoutWindow.webContents.send('dashboard:viewRequested', view)
+    }
     return dashboardPopoutWindow
   }
+
+  const initialView = view ?? DEFAULT_VIEW
 
   const savedBounds = resolveRestoredBounds(store)
 
@@ -283,7 +288,7 @@ export function createOrFocusDashboardPopout(
     broadcastPopoutOpenChanged(false)
   })
 
-  loadDashboardPopout(window, view)
+  loadDashboardPopout(window, initialView)
   return window
 }
 

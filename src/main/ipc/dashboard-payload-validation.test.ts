@@ -59,6 +59,23 @@ const SNAPSHOT = {
       askSummary: '{"question":"Proceed?"}'
     }
   ],
+  workspaces: [
+    {
+      repoId: 'repo-1',
+      worktreeId: 'worktree-1',
+      repoName: 'Orca',
+      worktreeName: 'Dashboard',
+      parentWorktreeId: 'parent-worktree-1',
+      hostKind: 'ssh',
+      executionHostId: 'ssh:build-box',
+      workspaceKind: 'worktree',
+      workspaceStatusId: 'in-review',
+      workspaceStatusLabel: 'In review',
+      workspaceStatusColor: 'emerald',
+      hasReview: true,
+      review: { number: 11012, state: 'open' }
+    }
+  ],
   showIdle: false,
   filterOptions: {
     projects: [{ id: 'repo-1', label: 'Orca' }],
@@ -204,6 +221,23 @@ describe('dashboard payload validation', () => {
     ).toBe(false)
   })
 
+  it('validates bounded map workspace metadata independently of cards', () => {
+    expect(isDashboardSnapshot({ ...SNAPSHOT, cards: [] })).toBe(true)
+    expect(isDashboardSnapshot({ ...SNAPSHOT, workspaces: undefined })).toBe(true)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        workspaces: [{ ...SNAPSHOT.workspaces[0], executionHostId: 'build-box' }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        workspaces: [{ ...SNAPSHOT.workspaces[0], worktreeName: 'x'.repeat(1_025) }]
+      })
+    ).toBe(false)
+  })
+
   it('validates bounded launch choices and spawn requests', () => {
     expect(
       isDashboardSnapshot({
@@ -301,6 +335,19 @@ describe('dashboard payload validation', () => {
 
       expect(admitted?.droppedCardCount).toBe(1)
       expect(admitted?.snapshot.cards.map((card) => card.paneKey)).toEqual(['tab-1:leaf-1'])
+    })
+
+    it('drops only malformed optional workspace metadata', () => {
+      const admitted = admitDashboardSnapshot({
+        ...SNAPSHOT,
+        workspaces: [
+          SNAPSHOT.workspaces[0],
+          { ...SNAPSHOT.workspaces[0], worktreeId: '', worktreeName: 'Invalid' }
+        ]
+      })
+
+      expect(admitted?.droppedCardCount).toBe(0)
+      expect(admitted?.snapshot.workspaces).toEqual([SNAPSHOT.workspaces[0]])
     })
 
     it('reports nothing dropped for a fully valid snapshot', () => {

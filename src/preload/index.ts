@@ -2282,7 +2282,8 @@ const api = {
 
   dashboard: {
     // Open the pop-out dashboard window, or focus it if already open.
-    openPopout: (): Promise<void> => ipcRenderer.invoke('dashboardPopout:open'),
+    openPopout: (view?: 'board' | 'map'): Promise<void> =>
+      ipcRenderer.invoke('dashboardPopout:open', view),
 
     // ── Producer side (main window) ──────────────────────────────────────
     publishSnapshot: (snapshot: DashboardSnapshot): Promise<void> =>
@@ -2332,6 +2333,12 @@ const api = {
         callback(snapshot)
       ipcRenderer.on('dashboard:snapshot', listener)
       return () => ipcRenderer.removeListener('dashboard:snapshot', listener)
+    },
+    onViewRequested: (callback: (view: 'board' | 'map') => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, view: 'board' | 'map'): void =>
+        callback(view)
+      ipcRenderer.on('dashboard:viewRequested', listener)
+      return () => ipcRenderer.removeListener('dashboard:viewRequested', listener)
     },
     revealAgent: (args: DashboardRevealAgentArgs): Promise<void> =>
       ipcRenderer.invoke('dashboardPopout:revealAgent', args),

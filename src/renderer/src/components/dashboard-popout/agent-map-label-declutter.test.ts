@@ -23,7 +23,7 @@ function worktree(overrides: Partial<AgentMapWorktreeRing> = {}): AgentMapWorktr
     x: 0,
     y: 0,
     radius: 62,
-    // Only the count matters to the declutter pass; the nodes never reach it.
+    // Sparse placeholders keep tests that only care about label-to-label collisions concise.
     agents: Array.from({ length: total }) as AgentMapWorktreeRing['agents'],
     statusCounts: counts,
     quiet: counts.idle === total,
@@ -78,6 +78,31 @@ describe('selectVisibleAgentMapLabels', () => {
     const { worktreeIds } = selectVisibleAgentMapLabels(layout, 1, 1)
 
     expect([...worktreeIds]).toEqual(['busy'])
+  })
+
+  it('hides a workspace title that would cover an agent', () => {
+    const coveringAgent = { x: 0, y: -48, radius: 20 }
+    const covered = worktree({
+      id: 'covered',
+      agents: [coveringAgent] as AgentMapWorktreeRing['agents']
+    })
+
+    const labels = selectVisibleAgentMapLabels(layoutOf([covered]), 1, 1)
+
+    expect(labels.worktreeIds.size).toBe(0)
+    expect(labels.worktreeAgentSafeIds.size).toBe(0)
+  })
+
+  it('keeps a collision-suppressed workspace title safe to reveal away from agents', () => {
+    const layout = layoutOf([
+      worktree({ id: 'busy', x: 0, y: 0, statusCounts: statusCounts({ working: 3 }) }),
+      worktree({ id: 'calm', name: 'beta', x: 0, y: 0, statusCounts: statusCounts({ done: 1 }) })
+    ])
+
+    const labels = selectVisibleAgentMapLabels(layout, 1, 1)
+
+    expect([...labels.worktreeIds]).toEqual(['busy'])
+    expect([...labels.worktreeAgentSafeIds].sort()).toEqual(['busy', 'calm'])
   })
 
   it('lets a blocked workspace outrank a busier neighbour for the surviving label', () => {

@@ -1,14 +1,14 @@
 import type { AppState } from '@/store/types'
 import {
+  DASHBOARD_MAX_MAP_WORKSPACES,
   dashboardCardDisplayState,
-  type DashboardBucket,
   type DashboardCard,
   type DashboardCardDotState,
   type DashboardCardSubagent,
-  type DashboardSnapshot
+  type DashboardSnapshot,
+  type DashboardWorkspace
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
-import { DEFAULT_WORKSPACE_STATUSES } from '../../../../shared/workspace-statuses'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
 import {
   resolveDashboardCardTerminalInput,
@@ -54,6 +54,8 @@ import {
   buildDashboardWorktreeLaunchOptions,
   type DashboardLaunchDetectionState
 } from './dashboard-worktree-launch-options'
+import { buildDashboardSnapshotFilterOptions } from './dashboard-snapshot-filter-options'
+import { dashboardBucketForDotState } from './dashboard-card-bucket'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -75,21 +77,6 @@ export type DashboardSnapshotState = Pick<
   DashboardCardContextState &
   Partial<DashboardCardTerminalInputState & DashboardLaunchDetectionState>
 
-function bucketForState(state: DashboardCardDotState): DashboardBucket {
-  switch (state) {
-    case 'working':
-      return 'working'
-    case 'done':
-      return 'done'
-    case 'idle':
-      return 'idle'
-    // blocked | waiting — the agent needs the user.
-    case 'blocked':
-    case 'waiting':
-      return 'attention'
-  }
-}
-
 /**
  * Derive the serializable dashboard snapshot from the live renderer store.
  * Reuses the exact per-worktree row machinery the sidebar uses
@@ -103,6 +90,8 @@ export function buildDashboardSnapshot(
   options: { includeCardDetails?: boolean; includeFilterOptions?: boolean } = {}
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
+  const workspaces: DashboardWorkspace[] | undefined =
+    options.includeCardDetails === false ? undefined : []
   const clientHost = readDashboardClientHost()
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
   const includeCardDetails = options.includeCardDetails !== false
@@ -112,26 +101,7 @@ export function buildDashboardSnapshot(
   const filterOptions =
     options.includeFilterOptions === false
       ? undefined
-      : {
-          // Why: filterOptions is snapshot-level, so an over-long project label
-          // costs the WHOLE board, not one card. Bound it at the producer.
-          projects: [
-            ...new Map(
-              activeWorktrees.map((workspace) => [workspace.projectId, workspace])
-            ).values()
-          ].map((workspace) => ({
-            id: workspace.projectId,
-            label: boundedLabel(workspace.projectName)
-          })),
-          workspaceStatuses: (state.workspaceStatuses && state.workspaceStatuses.length > 0
-            ? state.workspaceStatuses
-            : DEFAULT_WORKSPACE_STATUSES
-          ).map((status) => ({
-            id: status.id,
-            label: status.label,
-            color: status.color
-          }))
-        }
+      : buildDashboardSnapshotFilterOptions(state, activeWorktrees)
   let singletonOrchestration: ReturnType<typeof selectRuntimeAgentOrchestrationForWorktree> | null =
     null
   let orchestrationByWorktree: ReturnType<typeof selectRuntimeAgentOrchestrationBatch> | null = null
@@ -214,6 +184,21 @@ export function buildDashboardSnapshot(
     const context = includeCardDetails
       ? resolveDashboardCardContext(state, repo, worktree)
       : undefined
+    if (workspaces && workspaces.length < DASHBOARD_MAX_MAP_WORKSPACES) {
+      workspaces.push({
+        repoId: workspace.projectId,
+        worktreeId,
+        repoName: boundedLabel(workspace.projectName),
+        worktreeName: boundedLabel(worktree.displayName),
+        ...(parentWorktreeId ? { parentWorktreeId } : {}),
+        ...dashboardCardMapWorkspaceMetadata(workspace, null, undefined, clientHost.platform),
+        workspaceStatusId: context?.workspaceStatus.id,
+        workspaceStatusLabel: context?.workspaceStatus.label,
+        workspaceStatusColor: context?.workspaceStatus.color,
+        hasReview: context?.hasReview,
+        review: context?.review
+      })
+    }
 
     for (const row of rows) {
       // Child rows have no pane of their own; the board lists top-level agents.
@@ -242,7 +227,7 @@ export function buildDashboardSnapshot(
       const unseen =
         !isTitleDerived &&
         (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt
-      const bucket = bucketForState(dashboardCardDisplayState({ dotState, unseen }))
+      const bucket = dashboardBucketForDotState(dashboardCardDisplayState({ dotState, unseen }))
       // Why: only a live pty can open a preview terminal, and only a
       // card-rendering caller can open one — the sidebar's bucket counts must
       // not pay host resolution on every agent-status tick.
@@ -260,6 +245,7 @@ export function buildDashboardSnapshot(
               osRelease: clientHost.osRelease
             })
           : null
+      const finishedAt = lastEnteredDoneAt(row)
       // Only repos that actually contribute a card ship their icon.
       repoIconsByRepoId[workspace.projectId] = workspace.repoIcon
 
@@ -297,7 +283,7 @@ export function buildDashboardSnapshot(
         lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
         lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
         startedAt: row.startedAt,
-        finishedAt: lastEnteredDoneAt(row),
+        finishedAt,
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,
         // Same derivation as WorktreeCardAgents' unvisitedByPaneKey, so the
         // board and the sidebar bold/mute the same agents at the same time.
@@ -312,12 +298,19 @@ export function buildDashboardSnapshot(
   return {
     generatedAt: now,
     cards,
+    ...(workspaces ? { workspaces } : {}),
     showIdle,
     filterOptions,
     // Only the dashboard surfaces offer a launcher; the count-only rebuild that
     // feeds the sidebar must not pay for host-detection lookups.
     ...(includeCardDetails
-      ? { launchableAgentsByWorktreeId: buildDashboardWorktreeLaunchOptions(state, cards) }
+      ? {
+          launchableAgentsByWorktreeId: buildDashboardWorktreeLaunchOptions(
+            state,
+            cards,
+            workspaces
+          )
+        }
       : {}),
     repoIconsByRepoId
   }

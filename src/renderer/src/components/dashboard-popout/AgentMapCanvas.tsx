@@ -8,6 +8,7 @@ import {
   useState
 } from 'react'
 import { translate } from '@/i18n/i18n'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import type {
   DashboardCard,
   DashboardSleepWorkspaceArgs,
@@ -15,7 +16,12 @@ import type {
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import type { TuiAgent } from '../../../../shared/types'
-import type { AgentMapAgentNode, AgentMapProjectRing, AgentMapLayout } from './agent-map-layout'
+import {
+  AGENT_MAP_AGENT_RADIUS,
+  type AgentMapAgentNode,
+  type AgentMapProjectRing,
+  type AgentMapLayout
+} from './agent-map-layout'
 import { AgentMapScene } from './AgentMapScene'
 import { AgentMapViewportControls } from './AgentMapViewportControls'
 import {
@@ -23,14 +29,18 @@ import {
   navigableAgentMapAgents,
   nextDirectionalAgent
 } from './agent-map-navigation'
+import type { AgentMapViewport } from './agent-map-viewport-transition'
 import { useAgentMapContextMenus } from './useAgentMapContextMenus'
+import { useAgentMapCanvasSize } from './useAgentMapCanvasSize'
+import { useAgentMapSelectedFocus } from './useAgentMapSelectedFocus'
+import { useAgentMapViewportTransition } from './useAgentMapViewportTransition'
 
 const MIN_ZOOM = 0.7
-const MAX_ZOOM = 4
+const MAX_ZOOM = 24
+const AGENT_FOCUS_DURATION_MS = 240
+const AGENT_FOCUS_RADIUS_PX = 24
 
 type Point = { x: number; y: number }
-type ViewportSize = { width: number; height: number }
-type Viewport = { center: Point; zoom: number }
 
 export type AgentMapCanvasHandle = {
   fit: () => void
@@ -45,13 +55,26 @@ type AgentMapCanvasProps = {
   launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
-  onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSelectAgent: (card: DashboardCard) => void
   onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onSleepWorkspace?: (args: DashboardSleepWorkspaceArgs) => void
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
+}
+
+function agentFocusZoom(layout: AgentMapLayout, width: number, height: number): number {
+  const aspect = width / Math.max(1, height)
+  const baseWidth = Math.max(layout.width, layout.height * aspect)
+  return clamp(
+    Math.max(
+      2,
+      (baseWidth * AGENT_FOCUS_RADIUS_PX) / (Math.max(1, width) * AGENT_MAP_AGENT_RADIUS)
+    ),
+    MIN_ZOOM,
+    MAX_ZOOM
+  )
 }
 
 export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasProps>(
@@ -81,15 +104,18 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       worldPerPixelY: number
     } | null>(null)
     const viewportFrameRef = useRef<number | null>(null)
-    const pendingViewportRef = useRef<Viewport | null>(null)
+    const pendingViewportRef = useRef<AgentMapViewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
-    const focusedAgentRef = useRef<{ paneKey: string; x: number; y: number } | null>(null)
     const hasShownProjectsRef = useRef(layout.projects.length > 0)
-    const [size, setSize] = useState<ViewportSize>({ width: 800, height: 560 })
-    const [viewport, setViewport] = useState<Viewport>({
+    const clearInteractionBounds = useCallback(() => {
+      interactionBoundsRef.current = null
+    }, [])
+    const size = useAgentMapCanvasSize(containerRef, clearInteractionBounds)
+    const [viewport, setViewport] = useState<AgentMapViewport>({
       center: { x: layout.width / 2, y: layout.height / 2 },
       zoom: 1
     })
+    const prefersReducedMotion = usePrefersReducedMotion()
     const viewportRef = useRef(viewport)
     const { contextMenus, onOpenProjectContextMenu, onOpenWorkspaceContextMenu } =
       useAgentMapContextMenus({
@@ -114,29 +140,61 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const mapScale = size.width / viewWidth
     const labelScale = Math.max(1, 1 / mapScale)
     const viewBox = `${center.x - viewWidth / 2} ${center.y - viewHeight / 2} ${viewWidth} ${viewHeight}`
+    const focusZoom = agentFocusZoom(layout, size.width, size.height)
+    const resolveFocusZoom = useCallback((): number => {
+      const bounds = containerRef.current?.getBoundingClientRect()
+      return bounds && bounds.width > 0 && bounds.height > 0
+        ? agentFocusZoom(layout, bounds.width, bounds.height)
+        : focusZoom
+    }, [focusZoom, layout])
 
-    const applyViewport = useCallback((next: Viewport): void => {
+    const commitViewport = useCallback((next: AgentMapViewport): void => {
       viewportRef.current = next
       pendingViewportRef.current = null
       interactionBoundsRef.current = null
       setViewport(next)
     }, [])
-    const scheduleViewport = useCallback((next: Viewport): void => {
-      viewportRef.current = next
-      pendingViewportRef.current = next
-      if (viewportFrameRef.current !== null) {
-        return
-      }
-      viewportFrameRef.current = requestAnimationFrame(() => {
-        viewportFrameRef.current = null
-        interactionBoundsRef.current = null
-        const pending = pendingViewportRef.current
-        pendingViewportRef.current = null
-        if (pending) {
-          setViewport(pending)
-        }
+    const { animate: animateViewport, stop: stopViewportTransition } =
+      useAgentMapViewportTransition({
+        durationMs: AGENT_FOCUS_DURATION_MS,
+        reducedMotion: prefersReducedMotion,
+        onFrame: commitViewport
       })
-    }, [])
+    useAgentMapSelectedFocus({
+      agents,
+      selectedPaneKey,
+      viewportRef,
+      resolveFocusZoom,
+      animateViewport,
+      stopViewportTransition
+    })
+    const applyViewport = useCallback(
+      (next: AgentMapViewport): void => {
+        stopViewportTransition()
+        commitViewport(next)
+      },
+      [commitViewport, stopViewportTransition]
+    )
+    const scheduleViewport = useCallback(
+      (next: AgentMapViewport): void => {
+        stopViewportTransition()
+        viewportRef.current = next
+        pendingViewportRef.current = next
+        if (viewportFrameRef.current !== null) {
+          return
+        }
+        viewportFrameRef.current = requestAnimationFrame(() => {
+          viewportFrameRef.current = null
+          interactionBoundsRef.current = null
+          const pending = pendingViewportRef.current
+          pendingViewportRef.current = null
+          if (pending) {
+            setViewport(pending)
+          }
+        })
+      },
+      [stopViewportTransition]
+    )
     const fit = useCallback((): void => {
       applyViewport({ center: { x: layout.width / 2, y: layout.height / 2 }, zoom: 1 })
     }, [applyViewport, layout.height, layout.width])
@@ -164,28 +222,6 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       }
     }, [fit, hasProjects])
 
-    useEffect(() => {
-      const container = containerRef.current
-      if (!container || typeof ResizeObserver === 'undefined') {
-        return
-      }
-      const measure = (): void => {
-        const next = container.getBoundingClientRect()
-        if (next.width > 0 && next.height > 0) {
-          interactionBoundsRef.current = null
-          setSize((current) =>
-            current.width === next.width && current.height === next.height
-              ? current
-              : { width: next.width, height: next.height }
-          )
-        }
-      }
-      measure()
-      const observer = new ResizeObserver(measure)
-      observer.observe(container)
-      return () => observer.disconnect()
-    }, [])
-
     useEffect(
       () => () => {
         if (viewportFrameRef.current !== null) {
@@ -195,38 +231,11 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
       []
     )
 
-    useEffect(() => {
-      if (!selectedPaneKey) {
-        focusedAgentRef.current = null
-        return
-      }
-      const selected = agents.find((agent) => agent.card.paneKey === selectedPaneKey)
-      if (!selected) {
-        focusedAgentRef.current = null
-        return
-      }
-      const focused = focusedAgentRef.current
-      if (
-        focused?.paneKey === selectedPaneKey &&
-        focused.x === selected.x &&
-        focused.y === selected.y
-      ) {
-        return
-      }
-      focusedAgentRef.current = { paneKey: selectedPaneKey, x: selected.x, y: selected.y }
-      applyViewport({
-        center: { x: selected.x, y: selected.y },
-        zoom: Math.max(1, viewportRef.current.zoom)
-      })
-    }, [agents, applyViewport, selectedPaneKey])
-
     const handleAgentKeyDown = useCallback(
       (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode): void => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          const bounds = event.currentTarget.getBoundingClientRect()
-          const side = bounds.left + bounds.width / 2 <= window.innerWidth / 2 ? 'right' : 'left'
-          onSelectAgent(agent.card, side)
+          onSelectAgent(agent.card)
           return
         }
         const direction =

@@ -255,6 +255,16 @@ describe('createOrFocusDashboardPopout', () => {
     expect(instances[0].focus).toHaveBeenCalledTimes(1)
   })
 
+  it('switches an existing popout to an explicitly requested view', () => {
+    const store = makeStore()
+    createOrFocusDashboardPopout(store as never)
+    const win = instances[0]
+
+    createOrFocusDashboardPopout(store as never, 'map')
+
+    expect(win.webContents.send).toHaveBeenCalledWith('dashboard:viewRequested', 'map')
+  })
+
   it('trusts only the live popout webContents', () => {
     const win = createOrFocusDashboardPopout(makeStore() as never) as unknown as FakeWindow
     expect(isDashboardPopoutRenderer(win.webContents as never)).toBe(true)

@@ -19,20 +19,18 @@ type AgentMapWorktreeRingNodeProps = {
   project: AgentMapProjectRing
   worktree: AgentMapWorktreeRing
   zoom: number
-  labelScale: number
   mapScale: number
   selectedPaneKey: string | null
   allowAggregation: boolean
-  /** Decided by the scene's declutter pass so labels never stack on each other. */
-  labelVisible: boolean
   launchableAgents?: readonly TuiAgent[]
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
-  onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSelectAgent: (card: DashboardCard) => void
   onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onOpenWorkspaceContextMenu?: (
     event: React.MouseEvent<SVGCircleElement>,
     worktree: AgentMapWorktreeRing
   ) => void
+  onLabelActiveChange: (worktreeId: string, active: boolean) => void
   onAgentKeyDown: (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode) => void
 }
 
@@ -57,13 +55,13 @@ function lineagePath(parent: AgentMapAgentNode, child: AgentMapAgentNode): strin
   return `M ${parent.x} ${startY} L ${parent.x} ${branchY} L ${child.x} ${branchY} L ${child.x} ${endY}`
 }
 
-function panelSideFor(element: Element): 'left' | 'right' {
-  const bounds = element.getBoundingClientRect()
-  return bounds.left + bounds.width / 2 <= window.innerWidth / 2 ? 'right' : 'left'
-}
-
 function agentName(card: DashboardCard): string {
   return card.conversationName ?? (card.task.trim() || card.agentType)
+}
+
+export function agentMapAttentionMarkerScale(mapScale: number): number {
+  const inverseScale = 1 / Math.max(mapScale, 0.001)
+  return Math.max(1, inverseScale ** 0.72, inverseScale * 0.5)
 }
 
 function WorktreeDetails({
@@ -106,28 +104,34 @@ function WorktreeDetails({
           {translate('dashboardPopout.map.runningAgents', 'Agents')}
         </h3>
         <div className="scrollbar-sleek max-h-56 space-y-0.5 overflow-y-auto">
-          {worktree.agents.map((agent) => (
-            <button
-              key={agent.card.paneKey}
-              type="button"
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              onClick={(event) => {
-                onSelectAgent(agent.card, panelSideFor(event.currentTarget))
-                onDone()
-              }}
-            >
-              <AgentIcon agent={agentTypeToIconAgent(agent.card.agentType)} size={14} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12px] font-medium">
-                  {agentName(agent.card)}
+          {worktree.agents.length === 0 ? (
+            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              {translate('dashboardPopout.map.noWorkspaceAgents', 'No agents in this workspace.')}
+            </p>
+          ) : (
+            worktree.agents.map((agent) => (
+              <button
+                key={agent.card.paneKey}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                onClick={() => {
+                  onSelectAgent(agent.card)
+                  onDone()
+                }}
+              >
+                <AgentIcon agent={agentTypeToIconAgent(agent.card.agentType)} size={14} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-medium">
+                    {agentName(agent.card)}
+                  </span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {agentStateLabel(agent.status)} · {formatDuration(agent.durationMinutes)}
+                  </span>
                 </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {agentStateLabel(agent.status)} · {formatDuration(agent.durationMinutes)}
-                </span>
-              </span>
-              <AgentStateDot state={agent.status} size="md" />
-            </button>
-          ))}
+                <AgentStateDot state={agent.status} size="md" />
+              </button>
+            ))
+          )}
         </div>
       </section>
       {onSpawnAgent ? (
@@ -170,31 +174,40 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   project,
   worktree,
   zoom,
-  labelScale,
   mapScale,
   selectedPaneKey,
   allowAggregation,
-  labelVisible,
   launchableAgents,
   nodeRefs,
   onSelectAgent,
   onSpawnAgent,
   onOpenWorkspaceContextMenu,
+  onLabelActiveChange,
   onAgentKeyDown
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
-  const screenRadius = worktree.radius * mapScale
-  const showCount = labelVisible && screenRadius >= 80
 
   return (
     <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
-      <g className="agent-map-worktree-group">
+      <g
+        className="agent-map-worktree-group"
+        onPointerEnter={() => onLabelActiveChange(worktree.id, true)}
+        onPointerLeave={() => onLabelActiveChange(worktree.id, false)}
+        onFocus={() => onLabelActiveChange(worktree.id, true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            onLabelActiveChange(worktree.id, false)
+          }
+        }}
+      >
         <PopoverTrigger asChild>
           <circle
             className={`agent-map-worktree-ring${selected ? ' is-selected' : ''}${detailsOpen ? ' is-open' : ''}`}
+            data-agent-map-worktree=""
+            data-agent-count={worktree.agents.length}
             cx={worktree.x}
             cy={worktree.y}
             r={worktree.radius}
@@ -231,21 +244,6 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
             }
           />
         </PopoverTrigger>
-        <g
-          className={`agent-map-worktree-label-group${labelVisible ? ' is-visible' : ''}${showCount ? ' is-count-visible' : ''}`}
-          transform={`translate(${worktree.x} ${worktree.y - worktree.radius}) scale(${labelScale})`}
-        >
-          <text className="agent-map-worktree-label" y={18}>
-            {worktree.name}
-          </text>
-          <text className="agent-map-worktree-count" y={32}>
-            {translate(
-              'dashboardPopout.map.agentCount',
-              worktree.agents.length === 1 ? '{{count}} agent' : '{{count}} agents',
-              { count: worktree.agents.length }
-            )}
-          </text>
-        </g>
         {aggregate ? (
           <g
             className="agent-map-aggregate-node"
@@ -289,10 +287,14 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   data-agent-provider={agent.card.agentType}
                   role="button"
                   tabIndex={0}
+                  aria-pressed={selectedPaneKey === agent.card.paneKey}
                   aria-label={`${agentName(agent.card)}, ${agentStateLabel(agent.status)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
                   className={`agent-map-agent-node fleet-status-${agent.status}${selectedPaneKey === agent.card.paneKey ? ' is-selected' : ''}`}
                   transform={`translate(${agent.x} ${agent.y})`}
-                  onClick={(event) => onSelectAgent(agent.card, panelSideFor(event.currentTarget))}
+                  onClick={(event) => {
+                    event.currentTarget.focus()
+                    onSelectAgent(agent.card)
+                  }}
                   onKeyDown={(event) => onAgentKeyDown(event, agent)}
                 >
                   <circle className="agent-map-agent-hit" r={Math.max(10, agent.radius + 3)} />
@@ -318,7 +320,8 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                       data-agent-unread-marker=""
                       cx={-agent.radius * Math.SQRT1_2}
                       cy={-agent.radius * Math.SQRT1_2}
-                      r={4.5}
+                      r={agent.radius * 0.225 * agentMapAttentionMarkerScale(mapScale)}
+                      vectorEffect="none"
                       aria-hidden="true"
                     />
                   ) : null}

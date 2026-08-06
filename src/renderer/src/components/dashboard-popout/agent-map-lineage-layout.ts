@@ -1,10 +1,10 @@
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { packAgentMapWorktrees } from './agent-map-worktree-packing'
 
-const HORIZONTAL_GAP = 58
-const VERTICAL_GAP = 62
-const FAMILY_PADDING = 12
-const WORKTREE_PADDING = 10
+const HORIZONTAL_GAP = 54
+const VERTICAL_GAP = 58
+const FAMILY_PADDING = 8
+const WORKTREE_PADDING = 6
 const COMPACT_FANOUT_THRESHOLD = 12
 const MAX_EXACT_LINEAGE_AGENTS = 256
 
@@ -165,7 +165,7 @@ function layoutBoundedLineage(
   }
   const family = encloseFamily(sorted[0].paneKey, agents, nodeRadius)
   family.agents.sort((a, b) => compareStable(a.card.paneKey, b.card.paneKey))
-  return { agents: family.agents, radius: Math.max(62, family.radius + WORKTREE_PADDING) }
+  return { agents: family.agents, radius: Math.max(52, family.radius + WORKTREE_PADDING) }
 }
 
 export function layoutAgentMapLineage(
@@ -217,7 +217,7 @@ export function layoutAgentMapLineage(
       )
       .sort((a, b) => compareStable(a.card.paneKey, b.card.paneKey)),
     radius: Math.max(
-      62,
+      52,
       ...packed.map((family) => Math.hypot(family.x, family.y) + family.radius + WORKTREE_PADDING)
     )
   }

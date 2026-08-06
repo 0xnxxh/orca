@@ -38,7 +38,7 @@ describe('AgentMapScene project labels', () => {
           }}
           zoom={1}
           labelScale={1}
-          mapScale={1}
+          mapScale={0.5}
           selectedPaneKey={null}
           allowAggregation
           nodeRefs={{ current: new Map() }}
@@ -50,7 +50,11 @@ describe('AgentMapScene project labels', () => {
 
     const label = container.querySelector('.agent-map-project-label')!
     expect(label).toHaveTextContent('ORCA')
+    expect(label).toHaveClass('agent-map-project-label')
+    expect(label.querySelector('.agent-map-project-name')).toHaveTextContent('ORCA')
     expect(label.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,AAAA')
     expect(label.firstElementChild?.querySelector('img')).toBeInTheDocument()
+    expect(container.querySelector('.agent-map-project-label-frame')).toHaveAttribute('x', '-48')
+    expect(container.querySelector('.agent-map-project-label-frame')).toHaveAttribute('width', '96')
   })
 })

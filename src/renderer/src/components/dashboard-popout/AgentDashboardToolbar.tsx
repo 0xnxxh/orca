@@ -43,6 +43,9 @@ type AgentDashboardToolbarProps = {
   agentStates?: ReadonlySet<AgentMapState>
   onAgentStateToggle?: (state: AgentMapState) => void
   onAgentStatesReset?: () => void
+  showAgentlessWorkspaces?: boolean
+  agentlessWorkspaceCount?: number
+  onShowAgentlessWorkspacesChange?: (show: boolean) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
 }
 
@@ -169,6 +172,9 @@ export function AgentDashboardToolbar({
   agentStates,
   onAgentStateToggle,
   onAgentStatesReset,
+  showAgentlessWorkspaces,
+  agentlessWorkspaceCount = 0,
+  onShowAgentlessWorkspacesChange,
   searchInputRef
 }: AgentDashboardToolbarProps): React.JSX.Element {
   const isMac = navigator.userAgent.includes('Mac')
@@ -181,7 +187,10 @@ export function AgentDashboardToolbar({
   const agentStateCounts = agentStates ? countAgentMapCards(cards) : null
   // A muted state is an active filter, so the badge counts them like the rest.
   const mutedStateCount = agentStates ? AGENT_STATE_ROWS.length - agentStates.size : 0
-  const activeCount = activeDashboardFilterCount(filters) + mutedStateCount
+  const activeCount =
+    activeDashboardFilterCount(filters) +
+    mutedStateCount +
+    (showAgentlessWorkspaces === true ? 1 : 0)
   const toggleProject = (id: string): void =>
     onFiltersChange({ ...filters, projects: toggleDashboardFilter(filters.projects, id) })
   const toggleStatus = (id: string): void =>
@@ -197,6 +206,7 @@ export function AgentDashboardToolbar({
   const clearFilters = (): void => {
     onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
     onAgentStatesReset?.()
+    onShowAgentlessWorkspacesChange?.(false)
   }
   const reviewLabel = (id: DashboardReviewFilter): string =>
     translate('dashboardPopout.filters.reviewChip', 'Review: {{state}}', {
@@ -264,6 +274,27 @@ export function AgentDashboardToolbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64" sideOffset={6}>
+            {showAgentlessWorkspaces !== undefined && onShowAgentlessWorkspacesChange ? (
+              <>
+                <DropdownMenuLabel>
+                  {translate('dashboardPopout.map.filters.workspaceVisibility', 'Map content')}
+                </DropdownMenuLabel>
+                <DropdownMenuCheckboxItem
+                  checked={showAgentlessWorkspaces}
+                  onCheckedChange={(checked) => onShowAgentlessWorkspacesChange(checked === true)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  <span className="truncate">
+                    {translate(
+                      'dashboardPopout.map.filters.agentlessWorkspaces',
+                      'Workspaces without agents'
+                    )}
+                  </span>
+                  <OptionCount count={agentlessWorkspaceCount} />
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             {agentStates && agentStateCounts ? (
               <>
                 <DropdownMenuLabel>
@@ -354,9 +385,11 @@ export function AgentDashboardToolbar({
           projects={projects}
           statuses={statuses}
           reviewLabel={reviewLabel}
+          showAgentlessWorkspaces={showAgentlessWorkspaces === true}
           onProjectToggle={toggleProject}
           onStatusToggle={toggleStatus}
           onReviewToggle={toggleReview}
+          onAgentlessWorkspacesToggle={() => onShowAgentlessWorkspacesChange?.(false)}
           onClear={clearFilters}
         />
       ) : null}

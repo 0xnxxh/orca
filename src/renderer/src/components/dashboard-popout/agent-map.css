@@ -34,7 +34,7 @@
   pointer-events: none;
   stroke: var(--background);
   stroke-linejoin: round;
-  stroke-width: 2px;
+  stroke-width: 4px;
 }
 
 .agent-map-project-label-frame {
@@ -44,10 +44,13 @@
 
 .agent-map-project-label {
   display: flex;
+  width: max-content;
+  max-width: calc(100% - 8px);
   height: 100%;
   align-items: center;
   justify-content: center;
   gap: 4px;
+  margin-inline: auto;
   color: var(--foreground);
   font-family: Geist, var(--font-sans);
   font-size: 13px;
@@ -55,6 +58,15 @@
   letter-spacing: 0.05em;
   line-height: 1;
   white-space: nowrap;
+}
+
+.agent-map-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-text-stroke: 4px var(--background);
+  paint-order: stroke fill;
 }
 
 .agent-map-project-count,
@@ -66,7 +78,7 @@
   pointer-events: none;
   stroke: var(--background);
   stroke-linejoin: round;
-  stroke-width: 2px;
+  stroke-width: 4px;
 }
 
 .agent-map-project-count {
@@ -125,8 +137,7 @@
 }
 
 .agent-map-worktree-label-group.is-visible,
-.agent-map-worktree-group:hover .agent-map-worktree-label-group,
-.agent-map-worktree-group:focus-within .agent-map-worktree-label-group {
+.agent-map-worktree-label-group.is-active {
   opacity: 1;
 }
 
@@ -134,9 +145,7 @@
   opacity: 0;
 }
 
-.agent-map-worktree-label-group.is-count-visible .agent-map-worktree-count,
-.agent-map-worktree-group:hover .agent-map-worktree-count,
-.agent-map-worktree-group:focus-within .agent-map-worktree-count {
+.agent-map-worktree-label-group.is-count-visible .agent-map-worktree-count {
   opacity: 1;
 }
 
@@ -157,7 +166,8 @@
 .agent-map-lineage-link {
   fill: none;
   pointer-events: none;
-  stroke: color-mix(in srgb, var(--muted-foreground) 38%, transparent);
+  stroke: color-mix(in srgb, var(--muted-foreground) 42%, transparent);
+  stroke-dasharray: 1 4;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1;
@@ -192,14 +202,19 @@
 }
 
 .agent-map-agent-node:hover .agent-map-agent-hit,
-.agent-map-agent-node:focus-visible .agent-map-agent-hit,
-.agent-map-agent-node.is-selected .agent-map-agent-hit {
+.agent-map-agent-node:focus-visible .agent-map-agent-hit {
   fill: color-mix(in srgb, var(--ring) 10%, transparent);
   stroke: var(--ring);
 }
 
 .agent-map-agent-node.is-selected .agent-map-agent-hit {
-  stroke-width: 2;
+  fill: color-mix(in srgb, var(--ring) 18%, transparent);
+  stroke: var(--ring);
+  stroke-width: 3;
+}
+
+.agent-map-agent-node.is-selected .agent-map-agent-mark {
+  fill: color-mix(in srgb, var(--ring) 10%, var(--background));
 }
 
 .fleet-status-working .agent-map-agent-mark {
@@ -227,7 +242,6 @@
   pointer-events: none;
   stroke: var(--background);
   stroke-width: 2;
-  vector-effect: non-scaling-stroke;
 }
 
 .agent-map-aggregate-node circle {

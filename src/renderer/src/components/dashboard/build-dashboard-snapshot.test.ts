@@ -145,6 +145,23 @@ describe('buildDashboardSnapshot', () => {
     )
 
     expect(snapshot.cards).toEqual([])
+    expect(snapshot.workspaces).toEqual([
+      expect.objectContaining({
+        repoId: 'r1',
+        worktreeId: 'w1',
+        repoName: 'Repo One',
+        worktreeName: 'wt-one',
+        hostKind: 'local',
+        executionHostId: 'local',
+        workspaceKind: 'worktree'
+      }),
+      expect.objectContaining({
+        repoId: 'r2',
+        worktreeId: 'w2',
+        repoName: 'Repo Two',
+        worktreeName: 'wt-two'
+      })
+    ])
     expect(snapshot.filterOptions).toEqual({
       projects: [
         { id: 'r1', label: 'Repo One' },
@@ -579,6 +596,7 @@ describe('buildDashboardSnapshot', () => {
     // host-input resolution off the sidebar's per-status-tick rebuild.
     expect(snapshot.cards[0].ptyId).toBe('pty1')
     expect(snapshot.cards[0].terminalInput).toBeUndefined()
+    expect(snapshot.workspaces).toBeUndefined()
     expect(linkedReviewReads).toBe(0)
     expect(hostIdentityReads).toBe(0)
     expect(mapMetadataCalls.hostKind).not.toHaveBeenCalled()

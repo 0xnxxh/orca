@@ -30,6 +30,9 @@ export const DASHBOARD_MAX_LABEL_LENGTH = 1_024
  *  the launcher's entries rather than letting a huge fleet blank the pop-out. */
 export const DASHBOARD_MAX_LAUNCH_WORKTREES = 500
 
+/** Keeps optional map-only workspace metadata bounded across the renderer bridge. */
+export const DASHBOARD_MAX_MAP_WORKSPACES = 2_000
+
 /** Kept distinct from `bucket` so attention cards retain their precise dot state. */
 export type DashboardCardDotState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
 
@@ -54,6 +57,22 @@ export type DashboardCardSubagent = {
 export type DashboardCardHostKind = 'local' | 'ssh' | 'wsl' | 'remote'
 export type DashboardCardWorkspaceKind = 'worktree' | 'folder'
 
+export type DashboardWorkspace = {
+  repoId: string
+  worktreeId: string
+  repoName: string
+  worktreeName: string
+  parentWorktreeId?: string
+  hostKind: DashboardCardHostKind
+  executionHostId: ExecutionHostId
+  workspaceKind: DashboardCardWorkspaceKind
+  workspaceStatusId?: string
+  workspaceStatusLabel?: string
+  workspaceStatusColor?: string
+  hasReview?: boolean
+  review?: DashboardCardReview
+}
+
 export type DashboardCard = {
   /** Stable identity for React keys. */
   paneKey: string
@@ -74,7 +93,7 @@ export type DashboardCard = {
   worktreeId: string
   tabId: string
   leafId: string | null
-  /** Direct orchestration parent when both agents are visible in this workspace. */
+  /** Agent pane that spawned this agent, when both are visible. */
   parentPaneKey?: string
   /** Direct workspace parent. The map uses it only when both workspace rings are visible. */
   parentWorktreeId?: string
@@ -150,6 +169,9 @@ export type DashboardFilterOptions = {
 export type DashboardSnapshot = {
   generatedAt: number
   cards: DashboardCard[]
+  /** Active workspaces, including those without an agent card. Map-only and
+   *  optional for preload compatibility with older snapshot producers. */
+  workspaces?: DashboardWorkspace[]
   showIdle?: boolean
   /** Available filter dimensions are store-derived so zero-card projects and
    *  statuses remain selectable. Optional for preload-version compatibility. */
@@ -166,6 +188,7 @@ export type DashboardSnapshot = {
 export const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
   generatedAt: 0,
   cards: [],
+  workspaces: [],
   filterOptions: { projects: [], workspaceStatuses: [] },
   launchableAgentsByWorktreeId: {},
   repoIconsByRepoId: {}

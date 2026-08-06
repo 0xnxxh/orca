@@ -14,11 +14,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
 import { AgentKanbanCard } from './AgentKanbanCard'
 import { AgentDashboardToolbar } from './AgentDashboardToolbar'
-import {
-  AgentTerminalDialog,
-  AgentTerminalPanel,
-  type AgentRevealArgs
-} from './AgentTerminalDialog'
+import { AgentTerminalDialog, type AgentRevealArgs } from './AgentTerminalDialog'
 import {
   EMPTY_DASHBOARD_FILTERS,
   filterDashboardCards,
@@ -28,13 +24,13 @@ import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
-import { useAgentMapStateFilter } from './useAgentMapStateFilter'
 
 export type AgentDashboardView = 'map' | 'board'
 
-const AgentMap = lazyWithRetry(
-  () => import('./AgentMap').then((module) => ({ default: module.AgentMap })),
-  { reloadKey: 'agent-map' }
+const AgentDashboardMapView = lazyWithRetry(
+  () =>
+    import('./AgentDashboardMapView').then((module) => ({ default: module.AgentDashboardMapView })),
+  { reloadKey: 'agent-dashboard-map-view' }
 )
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
@@ -164,6 +160,9 @@ type AgentKanbanBoardProps = {
   /** Header controls rendered before the close button. The in-window host
    *  passes its settings menu; the pop-out renderer has no store to drive it. */
   headerActions?: React.ReactNode
+  /** Opens the map outside this renderer. The in-window drawer uses this to
+   *  hand map work to the dedicated pop-out window. */
+  onOpenMap?: () => void
   /** The shared sidebar workspace menu is available only in the main renderer. */
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
@@ -182,6 +181,7 @@ export function AgentKanbanBoard({
   onSleepWorkspace = sleepWorkspaceViaPopoutRelay,
   onClose,
   headerActions,
+  onOpenMap,
   workspaceContextMenusEnabled = false,
   onWorkspaceContextMenuOpenChange
 }: AgentKanbanBoardProps): React.JSX.Element {
@@ -199,7 +199,6 @@ export function AgentKanbanBoard({
   const [query, setQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [filters, setFilters] = useState<DashboardFilters>(EMPTY_DASHBOARD_FILTERS)
-  const { agentStates, toggleAgentState, resetAgentStates } = useAgentMapStateFilter()
   const filteredCards = useMemo(
     () => filterDashboardCards(availableCards, query, filters),
     [availableCards, filters, query]
@@ -210,7 +209,6 @@ export function AgentKanbanBoard({
     [snapshot.cards]
   )
   const [now, setNow] = useState(() => Date.now())
-  const [terminalPanelSide, setTerminalPanelSide] = useState<'left' | 'right'>('right')
   useEffect(() => {
     if (!hasRelativeTimestamps) {
       return
@@ -267,13 +265,17 @@ export function AgentKanbanBoard({
   }, [])
   const handleViewChange = useCallback(
     (nextView: AgentDashboardView) => {
+      if (nextView === 'map' && onOpenMap) {
+        onOpenMap()
+        return
+      }
       if (nextView === view) {
         return
       }
       setOpenedCard(null)
       setView(nextView)
     },
-    [view]
+    [onOpenMap, view]
   )
 
   // Seen-state is the app-wide ack map (same signal as the sidebar's bold/mute
@@ -285,13 +287,6 @@ export function AgentKanbanBoard({
       setOpenedCard(card)
     },
     [onAckAgent]
-  )
-  const handleOpenAdjacentTerminal = useCallback(
-    (card: DashboardCard, side: 'left' | 'right') => {
-      setTerminalPanelSide(side)
-      handleOpenTerminal(card)
-    },
-    [handleOpenTerminal]
   )
   // Watching the open dialog counts as seeing state changes as they happen —
   // without this, an agent finishing while you watch would re-flag its card.
@@ -362,76 +357,55 @@ export function AgentKanbanBoard({
             </div>
           ) : null}
         </div>
-        <AgentDashboardToolbar
-          cards={visibleCards}
-          filterOptions={snapshot.filterOptions}
-          filteredCount={filteredCards.length}
-          query={query}
-          onQueryChange={setQuery}
-          filters={filters}
-          onFiltersChange={setFilters}
-          agentStates={view === 'map' ? agentStates : undefined}
-          onAgentStateToggle={toggleAgentState}
-          onAgentStatesReset={resetAgentStates}
-          searchInputRef={searchInputRef}
-        />
         {view !== 'board' ? (
-          <div
-            className={cn(
-              'flex min-h-0 flex-1',
-              dialogCard && terminalPanelSide === 'left' && 'flex-row-reverse'
-            )}
-          >
-            <Suspense fallback={null}>
-              <AgentMap
-                cards={filteredCards}
-                repoIconsByRepoId={snapshot.repoIconsByRepoId}
-                now={now}
-                className={
-                  dialogCard
-                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
-                    : undefined
-                }
-                compact={dialogCard !== null}
-                selectedPaneKey={dialogCard?.paneKey}
-                enabledStates={agentStates}
-                launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId}
-                workspaceContextMenusEnabled={workspaceContextMenusEnabled}
-                onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
-                onOpenTerminal={handleOpenAdjacentTerminal}
-                onSpawnAgent={onSpawnAgent}
-                onSleepWorkspace={onSleepWorkspace}
-              />
-            </Suspense>
-            {dialogCard ? (
-              <AgentTerminalPanel
-                card={dialogCard}
-                onOpenChange={handleDialogOpenChange}
-                onReveal={onRevealAgent}
-                className={cn(
-                  terminalPanelSide === 'right' ? 'ml-0' : 'mr-0',
-                  'animate-in fade-in-0 duration-200 motion-reduce:animate-none',
-                  terminalPanelSide === 'right' ? 'slide-in-from-right-2' : 'slide-in-from-left-2'
-                )}
-              />
-            ) : null}
-          </div>
+          <Suspense fallback={null}>
+            <AgentDashboardMapView
+              snapshot={snapshot}
+              cards={filteredCards}
+              query={query}
+              onQueryChange={setQuery}
+              filters={filters}
+              onFiltersChange={setFilters}
+              searchInputRef={searchInputRef}
+              now={now}
+              dialogCard={dialogCard}
+              onDialogOpenChange={handleDialogOpenChange}
+              onRevealAgent={onRevealAgent}
+              onOpenTerminal={handleOpenTerminal}
+              onSpawnAgent={onSpawnAgent}
+              onSleepWorkspace={onSleepWorkspace}
+              workspaceContextMenusEnabled={workspaceContextMenusEnabled}
+              onWorkspaceContextMenuOpenChange={onWorkspaceContextMenuOpenChange}
+            />
+          </Suspense>
         ) : (
-          <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
-            {/* Auto margins center the capped board and collapse during horizontal overflow. */}
-            <div className="mx-auto flex w-full max-w-[1280px] gap-3">
-              {visibleBuckets.map((bucket) => (
-                <KanbanColumn
-                  key={bucket}
-                  bucket={bucket}
-                  cards={grouped[bucket]}
-                  repoIconsByRepoId={snapshot.repoIconsByRepoId}
-                  now={now}
-                  onOpenTerminal={handleOpenTerminal}
-                />
-              ))}
+          <>
+            <AgentDashboardToolbar
+              cards={visibleCards}
+              filterOptions={snapshot.filterOptions}
+              filteredCount={filteredCards.length}
+              query={query}
+              onQueryChange={setQuery}
+              filters={filters}
+              onFiltersChange={setFilters}
+              searchInputRef={searchInputRef}
+            />
+            <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
+              {/* Auto margins center the capped board and collapse during horizontal overflow. */}
+              <div className="mx-auto flex w-full max-w-[1280px] gap-3">
+                {visibleBuckets.map((bucket) => (
+                  <KanbanColumn
+                    key={bucket}
+                    bucket={bucket}
+                    cards={grouped[bucket]}
+                    repoIconsByRepoId={snapshot.repoIconsByRepoId}
+                    now={now}
+                    onOpenTerminal={handleOpenTerminal}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         )}
         {view === 'board' ? (
           <AgentTerminalDialog

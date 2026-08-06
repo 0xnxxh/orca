@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/dashboard-snapshot'
 import type { TuiAgent } from '../../../../shared/types'
 import { AgentMap } from './AgentMap'
+import { agentMapAttentionMarkerScale } from './AgentMapWorktreeRingNode'
 import type { AgentMapState } from './agent-map-filter'
 import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
 
@@ -52,7 +53,7 @@ function renderMap(
     onSpawnAgent,
     onSleepWorkspace
   }: {
-    onOpenTerminal?: (card: DashboardCard, side: 'left' | 'right') => void
+    onOpenTerminal?: (card: DashboardCard) => void
     selectedPaneKey?: string | null
     compact?: boolean
     workspaceContextMenusEnabled?: boolean
@@ -84,6 +85,10 @@ describe('AgentMap', () => {
 
   beforeEach(() => {
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Linux' })
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
     boundsSpy = vi
       .spyOn(Element.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBounds(this: Element) {
@@ -125,7 +130,7 @@ describe('AgentMap', () => {
     })
   })
 
-  it('renders the fixed amber marker only for unread agents', () => {
+  it('renders the amber marker only for unread agents', () => {
     const finished = card({
       paneKey: 'done',
       conversationName: 'Finished agent',
@@ -149,8 +154,44 @@ describe('AgentMap', () => {
     const onRing = String(-AGENT_MAP_AGENT_RADIUS * Math.SQRT1_2)
     expect(unreadMarker).toHaveAttribute('cx', onRing)
     expect(unreadMarker).toHaveAttribute('cy', onRing)
-    expect(unreadMarker).toHaveAttribute('r', '4.5')
+    expect(Number(unreadMarker?.getAttribute('r'))).toBeGreaterThanOrEqual(
+      AGENT_MAP_AGENT_RADIUS * 0.225
+    )
+    expect(unreadMarker).toHaveAttribute('vector-effect', 'none')
     expect(doneNode).toHaveAccessibleName(/unread/)
+  })
+
+  it('enlarges unread markers when the full fleet is zoomed out', () => {
+    const fleet = Array.from({ length: 72 }, (_, index) =>
+      card({
+        paneKey: `pane-${index}`,
+        ptyId: `pty-${index}`,
+        tabId: `tab-${index}`,
+        leafId: `leaf-${index}`,
+        worktreeId: `worktree-${index}`,
+        worktreeName: `Worktree ${index}`,
+        conversationName: `Agent ${index}`,
+        unseen: index === 0
+      })
+    )
+    const { container } = renderMap(fleet)
+    const marker = container.querySelector<SVGCircleElement>('[data-agent-unread-marker]')!
+    const agentMark =
+      marker.parentElement!.querySelector<SVGCircleElement>('.agent-map-agent-mark')!
+
+    expect(Number(marker.getAttribute('r'))).toBeGreaterThan(
+      Number(agentMark.getAttribute('r')) * 0.225
+    )
+    expect(marker).toHaveAttribute('vector-effect', 'none')
+  })
+
+  it('grows attention markers more gently than the inverse zoom while keeping a size floor', () => {
+    const mapScale = 0.2
+    const markerScale = agentMapAttentionMarkerScale(mapScale)
+
+    expect(markerScale).toBeGreaterThan(1)
+    expect(markerScale).toBeLessThan(1 / mapScale)
+    expect(AGENT_MAP_AGENT_RADIUS * 0.225 * markerScale * mapScale).toBeGreaterThanOrEqual(2.25)
   })
 
   it('shows worktree details and opens a running agent', () => {
@@ -167,7 +208,7 @@ describe('AgentMap', () => {
     expect(screen.getByText('1 agent · 1 active · 0 done')).toBeInTheDocument()
     expect(screen.getByText('Agent alpha')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: /Agent alpha/ })[1])
-    expect(onOpenTerminal).toHaveBeenCalledWith(running, 'right')
+    expect(onOpenTerminal).toHaveBeenCalledWith(running)
     expect(ring).not.toHaveClass('is-open')
   })
 
@@ -228,7 +269,7 @@ describe('AgentMap', () => {
     ).toBeInTheDocument()
   })
 
-  it('connects orchestrated workers beneath their visible parent', () => {
+  it('connects spawned workers beneath their visible parent', () => {
     const parent = card({ paneKey: 'parent', conversationName: 'Coordinator' })
     const child = card({
       paneKey: 'child',
@@ -246,8 +287,31 @@ describe('AgentMap', () => {
     expect(screen.getByRole('button', { name: /Coordinator/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Worker/ })).toBeInTheDocument()
     expect(links).toHaveLength(1)
+    expect(links[0]).toHaveClass('agent-map-lineage-link')
     expect(links[0]).toHaveAttribute('data-parent-pane-key', 'parent')
     expect(links[0]).toHaveAttribute('data-child-pane-key', 'child')
+  })
+
+  it('connects spawned workers across worktree rings', () => {
+    const parent = card({
+      paneKey: 'parent',
+      worktreeId: 'parent-worktree',
+      worktreeName: 'Parent workspace',
+      conversationName: 'Coordinator'
+    })
+    const child = card({
+      paneKey: 'child',
+      worktreeId: 'child-worktree',
+      worktreeName: 'Child workspace',
+      parentPaneKey: 'parent',
+      conversationName: 'Worker'
+    })
+    const { container } = renderMap([parent, child])
+    const link = container.querySelector('[data-agent-map-cross-worktree-lineage-link]')
+
+    expect(link).toHaveClass('agent-map-lineage-link', 'is-cross-worktree')
+    expect(link).toHaveAttribute('data-parent-pane-key', 'parent')
+    expect(link).toHaveAttribute('data-child-pane-key', 'child')
   })
 
   it('connects visible child worktrees beneath their parent ring', () => {
@@ -279,15 +343,57 @@ describe('AgentMap', () => {
     renderMap([agent], { onOpenTerminal })
 
     fireEvent.click(screen.getByRole('button', { name: /Agent alpha/ }))
-    expect(onOpenTerminal).toHaveBeenCalledWith(agent, 'right')
+    expect(onOpenTerminal).toHaveBeenCalledWith(agent)
   })
 
   it('keeps a selected node visible while compacting around an adjacent terminal', () => {
-    renderMap([card()], { selectedPaneKey: 'pane-1', compact: true })
+    const { container } = renderMap([card()], { selectedPaneKey: 'pane-1', compact: true })
 
-    expect(screen.getByRole('button', { name: /Agent alpha/ })).toHaveClass('is-selected')
+    const selectedNode = screen.getByRole('button', { name: /Agent alpha/ })
+    expect(selectedNode).toHaveClass('is-selected')
+    expect(screen.getByRole('button', { name: /Agent alpha/ })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    const label = container.querySelector('.agent-map-worktree-label-group')!
+    expect(selectedNode.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(4)
+    expect(label.querySelector('rect')).not.toBeInTheDocument()
+    expect(screen.getByText('270%')).toBeInTheDocument()
     expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Host filter' })).not.toBeInTheDocument()
+  })
+
+  it('eases the viewport into the selected agent', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const agent = card()
+    const view = renderMap([agent])
+
+    view.rerender(
+      <AgentMap
+        cards={[agent]}
+        now={NOW}
+        onOpenTerminal={vi.fn()}
+        selectedPaneKey={agent.paneKey}
+      />
+    )
+    act(() => frames.shift()?.(0))
+    expect(screen.getByText('100%')).toBeInTheDocument()
+    act(() => frames.shift()?.(120))
+    expect(screen.getByText('249%')).toBeInTheDocument()
+    act(() => frames.shift()?.(240))
+    expect(screen.getByText('270%')).toBeInTheDocument()
   })
 
   it('keeps the selected node centered when topology changes around it', () => {

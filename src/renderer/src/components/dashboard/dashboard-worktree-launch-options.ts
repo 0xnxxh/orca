@@ -2,7 +2,8 @@ import type { AppState } from '@/store/types'
 import { parseExecutionHostId } from '../../../../shared/execution-host'
 import {
   DASHBOARD_MAX_LAUNCH_WORKTREES,
-  type DashboardCard
+  type DashboardCard,
+  type DashboardWorkspace
 } from '../../../../shared/dashboard-snapshot'
 import { isTuiAgent } from '../../../../shared/tui-agent-config'
 import {
@@ -78,11 +79,16 @@ function detectedAgentsForWorktree(
 /** Host-detected choices plus providers already proven to run in the workspace. */
 export function buildDashboardWorktreeLaunchOptions(
   state: DashboardLaunchOptionState,
-  cards: readonly DashboardCard[]
+  cards: readonly DashboardCard[],
+  workspaces: readonly DashboardWorkspace[] = []
 ): Record<string, TuiAgent[]> {
   const catalog = buildDashboardLaunchCatalog(state)
   const cardsByWorktreeId = new Map<string, DashboardCard[]>()
+  const repoIdByWorktreeId = new Map(
+    workspaces.map((workspace) => [workspace.worktreeId, workspace.repoId])
+  )
   for (const card of cards) {
+    repoIdByWorktreeId.set(card.worktreeId, card.repoId)
     const existing = cardsByWorktreeId.get(card.worktreeId)
     if (existing) {
       existing.push(card)
@@ -92,14 +98,15 @@ export function buildDashboardWorktreeLaunchOptions(
   }
 
   const result: Record<string, TuiAgent[]> = {}
-  for (const [worktreeId, worktreeCards] of cardsByWorktreeId) {
+  for (const [worktreeId, repoId] of repoIdByWorktreeId) {
     // Past the validator's bound the snapshot itself would be rejected, so the
     // launcher goes quiet for the tail rather than taking the board down.
     if (Object.keys(result).length >= DASHBOARD_MAX_LAUNCH_WORKTREES) {
       break
     }
+    const worktreeCards = cardsByWorktreeId.get(worktreeId) ?? []
     const available = new Set<TuiAgent>(
-      detectedAgentsForWorktree(state, worktreeId, worktreeCards[0].repoId, catalog)
+      detectedAgentsForWorktree(state, worktreeId, repoId, catalog)
     )
     for (const card of worktreeCards) {
       if (isTuiAgent(card.agentType)) {

@@ -51,6 +51,9 @@ beforeEach(() => {
   mocks.useLiveDashboardSnapshot.mockClear()
   mocks.blockingOverlay = false
   mocks.boardProps = null
+  ;(window as unknown as { api: unknown }).api = {
+    dashboard: { openPopout: vi.fn().mockResolvedValue(undefined) }
+  }
 })
 
 afterEach(() => {
@@ -82,13 +85,23 @@ describe('AgentDashboardDrawer', () => {
     expect(useAppStore.getState().agentDashboardDrawerOpen).toBe(false)
   })
 
-  it('enables workspace ring menus only while the in-window dashboard is mounted', () => {
+  it('hands map rendering to the dedicated popout', () => {
+    const openPopout = vi.mocked(window.api.dashboard.openPopout)
     render(<AgentDashboardDrawer statusBarVisible />)
     expect(mocks.boardProps).toBeNull()
 
     act(() => useAppStore.setState({ agentDashboardDrawerOpen: true }))
-    expect(mocks.boardProps?.workspaceContextMenusEnabled).toBe(true)
-    expect(mocks.boardProps?.onWorkspaceContextMenuOpenChange).toBeTypeOf('function')
+    expect(mocks.boardProps?.initialView).toBe('board')
+    expect(mocks.boardProps?.workspaceContextMenusEnabled).toBeUndefined()
+    const onOpenMap = mocks.boardProps?.onOpenMap
+    expect(onOpenMap).toBeTypeOf('function')
+
+    act(() => {
+      ;(onOpenMap as () => void)()
+    })
+
+    expect(openPopout).toHaveBeenCalledWith('map')
+    expect(useAppStore.getState().agentDashboardDrawerOpen).toBe(false)
   })
 
   it('reveals a colliding worktree on the card execution host', () => {

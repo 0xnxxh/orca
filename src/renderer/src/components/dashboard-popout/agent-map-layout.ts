@@ -1,8 +1,14 @@
 import type * as DashboardSnapshotTypes from '../../../../shared/dashboard-snapshot'
+import { placeAgentMapAgents } from './agent-map-agent-placement'
 import { layoutAgentMapLineage } from './agent-map-lineage-layout'
+import { refreshAgentMapMetadata } from './agent-map-layout-metadata'
 import { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
+import { placeAgentMapProjects } from './agent-map-project-placement'
+import { selectAgentMapSpawnParentContainer } from './agent-map-spawn-clustering'
 import {
   agentMapCardTopologyIdentity,
+  agentMapWorkspaceIdentity,
+  agentMapWorkspaceTopologyIdentity,
   agentMapWorktreeIdentity,
   agentMapWorktreeIdentityFromParts
 } from './agent-map-workspace-identity'
@@ -10,17 +16,18 @@ import { layoutAgentMapWorktreeLineage } from './agent-map-worktree-lineage-layo
 
 type DashboardCard = DashboardSnapshotTypes.DashboardCard
 type DashboardCardDotState = DashboardSnapshotTypes.DashboardCardDotState
+type DashboardWorkspace = DashboardSnapshotTypes.DashboardWorkspace
 
 export { AGENT_MAP_WORKTREE_GAP } from './agent-map-worktree-packing'
 export { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
 
 export const AGENT_MAP_AGENT_RADIUS = 20
 export const AGENT_MAP_AGGREGATE_ZOOM = 1.15
+export const AGENT_MAP_RING_HEADER_HEIGHT = 40
 
-const PROJECT_GAP = 32
-const PROJECT_PADDING = 16
+const PROJECT_PADDING = 12
 const WORLD_MARGIN = 32
-const GOLDEN_ANGLE = 2.399963229728653
+const RING_CONTENT_OFFSET = AGENT_MAP_RING_HEADER_HEIGHT / 2
 
 export type AgentMapStatusCounts = Record<DashboardCardDotState, number>
 
@@ -36,6 +43,8 @@ export type AgentMapAgentNode = {
 export type AgentMapWorktreeRing = {
   id: string
   parentId?: string
+  /** Layout-only parent chosen from agent spawn edges; does not imply workspace lineage. */
+  clusterParentId?: string
   worktreeId: string
   executionHostId: DashboardCard['executionHostId']
   name: string
@@ -73,6 +82,9 @@ export type AgentMapLayoutCache = {
 
 type LocalWorktree = Omit<AgentMapWorktreeRing, 'x' | 'y'> & { x: number; y: number }
 type LocalProject = Omit<AgentMapProjectRing, 'x' | 'y' | 'worktrees'> & {
+  x: number
+  y: number
+  clusterParentId?: string
   worktrees: LocalWorktree[]
 }
 
@@ -80,17 +92,16 @@ function compareStable(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-function stableHash(value: string): number {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
-}
-
-export function agentMapTopologyKey(cards: DashboardCard[]): string {
-  return cards.map(agentMapCardTopologyIdentity).sort(compareStable).join('|')
+export function agentMapTopologyKey(
+  cards: DashboardCard[],
+  workspaces: DashboardWorkspace[] = []
+): string {
+  return [
+    ...cards.map((card) => `a:${agentMapCardTopologyIdentity(card)}`),
+    ...workspaces.map((workspace) => `w:${agentMapWorkspaceTopologyIdentity(workspace)}`)
+  ]
+    .sort(compareStable)
+    .join('|')
 }
 
 export function shouldAggregateAgentMapWorktree(
@@ -112,56 +123,39 @@ function emptyStatusCounts(): AgentMapStatusCounts {
 
 function worktreeRadius(agentCount: number): number {
   return Math.max(
-    62,
-    34 + Math.ceil(Math.sqrt(Math.max(1, agentCount))) * (AGENT_MAP_AGENT_RADIUS + 8)
+    52,
+    24 + Math.ceil(Math.sqrt(Math.max(1, agentCount))) * (AGENT_MAP_AGENT_RADIUS + 8)
   )
 }
 
-function placeAgents(
-  worktreeId: string,
+function buildLocalWorktree(
+  id: string,
   cards: DashboardCard[],
-  radius: number,
-  now: number
-): AgentMapAgentNode[] {
-  const availableRadius = Math.max(0, radius - AGENT_MAP_AGENT_RADIUS - 10)
-  const sorted = [...cards].sort((a, b) => compareStable(a.paneKey, b.paneKey))
-  const capacity = Math.ceil(Math.sqrt(Math.max(1, sorted.length))) ** 2
-  const angleOffset = (stableHash(worktreeId) / 0xffffffff) * Math.PI * 2
-
-  return sorted.map((card, index) => {
-    const orbit = sorted.length === 1 ? 0 : Math.sqrt((index + 0.5) / capacity) * availableRadius
-    const angle = angleOffset + index * GOLDEN_ANGLE
-    return {
-      card,
-      x: Math.cos(angle) * orbit,
-      y: Math.sin(angle) * orbit,
-      radius: AGENT_MAP_AGENT_RADIUS,
-      durationMinutes: agentMapDurationMinutes(card, now),
-      status: agentMapNodeStatus(card)
-    }
-  })
-}
-
-function buildLocalWorktree(id: string, cards: DashboardCard[], now: number): LocalWorktree {
+  now: number,
+  workspace?: DashboardWorkspace
+): LocalWorktree {
   const lineageLayout = layoutAgentMapLineage(cards, AGENT_MAP_AGENT_RADIUS)
-  const radius = lineageLayout?.radius ?? worktreeRadius(cards.length)
+  const contentRadius = lineageLayout?.radius ?? worktreeRadius(cards.length)
+  const radius = contentRadius + RING_CONTENT_OFFSET
   const statusCounts = emptyStatusCounts()
   for (const card of cards) {
     statusCounts[agentMapNodeStatus(card)] += 1
   }
+  const executionHostId = workspace?.executionHostId ?? cards[0]?.executionHostId
+  const parentWorktreeId = workspace?.parentWorktreeId ?? cards[0]?.parentWorktreeId
   return {
     id,
-    parentId: cards[0]?.parentWorktreeId
-      ? agentMapWorktreeIdentityFromParts(cards[0].parentWorktreeId, cards[0].executionHostId)
+    parentId: parentWorktreeId
+      ? agentMapWorktreeIdentityFromParts(parentWorktreeId, executionHostId)
       : undefined,
-    worktreeId: cards[0]?.worktreeId ?? id,
-    executionHostId: cards[0]?.executionHostId,
-    name: cards[0]?.worktreeName ?? id,
-    workspaceKind: cards[0]?.workspaceKind ?? 'worktree',
+    worktreeId: workspace?.worktreeId ?? cards[0]?.worktreeId ?? id,
+    executionHostId,
+    name: workspace?.worktreeName ?? cards[0]?.worktreeName ?? id,
+    workspaceKind: workspace?.workspaceKind ?? cards[0]?.workspaceKind ?? 'worktree',
     x: 0,
     y: 0,
     radius,
-    agents:
+    agents: (
       lineageLayout?.agents.map(({ card, x, y }) => ({
         card,
         x,
@@ -169,13 +163,27 @@ function buildLocalWorktree(id: string, cards: DashboardCard[], now: number): Lo
         radius: AGENT_MAP_AGENT_RADIUS,
         durationMinutes: agentMapDurationMinutes(card, now),
         status: agentMapNodeStatus(card)
-      })) ?? placeAgents(id, cards, radius, now),
+      })) ??
+      placeAgentMapAgents({
+        worktreeId: id,
+        cards,
+        radius: contentRadius,
+        agentRadius: AGENT_MAP_AGENT_RADIUS,
+        now
+      })
+    ).map((agent) => ({ ...agent, y: agent.y + RING_CONTENT_OFFSET })),
     statusCounts,
     quiet: statusCounts.idle === cards.length
   }
 }
 
-function buildLocalProject(id: string, cards: DashboardCard[], now: number): LocalProject {
+function buildLocalProject(
+  id: string,
+  cards: DashboardCard[],
+  workspaces: DashboardWorkspace[],
+  cardsByPaneKey: ReadonlyMap<string, DashboardCard>,
+  now: number
+): LocalProject {
   const byWorktree = new Map<string, DashboardCard[]>()
   for (const card of cards) {
     const identity = agentMapWorktreeIdentity(card)
@@ -186,128 +194,106 @@ function buildLocalProject(id: string, cards: DashboardCard[], now: number): Loc
       byWorktree.set(identity, [card])
     }
   }
-  const worktrees = layoutAgentMapWorktreeLineage(
+  const workspacesById = new Map(
+    workspaces.map((workspace) => [agentMapWorkspaceIdentity(workspace), workspace])
+  )
+  for (const workspaceId of workspacesById.keys()) {
+    if (!byWorktree.has(workspaceId)) {
+      byWorktree.set(workspaceId, [])
+    }
+  }
+  const positionedWorktrees = layoutAgentMapWorktreeLineage(
     [...byWorktree.entries()]
       .sort(([a], [b]) => compareStable(a, b))
-      .map(([worktreeId, worktreeCards]) => buildLocalWorktree(worktreeId, worktreeCards, now))
+      .map(([worktreeId, worktreeCards]) => ({
+        ...buildLocalWorktree(worktreeId, worktreeCards, now, workspacesById.get(worktreeId)),
+        clusterParentId: selectAgentMapSpawnParentContainer(
+          worktreeCards,
+          cardsByPaneKey,
+          agentMapWorktreeIdentity
+        )
+      }))
   )
-  const radius = Math.max(
-    96,
-    ...worktrees.map(
+  const contentRadius = Math.max(
+    84,
+    ...positionedWorktrees.map(
       (worktree) => Math.hypot(worktree.x, worktree.y) + worktree.radius + PROJECT_PADDING
     )
   )
+  const worktrees = positionedWorktrees.map((worktree) => ({
+    ...worktree,
+    y: worktree.y + RING_CONTENT_OFFSET
+  }))
   return {
     id,
-    name: cards[0]?.repoName ?? id,
-    radius,
+    name: cards[0]?.repoName ?? workspaces[0]?.repoName ?? id,
+    x: 0,
+    y: 0,
+    clusterParentId: selectAgentMapSpawnParentContainer(
+      cards,
+      cardsByPaneKey,
+      (card) => card.repoId
+    ),
+    radius: contentRadius + RING_CONTENT_OFFSET,
     worktrees,
     agentCount: cards.length
   }
 }
 
-export function deriveAgentMapLayout(cards: DashboardCard[], now: number): AgentMapLayout {
-  const topologyKey = agentMapTopologyKey(cards)
-  if (cards.length === 0) {
+export function deriveAgentMapLayout(
+  cards: DashboardCard[],
+  now: number,
+  workspaces: DashboardWorkspace[] = []
+): AgentMapLayout {
+  const topologyKey = agentMapTopologyKey(cards, workspaces)
+  if (cards.length === 0 && workspaces.length === 0) {
     return { projects: [], width: 900, height: 560, topologyKey }
   }
-  const byProject = new Map<string, DashboardCard[]>()
+  const byProject = new Map<string, { cards: DashboardCard[]; workspaces: DashboardWorkspace[] }>()
   for (const card of cards) {
-    const current = byProject.get(card.repoId)
-    if (current) {
-      current.push(card)
-    } else {
-      byProject.set(card.repoId, [card])
-    }
+    const current = byProject.get(card.repoId) ?? { cards: [], workspaces: [] }
+    current.cards.push(card)
+    byProject.set(card.repoId, current)
   }
+  for (const workspace of workspaces) {
+    const current = byProject.get(workspace.repoId) ?? { cards: [], workspaces: [] }
+    current.workspaces.push(workspace)
+    byProject.set(workspace.repoId, current)
+  }
+  const cardsByPaneKey = new Map(cards.map((card) => [card.paneKey, card]))
   const localProjects = [...byProject.entries()]
     .sort(([a], [b]) => compareStable(a, b))
-    .map(([projectId, projectCards]) => buildLocalProject(projectId, projectCards, now))
-  const maxProjectRadius = Math.max(...localProjects.map((project) => project.radius))
-  const projectSpanWidth = localProjects.reduce((sum, project) => sum + project.radius * 2, 0)
-  const naturalWidth =
-    projectSpanWidth + PROJECT_GAP * (localProjects.length - 1) + WORLD_MARGIN * 2
-  const naturalHeight = maxProjectRadius * 2 + WORLD_MARGIN * 2
-  const width = Math.max(900, naturalWidth)
-  const height = Math.max(560, naturalHeight)
-  const centerY = WORLD_MARGIN + maxProjectRadius + (height - naturalHeight) / 2
-  let cursorX = WORLD_MARGIN + (width - naturalWidth) / 2
-  const projects = localProjects.map((project): AgentMapProjectRing => {
-    const centerX = cursorX + project.radius
-    cursorX += project.radius * 2 + PROJECT_GAP
+    .map(([projectId, project]) =>
+      buildLocalProject(projectId, project.cards, project.workspaces, cardsByPaneKey, now)
+    )
+  const framed = placeAgentMapProjects(localProjects, 900, 560, WORLD_MARGIN)
+  const projects = framed.projects.map((project): AgentMapProjectRing => {
     return {
       ...project,
-      x: centerX,
-      y: centerY,
       worktrees: project.worktrees.map((worktree) => ({
         ...worktree,
-        x: centerX + worktree.x,
-        y: centerY + worktree.y,
+        x: project.x + worktree.x,
+        y: project.y + worktree.y,
         agents: worktree.agents.map((agent) => ({
           ...agent,
-          x: centerX + worktree.x + agent.x,
-          y: centerY + worktree.y + agent.y
+          x: project.x + worktree.x + agent.x,
+          y: project.y + worktree.y + agent.y
         }))
       }))
     }
   })
-  return { projects, width, height, topologyKey }
-}
-
-function refreshAgentMapMetadata(
-  geometry: AgentMapLayout,
-  cards: DashboardCard[],
-  now: number
-): AgentMapLayout {
-  const cardsByPaneKey = new Map(cards.map((card) => [card.paneKey, card]))
-  const projects = geometry.projects.map((project) => {
-    let projectName = project.name
-    let agentCount = 0
-    const worktrees = project.worktrees.map((worktree) => {
-      let worktreeName = worktree.name
-      let workspaceKind = worktree.workspaceKind
-      const statusCounts = emptyStatusCounts()
-      const agents = worktree.agents.flatMap((agent) => {
-        const card = cardsByPaneKey.get(agent.card.paneKey)
-        if (!card) {
-          return []
-        }
-        projectName = card.repoName
-        worktreeName = card.worktreeName
-        workspaceKind = card.workspaceKind ?? 'worktree'
-        agentCount += 1
-        statusCounts[agentMapNodeStatus(card)] += 1
-        return [
-          {
-            ...agent,
-            card,
-            durationMinutes: agentMapDurationMinutes(card, now),
-            status: agentMapNodeStatus(card)
-          }
-        ]
-      })
-      return {
-        ...worktree,
-        name: worktreeName,
-        workspaceKind,
-        agents,
-        statusCounts,
-        quiet: statusCounts.idle === agents.length
-      }
-    })
-    return { ...project, name: projectName, worktrees, agentCount }
-  })
-  return { ...geometry, projects }
+  return { projects, width: framed.width, height: framed.height, topologyKey }
 }
 
 export function updateAgentMapLayout(
   cache: AgentMapLayoutCache | null,
   cards: DashboardCard[],
-  now: number
+  now: number,
+  workspaces: DashboardWorkspace[] = []
 ): { cache: AgentMapLayoutCache; layout: AgentMapLayout } {
-  const topologyKey = agentMapTopologyKey(cards)
+  const topologyKey = agentMapTopologyKey(cards, workspaces)
   if (!cache || cache.topologyKey !== topologyKey) {
-    const geometry = deriveAgentMapLayout(cards, now)
+    const geometry = deriveAgentMapLayout(cards, now, workspaces)
     return {
       cache: {
         topologyKey,

@@ -77,7 +77,7 @@ function layoutWithWorktreePushCount(count: number) {
 }
 
 describe('layoutAgentMapWorktreeLineage', () => {
-  it('preserves the legacy coordinates for branched and linear families', () => {
+  it('keeps branched and linear family coordinates deterministic', () => {
     const layout = layoutAgentMapWorktreeLineage([
       { id: 'root', x: 0, y: 0, radius: 40 },
       { id: 'child-a', parentId: 'root', x: 0, y: 0, radius: 30 },
@@ -92,36 +92,36 @@ describe('layoutAgentMapWorktreeLineage', () => {
         id: 'child-a',
         parentId: 'root',
         radius: 30,
-        x: -4.33242478827686,
-        y: 47.79022515386755
+        x: -7.740689238053122,
+        y: 42.47172405948656
       },
       {
         id: 'child-b',
         parentId: 'root',
         radius: 45,
-        x: 79.07393510462774,
-        y: 194.80695213220156
+        x: 69.93546272327787,
+        y: 175.54837055839306
       },
       {
         id: 'grandchild-a',
         parentId: 'child-a',
         radius: 25,
-        x: -4.33242478827686,
-        y: 144.79022515386754
+        x: -7.740689238053122,
+        y: 125.47172405948656
       },
-      { id: 'root', radius: 40, x: 21.870755158175434, y: -64.20977484613245 },
+      { id: 'root', radius: 40, x: 19.097386742612372, y: -55.52827594051344 },
       {
         id: 'second-child',
         parentId: 'second-root',
         radius: 20,
-        x: -121.42967792073006,
-        y: -79.34629927692441
+        x: -112.9872940755618,
+        y: -73.65876088400047
       },
       {
         id: 'second-root',
         radius: 35,
-        x: -121.42967792073006,
-        y: -176.3462992769244
+        x: -112.9872940755618,
+        y: -156.65876088400046
       }
     ])
   })
@@ -200,5 +200,24 @@ describe('layoutAgentMapWorktreeLineage', () => {
       }
     }
     expect(minimumGap).toBeGreaterThanOrEqual(AGENT_MAP_WORKTREE_GAP)
+  })
+
+  it('packs high-fanout spawn clusters without forcing every workspace below the coordinator', () => {
+    const layout = layoutAgentMapWorktreeLineage([
+      { id: 'parent', x: 0, y: 0, radius: 32 },
+      ...Array.from({ length: 13 }, (_, index) => ({
+        id: `child-${index.toString().padStart(2, '0')}`,
+        clusterParentId: 'parent',
+        x: 0,
+        y: 0,
+        radius: 24
+      }))
+    ])
+    const parent = layout.find((worktree) => worktree.id === 'parent')!
+    const children = layout.filter(
+      (worktree) => 'clusterParentId' in worktree && worktree.clusterParentId === 'parent'
+    )
+
+    expect(children.some((child) => child.y <= parent.y)).toBe(true)
   })
 })

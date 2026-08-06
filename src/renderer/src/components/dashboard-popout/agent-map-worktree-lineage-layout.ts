@@ -1,11 +1,13 @@
 import { AGENT_MAP_WORKTREE_GAP, packAgentMapWorktrees } from './agent-map-worktree-packing'
 
-const LINEAGE_VERTICAL_GAP = 42
+const LINEAGE_VERTICAL_GAP = 28
+const MAX_HIERARCHICAL_CLUSTER_FANOUT = 12
 const MAX_EXACT_LINEAGE_WORKTREES = 256
 
 type LineageWorktree = {
   id: string
   parentId?: string
+  clusterParentId?: string
   x: number
   y: number
   radius: number
@@ -219,10 +221,24 @@ function layoutBoundedLineage<T extends LineageWorktree>(
 export function layoutAgentMapWorktreeLineage<T extends LineageWorktree>(worktrees: T[]): T[] {
   const sorted = [...worktrees].sort((a, b) => compareStable(a.id, b.id))
   const worktreesById = new Map(sorted.map((worktree) => [worktree.id, worktree]))
+  const clusterChildCounts = new Map<string, number>()
+  for (const worktree of sorted) {
+    if (worktree.clusterParentId && worktreesById.has(worktree.clusterParentId)) {
+      clusterChildCounts.set(
+        worktree.clusterParentId,
+        (clusterChildCounts.get(worktree.clusterParentId) ?? 0) + 1
+      )
+    }
+  }
   const childrenByParent = new Map<string, T[]>()
   const childIds = new Set<string>()
   for (const worktree of sorted) {
-    const parentId = worktree.parentId
+    const clusterParentId = worktree.clusterParentId
+    const parentId =
+      clusterParentId &&
+      (clusterChildCounts.get(clusterParentId) ?? 0) <= MAX_HIERARCHICAL_CLUSTER_FANOUT
+        ? clusterParentId
+        : worktree.parentId
     if (!parentId || parentId === worktree.id || !worktreesById.has(parentId)) {
       continue
     }

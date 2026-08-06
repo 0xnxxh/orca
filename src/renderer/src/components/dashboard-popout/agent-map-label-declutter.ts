@@ -14,6 +14,7 @@ const PROJECT_LABEL_ICON_PX = 16
 /** Local-unit breathing room so two labels never appear to touch. */
 const LABEL_GAP_X_PX = 3
 const LABEL_GAP_Y_PX = 1
+const AGENT_LABEL_CLEARANCE_PX = 3
 /** Baselines the scene renders at, relative to each label group's origin. */
 const WORKTREE_LABEL_BASELINE = 18
 const COUNT_BASELINE = 32
@@ -37,6 +38,8 @@ type LabelGrid = Map<number, Map<number, LabelBox[]>>
 export type AgentMapVisibleLabels = {
   /** Worktree ring ids whose name can render without colliding. */
   worktreeIds: Set<string>
+  /** Worktree names that hover/focus may reveal without covering an agent. */
+  worktreeAgentSafeIds: Set<string>
   /** Project ids whose agent/workspace count line still has room. The count is
    *  the first thing dropped: it repeats what the filter rail already says. */
   projectCountIds: Set<string>
@@ -44,6 +47,14 @@ export type AgentMapVisibleLabels = {
 
 function textWidth(text: string, fontPx: number, ratio = GLYPH_WIDTH_RATIO): number {
   return text.length * fontPx * ratio
+}
+
+export function agentMapWorktreeLabelWidth(text: string): number {
+  return textWidth(text, WORKTREE_LABEL_FONT_PX)
+}
+
+export function agentMapCountLabelWidth(text: string): number {
+  return textWidth(text, COUNT_FONT_PX)
 }
 
 function boxesOverlap(a: LabelBox, b: LabelBox): boolean {
@@ -149,6 +160,26 @@ function compareStable(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+function addAgentExclusionBoxes(grid: LabelGrid, layout: AgentMapLayout, mapScale: number): void {
+  const clearance = AGENT_LABEL_CLEARANCE_PX / Math.max(mapScale, 0.001)
+  for (const project of layout.projects) {
+    for (const worktree of project.worktrees) {
+      for (const agent of worktree.agents) {
+        if (!agent) {
+          continue
+        }
+        const radius = agent.radius + clearance
+        addBox(grid, {
+          left: agent.x - radius,
+          right: agent.x + radius,
+          top: agent.y - radius,
+          bottom: agent.y + radius
+        })
+      }
+    }
+  }
+}
+
 /**
  * Picks the labels that can render without stacking on each other. Labels draw
  * at a fixed screen size, so which ones fit depends on zoom but never on pan —
@@ -161,7 +192,10 @@ export function selectVisibleAgentMapLabels(
   labelScale: number,
   mapScale: number
 ): AgentMapVisibleLabels {
+  const agentGrid: LabelGrid = new Map()
+  addAgentExclusionBoxes(agentGrid, layout, mapScale)
   const grid: LabelGrid = new Map()
+  addAgentExclusionBoxes(grid, layout, mapScale)
   for (const project of layout.projects) {
     const name = project.name.toUpperCase()
     addBox(
@@ -195,6 +229,7 @@ export function selectVisibleAgentMapLabels(
   })
 
   const worktreeIds = new Set<string>()
+  const worktreeAgentSafeIds = new Set<string>()
   for (const worktree of candidates.slice(0, MAX_LABEL_CANDIDATES)) {
     const box = baselineBox(
       worktree.x,
@@ -204,6 +239,10 @@ export function selectVisibleAgentMapLabels(
       WORKTREE_LABEL_FONT_PX,
       WORKTREE_LABEL_BASELINE
     )
+    if (collides(agentGrid, box)) {
+      continue
+    }
+    worktreeAgentSafeIds.add(worktree.id)
     if (collides(grid, box)) {
       continue
     }
@@ -230,5 +269,5 @@ export function selectVisibleAgentMapLabels(
     projectCountIds.add(project.id)
   }
 
-  return { worktreeIds, projectCountIds }
+  return { worktreeIds, worktreeAgentSafeIds, projectCountIds }
 }

@@ -56,11 +56,14 @@ export function registerDashboardPopoutHandlers(
     }
   })
 
-  ipcMain.handle('dashboardPopout:open', (event): void => {
+  ipcMain.handle('dashboardPopout:open', (event, view: unknown): void => {
     if (!isTrustedUIRenderer(event.sender) || !isDashboardEnabled(store)) {
       return
     }
-    createOrFocusDashboardPopout(store, undefined, {
+    if (view !== undefined && view !== 'board' && view !== 'map') {
+      return
+    }
+    createOrFocusDashboardPopout(store, view, {
       getKeybindings: () => keybindings?.getOverrides()
     })
   })

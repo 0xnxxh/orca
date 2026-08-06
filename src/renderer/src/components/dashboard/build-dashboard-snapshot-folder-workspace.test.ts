@@ -116,6 +116,17 @@ describe('buildDashboardSnapshot folder workspaces', () => {
     expect(snapshot.filterOptions?.projects).toEqual([
       { id: 'folder-workspace:group-1', label: 'Documentation' }
     ])
+    expect(snapshot.workspaces).toEqual([
+      expect.objectContaining({
+        repoId: 'folder-workspace:group-1',
+        worktreeId: WORKSPACE_ID,
+        repoName: 'Documentation',
+        worktreeName: 'Docs workspace',
+        workspaceKind: 'folder',
+        hostKind: 'ssh',
+        executionHostId: 'ssh:ssh-1'
+      })
+    ])
   })
 
   it('classifies a folder workspace from its own runtime host stamp', () => {

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardWorkspace } from '../../../../shared/dashboard-snapshot'
 import {
   deriveAgentMapLayout,
   AGENT_MAP_AGENT_RADIUS,
+  AGENT_MAP_RING_HEADER_HEIGHT,
   AGENT_MAP_WORKTREE_GAP,
   agentMapDurationMinutes,
   agentMapNodeStatus,
@@ -46,7 +47,39 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
   }
 }
 
+function workspace(overrides: Partial<DashboardWorkspace> = {}): DashboardWorkspace {
+  return {
+    repoId: 'repo-1',
+    worktreeId: 'empty-worktree',
+    repoName: 'Orca',
+    worktreeName: 'Empty worktree',
+    hostKind: 'local',
+    executionHostId: 'local',
+    workspaceKind: 'worktree',
+    ...overrides
+  }
+}
+
 describe('agent map layout', () => {
+  it('lays out agentless workspaces and preserves their workspace lineage', () => {
+    const layout = deriveAgentMapLayout([], NOW, [
+      workspace({ worktreeId: 'parent', worktreeName: 'Parent' }),
+      workspace({
+        worktreeId: 'child',
+        worktreeName: 'Child',
+        parentWorktreeId: 'parent'
+      })
+    ])
+    const project = layout.projects[0]
+    const parent = project.worktrees.find((item) => item.worktreeId === 'parent')!
+    const child = project.worktrees.find((item) => item.worktreeId === 'child')!
+
+    expect(project.agentCount).toBe(0)
+    expect(parent.agents).toEqual([])
+    expect(child.parentId).toBe(parent.id)
+    expect(child.y).toBeGreaterThan(parent.y)
+  })
+
   it('derives project containment, workspace containment, and every agent node', () => {
     const cards = [
       card({ paneKey: 'a', repoId: 'repo-a', worktreeId: 'wt-a' }),
@@ -109,6 +142,35 @@ describe('agent map layout', () => {
     )
   })
 
+  it('reserves project and workspace header bands above dense ring contents', () => {
+    const layout = deriveAgentMapLayout(
+      Array.from({ length: 24 }, (_unused, index) =>
+        card({ paneKey: `dense-${index.toString().padStart(2, '0')}` })
+      ),
+      NOW
+    )
+    const project = layout.projects[0]
+    const worktree = project.worktrees[0]
+    const projectTop = project.y - project.radius
+    const worktreeTop = worktree.y - worktree.radius
+    const agentTop = Math.min(...worktree.agents.map((agent) => agent.y - agent.radius))
+
+    expect(worktreeTop - projectTop).toBeGreaterThanOrEqual(AGENT_MAP_RING_HEADER_HEIGHT)
+    expect(agentTop - worktreeTop).toBeGreaterThanOrEqual(AGENT_MAP_RING_HEADER_HEIGHT)
+  })
+
+  it('keeps sparse project and workspace rings compact around their header bands', () => {
+    const single = deriveAgentMapLayout([card()], NOW).projects[0]
+    const four = deriveAgentMapLayout(
+      Array.from({ length: 4 }, (_unused, index) => card({ paneKey: `agent-${index}` })),
+      NOW
+    ).projects[0]
+
+    expect(single.worktrees[0].radius).toBeLessThanOrEqual(72)
+    expect(single.radius).toBeLessThanOrEqual(104)
+    expect(four.worktrees[0].radius).toBeLessThanOrEqual(100)
+  })
+
   it.each([
     ['single', [card()]],
     [
@@ -131,7 +193,7 @@ describe('agent map layout', () => {
     expect((top + bottom) / 2).toBeCloseTo(layout.height / 2)
   })
 
-  it('places orchestrated descendants beneath their direct parent inside the workspace', () => {
+  it('places spawned descendants beneath their direct parent inside the workspace', () => {
     const layout = deriveAgentMapLayout(
       [
         card({ paneKey: 'parent' }),
@@ -158,7 +220,7 @@ describe('agent map layout', () => {
     }
   })
 
-  it('packs high-fanout orchestrated children into a compact deterministic cluster', () => {
+  it('packs high-fanout spawned children into a compact deterministic cluster', () => {
     const cards = [
       card({ paneKey: 'parent' }),
       ...Array.from({ length: 29 }, (_, index) =>
@@ -233,6 +295,57 @@ describe('agent map layout', () => {
     }
   })
 
+  it('clusters cross-worktree spawned agents without inventing workspace lineage', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({ paneKey: 'parent', worktreeId: 'parent-worktree' }),
+        card({
+          paneKey: 'child',
+          worktreeId: 'child-worktree',
+          parentPaneKey: 'parent'
+        }),
+        card({ paneKey: 'unrelated', worktreeId: 'unrelated-worktree' })
+      ],
+      NOW
+    )
+    const worktrees = new Map(
+      layout.projects[0].worktrees.map((worktree) => [worktree.worktreeId, worktree])
+    )
+    const parent = worktrees.get('parent-worktree')!
+    const child = worktrees.get('child-worktree')!
+
+    expect(child.clusterParentId).toBe(parent.id)
+    expect(child.parentId).toBeUndefined()
+    expect(child.y).toBeGreaterThan(parent.y)
+    expect(Math.hypot(child.x - parent.x, child.y - parent.y)).toBeLessThan(
+      child.radius + parent.radius + 100
+    )
+  })
+
+  it('clusters spawned agents whose parent is in another project', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({ paneKey: 'parent', repoId: 'repo-parent', worktreeId: 'parent-worktree' }),
+        card({
+          paneKey: 'child',
+          repoId: 'repo-child',
+          worktreeId: 'child-worktree',
+          parentPaneKey: 'parent'
+        }),
+        card({ paneKey: 'unrelated', repoId: 'repo-unrelated', worktreeId: 'unrelated-worktree' })
+      ],
+      NOW
+    )
+    const projects = new Map(layout.projects.map((project) => [project.id, project]))
+    const parent = projects.get('repo-parent')!
+    const child = projects.get('repo-child')!
+
+    expect(child.y).toBeGreaterThan(parent.y)
+    expect(Math.hypot(child.x - parent.x, child.y - parent.y)).toBeLessThan(
+      child.radius + parent.radius + 100
+    )
+  })
+
   it('repacks cached geometry when a worktree parent changes', () => {
     const cards = [
       card({ paneKey: 'parent-a', worktreeId: 'parent-a' }),
@@ -254,7 +367,7 @@ describe('agent map layout', () => {
     expect(updated.cache.packingGeneration).toBe(2)
   })
 
-  it('repacks cached geometry when an orchestration parent changes', () => {
+  it('repacks cached geometry when a spawn parent changes', () => {
     const cards = [
       card({ paneKey: 'parent-a' }),
       card({ paneKey: 'parent-b' }),
@@ -437,7 +550,7 @@ describe('agent map layout', () => {
     expect(minimumDistance).toBeGreaterThanOrEqual(AGENT_MAP_AGENT_RADIUS * 2)
   })
 
-  it('keeps deeply nested orchestration finite without recursive stack growth', () => {
+  it('keeps deeply nested spawn lineage finite without recursive stack growth', () => {
     const layout = deriveAgentMapLayout(
       Array.from({ length: 5_000 }, (_, index) =>
         card({
@@ -461,7 +574,7 @@ describe('agent map layout', () => {
     }
   })
 
-  it('wraps very large orchestration fanout without overlap', () => {
+  it('wraps very large spawn fanout without overlap', () => {
     const layout = deriveAgentMapLayout(
       [
         card({ paneKey: 'parent' }),

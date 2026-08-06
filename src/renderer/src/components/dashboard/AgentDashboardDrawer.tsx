@@ -62,6 +62,11 @@ function AgentDashboardDrawerBody({
     void window.api.dashboard.openPopout?.()
   }, [onClose])
 
+  const handleOpenMap = useCallback(() => {
+    onClose()
+    void window.api.dashboard.openPopout?.('map')
+  }, [onClose])
+
   return (
     <AgentKanbanBoard
       snapshot={snapshot}
@@ -73,8 +78,7 @@ function AgentDashboardDrawerBody({
       onRevealAgent={handleRevealAgent}
       onSpawnAgent={launchDashboardAgent}
       onClose={onClose}
-      workspaceContextMenusEnabled
-      onWorkspaceContextMenuOpenChange={onMenuOpenChange}
+      onOpenMap={handleOpenMap}
       headerActions={
         <AgentDashboardSettingsMenu
           onSwitchToPopout={handleSwitchToPopout}

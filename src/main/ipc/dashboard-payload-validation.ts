@@ -14,12 +14,16 @@ import {
   AGENT_TYPE_MAX_LENGTH
 } from '../../shared/agent-status-types'
 import { isDashboardLaunchOptions } from './dashboard-agent-launch-validation'
+import {
+  admitDashboardWorkspaces,
+  isDashboardWorkspaceList
+} from './dashboard-workspace-payload-validation'
+import { isDashboardFilterOptions } from './dashboard-filter-payload-validation'
 export { isDashboardSpawnAgentArgs } from './dashboard-agent-launch-validation'
 
 const MAX_DASHBOARD_CARDS = 1_000
 const MAX_DASHBOARD_SUBAGENTS = 100
 const MAX_DASHBOARD_REPO_ICONS = 500
-const MAX_DASHBOARD_FILTER_OPTIONS = 500
 // Why: sanitizing an image icon base64-decodes the whole data URI to read a
 // 24-byte header, and the renderer republishes the same icons every 250 ms.
 const MAX_CACHED_ICON_SRC_BYTES = 8 * 1024 * 1024
@@ -101,6 +105,7 @@ export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot 
     Array.isArray(snapshot.cards) &&
     snapshot.cards.length <= MAX_DASHBOARD_CARDS &&
     snapshot.cards.every(isDashboardCard) &&
+    isDashboardWorkspaceList(snapshot.workspaces) &&
     (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean') &&
     isDashboardFilterOptions(snapshot.filterOptions) &&
     isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) &&
@@ -126,10 +131,12 @@ export function admitDashboardSnapshot(value: unknown): DashboardSnapshotAdmissi
     return null
   }
   const snapshot = value as Record<string, unknown>
+  const workspaces = admitDashboardWorkspaces(snapshot.workspaces)
   if (
     !isFiniteNumber(snapshot.generatedAt) ||
     !Array.isArray(snapshot.cards) ||
     snapshot.cards.length > MAX_DASHBOARD_CARDS ||
+    workspaces === null ||
     (snapshot.showIdle !== undefined && typeof snapshot.showIdle !== 'boolean') ||
     !isDashboardFilterOptions(snapshot.filterOptions) ||
     !isDashboardLaunchOptions(snapshot.launchableAgentsByWorktreeId) ||
@@ -139,41 +146,13 @@ export function admitDashboardSnapshot(value: unknown): DashboardSnapshotAdmissi
   }
   const cards = snapshot.cards.filter(isDashboardCard)
   return {
-    snapshot: { ...(snapshot as unknown as DashboardSnapshot), cards },
+    snapshot: {
+      ...(snapshot as unknown as DashboardSnapshot),
+      cards,
+      ...(workspaces ? { workspaces } : {})
+    },
     droppedCardCount: snapshot.cards.length - cards.length
   }
-}
-
-function isDashboardFilterOptions(value: unknown): boolean {
-  if (value === undefined) {
-    return true
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false
-  }
-  const options = value as Record<string, unknown>
-  return (
-    isDashboardFilterOptionList(options.projects) &&
-    isDashboardFilterOptionList(options.workspaceStatuses)
-  )
-}
-
-function isDashboardFilterOptionList(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length <= MAX_DASHBOARD_FILTER_OPTIONS &&
-    value.every((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-        return false
-      }
-      const option = entry as Record<string, unknown>
-      return (
-        isBoundedString(option.id, MAX_ID_LENGTH) &&
-        isBoundedString(option.label, MAX_LABEL_LENGTH, true) &&
-        isOptionalBoundedString(option.color, MAX_ID_LENGTH)
-      )
-    })
-  )
 }
 
 /** Repo icons reach the pop-out's `<img src>`, so each one must survive the

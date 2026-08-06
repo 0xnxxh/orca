@@ -8,11 +8,14 @@ import { resolve } from 'node:path'
 import type {
   DashboardCard,
   DashboardFilterOptions,
-  DashboardSnapshot
+  DashboardSnapshot,
+  DashboardWorkspace
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { i18n } from '@/i18n/i18n'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
+
+const MAP_LOAD_TIMEOUT = { timeout: 5_000 }
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
 // machinery while still exercising the board-owned dialog wiring.
@@ -92,12 +95,26 @@ function card(overrides: Partial<DashboardCard>): DashboardCard {
   }
 }
 
+function workspace(overrides: Partial<DashboardWorkspace> = {}): DashboardWorkspace {
+  return {
+    repoId: 'r1',
+    worktreeId: 'w1',
+    repoName: 'Repo',
+    worktreeName: 'wt',
+    hostKind: 'local',
+    executionHostId: 'local',
+    workspaceKind: 'worktree',
+    ...overrides
+  }
+}
+
 function renderBoard(
   cards: DashboardCard[],
   options: {
     showIdle?: boolean
     repoIconsByRepoId?: Record<string, RepoIcon | null>
     filterOptions?: DashboardFilterOptions
+    workspaces?: DashboardWorkspace[]
   } = {}
 ): void {
   const snapshot: DashboardSnapshot = { generatedAt: 1, cards, ...options }
@@ -110,6 +127,10 @@ describe('AgentKanbanBoard', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en')
     localStorage.clear()
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
     // The board relays seen-acks through the dashboard preload API.
     ;(window as unknown as { api: unknown }).api = { dashboard: { ackAgent } }
   })
@@ -118,6 +139,7 @@ describe('AgentKanbanBoard', () => {
     vi.useRealTimers()
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('renders the three default columns in order', () => {
@@ -133,15 +155,17 @@ describe('AgentKanbanBoard', () => {
     )
 
     expect(source).toContain("import { lazyWithRetry } from '@/lib/lazy-with-retry'")
-    expect(source).toMatch(/lazyWithRetry\(\s*\(\) => import\('\.\/AgentMap'\)/)
-    expect(source).not.toMatch(/import\s+(?:\{[^}]*\}|\w+)\s+from\s+['"]\.\/AgentMap['"]/)
+    expect(source).toMatch(/import\('\.\/AgentDashboardMapView'\)/)
+    expect(source).not.toMatch(/from\s+['"]\.\/(?:AgentMap|useAgentMap|agent-map-)/)
   })
 
   it('keeps the dashboard and map available as separate views', async () => {
     renderBoard([])
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    expect(await screen.findByText('0 of 0 agents shown')).toBeInTheDocument()
+    expect(
+      await screen.findByText('0 of 0 agents shown', undefined, MAP_LOAD_TIMEOUT)
+    ).toBeInTheDocument()
     expect(screen.queryByText('Live containment map')).not.toBeInTheDocument()
     // The map has no rail of its own; its filters live in the shared toolbar.
     expect(screen.queryByRole('complementary', { name: 'Map filters' })).not.toBeInTheDocument()
@@ -165,7 +189,9 @@ describe('AgentKanbanBoard', () => {
       })
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    expect(await screen.findByText('2 of 2 agents shown')).toBeInTheDocument()
+    expect(
+      await screen.findByText('2 of 2 agents shown', undefined, MAP_LOAD_TIMEOUT)
+    ).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
     fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /Working/ }))
@@ -190,15 +216,58 @@ describe('AgentKanbanBoard', () => {
     expect(await screen.findByText('Agent states')).toBeInTheDocument()
   })
 
+  it('toggles workspaces without agents from the shared map filter', async () => {
+    renderBoard([card({ paneKey: 'busy' })], {
+      workspaces: [workspace(), workspace({ worktreeId: 'empty', worktreeName: 'Empty child' })]
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+
+    expect(
+      screen.queryByRole('button', { name: 'Open Empty child worktree details' })
+    ).not.toBeInTheDocument()
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+    const workspaceToggle = await screen.findByRole('menuitemcheckbox', {
+      name: /Workspaces without agents/
+    })
+    fireEvent.click(workspaceToggle)
+
+    expect(workspaceToggle).toHaveAttribute('aria-checked', 'true')
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+
+    expect(
+      await screen.findByRole(
+        'button',
+        { name: 'Open Empty child worktree details' },
+        MAP_LOAD_TIMEOUT
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByText('Workspaces without agents')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(
+      screen.queryByRole('button', { name: 'Open Empty child worktree details' })
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps the selected map visible beside its terminal panel', async () => {
     const agent = card({ paneKey: 'map-agent', conversationName: 'Map agent' })
     render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }, MAP_LOAD_TIMEOUT))
 
     expect(screen.getByLabelText('Nested project, workspace, and agent map')).toBeInTheDocument()
-    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+    const terminalPanel = screen.getByTestId('terminal-panel')
+    expect(terminalPanel).toHaveAttribute('data-pty-id', 'p1')
+    expect(terminalPanel.parentElement).toHaveClass('flex-row-reverse')
+    expect(
+      screen.getByLabelText('Nested project, workspace, and agent map').closest('section')
+    ).toHaveClass('w-1/2', 'flex-none')
     expect(screen.getByRole('button', { name: /Map agent/ })).toHaveClass('is-selected')
+    expect(screen.getByRole('button', { name: /Map agent/ })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByText('200%')).toBeInTheDocument()
     expect(screen.queryByText('Map filters')).not.toBeInTheDocument()
     expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
   })
@@ -207,7 +276,7 @@ describe('AgentKanbanBoard', () => {
     const agent = card({ paneKey: 'map-agent', conversationName: 'Map agent' })
     render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Map agent/ }, MAP_LOAD_TIMEOUT))
     expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
     expect(screen.getByTestId('terminal-panel')).toBeInTheDocument()
@@ -446,7 +515,9 @@ describe('AgentKanbanBoard', () => {
       <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh] }} initialView="map" />
     )
 
-    expect(await screen.findByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: /Fresh result/ }, MAP_LOAD_TIMEOUT)
+    ).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
     expect(ackAgent).toHaveBeenCalledWith('fresh-result')
 

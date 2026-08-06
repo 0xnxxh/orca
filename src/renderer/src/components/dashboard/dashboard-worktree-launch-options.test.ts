@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DASHBOARD_MAX_LAUNCH_WORKTREES } from '../../../../shared/dashboard-snapshot'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardWorkspace } from '../../../../shared/dashboard-snapshot'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import { buildDashboardWorktreeLaunchOptions } from './dashboard-worktree-launch-options'
 
@@ -69,6 +69,25 @@ describe('buildDashboardWorktreeLaunchOptions', () => {
     )
 
     expect(options).toEqual({ 'worktree-1': ['codex', 'gemini'] })
+  })
+
+  it('publishes detected launch choices for workspaces without cards', () => {
+    const workspace: DashboardWorkspace = {
+      repoId: 'repo-1',
+      worktreeId: 'empty-worktree',
+      repoName: 'Orca',
+      worktreeName: 'Empty',
+      hostKind: 'local',
+      executionHostId: 'local',
+      workspaceKind: 'worktree'
+    }
+    const options = buildDashboardWorktreeLaunchOptions(
+      state({ detectedAgentIds: ['claude', 'codex'] }),
+      [],
+      [workspace]
+    )
+
+    expect(options).toEqual({ 'empty-worktree': ['claude', 'codex'] })
   })
 
   it('uses each git workspace execution host instead of local detection', () => {

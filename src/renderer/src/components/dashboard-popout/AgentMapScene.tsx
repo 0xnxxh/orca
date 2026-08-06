@@ -1,4 +1,4 @@
-import { memo, useMemo, type MutableRefObject } from 'react'
+import { memo, useCallback, useMemo, useState, type MutableRefObject } from 'react'
 import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard, DashboardSpawnAgentArgs } from '../../../../shared/dashboard-snapshot'
@@ -10,7 +10,9 @@ import type {
   AgentMapProjectRing,
   AgentMapWorktreeRing
 } from './agent-map-layout'
+import { shouldAggregateAgentMapWorktree } from './agent-map-layout'
 import { selectVisibleAgentMapLabels } from './agent-map-label-declutter'
+import { AgentMapWorktreeLabel } from './AgentMapWorktreeLabel'
 import { AgentMapWorktreeRingNode } from './AgentMapWorktreeRingNode'
 
 type AgentMapSceneProps = {
@@ -23,7 +25,7 @@ type AgentMapSceneProps = {
   allowAggregation: boolean
   launchableAgentsByWorktreeId?: Record<string, TuiAgent[]>
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
-  onSelectAgent: (card: DashboardCard, side: 'left' | 'right') => void
+  onSelectAgent: (card: DashboardCard) => void
   onSpawnAgent?: (args: DashboardSpawnAgentArgs) => void
   onOpenProjectContextMenu?: (
     event: React.MouseEvent<SVGCircleElement>,
@@ -43,6 +45,23 @@ function worktreeLineagePath(parent: AgentMapWorktreeRing, child: AgentMapWorktr
   return `M ${parent.x} ${startY} C ${parent.x} ${branchY} ${child.x} ${branchY} ${child.x} ${endY}`
 }
 
+type VisibleAgentLocation = {
+  agent: AgentMapAgentNode
+  worktreeId: string
+}
+
+function agentLineagePath(parent: AgentMapAgentNode, child: AgentMapAgentNode): string {
+  const dx = child.x - parent.x
+  const dy = child.y - parent.y
+  const distance = Math.hypot(dx, dy)
+  if (distance === 0) {
+    return `M ${parent.x} ${parent.y}`
+  }
+  const unitX = dx / distance
+  const unitY = dy / distance
+  return `M ${parent.x + unitX * parent.radius} ${parent.y + unitY * parent.radius} L ${child.x - unitX * child.radius} ${child.y - unitY * child.radius}`
+}
+
 /** Memoization keeps pointer panning to one SVG viewBox write, not a map rerender. */
 export const AgentMapScene = memo(function AgentMapScene({
   layout,
@@ -60,14 +79,52 @@ export const AgentMapScene = memo(function AgentMapScene({
   onOpenWorkspaceContextMenu,
   onAgentKeyDown
 }: AgentMapSceneProps): React.JSX.Element {
+  const [activeWorktreeId, setActiveWorktreeId] = useState<string | null>(null)
+  const handleLabelActiveChange = useCallback((worktreeId: string, active: boolean): void => {
+    setActiveWorktreeId((current) =>
+      active ? worktreeId : current === worktreeId ? null : current
+    )
+  }, [])
   const visibleLabels = useMemo(
     () => selectVisibleAgentMapLabels(layout, labelScale, mapScale),
     [labelScale, layout, mapScale]
   )
+  const visibleAgentsByPaneKey = useMemo(() => {
+    const agents = new Map<string, VisibleAgentLocation>()
+    for (const project of layout.projects) {
+      for (const worktree of project.worktrees) {
+        const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
+        if (!selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)) {
+          continue
+        }
+        for (const agent of worktree.agents) {
+          agents.set(agent.card.paneKey, { agent, worktreeId: worktree.id })
+        }
+      }
+    }
+    return agents
+  }, [allowAggregation, layout, selectedPaneKey, zoom])
   return (
     <>
       {layout.projects.map((project) => {
         const worktreesById = new Map(project.worktrees.map((worktree) => [worktree.id, worktree]))
+        const projectLabelHalfWidth = project.radius * mapScale
+        const projectCountText = translate(
+          'dashboardPopout.map.projectCount',
+          '{{agents}} agents · {{workspaces}} workspaces',
+          { agents: project.agentCount, workspaces: project.worktrees.length }
+        ).toUpperCase()
+        const crossWorktreeLineage = project.worktrees.flatMap((worktree) =>
+          worktree.agents.flatMap((child) => {
+            const parent = child.card.parentPaneKey
+              ? visibleAgentsByPaneKey.get(child.card.parentPaneKey)
+              : undefined
+            const childLocation = visibleAgentsByPaneKey.get(child.card.paneKey)
+            return parent && childLocation && parent.worktreeId !== childLocation.worktreeId
+              ? [{ parent: parent.agent, child }]
+              : []
+          })
+        )
         return (
           <g key={project.id}>
             <circle
@@ -86,35 +143,6 @@ export const AgentMapScene = memo(function AgentMapScene({
                   : undefined
               }
             />
-            <g
-              transform={`translate(${project.x} ${project.y - project.radius}) scale(${labelScale})`}
-            >
-              <foreignObject
-                className="agent-map-project-label-frame"
-                x={-project.radius}
-                y={3}
-                width={project.radius * 2}
-                height={18}
-              >
-                <div className="agent-map-project-label">
-                  <RepoIconGlyph
-                    repoIcon={repoIconsByRepoId?.[project.id] ?? null}
-                    className="size-3 shrink-0"
-                    iconClassName="size-3"
-                  />
-                  <span className="shrink-0">{project.name.toUpperCase()}</span>
-                </div>
-              </foreignObject>
-              {visibleLabels.projectCountIds.has(project.id) ? (
-                <text className="agent-map-project-count" y={32}>
-                  {translate(
-                    'dashboardPopout.map.projectCount',
-                    '{{agents}} agents · {{workspaces}} workspaces',
-                    { agents: project.agentCount, workspaces: project.worktrees.length }
-                  ).toUpperCase()}
-                </text>
-              ) : null}
-            </g>
             <g className="agent-map-worktree-lineage-links" aria-hidden>
               {project.worktrees.map((child) => {
                 const parent = child.parentId ? worktreesById.get(child.parentId) : undefined
@@ -130,25 +158,79 @@ export const AgentMapScene = memo(function AgentMapScene({
                 )
               })}
             </g>
+            <g className="agent-map-lineage-links" aria-hidden>
+              {crossWorktreeLineage.map(({ parent, child }) => (
+                <path
+                  key={child.card.paneKey}
+                  className="agent-map-lineage-link is-cross-worktree"
+                  data-agent-map-lineage-link=""
+                  data-agent-map-cross-worktree-lineage-link=""
+                  data-parent-pane-key={parent.card.paneKey}
+                  data-child-pane-key={child.card.paneKey}
+                  d={agentLineagePath(parent, child)}
+                />
+              ))}
+            </g>
             {project.worktrees.map((worktree) => (
               <AgentMapWorktreeRingNode
                 key={worktree.id}
                 project={project}
                 worktree={worktree}
                 zoom={zoom}
-                labelScale={labelScale}
                 mapScale={mapScale}
                 selectedPaneKey={selectedPaneKey}
                 allowAggregation={allowAggregation}
-                labelVisible={visibleLabels.worktreeIds.has(worktree.id)}
                 launchableAgents={launchableAgentsByWorktreeId?.[worktree.worktreeId]}
                 nodeRefs={nodeRefs}
                 onSelectAgent={onSelectAgent}
                 onSpawnAgent={onSpawnAgent}
                 onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
+                onLabelActiveChange={handleLabelActiveChange}
                 onAgentKeyDown={onAgentKeyDown}
               />
             ))}
+            <g className="agent-map-worktree-label-layer">
+              {project.worktrees.map((worktree) => (
+                <AgentMapWorktreeLabel
+                  key={worktree.id}
+                  worktree={worktree}
+                  visible={visibleLabels.worktreeIds.has(worktree.id)}
+                  active={
+                    activeWorktreeId === worktree.id &&
+                    visibleLabels.worktreeAgentSafeIds.has(worktree.id)
+                  }
+                  labelScale={labelScale}
+                  mapScale={mapScale}
+                />
+              ))}
+            </g>
+            <g
+              transform={`translate(${project.x} ${project.y - project.radius}) scale(${labelScale})`}
+            >
+              <foreignObject
+                className="agent-map-project-label-frame"
+                x={-projectLabelHalfWidth}
+                y={3}
+                width={projectLabelHalfWidth * 2}
+                height={18}
+              >
+                <div className="agent-map-project-label">
+                  <RepoIconGlyph
+                    repoIcon={repoIconsByRepoId?.[project.id] ?? null}
+                    className="size-3 shrink-0"
+                    iconClassName="size-3"
+                  />
+                  <span className="agent-map-project-name min-w-0 truncate">
+                    {project.name.toUpperCase()}
+                  </span>
+                </div>
+              </foreignObject>
+              {visibleLabels.projectCountIds.has(project.id) ? (
+                <text className="agent-map-project-count" y={32}>
+                  {projectCountText}
+                </text>
+              ) : null}
+            </g>
           </g>
         )
       })}
