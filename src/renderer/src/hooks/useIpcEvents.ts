@@ -3286,8 +3286,7 @@ export function useIpcEvents(): void {
         observeAgentHookCompletionForNotification({
           paneKey,
           worktreeId: statusWorktreeId,
-          payload: notificationPayload,
-          ...(data.hookEventName ? { hookEventName: data.hookEventName } : {})
+          payload: notificationPayload
         })
       }
       return 'applied'

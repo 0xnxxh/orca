@@ -60,7 +60,13 @@ export function countActivityUnread(
         }
       }
     }
-    if (isUnreadAgentState(entry.state) && ackAt < entry.stateStartedAt) {
+    // Why: a session-boundary done is an idle connect (STA-3386), not an event to read;
+    // history never contains one (the status slice skips the push), so only the live entry needs the gate.
+    if (
+      isUnreadAgentState(entry.state) &&
+      entry.sessionBoundary !== true &&
+      ackAt < entry.stateStartedAt
+    ) {
       count += 1
     }
   }

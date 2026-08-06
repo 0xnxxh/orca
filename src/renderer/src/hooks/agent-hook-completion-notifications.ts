@@ -272,19 +272,12 @@ function createCoordinator(paneKey: string, worktreeId: string): AgentCompletion
 export function observeAgentHookCompletionForNotification({
   paneKey,
   worktreeId,
-  payload,
-  hookEventName
+  payload
 }: {
   paneKey: string
   worktreeId: string
   payload: AgentCompletionStatusSnapshot
-  hookEventName?: string
 }): void {
-  if (hookEventName === 'SessionStart' && payload.state === 'done') {
-    // Why: a SessionStart that lands 'done' is an idle session connecting (resume/launch,
-    // STA-3386) — not a completed turn, so it must not raise agent-task-complete.
-    return
-  }
   pruneClosedPaneCoordinators()
   if (!paneCanReceiveHookCompletion(paneKey)) {
     return

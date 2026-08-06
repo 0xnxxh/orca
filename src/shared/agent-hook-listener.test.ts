@@ -1384,9 +1384,14 @@ describe('shared agent-hook-listener', () => {
       'production'
     )
 
-    // Why: 'working' would show a phantom spinner on an idle TUI (Devin precedent);
+    // Why: 'working' would show a phantom spinner on an idle TUI; a session-boundary
     // 'done' renders the row idle, which is the truth at SessionStart.
-    expect(event?.payload).toMatchObject({ state: 'done', prompt: '', agentType: 'claude' })
+    expect(event?.payload).toMatchObject({
+      state: 'done',
+      prompt: '',
+      agentType: 'claude',
+      sessionBoundary: true
+    })
     expect(event?.payload.interrupted).toBeUndefined()
     expect(event?.hookEventName).toBe('SessionStart')
     // Why: SessionStart carries resume identity, so in-app resume works before any prompt.
@@ -1427,6 +1432,13 @@ describe('shared agent-hook-listener', () => {
       { paneKey: PANE_KEY, payload: { hook_event_name: 'SessionStart', source: 'compact' } },
       'production'
     )
+    // Why: unknown/missing sources fail closed — only startup/resume/clear are idle boundaries.
+    const unknownSource = normalizeHookPayload(
+      state,
+      'claude',
+      { paneKey: PANE_KEY, payload: { hook_event_name: 'SessionStart' } },
+      'production'
+    )
     const child = normalizeHookPayload(
       state,
       'claude',
@@ -1441,8 +1453,10 @@ describe('shared agent-hook-listener', () => {
     // Why: auto-compact restarts mid-turn (PreCompact/PostCompact own that lifecycle) and a
     // child-attributed SessionStart must not flip the lead's live turn to an idle row.
     expect(compacted).toBeNull()
+    expect(unknownSource).toBeNull()
     expect(child).toBeNull()
     expect(stopped?.payload).toMatchObject({ state: 'done', prompt: 'say hi' })
+    expect(stopped?.payload.sessionBoundary).toBeUndefined()
   })
 
   it('normalizes Devin documented lifecycle events', () => {

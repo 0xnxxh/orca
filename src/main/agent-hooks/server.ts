@@ -394,7 +394,6 @@ function toAgentStatusIpcPayload(entry: EnrichedAgentHookEventPayload): AgentSta
     connectionId: entry.connectionId,
     receivedAt: entry.receivedAt,
     stateStartedAt: entry.stateStartedAt,
-    ...(entry.hookEventName ? { hookEventName: entry.hookEventName } : {}),
     ...(entry.providerSession ? { providerSession: entry.providerSession } : {}),
     ...(entry.providerSessionOnly ? { providerSessionOnly: true } : {}),
     ...(entry.promptInteractionKey ? { promptInteractionKey: entry.promptInteractionKey } : {}),
@@ -997,7 +996,12 @@ export class AgentHookServer {
       return 'accept'
     }
     // Why: command completion retires launch authority but leaves its shell pane reusable.
-    if (event?.hookEventName === 'UserPromptSubmit' && event.isReplay !== true) {
+    // A live SessionStart proves a new agent process owns the retired pane just like a
+    // fresh prompt does — without it, a session resumed in a reused pane stays rowless (STA-3386).
+    if (
+      (event?.hookEventName === 'UserPromptSubmit' || event?.hookEventName === 'SessionStart') &&
+      event.isReplay !== true
+    ) {
       this.closedAgentStatusPaneKeys.delete(paneKey)
       this.closedAgentStatusPaneKeys.delete(ownerPaneKey)
       return 'restart'

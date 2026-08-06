@@ -1739,8 +1739,14 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
         // Rolling log of state transitions for the dashboard's activity blocks; push only on
         // real state changes to avoid dupes from prompt-only pings within the same state.
+        // A session-boundary 'done' (idle connect, STA-3386) is not a turn event — keep it
+        // out of history so activity feeds and unread counts never surface it.
         let history: AgentStateHistoryEntry[] = existing?.stateHistory ?? []
-        if (existing && existing.state !== payload.state) {
+        if (
+          existing &&
+          existing.state !== payload.state &&
+          !(existing.state === 'done' && existing.sessionBoundary === true)
+        ) {
           history = [
             ...history,
             {
@@ -1930,7 +1936,15 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           ...(promptInteractionKey ? { promptInteractionKey } : {}),
           ...(payload.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
           // Why: `interrupted` is done-only; parseAgentStatusPayload already clamps it for non-done states, so write it through directly.
-          interrupted: payload.interrupted
+          interrupted: payload.interrupted,
+          // Why: done→done repaints (OSC 9999, reconnect snapshot replays) re-deliver a
+          // metadata-less `done`; preserving the flag there keeps completion-reactive
+          // consumers from treating the still-idle session as newly finished.
+          sessionBoundary:
+            payload.sessionBoundary ??
+            (existing?.state === 'done' && payload.state === 'done'
+              ? existing.sessionBoundary
+              : undefined)
         }
         generatedTitleEntry.current = entry
         if (
