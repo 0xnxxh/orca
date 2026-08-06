@@ -24,6 +24,7 @@ const {
   checkDaemonHealthMock,
   healthCheckDaemonMock,
   getMacDaemonSystemResolverHealthMock,
+  getMacDaemonTccAttributionHealthMock,
   getDaemonLaunchIdentityMock,
   isDaemonStaleForCurrentBundleMock,
   killStaleDaemonMock,
@@ -83,6 +84,7 @@ const {
   const checkDaemonHealthMock = vi.fn(async () => 'healthy')
   const healthCheckDaemonMock = vi.fn(async () => true)
   const getMacDaemonSystemResolverHealthMock = vi.fn(() => 'healthy')
+  const getMacDaemonTccAttributionHealthMock = vi.fn(async () => 'unknown')
   const getDaemonLaunchIdentityMock = vi.fn(() => 'match')
   const isDaemonStaleForCurrentBundleMock = vi.fn(() => false)
   const killStaleDaemonMock = vi.fn(async () => true)
@@ -165,6 +167,7 @@ const {
     checkDaemonHealthMock,
     healthCheckDaemonMock,
     getMacDaemonSystemResolverHealthMock,
+    getMacDaemonTccAttributionHealthMock,
     getDaemonLaunchIdentityMock,
     isDaemonStaleForCurrentBundleMock,
     killStaleDaemonMock,
@@ -252,6 +255,7 @@ vi.mock('./daemon-health', () => ({
   checkDaemonHealth: checkDaemonHealthMock,
   getDaemonLaunchIdentity: getDaemonLaunchIdentityMock,
   getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock,
+  getMacDaemonTccAttributionHealth: getMacDaemonTccAttributionHealthMock,
   healthCheckDaemon: healthCheckDaemonMock,
   isDaemonStaleForCurrentBundle: isDaemonStaleForCurrentBundleMock,
   killStaleDaemon: killStaleDaemonMock,
@@ -413,6 +417,8 @@ async function importFresh() {
   healthCheckDaemonMock.mockResolvedValue(true)
   getMacDaemonSystemResolverHealthMock.mockReset()
   getMacDaemonSystemResolverHealthMock.mockReturnValue('healthy')
+  getMacDaemonTccAttributionHealthMock.mockReset()
+  getMacDaemonTccAttributionHealthMock.mockResolvedValue('unknown')
   getDaemonLaunchIdentityMock.mockClear()
   isDaemonStaleForCurrentBundleMock.mockReset()
   isDaemonStaleForCurrentBundleMock.mockReturnValue(false)
@@ -1244,6 +1250,73 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0)
   })
 
+  it('replaces a healthy daemon whose macOS TCC attribution is severed when it has no live sessions', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider(undefined, { macosLoginSessionWatch: true })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    getMacDaemonTccAttributionHealthMock.mockResolvedValueOnce('severed')
+    forkMock.mockImplementationOnce(() => {
+      const handlers: Record<string, ((arg?: unknown) => void)[]> = {
+        message: [],
+        error: [],
+        exit: []
+      }
+      return {
+        pid: 12345,
+        on(event: string, cb: (arg?: unknown) => void) {
+          handlers[event]?.push(cb)
+          if (event === 'message') {
+            queueMicrotask(() => cb({ type: 'ready', startedAtMs: 1_000_000 }))
+          }
+          return this
+        },
+        off(event: string, cb: (arg?: unknown) => void) {
+          handlers[event] = handlers[event]?.filter((handler) => handler !== cb) ?? []
+          return this
+        },
+        disconnect: vi.fn(),
+        unref: vi.fn()
+      }
+    })
+
+    await launcher('/fake/socket', '/fake/token')
+
+    expect(forkMock).toHaveBeenCalledTimes(1)
+    // STA-3491: attribution-severed replacement is billed to its own reason, exactly once.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('severed_tcc_attribution', 0)
+  })
+
+  it('preserves a severed-attribution daemon that owns live sessions', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider(undefined, { macosLoginSessionWatch: true })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    getMacDaemonTccAttributionHealthMock.mockResolvedValueOnce('severed')
+    // Why: live sessions must veto replacement — the Settings surface owns the remedy instead.
+    daemonClientMock.mockImplementation(function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [{ sessionId: 's1', isAlive: true }] })),
+        disconnect: vi.fn()
+      }
+    })
+
+    const handle = await launcher('/fake/socket', '/fake/token')
+
+    expect(handle).toBeDefined()
+    expect(forkMock).not.toHaveBeenCalled()
+    expect(killStaleDaemonMock).not.toHaveBeenCalled()
+    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+  })
+
   it('holds a full adoption pair before a healthy launcher resolves', async () => {
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
@@ -1819,7 +1892,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       bootId: 'boot-a',
       entryPath: FAKE_DAEMON_ENTRY_PATH,
       appVersion: '1.2.3',
-      launchNonce: expect.stringMatching(/^[0-9a-f-]{36}$/)
+      launchNonce: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      spawnerExecPath: process.execPath
     })
     expect(pidOptions).toEqual({ mode: 0o600, flag: 'wx' })
     const launchArgs = forkMock.mock.calls.at(-1)?.[1] as string[]
@@ -2795,7 +2869,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       startedAtMs: 1_700_000_123_456,
       entryPath: FAKE_DAEMON_ENTRY_PATH,
       appVersion: '1.2.3',
-      launchNonce: expect.stringMatching(/^[0-9a-f-]{36}$/)
+      launchNonce: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      spawnerExecPath: process.execPath
     })
     expect(pidOptions).toEqual({ mode: 0o600, flag: 'wx' })
   })

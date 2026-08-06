@@ -48,6 +48,7 @@ export type ParsedDaemonPid = {
   launchNonce: string | null
   linuxStartTicks: string | null
   bootId: string | null
+  spawnerExecPath: string | null
 }
 
 function canConnectSocket(socketPath: string): Promise<boolean> {
@@ -327,6 +328,7 @@ export function parseDaemonPidFile(contents: string): ParsedDaemonPid | null {
       launchNonce?: unknown
       linuxStartTicks?: unknown
       bootId?: unknown
+      spawnerExecPath?: unknown
     }
     if (typeof parsed.pid === 'number' && Number.isFinite(parsed.pid)) {
       return {
@@ -339,7 +341,8 @@ export function parseDaemonPidFile(contents: string): ParsedDaemonPid | null {
         appVersion: typeof parsed.appVersion === 'string' ? parsed.appVersion : null,
         launchNonce: typeof parsed.launchNonce === 'string' ? parsed.launchNonce : null,
         linuxStartTicks: typeof parsed.linuxStartTicks === 'string' ? parsed.linuxStartTicks : null,
-        bootId: typeof parsed.bootId === 'string' ? parsed.bootId : null
+        bootId: typeof parsed.bootId === 'string' ? parsed.bootId : null,
+        spawnerExecPath: typeof parsed.spawnerExecPath === 'string' ? parsed.spawnerExecPath : null
       }
     }
   } catch {
@@ -355,7 +358,8 @@ export function parseDaemonPidFile(contents: string): ParsedDaemonPid | null {
         appVersion: null,
         launchNonce: null,
         linuxStartTicks: null,
-        bootId: null
+        bootId: null,
+        spawnerExecPath: null
       }
     : null
 }
@@ -655,6 +659,43 @@ export async function isDaemonStaleForCurrentBundle(
   // marker. Replacing them once prevents archive-preserved mtimes from
   // reusing stale native modules across the first metadata-aware upgrade.
   return true
+}
+
+// 'severed': macOS can no longer resolve the daemon's TCC responsible process, so
+// Accessibility/Automation grants on Orca silently stop covering its terminals (STA-3491).
+// 'unknown' fails open: legacy pid files and probe failures must not trigger replacement.
+export type MacDaemonTccAttributionHealth = 'intact' | 'severed' | 'unknown'
+
+/**
+ * macOS pins a process's TCC "responsible process" to the binary that forked it,
+ * by file reference. The detached daemon outlives that app instance, and once the
+ * spawning binary is deleted (every packaged update replaces the bundle) tccd
+ * can't resolve the grant subject — `osascript`/System Events from every terminal
+ * hosted by that daemon is silently denied (-25211) no matter what the user grants.
+ */
+export async function getMacDaemonTccAttributionHealth(
+  runtimeDir: string,
+  socketPath: string,
+  tokenPath: string,
+  packagedAppVersion: string | null,
+  protocolVersion = PROTOCOL_VERSION
+): Promise<MacDaemonTccAttributionHealth> {
+  if (process.platform !== 'darwin') {
+    return 'unknown'
+  }
+  const parsedPid = await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath, protocolVersion)
+  if (!parsedPid) {
+    return 'unknown'
+  }
+  if (parsedPid.spawnerExecPath) {
+    return existsSync(parsedPid.spawnerExecPath) ? 'intact' : 'severed'
+  }
+  // Legacy pid files carry no spawner path. A packaged version change still proves the
+  // spawning bundle was replaced (the updater deletes the old binary), so flag those.
+  if (packagedAppVersion !== null && parsedPid.appVersion !== null) {
+    return parsedPid.appVersion === packagedAppVersion ? 'unknown' : 'severed'
+  }
+  return 'unknown'
 }
 
 export async function killStaleDaemon(
