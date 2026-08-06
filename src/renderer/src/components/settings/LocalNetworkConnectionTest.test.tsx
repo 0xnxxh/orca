@@ -37,6 +37,20 @@ function inputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+async function expandConnectionTest(): Promise<void> {
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[data-slot="collapsible-trigger"]')?.click()
+  )
+}
+
+it('keeps the target form collapsed by default', async () => {
+  await act(async () => root.render(<LocalNetworkConnectionTest />))
+
+  expect(container.textContent).toContain('Test connection')
+  expect(container.textContent).toContain('No successful test saved.')
+  expect(container.querySelector('form')).toBeNull()
+})
+
 it('saves and displays the last successful target-specific test', async () => {
   testConnectionMock.mockResolvedValue({
     ok: true,
@@ -45,6 +59,7 @@ it('saves and displays the last successful target-specific test', async () => {
     testedAt: new Date('2026-08-06T07:00:00Z').getTime()
   })
   await act(async () => root.render(<LocalNetworkConnectionTest />))
+  await expandConnectionTest()
 
   const host = container.querySelector<HTMLInputElement>('#local-network-test-host')!
   const port = container.querySelector<HTMLInputElement>('#local-network-test-port')!
@@ -52,7 +67,9 @@ it('saves and displays the last successful target-specific test', async () => {
     inputValue(host, '192.168.1.20')
     inputValue(port, '3000')
   })
-  await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+  )
 
   expect(testConnectionMock).toHaveBeenCalledWith({ host: '192.168.1.20', port: 3000 })
   expect(container.textContent).toContain('Last verified')
@@ -60,6 +77,7 @@ it('saves and displays the last successful target-specific test', async () => {
 
   await act(async () => root.render(null))
   await act(async () => root.render(<LocalNetworkConnectionTest />))
+  await expandConnectionTest()
   expect(container.textContent).toContain('192.168.1.20:3000')
 })
 
@@ -79,6 +97,7 @@ it('keeps the last success visible when a later test fails', async () => {
       failure: 'refused'
     })
   await act(async () => root.render(<LocalNetworkConnectionTest />))
+  await expandConnectionTest()
 
   const host = container.querySelector<HTMLInputElement>('#local-network-test-host')!
   const port = container.querySelector<HTMLInputElement>('#local-network-test-port')!
@@ -86,8 +105,12 @@ it('keeps the last success visible when a later test fails', async () => {
     inputValue(host, 'devbox.local')
     inputValue(port, '8080')
   })
-  await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
-  await act(async () => container.querySelector<HTMLButtonElement>('button')?.click())
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+  )
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
+  )
 
   expect(container.textContent).toContain('Last verified')
   expect(container.textContent).toContain('devbox.local:8080')
