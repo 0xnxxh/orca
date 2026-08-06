@@ -219,6 +219,10 @@ export type AgentStatusIpcPayload = ParsedAgentStatusPayload & {
   /** Identifies the SSH connection the event arrived on, or null for local.
    *  Only the remote-ingest path (`ingestRemote`) can stamp it; the HTTP path always sets null. See docs/design/agent-status-over-ssh.md §5. */
   connectionId: string | null
+  /** Hook event that produced this status, when it came from a native hook.
+   *  Why: lets receivers tell a session boundary from a turn result — a SessionStart
+   *  'done' is an idle connect (STA-3386), not a completion to notify about. */
+  hookEventName?: string
   /** Timestamp (ms) when the hook server received this latest status event. */
   receivedAt: number
   /** Timestamp (ms) when the current state first appeared for this pane. */

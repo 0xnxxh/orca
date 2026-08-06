@@ -2405,9 +2405,11 @@ function isNewTurnEvent(source: AgentHookSource, eventName: unknown): boolean {
   // Why: exhaustive switch so a new AgentHookSource fails typecheck here instead of falling through to false.
   switch (source) {
     case 'claude':
-    // Why: Kimi Code emits Claude-compatible hook events, so UserPromptSubmit is its new-turn boundary too.
-    // falls through
+      // Why: SessionStart lands an idle row (STA-3386) and must also drop stale
+      // tool/prompt caches left by the pane's previous session.
+      return eventName === 'SessionStart' || eventName === 'UserPromptSubmit'
     case 'kimi':
+      // Why: Kimi Code emits Claude-compatible hook events, so UserPromptSubmit is its new-turn boundary too.
       return eventName === 'UserPromptSubmit'
     case 'codex':
       return eventName === 'SessionStart' || eventName === 'UserPromptSubmit'
@@ -2738,6 +2740,26 @@ function normalizeClaudeEvent(
     eventName === 'TeammateIdle'
   ) {
     return normalizeClaudeSubagentLifecycleEvent(state, eventName, paneKey, hookPayload)
+  }
+  if (eventName === 'SessionStart') {
+    // Why: SessionStart fires while the TUI is idle (startup/resume/clear), so land the row
+    // 'done' — 'working' would show a phantom spinner before any prompt (Devin precedent).
+    // This is the only signal a resumed session emits before its first prompt (STA-3386).
+    if (eventAgentId !== undefined || hookPayload['source'] === 'compact') {
+      // Why: auto-compact restarts mid-turn (PreCompact/PostCompact own that lifecycle), and a
+      // child-attributed SessionStart must not flip the lead's live turn to an idle row.
+      return null
+    }
+    // Why: a new process owns the pane; stale children/tasks/crons must not gate the
+    // fresh session's idle row back up to 'working' (mirrors the Codex SessionStart reset).
+    state.claudeSubagentRosterByPaneKey.delete(paneKey)
+    state.claudeRunningNonAgentTaskPaneKeys.delete(paneKey)
+    state.claudeActiveSessionCronPaneKeys.delete(paneKey)
+    state.claudeLeadStateByPaneKey.set(paneKey, { state: 'done' })
+    return buildClaudeStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
+      stateName: 'done',
+      updateToolSnapshot: true
+    })
   }
   const previousLead = state.claudeLeadStateByPaneKey.get(paneKey)
   // Why: only a turn boundary may declare an interrupt or carry a prior one forward; any other event starts a fresh turn and drops it.

@@ -1426,6 +1426,7 @@ function openMainWindow(): BrowserWindow {
       providerSessionOnly,
       promptInteractionKey,
       restoredUnconfirmed,
+      hookEventName,
       isReplay
     }) => {
       if (mainWindow?.isDestroyed()) {
@@ -1460,6 +1461,7 @@ function openMainWindow(): BrowserWindow {
         connectionId,
         receivedAt,
         stateStartedAt,
+        ...(hookEventName ? { hookEventName } : {}),
         ...(providerSession ? { providerSession } : {}),
         ...(promptInteractionKey ? { promptInteractionKey } : {}),
         ...(restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
