@@ -159,17 +159,21 @@ export const AgentMapScene = memo(function AgentMapScene({
               })}
             </g>
             <g className="agent-map-lineage-links" aria-hidden>
-              {crossWorktreeLineage.map(({ parent, child }) => (
-                <path
-                  key={child.card.paneKey}
-                  className="agent-map-lineage-link is-cross-worktree"
-                  data-agent-map-lineage-link=""
-                  data-agent-map-cross-worktree-lineage-link=""
-                  data-parent-pane-key={parent.card.paneKey}
-                  data-child-pane-key={child.card.paneKey}
-                  d={agentLineagePath(parent, child)}
-                />
-              ))}
+              {crossWorktreeLineage.map(({ parent, child }) => {
+                const relation = parent.card.parentPaneKey ? 'subagent' : 'orchestration'
+                return (
+                  <path
+                    key={child.card.paneKey}
+                    className={`agent-map-lineage-link is-cross-worktree${relation === 'subagent' ? ' is-subagent' : ''}`}
+                    data-agent-map-lineage-link=""
+                    data-agent-map-cross-worktree-lineage-link=""
+                    data-agent-map-lineage-relation={relation}
+                    data-parent-pane-key={parent.card.paneKey}
+                    data-child-pane-key={child.card.paneKey}
+                    d={agentLineagePath(parent, child)}
+                  />
+                )
+              })}
             </g>
             {project.worktrees.map((worktree) => (
               <AgentMapWorktreeRingNode

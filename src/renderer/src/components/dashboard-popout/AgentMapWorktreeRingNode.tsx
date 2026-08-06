@@ -272,11 +272,16 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                 const parent = child.card.parentPaneKey
                   ? agentsByPaneKey.get(child.card.parentPaneKey)
                   : undefined
-                return !parent || child.y <= parent.y ? null : (
+                if (!parent || child.y <= parent.y) {
+                  return null
+                }
+                const relation = parent.card.parentPaneKey ? 'subagent' : 'orchestration'
+                return (
                   <path
                     key={child.card.paneKey}
-                    className="agent-map-lineage-link"
+                    className={`agent-map-lineage-link${relation === 'subagent' ? ' is-subagent' : ''}`}
                     data-agent-map-lineage-link=""
+                    data-agent-map-lineage-relation={relation}
                     data-parent-pane-key={parent.card.paneKey}
                     data-child-pane-key={child.card.paneKey}
                     d={lineagePath(parent, child)}

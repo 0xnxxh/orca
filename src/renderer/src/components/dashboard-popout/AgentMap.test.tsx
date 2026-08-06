@@ -338,20 +338,30 @@ describe('AgentMap', () => {
       parentPaneKey: 'parent',
       conversationName: 'Worker'
     })
+    const nested = card({
+      paneKey: 'nested',
+      parentPaneKey: 'child',
+      conversationName: 'Subagent'
+    })
     const orphan = card({
       paneKey: 'orphan',
       parentPaneKey: 'filtered-parent',
       conversationName: 'Orphaned worker'
     })
-    const { container } = renderMap([parent, child, orphan])
-    const links = container.querySelectorAll('[data-agent-map-lineage-link]')
+    const { container } = renderMap([parent, child, nested, orphan])
+    const workerLink = container.querySelector('[data-child-pane-key="child"]')
+    const subagentLink = container.querySelector('[data-child-pane-key="nested"]')
 
     expect(screen.getByRole('button', { name: /Coordinator/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Worker/ })).toBeInTheDocument()
-    expect(links).toHaveLength(1)
-    expect(links[0]).toHaveClass('agent-map-lineage-link')
-    expect(links[0]).toHaveAttribute('data-parent-pane-key', 'parent')
-    expect(links[0]).toHaveAttribute('data-child-pane-key', 'child')
+    expect(container.querySelectorAll('[data-agent-map-lineage-link]')).toHaveLength(2)
+    expect(workerLink).toHaveClass('agent-map-lineage-link')
+    expect(workerLink).not.toHaveClass('is-subagent')
+    expect(workerLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
+    expect(workerLink).toHaveAttribute('data-parent-pane-key', 'parent')
+    expect(subagentLink).toHaveClass('agent-map-lineage-link', 'is-subagent')
+    expect(subagentLink).toHaveAttribute('data-agent-map-lineage-relation', 'subagent')
+    expect(subagentLink).toHaveAttribute('data-parent-pane-key', 'child')
   })
 
   it('connects spawned workers across worktree rings', () => {
@@ -368,12 +378,42 @@ describe('AgentMap', () => {
       parentPaneKey: 'parent',
       conversationName: 'Worker'
     })
-    const { container } = renderMap([parent, child])
-    const link = container.querySelector('[data-agent-map-cross-worktree-lineage-link]')
+    const nested = card({
+      paneKey: 'nested',
+      worktreeId: 'nested-worktree',
+      worktreeName: 'Nested workspace',
+      parentPaneKey: 'child',
+      conversationName: 'Subagent'
+    })
+    const { container } = renderMap([parent, child, nested])
+    const workerLink = container.querySelector('[data-child-pane-key="child"]')
+    const subagentLink = container.querySelector('[data-child-pane-key="nested"]')
 
-    expect(link).toHaveClass('agent-map-lineage-link', 'is-cross-worktree')
-    expect(link).toHaveAttribute('data-parent-pane-key', 'parent')
-    expect(link).toHaveAttribute('data-child-pane-key', 'child')
+    expect(workerLink).toHaveClass('agent-map-lineage-link', 'is-cross-worktree')
+    expect(workerLink).not.toHaveClass('is-subagent')
+    expect(workerLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
+    expect(subagentLink).toHaveClass('agent-map-lineage-link', 'is-cross-worktree', 'is-subagent')
+    expect(subagentLink).toHaveAttribute('data-agent-map-lineage-relation', 'subagent')
+  })
+
+  it('keeps lineage styling to one lightweight path per relationship at fleet scale', () => {
+    const cards = Array.from({ length: 240 }, (_, index) =>
+      card({
+        paneKey: `agent-${index}`,
+        parentPaneKey: index === 0 ? undefined : `agent-${index - 1}`,
+        conversationName: `Agent ${index}`
+      })
+    )
+    const { container } = renderMap(cards, { selectedPaneKey: 'agent-0' })
+
+    expect(container.querySelectorAll('[data-agent-map-lineage-link]')).toHaveLength(239)
+    expect(
+      container.querySelectorAll('[data-agent-map-lineage-relation="orchestration"]')
+    ).toHaveLength(1)
+    expect(container.querySelectorAll('[data-agent-map-lineage-relation="subagent"]')).toHaveLength(
+      238
+    )
+    expect(container.querySelectorAll('filter, animate, animateTransform')).toHaveLength(0)
   })
 
   it('connects visible child worktrees beneath their parent ring', () => {
