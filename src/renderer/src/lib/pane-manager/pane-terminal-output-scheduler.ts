@@ -725,7 +725,11 @@ function rebaseRetainedChunks(entry: QueueEntry): void {
   }
 
   const chunk = entry.chunks[0]
-  if (!chunk || chunk.consumedOffset === 0) {
+  if (
+    !chunk ||
+    chunk.consumedOffset === 0 ||
+    chunk.consumedOffset < chunk.data.length - chunk.consumedOffset
+  ) {
     return
   }
   const source = chunk.data

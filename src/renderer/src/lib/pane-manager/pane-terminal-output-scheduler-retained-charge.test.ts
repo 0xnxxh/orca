@@ -255,6 +255,49 @@ describe('terminal scheduler retained-string charge', () => {
     })
   })
 
+  it('bounds retained pressure and repeated rebase copies', async () => {
+    const {
+      BACKGROUND_CHUNK_CHARS,
+      configureTerminalOutputBacklogCap,
+      flushTerminalOutput,
+      setRetainedRebaseCopyObserverForTesting,
+      writeTerminalOutput
+    } = await loadScheduler()
+    const terminal = createTerminal()
+    const source = 'x'.repeat(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS)
+    const cycleCount = 120
+    let copiedChars = 0
+    configureTerminalOutputBacklogCap(1_000)
+    setRetainedRebaseCopyObserverForTesting((_parent, copy) => {
+      copiedChars += copy.length
+    })
+
+    writeTerminalOutput(terminal as never, source, {
+      foreground: true,
+      latencySensitive: false
+    })
+    for (let cycle = 0; cycle < cycleCount; cycle += 1) {
+      flushTerminalOutput(terminal as never, { maxChars: BACKGROUND_CHUNK_CHARS })
+      expect(readDebugSnapshot().retainedChars).toBeLessThan(
+        TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS * 2
+      )
+      writeTerminalOutput(terminal as never, 'a', {
+        foreground: true,
+        latencySensitive: false
+      })
+      const snapshot = readDebugSnapshot()
+      expect(snapshot.retainedChars).toBeLessThanOrEqual(
+        Math.max(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS, snapshot.queuedChars * 2)
+      )
+      expect(snapshot.retainedChars).toBeLessThan(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS * 2)
+    }
+    flushTerminalOutput(terminal as never)
+
+    expect(readOutput(terminal)).toBe(source + 'a'.repeat(cycleCount))
+    expect(copiedChars).toBeGreaterThan(0)
+    expect(copiedChars).toBeLessThanOrEqual(source.length * 2)
+  })
+
   it('does not copy an unconsumed indivisible chunk above the cap', async () => {
     const {
       configureTerminalOutputBacklogCap,
