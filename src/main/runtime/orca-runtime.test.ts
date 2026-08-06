@@ -29859,6 +29859,106 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  // Why: terminal.send carries no activation ordering, so a client holding a
+  // handle can type while the reattach is still in flight. The send must wait
+  // for that reattach rather than land on the unattached session and vanish.
+  it('holds a concurrent send until the in-flight reattach lands', async () => {
+    const ptyId = 'serve-concurrent-send-pty'
+    const incarnationId = '93939393-9393-4939-8939-939393939393'
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Restored Git Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        },
+        terminalPtyIncarnationsByPaneKey: {
+          [makePaneKey('host-tab', HEADLESS_LEAF_ID)]: incarnationId
+        }
+      })
+    )
+    let attached = false
+    let releaseAttach!: () => void
+    const attach = new Promise<void>((resolve) => {
+      releaseAttach = resolve
+    })
+    const spawn = vi.fn(async () => {
+      await attach
+      attached = true
+      return { id: ptyId, incarnationId }
+    })
+    const write = vi.fn(() => attached)
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [
+        {
+          id: ptyId,
+          cwd: TEST_WORKTREE_PATH,
+          title: 'Restored Git Terminal',
+          worktreeId: TEST_WORKTREE_ID,
+          terminalHandle: 'term_concurrent_send',
+          incarnationId
+        }
+      ]
+    })
+
+    const listed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const listedTab = listed.tabs.find(
+      (candidate) => candidate.type === 'terminal' && candidate.parentTabId === 'host-tab'
+    )
+    const handle = listedTab?.type === 'terminal' ? listedTab.terminal! : 'missing'
+
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      'host-tab',
+      undefined,
+      { navigation: 'caller' }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    // Why: issued mid-reattach with no activation await — the pre-barrier bug.
+    let settled: 'pending' | 'resolved' | 'rejected' = 'pending'
+    const send = runtime.sendTerminal(handle, { text: 'typed mid-reattach' }).then(
+      (result) => {
+        settled = 'resolved'
+        return result
+      },
+      (error) => {
+        settled = 'rejected'
+        throw error
+      }
+    )
+    // Why: drain every queued microtask/macrotask the send could resolve on.
+    // Without the barrier it runs to completion here and rejects on the
+    // unattached session; with it, the send is still parked on the reattach.
+    for (let tick = 0; tick < 20; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    expect(settled).toBe('pending')
+    expect(write).not.toHaveBeenCalled()
+
+    releaseAttach()
+    await expect(send).resolves.toMatchObject({ accepted: true })
+    await activation
+    expect(write).toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledOnce()
+  })
+
   it('reattaches hydrated SSH headless terminals with the persisted relay identity', async () => {
     const incarnationId = '92929292-9292-4929-8929-929292929292'
     const priorPtyId = 'ssh:ssh-1@@prior-relay-pty'

@@ -2948,6 +2948,11 @@ export class OrcaRuntimeService {
     }
   >()
   private pendingMobileTerminalMaterializations = new Map<string, Promise<void>>()
+  // Why: PTY inventory proves the process survived, not that this runtime
+  // generation attached to it — an unattached session accepts writes into a
+  // void. Senders await the in-flight reattach here rather than relying on the
+  // caller having activated the tab first; terminal.send has no such ordering.
+  private pendingPtyReattachBySessionId = new Map<string, Promise<void>>()
   // Why: concurrent host terminal.focus storms (CLI switch fan-out / bulk open)
   // each await a full host reveal; only one terminal can be focused, so latest-wins
   // single-flight bounds host work. Does not replace cheaper activation or
@@ -8483,6 +8488,11 @@ export class OrcaRuntimeService {
             }
           })()
           this.pendingMobileTerminalMaterializations.set(materializationKey, materialization)
+          // Why: keyed by the persisted session id a sender resolves from the
+          // leaf, so a concurrent terminal.send blocks on this exact reattach.
+          if (sessionId) {
+            this.pendingPtyReattachBySessionId.set(sessionId, materialization)
+          }
           void materialization
             .finally(() => {
               if (
@@ -8490,6 +8500,12 @@ export class OrcaRuntimeService {
                 materialization
               ) {
                 this.pendingMobileTerminalMaterializations.delete(materializationKey)
+              }
+              if (
+                sessionId &&
+                this.pendingPtyReattachBySessionId.get(sessionId) === materialization
+              ) {
+                this.pendingPtyReattachBySessionId.delete(sessionId)
               }
             })
             .catch(() => undefined)
@@ -17557,6 +17573,7 @@ export class OrcaRuntimeService {
         throw new Error('invalid_terminal_send')
       }
       await assertTerminalInputWithinLimitWithYield(action.text)
+      await this.awaitPendingPtyReattach(pty.pty.ptyId)
       await this.writeTerminalAction(pty.pty.ptyId, action, payload, options)
       return {
         handle,
@@ -17574,6 +17591,9 @@ export class OrcaRuntimeService {
       throw new Error('invalid_terminal_send')
     }
     await assertTerminalInputWithinLimitWithYield(action.text)
+    // Why: settle the reattach before the absence probe, else a session mid-attach
+    // reads as absent and a legitimate send is rejected.
+    await this.awaitPendingPtyReattach(leaf.ptyId)
     // Why: leaf.writable mirrors the renderer graph, which can still answer for
     // a prior process's ptyId — and provider writes to unknown ids are accepted
     // no-ops. Only controller-proven absence rejects; unknown proceeds (a
@@ -17589,6 +17609,16 @@ export class OrcaRuntimeService {
       accepted: true,
       bytesWritten: Buffer.byteLength(payload, 'utf8')
     }
+  }
+
+  // Why: holds a send behind an in-flight reattach so input can't land on a
+  // session this generation restored from inventory but has not attached.
+  // Returns undefined on the common path so a settled session adds no await.
+  private awaitPendingPtyReattach(ptyId: string): Promise<void> | undefined {
+    const pending = this.pendingPtyReattachBySessionId.get(ptyId)
+    // Why: a failed reattach must not swallow the send — the write below still
+    // reports terminal_not_writable when the session is genuinely gone.
+    return pending ? pending.catch(() => undefined) : undefined
   }
 
   async sendTerminalAgentPrompt(
@@ -17607,6 +17637,7 @@ export class OrcaRuntimeService {
         throw new Error('terminal_not_writable')
       }
       await assertTerminalInputWithinLimitWithYield(payload)
+      await this.awaitPendingPtyReattach(pty.pty.ptyId)
       await this.writeTerminalAgentPrompt(pty.pty.ptyId, payload, options)
       return { handle, accepted: true, bytesWritten }
     }
@@ -17616,6 +17647,8 @@ export class OrcaRuntimeService {
       throw new Error('terminal_not_writable')
     }
     await assertTerminalInputWithinLimitWithYield(payload)
+    // Why: same reattach barrier as sendTerminal — settle before the absence probe.
+    await this.awaitPendingPtyReattach(leaf.ptyId)
     // Why: same absence gate as sendTerminal — a stale graph mirror must not
     // accept a prompt into a void; unknown liveness still proceeds.
     if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
