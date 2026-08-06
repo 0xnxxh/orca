@@ -22,6 +22,23 @@ type DeliveryRecoveryArgs = {
   restoreMessage: (text: string, imagePaths?: string[]) => void
 }
 
+function scheduleDeliveryChecks(
+  pending: readonly NativeChatPendingSend[],
+  onDeadline: (entry: NativeChatPendingSend) => void
+): () => void {
+  const timers = pending.flatMap((entry) => {
+    const deadline = entry.deliveryCheck?.deadline
+    return deadline === undefined
+      ? []
+      : [setTimeout(() => onDeadline(entry), Math.max(0, deadline - Date.now()))]
+  })
+  return () => {
+    for (const timer of timers) {
+      clearTimeout(timer)
+    }
+  }
+}
+
 export function useNativeChatDeliveryRecovery({
   scope,
   pending,
@@ -34,8 +51,7 @@ export function useNativeChatDeliveryRecovery({
   clearFailure: () => void
   markSubmitted: (pendingId: string) => void
 } {
-  const [failed, setFailed] = useState(false)
-  const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const [failedScope, setFailedScope] = useState<NativeChatPendingSendScope | null>(null)
   const messagesRef = useRef(messages)
   const submissionsRef = useRef(promptSubmissions)
   const restoreMessageRef = useRef(restoreMessage)
@@ -74,9 +90,8 @@ export function useNativeChatDeliveryRecovery({
     },
     [updatePending]
   )
-  const clearFailure = useCallback(() => setFailed(false), [])
-
-  useEffect(() => setFailed(false), [scope])
+  const clearFailure = useCallback(() => setFailedScope(null), [])
+  const failed = failedScope?.paneKey === scope.paneKey && failedScope.agent === scope.agent
 
   useEffect(() => {
     const assignments = assignMatchingPromptSubmissions(pending, promptSubmissions)
@@ -113,78 +128,51 @@ export function useNativeChatDeliveryRecovery({
     )
   }, [messages, pending, promptSubmissions, updatePending])
 
-  useEffect(() => {
-    const liveIds = new Set<string>()
-    for (const entry of pending) {
-      const deadline = entry.deliveryCheck?.deadline
-      if (deadline === undefined) {
-        continue
+  const handleDeliveryDeadline = useCallback(
+    (entry: NativeChatPendingSend) => {
+      const cached = readPendingSendCache(scope).find((candidate) => candidate.id === entry.id)
+      if (!cached?.deliveryCheck) {
+        return
       }
-      liveIds.add(entry.id)
-      if (timersRef.current.has(entry.id)) {
-        continue
-      }
-      const timer = setTimeout(
-        () => {
-          timersRef.current.delete(entry.id)
-          const cached = readPendingSendCache(scope).find((candidate) => candidate.id === entry.id)
-          if (!cached?.deliveryCheck) {
-            return
-          }
-          const cachedEntries = readPendingSendCache(scope)
-          const acknowledgedBy = assignMatchingPromptSubmissions(
-            cachedEntries,
-            submissionsRef.current
-          ).get(entry.id)
-          if (acknowledgedBy) {
-            setPending(
-              writePendingSendCache(
-                scope,
-                cachedEntries.map((candidate) =>
-                  candidate.id === entry.id && candidate.deliveryCheck
-                    ? {
-                        ...candidate,
-                        deliveryCheck: {
-                          ...candidate.deliveryCheck,
-                          deadline: undefined,
-                          acknowledgedBy
-                        }
-                      }
-                    : candidate
-                )
-              )
+      const cachedEntries = readPendingSendCache(scope)
+      const acknowledgedBy = assignMatchingPromptSubmissions(
+        cachedEntries,
+        submissionsRef.current
+      ).get(entry.id)
+      if (acknowledgedBy) {
+        setPending(
+          writePendingSendCache(
+            scope,
+            cachedEntries.map((candidate) =>
+              candidate.id === entry.id && candidate.deliveryCheck
+                ? {
+                    ...candidate,
+                    deliveryCheck: {
+                      ...candidate.deliveryCheck,
+                      deadline: undefined,
+                      acknowledgedBy
+                    }
+                  }
+                : candidate
             )
-            return
-          }
-          if (pendingSendsAsMessages([cached], messagesRef.current).length === 0) {
-            return
-          }
-          const next = readPendingSendCache(scope).filter((candidate) => candidate.id !== entry.id)
-          setPending(writePendingSendCache(scope, next))
-          restoreMessageRef.current(cached.text, cached.imagePaths)
-          setFailed(true)
-        },
-        Math.max(0, deadline - Date.now())
-      )
-      timersRef.current.set(entry.id, timer)
-    }
-    for (const [id, timer] of timersRef.current) {
-      if (!liveIds.has(id)) {
-        clearTimeout(timer)
-        timersRef.current.delete(id)
+          )
+        )
+        return
       }
-    }
-  }, [pending, scope, setPending])
-
-  useEffect(
-    () => () => {
-      for (const timer of timersRef.current.values()) {
-        clearTimeout(timer)
+      if (pendingSendsAsMessages([cached], messagesRef.current).length === 0) {
+        return
       }
-      timersRef.current.clear()
+      const next = readPendingSendCache(scope).filter((candidate) => candidate.id !== entry.id)
+      setPending(writePendingSendCache(scope, next))
+      restoreMessageRef.current(cached.text, cached.imagePaths)
+      setFailedScope(scope)
     },
-    [scope]
+    [scope, setPending]
   )
+
+  useEffect(() => {
+    return scheduleDeliveryChecks(pending, handleDeliveryDeadline)
+  }, [handleDeliveryDeadline, pending])
 
   return { failed, clearFailure, markSubmitted }
 }
