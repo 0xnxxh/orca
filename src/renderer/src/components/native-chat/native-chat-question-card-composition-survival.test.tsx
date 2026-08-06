@@ -2,27 +2,37 @@
 
 /** A question card fully replaces the composer (`NativeChatView.tsx`,
  *  `{questionActive ? null : <NativeChatComposer/>}`) because the card supplies
- *  its own answer input. That swap unmounts the composer, so a Hangul preedit
- *  in flight when an AskUserQuestion card arrives is lost: the composer never
- *  receives `compositionend`, so the preedit is never committed to the draft,
- *  and the remounted textarea restores only the committed text via
- *  `defaultValue={draft}`.
+ *  its own answer input. That swap unmounts the composer mid-composition, and
+ *  the composer never receives `compositionend`. The preedit survives anyway,
+ *  and this file pins the chain that carries it.
+ *
+ *  A real IME fires `input` (inputType `insertCompositionText`) for every
+ *  preedit mutation — see the observation-derived sequence in
+ *  `tests/e2e/terminal-ime-observed-event-sequences.ts`. React dispatches
+ *  `onChange` on those events with no composition gate (react-dom's
+ *  `getTargetInstForInputOrChangeEvent` keys only on `input`/`change`), so
+ *  `handleDraftChange` runs per keystroke and `setDraft` writes the preedit
+ *  straight through to the draft cache. The remounted textarea then restores it
+ *  via `defaultValue={draft}`. `compositionend` is a reconciliation fallback,
+ *  not the commit path.
+ *
+ *  An earlier revision of this file characterized the preedit as LOST. That was
+ *  a simulation artifact: it assigned `textarea.value` directly, with no `input`
+ *  event, which no IME does. Drive composition through the frames below or the
+ *  loss reappears as an artifact rather than a defect.
  *
  *  THIS OWNS NO REPORTED ROW. It is not a regression guard for #12118 or
  *  STA-3219. Those reporters describe continuous flicker keyed to streaming
  *  token counters and elapsed timers, and those drivers provably do not remount
  *  the composer — `native-chat-composer-autogrow.test.tsx` holds node identity
  *  across 120 such rerenders. An AskUserQuestion card arrives once per question,
- *  which does not match that cadence. This is filed as a hazard guard for a real
- *  preedit-loss path found while searching for those rows' owner.
+ *  which does not match that cadence.
  *
- *  It characterizes CURRENT behavior, including the loss itself. Committing the
- *  preedit before the swap (or keeping the composer mounted) is a fix, not a
- *  regression — it will fail this file, and the expectations below should then
- *  be updated to the new contract rather than worked around.
- *
- *  The card owning its own input is by design; losing the in-flight composition
- *  is not. Geometry is deliberately unasserted: happy-dom has no layout engine. */
+ *  Two residual facts are deliberately unasserted because no JS owns them: the
+ *  OS aborts the composition when the field disappears, so the surviving text
+ *  returns committed (a lone jamo comes back as a compatibility jamo the user
+ *  cannot compose onto), and the remounted composer is unfocused because the
+ *  card owned focus. Geometry too: happy-dom has no layout engine. */
 
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -112,7 +122,10 @@ vi.mock('./use-native-chat-session-options', () => ({
 }))
 
 import NativeChatView from './NativeChatView'
-import { clearNativeChatDraftCacheForTests } from './native-chat-draft-cache'
+import {
+  clearNativeChatDraftCacheForTests,
+  readNativeChatDraftCache
+} from './native-chat-draft-cache'
 
 // Preload bridge surface the composer subscribes to on mount.
 beforeAll(() => {
@@ -160,19 +173,29 @@ function setInteractivePrompt(prompt: string | null, rendered: ReturnType<typeof
   })
 }
 
+/** One preedit mutation as an IME delivers it: the composition text updates and
+ *  the element's value is replaced, both reported through `input`. Assigning
+ *  `value` without this is what made the loss look real. */
+function composeFrame(el: HTMLTextAreaElement, value: string, data: string): void {
+  fireEvent.compositionUpdate(el, { data })
+  fireEvent.input(el, { target: { value }, inputType: 'insertCompositionText', data })
+}
+
 describe('native chat question card vs an in-flight composition', () => {
-  it('drops an active Hangul preedit but keeps the committed draft', () => {
+  it('keeps an active Hangul preedit across the swap', () => {
     const rendered = render(view())
     const before = composerTextarea()
     expect(before).not.toBeNull()
 
-    // Committed draft is "abc"; the user is now composing Hangul onto the end,
-    // so "가" lives only in the browser-owned value, not in React state.
+    // Committed draft is "abc"; the user now composes Hangul onto the end,
+    // one jamo per frame.
     fireEvent.change(before!, { target: { value: 'abc' } })
     fireEvent.compositionStart(before!)
-    before!.value = 'abc가'
+    composeFrame(before!, 'abcㄱ', 'ㄱ')
+    composeFrame(before!, 'abc가', '가')
 
-    // An AskUserQuestion card arrives mid-composition and takes the input region.
+    // An AskUserQuestion card arrives mid-composition and takes the input
+    // region. No compositionend ever reaches the composer.
     setInteractivePrompt(ASK_USER_QUESTION, rendered)
     expect(composerTextarea()).toBeNull()
     expect(before!.isConnected).toBe(false)
@@ -182,11 +205,49 @@ describe('native chat question card vs an in-flight composition', () => {
     const after = composerTextarea()
     expect(after).not.toBeNull()
 
-    // The reporter-facing shape: a different node, committed text intact, and
-    // the preedit gone because no compositionend ever reached the composer.
+    // A different node — the swap does remount — carrying the whole in-flight
+    // text, preedit included.
     expect(after).not.toBe(before)
-    expect(after!.value).toBe('abc')
-    expect(after!.value).not.toContain('가')
+    expect(after!.value).toBe('abc가')
+  })
+
+  it('keeps the live conversion candidate of a multi-segment Japanese composition', () => {
+    const rendered = render(view())
+    const before = composerTextarea()
+    expect(before).not.toBeNull()
+
+    // Japanese stays composing far longer than Hangul: kana first, then
+    // per-segment conversion, all inside one composition.
+    fireEvent.compositionStart(before!)
+    composeFrame(before!, 'か', 'か')
+    composeFrame(before!, 'かんじ', 'かんじ')
+    composeFrame(before!, 'かんじへんかん', 'かんじへんかん')
+    composeFrame(before!, '漢字へんかん', '漢字へんかん')
+    // Second segment converted; the card lands on this candidate.
+    composeFrame(before!, '漢字変換', '漢字変換')
+
+    setInteractivePrompt(ASK_USER_QUESTION, rendered)
+    setInteractivePrompt(null, rendered)
+
+    const after = composerTextarea()
+    expect(after).not.toBeNull()
+    // The candidate the user was looking at, not the kana it started from.
+    expect(after!.value).toBe('漢字変換')
+  })
+
+  it('holds the preedit in the draft cache while the card owns the input region', () => {
+    const rendered = render(view())
+    const before = composerTextarea()
+    expect(before).not.toBeNull()
+
+    fireEvent.compositionStart(before!)
+    composeFrame(before!, '가', '가')
+
+    // The mechanism, pinned directly: onChange fires on composition `input`
+    // frames, so the draft cache — not the unmounted DOM node — is what carries
+    // the preedit across the swap. Gating onChange on `isComposing` breaks here.
+    setInteractivePrompt(ASK_USER_QUESTION, rendered)
+    expect(readNativeChatDraftCache(PANE_KEY)).toBe('가')
   })
 
   it('leaves an ordinary committed English draft unchanged through the same swap', () => {
