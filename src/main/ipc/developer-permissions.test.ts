@@ -145,12 +145,14 @@ describe('registerDeveloperPermissionHandlers', () => {
     return call[1] as () => Promise<DeveloperPermissionState[]>
   }
 
-  function necpDenialError(): Error {
-    // The macOS NECP silent-deny signature (STA-3505): multicast send to
-    // 224.0.0.251 fails with EHOSTUNREACH and no authorization prompt appears.
-    return Object.assign(new Error('send EHOSTUNREACH 224.0.0.251:5353'), {
-      code: 'EHOSTUNREACH'
-    })
+  function getOpenSettingsHandler(): (_event: unknown, args: { id: string }) => Promise<void> {
+    const call = handleMock.mock.calls.find(
+      (c: unknown[]) => c[0] === 'developerPermissions:openSettings'
+    )
+    if (!call) {
+      throw new Error('developerPermissions:openSettings handler not registered')
+    }
+    return call[1] as (_event: unknown, args: { id: string }) => Promise<void>
   }
 
   it('returns the Full Disk Access read-probe status', async () => {
@@ -187,51 +189,14 @@ describe('registerDeveloperPermissionHandlers', () => {
     expect(socketMock.close).toHaveBeenCalledTimes(1)
   })
 
-  it('reports denied when the local-network probe send fails with the NECP silent-deny signature', async () => {
+  it('keeps local-network status unknown when the prompt trigger receives a socket error', async () => {
     registerDeveloperPermissionHandlers()
 
     const result = getRequestHandler()({}, { id: 'local-network' })
-    socketState.sendCallback?.(necpDenialError())
-
-    await expect(result).resolves.toEqual({
-      id: 'local-network',
-      status: 'denied',
-      openedSystemSettings: false
-    })
-  })
-
-  it('reports denied when the local-network probe socket errors with the NECP silent-deny signature', async () => {
-    registerDeveloperPermissionHandlers()
-
-    const result = getRequestHandler()({}, { id: 'local-network' })
-    socketState.errorListener?.(necpDenialError())
-
-    await expect(result).resolves.toEqual({
-      id: 'local-network',
-      status: 'denied',
-      openedSystemSettings: false
-    })
-  })
-
-  it('remembers the probe verdict for later local-network status reads', async () => {
-    registerDeveloperPermissionHandlers()
-
-    const request = getRequestHandler()({}, { id: 'local-network' })
-    socketState.sendCallback?.(necpDenialError())
-    await request
-
-    await expect(getStatusHandler()()).resolves.toContainEqual({
-      id: 'local-network',
-      status: 'denied'
-    })
-  })
-
-  it('keeps the local-network status unknown when the probe fails without the denial signature', async () => {
-    registerDeveloperPermissionHandlers()
-
-    const result = getRequestHandler()({}, { id: 'local-network' })
-    socketState.sendCallback?.(
-      Object.assign(new Error('send ENETUNREACH 224.0.0.251:5353'), { code: 'ENETUNREACH' })
+    socketState.errorListener?.(
+      Object.assign(new Error('send EHOSTUNREACH 224.0.0.251:5353'), {
+        code: 'EHOSTUNREACH'
+      })
     )
 
     await expect(result).resolves.toEqual({
@@ -239,6 +204,20 @@ describe('registerDeveloperPermissionHandlers', () => {
       status: 'unknown',
       openedSystemSettings: false
     })
+    await expect(getStatusHandler()()).resolves.toContainEqual({
+      id: 'local-network',
+      status: 'unknown'
+    })
+  })
+
+  it('opens the standard macOS Local Network settings pane', async () => {
+    registerDeveloperPermissionHandlers()
+
+    await getOpenSettingsHandler()({}, { id: 'local-network' })
+
+    expect(shellOpenExternalMock).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_LocalNetwork'
+    )
   })
 
   it('settles the automation prompt when osascript hangs', async () => {

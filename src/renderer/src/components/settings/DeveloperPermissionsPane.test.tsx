@@ -7,6 +7,16 @@ import type { DeveloperPermissionState } from '../../../../shared/developer-perm
 import { FULL_DISK_ACCESS_SETTINGS_TARGET_ID } from '@/lib/settings-navigation-types'
 import { DeveloperPermissionsPane } from './DeveloperPermissionsPane'
 
+const toastMessageMock = vi.hoisted(() => vi.fn())
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    message: toastMessageMock,
+    success: vi.fn()
+  }
+}))
+
 let container: HTMLDivElement
 let root: Root
 
@@ -19,10 +29,16 @@ beforeEach(() => {
             { id: 'full-disk-access', status: 'denied' }
           ]
         ),
-        request: vi.fn()
+        request: vi.fn(async ({ id }: { id: string }) => ({
+          id,
+          status: 'unknown',
+          openedSystemSettings: false
+        })),
+        openSettings: vi.fn()
       }
     }
   })
+  toastMessageMock.mockReset()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -39,26 +55,35 @@ function setPermissionStates(states: DeveloperPermissionState[]): void {
   api.developerPermissions.getStatus = vi.fn(async () => states)
 }
 
-it('surfaces the silent-denial diagnostic and workaround when local network is denied', async () => {
-  setPermissionStates([{ id: 'local-network', status: 'denied' }])
-
-  await act(async () => {
-    root.render(<DeveloperPermissionsPane />)
-  })
-
-  const note = container.querySelector('[data-testid="local-network-denied-diagnostic"]')
-  expect(note?.textContent).toContain('without showing a prompt')
-  expect(note?.textContent).toContain('killall nesessionmanager nehelper')
-})
-
-it('keeps the diagnostic hidden while the local-network probe verdict is unknown', async () => {
+it('requests Local Network access without claiming a permission verdict', async () => {
   setPermissionStates([{ id: 'local-network', status: 'unknown' }])
 
   await act(async () => {
     root.render(<DeveloperPermissionsPane />)
   })
 
-  expect(container.querySelector('[data-testid="local-network-denied-diagnostic"]')).toBeNull()
+  const row = container.querySelector<HTMLElement>(
+    '[data-settings-section="developer-permissions-local-network"]'
+  )
+  const button = row?.querySelector<HTMLButtonElement>('button')
+  expect(row?.textContent).toContain('Check manually')
+  expect(button?.textContent).toContain('Request Access')
+
+  await act(async () => button?.click())
+
+  const api = window.api.developerPermissions
+  expect(api.request).toHaveBeenCalledWith({ id: 'local-network' })
+  expect(toastMessageMock).toHaveBeenCalledWith(
+    'Check macOS for a Local Network prompt',
+    expect.objectContaining({
+      description: 'If no prompt appeared, open Local Network settings.',
+      action: expect.objectContaining({ label: 'Open Settings' })
+    })
+  )
+
+  const options = toastMessageMock.mock.calls[0]?.[1] as { action?: { onClick?: () => void } }
+  options.action?.onClick?.()
+  expect(api.openSettings).toHaveBeenCalledWith({ id: 'local-network' })
 })
 
 it('highlights the Full Disk Access row for a targeted Settings navigation', async () => {

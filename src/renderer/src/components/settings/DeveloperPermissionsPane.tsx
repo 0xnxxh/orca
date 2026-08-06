@@ -24,7 +24,7 @@ import {
   developerPermissionStatusClass,
   developerPermissionStatusLabel
 } from './developer-permission-status'
-import { LocalNetworkDeniedDiagnostic } from './LocalNetworkDeniedDiagnostic'
+import { showDeveloperPermissionRequestNotice } from './developer-permission-request-notice'
 export { getDeveloperPermissionsPaneSearchEntries } from './developer-permissions-search'
 
 type DeveloperPermissionsPaneProps = {
@@ -167,8 +167,8 @@ const PERMISSIONS: PermissionDefinition[] = [
     },
     get actionLabel() {
       return translate(
-        'auto.components.settings.DeveloperPermissionsPane.actionTriggerPrompt',
-        'Trigger Prompt'
+        'auto.components.settings.DeveloperPermissionsPane.actionRequestAccess',
+        'Request Access'
       )
     },
     icon: <Network className="size-4" />
@@ -290,37 +290,9 @@ export function DeveloperPermissionsPane({
       if (!mountedRef.current) {
         return
       }
-      if (result.status === 'granted') {
-        toast.success(
-          translate(
-            'auto.components.settings.DeveloperPermissionsPane.48d87edcd2',
-            'Permission granted'
-          )
-        )
-      } else if (result.openedSystemSettings) {
-        toast.message(
-          translate(
-            'auto.components.settings.DeveloperPermissionsPane.fa809e8ada',
-            'Opened macOS Privacy & Security'
-          )
-        )
-      } else if (result.status === 'denied') {
-        // Why: macOS can deny without ever showing a prompt (NECP silent deny,
-        // STA-3505) — reporting "request sent" here would look like success.
-        toast.error(
-          translate(
-            'auto.components.settings.DeveloperPermissionsPane.deniedWithoutPrompt',
-            'macOS denied access without showing a prompt'
-          )
-        )
-      } else {
-        toast.message(
-          translate(
-            'auto.components.settings.DeveloperPermissionsPane.66e94d6cf3',
-            'Permission request sent'
-          )
-        )
-      }
+      showDeveloperPermissionRequestNotice(result, () => {
+        void window.api.developerPermissions.openSettings({ id: 'local-network' })
+      })
     } catch {
       if (mountedRef.current) {
         toast.error(
@@ -388,9 +360,6 @@ export function DeveloperPermissionsPane({
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">{permission.description}</p>
-                  {permission.id === 'local-network' && status === 'denied' ? (
-                    <LocalNetworkDeniedDiagnostic />
-                  ) : null}
                 </div>
               </div>
               <Button
