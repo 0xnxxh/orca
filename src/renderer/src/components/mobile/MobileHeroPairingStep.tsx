@@ -274,7 +274,7 @@ export function MobileHeroPairingStep({
               <button type="button" className="mp-text-link">
                 {translate(
                   'auto.components.mobile.MobileHero.directAddressDisclosure',
-                  'Local network address (optional)'
+                  'Direct connection on this network'
                 )}
                 <ChevronDown
                   className={cn(

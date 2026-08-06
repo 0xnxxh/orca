@@ -122,6 +122,34 @@ describe('MobilePairingConnectionOptions', () => {
     expect(relay).toHaveTextContent(/isn’t available in this build/i)
   })
 
+  it('keeps Relay unavailable and unselectable while LAN is selected', async () => {
+    mocks.state = {
+      ...mocks.state,
+      orcaProfileAuthStatus: {
+        activeProfileId: 'profile-1',
+        configured: false,
+        state: 'unconfigured',
+        persistence: 'none'
+      }
+    }
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<MobilePairingConnectionOptions value="local-only" onChange={onChange} />)
+
+    // Availability follows the build, not the selected path.
+    const relay = screen.getByRole('radio', { name: /Orca Relay/i })
+    expect(relay).toHaveTextContent('Unavailable')
+    expect(relay).toHaveTextContent(/isn’t available in this build/i)
+    expect(relay).toHaveAttribute('aria-disabled', 'true')
+
+    await user.click(relay)
+    expect(onChange).not.toHaveBeenCalled()
+
+    screen.getByRole('radio', { name: /^LAN\b/i }).focus()
+    await user.keyboard('{ArrowUp}')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('moves selection with the arrow keys as a radiogroup', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

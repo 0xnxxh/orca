@@ -9608,8 +9608,8 @@
           "step1Title": "接続方法",
           "step2Title": "このコンピューターのアドレス",
           "step2LocalDescription": "スマートフォンが Tailscale または Wi‑Fi でこのアドレスに到達できる必要があります。",
-          "step2RelayDescription": "近くでは高速な直接接続に使用されます。Relay はリモートアクセスに対応します。",
-          "step2RelayDisclosure": "ローカルネットワークアドレス（任意）"
+          "step2RelayDescription": "スマートフォンが同じネットワークにあるときはこのコンピューターに直接接続され、Relay より高速です。外出中は Relay が引き継ぎます。",
+          "step2RelayDisclosure": "このネットワークでの直接接続"
         },
         "MobileRelayBetaAvailability": {
           "about": "Orca Relay ベータについて",
@@ -11770,7 +11770,7 @@
           },
           "relayDegradedNotice": "Relay に接続できませんでした — このコードは LAN または Tailscale でのみ動作します。",
           "pairingQrError": "このペアリングコードを QR コードとして表示できませんでした。代わりに Orca Mobile にコピーしてください。",
-          "directAddressDisclosure": "ローカルネットワークアドレス（任意）"
+          "directAddressDisclosure": "このネットワークでの直接接続"
         },
         "MobilePage": {
           "e17393c6a3": "スマートフォンプレビュー",

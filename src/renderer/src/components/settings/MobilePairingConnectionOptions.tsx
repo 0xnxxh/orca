@@ -63,7 +63,9 @@ export function MobilePairingConnectionOptions({
   // and only offer Sign in when the build can actually reach Relay.
   const configured = authStatus?.configured !== false
   const needsSignIn = value === 'automatic' && !signedIn && configured
-  const relayUnavailable = value === 'automatic' && !signedIn && !configured
+  // Availability is a property of the build, not of the current selection.
+  const relayUnavailable = !signedIn && !configured
+  const relayDisabled = relayMintRetrying || relayUnavailable
   const optionRefs = useRef<Record<MobilePairingConnectionMode, HTMLDivElement | null>>({
     automatic: null,
     'local-only': null
@@ -81,12 +83,12 @@ export function MobilePairingConnectionOptions({
     if (!(target instanceof HTMLElement) || target.getAttribute('role') !== 'radio') {
       return
     }
-    if (relayMintRetrying && value !== 'automatic') {
+    if (relayDisabled && value !== 'automatic') {
       return
     }
     event.preventDefault()
     const next: MobilePairingConnectionMode =
-      relayMintRetrying || value === 'automatic' ? 'local-only' : 'automatic'
+      relayDisabled || value === 'automatic' ? 'local-only' : 'automatic'
     onChange(next)
     optionRefs.current[next]?.focus()
   }
@@ -133,8 +135,8 @@ export function MobilePairingConnectionOptions({
       >
         <MobilePairingPathOption
           selected={value === 'automatic'}
-          tabIndex={value === 'automatic' && !relayMintRetrying ? 0 : -1}
-          disabled={relayMintRetrying}
+          tabIndex={value === 'automatic' && !relayDisabled ? 0 : -1}
+          disabled={relayDisabled}
           positionInSet={1}
           setSize={2}
           optionRef={(el) => {
@@ -231,7 +233,7 @@ export function MobilePairingConnectionOptions({
         <div className="border-t border-border" />
         <MobilePairingPathOption
           selected={value === 'local-only'}
-          tabIndex={value === 'local-only' || relayMintRetrying ? 0 : -1}
+          tabIndex={value === 'local-only' || relayDisabled ? 0 : -1}
           positionInSet={2}
           setSize={2}
           optionRef={(el) => {
