@@ -84,6 +84,7 @@ describe('parked terminal viewport frames', () => {
         { leafId: 'matching', frame: { data: 'matching frame', cols: 120, rows: 40 } },
         { leafId: 'stale', frame: { data: 'stale frame', cols: 80, rows: 24 } }
       ],
+      isVisible: () => true,
       paneByLeafId: new Map([
         ['matching', 1],
         ['stale', 2]
@@ -97,8 +98,9 @@ describe('parked terminal viewport frames', () => {
       matching.pane,
       replayingPanesRef,
       'matching frame',
-      expect.any(Object)
+      expect.objectContaining({ shouldReleaseRenderPause: expect.any(Function) })
     )
+    expect(mocks.replayIntoTerminal.mock.calls[0][3].shouldReleaseRenderPause()).toBe(true)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(true)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(false)
   })

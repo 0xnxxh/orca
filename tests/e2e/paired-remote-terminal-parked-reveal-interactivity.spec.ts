@@ -204,6 +204,26 @@ async function readPaneContent(page: Page, webTabId: string): Promise<string> {
   }, webTabId)
 }
 
+async function readPaintedPaneViewport(
+  page: Page,
+  webTabId: string
+): Promise<{ renderPaused: boolean; text: string }> {
+  return page.evaluate((id) => {
+    const manager = window.__paneManagers?.get(id)
+    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
+    if (!pane) {
+      return { renderPaused: false, text: '' }
+    }
+    const buffer = pane.terminal.buffer.active
+    const text = Array.from(
+      { length: pane.terminal.rows },
+      (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? ''
+    ).join('\n')
+    const renderService = Reflect.get(pane.terminal, '_core')?._renderService
+    return { renderPaused: renderService?._isPaused === true, text }
+  }, webTabId)
+}
+
 async function readPaneDiagnostics(
   page: Page,
   worktreeId: string,
@@ -241,6 +261,23 @@ async function waitForPaneMarker(
   const deadline = Date.now() + budgetMs
   while (Date.now() < deadline) {
     if ((await readPaneContent(page, webTabId)).includes(marker)) {
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  return false
+}
+
+async function waitForPaintedPaneMarker(
+  page: Page,
+  webTabId: string,
+  marker: string,
+  budgetMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + budgetMs
+  while (Date.now() < deadline) {
+    const viewport = await readPaintedPaneViewport(page, webTabId)
+    if (!viewport.renderPaused && viewport.text.includes(marker)) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -532,7 +569,7 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
     const startedAt = Date.now()
     await openClientTab(client.page, worktreeId, target.webTabId)
     expect(
-      await waitForPaneMarker(client.page, target.webTabId, 'READY:', 2_000),
+      await waitForPaintedPaneMarker(client.page, target.webTabId, 'READY:', 2_000),
       'cold-parked viewport stayed blank while the paired runtime was disconnected'
     ).toBe(true)
     console.log(`[paired-reveal] cached viewport painted in ${Date.now() - startedAt}ms`)

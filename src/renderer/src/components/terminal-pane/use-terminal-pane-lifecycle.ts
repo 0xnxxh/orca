@@ -1505,6 +1505,7 @@ export function useTerminalPaneLifecycle({
       restoredViewportBlankingPanesRef
     )
     replayParkedTerminalViewportForTab({
+      isVisible: () => isVisibleRef.current,
       manager,
       paneByLeafId: restoredPaneByLeafId,
       replayingPanesRef,

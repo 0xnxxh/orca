@@ -65,6 +65,7 @@ export function captureParkedTerminalViewportFrame(
 export function replayParkedTerminalViewportFrames(args: {
   manager: PaneManager
   frames: readonly ParkedTerminalViewportFrameByLeaf[]
+  isVisible: () => boolean
   paneByLeafId: ReadonlyMap<string, number>
   replayingPanesRef: ReplayingPanesRef
 }): number {
@@ -76,7 +77,8 @@ export function replayParkedTerminalViewportFrames(args: {
       continue
     }
     replayIntoTerminal(pane, args.replayingPanesRef, frame.data, {
-      shouldRefreshViewportSynchronously: () => !args.manager.hasWebglRenderer(pane.id)
+      shouldRefreshViewportSynchronously: () => !args.manager.hasWebglRenderer(pane.id),
+      shouldReleaseRenderPause: args.isVisible
     })
     pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] = 'true'
     replayed += 1

@@ -55,6 +55,7 @@ export type { ParkableTerminalTabModel } from './terminal-parked-watcher-reconci
 export type ParkedTerminalPtyEligibility = (ptyId: string) => boolean
 
 export function replayParkedTerminalViewportForTab(args: {
+  isVisible: () => boolean
   manager: PaneManager
   paneByLeafId: ReadonlyMap<string, number>
   replayingPanesRef: ReplayingPanesRef
@@ -72,6 +73,7 @@ export function replayParkedTerminalViewportForTab(args: {
       state.terminalLayoutsByTabId[args.tabId]?.ptyIdsByLeafId ?? {},
       tab?.ptyId ?? null
     ),
+    isVisible: args.isVisible,
     paneByLeafId: args.paneByLeafId,
     replayingPanesRef: args.replayingPanesRef
   })
