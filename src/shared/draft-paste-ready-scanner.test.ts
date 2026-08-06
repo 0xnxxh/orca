@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createDraftPasteReadyScanner } from './draft-paste-ready-scanner'
+import { createDraftPasteReadyScanner, draftPasteReadyBudgetMs } from './draft-paste-ready-scanner'
 
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -134,5 +134,31 @@ describe('createDraftPasteReadyScanner', () => {
         armQuietTimer: false
       })
     })
+  })
+})
+
+describe('draftPasteReadyBudgetMs', () => {
+  it('gives marker-gated signals room for a cold boot (STA-3367)', () => {
+    // Why: the marker is a positive proof, so waiting longer can only tolerate a
+    // slow first-run codex — it can never paste into a composer that isn't there.
+    expect(draftPasteReadyBudgetMs('codex-composer-prompt')).toBe(20000)
+    expect(draftPasteReadyBudgetMs('render-cursor-after-bracketed-paste')).toBe(20000)
+  })
+
+  it('keeps the markerless quiet window tight', () => {
+    // Why: silence is a guess, not a proof; a longer budget just delays a wrong answer.
+    expect(draftPasteReadyBudgetMs('render-quiet-after-bracketed-paste')).toBe(8000)
+  })
+
+  it('gives every marker-gated signal a strictly larger budget than the quiet window', () => {
+    // Guards the invariant rather than the numbers: a new marker signal added to
+    // the scanner must not silently inherit the tighter markerless budget.
+    const quiet = draftPasteReadyBudgetMs('render-quiet-after-bracketed-paste')
+    for (const signal of [
+      'codex-composer-prompt',
+      'render-cursor-after-bracketed-paste'
+    ] as const) {
+      expect(draftPasteReadyBudgetMs(signal)).toBeGreaterThan(quiet)
+    }
   })
 })

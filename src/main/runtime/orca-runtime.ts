@@ -416,7 +416,10 @@ import {
   isTuiAgent,
   TUI_AGENT_CONFIG
 } from '../../shared/tui-agent-config'
-import { createDraftPasteReadyScanner } from '../../shared/draft-paste-ready-scanner'
+import {
+  createDraftPasteReadyScanner,
+  draftPasteReadyBudgetMs
+} from '../../shared/draft-paste-ready-scanner'
 import { detectInstalledAgentsWithShellPathHydration, detectRemoteAgents } from '../ipc/preflight'
 import {
   markCodexProjectTrusted,
@@ -1737,7 +1740,6 @@ const FOREGROUND_AGENT_WRAPPER_RETRY_TIMEOUT_MS = 6_500
 const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
-const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
 const RECENT_PTY_PATH_CANDIDATE_LIMIT = 1024
@@ -21366,8 +21368,32 @@ export class OrcaRuntimeService {
       if (replay) {
         observeData(replay)
       }
-      hardTimer = setTimeout(() => finish(null), DRAFT_PASTE_READY_TIMEOUT_MS)
+      // Why: a marker that never rendered is not proof the agent is absent — the
+      // sidecar can attach after a fast TUI's handshake, and a cold boot can
+      // outlast the budget. Fall back to process ownership like the renderer
+      // delivery paths do, instead of silently dropping the prompt (STA-3367).
+      hardTimer = setTimeout(() => {
+        void this.resolveDraftPastePtyIfAgentOwns(ptyId, agent).then(finish)
+      }, draftPasteReadyBudgetMs(readySignal))
     })
+  }
+
+  /** Best-effort post-timeout check: does the launched agent own this PTY? */
+  private async resolveDraftPastePtyIfAgentOwns(
+    ptyId: string,
+    agent: TuiAgent
+  ): Promise<string | null> {
+    if (!this.ptyController) {
+      return null
+    }
+    try {
+      const foregroundProcess = await this.ptyController.getForegroundProcess(ptyId)
+      return isExpectedAgentProcess(foregroundProcess, TUI_AGENT_CONFIG[agent].expectedProcess)
+        ? ptyId
+        : null
+    } catch {
+      return null
+    }
   }
 
   async prefetchManagedWorktreeCreateBase(args: {

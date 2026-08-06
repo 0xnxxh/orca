@@ -1,5 +1,6 @@
 import type { TuiAgent, GlobalSettings } from '../../../shared/types'
-import { TUI_AGENT_CONFIG, type DraftPasteReadySignal } from '../../../shared/tui-agent-config'
+import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
+import { draftPasteReadyBudgetMs } from '../../../shared/draft-paste-ready-scanner'
 import { useAppStore } from '@/store'
 import {
   inspectRuntimeTerminalProcess,
@@ -38,25 +39,12 @@ export function sanitizeBracketedPasteContent(content: string): string {
   return sanitizeTerminalPasteText(content)
 }
 
-// Why: deterministic signal can fail in two ways: (1) the agent never
-// emits DECSET 2004 (no shipped agent does this — guarded as a fallback),
-// or (2) the launch fails outright. The hard timeout caps the wait so a
-// stuck launch doesn't pin a Promise forever.
-const READINESS_TIMEOUT_MS = 8000
-
-// Why: marker-gated signals (Codex '›', opencode show-cursor) are positive
-// readiness proofs — the paste fires only when the marker actually renders, so a
-// longer budget can never paste prematurely; it only tolerates a slow cold boot.
-// First-run codex on a cold app can take >8s to mount its composer, past which
-// the old budget gave up and dropped the launch prompt (STA-3367). The default
-// quiet-window signal has no such proof, so it keeps the tighter budget.
-const MARKER_READINESS_TIMEOUT_MS = 20000
-
-function readinessBudgetForSignal(readySignal: DraftPasteReadySignal): number {
-  return readySignal === 'render-quiet-after-bracketed-paste'
-    ? READINESS_TIMEOUT_MS
-    : MARKER_READINESS_TIMEOUT_MS
-}
+// Why: "the tab has a PTY" and "the agent's composer accepts input" are separate
+// states with separate failure modes, so they get separate budgets. A PTY that
+// hasn't appeared in 8s means the launch itself failed — waiting the (longer)
+// composer budget on top would only delay that verdict. Keeping them distinct
+// also stops one slow step from spending the other's budget (STA-3367).
+const PTY_SPAWN_TIMEOUT_MS = 8000
 
 export function getSettingsForAgentTabRuntimeOwner(
   tabId: string
@@ -79,7 +67,9 @@ export function getSettingsForAgentTabRuntimeOwner(
  *
  * Returns true when the paste was issued, false on timeout or missing
  * PTY. `onTimeout` lets the caller surface a UI hint (e.g. toast) when
- * the agent doesn't reach a ready state inside `timeoutMs`.
+ * the agent doesn't reach a ready state. `timeoutMs` overrides the
+ * per-signal readiness budget only; waiting for the PTY to spawn keeps its
+ * own fixed budget.
  *
  * Readiness combines DECSET 2004 with one agent-specific follow-up signal:
  *   1. `\x1b[?2004h` (DECSET 2004 — bracketed-paste-enable) on the PTY
@@ -111,14 +101,16 @@ export async function pasteDraftWhenAgentReady(args: {
   }
 
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const budget = timeoutMs ?? readinessBudgetForSignal(readySignal)
-  const ptyId = await waitForPtyId(tabId, budget)
+  const ptyId = await waitForPtyId(tabId, PTY_SPAWN_TIMEOUT_MS)
   if (!ptyId) {
     onTimeout?.()
     return false
   }
 
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+  // Why: the readiness budget starts once the PTY exists, so a slow spawn
+  // shortens nothing — a cold composer still gets its full window.
+  const budget = timeoutMs ?? draftPasteReadyBudgetMs(readySignal)
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
     // Why: fast-starting TUIs can emit the paste-ready escape sequence before
@@ -161,7 +153,7 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
 
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const budget = timeoutMs ?? readinessBudgetForSignal(readySignal)
+  const budget = timeoutMs ?? draftPasteReadyBudgetMs(readySignal)
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
     const fallbackReady = agentConfig

@@ -17,7 +17,7 @@ import {
 const testState = vi.hoisted(() => ({
   appState: {
     settings: {},
-    ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+    ptyIdsByTabId: { 'tab-1': ['pty-1'] } as Record<string, string[]>,
     runtimePaneTitlesByTabId: {},
     tabsByWorktree: {} as Record<string, { id: string; title?: string }[]>,
     repos: [] as { id: string; connectionId: string | null; executionHostId?: string | null }[],
@@ -456,6 +456,62 @@ describe('pasteDraftWhenAgentReady', () => {
       PASTED_ISSUE_URL
     )
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('gives up on a never-spawned PTY at the spawn budget, not the composer budget (STA-3367)', async () => {
+    // Why: the two waits must not each spend the marker budget. A tab whose PTY
+    // never appears is a failed launch, and must not also burn the 20s cold-boot
+    // composer window before the caller is told.
+    testState.appState.ptyIdsByTabId = {}
+    const onTimeout = vi.fn()
+    const promise = pasteDraftWhenAgentReady({
+      tabId: 'tab-1',
+      content: ISSUE_URL,
+      agent: 'codex',
+      onTimeout
+    })
+
+    await vi.advanceTimersByTimeAsync(8000)
+    await flushMicrotasks(5)
+
+    await expect(promise).resolves.toBe(false)
+    expect(onTimeout).toHaveBeenCalledTimes(1)
+    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('starts the composer budget once the PTY exists, so a slow spawn does not shorten it', async () => {
+    // Why: "tab has a PTY" and "composer accepts input" are separate states. A
+    // spawn that eats most of a shared budget would leave a cold codex too little
+    // room and re-drop the prompt — the exact STA-3367 failure.
+    testState.appState.ptyIdsByTabId = {}
+    const promise = pasteDraftWhenAgentReady({
+      tabId: 'tab-1',
+      content: ISSUE_URL,
+      agent: 'codex'
+    })
+
+    // PTY takes 4s to appear — most of the old shared 8s budget.
+    await vi.advanceTimersByTimeAsync(4000)
+    testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-1'] }
+    await vi.advanceTimersByTimeAsync(100)
+    await flushMicrotasks(5)
+
+    testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
+    // 19s of cold boot after the PTY appeared: past a shared budget, inside the
+    // composer's own window.
+    await vi.advanceTimersByTimeAsync(19000)
+    await flushMicrotasks()
+    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+
+    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
+
+    await expect(promise).resolves.toBe(true)
+    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
+      {},
+      'pty-1',
+      PASTED_ISSUE_URL
+    )
   })
 
   it('honors the fallback inspection deadline for pty-bound draft paste', async () => {
