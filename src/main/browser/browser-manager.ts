@@ -43,6 +43,7 @@ import {
   buildBrowserIframeClickedLinkRoutingScript
 } from './browser-clicked-link-routing'
 import { cleanElectronUserAgent } from './browser-session-ua'
+import { googleAuthUserAgent, isGoogleAuthUrl } from './browser-google-auth-ua'
 import type {
   BrowserViewportOverride,
   BrowserCertificateFailure,
@@ -850,6 +851,7 @@ export class BrowserManager {
       if (!isMainFrame || isChromiumInternalErrorUrl(url)) {
         return
       }
+      this.applyGoogleAuthUserAgent(guest, url)
       this.certificateTrustController?.onMainFrameNavigationStarted(guest.id)
       // Why: a pre-registration failure belongs only to its own nav; a replacement nav must not replay it.
       this.pendingLoadFailuresByGuestId.delete(guest.id)
@@ -911,6 +913,23 @@ export class BrowserManager {
         guest.off('did-fail-load', didFailLoadHandler)
       }
     })
+  }
+
+  // Why: navigator.userAgent (read by Google's auth JS) reflects the WebContents UA,
+  // not the request header, so the header-level Firefox switch in setupClientHintsOverride
+  // must be matched here per navigation or the two layers disagree — itself a bot tell.
+  // Restores the session's base identity off the auth hosts. Native-UA profiles opt out
+  // of the whole clean-UA path, so they keep their untouched identity everywhere.
+  private applyGoogleAuthUserAgent(guest: Electron.WebContents, url: string): void {
+    const browserPageId = this.tabIdByWebContentsId.get(guest.id)
+    const mode = browserPageId ? this.userAgentModeByPageId.get(browserPageId) : undefined
+    if (mode === 'native') {
+      return
+    }
+    const desiredUa = isGoogleAuthUrl(url) ? googleAuthUserAgent() : guest.session.getUserAgent()
+    if (guest.getUserAgent() !== desiredUa) {
+      guest.setUserAgent(desiredUa)
+    }
   }
 
   private createPopupChildWindowWithOriginBar(
