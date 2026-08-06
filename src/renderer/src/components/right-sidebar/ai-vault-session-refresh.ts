@@ -207,8 +207,7 @@ export function useAiVaultSessionRefresh(
     }
     forcedRescanTimerRef.current = setTimeout(() => {
       forcedRescanTimerRef.current = null
-      lastForcedRescanAt = Date.now()
-      void refresh({ background: true, force: true })
+      requestForcedRescan()
     }, waitMs)
   }, [refresh])
 

@@ -514,6 +514,26 @@ describe('useAiVaultSessionRefresh in-app agent session behavior', () => {
     expect(lastCallArgs()).toMatchObject({ force: true })
   })
 
+  it('re-budgets a trailing agent scan after a manual refresh', async () => {
+    await renderHook()
+    await flushMicrotasks()
+
+    await setAgentStatuses({ 'pane-1': makeAgentEntry('sess-1') })
+    await advance(10_000)
+    await setAgentStatuses({ 'pane-2': makeAgentEntry('sess-2') })
+    await advance(10_000)
+    await act(async () => {
+      await latest?.refresh({ force: true })
+    })
+
+    await advance(10_001)
+    expect(listSessionsMock).toHaveBeenCalledTimes(3)
+
+    await advance(19_999)
+    expect(listSessionsMock).toHaveBeenCalledTimes(4)
+    expect(lastCallArgs()).toMatchObject({ force: true })
+  })
+
   it('ignores agent activity on already-known sessions', async () => {
     await renderHook()
     await flushMicrotasks()
