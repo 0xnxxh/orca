@@ -793,6 +793,13 @@ export default function HomeScreen() {
                     setConfirmRemove(item)
                   }
                 }}
+                onOpenActions={() => {
+                  if (item.profile) {
+                    setActionTarget(item.profile)
+                  } else {
+                    setConfirmRemove(item)
+                  }
+                }}
               />
             )
           }}
