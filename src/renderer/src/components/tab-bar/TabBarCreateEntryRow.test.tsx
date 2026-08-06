@@ -4,19 +4,6 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveOption } from './tab-create-entry-active-option'
-
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => (
-    <div data-tooltip-root="">{children}</div>
-  ),
-  TooltipContent: ({ children }: { children: React.ReactNode }) => (
-    <div data-tooltip-content="">{children}</div>
-  ),
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
-    <div data-tooltip-trigger="">{children}</div>
-  )
-}))
-
 import { EntryActionRow } from './TabBarCreateEntryRow'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -37,6 +24,25 @@ function makeFileOption(path: string): ActiveOption {
   }
 }
 
+function renderRow(option: ActiveOption): HTMLButtonElement {
+  act(() => {
+    root.render(
+      createElement(EntryActionRow, {
+        id: 'file-result',
+        onClick: vi.fn(),
+        option,
+        selected: false
+      })
+    )
+  })
+
+  const button = container.querySelector('button')
+  if (!button) {
+    throw new Error('row did not render a button')
+  }
+  return button
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -52,37 +58,34 @@ afterEach(() => {
 })
 
 describe('EntryActionRow', () => {
-  it('puts the filename before the truncated parent path and exposes the full path in a tooltip', () => {
-    act(() => {
-      root.render(
-        createElement(EntryActionRow, {
-          id: 'file-result',
-          onClick: vi.fn(),
-          option: makeFileOption(filePath),
-          selected: true
-        })
-      )
-    })
+  it('puts the filename before the truncated parent path', () => {
+    const text = renderRow(makeFileOption(filePath)).textContent ?? ''
 
-    const button = container.querySelector('button')
-    const text = button?.textContent ?? ''
     expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('app/src/components/'))
-    expect(container.querySelector('[data-tooltip-content]')?.textContent).toBe(filePath)
+  })
+
+  it('exposes the full path through the native tooltip', () => {
+    expect(renderRow(makeFileOption(filePath)).getAttribute('title')).toBe(filePath)
   })
 
   it('does not duplicate the root separator for absolute root-level files', () => {
-    act(() => {
-      root.render(
-        createElement(EntryActionRow, {
-          id: 'root-file-result',
-          onClick: vi.fn(),
-          option: makeFileOption('/foo'),
-          selected: false
-        })
-      )
-    })
+    const text = renderRow(makeFileOption('/foo')).textContent ?? ''
 
-    expect(container.querySelector('button')?.textContent).toContain('foo/')
-    expect(container.querySelector('button')?.textContent).not.toContain('foo//')
+    expect(text).toContain('foo/')
+    expect(text).not.toContain('foo//')
+  })
+
+  it('keeps Windows separators intact', () => {
+    const windowsPath = 'C:\\repo\\src\\SecondaryNav.tsx'
+    const button = renderRow(makeFileOption(windowsPath))
+    const text = button.textContent ?? ''
+
+    expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('C:\\repo\\src\\'))
+    expect(button.getAttribute('title')).toBe(windowsPath)
+  })
+
+  it('renders a bare filename without a directory fragment', () => {
+    expect(renderRow(makeFileOption('README.md')).textContent).toContain('README.md')
+    expect(container.textContent).not.toContain('/')
   })
 })

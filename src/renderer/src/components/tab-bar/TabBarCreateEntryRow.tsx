@@ -1,9 +1,7 @@
 import React from 'react'
 import { FilePlus, FileText, Globe, Loader2, Smartphone, TerminalSquare } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
-import { basename, dirname } from '@/lib/path'
 import { cn } from '@/lib/utils'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 import type { ActiveOption } from './tab-create-entry-active-option'
 
@@ -42,12 +40,17 @@ export function EntryActionRow({
   selected: boolean
 }): React.JSX.Element {
   const presentation = getActionPresentation(option)
-  const actionRow = (
+
+  return (
     <button
       type="button"
       id={id}
       role="option"
       aria-selected={selected}
+      // Why: the row truncates aggressively, so the OS tooltip carries the full
+      // text. Native beats a portaled tooltip here — this row lives inside the
+      // new-tab dropdown, where an overlay would cover the sibling results.
+      title={presentation.showDetail ? presentation.detail : undefined}
       className={cn(
         'flex h-6 w-full items-center gap-1.5 rounded-[7px] px-1 text-left text-[11px] leading-5 outline-none',
         selected
@@ -74,40 +77,28 @@ export function EntryActionRow({
       ) : null}
     </button>
   )
+}
 
-  if (!presentation.prioritizeFilename) {
-    return actionRow
-  }
+// Why: keeps the separator attached to the directory, so `/foo` renders as
+// `foo` + `/` rather than re-deriving a separator that may not match the path.
+function splitTrailingSegment(path: string): { directory: string; filename: string } {
+  const separatorIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
 
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{actionRow}</TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={4}
-        className="max-w-[min(90vw,600px)] break-all font-mono"
-      >
-        {presentation.detail}
-      </TooltipContent>
-    </Tooltip>
-  )
+  return separatorIndex === -1
+    ? { directory: '', filename: path }
+    : { directory: path.slice(0, separatorIndex + 1), filename: path.slice(separatorIndex + 1) }
 }
 
 function FilenameFirstPath({ path }: { path: string }): React.JSX.Element {
-  const filename = basename(path)
-  const directory = dirname(path)
-  const directoryLabel =
-    directory === '.'
-      ? ''
-      : directory.endsWith('/') || directory.endsWith('\\')
-        ? directory
-        : `${directory}${path.includes('\\') ? '\\' : '/'}`
+  const { directory, filename } = splitTrailingSegment(path)
 
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1">
-      <span className="min-w-0 max-w-full shrink-0 truncate text-foreground">{filename}</span>
-      {directoryLabel ? (
-        <span className="min-w-0 truncate text-muted-foreground">{directoryLabel}</span>
+      {/* shrink-0 + max-w-full: the directory gives up all of its width before
+          the filename loses a character. */}
+      <span className="min-w-0 max-w-full shrink-0 truncate">{filename}</span>
+      {directory ? (
+        <span className="min-w-0 truncate text-muted-foreground/70">{directory}</span>
       ) : null}
     </span>
   )
