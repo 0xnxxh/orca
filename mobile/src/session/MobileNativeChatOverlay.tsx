@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { StyleSheet, View } from 'react-native'
-import { MobileNativeChatView, type MobileNativeChatInputLockReason } from './MobileNativeChatView'
+import { MobileNativeChatView } from './MobileNativeChatView'
+import type { MobileNativeChatInputLockReason } from './use-mobile-native-chat-input-lock'
 import { foldMobileNativeChatMessages } from './mobile-native-chat-render-data'
 import type { MobileNativeChatImageAttachments } from './use-mobile-native-chat-image-attachments'
 import type { MobileNativeChatController } from './use-mobile-native-chat-controller'
@@ -83,6 +84,7 @@ export function MobileNativeChatOverlay({
         onLoadEarlier={session.loadEarlier}
         onSend={images.sendNativeChat}
         pending={controller.chatPending}
+        imagePreviewsByMessageId={controller.chatImagePreviewsByMessageId}
         composerText={controller.chatComposerText}
         onComposerTextChange={controller.setChatComposerText}
         onAttachImage={() => void images.attachImage('library')}

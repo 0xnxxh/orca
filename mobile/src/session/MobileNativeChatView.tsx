@@ -20,6 +20,10 @@ import {
   type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
 import { useMobileNativeChatTailFollow } from './use-mobile-native-chat-tail-follow'
+import {
+  useMobileNativeChatInputLock,
+  type MobileNativeChatInputLockReason
+} from './use-mobile-native-chat-input-lock'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -36,10 +40,6 @@ import type {
   MobileNativeChatLoadEarlier,
   MobileNativeChatStatus
 } from './use-mobile-native-chat-session'
-
-/** Why the composer input is locked: the transport is disconnected, or the
- *  terminal subscription has not acknowledged its input lease yet. */
-export type MobileNativeChatInputLockReason = 'disconnected' | 'waiting'
 
 const NATIVE_CHAT_MAINTAIN_VISIBLE_CONTENT_POSITION = { minIndexForVisible: 0 } as const
 
@@ -66,6 +66,9 @@ type Props = {
   /** Optimistic queued sends (owned by the route so they survive view switches). */
   /** Optimistic user echoes, including any ridden-along image preview URIs. */
   pending: MobileNativeChatPendingItem[]
+  /** Local photo URIs retained when the authoritative transcript replaces an
+   *  optimistic image bubble. */
+  imagePreviewsByMessageId?: Record<string, string[]>
   /** Controlled composer text (owned by the route so dictation can write to it). */
   composerText: string
   onComposerTextChange: (text: string) => void
@@ -131,6 +134,7 @@ export function MobileNativeChatView({
   onLoadEarlier,
   onSend,
   pending,
+  imagePreviewsByMessageId,
   composerText,
   onComposerTextChange,
   onAttachImage,
@@ -182,8 +186,14 @@ export function MobileNativeChatView({
   // route-owned optimistic queued messages. Memoize on the same deps so the
   // downstream autoscroll effects/`renderItem` keep referential stability.
   const { data } = useMemo(
-    () => buildMobileNativeChatTransientData({ folded, streaming, pending }),
-    [folded, streaming, pending]
+    () =>
+      buildMobileNativeChatTransientData({
+        folded,
+        streaming,
+        pending,
+        imagePreviewsByMessageId
+      }),
+    [folded, streaming, pending, imagePreviewsByMessageId]
   )
 
   // Follow the tail as the conversation grows and keep the newest message above
@@ -264,20 +274,7 @@ export function MobileNativeChatView({
   const emptyState = mobileNativeChatEmptyState(status, agent ?? null, error)
   const showLoading = status === 'loading' && messages.length === 0
 
-  // Composer-lock flicker guard: on a remote link, brief connState blips or lease
-  // hand-offs would otherwise toggle the lock placeholder on and off. Only surface
-  // a lock once it has held ~600ms; drop it instantly so unlocking stays snappy.
-  const rawLockReason = inputLockReason ?? null
-  const [lockHeld, setLockHeld] = useState(false)
-  useEffect(() => {
-    if (rawLockReason === null) {
-      setLockHeld(false)
-      return
-    }
-    const timer = setTimeout(() => setLockHeld(true), 600)
-    return () => clearTimeout(timer)
-  }, [rawLockReason])
-  const lockReason = lockHeld ? rawLockReason : null
+  const lockReason = useMobileNativeChatInputLock(inputLockReason)
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
