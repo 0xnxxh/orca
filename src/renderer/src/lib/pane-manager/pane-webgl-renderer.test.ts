@@ -9,6 +9,7 @@ import {
 } from './pane-webgl-renderer'
 import { notifyPaneFitSucceeded } from './pane-fit-webgl-attach-signal'
 import { safeFit } from './pane-fit'
+import { disposePane } from './pane-lifecycle'
 
 function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
   const leafId = '22222222-2222-4222-8222-222222222222' as never
@@ -47,6 +48,19 @@ function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneIntern
     pendingSplitScrollState: null,
     debugLabel: null
   }
+}
+
+function createFittablePane(): ManagedPaneInternal {
+  const pane = createPane()
+  const rect = { width: 800, height: 400 }
+  pane.container = { dataset: {}, getBoundingClientRect: () => rect } as never
+  pane.xtermContainer = { getBoundingClientRect: () => rect } as never
+  // Why: WebGL floors the device cell width, so the same box proposes a wider
+  // grid once the addon is live — the divergence the reattach has to settle.
+  pane.fitAddon.proposeDimensions = vi.fn(() =>
+    pane.webglAddon ? { cols: 84, rows: 24 } : { cols: 80, rows: 24 }
+  ) as never
+  return pane
 }
 
 describe('terminal WebGL addon lifecycle', () => {
@@ -236,19 +250,6 @@ describe('fit-anchored WebGL reattach', () => {
 // green even if safeFit stops calling it. These go through the real fit path so
 // the wiring — and the import-time hook registration — is what is under test.
 describe('safeFit drives the fit-anchored WebGL reattach', () => {
-  function createFittablePane(): ManagedPaneInternal {
-    const pane = createPane()
-    const rect = { width: 800, height: 400 }
-    pane.container = { dataset: {}, getBoundingClientRect: () => rect } as never
-    pane.xtermContainer = { getBoundingClientRect: () => rect } as never
-    // Why: WebGL floors the device cell width, so the same box proposes a wider
-    // grid once the addon is live — the divergence the reattach has to settle.
-    pane.fitAddon.proposeDimensions = vi.fn(() =>
-      pane.webglAddon ? { cols: 84, rows: 24 } : { cols: 80, rows: 24 }
-    ) as never
-    return pane
-  }
-
   beforeEach(() => {
     resetTerminalWebglSuggestion()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -296,5 +297,62 @@ describe('safeFit drives the fit-anchored WebGL reattach', () => {
     expect(safeFit(pane)).toBe(false)
 
     expect(pane.webglAddon).toBeNull()
+  })
+})
+
+// Why a deferred stub: the suites above run rAF synchronously, so the window in
+// which the refit handle is live never exists there — and that window is exactly
+// where teardown and re-entry have to hold.
+describe('the deferred fit-anchored refit frame', () => {
+  const frames: (FrameRequestCallback | null)[] = []
+  const cancelledFrameIds: number[] = []
+
+  beforeEach(() => {
+    frames.length = 0
+    cancelledFrameIds.length = 0
+    resetTerminalWebglSuggestion()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      frames.push(callback)
+    )
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      cancelledFrameIds.push(id)
+      frames[id - 1] = null
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('cancels the refit when the pane is disposed before the frame runs', () => {
+    // An uncancelled handle refits — and forwards a PTY resize for — a pane
+    // whose terminal is already disposed.
+    const pane = createFittablePane()
+    safeFit(pane)
+    const refitFrameId = pane.pendingWebglRefreshRafId
+    expect(refitFrameId).not.toBeNull()
+
+    disposePane(pane, new Map([[pane.id, pane]]))
+
+    expect(cancelledFrameIds).toContain(refitFrameId)
+    expect(pane.pendingWebglRefreshRafId).toBeNull()
+    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+  })
+
+  it('settles after one refit instead of cycling fit -> attach -> fit', () => {
+    const pane = createFittablePane()
+
+    safeFit(pane)
+    // Bounded drain: a cycle would keep queueing frames past the cap.
+    for (let index = 0; index < frames.length && index < 8; index += 1) {
+      const frame = frames[index]
+      frames[index] = null
+      frame?.(16)
+    }
+
+    expect(frames.length).toBe(1)
+    expect(pane.pendingWebglRefreshRafId).toBeNull()
   })
 })
