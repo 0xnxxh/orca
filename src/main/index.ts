@@ -372,7 +372,6 @@ function emitPluginWorktreeLifecycle(event: RuntimeWorktreeLifecycleEvent): void
 }
 // Why: a reload intent must not leak to a later load; recovery reloads spare live PTYs from the orphan sweep (#5787).
 const expectedRendererReload = createWebContentsTimedFlag()
-const recoveryReloadInFlight = createWebContentsTimedFlag()
 const lazyChunkRecoveryReloadIntent = createRecoveryReloadIntent()
 // Why: a tray "Settings…" click can precede the renderer's ui:openSettings listener; it pulls this one-shot on mount.
 const pendingOpenSettings = createWebContentsTimedFlag()
@@ -693,6 +692,7 @@ function createWebContentsTimedFlag(defaultDurationMs = 10_000): {
 
 function markExpectedRendererReload(webContentsId: number, durationMs = 10_000): void {
   expectedRendererReload.mark(webContentsId, durationMs)
+  lazyChunkRecoveryReloadIntent.armOrdinary(webContentsId)
 }
 
 function clearExpectedRendererReload(webContentsId?: number): void {
@@ -709,16 +709,8 @@ function getExpectedTeardownScope(webContentsId?: number): ExpectedTeardownScope
   return expectedRendererReload.matches(webContentsId) ? 'renderer-reload' : 'none'
 }
 
-function markRecoveryReloadInFlight(webContentsId: number, durationMs = 10_000): void {
-  recoveryReloadInFlight.mark(webContentsId, durationMs)
-}
-
-function isRecoveryReloadInFlight(webContentsId: number): boolean {
-  if (lazyChunkRecoveryReloadIntent.consume(webContentsId)) {
-    return true
-  }
-  // Why: consume on read — the recovery reload fires exactly one did-finish-load, so a later genuine reload still sweeps orphaned PTYs.
-  return recoveryReloadInFlight.matches(webContentsId, { consume: true })
+function markRecoveryReloadInFlight(webContentsId: number): void {
+  lazyChunkRecoveryReloadIntent.begin(webContentsId)
 }
 
 function recordAgentStateCrashBreadcrumb(agentType: string, state: string): void {
@@ -1410,8 +1402,8 @@ function openMainWindow(): BrowserWindow {
         }
         return cancelled
       },
-      // Why: let the PTY layer skip its orphan sweep on the recovery reload that re-fires did-finish-load, so live local sessions survive (#5787).
-      isRecoveryReloadInFlight,
+      noteRendererNavigationStarted: lazyChunkRecoveryReloadIntent.noteNavigationStarted,
+      classifyRendererLoad: lazyChunkRecoveryReloadIntent.classifyLoad,
       onBeforeUpdateQuit: () =>
         preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store }),
       updateInstallMode: resolveUpdateInstallMode(isServeMode),
@@ -1428,6 +1420,7 @@ function openMainWindow(): BrowserWindow {
       mainWindow = null
     }
     clearExpectedRendererReload(rendererWebContentsId)
+    lazyChunkRecoveryReloadIntent.forget(rendererWebContentsId)
     automations?.setWebContents(null)
     // Why: detach the hook listener on close so the server never fires into destroyed webContents before reopen, and replay runs only on deliberate recreations.
     agentHookServer.setListener(null)

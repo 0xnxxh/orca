@@ -19,13 +19,14 @@ describe('createRecoveryReloadIntent', () => {
     })
 
     intent.begin(7)
+    intent.noteNavigationStarted(7)
 
-    expect(intent.consume(7)).toBe(false)
+    expect(intent.classifyLoad(7)).toBe('unknown')
     expect(performanceNow).toHaveBeenCalledTimes(2)
     expect(dateNow).not.toHaveBeenCalled()
   })
 
-  it('consumes only the matching webContents intent once', () => {
+  it('classifies only the first post-intent navigation as recovery', () => {
     const intent = createRecoveryReloadIntent({
       now: () => 100,
       createToken: () => 'intent-1',
@@ -33,9 +34,93 @@ describe('createRecoveryReloadIntent', () => {
     })
 
     expect(intent.begin(7)).toBe('intent-1')
-    expect(intent.consume(8)).toBe(false)
-    expect(intent.consume(7)).toBe(true)
-    expect(intent.consume(7)).toBe(false)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('recovery')
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not let an intervening load consume the intended recovery navigation', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    expect(intent.classifyLoad(7)).toBe('unknown')
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('recovery')
+  })
+
+  it('does not bind an intent to a navigation already in flight', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.noteNavigationStarted(7)
+    intent.begin(7)
+    expect(intent.classifyLoad(7)).toBe('unknown')
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('recovery')
+  })
+
+  it('classifies an expired intended navigation as unknown', () => {
+    let now = 100
+    const intent = createRecoveryReloadIntent({
+      now: () => now,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    now = 150
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+    expect(intent.cancel(7, 'intent-1')).toBe(false)
+  })
+
+  it('tracks concurrent recovery navigations per webContents', () => {
+    let token = 0
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => `intent-${++token}`,
+      durationMs: 50
+    })
+
+    expect(intent.begin(7)).toBe('intent-1')
+    expect(intent.begin(8)).toBe('intent-2')
+    intent.noteNavigationStarted(7)
+    intent.noteNavigationStarted(8)
+
+    expect(intent.classifyLoad(7)).toBe('recovery')
+    expect(intent.classifyLoad(8)).toBe('recovery')
+  })
+
+  it('requires an explicit arm to classify a load as ordinary', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+    intent.noteNavigationStarted(7)
+    expect(intent.classifyLoad(7)).toBe('unknown')
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+    expect(intent.classifyLoad(7)).toBe('ordinary')
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping navigations as unknown', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+
+    intent.noteNavigationStarted(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
   })
 
   it('cancels only the exact token from the originating webContents', () => {
@@ -49,25 +134,8 @@ describe('createRecoveryReloadIntent', () => {
     expect(intent.cancel(7, 'stale')).toBe(false)
     expect(intent.cancel(8, 'intent-1')).toBe(false)
     expect(intent.cancel(7, 'intent-1')).toBe(true)
-    expect(intent.consume(7)).toBe(false)
-  })
-
-  it('never expires early when an injected clock moves backwards', () => {
-    let now = 100
-    const intent = createRecoveryReloadIntent({
-      now: () => now,
-      createToken: () => 'intent-1',
-      durationMs: 50
-    })
-
-    intent.begin(7)
-    now = 120
-    expect(intent.consume(8)).toBe(false)
-    now = 110
-    expect(intent.consume(8)).toBe(false)
-    now = 151
-
-    expect(intent.consume(7)).toBe(true)
+    intent.noteNavigationStarted(7)
+    expect(intent.classifyLoad(7)).toBe('unknown')
   })
 
   it('restarts the expiry window after an injected clock rollback', () => {
@@ -80,26 +148,12 @@ describe('createRecoveryReloadIntent', () => {
 
     intent.begin(7)
     now = 120
-    expect(intent.consume(8)).toBe(false)
+    expect(intent.cancel(8, 'intent-1')).toBe(false)
     now = 90
-    expect(intent.consume(8)).toBe(false)
-    now = 145
+    expect(intent.cancel(8, 'intent-1')).toBe(false)
+    now = 139
+    intent.noteNavigationStarted(7)
 
-    expect(intent.consume(7)).toBe(false)
-  })
-
-  it('expires at the injected deadline without wall-clock waiting', () => {
-    let now = 100
-    const intent = createRecoveryReloadIntent({
-      now: () => now,
-      createToken: () => 'intent-1',
-      durationMs: 50
-    })
-
-    intent.begin(7)
-    now = 150
-
-    expect(intent.consume(7)).toBe(false)
-    expect(intent.cancel(7, 'intent-1')).toBe(false)
+    expect(intent.classifyLoad(7)).toBe('recovery')
   })
 })

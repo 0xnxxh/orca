@@ -39,7 +39,7 @@ describe('lazy chunk recovery local PTY load', () => {
 
   async function spawnStaleGenerationPty(provider: LocalPtyProvider): Promise<string> {
     const spawned = await provider.spawn({ cols: 80, rows: 24 })
-    handleLocalPtyRendererLoad(provider, webContentsId, () => true)
+    handleLocalPtyRendererLoad(provider, webContentsId, () => 'recovery')
     await provider.spawn({ cols: 100, rows: 30, sessionId: spawned.id })
     return spawned.id
   }
@@ -59,7 +59,6 @@ describe('lazy chunk recovery local PTY load', () => {
   it('preserves a re-adopted older-generation PTY across lazy recovery', async () => {
     const provider = new LocalPtyProvider()
     const spawnedId = await spawnStaleGenerationPty(provider)
-
     const intent = createRecoveryReloadIntent({
       now: () => 100,
       createToken: () => 'intent-1',
@@ -75,7 +74,8 @@ describe('lazy chunk recovery local PTY load', () => {
       }
     })
     vi.spyOn(window.location, 'reload').mockImplementation(() => {
-      handleLocalPtyRendererLoad(provider, webContentsId, (id) => intent.consume(id))
+      intent.noteNavigationStarted(webContentsId)
+      handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
       window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
     })
 
@@ -87,10 +87,102 @@ describe('lazy chunk recovery local PTY load', () => {
     expect(provider.hasPty(spawnedId)).toBe(true)
   })
 
-  it('cancels a non-landing intent before a later genuine load', async () => {
+  it('does not let an intervening load consume the recovery protection', async () => {
+    const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+    Object.assign(window, {
+      api: {
+        app: {
+          beginLazyChunkRecoveryReload: async () => intent.begin(webContentsId),
+          cancelLazyChunkRecoveryReload: async (token: string) =>
+            intent.cancel(webContentsId, token)
+        }
+      }
+    })
+    vi.spyOn(window.location, 'reload').mockImplementation(() => {
+      handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+      intent.noteNavigationStarted(webContentsId)
+      handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+      window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+    })
+
+    await expect(requestLazyChunkRecoveryReload(window, async () => undefined)).resolves.toBe(
+      'unload-vetoed'
+    )
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
+  })
+
+  it('preserves the PTY when the recovery intent expires before navigation', async () => {
+    let now = 100
+    const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
+    const intent = createRecoveryReloadIntent({
+      now: () => now,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+    Object.assign(window, {
+      api: {
+        app: {
+          beginLazyChunkRecoveryReload: async () => intent.begin(webContentsId),
+          cancelLazyChunkRecoveryReload: async (token: string) =>
+            intent.cancel(webContentsId, token)
+        }
+      }
+    })
+    vi.spyOn(window.location, 'reload').mockImplementation(() => {
+      now = 151
+      intent.noteNavigationStarted(webContentsId)
+      handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+      window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+    })
+
+    await expect(requestLazyChunkRecoveryReload(window, async () => undefined)).resolves.toBe(
+      'unload-vetoed'
+    )
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
+  })
+
+  it('isolates concurrent recovery intents by webContents', () => {
+    const provider = new LocalPtyProvider()
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent',
+      durationMs: 50
+    })
+
+    intent.begin(webContentsId)
+    intent.begin(8)
+    intent.noteNavigationStarted(webContentsId)
+    handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+    intent.noteNavigationStarted(8)
+    handleLocalPtyRendererLoad(provider, 8, intent.classifyLoad)
+
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('preserves the PTY for an unknown load classification', async () => {
+    const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
+
+    handleLocalPtyRendererLoad(provider, webContentsId, () => 'unknown')
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
+  })
+
+  it('sweeps only after a positively classified ordinary navigation', async () => {
     const provider = new LocalPtyProvider()
     await spawnStaleGenerationPty(provider)
-
     const intent = createRecoveryReloadIntent({
       now: () => 100,
       createToken: () => 'intent-1',
@@ -112,7 +204,9 @@ describe('lazy chunk recovery local PTY load', () => {
     await expect(requestLazyChunkRecoveryReload(window, async () => undefined)).resolves.toBe(
       'unload-vetoed'
     )
-    handleLocalPtyRendererLoad(provider, webContentsId, (id) => intent.consume(id))
+    intent.armOrdinary(webContentsId)
+    intent.noteNavigationStarted(webContentsId)
+    handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
 
     expect(kill).toHaveBeenCalledTimes(1)
   })

@@ -3,11 +3,26 @@ import { performance } from 'node:perf_hooks'
 
 export const RECOVERY_RELOAD_INTENT_TTL_MS = 30_000
 
-type RecoveryReloadIntentState = {
-  token: string
-  webContentsId: number
+export type RendererLoadKind = 'ordinary' | 'recovery' | 'unknown'
+
+type RendererNavigationArm = {
+  kind: 'ordinary' | 'recovery'
+  token?: string
   remainingMs: number
   lastObservedAt: number
+}
+
+type PendingRendererLoad = {
+  sequence: number
+  kind: RendererLoadKind
+  recoveryToken?: string
+}
+
+type WebContentsRecoveryState = {
+  navigationSequence: number
+  pendingLoad: PendingRendererLoad | null
+  arm: RendererNavigationArm | null
+  nextNavigationUnknown: boolean
 }
 
 type RecoveryReloadIntentOptions = {
@@ -18,8 +33,11 @@ type RecoveryReloadIntentOptions = {
 
 export type RecoveryReloadIntent = {
   begin: (webContentsId: number) => string
+  armOrdinary: (webContentsId: number) => void
   cancel: (webContentsId: number, token: string) => boolean
-  consume: (webContentsId: number) => boolean
+  noteNavigationStarted: (webContentsId: number) => void
+  classifyLoad: (webContentsId: number) => RendererLoadKind
+  forget: (webContentsId: number) => void
 }
 
 export function createRecoveryReloadIntent({
@@ -28,51 +46,125 @@ export function createRecoveryReloadIntent({
   createToken = randomUUID,
   durationMs = RECOVERY_RELOAD_INTENT_TTL_MS
 }: RecoveryReloadIntentOptions = {}): RecoveryReloadIntent {
-  let state: RecoveryReloadIntentState | null = null
+  const states = new Map<number, WebContentsRecoveryState>()
 
-  const currentState = (): RecoveryReloadIntentState | null => {
-    if (!state) {
+  const getState = (webContentsId: number): WebContentsRecoveryState => {
+    const existing = states.get(webContentsId)
+    if (existing) {
+      return existing
+    }
+    const created: WebContentsRecoveryState = {
+      navigationSequence: 0,
+      pendingLoad: null,
+      arm: null,
+      nextNavigationUnknown: false
+    }
+    states.set(webContentsId, created)
+    return created
+  }
+
+  const refreshArm = (state: WebContentsRecoveryState): RendererNavigationArm | null => {
+    const arm = state.arm
+    if (!arm) {
       return null
     }
     const observedAt = now()
-    if (observedAt < state.lastObservedAt) {
-      state = { ...state, remainingMs: durationMs, lastObservedAt: observedAt }
-      return state
+    if (observedAt < arm.lastObservedAt) {
+      arm.remainingMs = durationMs
+      arm.lastObservedAt = observedAt
+      return arm
     }
-    const elapsedMs = observedAt - state.lastObservedAt
-    if (elapsedMs >= state.remainingMs) {
-      state = null
+    const elapsedMs = observedAt - arm.lastObservedAt
+    if (elapsedMs >= arm.remainingMs) {
+      state.arm = null
+      state.nextNavigationUnknown = true
       return null
     }
-    state = {
-      ...state,
-      remainingMs: state.remainingMs - elapsedMs,
-      lastObservedAt: observedAt
+    arm.remainingMs -= elapsedMs
+    arm.lastObservedAt = observedAt
+    return arm
+  }
+
+  const armNavigation = (
+    state: WebContentsRecoveryState,
+    kind: 'ordinary' | 'recovery',
+    token?: string
+  ): void => {
+    refreshArm(state)
+    if (state.pendingLoad) {
+      state.pendingLoad = { ...state.pendingLoad, kind: 'unknown' }
     }
-    return state
+    state.arm = {
+      kind,
+      token,
+      remainingMs: durationMs,
+      lastObservedAt: now()
+    }
+    state.nextNavigationUnknown = false
   }
 
   return {
     begin(webContentsId) {
       const token = createToken()
-      state = { token, webContentsId, remainingMs: durationMs, lastObservedAt: now() }
+      armNavigation(getState(webContentsId), 'recovery', token)
       return token
     },
-    cancel(webContentsId, token) {
-      const current = currentState()
-      if (current?.webContentsId !== webContentsId || current.token !== token) {
-        return false
-      }
-      state = null
-      return true
+    armOrdinary(webContentsId) {
+      armNavigation(getState(webContentsId), 'ordinary')
     },
-    consume(webContentsId) {
-      const current = currentState()
-      if (current?.webContentsId !== webContentsId) {
-        return false
+    cancel(webContentsId, token) {
+      const state = getState(webContentsId)
+      const arm = refreshArm(state)
+      if (arm?.kind === 'recovery' && arm.token === token) {
+        state.arm = null
+        state.nextNavigationUnknown = false
+        return true
       }
-      state = null
-      return true
+      if (state.pendingLoad?.kind === 'recovery' && state.pendingLoad.recoveryToken === token) {
+        state.pendingLoad = { ...state.pendingLoad, kind: 'unknown' }
+        return true
+      }
+      return false
+    },
+    noteNavigationStarted(webContentsId) {
+      const state = getState(webContentsId)
+      const arm = refreshArm(state)
+      state.navigationSequence += 1
+
+      if (state.pendingLoad) {
+        state.pendingLoad = { sequence: state.navigationSequence, kind: 'unknown' }
+        state.arm = null
+        state.nextNavigationUnknown = false
+        return
+      }
+      if (state.nextNavigationUnknown) {
+        state.pendingLoad = { sequence: state.navigationSequence, kind: 'unknown' }
+        state.nextNavigationUnknown = false
+        return
+      }
+      if (!arm) {
+        state.pendingLoad = { sequence: state.navigationSequence, kind: 'unknown' }
+        return
+      }
+      state.pendingLoad = {
+        sequence: state.navigationSequence,
+        kind: arm.kind,
+        ...(arm.kind === 'recovery' ? { recoveryToken: arm.token } : {})
+      }
+      state.arm = null
+    },
+    classifyLoad(webContentsId) {
+      const state = getState(webContentsId)
+      refreshArm(state)
+      const pending = state.pendingLoad
+      if (!pending) {
+        return 'unknown'
+      }
+      state.pendingLoad = null
+      return pending.kind
+    },
+    forget(webContentsId) {
+      states.delete(webContentsId)
     }
   }
 }

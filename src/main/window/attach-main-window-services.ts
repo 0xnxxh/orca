@@ -66,6 +66,7 @@ import {
   setWorktreeBaseDirectoryWatcherSyncContext
 } from '../ipc/worktree-base-directory-watcher'
 import { logStartupMilestone } from '../startup/startup-diagnostics'
+import type { RendererLoadKind } from './recovery-reload-intent'
 
 const UPDATER_SETUP_FALLBACK_MS = 15_000
 
@@ -98,8 +99,8 @@ export function attachMainWindowServices(
     onBeforeRendererReload?: (args: { webContentsId: number; ignoreCache: boolean }) => void
     beginRecoveryReload?: (webContentsId: number) => string
     cancelRecoveryReload?: (webContentsId: number, token: string) => boolean
-    // Why: lets the PTY orphan sweep skip the one crash-recovery reload (#5787).
-    isRecoveryReloadInFlight?: (webContentsId: number) => boolean
+    noteRendererNavigationStarted?: (webContentsId: number) => void
+    classifyRendererLoad?: (webContentsId: number) => RendererLoadKind
     onBeforeUpdateQuit?: () => void | Promise<void>
     updateInstallMode?: UpdateInstallMode
     onWorktreeLifecycle?: (event: RuntimeWorktreeLifecycleEvent) => void
@@ -131,7 +132,8 @@ export function attachMainWindowServices(
       prepareCodexSessionResume: options?.prepareCodexSessionResume,
       awaitLocalPtyStartup: options?.awaitLocalPtyStartup,
       awaitLocalPtyProviderStartup: options?.awaitLocalPtyProviderStartup,
-      isRecoveryReloadInFlight: options?.isRecoveryReloadInFlight
+      noteRendererNavigationStarted: options?.noteRendererNavigationStarted,
+      classifyRendererLoad: options?.classifyRendererLoad
     }
   )
   // Why: register after registerPtyHandlers so pty:management:* IPC re-installs on macOS re-activation (docs/daemon-staleness-ux.md §Phase 1).
