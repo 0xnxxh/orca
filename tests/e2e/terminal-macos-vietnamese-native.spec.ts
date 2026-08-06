@@ -75,9 +75,14 @@ test.describe('Native macOS Vietnamese terminal input @headful', () => {
     await waitForActiveWorktree(orcaPage)
     await ensureTerminalVisible(orcaPage)
     await waitForActiveTerminalManager(orcaPage, 30_000)
-    await expect(orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())).resolves.toBe(
-      simpleTelexInputSourceId()
-    )
+    // Fails loudly, naming near-matches, if Simple Telex is not installed at all.
+    simpleTelexInputSourceId()
+    // TIS and `getKeyboardInputSourceId` report this source in DIFFERENT namespaces — TIS nests it
+    // under VietnameseIM, the app API does not. The precondition above is TIS-space; this assertion
+    // is app-space, so match the leaf rather than comparing across namespaces.
+    await expect(
+      orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())
+    ).resolves.toMatch(/(^|\.)VietnameseSimpleTelex$/)
 
     const ptyId = await waitForActivePanePtyId(orcaPage)
     let reader = createTerminalImeByteReader(testRepoPath, 1)
