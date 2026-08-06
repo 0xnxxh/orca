@@ -11,6 +11,20 @@ export const RESULT_LISTBOX_ID = 'tab-create-entry-results'
 // Clears the macOS pointer without putting the label under the cursor's own hotspot.
 const CURSOR_TOOLTIP_GAP = 18
 
+/**
+ * Radix positions the tooltip against the row, so a cursor position has to be
+ * restated as offsets from the row's bottom-left corner to land under the pointer.
+ */
+export function cursorTooltipOffsets(
+  pointer: { x: number; y: number },
+  row: { bottom: number; left: number }
+): { align: number; side: number } {
+  return {
+    align: pointer.x - row.left,
+    side: pointer.y + CURSOR_TOOLTIP_GAP - row.bottom
+  }
+}
+
 // Index-based (not the option id, which may contain spaces/slashes from file
 // paths) so it is always a valid aria-activedescendant IDREF.
 export function resultOptionDomId(index: number): string {
@@ -44,31 +58,42 @@ export function EntryActionRow({
   selected: boolean
 }): React.JSX.Element {
   const presentation = getActionPresentation(option)
+  const rowRef = React.useRef<HTMLButtonElement>(null)
+  const pointerRef = React.useRef<{ x: number; y: number } | null>(null)
   const [tooltipOpen, setTooltipOpen] = React.useState(false)
   const [pointerOffset, setPointerOffset] = React.useState({ align: 0, side: 0 })
 
+  // Why: Radix positions against the row, so the offsets are only valid for the
+  // row's position at the moment it positions. Results stream in while the open
+  // delay runs, so re-measure on open rather than trusting the pointer-move rect.
+  React.useLayoutEffect(() => {
+    const rect = rowRef.current?.getBoundingClientRect()
+    const pointer = pointerRef.current
+    if (!tooltipOpen || !rect || !pointer) {
+      return
+    }
+    const next = cursorTooltipOffsets(pointer, rect)
+    setPointerOffset((current) =>
+      current.align === next.align && current.side === next.side ? current : next
+    )
+  }, [tooltipOpen])
+
   const row = (
     <button
+      ref={rowRef}
       type="button"
       id={id}
       role="option"
       aria-selected={selected}
-      onMouseMove={(event) => {
-        // Freeze once shown: a system tooltip marks where the cursor came to
-        // rest, it does not trail the pointer around afterwards.
+      // Why: a ref, not state — this is read once when the tooltip opens, so
+      // re-rendering the row on every pointer move would be churn for nothing.
+      // pointermove (not mousemove) because Radix opens off pointermove and Slot
+      // runs the child handler first, keeping this fresh even on instant open.
+      onPointerMove={(event) => {
         if (tooltipOpen) {
           return
         }
-        const rect = event.currentTarget.getBoundingClientRect()
-        const next = {
-          align: event.clientX - rect.left,
-          side: event.clientY + CURSOR_TOOLTIP_GAP - rect.bottom
-        }
-        setPointerOffset((current) =>
-          Math.abs(current.align - next.align) < 3 && Math.abs(current.side - next.side) < 3
-            ? current
-            : next
-        )
+        pointerRef.current = { x: event.clientX, y: event.clientY }
       }}
       className={cn(
         'flex h-6 w-full items-center gap-1.5 rounded-[7px] px-1 text-left text-[11px] leading-5 outline-none',
@@ -97,7 +122,9 @@ export function EntryActionRow({
     </button>
   )
 
-  if (!presentation.showDetail) {
+  // Only the filename-first rows hide information. Every other row already shows
+  // its detail in full, and STYLEGUIDE.md:162 rules out labelling those.
+  if (!presentation.prioritizeFilename) {
     return row
   }
 
@@ -114,7 +141,7 @@ export function EntryActionRow({
         sideOffset={pointerOffset.side}
         alignOffset={pointerOffset.align}
         showArrow={false}
-        className="max-w-[420px] rounded-[5px] border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-all text-popover-foreground shadow-[0_2px_8px_rgba(0,0,0,0.28)]"
+        className="max-w-[420px] rounded-md border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-words text-popover-foreground shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
       >
         {presentation.detail}
       </TooltipContent>
