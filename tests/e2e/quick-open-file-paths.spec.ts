@@ -36,9 +36,18 @@ test('cmd+p quick open prioritizes the filename and reveals the full path on hov
     rowText?.indexOf('packages/orca/src/renderer/src/components/navigation/') ?? -1
   )
 
-  await row.hover({ force: true })
+  // Two hovers on purpose: results stream in and remount the row, and Radix only
+  // opens on a pointermove it actually receives. A single hover can land before
+  // the remount and leave the cursor sitting still over a row that never saw it.
+  await row.hover({ position: { x: 20, y: 12 } })
+  await orcaPage.waitForTimeout(250)
+  await row.hover({ position: { x: 40, y: 12 } })
+
+  // Exact cursor placement is arithmetic, unit-tested via cursorTooltipOffsets.
+  // Asserting it here measures the app mid-reflow and is flaky; what E2E is
+  // uniquely good for is that the tooltip really opens with the whole path.
   await expect(
-    orcaPage.locator('[role="tooltip"]').filter({ hasText: relativeFilePath })
+    orcaPage.locator('[data-slot="tooltip-content"]').filter({ hasText: relativeFilePath })
   ).toBeVisible()
 
   const proofPath = process.env.ORCA_QUICK_OPEN_PROOF_PATH
