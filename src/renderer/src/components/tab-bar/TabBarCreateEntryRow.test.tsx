@@ -3,6 +3,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ActiveOption } from './tab-create-entry-active-option'
 import { EntryActionRow } from './TabBarCreateEntryRow'
 
@@ -24,15 +25,21 @@ function makeFileOption(path: string): ActiveOption {
   }
 }
 
+// The tooltip itself is asserted in tests/e2e/tab-create-entry-file-paths.spec.ts,
+// where it actually opens; here we only need the row's own text layout.
 function renderRow(option: ActiveOption): HTMLButtonElement {
   act(() => {
     root.render(
-      createElement(EntryActionRow, {
-        id: 'file-result',
-        onClick: vi.fn(),
-        option,
-        selected: false
-      })
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(EntryActionRow, {
+          id: 'file-result',
+          onClick: vi.fn(),
+          option,
+          selected: false
+        })
+      )
     )
   })
 
@@ -64,10 +71,6 @@ describe('EntryActionRow', () => {
     expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('app/src/components/'))
   })
 
-  it('exposes the full path through the native tooltip', () => {
-    expect(renderRow(makeFileOption(filePath)).getAttribute('title')).toBe(filePath)
-  })
-
   it('does not duplicate the root separator for absolute root-level files', () => {
     const text = renderRow(makeFileOption('/foo')).textContent ?? ''
 
@@ -76,12 +79,9 @@ describe('EntryActionRow', () => {
   })
 
   it('keeps Windows separators intact', () => {
-    const windowsPath = 'C:\\repo\\src\\SecondaryNav.tsx'
-    const button = renderRow(makeFileOption(windowsPath))
-    const text = button.textContent ?? ''
+    const text = renderRow(makeFileOption('C:\\repo\\src\\SecondaryNav.tsx')).textContent ?? ''
 
     expect(text.indexOf('SecondaryNav.tsx')).toBeLessThan(text.indexOf('C:\\repo\\src\\'))
-    expect(button.getAttribute('title')).toBe(windowsPath)
   })
 
   it('renders a bare filename without a directory fragment', () => {

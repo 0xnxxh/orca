@@ -6,7 +6,7 @@ import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } fro
 const relativeFilePath =
   'packages/orca/src/renderer/src/components/navigation/worktree/secondary-nav/SecondaryNav.tsx'
 
-test('new-tab file results prioritize the filename and carry the full path in a native tooltip', async ({
+test('new-tab file results prioritize the filename and reveal the full path on hover', async ({
   orcaPage,
   testRepoPath
 }) => {
@@ -33,8 +33,6 @@ test('new-tab file results prioritize the filename and carry the full path in a 
     rowText?.indexOf('packages/orca/src/renderer/src/components/navigation/') ?? -1
   )
 
-  await expect(row).toHaveAttribute('title', relativeFilePath)
-
   // The filename must survive intact; only the directory may be clipped, and the
   // row itself must never spill past the dropdown.
   const overflow = await row.evaluate((element) => {
@@ -46,7 +44,20 @@ test('new-tab file results prioritize the filename and carry the full path in a 
   })
   expect(overflow).toEqual({ filenameClipped: false, rowClipped: false })
 
-  await row.hover({ force: true })
+  await row.hover()
+  const tooltip = orcaPage.locator('[data-slot="tooltip-content"]').filter({
+    hasText: relativeFilePath
+  })
+  await expect(tooltip).toBeVisible()
+
+  // Beside the list, not over it — the sibling results stay readable while the
+  // full path is up.
+  const [rowBox, tooltipBox] = await Promise.all([row.boundingBox(), tooltip.boundingBox()])
+  expect(rowBox).not.toBeNull()
+  expect(tooltipBox).not.toBeNull()
+  const overlapsRow =
+    tooltipBox!.x < rowBox!.x + rowBox!.width && tooltipBox!.x + tooltipBox!.width > rowBox!.x
+  expect(overlapsRow).toBe(false)
 
   const proofPath = process.env.ORCA_STA3424_PROOF_PATH
   if (proofPath) {

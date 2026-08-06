@@ -2,6 +2,7 @@ import React from 'react'
 import { FilePlus, FileText, Globe, Loader2, Smartphone, TerminalSquare } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 import type { ActiveOption } from './tab-create-entry-active-option'
 
@@ -41,16 +42,12 @@ export function EntryActionRow({
 }): React.JSX.Element {
   const presentation = getActionPresentation(option)
 
-  return (
+  const row = (
     <button
       type="button"
       id={id}
       role="option"
       aria-selected={selected}
-      // Why: the row truncates aggressively, so the OS tooltip carries the full
-      // text. Native beats a portaled tooltip here — this row lives inside the
-      // new-tab dropdown, where an overlay would cover the sibling results.
-      title={presentation.showDetail ? presentation.detail : undefined}
       className={cn(
         'flex h-6 w-full items-center gap-1.5 rounded-[7px] px-1 text-left text-[11px] leading-5 outline-none',
         selected
@@ -76,6 +73,27 @@ export function EntryActionRow({
         </>
       ) : null}
     </button>
+  )
+
+  if (!presentation.showDetail) {
+    return row
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{row}</TooltipTrigger>
+      {/* Why: side="right" clears the result list. Above/below would cover the
+          sibling rows the user is scanning, and Orca has no native tooltip to
+          fall back on — `title` renders nothing in this window. */}
+      <TooltipContent
+        side="right"
+        sideOffset={8}
+        showArrow={false}
+        className="max-w-[420px] rounded-[5px] border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-all text-popover-foreground shadow-[0_2px_8px_rgba(0,0,0,0.28)]"
+      >
+        {presentation.detail}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
