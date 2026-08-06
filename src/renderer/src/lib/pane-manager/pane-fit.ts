@@ -82,7 +82,12 @@ function performSafeFit(pane: ManagedPane): boolean {
   }
   // Why here: metric options deferred while the pane was unmeasurable must land
   // before this fit reads dimensions, or the fit pins cols/rows to stale metrics.
-  flushDeferredPaneMetricOptions(pane)
+  // Why re-check: the gate above measured with the old cell size — a large font
+  // jump on a narrow pane can drop it under the floor, and fit() would then pin
+  // the PTY at the tiny grid that floor exists to prevent.
+  if (flushDeferredPaneMetricOptions(pane) && !canMeasurePaneForFit(pane)) {
+    return false
+  }
   let scrollIntent = null as ReturnType<typeof captureTerminalStructuralScrollIntent>
   let pinnedScrollState: ScrollState | null = null
   let shouldRestoreScroll = false
