@@ -111,6 +111,7 @@ export function useNativeChatSessionOptions(args: {
       return
     }
     let cancelled = false
+    reportedScreenRef.current = null
     const reportCurrentValues = async (): Promise<void> => {
       let authoritativeScreen: string | null = null
       if (targetPtyId && window.api?.pty?.getMainBufferSnapshot) {
@@ -139,10 +140,11 @@ export function useNativeChatSessionOptions(args: {
         // Why: discovery can land after this read. Keeping the screen that
         // parsed lets it re-resolve against the host's real ids later, when the
         // frame itself may have already scrolled out of the buffer.
-        reportedScreenRef.current = screen
-        if (!cancelled) {
-          surface.reportSessionOptions(reportedValues)
+        if (cancelled) {
+          return
         }
+        reportedScreenRef.current = screen
+        surface.reportSessionOptions(reportedValues)
         return
       }
     }

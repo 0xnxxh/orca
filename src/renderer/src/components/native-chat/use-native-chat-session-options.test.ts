@@ -3,6 +3,7 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogModel } from '../../../../shared/agent-session-option-catalog'
+import { clearNativeChatModelEnrichmentForTests } from './native-chat-session-option-enrichment'
 
 const discoverModels = vi.fn<() => Promise<readonly CatalogModel[] | null>>()
 
@@ -39,8 +40,9 @@ function modelDescriptor(snapshot: { id: string; kind: unknown }[]): {
 
 describe('useNativeChatSessionOptions model reporting', () => {
   beforeEach(() => {
-    vi.resetModules()
+    clearNativeChatModelEnrichmentForTests()
     discoverModels.mockReset()
+    Object.defineProperty(window, 'api', { configurable: true, value: undefined })
   })
 
   it('re-resolves the reported model against models discovered after the read', async () => {
@@ -85,5 +87,92 @@ describe('useNativeChatSessionOptions model reporting', () => {
       'opus[1m]',
       'haiku'
     ])
+  })
+
+  it('does not re-resolve a late snapshot from the previous pty', async () => {
+    let resolveDiscovery: (models: CatalogModel[]) => void = () => {}
+    discoverModels.mockReturnValue(
+      new Promise<readonly CatalogModel[]>((resolve) => {
+        resolveDiscovery = resolve
+      })
+    )
+    let resolveOldSnapshot: (snapshot: { data: string; alternateScreen: false }) => void = () => {}
+    const oldSnapshot = new Promise<{ data: string; alternateScreen: false }>((resolve) => {
+      resolveOldSnapshot = resolve
+    })
+    const getMainBufferSnapshot = vi
+      .fn()
+      .mockReturnValueOnce(oldSnapshot)
+      .mockReturnValueOnce(new Promise(() => {}))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { pty: { getMainBufferSnapshot } }
+    })
+
+    const dispatchCommand = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ targetPtyId }) =>
+        useNativeChatSessionOptions({
+          agent: 'claude',
+          terminalTabId: 'tab-1',
+          targetPtyId,
+          dispatchCommand,
+          readTerminalScreen: () => null
+        }),
+      { initialProps: { targetPtyId: 'pty-old' } }
+    )
+
+    rerender({ targetPtyId: 'pty-new' })
+    resolveOldSnapshot({ data: CLAUDE_SCREEN, alternateScreen: false })
+    await Promise.resolve()
+    resolveDiscovery(DISCOVERED)
+
+    await waitFor(() =>
+      expect(
+        modelDescriptor(result.current.snapshot).choices.map((choice) => choice.value)
+      ).toEqual(['opus[1m]', 'haiku'])
+    )
+    expect(modelDescriptor(result.current.snapshot).currentValue).toBeUndefined()
+  })
+
+  it('clears a previously reported screen when the target pty changes', async () => {
+    let resolveDiscovery: (models: CatalogModel[]) => void = () => {}
+    discoverModels.mockReturnValue(
+      new Promise<readonly CatalogModel[]>((resolve) => {
+        resolveDiscovery = resolve
+      })
+    )
+    const getMainBufferSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({ data: CLAUDE_SCREEN, alternateScreen: false })
+      .mockReturnValueOnce(new Promise(() => {}))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { pty: { getMainBufferSnapshot } }
+    })
+
+    const dispatchCommand = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ targetPtyId }) =>
+        useNativeChatSessionOptions({
+          agent: 'claude',
+          terminalTabId: 'tab-reset',
+          targetPtyId,
+          dispatchCommand,
+          readTerminalScreen: () => null
+        }),
+      { initialProps: { targetPtyId: 'pty-reported' } }
+    )
+    await waitFor(() => expect(modelDescriptor(result.current.snapshot).currentValue).toBe('opus'))
+
+    rerender({ targetPtyId: 'pty-empty' })
+    resolveDiscovery(DISCOVERED)
+
+    await waitFor(() =>
+      expect(
+        modelDescriptor(result.current.snapshot).choices.map((choice) => choice.value)
+      ).toEqual(['opus[1m]', 'haiku'])
+    )
+    expect(modelDescriptor(result.current.snapshot).currentValue).toBeUndefined()
   })
 })

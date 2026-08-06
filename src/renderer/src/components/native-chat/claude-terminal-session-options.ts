@@ -64,6 +64,15 @@ function isModelDescriptorCell(cell: string): boolean {
   return cell.includes('·') || CLAUDE_MODEL_EFFORT.test(cell)
 }
 
+function isWorkingDirectoryCell(cell: string): boolean {
+  return (
+    cell.startsWith('/') ||
+    cell.startsWith('~') ||
+    /^[A-Za-z]:[\\/]/.test(cell) ||
+    /^\\\\[^\\]/.test(cell)
+  )
+}
+
 /**
  * Claude prints the model descriptor near the bottom of its startup frame, with
  * the welcome art and the release-notes panel in between — it is not adjacent to
@@ -105,7 +114,7 @@ function modelRowAboveWorkingDirectory(
   let workingDirectory = -1
   for (let index = frameBottom - 1; index > headerIndex; index -= 1) {
     const cell = frameCell(lines[index] ?? '')
-    if (cell.startsWith('/') || cell.startsWith('~')) {
+    if (isWorkingDirectoryCell(cell)) {
       workingDirectory = index
       break
     }
@@ -118,7 +127,11 @@ function modelRowAboveWorkingDirectory(
     top -= 1
   }
   // Anything taller than descriptor + billing is the welcome art, not a model.
-  return top < workingDirectory && workingDirectory - top <= 2 ? frameCell(lines[top] ?? '') : null
+  if (top >= workingDirectory || workingDirectory - top > 2) {
+    return null
+  }
+  const cell = frameCell(lines[top] ?? '')
+  return /^API Usage Billing$/i.test(cell) ? null : cell
 }
 
 /** The displayed model name, without the effort suffix or billing tail. */

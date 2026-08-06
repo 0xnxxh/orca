@@ -146,6 +146,18 @@ describe('Claude terminal session option detection', () => {
     })
   })
 
+  it('reads an option-less model above a Windows working directory', () => {
+    const screen = [
+      '╭─ Claude Code ───╮',
+      '│Haiku 4.5│',
+      '│API Usage Billing│',
+      '│C:\\work\\repo│',
+      '╰─────────────╯'
+    ].join('\r\n')
+
+    expect(readClaudeSessionOptionsFromTerminalScreen(screen)).toEqual({ model: 'haiku' })
+  })
+
   it('reports nothing rather than release-notes prose when the model row is bare', () => {
     // Why: a custom model with its billing wrapped away carries no descriptor
     // metadata, so nothing in the frame identifies it. The panel shares rows
@@ -162,6 +174,27 @@ describe('Claude terminal session option detection', () => {
     ].join('\r\n')
 
     expect(readClaudeSessionOptionsFromTerminalScreen(screen)).toBeNull()
+  })
+
+  it('reports nothing when a partial frame only contains wrapped billing', () => {
+    const screen = [
+      '╭─ Claude Code ───╮',
+      '│API Usage Billing│',
+      '│/repo│',
+      '╰─────────────╯'
+    ].join('\r\n')
+
+    expect(readClaudeSessionOptionsFromTerminalScreen(screen)).toBeNull()
+  })
+
+  it('does not reject a bare custom model whose name mentions billing', () => {
+    const screen = ['╭─ Claude Code ───╮', '│billing-model│', '│/repo│', '╰─────────────╯'].join(
+      '\r\n'
+    )
+
+    expect(readClaudeSessionOptionsFromTerminalScreen(screen)).toEqual({
+      model: 'billing-model'
+    })
   })
 
   // The exact catalog `claude -p` list_models returns on CLI 2.1.220: note the
