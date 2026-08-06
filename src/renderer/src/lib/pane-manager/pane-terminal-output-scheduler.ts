@@ -103,9 +103,11 @@ const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024
 let maxQueueChars = TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096
 const RETAINED_REBASE_COPY_BLOCK_CHARS = 8 * 1024
-let retainedRebaseCopyObserver: (() => void) | null = null
+let retainedRebaseCopyObserver: ((source: string, copy: string) => void) | null = null
 
-export function setRetainedRebaseCopyObserverForTesting(observer: (() => void) | null): void {
+export function setRetainedRebaseCopyObserverForTesting(
+  observer: ((source: string, copy: string) => void) | null
+): void {
   retainedRebaseCopyObserver = observer
 }
 
@@ -275,10 +277,7 @@ function recordQueueDebugPressure(): void {
     debugState.peakQueuedCharsByTerminal,
     current.queuedCharsByTerminal
   )
-  debugState.peakRetainedChars = Math.max(
-    debugState.peakRetainedChars,
-    current.retainedChars
-  )
+  debugState.peakRetainedChars = Math.max(debugState.peakRetainedChars, current.retainedChars)
 }
 
 function exposeDebugApi(): void {
@@ -731,7 +730,7 @@ function rebaseRetainedChunks(entry: QueueEntry): void {
   }
   const source = chunk.data
   const copied = copyStringSuffix(source, chunk.consumedOffset)
-  retainedRebaseCopyObserver?.()
+  retainedRebaseCopyObserver?.(source, copied)
   chunk.data = copied
   chunk.consumedOffset = 0
   entry.retainedChars += copied.length - source.length
