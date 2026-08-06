@@ -179,6 +179,36 @@ describe('PtyHandler', () => {
     expect(notifMethods).toContain('pty.ackData')
   })
 
+  it('awaits the async fallback shell at query, spawn, and revive call sites', async () => {
+    const fallbackShell = '/fallback-shell'
+    const resolveDefaultShellSpy = vi
+      .spyOn(ptyShellUtils, 'resolveDefaultShell')
+      .mockResolvedValue(fallbackShell)
+
+    expect(await dispatcher.callRequest('pty.getDefaultShell')).toBe(fallbackShell)
+    await dispatcher.callRequest('pty.spawn', { cols: 80, rows: 24, cwd: '/tmp' })
+    expect(mockPtySpawn).toHaveBeenLastCalledWith(
+      fallbackShell,
+      expect.any(Array),
+      expect.any(Object)
+    )
+
+    const state = (await dispatcher.callRequest('pty.serialize', { ids: ['pty-1'] })) as string
+    await handler.dispose({ waitForPhysicalExit: false })
+    mockPtySpawn.mockClear()
+    dispatcher = createMockDispatcher()
+    handler = new PtyHandler(dispatcher as unknown as RelayDispatcher)
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      await dispatcher.callRequest('pty.revive', { state })
+    } finally {
+      killSpy.mockRestore()
+    }
+
+    expect(mockPtySpawn).toHaveBeenCalledWith(fallbackShell, expect.any(Array), expect.any(Object))
+    expect(resolveDefaultShellSpy).toHaveBeenCalledTimes(3)
+  })
+
   it('pauses native output at the producer hard water and resumes after retained writes settle', async () => {
     let onData: ((data: string) => void) | undefined
     const pause = vi.fn()

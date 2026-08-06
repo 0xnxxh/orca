@@ -23,6 +23,15 @@ function valueNotSetError(): Error {
   })
 }
 
+function accessDeniedError(): Error {
+  return Object.assign(new Error('Command failed: reg.exe query'), {
+    code: 1,
+    killed: false,
+    signal: null,
+    stderr: 'ERROR: Access is denied.'
+  })
+}
+
 /** The rejection Node surfaces when the `timeout` option kills reg.exe. */
 function timeoutError(): Error {
   return Object.assign(new Error('Command failed: reg.exe query'), {
@@ -37,6 +46,14 @@ function spawnFailureError(): Error {
   // Why: spawn failures report killed/signal as `undefined` and a *string* code,
   // unlike the numeric exit code of a probe that actually ran.
   return Object.assign(new Error('spawn reg.exe ENOENT'), { code: 'ENOENT' })
+}
+
+function registryParentOutput(includeOpenSsh: boolean): string {
+  return [
+    'HKEY_LOCAL_MACHINE\\SOFTWARE',
+    'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft',
+    ...(includeOpenSsh ? ['HKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH'] : [])
+  ].join('\n')
 }
 
 /** Drive the promisified execFile callback with a per-attempt outcome. */
@@ -80,25 +97,22 @@ describe('readOpenSshDefaultShell', () => {
     expect(attempts()).toBe(1)
     expect(execFileMock).toHaveBeenCalledWith(
       'reg.exe',
-      ['query', 'HKLM\\SOFTWARE\\OpenSSH', '/v', 'DefaultShell'],
+      ['query', 'HKLM\\SOFTWARE\\OpenSSH'],
       { encoding: 'utf8', timeout: 3000, windowsHide: true },
       expect.any(Function)
     )
   })
 
-  it('permanently caches "no DefaultShell set", which reg.exe reports as a non-zero exit', async () => {
-    // REGRESSION: on a default OpenSSH install the value does not exist, so reg.exe
-    // exits 1. Treating that as a probe failure would re-spawn reg.exe every cooldown
-    // for the life of the relay; it is an authoritative answer, so cache it.
+  it('permanently caches a missing OpenSSH registry key', async () => {
     vi.useFakeTimers()
-    const { attempts } = mockAttempts([valueNotSetError()])
+    const { attempts } = mockAttempts([valueNotSetError(), registryParentOutput(false)])
     const { readOpenSshDefaultShell, OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS } = await loadModule()
 
     expect(await readOpenSshDefaultShell()).toBe('')
     vi.advanceTimersByTime(OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS * 10)
 
     expect(await readOpenSshDefaultShell()).toBe('')
-    expect(attempts()).toBe(1)
+    expect(attempts()).toBe(2)
   })
 
   it('permanently caches a successful query that carries no DefaultShell value', async () => {
@@ -144,6 +158,22 @@ describe('readOpenSshDefaultShell', () => {
     expect(attempts()).toBe(2)
   })
 
+  it('retries access denied instead of permanently caching it as no DefaultShell', async () => {
+    vi.useFakeTimers()
+    const { attempts } = mockAttempts([
+      accessDeniedError(),
+      registryParentOutput(true),
+      regOutput(POWERSHELL_7)
+    ])
+    const { readOpenSshDefaultShell, OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS } = await loadModule()
+
+    expect(await readOpenSshDefaultShell()).toBe('')
+    vi.advanceTimersByTime(OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS)
+
+    expect(await readOpenSshDefaultShell()).toBe(POWERSHELL_7)
+    expect(attempts()).toBe(3)
+  })
+
   it('does not re-probe in a tight loop while a failure is still fresh', async () => {
     // Why: retryable must not mean "retried per PTY spawn" — a wedged reg.exe would
     // otherwise get a new subprocess for every spawn on the relay.
@@ -159,17 +189,30 @@ describe('readOpenSshDefaultShell', () => {
     expect(attempts()).toBe(1)
   })
 
-  it('shares one in-flight probe across concurrent callers', async () => {
-    const { attempts } = mockAttempts([regOutput(POWERSHELL_7)])
-    const { readOpenSshDefaultShell } = await loadModule()
+  it('shares failing and retrying probes, then clears the in-flight promise', async () => {
+    vi.useFakeTimers()
+    const callbacks: ((error: unknown, result: { stdout: string; stderr: string }) => void)[] = []
+    execFileMock.mockImplementation(
+      (_command: string, _args: string[], _opts: unknown, callback: never) => {
+        callbacks.push(callback as (typeof callbacks)[number])
+      }
+    )
+    const { readOpenSshDefaultShell, OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS } = await loadModule()
 
-    const results = await Promise.all([
-      readOpenSshDefaultShell(),
-      readOpenSshDefaultShell(),
-      readOpenSshDefaultShell()
-    ])
+    const first = readOpenSshDefaultShell()
+    const firstJoiner = readOpenSshDefaultShell()
+    expect(callbacks).toHaveLength(1)
 
-    expect(results).toEqual([POWERSHELL_7, POWERSHELL_7, POWERSHELL_7])
-    expect(attempts()).toBe(1)
+    callbacks[0](timeoutError(), { stdout: '', stderr: '' })
+    await expect(Promise.all([first, firstJoiner])).resolves.toEqual(['', ''])
+    vi.advanceTimersByTime(OPENSSH_DEFAULT_SHELL_RETRY_COOLDOWN_MS)
+
+    const retry = readOpenSshDefaultShell()
+    const retryJoiner = readOpenSshDefaultShell()
+    expect(callbacks).toHaveLength(2)
+
+    callbacks[1](null, { stdout: regOutput(POWERSHELL_7), stderr: '' })
+    await expect(Promise.all([retry, retryJoiner])).resolves.toEqual([POWERSHELL_7, POWERSHELL_7])
+    expect(execFileMock).toHaveBeenCalledTimes(2)
   })
 })
