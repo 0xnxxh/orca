@@ -224,6 +224,7 @@ import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { resolveLocalProjectRuntimeForWorktreeId } from '../local-project-runtime-resolution'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtyListedSession } from '../../shared/pty-listed-session'
+import { handleLocalPtyRendererLoad } from './local-pty-renderer-load'
 
 // ─── Provider Registry ──────────────────────────────────────────────
 // Routes PTY operations by connectionId (null = local provider).
@@ -4026,13 +4027,8 @@ export function registerPtyHandlers(
   if (localProvider instanceof LocalPtyProvider) {
     const lp = localProvider
     didFinishLoadHandler = () => {
-      // Why: always advance to keep the generation monotonic, but skip the sweep on crash/freeze-recovery reload — it would kill live local PTYs before session restore (#5787).
-      const generation = lp.advanceGeneration()
-      if (options?.isRecoveryReloadInFlight?.(mainWindow.webContents.id)) {
-        return
-      }
       // Why: the retained provider onExit callback is the only physical-exit proof; it clears ownership after the OS reaps it.
-      lp.killOrphanedPtys(generation - 1)
+      handleLocalPtyRendererLoad(lp, mainWindow.webContents.id, options?.isRecoveryReloadInFlight)
     }
     didFinishLoadWebContents = mainWindow.webContents
     mainWindow.webContents.on('did-finish-load', didFinishLoadHandler)

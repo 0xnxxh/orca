@@ -96,6 +96,8 @@ export function attachMainWindowServices(
     awaitLocalPtyStartup?: () => Promise<void>
     awaitLocalPtyProviderStartup?: () => Promise<void>
     onBeforeRendererReload?: (args: { webContentsId: number; ignoreCache: boolean }) => void
+    beginRecoveryReload?: (webContentsId: number) => string
+    cancelRecoveryReload?: (webContentsId: number, token: string) => boolean
     // Why: lets the PTY orphan sweep skip the one crash-recovery reload (#5787).
     isRecoveryReloadInFlight?: (webContentsId: number) => boolean
     onBeforeUpdateQuit?: () => void | Promise<void>
@@ -103,7 +105,11 @@ export function attachMainWindowServices(
     onWorktreeLifecycle?: (event: RuntimeWorktreeLifecycleEvent) => void
   }
 ): void {
-  registerAppReloadHandler(mainWindow, options?.onBeforeRendererReload)
+  registerAppReloadHandler(mainWindow, {
+    onBeforeRendererReload: options?.onBeforeRendererReload,
+    beginRecoveryReload: options?.beginRecoveryReload,
+    cancelRecoveryReload: options?.cancelRecoveryReload
+  })
   registerRepoHandlers(mainWindow, store)
   // Why: repo IPC mutations must also invalidate paired clients' catalogs (#11994).
   setRepoRemoteClientNotifier(runtime)
@@ -279,9 +285,15 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
   })
 }
 
+type AppReloadHandlerOptions = {
+  onBeforeRendererReload?: (args: { webContentsId: number; ignoreCache: boolean }) => void
+  beginRecoveryReload?: (webContentsId: number) => string
+  cancelRecoveryReload?: (webContentsId: number, token: string) => boolean
+}
+
 function registerAppReloadHandler(
   mainWindow: BrowserWindow,
-  onBeforeRendererReload?: (args: { webContentsId: number; ignoreCache: boolean }) => void
+  options: AppReloadHandlerOptions
 ): void {
   // Why: the process-global IPC handler can outlive the window, so guard both lifetimes before using the WebContents.
   const handlerToken = ++appReloadHandlerTokenCounter
@@ -296,8 +308,34 @@ function registerAppReloadHandler(
     ) {
       return
     }
-    onBeforeRendererReload?.({ webContentsId: mainWebContents.id, ignoreCache: false })
+    options.onBeforeRendererReload?.({
+      webContentsId: mainWebContents.id,
+      ignoreCache: false
+    })
     mainWebContents.reload()
+  })
+  ipcMain.removeHandler('app:begin-lazy-chunk-recovery-reload')
+  ipcMain.handle('app:begin-lazy-chunk-recovery-reload', (event) => {
+    if (
+      mainWindow.isDestroyed() ||
+      mainWebContents.isDestroyed() ||
+      event.sender !== mainWebContents
+    ) {
+      return null
+    }
+    return options.beginRecoveryReload?.(mainWebContents.id) ?? null
+  })
+  ipcMain.removeHandler('app:cancel-lazy-chunk-recovery-reload')
+  ipcMain.handle('app:cancel-lazy-chunk-recovery-reload', (event, token: string) => {
+    if (
+      mainWindow.isDestroyed() ||
+      mainWebContents.isDestroyed() ||
+      event.sender !== mainWebContents ||
+      typeof token !== 'string'
+    ) {
+      return false
+    }
+    return options.cancelRecoveryReload?.(mainWebContents.id, token) ?? false
   })
   mainWindow.on('closed', () => {
     if (activeAppReloadHandlerToken !== handlerToken) {
@@ -305,6 +343,8 @@ function registerAppReloadHandler(
     }
     // Why: macOS keeps the process alive with no window; this handler would otherwise retain the closed window until reopen.
     ipcMain.removeHandler('app:reload')
+    ipcMain.removeHandler('app:begin-lazy-chunk-recovery-reload')
+    ipcMain.removeHandler('app:cancel-lazy-chunk-recovery-reload')
     activeAppReloadHandlerToken = null
   })
 }
