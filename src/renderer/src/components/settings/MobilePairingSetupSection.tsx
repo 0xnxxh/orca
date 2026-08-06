@@ -59,11 +59,11 @@ export function MobilePairingSetupSection({
   // substitutes its own default when the renderer has not resolved one yet.
   // LAN has no such fallback, so it needs an explicit reachable host.
   const generateDisabled = loading || !canGenerate || (!usingRelay && !selectedAddress)
-  // Not "(optional)": the phone races both paths and direct wins ties, so this
-  // address carries the session whenever the phone is on the same network.
+  // "Also use…" frames this as additive under Relay, not a second connection mode.
+  // The phone races both paths and direct wins ties when nearby.
   const relayAddressLabel = translate(
     'auto.components.settings.MobilePairingSetupSection.step2RelayDisclosure',
-    'Direct connection on this network'
+    'Also use a faster local path'
   )
 
   const addressControls = (
@@ -108,7 +108,7 @@ export function MobilePairingSetupSection({
         {usingRelay
           ? translate(
               'auto.components.settings.MobilePairingSetupSection.step2RelayDescription',
-              'Your phone connects straight to this computer when it’s on the same network — faster than Relay. Relay takes over when you’re away.'
+              'Optional. Pick the Wi‑Fi or Tailscale address your phone should use when nearby — usually faster than Relay. Relay still works when you’re away.'
             )
           : translate(
               'auto.components.settings.MobilePairingSetupSection.step2LocalDescription',

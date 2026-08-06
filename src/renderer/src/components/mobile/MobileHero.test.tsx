@@ -347,13 +347,14 @@ describe('HeroFlow height', () => {
     expect(screen.queryByRole('button', { name: 'Refresh network interfaces' })).toBeNull()
 
     // Relay still advertises a LAN endpoint, so the picker must stay reachable.
-    await user.click(screen.getByRole('button', { name: /Direct connection on this network/i }))
+    await user.click(screen.getByRole('button', { name: /Also use a faster local path/i }))
     expect(screen.getByText('Network')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Refresh network interfaces' })).toBeVisible()
+    expect(screen.getByText(/Optional\. Pick the Wi‑Fi or Tailscale address/i)).toBeVisible()
 
     rerender(<MobileHeroPairingStep {...props} connectionMode="local-only" />)
     expect(screen.getByText('Network')).toBeVisible()
-    expect(screen.queryByRole('button', { name: /Direct connection on this network/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Also use a faster local path/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Refresh network interfaces' })).toBeVisible()
   })
 
@@ -388,6 +389,6 @@ describe('HeroFlow height', () => {
     expect(screen.getByText('Network')).toBeVisible()
     // Why: a trigger here could not collapse the pinned-open row, so it would be
     // a dead control advertising aria-expanded it does not own.
-    expect(screen.queryByRole('button', { name: /Direct connection on this network/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Also use a faster local path/i })).toBeNull()
   })
 })

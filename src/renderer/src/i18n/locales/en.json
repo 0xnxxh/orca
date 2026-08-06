@@ -9820,8 +9820,8 @@
           "regenerate": "Regenerate QR code",
           "generate": "Generate QR code",
           "refresh": "Refresh network interfaces",
-          "step2RelayDescription": "Your phone connects straight to this computer when it’s on the same network — faster than Relay. Relay takes over when you’re away.",
-          "step2RelayDisclosure": "Direct connection on this network"
+          "step2RelayDescription": "Optional. Pick the Wi‑Fi or Tailscale address your phone should use when nearby — usually faster than Relay. Relay still works when you’re away.",
+          "step2RelayDisclosure": "Also use a faster local path"
         },
         "MobileRelayBetaAvailability": {
           "about": "About the Orca Relay beta",
@@ -12022,7 +12022,8 @@
           "pairThisMac": "Pair this Mac.",
           "pairThisPc": "Pair this PC.",
           "pairThisComputer": "Pair this computer.",
-          "directAddressDisclosure": "Direct connection on this network"
+          "directAddressDisclosure": "Also use a faster local path",
+          "directAddressHint": "Optional. Pick the Wi‑Fi or Tailscale address your phone should use when nearby — usually faster than Relay. Relay still works when you’re away."
         },
         "MobilePage": {
           "e17393c6a3": "Phone preview",

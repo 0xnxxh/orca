@@ -88,7 +88,7 @@ describe('MobilePairingSetupSection', () => {
     expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeEnabled()
 
     // Relay still advertises a LAN endpoint, so the picker must stay reachable.
-    await user.click(screen.getByRole('button', { name: /Direct connection on this network/i }))
+    await user.click(screen.getByRole('button', { name: /Also use a faster local path/i }))
     expect(screen.getByRole('combobox')).toBeVisible()
     expect(screen.getByText(/faster than Relay/i)).toBeVisible()
   })
@@ -101,7 +101,7 @@ describe('MobilePairingSetupSection', () => {
     expect(screen.getByRole('combobox')).toBeVisible()
     // Why: a trigger here could not collapse the pinned-open picker, so it would
     // be a dead control advertising aria-expanded it does not own.
-    expect(screen.queryByRole('button', { name: /Direct connection on this network/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Also use a faster local path/i })).toBeNull()
   })
 
   it('never hides a custom address behind the Relay disclosure', () => {
@@ -113,7 +113,7 @@ describe('MobilePairingSetupSection', () => {
       selectedAddressIsCustom: true
     })
     expect(screen.getByRole('combobox')).toHaveTextContent(address)
-    expect(screen.queryByRole('button', { name: /Direct connection on this network/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Also use a faster local path/i })).toBeNull()
   })
 
   it('disables generate on LAN when no advertise address is selected', () => {

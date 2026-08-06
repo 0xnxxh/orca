@@ -9608,8 +9608,8 @@
           "step1Title": "Método de conexión",
           "step2Title": "Dirección de este ordenador",
           "step2LocalDescription": "El teléfono debe poder alcanzar esta dirección por Tailscale o Wi‑Fi.",
-          "step2RelayDescription": "Tu teléfono se conecta directamente a este ordenador cuando está en la misma red: más rápido que Relay. Relay toma el relevo cuando estás fuera.",
-          "step2RelayDisclosure": "Conexión directa en esta red"
+          "step2RelayDescription": "Opcional. Elige la dirección Wi‑Fi o Tailscale que el teléfono usará cuando esté cerca — suele ser más rápido que Relay. Relay sigue funcionando cuando estás fuera.",
+          "step2RelayDisclosure": "También usar una ruta local más rápida"
         },
         "MobileRelayBetaAvailability": {
           "about": "Acerca de la beta de Orca Relay",
@@ -11770,7 +11770,8 @@
           },
           "relayDegradedNotice": "No se pudo contactar con Relay: este código solo funciona en tu LAN o Tailscale.",
           "pairingQrError": "Este código de emparejamiento no se pudo representar como código QR. Cópialo en Orca Mobile.",
-          "directAddressDisclosure": "Conexión directa en esta red"
+          "directAddressDisclosure": "También usar una ruta local más rápida",
+          "directAddressHint": "Opcional. Elige la dirección Wi‑Fi o Tailscale que el teléfono usará cuando esté cerca — suele ser más rápido que Relay. Relay sigue funcionando cuando estás fuera."
         },
         "MobilePage": {
           "e17393c6a3": "Vista previa del teléfono",

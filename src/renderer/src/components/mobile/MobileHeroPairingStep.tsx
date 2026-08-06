@@ -263,18 +263,19 @@ export function MobileHeroPairingStep({
       </div>
       <div className="mp-pairing-controls">
         {usingRelay && !networkDisclosurePinned ? (
-          // Why: Relay makes the address optional, not irrelevant — demote it to
-          // a disclosure so the direct fast path stays reachable without clutter.
+          // Why: Relay is the default path; this only configures the LAN/Tailscale
+          // endpoint the phone prefers when nearby. Noun phrasing + muted style so
+          // it reads as an alternative, not a mode switch next to "Copy pairing code".
           <Collapsible
             open={networkDisclosureOpen}
             onOpenChange={setNetworkDisclosureOpen}
             className="mb-[18px]"
           >
             <CollapsibleTrigger asChild>
-              <button type="button" className="mp-text-link">
+              <button type="button" className="mp-disclosure-trigger">
                 {translate(
                   'auto.components.mobile.MobileHero.directAddressDisclosure',
-                  'Direct connection on this network'
+                  'Also use a faster local path'
                 )}
                 <ChevronDown
                   className={cn(
@@ -289,7 +290,15 @@ export function MobileHeroPairingStep({
                   below stays identical whether the disclosure is open. `!` is
                   required: mobile-page.css is unlayered and so outranks Tailwind's
                   utilities layer on specificity ties. */}
-              <div className="mt-2 [&>.mp-network-row]:mb-0!">{networkRow}</div>
+              <div className="mt-2 space-y-2 [&>.mp-network-row]:mb-0!">
+                <p className="mp-disclosure-hint">
+                  {translate(
+                    'auto.components.mobile.MobileHero.directAddressHint',
+                    'Optional. Pick the Wi‑Fi or Tailscale address your phone should use when nearby — usually faster than Relay. Relay still works when you’re away.'
+                  )}
+                </p>
+                {networkRow}
+              </div>
             </CollapsibleContent>
           </Collapsible>
         ) : (
