@@ -5813,21 +5813,16 @@ export function connectPanePty(
                     }
                     const destinationCols = pane.terminal.cols
                     const destinationRows = pane.terminal.rows
-                    // Why the visibility gate, matching the sibling at the hidden-snapshot
-                    // restore: the transport remembers every viewport handed to resize()
-                    // before the claim branch and replays it with claim intent on the next
-                    // subscribe, so a send from a hidden pane reaches other clients as a
-                    // durable claim. Accepted tradeoff: a background measure-lease pane is
-                    // fully sized, so its fit succeeds and its grid then goes unreported
-                    // until the next layout change after reveal — fitRevealedPane will not
-                    // re-fit a pane whose pixels never changed (opacity does not affect
-                    // getBoundingClientRect) and remote PTYs have no ptySizeReassertion
-                    // drift repair. A stale grid until the next resize is the more
-                    // conservative failure than an unrevocable wrong-grid claim.
+                    // Why NOT gated on visibility, unlike the sibling fits: reaching here
+                    // means the fit measured a real box, which for a hidden pane means the
+                    // background measure lease deliberately laid it out full size — an
+                    // authoritative grid, not hidden-layout churn. Reveal will not re-send
+                    // it either: the pixels never changed, so fitRevealedPane skips, and
+                    // remote PTYs are excluded from ptySizeReassertion. This is the only
+                    // chance to report. (This path never signals SIGWINCH.)
                     if (
                       destinationCols > 0 &&
                       destinationRows > 0 &&
-                      isRendererPtyResizeAuthoritative() &&
                       !shouldSuppressDesktopPtyResize()
                     ) {
                       transport.resize(destinationCols, destinationRows)
