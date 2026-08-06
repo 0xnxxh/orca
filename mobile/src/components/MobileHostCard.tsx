@@ -4,44 +4,65 @@ import type { ConnectionVerdict } from '../transport/connection-health'
 import { verdictDisplayLabel } from '../transport/connection-health'
 import { mobileConnectionPathLabel } from '../transport/mobile-connection-path-label'
 import type { MobileConnectionPath } from '../transport/stable-logical-rpc-client'
-import type { ConnectionState, HostProfile } from '../transport/types'
+import type { ConnectionState, HostCatalogEntry, HostProfile } from '../transport/types'
 import { colors, radii, spacing } from '../theme/mobile-theme'
+import { homeHostWorktreeSummary, type HostWorktreeInfo } from '../worktree/home-worktree-info'
 import { StatusDot } from './StatusDot'
 
 export function MobileHostCard(props: {
-  host: HostProfile
+  host: HostProfile | HostCatalogEntry
+  credentialStatus?: HostCatalogEntry['credentialStatus']
   state: ConnectionState
   verdict: ConnectionVerdict
   path: MobileConnectionPath
-  worktreeCounts?: { total: number; active: number }
-  // Why (STA-3123): the host is connected but its worktree catalog request failed,
-  // so the card must say "unavailable" instead of asserting a count of zero.
-  worktreeCountsUnavailable?: boolean
+  // Why: the card owns the fresh/stale/unavailable wording so no caller can re-gate the counts
+  // away (STA-3123 shipped that bug once already).
+  worktreeInfo?: HostWorktreeInfo
   onPress: () => void
   onLongPress: () => void
   onOpenActions: () => void
 }) {
-  const connected = props.state === 'connected'
-  const isError = ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
-  const statusLabel = verdictDisplayLabel(props.verdict)
-  const connectionPathLabel = connected ? mobileConnectionPathLabel(props.path) : null
-  const accessibleConnectionPathLabel = connectionPathLabel?.replace(' · ', ' via ')
-  const worktreeSummary = props.worktreeCounts
-    ? `${props.worktreeCounts.total} worktree${props.worktreeCounts.total === 1 ? '' : 's'}${props.worktreeCounts.active > 0 ? ` · ${props.worktreeCounts.active} active` : ''}`
-    : props.worktreeCountsUnavailable
-      ? 'Worktree list unavailable'
+  const credentialUnavailable = props.credentialStatus === 'temporarily-unavailable'
+  const credentialMissing = props.credentialStatus === 'missing'
+  const connected = props.state === 'connected' && !credentialUnavailable && !credentialMissing
+  // Why: a relay dial can run for seconds behind "Connecting…"/"Reconnecting…"; naming the
+  // path mid-wait tells the user the phone is off-LAN rather than hung (F5). Only 'relay' is
+  // named — 'lan' doubles as the unknown-path default, so it would be a guess before connect.
+  const dialingPath =
+    ['connecting', 'handshaking', 'reconnecting'].includes(props.state) && props.path === 'relay'
+  const isError =
+    credentialMissing || ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
+  const statusLabel = credentialMissing
+    ? 'Pairing invalid'
+    : credentialUnavailable
+      ? 'Pairing temporarily unavailable'
+      : verdictDisplayLabel(props.verdict)
+  const statusVerdict: ConnectionVerdict = credentialMissing
+    ? { kind: 'auth-failed', label: statusLabel }
+    : credentialUnavailable
+      ? { kind: 'warning', label: statusLabel }
+      : props.verdict
+  const worktreeSummary = homeHostWorktreeSummary(props.worktreeInfo)
+  const connectionPathLabel =
+    !credentialMissing && !credentialUnavailable && (connected || dialingPath)
+      ? mobileConnectionPathLabel(props.path)
       : null
-  const accessibleWorktreeSummary = connected ? worktreeSummary?.replace(' · ', ', ') : null
   const discoveryHint =
     props.verdict.kind === 'unreachable' && !props.host.relay
       ? 'Update desktop Orca and sign in to connect from anywhere'
       : null
+  const credentialHint = credentialMissing
+    ? 'Tap to re-pair with your desktop'
+    : credentialUnavailable
+      ? 'Unlock your phone, then tap to retry'
+      : null
   const accessibilityLabel = [
     `Open ${props.host.name}`,
     statusLabel,
-    accessibleConnectionPathLabel,
-    accessibleWorktreeSummary,
-    discoveryHint
+    connectionPathLabel?.replace(' · ', ' via '),
+    connected ? worktreeSummary?.replace(' · ', ', ') : null,
+    discoveryHint,
+    credentialHint
   ]
     .filter(Boolean)
     .join(', ')
@@ -66,9 +87,13 @@ export function MobileHostCard(props: {
             {props.host.name}
           </Text>
           <View style={styles.meta}>
-            <StatusDot state={props.state} verdict={props.verdict} />
+            <StatusDot state={props.state} verdict={statusVerdict} />
             <Text
-              style={[styles.metaText, isError && { color: colors.statusRed }]}
+              style={[
+                styles.metaText,
+                isError && { color: colors.statusRed },
+                credentialUnavailable && { color: colors.statusAmber }
+              ]}
               numberOfLines={1}
             >
               {statusLabel}
@@ -83,6 +108,11 @@ export function MobileHostCard(props: {
           {discoveryHint ? (
             <Text style={styles.discoveryHint} numberOfLines={2}>
               {discoveryHint}
+            </Text>
+          ) : null}
+          {credentialHint ? (
+            <Text style={styles.discoveryHint} numberOfLines={2}>
+              {credentialHint}
             </Text>
           ) : null}
         </View>

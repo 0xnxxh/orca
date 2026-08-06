@@ -104,7 +104,13 @@ describe('MobileHostCard', () => {
           state: 'connected',
           verdict: { kind: 'normal', label: 'Connected' },
           path: 'tailscale',
-          worktreeCounts: { total: 3, active: 2 },
+          worktreeInfo: {
+            hostId: 'desk',
+            totalWorktrees: 3,
+            activeCount: 2,
+            lastActiveWorktree: null,
+            countsProvenAt: Date.now()
+          },
           onPress: vi.fn(),
           onLongPress: vi.fn(),
           onOpenActions: vi.fn()
@@ -135,7 +141,13 @@ describe('MobileHostCard', () => {
           state: 'connected',
           verdict: { kind: 'normal', label: 'Connected' },
           path: 'relay',
-          worktreeCountsUnavailable: true,
+          worktreeInfo: {
+            hostId: 'desk',
+            totalWorktrees: 0,
+            activeCount: 0,
+            lastActiveWorktree: null,
+            catalogUnavailable: true
+          },
           onPress: vi.fn(),
           onLongPress: vi.fn(),
           onOpenActions: vi.fn()
