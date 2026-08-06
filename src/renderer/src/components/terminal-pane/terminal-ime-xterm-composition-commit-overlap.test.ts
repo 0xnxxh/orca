@@ -16,29 +16,33 @@
 //    Cmd was checked against the swallow in (2) and does NOT reach it: Cmd duplicates,
 //    it does not drop. The two hazards below share no trigger.
 //
-// 2. An uncomposed insertText landing in the window after the commit timer has already
-//    sent is swallowed whole. _isSendingComposition stays true for one macrotask after
-//    the timer cleared _pendingCompositionStart; handleCompositionInput passes the first
-//    check, then reads the cleared sentinel and substitutes '' for the data.
+// 2. FIXED — the arm below now asserts the repaired contract, not a defect. An uncomposed
+//    insertText landing in the window after the commit timer had already sent used to be
+//    swallowed whole: _isSendingComposition stays true for one macrotask after the timer
+//    cleared _pendingCompositionStart, and handleCompositionInput passed the first check,
+//    then read the cleared sentinel and substituted '' for the data — unconditionally, so
+//    it ate genuinely new input along with the duplicate it was aimed at.
+//    handleCompositionInput now compares the payload against _sentComposition, the text
+//    the deferred send actually emitted, and discards only a match.
 //
-//    THIS NAMES THE TRIGGER (2) PREVIOUSLY LACKED, and it is an ordinary one. Hazard (1)
-//    is Cmd's; this one was left with no trigger at all, which reads as exotic. It is
+//    THIS NAMED THE TRIGGER (2) PREVIOUSLY LACKED, and it is an ordinary one. Hazard (1)
+//    is Cmd's; this one was left with no trigger at all, which reads as exotic. It was
 //    not. A differential run through Japanese
-//    multi-segment conversion found shipped behaviour swallows an ordinary Latin key
+//    multi-segment conversion found the shipped patch swallowed an ordinary Latin key
 //    typed one macrotask after a conversion commit: type a segment, convert, then press
-//    `a`, and the `a` is lost. No modifier, no exotic gesture — every Japanese user who
+//    `a`, and the `a` was lost. No modifier, no exotic gesture — every Japanese user who
 //    keeps typing straight after converting. Korean surfaced it first only because
 //    2-Set composes on nearly every keystroke.
 //
 //    The suppression is NOT a defect on its own: it de-duplicates IMEs that deliver
 //    their commit insertText a task after compositionend (IBus, Mozc), which
-//    terminal-stock-composition.test.ts pins. This swallow is that dedup's false
-//    positive. The two events are structurally identical — same inputType, same
-//    composed, same preceding 229 keydown — and differ only in payload, so no
-//    flag-timing change separates them. A redesign was built and measured: it fixes
-//    this and duplicates on IBus. A content-aware variant fixes both at +5 lines but
-//    flips a reported row's test, and is blocked regardless while the patch cannot be
-//    regenerated. See .tmp/ime-handoff/swarm-scratch/lane-group-e-redesign/.
+//    terminal-stock-composition.test.ts pins and which the fix preserves. The swallow was
+//    that dedup's false positive. The two events are structurally identical — same
+//    inputType, same composed, same preceding 229 keydown — and differ only in payload,
+//    which is why no flag-timing change could separate them and why the fix compares
+//    payloads. A flag-timing redesign was built and measured first: it fixed this and
+//    duplicated on IBus, which is why it is not what landed.
+//    See .tmp/ime-handoff/swarm-scratch/lane-group-e-redesign/.
 //
 //    CORRECTION to an earlier claim in this file that no Japanese DOM composition trace
 //    exists in the corpus. One does, filed under the Linux bundles rather than the bundle
@@ -60,15 +64,18 @@
 //      implementation from HEAD's — measurements here do not transfer to it.
 //   2. Measured, not inferred: every expectation below was read off onData against the
 //      @xterm/xterm this repo installs (src/browser/input/CompositionHelper.ts,
-//      sha256 10893b3e609b3a1d296e03be03e397b5044308d7f7b6a3da6efd06a545c13a21).
+//      sha256 d6393a7e805139c1b8791a8996a42b7683e7bb0e03c137e98a021917605c1635, under
+//      patch_hash=8a8976e1ddd73b3747547f119f76a72f2fa3f8e6efc6e6134b267d9c7f80f65d —
+//      the store holds one directory per patch iteration, so the hash alone is ambiguous).
 //      The comparison bundle is cited, NOT imported — a landed test can only exercise
 //      code that ships. Stock 6.1.0-beta.287 CompositionHelper.ts,
 //      sha256 1e935e66830ca171456466987cb45ed0a270553901729f11dfa91f6b702e0845
 //      (sha1 ebffd1d354428143d712124f92fbcd846e6e44d4, byte-identical across beta.287,
 //      .288 and .292, so this is also what VS Code 1.129.1 runs). Against that bundle
 //      the duplication is version-NEUTRAL — defective on both, in different magnitudes.
-//      The swallowed insertText is NOT: stock delivers the syllable and this bundle
-//      drops it, making it the one defect here that is ours rather than inherited.
+//      The swallowed insertText was NOT: stock delivered the syllable and this bundle
+//      dropped it, making it the one defect here that was ours rather than inherited.
+//      That arm now asserts parity with stock.
 //   3. Inferred, not measured: that a real macOS IME delivers a compositionend for a
 //      composition it kept alive across the Cmd. That is ordinary IME behaviour but no
 //      capture contains the gesture, so the trigger is unverified on hardware.
@@ -82,8 +89,8 @@
 //      during composition is keyCode 229 in every capture, and 229 returns early.
 //      Do not reintroduce a Space arm.
 //
-// These assertions pin CURRENT broken behaviour. When someone fixes it they will fail —
-// update the expectations to the correct values named in each comment. Do not work
+// The Cmd arms still pin CURRENT broken behaviour. When someone fixes them they will fail
+// — update the expectations to the correct values named in each comment. Do not work
 // around them.
 import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -225,7 +232,7 @@ describe('xterm CompositionHelper — overlapping and swallowed commits at onDat
     expect(emitted).toEqual(['한'])
   })
 
-  it('swallows an uncomposed insertText that lands in the sending window', async () => {
+  it('delivers an uncomposed insertText that lands in the sending window', async () => {
     const { emitted, textarea } = openTerminal()
     dispatchProcessKeydown(textarea)
     dispatchCompositionEvent(textarea, 'compositionstart')
@@ -242,9 +249,10 @@ describe('xterm CompositionHelper — overlapping and swallowed commits at onDat
     await nextEventLoop()
     await nextEventLoop()
 
-    // Whole syllable lost. CORRECT would be ['문', '제'], which is what pristine
-    // beta.287 emits — this arm, unlike the ones above, is ours.
-    expect(emitted).toEqual(['문'])
+    // Was ['문'] — the whole syllable lost. '제' is not what the deferred send emitted, so
+    // the dedup no longer claims it. Matches pristine beta.287; this arm, unlike the ones
+    // above, was ours to fix.
+    expect(emitted).toEqual(['문', '제'])
   })
 
   it('leaves ordinary Latin typing untouched', async () => {

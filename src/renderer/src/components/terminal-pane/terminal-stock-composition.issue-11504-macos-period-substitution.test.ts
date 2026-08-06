@@ -25,8 +25,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // a browser-dispatched `input` event. It is the harder case for the guard: the +149 ms arm below
 // passes with `composed` either way, and only the keydown-in-flight arm depends on it.
 //
-// These tests pin CURRENT, DEFECTIVE behaviour. #11504 is unfixed at HEAD (PR #11506 is open and
-// unmerged) and the first test asserts the unwanted period reaches the PTY. A fix must update it.
+// The first two tests pin CURRENT, DEFECTIVE behaviour. #11504 is unfixed at HEAD (PR #11506 is
+// open and unmerged) and the first test asserts the unwanted period reaches the PTY. A fix must
+// update it. The third test no longer pins a defect; see its own docblock for why it moved.
 
 const HANGUL = '아'
 const COMMITTED = '아 '
@@ -180,19 +181,34 @@ describe('#11504 macOS automatic period substitution after a Hangul space commit
     terminal.dispose()
   })
 
-  it('absorbs a substitution that lands before the commit send window drains', async () => {
+  // UPDATED to a new contract, and deliberately NOT a weakening of the reporter's row above.
+  //
+  // This arm never covered the report. Its own prior note said as much: what it measured was that
+  // "Orca's `handleCompositionInput` intercept still owns the path here and swallows it" — the
+  // incidental reach of that intercept's window at a timing the reporter never observed, not
+  // coverage #11504 depends on. The absorb came for free with the intercept; nobody chose it.
+  //
+  // What changed in the intercept: it discarded ANY insertText landing in the sending window, so it
+  // also ate ordinary keystrokes typed one macrotask after a Japanese conversion commit — type a
+  // segment, convert, press `a`, lose the `a`. It now discards only a payload equal to what the
+  // deferred send actually emitted, so a different payload gets through. This substitution is a
+  // different payload, hence the flip. See terminal-ime-xterm-composition-commit-overlap.test.ts.
+  //
+  // The reporter's timing is untouched. The +149 ms arm at :141 lands long past both drains, never
+  // reached this intercept, and still asserts the unwanted period arriving at the PTY. #11504 stays
+  // unfixed at HEAD and its fix is not in xterm: PR #11506 is open and unmerged and changes only
+  // src/main/ (index.ts plus macos-automatic-period-substitution.ts and its test).
+  it('delivers a substitution that lands before the commit send window drains', async () => {
     const { emitted, terminal, textarea } = openTerminal()
     replayRecordedCommit(textarea)
     await nextTask()
     expect(emitted).toEqual([COMMITTED])
 
-    // Same payload, same guards, only earlier: Orca's `handleCompositionInput` intercept still owns
-    // the path here and swallows it. The delay in the report is a trigger condition, not a detail.
     substitutionInput(textarea, '아. ')
     await nextTask()
     await nextTask()
 
-    expect(emitted).toEqual([COMMITTED])
+    expect(emitted).toEqual([COMMITTED, SUBSTITUTION])
     terminal.dispose()
   })
 

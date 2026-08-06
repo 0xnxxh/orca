@@ -45,7 +45,9 @@
 // Measured, not inferred: every expectation was read off onData against the @xterm/xterm
 // this repo installs and ships.
 //   src/browser/input/CompositionHelper.ts
-//     sha256 10893b3e609b3a1d296e03be03e397b5044308d7f7b6a3da6efd06a545c13a21
+//     sha256 d6393a7e805139c1b8791a8996a42b7683e7bb0e03c137e98a021917605c1635
+//     (patch_hash=8a8976e1ddd73b3747547f119f76a72f2fa3f8e6efc6e6134b267d9c7f80f65d;
+//      re-measured after the composition-commit dedup fix, expectations unchanged)
 //   src/browser/CoreBrowserTerminal.ts
 //     sha256 06efd181ba938e7d3be8c49eef2e6335c9e32fc7e41ac47102a32fc4e32d8678
 //   regular-terminal-focus-ownership.ts (the Orca call site under test)
