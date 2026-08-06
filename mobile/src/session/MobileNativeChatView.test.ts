@@ -228,12 +228,6 @@ describe('MobileNativeChatView', () => {
     })
   }
 
-  async function settleStatusStale(): Promise<void> {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000)
-    })
-  }
-
   async function relock(inputLockReason: Overrides['inputLockReason']): Promise<void> {
     await update({
       agentWorking: true,
@@ -243,33 +237,14 @@ describe('MobileNativeChatView', () => {
     })
   }
 
-  it('blocks Stop immediately and marks the working row stale once a disconnect settles', async () => {
-    vi.useFakeTimers()
+  it('marks the working row stale and blocks Stop immediately on disconnect', async () => {
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
-
-    // The label is held to avoid flicker; the unreachable action is not.
-    expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(true)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000)
-    })
-    await update({ agentWorking: true, inputLockReason: 'disconnected', onStop: vi.fn() })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(999)
-    })
-    expect(workingIndicator().props.stale).toBe(false)
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
 
     expect(workingIndicator().props.stale).toBe(true)
     expect(stopButton().props.disabled).toBe(true)
   })
 
   it('uses canonical transport state when the composer lock misses socket loss', async () => {
-    vi.useFakeTimers()
     await render({
       agentWorking: true,
       inputLockReason: null,
@@ -278,17 +253,11 @@ describe('MobileNativeChatView', () => {
     })
 
     // Real socket loss can precede the composer-specific lock signal.
-    expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(true)
-
-    await settleStatusStale()
-
     expect(workingIndicator().props.stale).toBe(true)
     expect(stopButton().props.disabled).toBe(true)
   })
 
   it('disables and dims Stop while disconnected', async () => {
-    vi.useFakeTimers()
     const onStop = vi.fn()
     await render({ agentWorking: true, inputLockReason: 'disconnected', onStop })
 
@@ -308,42 +277,20 @@ describe('MobileNativeChatView', () => {
     expect(stopButton().props.disabled).toBe(true)
   })
 
-  // Status liveness owns a separate hold from the composer's lock feedback.
-  it('requires two seconds of continuous loss when a settled lease wait disconnects', async () => {
+  it('marks status stale immediately when a settled lease wait disconnects', async () => {
     vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'waiting' })
     await settleLockDebounce()
 
     await relock('disconnected')
 
-    expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(true)
-
-    await settleStatusStale()
-
     expect(workingIndicator().props.stale).toBe(true)
     expect(stopButton().props.disabled).toBe(true)
   })
 
-  it('never goes stale when the link recovers inside the hold', async () => {
-    vi.useFakeTimers()
-    await render({ agentWorking: true, inputLockReason: 'disconnected' })
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_999)
-    })
-    await relock('waiting')
-    await settleStatusStale()
-
-    // A surviving timer would mute a row whose transport is already back.
-    expect(workingIndicator().props.stale).toBe(false)
-    expect(stopButton().props.disabled).toBe(true)
-  })
-
   it('clears stale feedback on reconnect and restores Stop once the lease is ready', async () => {
-    vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
-    await settleStatusStale()
+    expect(workingIndicator().props.stale).toBe(true)
     expect(stopButton().props.disabled).toBe(true)
 
     // Reconnect always lands on 'waiting' first — the lease drops its ready
@@ -361,9 +308,7 @@ describe('MobileNativeChatView', () => {
   })
 
   it('never renders stale feedback after the transport reconnects', async () => {
-    vi.useFakeTimers()
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
-    await settleStatusStale()
     expect(workingIndicator().props.stale).toBe(true)
 
     mocks.staleRenders.length = 0
@@ -373,16 +318,13 @@ describe('MobileNativeChatView', () => {
     expect(mocks.staleRenders).not.toContain(true)
   })
 
-  it('restarts the hold when the recovered transport disconnects again', async () => {
-    vi.useFakeTimers()
+  it('marks a recovered transport stale again on the next disconnect', async () => {
     await render({ agentWorking: true, inputLockReason: 'disconnected' })
-    await settleStatusStale()
+    expect(workingIndicator().props.stale).toBe(true)
     await relock('waiting')
-
-    await relock('disconnected')
     expect(workingIndicator().props.stale).toBe(false)
 
-    await settleStatusStale()
+    await relock('disconnected')
     expect(workingIndicator().props.stale).toBe(true)
   })
 

@@ -2,22 +2,8 @@ import { useEffect, useState } from 'react'
 import { canStopNativeChatAgent } from '../../../src/shared/native-chat-action-availability'
 
 const COMPOSER_LOCK_SETTLE_MS = 600
-const AGENT_STATUS_STALE_AFTER_MS = 2_000
 
 export type MobileNativeChatInputLockReason = 'disconnected' | 'waiting'
-
-function useDelayedActivation(active: boolean, delayMs: number): boolean {
-  const [delayedActive, setDelayedActive] = useState(false)
-  useEffect(() => {
-    if (!active) {
-      setDelayedActive(false)
-      return
-    }
-    const timer = setTimeout(() => setDelayedActive(true), delayMs)
-    return () => clearTimeout(timer)
-  }, [active, delayMs])
-  return active && delayedActive
-}
 
 export function useMobileNativeChatControlState(args: {
   inputLockReason: MobileNativeChatInputLockReason | null
@@ -38,11 +24,10 @@ export function useMobileNativeChatControlState(args: {
     const timer = setTimeout(() => setLockHeld(rawLockHeld), COMPOSER_LOCK_SETTLE_MS)
     return () => clearTimeout(timer)
   }, [lockHeld, rawLockHeld])
-  const statusStale = useDelayedActivation(!args.agentStatusLive, AGENT_STATUS_STALE_AFTER_MS)
 
   return {
     lockReason: lockHeld ? (args.inputLockReason ?? 'waiting') : null,
-    statusStale,
+    statusStale: !args.agentStatusLive,
     canStopAgent: canStopNativeChatAgent({
       targetWritable: args.stopTargetWritable,
       stopCommandAvailable: args.stopCommandAvailable
