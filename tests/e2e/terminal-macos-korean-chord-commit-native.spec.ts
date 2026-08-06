@@ -33,7 +33,7 @@ import {
  */
 
 const TWO_SET_KOREAN_ID = 'com.apple.inputmethod.Korean.2SetKorean'
-const SELECT_INPUT_SOURCE = path.resolve(__dirname, '../../.tmp/select-input-source.swift')
+const SELECT_INPUT_SOURCE = path.resolve(__dirname, 'select-input-source.swift')
 
 // 2-Set Korean: ㅎ = key code 5, ㅏ = key code 40, Space = 49. Three `하` separated by spaces,
 // matching the byte expectations preserved below.

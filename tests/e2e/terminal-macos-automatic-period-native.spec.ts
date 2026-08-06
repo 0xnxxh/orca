@@ -71,7 +71,7 @@ test.describe('Native macOS automatic period substitution @headful', () => {
       await startTerminalImeByteReader(orcaPage, ptyId, hangulReader)
       await focusActiveTerminalInput(orcaPage)
       await installTerminalImeBoundaryProbe(orcaPage)
-      execFileSync('swift', ['.tmp/select-input-source.swift', KOREAN_ID])
+      execFileSync('swift', ['tests/e2e/select-input-source.swift', KOREAN_ID])
       await waitForInputSource(orcaPage, KOREAN_ID)
 
       typePhysicalKeys(electronApp.process().pid!, [2, 40, 49])
@@ -84,7 +84,7 @@ test.describe('Native macOS automatic period substitution @headful', () => {
       await startTerminalImeByteReader(orcaPage, ptyId, abcReader)
       await focusActiveTerminalInput(orcaPage)
 
-      execFileSync('swift', ['.tmp/select-input-source.swift', ABC_ID])
+      execFileSync('swift', ['tests/e2e/select-input-source.swift', ABC_ID])
       await waitForInputSource(orcaPage, ABC_ID)
       typePhysicalKeys(electronApp.process().pid!, [47, 49, 36])
 
@@ -102,7 +102,7 @@ test.describe('Native macOS automatic period substitution @headful', () => {
         { abcPty, automaticPeriodPreference: true, hangulBeforeEnter, hangulPty }
       )
     } finally {
-      execFileSync('swift', ['.tmp/select-input-source.swift', ABC_ID])
+      execFileSync('swift', ['tests/e2e/select-input-source.swift', ABC_ID])
       await disposeTerminalImeBoundaryProbe(orcaPage).catch(() => undefined)
       removeTerminalImeByteReader(hangulReader)
       removeTerminalImeByteReader(abcReader)

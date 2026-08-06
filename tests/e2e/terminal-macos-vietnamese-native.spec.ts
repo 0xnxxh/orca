@@ -57,7 +57,7 @@ function typeKeyCodes(processId: number, keyCodes: readonly number[]): void {
 }
 
 function selectInputSource(inputSourceId: string): void {
-  execFileSync('swift', ['.tmp/select-input-source.swift', inputSourceId])
+  execFileSync('swift', ['tests/e2e/select-input-source.swift', inputSourceId])
 }
 
 test.describe('Native macOS Vietnamese terminal input @headful', () => {
