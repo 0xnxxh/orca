@@ -131,7 +131,9 @@ import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-
 import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-send-rpc-response'
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
+import { imeGuardedSubmitProps } from '../../../../src/ime/ime-submit-carry'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
+import { useTerminalLiveInputPreedit } from '../../../../src/terminal/use-terminal-live-input-preedit'
 import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import {
   buildTerminalSendParams,
@@ -1085,9 +1087,12 @@ export default function SessionScreen() {
     liveInputRef,
     liveInputTerminalHandles,
     liveInputTerminalHandlesRef,
+    platform: Platform.OS,
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
+  const { isComposing: liveInputComposing, handleLiveInputChangeWithPreedit } =
+    useTerminalLiveInputPreedit(handleLiveInputChange)
   const { canCompose, canSend } = resolveMobileTerminalInputGate({
     connState,
     activeHandle,
@@ -4993,6 +4998,7 @@ export default function SessionScreen() {
                       <MobileTerminalLiveInputStatus
                         dictation={dictation}
                         isAttaching={isAttaching}
+                        composingText={liveInputComposing ? liveInputCapture : ''}
                       />
                     </Pressable>
                     <MobileTerminalInputActions
@@ -5014,7 +5020,7 @@ export default function SessionScreen() {
                       ref={liveInputRef}
                       style={styles.liveInputCapture}
                       value={liveInputCapture}
-                      onChange={handleLiveInputChange}
+                      onChange={handleLiveInputChangeWithPreedit}
                       onKeyPress={handleLiveInputKeyPress}
                       onSubmitEditing={handleLiveInputSubmit}
                       placeholder=""
@@ -5063,7 +5069,7 @@ export default function SessionScreen() {
                       returnKeyType="send"
                       // Why: composing is local — an outage must not lock the field or discard typed text (#6713).
                       editable={canCompose}
-                      onSubmitEditing={() => void handleSend()}
+                      {...imeGuardedSubmitProps(Platform.OS, () => void handleSend())}
                     />
                     <MobileTerminalInputActions
                       canSend={canSend}

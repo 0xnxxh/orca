@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
+import { imeOwnsSubmit, noteImeCompositionChange } from '../ime/ime-submit-carry'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
 import {
@@ -14,8 +15,13 @@ export type TerminalLiveInputChangeEvent = {
     readonly isComposing?: boolean
     readonly replacementText?: string
     readonly replacementRange?: TerminalLiveReplacement['replacementRange']
+    readonly target?: number
   }
 }
+
+// `nativeEvent: object` so React Native's own TextInputSubmitEditingEvent stays assignable; the
+// view tag it carries at runtime is not declared on React Native's shipped event data types.
+export type TerminalLiveInputSubmitEvent = { readonly nativeEvent?: object }
 
 type TerminalLiveInputKeyPressEvent = {
   readonly nativeEvent: {
@@ -32,6 +38,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
   readonly liveInputRef: RefObject<Pick<TextInput, 'setNativeProps'> | null>
   readonly liveInputTerminalHandles: ReadonlySet<string>
   readonly liveInputTerminalHandlesRef: RefObject<Set<string>>
+  readonly platform: string
   readonly sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender>
   readonly setLiveInputCapture: (text: string) => void
 }
@@ -48,7 +55,7 @@ type TerminalLiveInputCommitHandlers = {
   ) => Promise<TerminalLiveAccessoryInputCommitResult>
   readonly handleLiveInputChange: (event: TerminalLiveInputChangeEvent) => void
   readonly handleLiveInputKeyPress: (event: TerminalLiveInputKeyPressEvent) => void
-  readonly handleLiveInputSubmit: () => void
+  readonly handleLiveInputSubmit: (event?: TerminalLiveInputSubmitEvent) => void
 }
 
 export function useTerminalLiveInputCommit<TTabType extends string>({
@@ -60,6 +67,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   liveInputRef,
   liveInputTerminalHandles,
   liveInputTerminalHandlesRef,
+  platform,
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
@@ -117,6 +125,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
 
   const handleLiveInputChange = useCallback(
     ({ nativeEvent }: TerminalLiveInputChangeEvent) => {
+      noteImeCompositionChange(platform, nativeEvent.isComposing, nativeEvent.target)
       if (!activeHandle || !liveInputTerminalHandles.has(activeHandle)) {
         clearPendingLiveInputCommit()
         return
@@ -131,6 +140,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
         typeof nativeEvent.replacementText !== 'string' ||
         !nativeEvent.replacementRange
       ) {
+        isComposingRef.current = true
         return
       }
 
@@ -139,10 +149,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
         replacementText: nativeEvent.replacementText,
         replacementRange: nativeEvent.replacementRange
       })
-      isComposingRef.current = false
       if (!commit) {
+        isComposingRef.current = true
         return
       }
+      isComposingRef.current = false
       committedTextRef.current = commit.committedText
       if (commit.payload.length > 0) {
         void queueSend(activeHandle, commit.payload)
@@ -152,6 +163,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       activeHandle,
       clearPendingLiveInputCommit,
       liveInputTerminalHandles,
+      platform,
       queueSend,
       setLiveInputCapture
     ]
@@ -211,13 +223,19 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     ]
   )
 
-  const handleLiveInputSubmit = useCallback(() => {
-    if (!activeHandle || isComposingRef.current || !liveInputTerminalHandles.has(activeHandle)) {
-      return
-    }
-    clearPendingLiveInputCommit()
-    void queueSend(activeHandle, '\r')
-  }, [activeHandle, clearPendingLiveInputCommit, liveInputTerminalHandles, queueSend])
+  const handleLiveInputSubmit = useCallback(
+    (event?: TerminalLiveInputSubmitEvent) => {
+      if (imeOwnsSubmit((event?.nativeEvent as { target?: number } | undefined)?.target)) {
+        return
+      }
+      if (!activeHandle || isComposingRef.current || !liveInputTerminalHandles.has(activeHandle)) {
+        return
+      }
+      clearPendingLiveInputCommit()
+      void queueSend(activeHandle, '\r')
+    },
+    [activeHandle, clearPendingLiveInputCommit, liveInputTerminalHandles, queueSend]
+  )
 
   return {
     clearPendingLiveInputCommit,
