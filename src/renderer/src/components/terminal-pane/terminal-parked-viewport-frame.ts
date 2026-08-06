@@ -84,11 +84,10 @@ export function replayParkedTerminalViewportFrames(args: {
     void replay.then(() => {
       if (
         pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] === 'true' &&
-        args.isVisible() &&
-        args.manager.hasWebglRenderer(pane.id)
+        args.isVisible()
       ) {
-        // Why: WebGL attached to the empty remount can retain a blank render model until reactivated after parsing.
-        args.manager.rebuildPaneWebgl(pane.id)
+        // Why: the immediate refresh can precede measurable layout; repaint the parsed frame after reveal settles.
+        args.manager.scheduleRevealRepaint()
       }
     })
     replayed += 1

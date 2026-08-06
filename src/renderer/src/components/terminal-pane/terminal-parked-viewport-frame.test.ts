@@ -78,14 +78,14 @@ describe('parked terminal viewport frames', () => {
     expect(local.serialize).not.toHaveBeenCalled()
   })
 
-  it('replays a matching-grid frame and rebuilds WebGL after parsing', async () => {
+  it('replays a matching-grid frame and repaints after reveal layout settles', async () => {
     const matching = makePane(1, 'matching')
     const stale = makePane(2, 'stale')
-    const rebuildPaneWebgl = vi.fn()
+    const scheduleRevealRepaint = vi.fn()
     const manager = {
       getPanes: () => [matching.pane, stale.pane],
-      hasWebglRenderer: () => true,
-      rebuildPaneWebgl
+      hasWebglRenderer: () => false,
+      scheduleRevealRepaint
     } as unknown as PaneManager
     const replayingPanesRef = { current: new Map<number, number>() }
 
@@ -113,7 +113,7 @@ describe('parked terminal viewport frames', () => {
     )
     expect(mocks.replayIntoTerminalAsync.mock.calls[0]?.[3].shouldReleaseRenderPause()).toBe(true)
     await Promise.resolve()
-    expect(rebuildPaneWebgl).toHaveBeenCalledWith(1)
+    expect(scheduleRevealRepaint).toHaveBeenCalledOnce()
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(true)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(false)
   })
