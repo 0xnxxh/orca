@@ -264,10 +264,12 @@ describe('terminal scheduler retained-string charge', () => {
       writeTerminalOutput
     } = await loadScheduler()
     const terminal = createTerminal()
-    const source = 'x'.repeat(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS)
-    const cycleCount = 120
+    const configuredCapChars = 6_000_000
+    const source = 'x'.repeat(configuredCapChars)
+    const appended = 'a'.repeat(BACKGROUND_CHUNK_CHARS)
+    const cycleCount = Math.ceil(configuredCapChars / BACKGROUND_CHUNK_CHARS)
     let copiedChars = 0
-    configureTerminalOutputBacklogCap(1_000)
+    configureTerminalOutputBacklogCap(50_000)
     setRetainedRebaseCopyObserverForTesting((_parent, copy) => {
       copiedChars += copy.length
     })
@@ -278,22 +280,20 @@ describe('terminal scheduler retained-string charge', () => {
     })
     for (let cycle = 0; cycle < cycleCount; cycle += 1) {
       flushTerminalOutput(terminal as never, { maxChars: BACKGROUND_CHUNK_CHARS })
-      expect(readDebugSnapshot().retainedChars).toBeLessThan(
-        TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS * 2
-      )
-      writeTerminalOutput(terminal as never, 'a', {
+      expect(readDebugSnapshot().retainedChars).toBeLessThan(configuredCapChars * 2)
+      writeTerminalOutput(terminal as never, appended, {
         foreground: true,
         latencySensitive: false
       })
       const snapshot = readDebugSnapshot()
       expect(snapshot.retainedChars).toBeLessThanOrEqual(
-        Math.max(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS, snapshot.queuedChars * 2)
+        Math.max(configuredCapChars, snapshot.queuedChars * 2)
       )
-      expect(snapshot.retainedChars).toBeLessThan(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS * 2)
+      expect(snapshot.retainedChars).toBeLessThan(configuredCapChars * 2)
     }
     flushTerminalOutput(terminal as never)
 
-    expect(readOutput(terminal)).toBe(source + 'a'.repeat(cycleCount))
+    expect(readOutput(terminal)).toBe(source + appended.repeat(cycleCount))
     expect(copiedChars).toBeGreaterThan(0)
     expect(copiedChars).toBeLessThanOrEqual(source.length * 2)
   })
