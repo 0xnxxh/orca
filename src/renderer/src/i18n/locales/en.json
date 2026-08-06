@@ -5905,7 +5905,22 @@
           "localNetworkOpenSettings": "Open System Settings",
           "openSettingsFailed": "Could not open System Settings",
           "localNetworkOpenSystemSettings": "Open System Settings",
-          "statusManagedByMacOS": "Managed by macOS"
+          "statusManagedByMacOS": "Managed by macOS",
+          "connectionTestInvalidTarget": "Enter a hostname or private LAN IP and a port from 1 to 65535.",
+          "connectionTestTimeout": "Connection timed out. Check the target, service, and macOS Local Network settings.",
+          "connectionTestRefused": "The host responded, but the port refused the connection.",
+          "connectionTestUnreachable": "The target could not be reached.",
+          "connectionTestUnresolved": "The hostname could not be resolved.",
+          "connectionTestUnsupported": "Connection testing is available in the macOS desktop app.",
+          "connectionTestFailed": "The connection test could not be completed.",
+          "connectionTestTitle": "Test connection",
+          "connectionTestDescription": "Enter a service on another device on your local network. Orca tests the same network path used by terminal tools.",
+          "connectionTestLastVerified": "Last verified",
+          "connectionTestNotYetVerified": "No successful test saved.",
+          "connectionTestHost": "Host",
+          "connectionTestPort": "Port",
+          "connectionTestRunning": "Testing...",
+          "connectionTestAction": "Test Connection"
         },
         "ExperimentalPane": {
           "9762364929": "Uses APFS clone-copy on macOS when possible, otherwise symlinks configured folders or files into created worktrees.",

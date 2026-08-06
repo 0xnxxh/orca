@@ -2403,7 +2403,9 @@ const api = {
     request: (args: { id: string }): Promise<unknown> =>
       ipcRenderer.invoke('developerPermissions:request', args),
     openSettings: (args: { id: string }): Promise<void> =>
-      ipcRenderer.invoke('developerPermissions:openSettings', args)
+      ipcRenderer.invoke('developerPermissions:openSettings', args),
+    testLocalNetworkConnection: (args: { host: string; port: number }): Promise<unknown> =>
+      ipcRenderer.invoke('developerPermissions:testLocalNetworkConnection', args)
   },
 
   computerUsePermissions: {

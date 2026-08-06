@@ -20,6 +20,7 @@ import type {
 import { Button } from '../ui/button'
 import { translate } from '@/i18n/i18n'
 import { DeveloperPermissionActions } from './DeveloperPermissionActions'
+import { LocalNetworkConnectionTest } from './LocalNetworkConnectionTest'
 import {
   developerPermissionStatusClass,
   developerPermissionStatusLabel
@@ -345,35 +346,37 @@ export function DeveloperPermissionsPane({
           const settingId = `developer-permissions-${permission.id}`
 
           return (
-            <div
-              key={permission.id}
-              data-settings-section={settingId}
-              data-highlighted={highlightedSettingId === settingId ? 'true' : undefined}
-              className="flex items-center justify-between gap-4 px-4 py-3 transition-[background-color,box-shadow] duration-500 data-[highlighted=true]:bg-accent data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-inset data-[highlighted=true]:ring-ring/50 motion-reduce:transition-none"
-            >
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="mt-0.5 text-muted-foreground">{permission.icon}</div>
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{permission.label}</span>
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${developerPermissionStatusClass(
-                        status
-                      )}`}
-                    >
-                      {developerPermissionStatusLabel(permission.id, status)}
-                    </span>
+            <div key={permission.id}>
+              <div
+                data-settings-section={settingId}
+                data-highlighted={highlightedSettingId === settingId ? 'true' : undefined}
+                className="flex items-center justify-between gap-4 px-4 py-3 transition-[background-color,box-shadow] duration-500 data-[highlighted=true]:bg-accent data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-inset data-[highlighted=true]:ring-ring/50 motion-reduce:transition-none"
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="mt-0.5 text-muted-foreground">{permission.icon}</div>
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{permission.label}</span>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${developerPermissionStatusClass(
+                          status
+                        )}`}
+                      >
+                        {developerPermissionStatusLabel(permission.id, status)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{permission.description}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">{permission.description}</p>
                 </div>
+                <DeveloperPermissionActions
+                  id={permission.id}
+                  actionLabel={permission.actionLabel}
+                  pending={pending}
+                  status={status}
+                  onRequest={(id) => void request(id)}
+                />
               </div>
-              <DeveloperPermissionActions
-                id={permission.id}
-                actionLabel={permission.actionLabel}
-                pending={pending}
-                status={status}
-                onRequest={(id) => void request(id)}
-              />
+              {permission.id === 'local-network' && <LocalNetworkConnectionTest />}
             </div>
           )
         })}

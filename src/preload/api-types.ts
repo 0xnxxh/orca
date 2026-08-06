@@ -430,7 +430,8 @@ import type {
 import type {
   DeveloperPermissionId,
   DeveloperPermissionRequestResult,
-  DeveloperPermissionState
+  DeveloperPermissionState,
+  LocalNetworkConnectionTestResult
 } from '../shared/developer-permissions-types'
 import type {
   ComputerUsePermissionId,
@@ -2552,6 +2553,10 @@ export type PreloadApi = {
     getStatus: () => Promise<DeveloperPermissionState[]>
     request: (args: { id: DeveloperPermissionId }) => Promise<DeveloperPermissionRequestResult>
     openSettings: (args: { id: DeveloperPermissionId }) => Promise<void>
+    testLocalNetworkConnection: (args: {
+      host: string
+      port: number
+    }) => Promise<LocalNetworkConnectionTestResult>
   }
   computerUsePermissions: {
     getStatus: () => Promise<ComputerUsePermissionStatusResult>
