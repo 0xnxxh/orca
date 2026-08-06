@@ -415,7 +415,10 @@ function equivalentParsedAgentStatusPayload(
     a.toolInput === b.toolInput &&
     a.interactivePrompt === b.interactivePrompt &&
     a.lastAssistantMessage === b.lastAssistantMessage &&
-    a.interrupted === b.interrupted
+    a.interrupted === b.interrupted &&
+    // Why: a session-boundary done must never be deduped against a cached real done —
+    // the flag has to reach receivers deterministically (STA-3386).
+    a.sessionBoundary === b.sessionBoundary
   )
 }
 
