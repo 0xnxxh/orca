@@ -58,10 +58,18 @@
 //    the `a`-after-conversion figure above stays AUTHORED and unobserved.
 //
 // Four things a future reader must not misread:
-//   1. No reporter has filed either of these. #12164 was considered and rejected: its
-//      comment 1 is untyped agent OUTPUT doubling on the wide-glyph repaint path, and
-//      its comment 2 is filed against 1.4.163, whose CompositionHelper is a different
-//      implementation from HEAD's — measurements here do not transfer to it.
+//   1. No reporter has filed either of these. #12164 was considered and rejected —
+//      CORRECTION: the grounds cited here were wrong, though the conclusion holds.
+//      This said #12164's "comment 1" was output doubling and its "comment 2" was filed
+//      against 1.4.163. Checked against the API: the issue has exactly two comments —
+//      "I'm here right now with the same issue" and a maintainer's "should be fixed in
+//      the latest v.1.4.167" — and the string 1.4.163 appears NOWHERE in the thread.
+//      The real grounds are the issue BODY, whose repro is "Run any CLI agent (Codex,
+//      AGY, Claude, etc.) that outputs Korean text into the Orca terminal": untyped
+//      OUTPUT, no keystrokes, no composition. CompositionHelper is correctly excluded.
+//      Treat that body with care — it is LLM-authored (it still contains a literal
+//      "## 5. GitHub Submission Draft (Ready to Post)") and its Root Cause section
+//      blames a "CJK IME preedit buffer" its own repro never engages.
 //   2. Measured, not inferred: every expectation below was read off onData against the
 //      @xterm/xterm this repo installs (src/browser/input/CompositionHelper.ts,
 //      sha256 d6393a7e805139c1b8791a8996a42b7683e7bb0e03c137e98a021917605c1635, under
