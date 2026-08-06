@@ -3,9 +3,11 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import {
   attachWebgl,
+  clearTerminalWebglAttachBackoff,
   resetTerminalWebglSuggestion,
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
+import { notifyPaneFitSucceeded } from './pane-fit-webgl-attach-signal'
 
 function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
   const leafId = '22222222-2222-4222-8222-222222222222' as never
@@ -122,5 +124,109 @@ describe('terminal WebGL addon lifecycle', () => {
     resetWebglTextureAtlas(pane)
 
     expect(pane.terminal.refresh).not.toHaveBeenCalled()
+  })
+
+  it('keeps attaching to healthy panes after another pane fails to attach', () => {
+    // Regression: the attach-failure latch was module-global, so one pane's
+    // failed context creation stranded every later pane on the DOM renderer
+    // (bold/wider text) until the next recovery boundary.
+    const failing = createPane({
+      loadAddon: () => {
+        throw new Error('WebGL2 not supported null')
+      }
+    })
+    attachWebgl(failing)
+    expect(failing.webglAddon).toBeNull()
+    expect(failing.webglAttachFailedSinceRecovery).toBe(true)
+
+    const healthy = createPane()
+    attachWebgl(healthy)
+
+    expect(healthy.webglAddon).not.toBeNull()
+    expect(healthy.webglAttachFailedSinceRecovery).not.toBe(true)
+  })
+
+  it('honors the per-pane failure latch until it is cleared', () => {
+    const loadAddon = vi.fn(() => {
+      throw new Error('WebGL2 not supported null')
+    })
+    const pane = createPane({ loadAddon })
+
+    attachWebgl(pane)
+    attachWebgl(pane)
+
+    // Second attempt must not burn another canvas/getContext while latched.
+    expect(loadAddon).toHaveBeenCalledTimes(1)
+
+    clearTerminalWebglAttachBackoff(pane)
+    attachWebgl(pane)
+
+    expect(loadAddon).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('fit-anchored WebGL reattach', () => {
+  beforeEach(() => {
+    resetTerminalWebglSuggestion()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(16)
+      return 1
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('attaches WebGL to an eligible addon-less pane when a fit succeeds', () => {
+    // The event-anchored heal: a user resize (or late mount) proves the pane
+    // measurable, which is the moment a DOM-stuck pane can regain WebGL.
+    const pane = createPane()
+    expect(pane.webglAddon).toBeNull()
+
+    notifyPaneFitSucceeded(pane)
+
+    expect(pane.webglAddon).not.toBeNull()
+  })
+
+  it('does not retry a pane whose attach already failed since recovery', () => {
+    const loadAddon = vi.fn(() => {
+      throw new Error('WebGL2 not supported null')
+    })
+    const pane = createPane({ loadAddon })
+    attachWebgl(pane)
+    expect(loadAddon).toHaveBeenCalledTimes(1)
+
+    notifyPaneFitSucceeded(pane)
+
+    // Failed attaches retry only at recovery boundaries, never on every fit.
+    expect(loadAddon).toHaveBeenCalledTimes(1)
+    expect(pane.webglAddon).toBeNull()
+  })
+
+  it('leaves suspended and context-loss panes alone on fit', () => {
+    const deferred = createPane()
+    deferred.webglAttachmentDeferred = true
+    notifyPaneFitSucceeded(deferred)
+    expect(deferred.webglAddon).toBeNull()
+
+    const lost = createPane()
+    lost.webglDisabledAfterContextLoss = true
+    notifyPaneFitSucceeded(lost)
+    expect(lost.webglAddon).toBeNull()
+  })
+
+  it('does not disturb a pane that already has a live addon', () => {
+    const pane = createPane()
+    attachWebgl(pane)
+    const liveAddon = pane.webglAddon
+    expect(liveAddon).not.toBeNull()
+
+    notifyPaneFitSucceeded(pane)
+
+    expect(pane.webglAddon).toBe(liveAddon)
   })
 })
