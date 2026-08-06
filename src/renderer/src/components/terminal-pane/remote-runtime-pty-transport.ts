@@ -2298,6 +2298,9 @@ export function createRemoteRuntimePtyTransport(
     },
 
     detach() {
+      // Why first: the successor transport owns the PTY after detach, and the batcher flushes
+      // below can throw past the census drop — a stranded gauge outlives the transport.
+      outputProcessor.disposePendingSideEffectGauge()
       lifecycleEpoch += 1
       attachGeneration += 1
       cancelTerminalCreateRetryWait()
@@ -2523,7 +2526,13 @@ export function createRemoteRuntimePtyTransport(
     destroy() {
       destroyed = true
       setAttachmentUnavailable()
-      this.disconnect()
+      // Why finally: disconnect runs consumer onDisconnect/onPtyExit callbacks; a throw there
+      // must not strand the gauge in the very path where teardown already went wrong.
+      try {
+        this.disconnect()
+      } finally {
+        outputProcessor.disposePendingSideEffectGauge()
+      }
       recovery.dispose()
       inputBatcher.clear()
       viewportBatcher.clear()

@@ -1979,6 +1979,7 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
       includeIgnored,
       bypassEffectiveUpstreamNegativeCache,
       reuseLineStats,
+      branchLineTotalMergeBase,
       requestToken
     }) => {
       const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
@@ -1986,7 +1987,8 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
         worktree: toRuntimeWorktreeSelector(worktree.id),
         includeIgnored,
         bypassEffectiveUpstreamNegativeCache,
-        reuseLineStats
+        reuseLineStats,
+        ...(branchLineTotalMergeBase ? { branchLineTotalMergeBase } : {})
       }
       // Why: no token = nothing to cancel (pooled); a token routes via the subscription bridge so cancelStatus can abort.
       if (!requestToken) {
@@ -3222,7 +3224,9 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
       listSessions: () => Promise.resolve({ sessions: [], degraded: false }),
       killAll: () => Promise.resolve({ killedCount: 0, remainingCount: 0, killedSessionIds: [] }),
       killOne: () => Promise.resolve({ success: false }),
-      restart: () => Promise.resolve({ success: false })
+      restart: () => Promise.resolve({ success: false }),
+      // Why: web clients can't inspect the host daemon's pid record; 'unknown' keeps the banner hidden.
+      macTccAttribution: () => Promise.resolve({ health: 'unknown' as const })
     }
   }
 }
