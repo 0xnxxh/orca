@@ -2,7 +2,7 @@ import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { isRemoteRuntimePtyId } from '@/runtime/runtime-terminal-inspection'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
-import { replayIntoTerminal, type ReplayingPanesRef } from './replay-guard'
+import { replayIntoTerminalAsync, type ReplayingPanesRef } from './replay-guard'
 
 const MAX_PARKED_VIEWPORT_FRAME_CHARS = 256 * 1024
 const PARKED_VIEWPORT_FRAME_DATASET_KEY = 'parkedViewportFrame'
@@ -76,11 +76,21 @@ export function replayParkedTerminalViewportFrames(args: {
     if (!pane || pane.terminal.cols !== frame.cols || pane.terminal.rows !== frame.rows) {
       continue
     }
-    replayIntoTerminal(pane, args.replayingPanesRef, frame.data, {
+    const replay = replayIntoTerminalAsync(pane, args.replayingPanesRef, frame.data, {
       shouldRefreshViewportSynchronously: () => !args.manager.hasWebglRenderer(pane.id),
       shouldReleaseRenderPause: args.isVisible
     })
     pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] = 'true'
+    void replay.then(() => {
+      if (
+        pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] === 'true' &&
+        args.isVisible() &&
+        args.manager.hasWebglRenderer(pane.id)
+      ) {
+        // Why: WebGL attached to the empty remount can retain a blank render model until reactivated after parsing.
+        args.manager.rebuildPaneWebgl(pane.id)
+      }
+    })
     replayed += 1
   }
   return replayed

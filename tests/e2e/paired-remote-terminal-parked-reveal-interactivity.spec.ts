@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
+import { PNG } from 'pngjs'
 import {
   HOST_TERMINAL_SURFACE_SEPARATOR,
   toWebTerminalSurfaceTabId
@@ -51,6 +52,7 @@ writeFileSync(
     'const size = () => `${process.stdout.columns}x${process.stdout.rows}`',
     'const record = (line) => appendFileSync(sink, `${line}\\n`)',
     'record(`READY:${size()}`)',
+    "process.stdout.write('\\x1b[44m                                                \\x1b[0m\\r\\n')",
     'process.stdout.write(`READY:${size()}\\r\\n`)',
     "process.stdout.on('resize', () => {",
     '  record(`SIZE:${size()}`)',
@@ -283,6 +285,60 @@ async function waitForPaintedPaneMarker(
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   return false
+}
+
+function countForegroundPixels(buffer: Buffer): number {
+  const image = PNG.sync.read(buffer)
+  const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>()
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    if ((image.data[offset + 3] ?? 0) < 128) {
+      continue
+    }
+    const red = image.data[offset] ?? 0
+    const green = image.data[offset + 1] ?? 0
+    const blue = image.data[offset + 2] ?? 0
+    const key = `${red >> 3},${green >> 3},${blue >> 3}`
+    const bucket = buckets.get(key) ?? { count: 0, red, green, blue }
+    bucket.count += 1
+    buckets.set(key, bucket)
+  }
+  const background = [...buckets.values()].sort((left, right) => right.count - left.count)[0]
+  if (!background) {
+    return 0
+  }
+  let foregroundPixels = 0
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    const distance =
+      Math.abs((image.data[offset] ?? 0) - background.red) +
+      Math.abs((image.data[offset + 1] ?? 0) - background.green) +
+      Math.abs((image.data[offset + 2] ?? 0) - background.blue)
+    if ((image.data[offset + 3] ?? 0) >= 128 && distance > 48) {
+      foregroundPixels += 1
+    }
+  }
+  return foregroundPixels
+}
+
+async function readPaneForegroundPixels(page: Page, webTabId: string): Promise<number> {
+  const clip = await page.evaluate((id) => {
+    const manager = window.__paneManagers?.get(id)
+    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
+    const screen = pane?.terminal.element?.querySelector('.xterm-screen')
+    if (!(screen instanceof HTMLElement)) {
+      return null
+    }
+    const rect = screen.getBoundingClientRect()
+    return {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.max(1, Math.min(rect.width, window.innerWidth - rect.left)),
+      height: Math.max(1, Math.min(rect.height, 64, window.innerHeight - rect.top))
+    }
+  }, webTabId)
+  if (!clip) {
+    return 0
+  }
+  return countForegroundPixels(await page.screenshot({ clip }))
 }
 
 function readPtyGridFromContent(content: string): { cols: number; rows: number } | null {
@@ -568,10 +624,15 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
 
     const startedAt = Date.now()
     await openClientTab(client.page, worktreeId, target.webTabId)
+    const painted = await waitForPaintedPaneMarker(client.page, target.webTabId, 'READY:', 2_000)
     expect(
-      await waitForPaintedPaneMarker(client.page, target.webTabId, 'READY:', 2_000),
+      painted,
       'cold-parked viewport stayed blank while the paired runtime was disconnected'
     ).toBe(true)
+    expect(
+      await readPaneForegroundPixels(client.page, target.webTabId),
+      'cached viewport reached the buffer but did not paint terminal pixels'
+    ).toBeGreaterThan(1_000)
     console.log(`[paired-reveal] cached viewport painted in ${Date.now() - startedAt}ms`)
   } finally {
     await client.page
