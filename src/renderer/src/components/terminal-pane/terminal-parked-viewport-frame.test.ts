@@ -8,7 +8,16 @@ import {
   replayParkedTerminalViewportFrames
 } from './terminal-parked-viewport-frame'
 
-const mocks = vi.hoisted(() => ({ replayIntoTerminalAsync: vi.fn(() => Promise.resolve()) }))
+const mocks = vi.hoisted(() => ({
+  replayIntoTerminalAsync: vi.fn(
+    (
+      _pane: unknown,
+      _replayingPanesRef: unknown,
+      _data: string,
+      _options: { shouldReleaseRenderPause: () => boolean }
+    ) => Promise.resolve()
+  )
+}))
 
 vi.mock('./replay-guard', () => ({ replayIntoTerminalAsync: mocks.replayIntoTerminalAsync }))
 
@@ -102,7 +111,7 @@ describe('parked terminal viewport frames', () => {
       'matching frame',
       expect.objectContaining({ shouldReleaseRenderPause: expect.any(Function) })
     )
-    expect(mocks.replayIntoTerminalAsync.mock.calls[0][3].shouldReleaseRenderPause()).toBe(true)
+    expect(mocks.replayIntoTerminalAsync.mock.calls[0]?.[3].shouldReleaseRenderPause()).toBe(true)
     await Promise.resolve()
     expect(rebuildPaneWebgl).toHaveBeenCalledWith(1)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(true)
