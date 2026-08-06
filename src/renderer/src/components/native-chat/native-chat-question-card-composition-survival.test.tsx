@@ -16,10 +16,15 @@
  *  via `defaultValue={draft}`. `compositionend` is a reconciliation fallback,
  *  not the commit path.
  *
- *  An earlier revision of this file characterized the preedit as LOST. That was
- *  a simulation artifact: it assigned `textarea.value` directly, with no `input`
- *  event, which no IME does. Drive composition through the frames below or the
- *  loss reappears as an artifact rather than a defect.
+ *  CORRECTION TO A PUSHED COMMIT. `61977d45177` ("characterize preedit loss
+ *  when a question card replaces the composer") asserted this loss as a real
+ *  data-loss path — "the preedit is never committed to the draft", "the 가 is
+ *  gone". That is false, and since it is pushed the history cannot be quietly
+ *  corrected, so the correction lives here: the loss was an artifact of that
+ *  file's own harness, which assigned `textarea.value` directly with no `input`
+ *  event — something no IME does. Production never behaved that way. The
+ *  surviving contract below is what actually holds. Drive composition through
+ *  the frames below or the artifact reappears and looks like a defect again.
  *
  *  THIS OWNS NO REPORTED ROW. It is not a regression guard for #12118 or
  *  STA-3219. Those reporters describe continuous flicker keyed to streaming
@@ -28,11 +33,18 @@
  *  across 120 such rerenders. An AskUserQuestion card arrives once per question,
  *  which does not match that cadence.
  *
- *  Two residual facts are deliberately unasserted because no JS owns them: the
- *  OS aborts the composition when the field disappears, so the surviving text
- *  returns committed (a lone jamo comes back as a compatibility jamo the user
- *  cannot compose onto), and the remounted composer is unfocused because the
- *  card owned focus. Geometry too: happy-dom has no layout engine. */
+ *  RESIDUAL, USER-FACING, AND NOT JS-REACHABLE. The text survives but the
+ *  composition does not: the OS aborts it when the field disappears, so what
+ *  returns is committed text. Mid-syllable Hangul is the bad case — a lone
+ *  leading jamo comes back as a standalone compatibility jamo (U+3131 ㄱ), which
+ *  is not a composable state. The user cannot resume the syllable; they must
+ *  delete it and retype. The text is preserved but degraded into something
+ *  unusable. No JS owns this — the IME's internal state is gone before any
+ *  handler could run — so it is recorded rather than asserted. If a reporter
+ *  ever describes exactly this, it is the note they are looking for.
+ *
+ *  Also unasserted: the remounted composer is unfocused, because the card owned
+ *  focus. Geometry too — happy-dom has no layout engine. */
 
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
