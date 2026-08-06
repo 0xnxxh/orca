@@ -85,7 +85,40 @@ function claudeModelDescriptorCell(lines: string[], headerIndex: number): string
   }
   // xterm serialization can join the descriptor onto the version row itself.
   const joined = frameCell((lines[headerIndex] ?? '').replace(/^.*?\bClaude Code\s*v?[\d.]*/i, ''))
-  return isModelDescriptorCell(joined) ? joined : null
+  if (isModelDescriptorCell(joined)) {
+    return joined
+  }
+  return frameBottom > 0 ? modelRowAboveWorkingDirectory(lines, headerIndex, frameBottom) : null
+}
+
+/**
+ * A model with no effort control whose billing wrapped away — `Haiku 4.5` on a
+ * narrow pane — leaves a bare name that no metadata identifies. Claude always
+ * closes the frame with the working directory, and prints at most the
+ * descriptor plus a wrapped billing line above it, so walk up from there.
+ */
+function modelRowAboveWorkingDirectory(
+  lines: string[],
+  headerIndex: number,
+  frameBottom: number
+): string | null {
+  let workingDirectory = -1
+  for (let index = frameBottom - 1; index > headerIndex; index -= 1) {
+    const cell = frameCell(lines[index] ?? '')
+    if (cell.startsWith('/') || cell.startsWith('~')) {
+      workingDirectory = index
+      break
+    }
+  }
+  if (workingDirectory < 0) {
+    return null
+  }
+  let top = workingDirectory
+  while (top - 1 > headerIndex && frameCell(lines[top - 1] ?? '')) {
+    top -= 1
+  }
+  // Anything taller than descriptor + billing is the welcome art, not a model.
+  return top < workingDirectory && workingDirectory - top <= 2 ? frameCell(lines[top] ?? '') : null
 }
 
 /** The displayed model name, without the effort suffix or billing tail. */
