@@ -79,7 +79,8 @@ const terminalTabSchema = z.object({
       title: z.string()
     })
     .nullable()
-    .optional(),
+    .optional()
+    .catch(undefined),
   quickCommandLabel: z.string().nullable().optional(),
   customTitle: z.string().nullable(),
   color: z.string().nullable(),
@@ -127,7 +128,8 @@ const tabSchema = z.object({
       title: z.string()
     })
     .nullable()
-    .optional(),
+    .optional()
+    .catch(undefined),
   quickCommandLabel: z.string().nullable().optional(),
   customLabel: z.string().nullable(),
   color: z.string().nullable(),

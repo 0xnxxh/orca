@@ -6,7 +6,11 @@ import type {
 } from '../../../shared/ai-vault-types'
 import { resolveTerminalTabTitle } from '../../../shared/tab-title-resolution'
 import type { TerminalTab } from '../../../shared/types'
-import { collectAiVaultTitleRequests } from './ai-vault-tab-title-requests'
+import {
+  collectAiVaultTitleRequests,
+  type AiVaultTitleRequest
+} from './ai-vault-tab-title-requests'
+import { groupAiVaultTitleRequests } from './ai-vault-tab-title-scan-groups'
 import { startAiVaultTabTitleSync } from './ai-vault-tab-title-sync'
 import type { AppState } from '@/store/types'
 
@@ -127,6 +131,41 @@ function makeState(args: {
   } as unknown as AppState
   return {
     getState: () => state,
+    pingAgentStatus: () => {
+      const previous = state
+      state = {
+        ...state,
+        agentStatusByPaneKey: Object.fromEntries(
+          Object.entries(state.agentStatusByPaneKey).map(([paneKey, entry]) => [
+            paneKey,
+            { ...entry, updatedAt: entry.updatedAt + 1 }
+          ])
+        )
+      }
+      for (const listener of listeners) {
+        listener(state, previous)
+      }
+    },
+    setProviderSessionId: (sessionId: string) => {
+      const previous = state
+      state = {
+        ...state,
+        agentStatusByPaneKey: Object.fromEntries(
+          Object.entries(state.agentStatusByPaneKey).map(([paneKey, entry]) => {
+            if (!entry.providerSession) {
+              return [paneKey, entry]
+            }
+            return [
+              paneKey,
+              { ...entry, providerSession: { ...entry.providerSession, id: sessionId } }
+            ]
+          })
+        )
+      }
+      for (const listener of listeners) {
+        listener(state, previous)
+      }
+    },
     removeSleepingRecord: () => {
       const previous = state
       state = { ...state, sleepingAgentSessionsByPaneKey: {} }
@@ -250,5 +289,67 @@ describe('AI Vault tab title sync', () => {
       )
     )
     stop()
+  })
+
+  it('does not rescan when a live status ping preserves title inputs', async () => {
+    const store = makeState({
+      executionHostId: 'ssh:dev-box',
+      worktreeId: 'worktree-1',
+      path: '/workspace/albacore'
+    })
+    const listSessions = vi.fn(async () => ({
+      sessions: [session('codex', 'ssh:dev-box', 'Stable conversation')],
+      issues: [],
+      scannedAt: '2026-08-05T00:00:00.000Z'
+    }))
+    const stop = startAiVaultTabTitleSync({ ...store, listSessions })
+
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(1))
+    store.pingAgentStatus()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(listSessions).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('reconciles immediately when the provider session identity changes', async () => {
+    const store = makeState({
+      executionHostId: 'ssh:dev-box',
+      worktreeId: 'worktree-1',
+      path: '/workspace/albacore'
+    })
+    const listSessions = vi.fn(async () => ({
+      sessions: [session('codex', 'ssh:dev-box', 'Original conversation')],
+      issues: [],
+      scannedAt: '2026-08-05T00:00:00.000Z'
+    }))
+    const stop = startAiVaultTabTitleSync({ ...store, listSessions })
+
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(1))
+    store.setProviderSessionId('codex-session-2')
+
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2))
+    expect(store.getState().tabsByWorktree['worktree-1'][0].aiVaultTitle).toBeNull()
+    stop()
+  })
+
+  it('batches workspace scopes per host within the wire bound', () => {
+    const request = (index: number): AiVaultTitleRequest => ({
+      agent: 'codex',
+      executionHostId: 'ssh:dev-box',
+      providerSession: { key: 'session_id', id: `session-${index}` },
+      refresh: true,
+      scopePath: `/workspace/project-${index}`,
+      tabId: `tab-${index}`,
+      worktreeId: `worktree-${index}`
+    })
+    const groups = groupAiVaultTitleRequests(
+      Array.from({ length: 65 }, (_, index) => request(index))
+    )
+
+    expect(groups).toHaveLength(2)
+    expect(groups[0]).toHaveLength(64)
+    expect(groups[1]).toHaveLength(1)
   })
 })

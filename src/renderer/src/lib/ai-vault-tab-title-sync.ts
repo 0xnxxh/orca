@@ -5,6 +5,8 @@ import {
   collectAiVaultTitleRequests,
   type AiVaultTitleRequest
 } from './ai-vault-tab-title-requests'
+import { groupAiVaultTitleRequests } from './ai-vault-tab-title-scan-groups'
+import { aiVaultTitleSyncInputsChanged } from './ai-vault-tab-title-sync-inputs'
 
 const LIVE_TITLE_REFRESH_MS = 20_000
 
@@ -49,9 +51,10 @@ export function startAiVaultTabTitleSync(dependencies: SyncDependencies): () => 
 
   const scanGroup = async (requests: AiVaultTitleRequest[]): Promise<void> => {
     const first = requests[0]!
+    const scopePaths = [...new Set(requests.flatMap((request) => request.scopePath ?? []))]
     const result = await dependencies.listSessions({
       executionHostScope: first.executionHostId,
-      ...(first.scopePath ? { scopePaths: [first.scopePath] } : {}),
+      ...(scopePaths.length > 0 ? { scopePaths } : {}),
       limit: 500
     })
     if (stopped || result.cancelled) {
@@ -113,13 +116,8 @@ export function startAiVaultTabTitleSync(dependencies: SyncDependencies): () => 
     })
 
     if (requestsToScan.length > 0) {
-      const groups = new Map<string, AiVaultTitleRequest[]>()
-      for (const request of requestsToScan) {
-        const key = `${request.executionHostId}\0${request.scopePath ?? ''}`
-        groups.set(key, [...(groups.get(key) ?? []), request])
-      }
       scanInFlight = true
-      await Promise.allSettled([...groups.values()].map(scanGroup))
+      await Promise.allSettled(groupAiVaultTitleRequests(requestsToScan).map(scanGroup))
       scanInFlight = false
     }
 
@@ -140,17 +138,7 @@ export function startAiVaultTabTitleSync(dependencies: SyncDependencies): () => 
   }
 
   const unsubscribe = dependencies.subscribe((state, previous) => {
-    if (
-      !writing &&
-      (state.agentStatusByPaneKey !== previous.agentStatusByPaneKey ||
-        state.retainedAgentsByPaneKey !== previous.retainedAgentsByPaneKey ||
-        state.sleepingAgentSessionsByPaneKey !== previous.sleepingAgentSessionsByPaneKey ||
-        state.tabsByWorktree !== previous.tabsByWorktree ||
-        state.terminalLayoutsByTabId !== previous.terminalLayoutsByTabId ||
-        state.worktreesByRepo !== previous.worktreesByRepo ||
-        state.detectedWorktreesByRepo !== previous.detectedWorktreesByRepo ||
-        state.folderWorkspaces !== previous.folderWorkspaces)
-    ) {
+    if (!writing && aiVaultTitleSyncInputsChanged(state, previous)) {
       schedule()
     }
   })
