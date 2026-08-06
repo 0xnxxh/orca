@@ -285,6 +285,7 @@ export function buildDashboardSnapshot(
         startedAt: row.startedAt,
         finishedAt,
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,
+        statusUpdatedAt: row.entry.updatedAt,
         // Same derivation as WorktreeCardAgents' unvisitedByPaneKey, so the
         // board and the sidebar bold/mute the same agents at the same time.
         unseen,

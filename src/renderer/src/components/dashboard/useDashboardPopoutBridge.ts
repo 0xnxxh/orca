@@ -46,7 +46,6 @@ export function dashboardSnapshotInputsChanged(
     state.repos !== previousState.repos ||
     state.worktreesByRepo !== previousState.worktreesByRepo ||
     state.tabsByWorktree !== previousState.tabsByWorktree ||
-    state.agentStatusByPaneKey !== previousState.agentStatusByPaneKey ||
     state.retainedAgentsByPaneKey !== previousState.retainedAgentsByPaneKey ||
     state.migrationUnsupportedByPtyId !== previousState.migrationUnsupportedByPtyId ||
     state.runtimeAgentOrchestrationByPaneKey !== previousState.runtimeAgentOrchestrationByPaneKey ||
@@ -62,8 +61,8 @@ export function dashboardSnapshotInputsChanged(
     state.detectedAgentIds !== previousState.detectedAgentIds ||
     state.remoteDetectedAgentIds !== previousState.remoteDetectedAgentIds ||
     state.runtimeDetectedAgentIds !== previousState.runtimeDetectedAgentIds ||
-    // Why: freshness can change a bucket without replacing any backing map.
-    state.agentStatusEpoch !== previousState.agentStatusEpoch ||
+    // Live hook status is relayed straight from main to the pop-out. Rebuilding
+    // every card here would put map refresh work on the main renderer's hot path.
     // Why: each card carries the host-input profile its preview terminal keys
     // against, and the pop-out cannot re-derive it. Every slice that resolves
     // an execution host must republish or the preview keeps encoding bytes for

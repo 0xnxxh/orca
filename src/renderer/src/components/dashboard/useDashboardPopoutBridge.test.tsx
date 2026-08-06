@@ -180,7 +180,6 @@ describe('useDashboardPopoutBridge', () => {
       'repos',
       'worktreesByRepo',
       'tabsByWorktree',
-      'agentStatusByPaneKey',
       'retainedAgentsByPaneKey',
       'migrationUnsupportedByPtyId',
       'runtimeAgentOrchestrationByPaneKey',
@@ -200,8 +199,14 @@ describe('useDashboardPopoutBridge', () => {
       ).toBe(true)
     }
     expect(
+      dashboardSnapshotInputsChanged(
+        { ...previousState, agentStatusByPaneKey: { ...previousState.agentStatusByPaneKey } },
+        previousState
+      )
+    ).toBe(false)
+    expect(
       dashboardSnapshotInputsChanged({ ...previousState, agentStatusEpoch: 1 }, previousState)
-    ).toBe(true)
+    ).toBe(false)
 
     // Why: each card's preview terminal keys against a host-input profile
     // derived from these. Not republishing leaves the pop-out encoding bytes
@@ -313,7 +318,7 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
     const previousState = makeSnapshotWatchState()
     act(() =>
       mocks.subscribeStore.mock.calls[0][0](
-        { ...previousState, agentStatusEpoch: 1 },
+        { ...previousState, acknowledgedAgentsByPaneKey: { pane: 1 } },
         previousState
       )
     )
@@ -321,6 +326,19 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
   const notifyUnrelatedStoreWrite = (): void => {
     const previousState = makeSnapshotWatchState()
     act(() => mocks.subscribeStore.mock.calls[0][0]({ ...previousState }, previousState))
+  }
+  const notifyStatusChurn = (): void => {
+    const previousState = makeSnapshotWatchState()
+    act(() =>
+      mocks.subscribeStore.mock.calls[0][0](
+        {
+          ...previousState,
+          agentStatusByPaneKey: { ...previousState.agentStatusByPaneKey },
+          agentStatusEpoch: previousState.agentStatusEpoch + 1
+        },
+        previousState
+      )
+    )
   }
   const mountAndOpen = async (): Promise<void> => {
     await act(async () => root.render(<Harness enabled />))
@@ -350,6 +368,19 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
     notifyUnrelatedStoreWrite()
 
     expect(mocks.publishSnapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('does no snapshot work during live status churn', async () => {
+    await mountAndOpen()
+    mocks.buildDashboardSnapshot.mockClear()
+    mocks.publishSnapshot.mockClear()
+
+    for (let index = 0; index < 100; index += 1) {
+      notifyStatusChurn()
+    }
+
+    expect(mocks.buildDashboardSnapshot).not.toHaveBeenCalled()
+    expect(mocks.publishSnapshot).not.toHaveBeenCalled()
   })
 
   // A burst collapses onto the trailing timer, so that edge carries most of the

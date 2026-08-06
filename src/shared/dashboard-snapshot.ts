@@ -121,6 +121,9 @@ export type DashboardCard = {
   /** When the agent entered its current state — column ordering key (cards
    *  that moved into a bucket most recently sort first). 0 when unknown. */
   stateChangedAt: number
+  /** Last accepted hook update. Optional for mixed-version snapshots; the
+   *  pop-out uses it to request one refresh when a live state becomes stale. */
+  statusUpdatedAt?: number
   /** Mirrors the sidebar's unvisited signal: the agent changed state since the
    *  user last acknowledged it (visited its tab / opened its dashboard dialog).
    *  Derived from the app-wide ack map so both surfaces mute in lockstep. */
