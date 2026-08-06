@@ -37,17 +37,20 @@
 // Unlike the sibling #11504 file, these assertions pin CORRECT behaviour — #6905 is NOT
 // reproducible at HEAD, so this is a regression guard rather than a defect pin. It is not vacuous:
 // the owner it exercises is @xterm/xterm's `CompositionHelper._finalizeComposition` in the
-// resolved install (`patch_hash=f4db57f4b724063e5888942227a36be616e72f05bc9fde69204d4689ae253f3e`,
-// `src/browser/input/CompositionHelper.ts`, 263 lines), and narrowing its commit range fails these
+// resolved install (`patch_hash=8a8976e1ddd73b3747547f119f76a72f2fa3f8e6efc6e6134b267d9c7f80f65d`,
+// `src/browser/input/CompositionHelper.ts`, 268 lines), and narrowing its commit range fails these
 // arms in the reporter's own two directions. Measured against copies of that bundle aliased in,
-// not inferred; node_modules was not written:
-//   - DEFERRED branch (line 201), range END collapsed onto its start -> 3 failed. Both Telex
+// not inferred; node_modules was not written. RE-MEASURED, not re-pointed, when the composition
+// dedup fix changed the patch and so the install directory: the rig
+// (.tmp/ime-handoff/swarm-scratch/lane-6905-criteria/build-arms.mjs) re-derives every arm from the
+// bundle the loader resolves, and all four counts below came back identical on the new bytes:
+//   - DEFERRED branch (line 205), range END collapsed onto its start -> 3 failed. Both Telex
 //     commits slice to '', so the first arm sees `[]` where it expects `['tiếng ']`. The
 //     "garbled / never arrives" direction.
-//   - DEFERRED branch (line 201), range START collapsed to 0 -> 2 failed. The first word is
+//   - DEFERRED branch (line 205), range START collapsed to 0 -> 2 failed. The first word is
 //     unaffected; the second commit re-slices from the start of the textarea and emits
 //     `'tiếng việt'` in place of `'việt'`. The "duplicated" direction.
-//   - IMMEDIATE branch (line 159), range end collapsed onto its start -> 3 PASSED, i.e. invisible
+//   - IMMEDIATE branch (line 163), range end collapsed onto its start -> 3 PASSED, i.e. invisible
 //     here, and deliberately kept as the null control. This shape never enters that branch: every
 //     keydown during a live composition in the capture is keyCode 229, so xterm's exemption holds
 //     and both commits arrive via `compositionend`. It matters because
