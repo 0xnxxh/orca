@@ -29,7 +29,15 @@ export function azureDevOpsApiVersionForOrigin(
 }
 
 export function isAzureDevOpsPreviewVersionRejection(status: number | null, body: string): boolean {
-  return status === 400 && body.includes('VssInvalidPreviewVersionException')
+  if (status !== 400) {
+    return false
+  }
+  try {
+    const parsed = JSON.parse(body) as { typeKey?: unknown } | null
+    return parsed?.typeKey === 'VssInvalidPreviewVersionException'
+  } catch {
+    return false
+  }
 }
 
 type AzureDevOpsAuthConfig = {
@@ -80,9 +88,16 @@ function authHeaders(config: AzureDevOpsAuthConfig): Record<string, string> {
   return {}
 }
 
-function sameOrigin(left: string, right: string): boolean {
+function isUrlPathAncestor(ancestor: string, descendant: string): boolean {
   try {
-    return new URL(left).origin === new URL(right).origin
+    const ancestorUrl = new URL(ancestor)
+    const descendantUrl = new URL(descendant)
+    const ancestorPath = ancestorUrl.pathname.replace(/\/+$/, '')
+    const descendantPath = descendantUrl.pathname.replace(/\/+$/, '')
+    return (
+      ancestorUrl.origin === descendantUrl.origin &&
+      (ancestorPath === descendantPath || descendantPath.startsWith(`${ancestorPath}/`))
+    )
   } catch {
     return false
   }
@@ -94,10 +109,9 @@ export function resolveAzureDevOpsGitApiBaseUrl(repo: AzureDevOpsRepoRef): strin
     return repo.apiBaseUrl
   }
   const normalized = normalizeAzureDevOpsApiBaseUrl(configured)
-  // Why (STA-3494): a same-origin configured base is the collection-level auth
-  // probe URL; Git endpoints need the project-level base derived from the
-  // remote. A cross-origin base (rewrite proxy) still overrides.
-  return sameOrigin(normalized, repo.apiBaseUrl) ? repo.apiBaseUrl : normalized
+  // Why (STA-3494): a configured collection ancestor is the auth-probe URL;
+  // Git endpoints need the project-level base derived from the remote.
+  return isUrlPathAncestor(normalized, repo.apiBaseUrl) ? repo.apiBaseUrl : normalized
 }
 
 function apiUrl(

@@ -151,6 +151,26 @@ describe('Azure DevOps pull request creation', () => {
     expect(versions).toEqual(['7.1', '7.1-preview'])
   })
 
+  it('does not retry PR creation when only the error message names the preview exception', async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        { message: 'Validation failed near VssInvalidPreviewVersionException' },
+        { status: 400 }
+      )
+    )
+    globalThis.fetch = fetchMock as never
+
+    await expect(
+      createAzureDevOpsPullRequest('/repo', {
+        provider: 'azure-devops',
+        base: 'main',
+        head: 'feature/azure',
+        title: 'Do not retry'
+      })
+    ).resolves.toMatchObject({ ok: false, code: 'validation' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('resolves Azure DevOps remotes through the SSH git provider', async () => {
     const remoteGit = {
       exec: vi.fn(async () => ({

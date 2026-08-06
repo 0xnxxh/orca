@@ -119,4 +119,16 @@ describe('Azure DevOps API request (STA-3494)', () => {
     await requestAzureDevOpsJson(serverRepoRef(), '/_apis/git/repositories/my-repo')
     expect(origins).toEqual(['http://127.0.0.1:8123'])
   })
+
+  it('keeps a same-origin non-ancestor base URL as a Git endpoint override', async () => {
+    process.env.ORCA_AZURE_DEVOPS_API_BASE_URL = 'https://ado.example.com:8443/rewrite/MyProject'
+    const paths: string[] = []
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      paths.push(new URL(String(input)).pathname)
+      return Response.json({ id: 'repo-guid' })
+    }) as never
+
+    await requestAzureDevOpsJson(serverRepoRef(), '/_apis/git/repositories/my-repo')
+    expect(paths).toEqual(['/rewrite/MyProject/_apis/git/repositories/my-repo'])
+  })
 })
