@@ -100,26 +100,13 @@ function clearChunkReloadGuard(): void {
 const MAX_RELOAD_REQUESTS_PER_DOCUMENT = 2
 let reloadRequestsThisDocument = 0
 let reloadRequestInFlight = false
-const MAX_RECORDED_EXHAUSTION_KEYS = 128
-// One breadcrumb per reloadKey + outcome + error name (unkeyed call sites share
-// 'unknown'): a corrupt shared chunk can fail dozens of sibling imports at once,
-// which would otherwise flush the 30-entry breadcrumb ring.
-const recordedExhaustionKeys = new Set<string>()
-
-export function getRecordedExhaustionKeyCountForTest(): number {
-  return recordedExhaustionKeys.size
-}
 
 export function resetLazyChunkReloadRequestsForTest(): void {
   reloadRequestsThisDocument = 0
   reloadRequestInFlight = false
-  recordedExhaustionKeys.clear()
 }
 
-type ReloadBreadcrumbName =
-  | 'lazy_chunk_reload'
-  | 'lazy_chunk_reload_vetoed'
-  | 'lazy_chunk_recovery_exhausted'
+type ReloadBreadcrumbName = 'lazy_chunk_reload' | 'lazy_chunk_reload_vetoed'
 
 function recordReloadBreadcrumb(
   name: ReloadBreadcrumbName,
@@ -143,53 +130,12 @@ function recordReloadBreadcrumb(
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-/**
- * Names a corrupt-chunk failure that recovery can no longer act on, so the error
- * boundary contains it instead of filing a react-error-boundary crash. Genuine
- * logic bugs are not dynamic-import failures and stay raw so they keep reporting.
- */
-function exhaustedRecoveryFailure(
-  lastError: unknown,
-  reloadKey: string,
-  failureMessage: string,
-  outcome: string,
-  // Set when the caller already recorded a vetoed breadcrumb for this outcome;
-  // the 30-entry ring is the only diagnostic left, so it must not self-evict.
-  alreadyRecorded = false
-): unknown {
-  if (!isKnownDynamicImportFailure(lastError)) {
-    return lastError
-  }
-  const failureName = lastError instanceof Error ? lastError.name : 'unknown'
-  const crumbKey = `${reloadKey}:${outcome}:${failureName}`
-  if (!alreadyRecorded && !recordedExhaustionKeys.has(crumbKey)) {
-    // error.name is library-controlled, so bound the set the way the breadcrumb
-    // and renderer-error key stores do: evict oldest-first, never wholesale, so
-    // an overflow cannot re-open the whole set to a repeat burst.
-    while (recordedExhaustionKeys.size >= MAX_RECORDED_EXHAUSTION_KEYS) {
-      const oldestKey = recordedExhaustionKeys.values().next().value
-      if (oldestKey === undefined) {
-        break
-      }
-      recordedExhaustionKeys.delete(oldestKey)
-    }
-    recordedExhaustionKeys.add(crumbKey)
-    recordReloadBreadcrumb('lazy_chunk_recovery_exhausted', reloadKey, failureMessage, outcome)
-  }
-  return new LazyChunkLoadError(lastError, reloadKey)
+/** Recovery is spent, so name the failure in the one way the boundary can contain. */
+function containedChunkFailure(lastError: unknown, reloadKey: string): unknown {
+  return isKnownDynamicImportFailure(lastError)
+    ? new LazyChunkLoadError(lastError, reloadKey)
+    : lastError
 }
-
-// Module scope: re-evaluating these literals would allocate fresh RegExp objects
-// on every classification.
-const DYNAMIC_IMPORT_FAILURE_PATTERNS = [
-  /failed to fetch dynamically imported module/i,
-  /error loading dynamically imported module/i,
-  /importing a module script failed/i,
-  /failed to load module script/i,
-  /loading chunk .+ failed/i,
-  /unexpected token/i,
-  /unexpected end of (input|script|json)/i
-]
 
 function isKnownDynamicImportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -213,7 +159,15 @@ function isKnownDynamicImportFailure(error: unknown): boolean {
     return true
   }
 
-  return DYNAMIC_IMPORT_FAILURE_PATTERNS.some((pattern) => pattern.test(error.message))
+  return [
+    /failed to fetch dynamically imported module/i,
+    /error loading dynamically imported module/i,
+    /importing a module script failed/i,
+    /failed to load module script/i,
+    /loading chunk .+ failed/i,
+    /unexpected token/i,
+    /unexpected end of (input|script|json)/i
+  ].some((pattern) => pattern.test(error.message))
 }
 
 export async function loadLazyWithRetry<T extends AnyComponent>(
@@ -263,36 +217,32 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     }
     // The reload was this document's last recovery step for this chunk, whether it
     // was refused outright or simply never navigated.
-    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, outcome, true)
+    throw containedChunkFailure(lastError, reloadKey)
   }
 
   if (reloadGuardState === 'reload-landed') {
-    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-landed')
+    throw containedChunkFailure(lastError, reloadKey)
   }
 
   if (reloadGuardState === 'reload-not-landed') {
-    if (reloadRequestInFlight) {
-      // A sibling chunk failing under a pending reload cannot request its own.
-      throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-in-flight')
+    // A sibling failing under a pending reload must not clear the guard, and an
+    // unrelated failure must not clear a guard it did not set.
+    if (!reloadRequestInFlight && isKnownDynamicImportFailure(lastError)) {
+      // Record the veto beside the resulting report before the ring can evict it.
+      clearChunkReloadGuard()
+      recordReloadBreadcrumb(
+        'lazy_chunk_reload_vetoed',
+        reloadKey,
+        failureMessage,
+        'guard-not-landed'
+      )
     }
-    if (!isKnownDynamicImportFailure(lastError)) {
-      // An unrelated failure must not clear a guard it did not set.
-      throw lastError
-    }
-    // Record the veto beside the resulting report before the ring can evict it.
-    clearChunkReloadGuard()
-    recordReloadBreadcrumb(
-      'lazy_chunk_reload_vetoed',
-      reloadKey,
-      failureMessage,
-      'guard-not-landed'
-    )
-    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'guard-not-landed', true)
+    throw containedChunkFailure(lastError, reloadKey)
   }
 
   if (reloadGuardState === 'not-attempted') {
     // The per-document reload cap is spent; further failures cannot recover.
-    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'reload-cap-reached')
+    throw containedChunkFailure(lastError, reloadKey)
   }
 
   // No window or no usable storage: recovery was never attempted, so preserve
