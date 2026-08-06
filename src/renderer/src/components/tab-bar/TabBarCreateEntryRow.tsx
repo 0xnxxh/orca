@@ -8,6 +8,9 @@ import type { ActiveOption } from './tab-create-entry-active-option'
 
 export const RESULT_LISTBOX_ID = 'tab-create-entry-results'
 
+// Clears the macOS pointer without putting the label under the cursor's own hotspot.
+const CURSOR_TOOLTIP_GAP = 18
+
 // Index-based (not the option id, which may contain spaces/slashes from file
 // paths) so it is always a valid aria-activedescendant IDREF.
 export function resultOptionDomId(index: number): string {
@@ -41,6 +44,8 @@ export function EntryActionRow({
   selected: boolean
 }): React.JSX.Element {
   const presentation = getActionPresentation(option)
+  const [tooltipOpen, setTooltipOpen] = React.useState(false)
+  const [pointerOffset, setPointerOffset] = React.useState({ align: 0, side: 0 })
 
   const row = (
     <button
@@ -48,6 +53,23 @@ export function EntryActionRow({
       id={id}
       role="option"
       aria-selected={selected}
+      onMouseMove={(event) => {
+        // Freeze once shown: a system tooltip marks where the cursor came to
+        // rest, it does not trail the pointer around afterwards.
+        if (tooltipOpen) {
+          return
+        }
+        const rect = event.currentTarget.getBoundingClientRect()
+        const next = {
+          align: event.clientX - rect.left,
+          side: event.clientY + CURSOR_TOOLTIP_GAP - rect.bottom
+        }
+        setPointerOffset((current) =>
+          Math.abs(current.align - next.align) < 3 && Math.abs(current.side - next.side) < 3
+            ? current
+            : next
+        )
+      }}
       className={cn(
         'flex h-6 w-full items-center gap-1.5 rounded-[7px] px-1 text-left text-[11px] leading-5 outline-none',
         selected
@@ -80,14 +102,17 @@ export function EntryActionRow({
   }
 
   return (
-    <Tooltip>
+    <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
       <TooltipTrigger asChild>{row}</TooltipTrigger>
-      {/* Why: side="right" clears the result list. Above/below would cover the
-          sibling rows the user is scanning, and Orca has no native tooltip to
-          fall back on — `title` renders nothing in this window. */}
+      {/* Anchored under the cursor the way a system tooltip is, rather than to
+          the row. Radix anchors to the trigger, so the cursor is expressed as
+          offsets off the row's bottom-left corner; collision flipping still
+          applies near the viewport edge. */}
       <TooltipContent
-        side="right"
-        sideOffset={8}
+        side="bottom"
+        align="start"
+        sideOffset={pointerOffset.side}
+        alignOffset={pointerOffset.align}
         showArrow={false}
         className="max-w-[420px] rounded-[5px] border border-border/80 bg-popover px-2 py-1 text-[11px] leading-[15px] break-all text-popover-foreground shadow-[0_2px_8px_rgba(0,0,0,0.28)]"
       >
