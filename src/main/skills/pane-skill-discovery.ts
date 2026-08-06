@@ -37,5 +37,8 @@ export async function discoverPaneSkills(args: {
     worktreeId: args.worktreeId,
     ...(args.projectRuntime ? { projectRuntime: args.projectRuntime } : {})
   })
-  return { status: 'ok', result: await discoverSkillsOnTarget(target, args.repos) }
+  return {
+    status: 'ok',
+    result: await discoverSkillsOnTarget(target, args.repos, args.signal)
+  }
 }

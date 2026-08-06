@@ -81,12 +81,14 @@ describe('discoverPaneSkills', () => {
     mocks.resolveSkillDiscoveryTarget.mockReturnValue(resolved)
     mocks.discoverSkillsOnTarget.mockResolvedValue(EMPTY_RESULT)
     const projectRuntime = { status: 'resolved' } as never
+    const signal = new AbortController().signal
 
     const response = await discoverPaneSkills({
       worktreeId: 'wt-1',
       cwd: '/local/repo',
       projectRuntime,
-      repos: []
+      repos: [],
+      signal
     })
 
     expect(response).toEqual({ status: 'ok', result: EMPTY_RESULT })
@@ -95,6 +97,6 @@ describe('discoverPaneSkills', () => {
       worktreeId: 'wt-1',
       projectRuntime
     })
-    expect(mocks.discoverSkillsOnTarget).toHaveBeenCalledWith(resolved, [])
+    expect(mocks.discoverSkillsOnTarget).toHaveBeenCalledWith(resolved, [], signal)
   })
 })

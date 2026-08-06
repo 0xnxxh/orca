@@ -12,7 +12,7 @@ export const SKILL_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'skills.discover',
     params: SkillDiscoveryTargetSchema.default({}),
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, signal }) => {
       // Why: the executing runtime owns WSL project preferences. Remote callers
       // send worktree identity only; trusting their projectRuntime absence
       // would scan this host's native filesystem for a WSL-configured project.
@@ -22,7 +22,11 @@ export const SKILL_METHODS: RpcMethod[] = [
             ...params,
             projectRuntime: runtime.resolveProjectRuntimeForWorktree(params.worktreeId)
           }
-      return discoverSkillsOnTarget(resolveSkillDiscoveryTarget(target), runtime.listRepos())
+      return discoverSkillsOnTarget(
+        resolveSkillDiscoveryTarget(target),
+        runtime.listRepos(),
+        signal
+      )
     }
   }),
   // Why: a separate method, not a field on skills.discover — old runtimes strip
