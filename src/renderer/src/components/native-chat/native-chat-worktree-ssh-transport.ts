@@ -20,6 +20,19 @@ type WorktreeSshTransportState = Pick<
   | 'worktreesByRepo'
 >
 
+type WorktreeTransportOwner = {
+  id: string
+  repoId: string
+  hostId?: ExecutionHostId
+  runtimeOwnerEnvironmentId?: string
+}
+
+const NO_TRANSPORT_OWNERS: readonly WorktreeTransportOwner[] = []
+const equivalentOwnerIndexCache = new WeakMap<
+  object,
+  ReadonlyMap<string, readonly WorktreeTransportOwner[]>
+>()
+
 export type NativeChatWorktreeSshTransportResolution =
   | { kind: 'resolved'; environmentId: string | null }
   | { kind: 'ambiguous' }
@@ -34,33 +47,32 @@ export function resolveNativeChatWorktreeSshTransport(
   const rawWorktreeId = scope?.type === 'worktree' ? scope.worktreeId : worktreeId
   const repoIds = new Set([getRepoIdFromWorktreeId(rawWorktreeId)])
   const environmentIds = new Set<string | null>()
-  const catalogs = [
-    ...Object.values(state.worktreesByRepo ?? {}),
-    ...Object.values(state.detectedWorktreesByRepo ?? {}).map((result) => result.worktrees)
+  const owners = [
+    ...findEquivalentOwners(state.worktreesByRepo, rawWorktreeId, () =>
+      Object.values(state.worktreesByRepo ?? {})
+    ),
+    ...findEquivalentOwners(state.detectedWorktreesByRepo, rawWorktreeId, () =>
+      Object.values(state.detectedWorktreesByRepo ?? {}).map((result) => result.worktrees)
+    )
   ]
   let hasDirectOwner = false
   let hasRuntimeOwner = false
-  for (const worktrees of catalogs) {
-    for (const worktree of worktrees) {
-      if (
-        !worktreeIdsEqual(worktree.id, rawWorktreeId) ||
-        parseExecutionHostId(worktree.hostId)?.id !== hostId
-      ) {
-        continue
-      }
-      repoIds.add(worktree.repoId)
-      if (worktree.runtimeOwnerEnvironmentId?.trim()) {
-        hasRuntimeOwner = true
-      } else {
-        hasDirectOwner = true
-      }
-      const resolution = resolveExactWorktreeRoute(state, worktree)
-      if (resolution.kind === 'ambiguous') {
-        return resolution
-      }
-      if (resolution.kind === 'resolved' && resolution.route.executionHostId === hostId) {
-        environmentIds.add(resolution.route.runtimeEnvironmentId)
-      }
+  for (const worktree of owners) {
+    if (parseExecutionHostId(worktree.hostId)?.id !== hostId) {
+      continue
+    }
+    repoIds.add(worktree.repoId)
+    if (worktree.runtimeOwnerEnvironmentId?.trim()) {
+      hasRuntimeOwner = true
+    } else {
+      hasDirectOwner = true
+    }
+    const resolution = resolveExactWorktreeRoute(state, worktree)
+    if (resolution.kind === 'ambiguous') {
+      return resolution
+    }
+    if (resolution.kind === 'resolved' && resolution.route.executionHostId === hostId) {
+      environmentIds.add(resolution.route.runtimeEnvironmentId)
     }
   }
   if (hasDirectOwner && hasRuntimeOwner) {
@@ -99,17 +111,37 @@ export function resolveNativeChatWorktreeSshTransport(
     : { kind: 'missing' }
 }
 
-function worktreeIdsEqual(left: string, right: string): boolean {
-  if (left === right) {
-    return true
+function findEquivalentOwners(
+  catalog: object | undefined,
+  worktreeId: string,
+  ownerLists: () => Iterable<readonly WorktreeTransportOwner[]>
+): readonly WorktreeTransportOwner[] {
+  if (!catalog) {
+    return NO_TRANSPORT_OWNERS
   }
-  const parsedLeft = splitWorktreeIdForFilesystem(left)
-  const parsedRight = splitWorktreeIdForFilesystem(right)
-  return Boolean(
-    parsedLeft &&
-    parsedRight &&
-    parsedLeft.repoId === parsedRight.repoId &&
-    normalizeRuntimePathForComparison(parsedLeft.worktreePath) ===
-      normalizeRuntimePathForComparison(parsedRight.worktreePath)
-  )
+  let index = equivalentOwnerIndexCache.get(catalog)
+  if (!index) {
+    const next = new Map<string, WorktreeTransportOwner[]>()
+    for (const owners of ownerLists()) {
+      for (const owner of owners) {
+        const key = comparableWorktreeId(owner.id)
+        const matches = next.get(key)
+        if (matches) {
+          matches.push(owner)
+        } else {
+          next.set(key, [owner])
+        }
+      }
+    }
+    index = next
+    equivalentOwnerIndexCache.set(catalog, index)
+  }
+  return index.get(comparableWorktreeId(worktreeId)) ?? NO_TRANSPORT_OWNERS
+}
+
+function comparableWorktreeId(worktreeId: string): string {
+  const parsed = splitWorktreeIdForFilesystem(worktreeId)
+  return parsed
+    ? JSON.stringify([parsed.repoId, normalizeRuntimePathForComparison(parsed.worktreePath)])
+    : worktreeId
 }

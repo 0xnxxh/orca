@@ -223,8 +223,12 @@ export function resolveNativeChatSkillDiscoveryContext(
 
 export function resolveNativeChatSkillDiscoverySubscriptionKey(
   state: AppState,
-  terminalTabId: string
+  terminalTabId: string,
+  enabled = true
 ): string | null {
+  if (!enabled) {
+    return null
+  }
   const context = resolveNativeChatSkillDiscoveryContext(
     selectNativeChatSkillStateInputs(state),
     terminalTabId
@@ -241,6 +245,22 @@ export function getNativeChatSkillDiscoverySubscriptionKey(
   return context.executionHostKind === 'ssh'
     ? JSON.stringify([context.key, context.sshDisconnected])
     : context.key
+}
+
+export function resolveSubscribedNativeChatSkillDiscoveryContext(
+  state: AppState,
+  terminalTabId: string,
+  enabled: boolean,
+  subscriptionKey: string | null
+): NativeChatSkillDiscoveryContext | null {
+  if (!enabled) {
+    return null
+  }
+  const context = resolveNativeChatSkillDiscoveryContext(
+    selectNativeChatSkillStateInputs(state),
+    terminalTabId
+  )
+  return getNativeChatSkillDiscoverySubscriptionKey(context) === subscriptionKey ? context : null
 }
 
 function findTerminalTab(

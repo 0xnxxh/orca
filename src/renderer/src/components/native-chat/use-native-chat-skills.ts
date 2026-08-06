@@ -12,10 +12,8 @@ import { RuntimeRpcCallError } from '@/runtime/runtime-rpc-result'
 import { isRuntimeCompatBlockError } from '@/runtime/runtime-protocol-compat'
 import { emitNativeChatSkillDiscovery } from '@/lib/native-chat-telemetry'
 import {
-  getNativeChatSkillDiscoverySubscriptionKey,
-  resolveNativeChatSkillDiscoveryContext,
   resolveNativeChatSkillDiscoverySubscriptionKey,
-  selectNativeChatSkillStateInputs,
+  resolveSubscribedNativeChatSkillDiscoveryContext,
   type NativeChatSkillDiscoveryContext
 } from './native-chat-skill-discovery-context'
 import type { NativeChatSkillDiscoveryErrorKind } from './native-chat-picker-items'
@@ -92,17 +90,18 @@ export function useNativeChatSkills(
   enabled = false
 ): NativeChatSkillDiscovery {
   const contextSubscriptionKey = useAppStore((state) =>
-    resolveNativeChatSkillDiscoverySubscriptionKey(state, terminalTabId)
+    resolveNativeChatSkillDiscoverySubscriptionKey(state, terminalTabId, enabled)
   )
-  const context = useMemo(() => {
-    const currentContext = resolveNativeChatSkillDiscoveryContext(
-      selectNativeChatSkillStateInputs(useAppStore.getState()),
-      terminalTabId
-    )
-    return getNativeChatSkillDiscoverySubscriptionKey(currentContext) === contextSubscriptionKey
-      ? currentContext
-      : null
-  }, [contextSubscriptionKey, terminalTabId])
+  const context = useMemo(
+    () =>
+      resolveSubscribedNativeChatSkillDiscoveryContext(
+        useAppStore.getState(),
+        terminalTabId,
+        enabled,
+        contextSubscriptionKey
+      ),
+    [contextSubscriptionKey, enabled, terminalTabId]
+  )
   const [state, setState] = useState<StoredDiscoveryState>(IDLE_STATE)
   const [retryGeneration, setRetryGeneration] = useState(0)
   const paneDiscoveryCache = useRef(new Map<string, SkillDiscoveryResult>())

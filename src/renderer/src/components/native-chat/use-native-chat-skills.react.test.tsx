@@ -140,6 +140,17 @@ describe('useNativeChatSkills', () => {
     )
   })
 
+  it('does not inspect workspace catalogs while the picker is disabled', () => {
+    mocks.state = new Proxy(connectedSshState(), {
+      get() {
+        throw new Error('disabled picker read store state')
+      }
+    })
+
+    expect(() => render(<Probe enabled={false} />)).not.toThrow()
+    expect(mocks.callRuntimeRpc).not.toHaveBeenCalled()
+  })
+
   it('shares one in-flight request between sibling panes', async () => {
     render(
       <>

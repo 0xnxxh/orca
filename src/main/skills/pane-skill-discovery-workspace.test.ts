@@ -307,6 +307,90 @@ describe('resolvePaneSkillDiscoveryWorkspace', () => {
     ).toEqual({ connectionId: 'target-1', cwd: '/remote/folder' })
   })
 
+  it('accepts the local compatibility mirror of an authoritative SSH folder pane', () => {
+    const worktreeId = 'folder:folder-1'
+    const group = {
+      id: 'group-1',
+      connectionId: 'target-1',
+      parentPath: '/remote/folder'
+    } as ProjectGroup
+    const workspace = {
+      id: 'folder-1',
+      projectGroupId: group.id,
+      folderPath: '/remote/folder',
+      connectionId: 'target-1'
+    } as FolderWorkspace
+
+    expect(
+      resolvePaneSkillDiscoveryWorkspace({
+        worktreeId,
+        terminalTabId: 'tab-1',
+        repos: [],
+        projectGroups: [group],
+        folderWorkspaces: [workspace],
+        sessions: [
+          { hostId: 'local', session: session(worktreeId, '/remote/folder/packages/app') },
+          {
+            hostId: 'ssh:target-1',
+            session: session(worktreeId, '/remote/folder/packages/app')
+          }
+        ]
+      })
+    ).toEqual({ connectionId: 'target-1', cwd: '/remote/folder/packages/app' })
+  })
+
+  it('rejects a hostless folder-workspace rival before collapsing a local mirror', () => {
+    const worktreeId = 'folder:folder-1'
+    const workspace = {
+      id: 'folder-1',
+      projectGroupId: 'group-1',
+      folderPath: '/remote/folder',
+      connectionId: 'target-1'
+    } as FolderWorkspace
+
+    expect(() =>
+      resolvePaneSkillDiscoveryWorkspace({
+        worktreeId,
+        terminalTabId: 'tab-1',
+        repos: [],
+        projectGroups: [],
+        folderWorkspaces: [workspace, { ...workspace, connectionId: null }],
+        sessions: [
+          { hostId: 'local', session: session(worktreeId, '/remote/folder') },
+          { hostId: 'ssh:target-1', session: session(worktreeId, '/remote/folder') }
+        ]
+      })
+    ).toThrow('pane_skill_discovery_owner_ambiguous')
+  })
+
+  it('rejects a hostless project-group rival before collapsing a local mirror', () => {
+    const worktreeId = 'folder:folder-1'
+    const workspace = {
+      id: 'folder-1',
+      projectGroupId: 'group-1',
+      folderPath: '/remote/folder'
+    } as FolderWorkspace
+    const group = {
+      id: 'group-1',
+      connectionId: 'target-1',
+      parentPath: '/remote/folder'
+    } as ProjectGroup
+
+    expect(() =>
+      resolvePaneSkillDiscoveryWorkspace({
+        worktreeId,
+        terminalTabId: 'tab-1',
+        repos: [],
+        projectGroups: [group, { ...group, connectionId: null }],
+        folderWorkspaces: [workspace],
+        sessions: [
+          { hostId: 'local', session: session(worktreeId, '/remote/folder') },
+          { hostId: 'ssh:target-1', session: session(worktreeId, '/remote/folder') }
+        ]
+      })
+    ).toThrow('pane_skill_discovery_owner_ambiguous')
+  })
+
   it('routes an executionHostId-only SSH folder workspace', () => {
     expect(
       resolvePaneSkillDiscoveryWorkspace({

@@ -16,6 +16,10 @@ import type {
 import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { parseWorkspaceKey } from '../../shared/workspace-scope'
 import { inferFolderWorkspacePathConnection } from '../project-groups/folder-workspace-path-status'
+import {
+  declaredFolderHostId,
+  declaredFolderOwnerHostId
+} from './pane-skill-discovery-folder-owner'
 
 export type PaneSkillDiscoveryWorkspace = {
   connectionId: string
@@ -41,20 +45,29 @@ export function resolvePaneSkillDiscoveryWorkspace(
   const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : args.worktreeId
 
   if (scope?.type === 'folder') {
-    const sessionOwner = findPaneSession(args.sessions, worktreeId, args.terminalTabId)
+    const workspaceCandidates = args.folderWorkspaces.filter(
+      (candidate) => candidate.id === scope.folderWorkspaceId
+    )
+    const authoritativeFolderHostId = declaredFolderHostId(workspaceCandidates, args.projectGroups)
+    const sessionOwner = findPaneSession(
+      args.sessions,
+      worktreeId,
+      args.terminalTabId,
+      authoritativeFolderHostId
+    )
     const workspace = selectFolderWorkspace(
-      args.folderWorkspaces.filter((candidate) => candidate.id === scope.folderWorkspaceId),
-      sessionOwner?.hostId
+      workspaceCandidates,
+      sessionOwner?.hostId ?? authoritativeFolderHostId ?? undefined
     )
     if (!workspace) {
       throw new Error('pane_skill_discovery_workspace_not_found')
     }
-    const workspaceHostId = declaredHostId(workspace)
+    const workspaceHostId = declaredFolderOwnerHostId(workspace)
     const group = selectFolderProjectGroup(
       args.projectGroups.filter((candidate) => candidate.id === workspace.projectGroupId),
       sessionOwner?.hostId ?? workspaceHostId
     )
-    const groupHostId = group ? declaredHostId(group) : null
+    const groupHostId = group ? declaredFolderOwnerHostId(group) : null
     assertMatchingHost(workspaceHostId, groupHostId)
     const hostId =
       workspaceHostId ??
@@ -127,11 +140,7 @@ function selectFolderWorkspace(
     throw new Error('pane_skill_discovery_owner_ambiguous')
   }
   const exact = candidates.filter((workspace) => {
-    const explicitHostId = parseOptionalHostId(workspace.executionHostId)
-    const connectionId = parseOptionalConnectionId(workspace.connectionId)
-    const connectionHostId = connectionId ? toSshExecutionHostId(connectionId) : null
-    assertMatchingHost(explicitHostId, connectionHostId)
-    return (explicitHostId ?? connectionHostId) === hostId
+    return declaredFolderOwnerHostId(workspace) === hostId
   })
   if (exact.length !== 1) {
     throw new Error('pane_skill_discovery_owner_ambiguous')
@@ -152,22 +161,11 @@ function selectFolderProjectGroup(
   if (!hostId) {
     throw new Error('pane_skill_discovery_owner_ambiguous')
   }
-  const exact = candidates.filter((group) => declaredHostId(group) === hostId)
+  const exact = candidates.filter((group) => declaredFolderOwnerHostId(group) === hostId)
   if (exact.length !== 1) {
     throw new Error('pane_skill_discovery_owner_ambiguous')
   }
   return exact[0]
-}
-
-function declaredHostId(owner: {
-  executionHostId?: string | null
-  connectionId?: string | null
-}): ExecutionHostId | null {
-  const executionHostId = parseOptionalHostId(owner.executionHostId)
-  const connectionId = parseOptionalConnectionId(owner.connectionId)
-  const connectionHostId = connectionId ? toSshExecutionHostId(connectionId) : null
-  assertMatchingHost(executionHostId, connectionHostId)
-  return executionHostId ?? connectionHostId
 }
 
 function findPaneSession(
