@@ -84,12 +84,14 @@ export function useNativeChatPendingDelivery({
         sentAt,
         afterMessageId: boundary?.id ?? null,
         afterMessageTimestamp: boundary?.timestamp ?? null,
-        deliveryCheck: {
-          ...(text.trim().length > 0 && !imagePaths?.length
-            ? { expectedDigest: nativeChatPromptDigest(text) }
-            : {}),
-          ...(promptSubmissions.at(-1) ? { baseline: promptSubmissions.at(-1) } : {})
-        },
+        ...(text.trim().length > 0 && !imagePaths?.length
+          ? {
+              deliveryCheck: {
+                expectedDigest: nativeChatPromptDigest(text),
+                ...(promptSubmissions.at(-1) ? { baseline: promptSubmissions.at(-1) } : {})
+              }
+            }
+          : {}),
         ...(imagePaths ? { imagePaths } : {})
       }
       setPending(appendPendingSendCache(scope, entry))
