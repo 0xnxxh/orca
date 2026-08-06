@@ -135,7 +135,7 @@ async function runNativeScenario(
     const expectedOnData = ordinaryControl
       ? `${expectedText}\rordinary\r`
       : preCommit?.shiftEnter
-        ? `${expectedText}\x1b\rordinary`
+        ? `${expectedText}\x1b\rordinary\x1b\r`
         : `${expectedText}\r`
     expect(trace.onData.join('')).toBe(expectedOnData)
     completed = true

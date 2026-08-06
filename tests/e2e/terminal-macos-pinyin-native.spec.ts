@@ -92,6 +92,12 @@ test.describe('Native macOS Pinyin terminal input @headful', () => {
     )
 
     const ptyId = await waitForActivePanePtyId(orcaPage)
+    // The line count MUST stay 1. The cancel arm emits nothing, so it cannot be asserted at the PTY
+    // directly; instead the single captured line is the FIRST thing to reach the PTY child, and a
+    // leaked cancel key (which carries no newline) would prepend to it — `cordinary\n` rather than
+    // `ordinary\n`. That prefix property is what enforces "nothing leaked" at the byte boundary.
+    // Raising this count, or sending anything newline-terminated before the control, silently
+    // downgrades the assertion to "the control worked" with no test failure to signal it.
     const reader = createTerminalImeByteReader(testRepoPath, 1)
     let completed = false
     try {

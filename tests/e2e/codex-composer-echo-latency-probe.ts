@@ -185,7 +185,20 @@ function percentile(sorted: number[], quantile: number): number {
   return sorted[Math.max(0, rank)]
 }
 
+/**
+ * Why this throws instead of returning zeros: an empty sample set used to summarise as
+ * `p50/p95/max = 0`, i.e. *perfect* latency, so every `toBeLessThan` threshold passed and a run
+ * that measured nothing looked like the best run ever recorded. The existing consumer is safe only
+ * because a separate line asserts the sample count. Refusing here makes that guard unnecessary
+ * rather than load-bearing.
+ */
 export function summarizeLatencies(values: number[]): LatencyDistribution {
+  if (values.length === 0) {
+    throw new Error(
+      'summarizeLatencies received 0 samples — a distribution over no data would report 0ms ' +
+        'and pass every latency threshold. Assert the sample count before summarising.'
+    )
+  }
   const sorted = [...values].sort((a, b) => a - b)
   return {
     count: sorted.length,
