@@ -71,6 +71,21 @@ export function* iterateTerminalOutputFrameChunks(
   options: TerminalOutputFrameChunkOptions
 ): Generator<TerminalOutputFrameChunk> {
   const rawLength = meta?.rawLength ?? data.length
+  // Why nothing at all: a fully absorbed run (an OSC query consumed with no display bytes) has
+  // rawLength > 0 and data === ''. A span carries that high-water mark, but a downgraded Output
+  // cannot, and `encodeTerminalStreamText('')` is zero bytes — which the ack/source-range ledger
+  // rejects (`canAccept` requires encodedBytes > 0), parking the chunk forever and head-blocking
+  // every later frame behind it. There is nothing to display and no seq a downgraded peer reads,
+  // so emitting no frame is both lossless for that peer and the only framing the ledger accepts.
+  // Scoped to transformed runs only: an ordinary empty emission must still frame identically in both
+  // modes, or downgrade-to-text stops being byte-equivalent to span framing for untransformed data.
+  if (
+    options.transformedRuns === 'downgrade-to-text' &&
+    data.length === 0 &&
+    (meta?.transformed || rawLength !== data.length)
+  ) {
+    return
+  }
   if (options.transformedRuns === 'span' && (meta?.transformed || rawLength !== data.length)) {
     yield {
       opcode: TerminalStreamOpcode.OutputSpan,

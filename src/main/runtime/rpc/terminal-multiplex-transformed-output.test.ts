@@ -196,6 +196,28 @@ describe('terminal multiplex transformed output', () => {
   // and terminal-multiplex.test.ts already exercises mobile multiplex streams. A mobile decoder does
   // not know opcode 15 and drops the frame silently, so sending a span here is STA-3482 on a second
   // path. Mobile keeps no seq accounting, so the text downgrade is lossless for it.
+  // Why: nothing server-side stops a mobile-typed multiplex stream declaring ackOutputSourceRanges,
+  // which routes every chunk through the ledger. A fully absorbed run (rawLength > 0, data === '')
+  // downgrades to a zero-byte Output, the ledger's canAccept requires encodedBytes > 0, and the chunk
+  // parks forever with every later frame queued behind it — the same head-block as the span-gate bug.
+  it('does not head-block behind an absorbed zero-byte emission for a mobile peer', async () => {
+    const harness = startMultiplexHarness()
+    await subscribe(harness, { ...SHIPPED_DESKTOP_CAPABILITIES }, { id: 'phone-1', type: 'mobile' })
+    harness.getDataListener()!('', { seq: 9, rawLength: 9, transformed: true })
+    harness.getDataListener()!('after\r\n', { seq: 16 })
+
+    await vi.waitFor(() =>
+      expect(
+        harness
+          .outputFrames()
+          .map((frame) => decodeTerminalStreamText(frame.payload))
+          .join('')
+      ).toContain('after')
+    )
+
+    harness.cleanups.get('terminal-multiplex:conn-transformed-output')?.()
+  })
+
   it('downgrades a transformed run to text for a mobile multiplex peer', async () => {
     const harness = startMultiplexHarness()
     await subscribe(harness, { ...SHIPPED_DESKTOP_CAPABILITIES }, { id: 'phone-1', type: 'mobile' })

@@ -620,7 +620,12 @@ describe('iterateTerminalOutputFrameChunks downgrade-to-text framing', () => {
     }
   })
 
-  it('emits a single empty frame for an absorbed zero-byte transformed run', () => {
+  // Why no frame at all: a zero-byte Output is rejected by the ack/source-range ledger, whose
+  // canAccept requires encodedBytes > 0. Emitting one parks the chunk forever and head-blocks every
+  // later frame behind it. The run carries no display bytes, and its raw high-water mark is only
+  // meaningful to a seq-tracking peer — which by definition never receives a downgrade. So the
+  // frame has no reader and one very bad failure mode; dropping it is lossless and unblocks the queue.
+  it('emits no frame for an absorbed zero-byte transformed run', () => {
     const frames = [
       ...iterateTerminalOutputFrameChunks(
         '',
@@ -628,10 +633,17 @@ describe('iterateTerminalOutputFrameChunks downgrade-to-text framing', () => {
         { transformedRuns: 'downgrade-to-text' }
       )
     ]
+    expect(frames).toHaveLength(0)
+  })
+
+  // An ordinary empty emission is NOT a transformed run and must still frame identically in both
+  // modes, so the drop above cannot widen into a general "swallow empty output" rule.
+  it('still emits an empty frame for an untransformed zero-byte emission', () => {
+    const frames = [
+      ...iterateTerminalOutputFrameChunks('', { seq: 9 }, { transformedRuns: 'downgrade-to-text' })
+    ]
     expect(frames).toHaveLength(1)
-    expect(frames[0]?.opcode).toBeUndefined()
     expect(frames[0]?.bytes.byteLength).toBe(0)
-    expect(frames[0]?.displayLength).toBe(0)
     expect(frames[0]?.seq).toBe(9)
   })
 
