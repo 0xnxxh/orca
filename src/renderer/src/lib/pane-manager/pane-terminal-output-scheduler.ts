@@ -102,6 +102,12 @@ const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024
 // Why mutable: the cap scales with the user's scrollback setting (terminalOutputBacklogCapChars), configured when settings apply; the chunk-count cap stays fixed.
 let maxQueueChars = TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096
+const RETAINED_REBASE_COPY_BLOCK_CHARS = 8 * 1024
+let retainedRebaseCopyObserver: (() => void) | null = null
+
+export function setRetainedRebaseCopyObserverForTesting(observer: (() => void) | null): void {
+  retainedRebaseCopyObserver = observer
+}
 
 export function configureTerminalOutputBacklogCap(scrollbackRows: unknown): void {
   maxQueueChars = terminalOutputBacklogCapChars(scrollbackRows)
@@ -331,7 +337,8 @@ function createQueueEntry(
     terminal,
     chunks: [],
     chunkIndex: 0,
-    queuedChars: 0,
+    pendingChars: 0,
+    retainedChars: 0,
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
     backgroundBacklogDropped: false,
     highPriority: true,
@@ -623,6 +630,7 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
     remaining = 0
   }
 
+  entry.pendingChars -= data.length
   compactConsumedChunks(entry)
   recordQueueDebugPressure()
   return data
@@ -666,6 +674,7 @@ function compactConsumedChunks(entry: QueueEntry): void {
   }
   if (entry.chunkIndex === entry.chunks.length) {
     entry.pendingChars = 0
+    entry.retainedChars = 0
     entry.chunks.length = 0
     entry.chunkIndex = 0
     return
@@ -675,10 +684,57 @@ function compactConsumedChunks(entry: QueueEntry): void {
     for (let index = 0; index < entry.chunkIndex; index += 1) {
       releasedChars += entry.chunks[index].data.length
     }
-    entry.pendingChars -= releasedChars
+    entry.retainedChars -= releasedChars
     entry.chunks.splice(0, entry.chunkIndex)
     entry.chunkIndex = 0
   }
+}
+
+function copyStringSuffix(data: string, offset: number): string {
+  let copied = ''
+  for (let start = offset; start < data.length; start += RETAINED_REBASE_COPY_BLOCK_CHARS) {
+    const end = Math.min(data.length, start + RETAINED_REBASE_COPY_BLOCK_CHARS)
+    const codeUnits = new Uint16Array(end - start)
+    for (let index = start; index < end; index += 1) {
+      codeUnits[index - start] = data.charCodeAt(index)
+    }
+    copied += String.fromCharCode(...codeUnits)
+  }
+  return copied
+}
+
+function rebaseRetainedChunks(entry: QueueEntry): void {
+  if (
+    entry.retainedChars <= maxQueueChars ||
+    entry.pendingChars > maxQueueChars ||
+    entry.chunks.length - entry.chunkIndex > MAX_BACKGROUND_QUEUE_CHUNKS
+  ) {
+    return
+  }
+
+  if (entry.chunkIndex > 0) {
+    let releasedChars = 0
+    for (let index = 0; index < entry.chunkIndex; index += 1) {
+      releasedChars += entry.chunks[index].data.length
+    }
+    entry.retainedChars -= releasedChars
+    entry.chunks.splice(0, entry.chunkIndex)
+    entry.chunkIndex = 0
+  }
+  if (entry.retainedChars <= maxQueueChars) {
+    return
+  }
+
+  const chunk = entry.chunks[0]
+  if (!chunk || chunk.consumedOffset === 0) {
+    return
+  }
+  const source = chunk.data
+  const copied = copyStringSuffix(source, chunk.consumedOffset)
+  retainedRebaseCopyObserver?.()
+  chunk.data = copied
+  chunk.consumedOffset = 0
+  entry.retainedChars += copied.length - source.length
 }
 
 function enqueueChunk(
@@ -709,6 +765,8 @@ function enqueueChunk(
     ackCredit: options?.ackCredit
   })
   entry.pendingChars += data.length
+  entry.retainedChars += data.length
+  rebaseRetainedChunks(entry)
   recordQueueDebugPressure()
 }
 
@@ -724,6 +782,7 @@ function discardDetachedQueueEntry(entry: QueueEntry): void {
   entry.chunks.length = 0
   entry.chunkIndex = 0
   entry.pendingChars = 0
+  entry.retainedChars = 0
   entry.highPriority = false
   clearForegroundHoldSafety(entry)
   clearForegroundCoalesce(entry)
@@ -772,6 +831,7 @@ function replaceBacklogWithWarning(
   ]
   entry.chunkIndex = 0
   entry.pendingChars = warning.length
+  entry.retainedChars = warning.length
   entry.backgroundBacklogDropped = true
   entry.highPriority = true
   entry.foregroundHold = false
@@ -963,6 +1023,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
       entry.chunks.length = 0
       entry.chunkIndex = 0
       entry.pendingChars = 0
+      entry.retainedChars = 0
       clearForegroundHoldSafety(entry)
       clearForegroundCoalesce(entry)
       recordQueueDebugPressure()
@@ -976,6 +1037,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     entry.chunks.length = 0
     entry.chunkIndex = 0
     entry.pendingChars = 0
+    entry.retainedChars = 0
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
     recordQueueDebugPressure()
@@ -1273,6 +1335,7 @@ export function flushTerminalOutput(
     entry.chunks.length = 0
     entry.chunkIndex = 0
     entry.pendingChars = 0
+    entry.retainedChars = 0
     entry.highPriority = false
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
