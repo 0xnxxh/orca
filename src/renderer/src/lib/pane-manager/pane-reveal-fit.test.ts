@@ -55,10 +55,12 @@ describe('fitRevealedPane routing', () => {
     mocks.flushDeferredPaneMetricOptionsIfMeasurable.mockReturnValue(false)
   })
 
-  it('fits when a deferred metric flush lands on a pane the size checks would skip', () => {
-    // Without this the no-op branch below returns early and the parked font
-    // change never reaches the grid — the stuck-metrics shape the deferral
-    // is supposed to prevent.
+  it('repairs on a steady grid when a deferred metric flush lands on a pane the size checks would skip', () => {
+    // Without the flush branch the checks below both say "nothing to do" and the
+    // parked font change never reaches the grid. It must route through the stable
+    // path, not a raw fit: pixels are unchanged and the grid diverged, so a
+    // synchronous fit would reflow on the WebGL/DOM metric wobble and corrupt a
+    // diff-painting inline TUI.
     mocks.flushDeferredPaneMetricOptionsIfMeasurable.mockReturnValue(true)
     const pane = createPane({
       lastFitClientSize: { width: 800, height: 600 },
@@ -69,8 +71,25 @@ describe('fitRevealedPane routing', () => {
 
     fitRevealedPane(pane)
 
+    expect(mocks.flushDeferredPaneMetricOptionsIfMeasurable).toHaveBeenCalledWith(pane)
+    expect(mocks.requestStablePaneFit).toHaveBeenCalledWith(pane)
+    expect(mocks.safeFit).not.toHaveBeenCalled()
+  })
+
+  it('still flushes parked metric options when the pane also resized while hidden', () => {
+    mocks.flushDeferredPaneMetricOptionsIfMeasurable.mockReturnValue(true)
+    const pane = createPane({
+      lastFitClientSize: { width: 800, height: 600 },
+      currentSize: { width: 640, height: 480 },
+      terminal: { cols: 80, rows: 24 },
+      proposed: { cols: 64, rows: 20 }
+    })
+
+    fitRevealedPane(pane)
+
+    expect(mocks.flushDeferredPaneMetricOptionsIfMeasurable).toHaveBeenCalledWith(pane)
+    // A real resize still takes the synchronous path, and the flush already landed.
     expect(mocks.safeFit).toHaveBeenCalledWith(pane)
-    expect(mocks.requestStablePaneFit).not.toHaveBeenCalled()
   })
 
   it('fits synchronously when the fit element resized while hidden', () => {
