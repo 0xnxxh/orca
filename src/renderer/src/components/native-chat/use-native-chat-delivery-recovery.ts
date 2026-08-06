@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import type { AgentPromptSubmissionOccurrence } from '../../../../shared/agent-status-types'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import {
@@ -55,9 +63,12 @@ export function useNativeChatDeliveryRecovery({
   const messagesRef = useRef(messages)
   const submissionsRef = useRef(promptSubmissions)
   const restoreMessageRef = useRef(restoreMessage)
-  messagesRef.current = messages
-  submissionsRef.current = promptSubmissions
-  restoreMessageRef.current = restoreMessage
+
+  useLayoutEffect(() => {
+    messagesRef.current = messages
+    submissionsRef.current = promptSubmissions
+    restoreMessageRef.current = restoreMessage
+  }, [messages, promptSubmissions, restoreMessage])
 
   const updatePending = useCallback(
     (updater: (entries: NativeChatPendingSend[]) => NativeChatPendingSend[]) => {

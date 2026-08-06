@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import type { AgentPromptSubmissionOccurrence } from '../../../src/shared/agent-status-types'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
@@ -62,16 +70,19 @@ export function useMobileNativeChatDeliveryRecovery({
   readPromptSubmissionBaseline: () => AgentPromptSubmissionOccurrence | undefined
 } {
   const activeDraftKeyRef = useRef(draftKey)
-  activeDraftKeyRef.current = draftKey
   const activePendingKeyRef = useRef(pendingKey)
-  activePendingKeyRef.current = pendingKey
   const messagesRef = useRef(messages)
-  messagesRef.current = messages
   const promptSubmissionsRef = useRef(promptSubmissions)
-  promptSubmissionsRef.current = promptSubmissions
   const pendingCounterRef = useRef(0)
   const deliveryChecksRef = useRef<MobileNativeChatDeliveryCheck[]>([])
   const [failureDraftKey, setFailureDraftKey] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    activeDraftKeyRef.current = draftKey
+    activePendingKeyRef.current = pendingKey
+    messagesRef.current = messages
+    promptSubmissionsRef.current = promptSubmissions
+  }, [draftKey, messages, pendingKey, promptSubmissions])
 
   const readPromptSubmissionBaseline = useCallback(() => promptSubmissionsRef.current.at(-1), [])
 
