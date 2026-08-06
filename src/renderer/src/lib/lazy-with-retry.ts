@@ -103,6 +103,7 @@ let reloadRequestInFlight = false
 // One breadcrumb per reloadKey + outcome + error name (unkeyed call sites share
 // 'unknown'): a corrupt shared chunk can fail dozens of sibling imports at once,
 // which would otherwise flush the 30-entry breadcrumb ring.
+const MAX_RECORDED_EXHAUSTION_KEYS = 128
 const recordedExhaustionKeys = new Set<string>()
 
 export function resetLazyChunkReloadRequestsForTest(): void {
@@ -150,19 +151,37 @@ function exhaustedRecoveryFailure(
   outcome: string,
   // Set when the caller already recorded a vetoed breadcrumb for this outcome;
   // the 30-entry ring is the only diagnostic left, so it must not self-evict.
-  alreadyRecorded = false
+  alreadyRecorded = false,
+  isChunkFailure = isKnownDynamicImportFailure(lastError)
 ): unknown {
-  if (!isKnownDynamicImportFailure(lastError)) {
+  if (!isChunkFailure) {
     return lastError
   }
   const failureName = lastError instanceof Error ? lastError.name : 'unknown'
   const crumbKey = `${reloadKey}:${outcome}:${failureName}`
   if (!alreadyRecorded && !recordedExhaustionKeys.has(crumbKey)) {
+    // error.name is library-controlled, so bound the set the way the breadcrumb
+    // and renderer-error key stores do rather than trusting its cardinality.
+    if (recordedExhaustionKeys.size >= MAX_RECORDED_EXHAUSTION_KEYS) {
+      recordedExhaustionKeys.clear()
+    }
     recordedExhaustionKeys.add(crumbKey)
     recordReloadBreadcrumb('lazy_chunk_recovery_exhausted', reloadKey, failureMessage, outcome)
   }
   return new LazyChunkLoadError(lastError, reloadKey)
 }
+
+// Module scope: re-evaluating these literals would allocate fresh RegExp objects
+// on every classification.
+const DYNAMIC_IMPORT_FAILURE_PATTERNS = [
+  /failed to fetch dynamically imported module/i,
+  /error loading dynamically imported module/i,
+  /importing a module script failed/i,
+  /failed to load module script/i,
+  /loading chunk .+ failed/i,
+  /unexpected token/i,
+  /unexpected end of (input|script|json)/i
+]
 
 function isKnownDynamicImportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -186,15 +205,7 @@ function isKnownDynamicImportFailure(error: unknown): boolean {
     return true
   }
 
-  return [
-    /failed to fetch dynamically imported module/i,
-    /error loading dynamically imported module/i,
-    /importing a module script failed/i,
-    /failed to load module script/i,
-    /loading chunk .+ failed/i,
-    /unexpected token/i,
-    /unexpected end of (input|script|json)/i
-  ].some((pattern) => pattern.test(error.message))
+  return DYNAMIC_IMPORT_FAILURE_PATTERNS.some((pattern) => pattern.test(error.message))
 }
 
 export async function loadLazyWithRetry<T extends AnyComponent>(
@@ -260,6 +271,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       // An unrelated failure must not clear a guard it did not set.
       throw lastError
     }
+    // Already classified just above; do not re-run the regex set.
     // Record the veto beside the resulting report before the ring can evict it.
     clearChunkReloadGuard()
     recordReloadBreadcrumb(
@@ -268,7 +280,14 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       failureMessage,
       'guard-not-landed'
     )
-    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'guard-not-landed', true)
+    throw exhaustedRecoveryFailure(
+      lastError,
+      reloadKey,
+      failureMessage,
+      'guard-not-landed',
+      true,
+      true
+    )
   }
 
   if (reloadGuardState === 'not-attempted') {
