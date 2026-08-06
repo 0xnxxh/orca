@@ -73,6 +73,21 @@ const FRESH_SESSION_60_COLS = [
   '\u001b[2C\u001b[38;2;255;107;128m⏵⏵ bypass permissions on\u001b[38;2;153;153;153m (shift+tab to cycle)\u001b[4A\u001b[45D\u001b[0m\u001b[?2004h\u001b[?1004h\u001b[?1003h'
 ].join('\n')
 
+const EFFORT = {
+  id: 'effort',
+  label: 'Effort',
+  kind: {
+    type: 'select' as const,
+    choices: [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' }
+    ],
+    defaultValue: 'high'
+  },
+  apply: {}
+}
+
 describe('Claude terminal session option detection', () => {
   it('reads the model from a real 100-column startup frame', () => {
     // The descriptor sits eight rows under the version, below the welcome art.
@@ -105,6 +120,69 @@ describe('Claude terminal session option detection', () => {
     ].join('\r\n')
 
     expect(readClaudeSessionOptionsFromTerminalScreen(screen)).toBeNull()
+  })
+
+  // The exact catalog `claude -p` list_models returns on CLI 2.1.220: note the
+  // host offers no plain `opus`, and `sonnet` and `sonnet[1m]` are distinct.
+  const DISCOVERED = [
+    { id: 'opus[1m]', label: 'Opus (1M context)', options: [EFFORT] },
+    { id: 'sonnet', label: 'Sonnet', options: [EFFORT] },
+    { id: 'sonnet[1m]', label: 'Sonnet 5 (1M context)', options: [EFFORT] },
+    { id: 'fable', label: 'Fable', options: [EFFORT] },
+    { id: 'haiku', label: 'Haiku', options: [] }
+  ]
+
+  function frame(descriptor: string): string {
+    return `Claude Code v2.1.220\r\n${descriptor}\r\n~/repo`
+  }
+
+  it('resolves to the host id the picker lists, not the seed family', () => {
+    // Why: `opus` is not offered on this host, so reporting it would select a
+    // row the picker has to invent.
+    expect(
+      readClaudeSessionOptionsFromTerminalScreen(
+        frame('Opus 5 (1M context) with high effort · API Usage Billing'),
+        DISCOVERED
+      )
+    ).toEqual({ model: 'opus[1m]', effort: 'high' })
+  })
+
+  it('prefers the most specific variant when a family also matches', () => {
+    expect(
+      readClaudeSessionOptionsFromTerminalScreen(
+        frame('Sonnet 5 (1M context) with low effort · API Usage Billing'),
+        DISCOVERED
+      )
+    ).toEqual({ model: 'sonnet[1m]', effort: 'low' })
+  })
+
+  it('keeps the plain family when the frame names no variant', () => {
+    // Why: `Sonnet 5` must not be captured by the 1M-context row just because
+    // that row's label happens to start with the same two tokens.
+    expect(
+      readClaudeSessionOptionsFromTerminalScreen(
+        frame('Sonnet 5 with medium effort · API Usage Billing'),
+        DISCOVERED
+      )
+    ).toEqual({ model: 'sonnet', effort: 'medium' })
+  })
+
+  it('falls back to a seed family the host list no longer offers', () => {
+    expect(
+      readClaudeSessionOptionsFromTerminalScreen(
+        frame('Opus 4.8 with high effort · API Usage Billing'),
+        DISCOVERED
+      )
+    ).toEqual({ model: 'opus', effort: 'high' })
+  })
+
+  it('still reports a custom model when the host list cannot name it', () => {
+    expect(
+      readClaudeSessionOptionsFromTerminalScreen(
+        frame('company/my-haiku-v2 · API Usage Billing'),
+        DISCOVERED
+      )
+    ).toEqual({ model: 'company/my-haiku-v2' })
   })
 
   it('reads an effort suffix the frame truncated to an ellipsis', () => {

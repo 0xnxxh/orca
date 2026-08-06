@@ -1,4 +1,7 @@
-import { getAgentSessionOptionCatalog } from '../../../../shared/agent-session-option-catalog'
+import {
+  getAgentSessionOptionCatalog,
+  type CatalogModel
+} from '../../../../shared/agent-session-option-catalog'
 import type { SessionOptionValue } from '../../../../shared/native-chat-session-options'
 import { stripScrollbackAnsi } from './native-chat-scrape-fallback'
 
@@ -96,16 +99,67 @@ function parseClaudeModelName(cell: string): string | null {
   return name || null
 }
 
-/** Whether the reported name is this catalog family, optionally followed by the
- *  resolved version the header appends. */
-function leadsWithLabel(reportedModel: string, label: string): boolean {
-  const name = reportedModel.toLowerCase()
-  const family = label.toLowerCase()
-  return name === family || name.startsWith(`${family} `)
+function modelNameTokens(value: string): string[] {
+  return value.toLowerCase().match(/[a-z]+|\d+[a-z]*/g) ?? []
 }
 
+/**
+ * Whether a catalog label names the model the frame reported. The frame prints
+ * the resolved model ("Opus 5 (1M context)") while labels name the alias
+ * ("Opus (1M context)"), so the family has to lead as a whole word and the
+ * label's remaining tokens have to appear in order. Requiring a whole word is
+ * what keeps `company/my-haiku-v2` and `opus-internal-v3` out of the catalog;
+ * requiring the rest is what stops `Sonnet` from claiming the 1M-context row.
+ */
+function labelNamesReportedModel(reportedModel: string, label: string): boolean {
+  const labelTokens = modelNameTokens(label)
+  const family = labelTokens[0]
+  if (!family) {
+    return false
+  }
+  const name = reportedModel.toLowerCase()
+  if (name !== family && !name.startsWith(`${family} `)) {
+    return false
+  }
+  const nameTokens = modelNameTokens(name)
+  let cursor = 1
+  for (const token of labelTokens.slice(1)) {
+    const found = nameTokens.indexOf(token, cursor)
+    if (found < 0) {
+      return false
+    }
+    cursor = found + 1
+  }
+  return true
+}
+
+/** The most specific catalog entry naming this model, preferring the host's
+ *  discovered list so variants like `opus[1m]` win over the seed family. */
+function findClaudeCatalogModel(
+  reportedModel: string,
+  models: readonly CatalogModel[] | undefined
+): CatalogModel | undefined {
+  const seeded = getAgentSessionOptionCatalog('claude')?.models ?? []
+  for (const candidates of [models ?? [], seeded]) {
+    const matches = candidates.filter(({ label }) => labelNamesReportedModel(reportedModel, label))
+    const best = matches.sort(
+      (left, right) => modelNameTokens(right.label).length - modelNameTokens(left.label).length
+    )[0]
+    if (best) {
+      return best
+    }
+  }
+  return undefined
+}
+
+/**
+ * @param models the host's live model list. Pass the discovered catalog so the
+ *   reported id is one the picker actually lists; omitting it falls back to the
+ *   version-neutral seed families.
+ */
 export function readClaudeSessionOptionsFromTerminalScreen(
-  screen: string | null | undefined
+  screen: string | null | undefined,
+  models?: readonly CatalogModel[]
 ): Record<string, SessionOptionValue> | null {
   if (!screen) {
     return null
@@ -120,11 +174,7 @@ export function readClaudeSessionOptionsFromTerminalScreen(
   if (!reportedModel) {
     return null
   }
-  const catalog = getAgentSessionOptionCatalog('claude')
-  // Why: catalog labels are version-neutral family names while the frame names
-  // the resolved model ("Opus 5 (1M context)"), so the family has to match as a
-  // leading word. Anchoring is what keeps `company/my-haiku-v2` out of `haiku`.
-  const model = catalog?.models.find(({ label }) => leadsWithLabel(reportedModel, label))
+  const model = findClaudeCatalogModel(reportedModel, models)
   if (!model) {
     // A custom model carries no catalog options, so no effort is reported.
     return { model: reportedModel }
