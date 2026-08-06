@@ -1962,6 +1962,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         generatedTitleEntry.current = entry
         if (
           isAgentCompletionState(entry.state) &&
+          entry.sessionBoundary !== true &&
           existing !== undefined &&
           !isAgentCompletionState(existing.state)
         ) {
