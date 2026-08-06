@@ -57,6 +57,12 @@ export function reloadBrowserPageWebview(
       webview.reload()
     }
   } catch {
+    try {
+      webview.getWebContentsId()
+    } catch {
+      // Why: the guest can be destroyed between the liveness probe and reload.
+      return 'guest-missing'
+    }
     return 'not-ready'
   }
   return 'reloaded'

@@ -83,6 +83,24 @@ describe('reloadBrowserPageWebview', () => {
     expect(webview.reload).not.toHaveBeenCalled()
   })
 
+  it('reports a guest destroyed between the liveness probe and reload', () => {
+    const getWebContentsId = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(42)
+      .mockImplementation(() => {
+        throw new Error('WebContents is destroyed')
+      })
+    const webview = createWebview({
+      getWebContentsId,
+      reload: vi.fn(() => {
+        throw new Error('The WebView must be attached to the DOM')
+      })
+    })
+
+    expect(reloadBrowserPageWebview(webview, { ignoreCache: false })).toBe('guest-missing')
+    expect(getWebContentsId).toHaveBeenCalledTimes(2)
+  })
+
   // Why: pre-dom-ready reload throws too, but a live guest is already loading — recovery must not replace it.
   it('reports not-ready when a live guest rejects the reload', () => {
     const webview = createWebview({
