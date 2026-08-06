@@ -22,6 +22,7 @@ vi.mock('@/lib/crash-breadcrumb-recorder', () => ({
 
 const TOTAL_CHARS = 4 * 1024 * 1024
 const FEED_CHUNK_CHARS = 8 * 1024
+const OVERSIZED_DRAIN_ITERATIONS = 32
 const MAX_SIMULATED_MS = 60_000
 
 function createInstantParseTerminal() {
@@ -75,6 +76,26 @@ async function measure(options: { foreground: boolean }): Promise<number> {
   return TOTAL_CHARS / 1024 / 1024 / (elapsed / 1000)
 }
 
+async function measureOversizedDrainCpu(): Promise<number> {
+  vi.useFakeTimers()
+  const scheduler = await loadScheduler()
+  const terminal = createInstantParseTerminal()
+  const payload = 'x'.repeat(TOTAL_CHARS)
+  scheduler.configureTerminalOutputBacklogCap(50_000)
+  const started = process.cpuUsage()
+
+  for (let index = 0; index < OVERSIZED_DRAIN_ITERATIONS; index += 1) {
+    scheduler.writeTerminalOutput(terminal as never, payload, { foreground: false })
+    scheduler.flushTerminalOutput(terminal as never)
+  }
+
+  const cpu = process.cpuUsage(started)
+  const cpuSeconds = (cpu.user + cpu.system) / 1_000_000
+  const writtenMiB = (TOTAL_CHARS * OVERSIZED_DRAIN_ITERATIONS) / 1024 / 1024
+  expect(terminal.written).toBe(TOTAL_CHARS * OVERSIZED_DRAIN_ITERATIONS)
+  return writtenMiB / cpuSeconds
+}
+
 describe.skipIf(!benchEnabled)('scheduler drain ceiling', () => {
   beforeEach(() => {
     vi.stubGlobal('window', globalThis)
@@ -92,6 +113,12 @@ describe.skipIf(!benchEnabled)('scheduler drain ceiling', () => {
     console.log(
       `\n[scheduler-ceiling] foreground flood: ${foreground.toFixed(1)} MB/s, background: ${background.toFixed(1)} MB/s (simulated time, instant parse)`
     )
+  })
+
+  it('measures CPU throughput for oversized source chunks', async () => {
+    const oversizedDrain = await measureOversizedDrainCpu()
+    // eslint-disable-next-line no-console -- bench harness output
+    console.log(`\n[scheduler-oversized-drain] ${oversizedDrain.toFixed(1)} MiB/CPU-s`)
   })
 })
 

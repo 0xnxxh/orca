@@ -49,6 +49,7 @@ type WriteTerminalOutputOptions = {
 
 type QueueChunk = {
   data: string
+  consumedOffset: number
   foreground: boolean
   forceForegroundRefresh: boolean
   followupForegroundRefresh: boolean
@@ -75,7 +76,8 @@ type QueueEntry = {
   terminal: TerminalOutputTarget
   chunks: QueueChunk[]
   chunkIndex: number
-  queuedChars: number
+  pendingChars: number
+  retainedChars: number
   onBackgroundBacklogDropped?: () => void
   backgroundBacklogDropped: boolean
   highPriority: boolean
@@ -90,7 +92,7 @@ type QueueEntry = {
 const BACKGROUND_FLUSH_DELAY_MS = 50
 const BACKGROUND_DRAIN_INTERVAL_MS = 16
 const HIGH_PRIORITY_DRAIN_INTERVAL_MS = 4
-const BACKGROUND_CHUNK_CHARS = 16 * 1024
+export const BACKGROUND_CHUNK_CHARS = 16 * 1024
 const MAX_WRITES_PER_DRAIN = 2
 // Why 8: per-tick volume (8 x 16KB = 128KB ≈ 1.3ms parse) sets the sustained ceiling (~30MB/s) within DRAIN_TIME_BUDGET_MS; at 2 it was only 8MB/s against a ~100MB/s parser (see throughput bench).
 const HIGH_PRIORITY_MAX_WRITES_PER_DRAIN = 8
@@ -176,9 +178,11 @@ type TerminalOutputSchedulerDebugSnapshot = {
   scheduledDrainCount: number
   queuedTerminalCount: number
   queuedChars: number
+  retainedChars: number
   peakQueuedTerminalCount: number
   peakQueuedChars: number
   peakQueuedCharsByTerminal: number
+  peakRetainedChars: number
   droppedBacklogCount: number
   drainWrites: number[]
 }
@@ -198,9 +202,11 @@ const debugState: TerminalOutputSchedulerDebugSnapshot = {
   scheduledDrainCount: 0,
   queuedTerminalCount: 0,
   queuedChars: 0,
+  retainedChars: 0,
   peakQueuedTerminalCount: 0,
   peakQueuedChars: 0,
   peakQueuedCharsByTerminal: 0,
+  peakRetainedChars: 0,
   droppedBacklogCount: 0,
   drainWrites: []
 }
@@ -215,9 +221,11 @@ function resetDebugState(): void {
   debugState.scheduledDrainCount = 0
   debugState.queuedTerminalCount = 0
   debugState.queuedChars = 0
+  debugState.retainedChars = 0
   debugState.peakQueuedTerminalCount = 0
   debugState.peakQueuedChars = 0
   debugState.peakQueuedCharsByTerminal = 0
+  debugState.peakRetainedChars = 0
   debugState.droppedBacklogCount = 0
   debugState.drainWrites = []
 }
@@ -226,17 +234,21 @@ function readQueueDebugSnapshot(): {
   queuedTerminalCount: number
   queuedChars: number
   queuedCharsByTerminal: number
+  retainedChars: number
 } {
   let queuedChars = 0
   let queuedCharsByTerminal = 0
+  let retainedChars = 0
   for (const entry of queuedByTerminal.values()) {
-    queuedChars += entry.queuedChars
-    queuedCharsByTerminal = Math.max(queuedCharsByTerminal, entry.queuedChars)
+    queuedChars += entry.pendingChars
+    queuedCharsByTerminal = Math.max(queuedCharsByTerminal, entry.pendingChars)
+    retainedChars += entry.retainedChars
   }
   return {
     queuedTerminalCount: queuedByTerminal.size,
     queuedChars,
-    queuedCharsByTerminal
+    queuedCharsByTerminal,
+    retainedChars
   }
 }
 
@@ -247,6 +259,7 @@ function recordQueueDebugPressure(): void {
   const current = readQueueDebugSnapshot()
   debugState.queuedTerminalCount = current.queuedTerminalCount
   debugState.queuedChars = current.queuedChars
+  debugState.retainedChars = current.retainedChars
   debugState.peakQueuedTerminalCount = Math.max(
     debugState.peakQueuedTerminalCount,
     current.queuedTerminalCount
@@ -255,6 +268,10 @@ function recordQueueDebugPressure(): void {
   debugState.peakQueuedCharsByTerminal = Math.max(
     debugState.peakQueuedCharsByTerminal,
     current.queuedCharsByTerminal
+  )
+  debugState.peakRetainedChars = Math.max(
+    debugState.peakRetainedChars,
+    current.retainedChars
   )
 }
 
@@ -520,7 +537,7 @@ function previewQueuedData(entry: QueueEntry, limit: number): string {
     if (remaining <= 0) {
       break
     }
-    data += chunk.data.slice(0, remaining)
+    data += chunk.data.slice(chunk.consumedOffset, chunk.consumedOffset + remaining)
   }
   return data
 }
@@ -587,10 +604,10 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       additionalBeforeWriteCallbacks ??= []
       additionalBeforeWriteCallbacks.push(chunk.beforeWrite)
     }
-    if (chunk.data.length <= remaining) {
-      data += chunk.data
-      remaining -= chunk.data.length
-      entry.queuedChars -= chunk.data.length
+    const available = chunk.data.length - chunk.consumedOffset
+    if (available <= remaining) {
+      data += chunk.consumedOffset === 0 ? chunk.data : chunk.data.slice(chunk.consumedOffset)
+      remaining -= available
       entry.chunkIndex += 1
       if (chunk.onParsed) {
         parsedCallbacks.push(chunk.onParsed)
@@ -601,19 +618,12 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       continue
     }
 
-    data += chunk.data.slice(0, remaining)
-    entry.chunks[entry.chunkIndex] = {
-      ...chunk,
-      data: chunk.data.slice(remaining)
-    }
-    entry.queuedChars -= remaining
+    data += chunk.data.slice(chunk.consumedOffset, chunk.consumedOffset + remaining)
+    chunk.consumedOffset += remaining
     remaining = 0
   }
 
   compactConsumedChunks(entry)
-  if (entry.queuedChars < 0) {
-    entry.queuedChars = 0
-  }
   recordQueueDebugPressure()
   return data
     ? {
@@ -655,11 +665,17 @@ function compactConsumedChunks(entry: QueueEntry): void {
     return
   }
   if (entry.chunkIndex === entry.chunks.length) {
+    entry.pendingChars = 0
     entry.chunks.length = 0
     entry.chunkIndex = 0
     return
   }
   if (entry.chunkIndex >= 64) {
+    let releasedChars = 0
+    for (let index = 0; index < entry.chunkIndex; index += 1) {
+      releasedChars += entry.chunks[index].data.length
+    }
+    entry.pendingChars -= releasedChars
     entry.chunks.splice(0, entry.chunkIndex)
     entry.chunkIndex = 0
   }
@@ -681,6 +697,7 @@ function enqueueChunk(
 ): void {
   entry.chunks.push({
     data,
+    consumedOffset: 0,
     foreground: options?.foreground === true,
     forceForegroundRefresh: options?.forceForegroundRefresh === true,
     followupForegroundRefresh: options?.followupForegroundRefresh === true,
@@ -691,7 +708,7 @@ function enqueueChunk(
     onParsed: options?.onParsed,
     ackCredit: options?.ackCredit
   })
-  entry.queuedChars += data.length
+  entry.pendingChars += data.length
   recordQueueDebugPressure()
 }
 
@@ -706,7 +723,7 @@ function discardDetachedQueueEntry(entry: QueueEntry): void {
   fireQueuedAckCredits(entry)
   entry.chunks.length = 0
   entry.chunkIndex = 0
-  entry.queuedChars = 0
+  entry.pendingChars = 0
   entry.highPriority = false
   clearForegroundHoldSafety(entry)
   clearForegroundCoalesce(entry)
@@ -714,7 +731,7 @@ function discardDetachedQueueEntry(entry: QueueEntry): void {
 
 function queueCapExceeded(entry: QueueEntry): boolean {
   return (
-    entry.queuedChars > maxQueueChars ||
+    entry.pendingChars > maxQueueChars ||
     entry.chunks.length - entry.chunkIndex > MAX_BACKGROUND_QUEUE_CHUNKS
   )
 }
@@ -728,7 +745,7 @@ function replaceBacklogWithWarning(
     // Why: field visibility for cap tuning — drop frequency and size decide whether the cap is too small (issue #2836 / #7017).
     recordRendererCrashBreadcrumb('terminal_output_backlog_dropped', {
       foreground: warning === FOREGROUND_BACKLOG_WARNING,
-      droppedChars: entry.queuedChars,
+      droppedChars: entry.pendingChars,
       capChars: maxQueueChars
     })
   }
@@ -744,6 +761,7 @@ function replaceBacklogWithWarning(
   entry.chunks = [
     {
       data: warning,
+      consumedOffset: 0,
       foreground: false,
       forceForegroundRefresh: false,
       followupForegroundRefresh: false,
@@ -753,7 +771,7 @@ function replaceBacklogWithWarning(
     }
   ]
   entry.chunkIndex = 0
-  entry.queuedChars = warning.length
+  entry.pendingChars = warning.length
   entry.backgroundBacklogDropped = true
   entry.highPriority = true
   entry.foregroundHold = false
@@ -775,7 +793,7 @@ function hasHighPriorityBacklog(): boolean {
   for (const entry of queuedByTerminal.values()) {
     if (
       isEntryDrainable(entry) &&
-      (entry.highPriority || entry.queuedChars > LARGE_BACKLOG_CHARS)
+      (entry.highPriority || entry.pendingChars > LARGE_BACKLOG_CHARS)
     ) {
       return true
     }
@@ -831,7 +849,7 @@ function takeNextDrainableEntry(): QueueEntry | null {
       queuedByTerminal.delete(entry.terminal)
       return entry
     }
-    if (!largeBacklogEntry && entry.queuedChars > LARGE_BACKLOG_CHARS) {
+    if (!largeBacklogEntry && entry.pendingChars > LARGE_BACKLOG_CHARS) {
       largeBacklogEntry = entry
     }
   }
@@ -944,7 +962,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
       fireQueuedAckCredits(entry)
       entry.chunks.length = 0
       entry.chunkIndex = 0
-      entry.queuedChars = 0
+      entry.pendingChars = 0
       clearForegroundHoldSafety(entry)
       clearForegroundCoalesce(entry)
       recordQueueDebugPressure()
@@ -957,7 +975,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     fireQueuedAckCredits(entry)
     entry.chunks.length = 0
     entry.chunkIndex = 0
-    entry.queuedChars = 0
+    entry.pendingChars = 0
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
     recordQueueDebugPressure()
@@ -1119,7 +1137,7 @@ export function writeTerminalOutput(
       scheduleDrain(0)
       return
     }
-    if (entry && entry.queuedChars > SYNC_FOREGROUND_FLUSH_CHARS) {
+    if (entry && entry.pendingChars > SYNC_FOREGROUND_FLUSH_CHARS) {
       entry.highPriority = true
       enqueueChunk(entry, data, {
         foreground: true,
@@ -1227,7 +1245,7 @@ export function writeTerminalOutput(
   }
   // Why: letting every non-focused pane call xterm.write immediately spawns a WriteBuffer timer per pane, starving the focused terminal on the shared renderer thread.
   scheduleDrain(
-    entry.highPriority || entry.queuedChars > LARGE_BACKLOG_CHARS ? 0 : BACKGROUND_FLUSH_DELAY_MS
+    entry.highPriority || entry.pendingChars > LARGE_BACKLOG_CHARS ? 0 : BACKGROUND_FLUSH_DELAY_MS
   )
 }
 
@@ -1254,7 +1272,7 @@ export function flushTerminalOutput(
     fireQueuedAckCredits(entry)
     entry.chunks.length = 0
     entry.chunkIndex = 0
-    entry.queuedChars = 0
+    entry.pendingChars = 0
     entry.highPriority = false
     clearForegroundHoldSafety(entry)
     clearForegroundCoalesce(entry)
