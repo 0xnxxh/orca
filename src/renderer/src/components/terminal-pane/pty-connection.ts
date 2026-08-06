@@ -8162,6 +8162,15 @@ export function connectPanePty(
       const ptyId =
         connectResult?.id ?? (typeof result === 'string' ? result : transport.getPtyId())
       if (!ptyId) {
+        // Why: paired recovery retains the valid parked frame while host liveness is unknown.
+        const recoveryPhase = transport.getRecoveryState?.().phase
+        if (
+          mountFollowsTerminalPark &&
+          isRemoteRuntimePtyId(staleSessionId) &&
+          (recoveryPhase === 'disconnected' || recoveryPhase === 'offline')
+        ) {
+          return false
+        }
         warnTerminalLifecycleAnomaly('restored PTY reattach returned no PTY id', {
           tabId: deps.tabId,
           worktreeId: deps.worktreeId,

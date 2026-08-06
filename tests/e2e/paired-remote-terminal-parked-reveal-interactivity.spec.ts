@@ -52,6 +52,7 @@ writeFileSync(
     'const size = () => `${process.stdout.columns}x${process.stdout.rows}`',
     'const record = (line) => appendFileSync(sink, `${line}\\n`)',
     'record(`READY:${size()}`)',
+    "process.stdout.write('\\x1b[2J\\x1b[H')",
     "process.stdout.write('\\x1b[44m                                                \\x1b[0m\\r\\n')",
     'process.stdout.write(`READY:${size()}\\r\\n`)',
     "process.stdout.on('resize', () => {",
@@ -84,7 +85,7 @@ function shellQuote(value: string): string {
 function fixtureCommand(sinkPath: string): string {
   const command = [process.execPath, fixturePath, sinkPath]
   return process.platform === 'win32'
-    ? command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')
+    ? `& ${command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')}`
     : command.map(shellQuote).join(' ')
 }
 
@@ -455,6 +456,12 @@ async function seedScenario(
       message: 'target terminal never painted its READY marker'
     })
     .toContain('READY:')
+  await expect
+    .poll(async () => (await readPaintedPaneViewport(client.page, target.webTabId)).text, {
+      timeout: 60_000,
+      message: 'target terminal READY marker never reached the visible viewport'
+    })
+    .toContain('READY:')
   return { target, decoys }
 }
 
@@ -602,6 +609,12 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
   const previousParkDelay = process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS
   process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS = String(PARK_DELAY_MS)
   const client = await launchPairedElectronClient(offer, testInfo, 'parked-fast-paint')
+  const clientWindow = await client.app.browserWindow(client.page)
+  await clientWindow.evaluate((window) => {
+    window.show()
+    window.focus()
+  })
+  await expect.poll(() => clientWindow.evaluate((window) => window.isVisible())).toBe(true)
   const createdTerminals: string[] = []
   try {
     const worktreeId = await orcaPage.evaluate(() => {

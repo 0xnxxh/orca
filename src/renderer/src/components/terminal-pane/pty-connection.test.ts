@@ -332,6 +332,7 @@ type MockTransport = {
   resize: ReturnType<typeof vi.fn>
   getPtyId: ReturnType<typeof vi.fn>
   getConnectionId: ReturnType<typeof vi.fn>
+  getRecoveryState?: ReturnType<typeof vi.fn>
   serializeBuffer?: ReturnType<typeof vi.fn>
 }
 
@@ -21080,6 +21081,110 @@ describe('connectPanePty', () => {
     expect(writes.join('')).toContain('DEEP_PAIRED_SCROLLBACK')
     expect(writes.join('')).toContain('current screen from initial subscribe')
     expect(transport.getPtyId).toHaveReturnedWith(remotePtyId)
+  })
+
+  it.each(['disconnected', 'offline'] as const)(
+    'preserves a parked paired frame and PTY identity while recovery is %s',
+    async (phase) => {
+      const { connectPanePty } = await import('./pty-connection')
+      const remotePtyId = 'remote:env-1@@terminal-1'
+      const transport = createMockTransport()
+      transport.connect.mockResolvedValue(undefined)
+      transport.getRecoveryState = vi.fn(() => ({ phase, epoch: 1, attempt: 1 }))
+      transportFactoryQueue.push(transport)
+      await parkTabForReveal('tab-1', remotePtyId)
+      mockStoreState = {
+        ...mockStoreState,
+        tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: remotePtyId }] },
+        ptyIdsByTabId: { 'tab-1': [remotePtyId] },
+        terminalLayoutsByTabId: {
+          'tab-1': {
+            root: { type: 'leaf', leafId: LEAF_1 },
+            activeLeafId: LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [LEAF_1]: remotePtyId }
+          }
+        },
+        runtimeStatusByEnvironmentId: new Map([
+          [
+            'env-1',
+            {
+              checkedAt: Date.now(),
+              status: { capabilities: ['terminal.paired-parking.v1'] }
+            }
+          ]
+        ])
+      }
+
+      const pane = createPane(1)
+      pane.container.dataset.parkedViewportFrame = 'true'
+      const { writes } = captureCallbackTerminalWrites(pane)
+      const deps = createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: remotePtyId }
+      })
+      connectPanePty(pane as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks(20)
+
+      expect(transport.connect).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ sessionId: remotePtyId })
+      )
+      expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+      expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(1, null)
+      expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+      expect(writes.join('')).not.toContain(
+        buildFreshShellViewportBlankingSequence(pane.terminal.rows)
+      )
+      expect(pane.container.dataset.parkedViewportFrame).toBe('true')
+      expect(mockStoreState.tabsByWorktree['wt-1'][0]?.ptyId).toBe(remotePtyId)
+      expect(mockStoreState.terminalLayoutsByTabId?.['tab-1']?.ptyIdsByLeafId?.[LEAF_1]).toBe(
+        remotePtyId
+      )
+    }
+  )
+
+  it('replaces an ended paired session after a parked reattach returns no PTY', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const remotePtyId = 'remote:env-1@@terminal-1'
+    const replacementPtyId = 'remote:env-1@@terminal-2'
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async ({ sessionId }) => {
+      if (sessionId) {
+        transport.getPtyId.mockReturnValue(null)
+        return undefined
+      }
+      transport.getPtyId.mockReturnValue(replacementPtyId)
+      return replacementPtyId
+    })
+    transport.getRecoveryState = vi.fn(() => ({ phase: 'ended', epoch: 1, attempt: 0 }))
+    transportFactoryQueue.push(transport)
+    await parkTabForReveal('tab-1', remotePtyId)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: remotePtyId }] },
+      ptyIdsByTabId: { 'tab-1': [remotePtyId] },
+      runtimeStatusByEnvironmentId: new Map([
+        [
+          'env-1',
+          {
+            checkedAt: Date.now(),
+            status: { capabilities: ['terminal.paired-parking.v1'] }
+          }
+        ]
+      ])
+    }
+
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: remotePtyId }
+    })
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(transport.connect).toHaveBeenCalledTimes(2)
+    expect(transport.connect.mock.calls[1]?.[0]).not.toHaveProperty('sessionId')
+    expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(1, remotePtyId)
+    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', remotePtyId)
   })
 
   it('restores a local main-model snapshot after a contentless park reattach', async () => {

@@ -10,7 +10,12 @@ type FakePaneManager = {
   refreshAllPanes: Mock<() => void>
 }
 
-function createPane(options: { webglAddon?: FakeWebglAddon | null } = {}): ManagedPaneInternal {
+function createPane(
+  options: {
+    clearRenderModel?: ReturnType<typeof vi.fn>
+    webglAddon?: FakeWebglAddon | null
+  } = {}
+): ManagedPaneInternal {
   const leafId = '33333333-3333-4333-8333-333333333333' as never
   return {
     id: 1,
@@ -20,7 +25,8 @@ function createPane(options: { webglAddon?: FakeWebglAddon | null } = {}): Manag
       cols: 80,
       rows: 24,
       refresh: vi.fn(),
-      loadAddon: vi.fn()
+      loadAddon: vi.fn(),
+      _core: { _renderService: { clear: options.clearRenderModel ?? vi.fn() } }
     } as never,
     container: {} as never,
     xtermContainer: {} as never,
@@ -156,6 +162,46 @@ describe('schedulePaneRevealRepaint', () => {
     expect(pane.webglAddon).not.toBeNull()
     expect(manager.resetWebglTextureAtlases).toHaveBeenCalledTimes(1)
     expect(pane.terminal.refresh).toHaveBeenCalled()
+  })
+
+  it('invalidates a requested WebGL pane only after reveal layout settles', () => {
+    const clearRenderModel = vi.fn()
+    const originalAddon = { clearTextureAtlas: vi.fn() }
+    const pane = createPane({ clearRenderModel, webglAddon: originalAddon })
+    registerPaneManager(() => [pane])
+    schedulePaneRevealRepaint(() => [pane], { invalidatePaneId: pane.id })
+
+    flushFrame()
+    expect(clearRenderModel).not.toHaveBeenCalled()
+
+    flushFrame()
+    expect(clearRenderModel).toHaveBeenCalledOnce()
+    expect(pane.webglAddon).toBe(originalAddon)
+  })
+
+  it('coalesces invalidation requests for different panes into one recovery', () => {
+    const firstClear = vi.fn()
+    const secondClear = vi.fn()
+    const firstPane = createPane({
+      clearRenderModel: firstClear,
+      webglAddon: { clearTextureAtlas: vi.fn() }
+    })
+    const secondPane = createPane({
+      clearRenderModel: secondClear,
+      webglAddon: { clearTextureAtlas: vi.fn() }
+    })
+    secondPane.id = 2
+    const manager = registerPaneManager(() => [firstPane, secondPane])
+    const getPanes = (): ManagedPaneInternal[] => [firstPane, secondPane]
+    schedulePaneRevealRepaint(getPanes, { invalidatePaneId: firstPane.id })
+    schedulePaneRevealRepaint(getPanes, { invalidatePaneId: secondPane.id })
+
+    flushFrame()
+    flushFrame()
+
+    expect(firstClear).toHaveBeenCalledOnce()
+    expect(secondClear).toHaveBeenCalledOnce()
+    expect(manager.resetWebglTextureAtlases).toHaveBeenCalledOnce()
   })
 
   it('resolves the pane list at repaint time, not at scheduling time', () => {

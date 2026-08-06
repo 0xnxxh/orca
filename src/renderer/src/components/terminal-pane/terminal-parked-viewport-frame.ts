@@ -86,8 +86,8 @@ export function replayParkedTerminalViewportFrames(args: {
         pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] === 'true' &&
         args.isVisible()
       ) {
-        // Why: the immediate refresh can precede measurable layout; repaint the parsed frame after reveal settles.
-        args.manager.scheduleRevealRepaint()
+        // Why: invalidate the stale WebGL cell model only after reveal layout settles.
+        args.manager.scheduleRevealRepaint({ invalidatePaneId: pane.id })
       }
     })
     replayed += 1

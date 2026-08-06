@@ -113,7 +113,7 @@ describe('parked terminal viewport frames', () => {
     )
     expect(mocks.replayIntoTerminalAsync.mock.calls[0]?.[3].shouldReleaseRenderPause()).toBe(true)
     await Promise.resolve()
-    expect(scheduleRevealRepaint).toHaveBeenCalledOnce()
+    expect(scheduleRevealRepaint).toHaveBeenCalledWith({ invalidatePaneId: matching.pane.id })
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(true)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(false)
   })
