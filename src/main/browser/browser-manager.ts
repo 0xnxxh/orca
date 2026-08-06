@@ -926,9 +926,16 @@ export class BrowserManager {
     if (mode === 'native') {
       return
     }
-    const desiredUa = isGoogleAuthUrl(url) ? googleAuthUserAgent() : guest.session.getUserAgent()
-    if (guest.getUserAgent() !== desiredUa) {
-      guest.setUserAgent(desiredUa)
+    const firefoxUa = googleAuthUserAgent()
+    const currentUa = guest.getUserAgent()
+    if (isGoogleAuthUrl(url)) {
+      if (currentUa !== firefoxUa) {
+        guest.setUserAgent(firefoxUa)
+      }
+    } else if (currentUa === firefoxUa) {
+      // Only restore when the auth-host override is actually in place, so normal
+      // navigation never touches the session UA.
+      guest.setUserAgent(guest.session.getUserAgent())
     }
   }
 

@@ -55,9 +55,17 @@ vi.mock('./popup-origin-bar-window', () => ({
 }))
 
 import { browserManager } from './browser-manager'
+import { googleAuthUserAgent } from './browser-google-auth-ua'
 
 describe('browserManager', () => {
   const rendererWebContentsId = 5001
+  // Base (non-Firefox) UA a guest reports off the Google auth hosts.
+  const guestBaseUserAgent = 'Mozilla/5.0 (Test) Chrome/140.0.0.0'
+  const guestUaMethods = () => ({
+    getUserAgent: vi.fn(() => guestBaseUserAgent),
+    setUserAgent: vi.fn(),
+    session: { getUserAgent: vi.fn(() => guestBaseUserAgent) }
+  })
   type DownloadItemHandlerState = 'progressing' | 'interrupted' | 'completed' | 'cancelled'
   type DownloadItemHandler = (event: Electron.Event, state: DownloadItemHandlerState) => void
 
@@ -1610,7 +1618,8 @@ describe('browserManager', () => {
       on: guestOnMock,
       off: guestOffMock,
       openDevTools: guestOpenDevToolsMock,
-      getURL: vi.fn(() => 'http://localhost:3000/')
+      getURL: vi.fn(() => 'http://localhost:3000/'),
+      ...guestUaMethods()
     }
 
     webContentsFromIdMock.mockImplementation((id: number) => {
@@ -1686,7 +1695,8 @@ describe('browserManager', () => {
       on: guestOnMock,
       off: guestOffMock,
       openDevTools: guestOpenDevToolsMock,
-      getURL: vi.fn(() => 'https://example.com/')
+      getURL: vi.fn(() => 'https://example.com/'),
+      ...guestUaMethods()
     }
     webContentsFromIdMock.mockImplementation((id: number) =>
       id === guest.id
@@ -1738,7 +1748,8 @@ describe('browserManager', () => {
       off: guestOffMock,
       openDevTools: guestOpenDevToolsMock,
       send: vi.fn(),
-      getURL: vi.fn(() => 'chrome-error://chromewebdata/')
+      getURL: vi.fn(() => 'chrome-error://chromewebdata/'),
+      ...guestUaMethods()
     }
     webContentsFromIdMock.mockReturnValue(guest)
 
@@ -1780,7 +1791,8 @@ describe('browserManager', () => {
       off: guestOffMock,
       openDevTools: guestOpenDevToolsMock,
       send: vi.fn(),
-      getURL: vi.fn(() => 'chrome-error://chromewebdata/')
+      getURL: vi.fn(() => 'chrome-error://chromewebdata/'),
+      ...guestUaMethods()
     }
     webContentsFromIdMock.mockReturnValue(guest)
 
@@ -1817,6 +1829,85 @@ describe('browserManager', () => {
     didStartNavigation(null, 'https://example.com/', false, true) // active empty -> drops stash
     didFailLoad(null, -3, 'Aborted', 'https://example.com/', true)
     expect(browserManager.getBrowserPageLoadError('browser-retry-abort-page')).toBeNull()
+  })
+
+  it('presents the Firefox UA on Google auth hosts and restores the base UA off them', () => {
+    let currentUa = guestBaseUserAgent
+    const setUserAgent = vi.fn((ua: string) => {
+      currentUa = ua
+    })
+    const guest = {
+      id: 408,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock,
+      getURL: vi.fn(() => 'https://accounts.google.com/'),
+      getUserAgent: vi.fn(() => currentUa),
+      setUserAgent,
+      session: { getUserAgent: vi.fn(() => guestBaseUserAgent) }
+    }
+    webContentsFromIdMock.mockReturnValue(guest)
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'browser-auth-ua',
+      webContentsId: guest.id,
+      rendererWebContentsId
+    })
+    const didStartNavigation = guestOnMock.mock.calls.find(
+      ([event]) => event === 'did-start-navigation'
+    )?.[1] as (event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void
+    setUserAgent.mockClear()
+
+    didStartNavigation(null, 'https://accounts.google.com/v3/signin/identifier', false, true)
+    expect(setUserAgent).toHaveBeenLastCalledWith(googleAuthUserAgent())
+
+    // Off the auth host, the guest's base identity is restored.
+    didStartNavigation(null, 'https://myaccount.google.com/', false, true)
+    expect(setUserAgent).toHaveBeenLastCalledWith(guestBaseUserAgent)
+
+    // A navigation that doesn't change the required UA must not thrash setUserAgent.
+    setUserAgent.mockClear()
+    didStartNavigation(null, 'https://example.com/', false, true)
+    expect(setUserAgent).not.toHaveBeenCalled()
+  })
+
+  it('leaves the UA untouched on Google auth hosts for native-UA profiles', () => {
+    const setUserAgent = vi.fn()
+    const guest = {
+      id: 409,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock,
+      getURL: vi.fn(() => 'https://accounts.google.com/'),
+      getUserAgent: vi.fn(() => guestBaseUserAgent),
+      setUserAgent,
+      session: { getUserAgent: vi.fn(() => guestBaseUserAgent) }
+    }
+    webContentsFromIdMock.mockReturnValue(guest)
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'browser-native-ua',
+      webContentsId: guest.id,
+      rendererWebContentsId,
+      userAgentMode: 'native'
+    })
+    const didStartNavigation = guestOnMock.mock.calls.find(
+      ([event]) => event === 'did-start-navigation'
+    )?.[1] as (event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void
+    setUserAgent.mockClear()
+
+    didStartNavigation(null, 'https://accounts.google.com/v3/signin/identifier', false, true)
+    expect(setUserAgent).not.toHaveBeenCalled()
   })
 
   it('queues permission denials and download requests until the guest registers', () => {
