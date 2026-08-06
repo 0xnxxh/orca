@@ -102,7 +102,6 @@ const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024
 // Why mutable: the cap scales with the user's scrollback setting (terminalOutputBacklogCapChars), configured when settings apply; the chunk-count cap stays fixed.
 let maxQueueChars = TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS
 const MAX_BACKGROUND_QUEUE_CHUNKS = 4096
-const RETAINED_REBASE_COPY_BLOCK_CHARS = 8 * 1024
 let retainedRebaseCopyObserver: ((source: string, copy: string) => void) | null = null
 
 export function setRetainedRebaseCopyObserverForTesting(
@@ -690,16 +689,7 @@ function compactConsumedChunks(entry: QueueEntry): void {
 }
 
 function copyStringSuffix(data: string, offset: number): string {
-  let copied = ''
-  for (let start = offset; start < data.length; start += RETAINED_REBASE_COPY_BLOCK_CHARS) {
-    const end = Math.min(data.length, start + RETAINED_REBASE_COPY_BLOCK_CHARS)
-    const codeUnits = new Uint16Array(end - start)
-    for (let index = start; index < end; index += 1) {
-      codeUnits[index - start] = data.charCodeAt(index)
-    }
-    copied += String.fromCharCode(...codeUnits)
-  }
-  return copied
+  return structuredClone(data.slice(offset))
 }
 
 function rebaseRetainedChunks(entry: QueueEntry): void {

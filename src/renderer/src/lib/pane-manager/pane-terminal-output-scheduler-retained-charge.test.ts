@@ -122,9 +122,10 @@ describe('terminal scheduler retained-string charge', () => {
       writeTerminalOutput
     } = await loadScheduler()
     const terminal = createTerminal()
+    const liveTail = `${'t'.repeat(BACKGROUND_CHUNK_CHARS - 7)}A\ud83dB\ude00C😀`
     const source = `${'d'.repeat(
       TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS - BACKGROUND_CHUNK_CHARS
-    )}${'t'.repeat(BACKGROUND_CHUNK_CHARS)}`
+    )}${liveTail}`
     const appended = 'tail'
     const copyObserver = vi.fn()
     configureTerminalOutputBacklogCap(1_000)
