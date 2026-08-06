@@ -5813,14 +5813,16 @@ export function connectPanePty(
                     }
                     const destinationCols = pane.terminal.cols
                     const destinationRows = pane.terminal.rows
-                    // Why guarded but still fitted: xterm must leave the source grid, yet
-                    // a background measure-lease pane is fully sized (so the fit lands)
-                    // while not visible, and even a non-claiming resize is remembered and
-                    // replayed as a claim on the next subscribe.
+                    // Why NOT gated on visibility, unlike the sibling fits: reaching here
+                    // means the fit measured a real box, which for a hidden pane means the
+                    // background measure lease deliberately laid it out full size — an
+                    // authoritative grid, not hidden-layout churn. Reveal will not re-send
+                    // it either: the pixels never changed, so fitRevealedPane skips, and
+                    // remote PTYs are excluded from ptySizeReassertion. This is the only
+                    // chance to report. (This path never signals SIGWINCH.)
                     if (
                       destinationCols > 0 &&
                       destinationRows > 0 &&
-                      isRendererPtyResizeAuthoritative() &&
                       !shouldSuppressDesktopPtyResize()
                     ) {
                       transport.resize(destinationCols, destinationRows)

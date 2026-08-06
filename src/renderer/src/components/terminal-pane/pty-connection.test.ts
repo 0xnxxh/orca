@@ -9094,7 +9094,10 @@ describe('connectPanePty', () => {
     expect(transport.resize.mock.calls).toEqual([])
   })
 
-  it('refits but does not report the destination grid from a background measure-lease pane', async () => {
+  it('reports the destination grid from a background measure-lease pane', async () => {
+    // Why this test: the report is deliberately NOT gated on visibility here. A hidden
+    // pane that still measures is under the background measure lease, so its grid is
+    // authoritative — and reveal never re-sends it, because the pixels never changed.
     const { pane, transport, replayCallback } = await connectRemoteSnapshotGridPane(
       'remote:web-env-1@@pty-replay-grid-hidden',
       { visible: false }
@@ -9103,11 +9106,9 @@ describe('connectPanePty', () => {
     replayCallback.current?.('remote snapshot bytes', { snapshotCols: 80, snapshotRows: 24 })
     await flushAsyncTicks(20)
 
-    // A measure-lease pane is fully sized, so the fit lands — but a resize from a
-    // non-visible pane would SIGWINCH the host TUI and persist as the next claim.
     expect(pane.fitAddon.fit).toHaveBeenCalled()
     expect(pane.terminal.cols).toBe(120)
-    expect(transport.resize).not.toHaveBeenCalled()
+    expect(transport.resize).toHaveBeenCalledWith(120, 40)
   })
 
   it('arms no fit retry after replaying into an unmeasurable pane', async () => {
