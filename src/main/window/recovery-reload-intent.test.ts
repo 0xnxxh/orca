@@ -114,6 +114,2578 @@ describe('createRecoveryReloadIntent', () => {
     expect(intent.classifyLoad(7)).toBe('unknown')
   })
 
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain an abandoned ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+
+    intent.armOrdinary(7)
+    // The attempted reload is vetoed before did-start-navigation.
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('does not retain a cancelled ordinary arm for a later navigation', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 })
+    const cancelOrdinary = (
+      intent as typeof intent & { cancelOrdinary?: (webContentsId: number) => boolean }
+    ).cancelOrdinary
+
+    intent.armOrdinary(7)
+    cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('classifies overlapping recovery and ordinary arms as unknown', () => {
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(7)
+    intent.armOrdinary(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
+  it('cancels an ordinary arm before navigation starts', () => {
+    const intent = createRecoveryReloadIntent({ now: () => 100 }) as ReturnType<
+      typeof createRecoveryReloadIntent
+    > & { cancelOrdinary?: (webContentsId: number) => boolean }
+
+    intent.armOrdinary(7)
+    intent.cancelOrdinary?.(7)
+    intent.noteNavigationStarted(7)
+
+    expect(intent.classifyLoad(7)).toBe('unknown')
+  })
+
   it('classifies overlapping navigations as unknown', () => {
     const intent = createRecoveryReloadIntent({ now: () => 100 })
 

@@ -152,11 +152,45 @@ describe('lazy chunk recovery local PTY load', () => {
     expect(provider.hasPty(spawnedId)).toBe(true)
   })
 
-  it('isolates concurrent recovery intents by webContents', () => {
+  it('preserves the PTY when recovery and ordinary reload arms overlap', async () => {
     const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
     const intent = createRecoveryReloadIntent({
       now: () => 100,
-      createToken: () => 'intent',
+      createToken: () => 'intent-1',
+      durationMs: 50
+    })
+
+    intent.begin(webContentsId)
+    intent.armOrdinary(webContentsId)
+    intent.noteNavigationStarted(webContentsId)
+    handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
+  })
+
+  it('does not let an abandoned ordinary reload authorize a later sweep', async () => {
+    const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
+    const intent = createRecoveryReloadIntent({ now: () => 100, durationMs: 50 })
+
+    intent.armOrdinary(webContentsId)
+    // Chromium vetoes the reload before did-start-navigation.
+    intent.noteNavigationStarted(webContentsId)
+    handleLocalPtyRendererLoad(provider, webContentsId, intent.classifyLoad)
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
+  })
+
+  it('isolates concurrent recovery intents by webContents', async () => {
+    const provider = new LocalPtyProvider()
+    const spawnedId = await spawnStaleGenerationPty(provider)
+    let token = 0
+    const intent = createRecoveryReloadIntent({
+      now: () => 100,
+      createToken: () => `intent-${++token}`,
       durationMs: 50
     })
 
@@ -168,6 +202,7 @@ describe('lazy chunk recovery local PTY load', () => {
     handleLocalPtyRendererLoad(provider, 8, intent.classifyLoad)
 
     expect(kill).not.toHaveBeenCalled()
+    expect(provider.hasPty(spawnedId)).toBe(true)
   })
 
   it('preserves the PTY for an unknown load classification', async () => {

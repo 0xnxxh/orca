@@ -34,6 +34,7 @@ type RecoveryReloadIntentOptions = {
 export type RecoveryReloadIntent = {
   begin: (webContentsId: number) => string
   armOrdinary: (webContentsId: number) => void
+  cancelOrdinary: (webContentsId: number) => boolean
   cancel: (webContentsId: number, token: string) => boolean
   noteNavigationStarted: (webContentsId: number) => void
   classifyLoad: (webContentsId: number) => RendererLoadKind
