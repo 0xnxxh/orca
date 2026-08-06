@@ -25,7 +25,6 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
-import { PNG } from 'pngjs'
 import {
   HOST_TERMINAL_SURFACE_SEPARATOR,
   toWebTerminalSurfaceTabId
@@ -52,8 +51,6 @@ writeFileSync(
     'const size = () => `${process.stdout.columns}x${process.stdout.rows}`',
     'const record = (line) => appendFileSync(sink, `${line}\\n`)',
     'record(`READY:${size()}`)',
-    "process.stdout.write('\\x1b[2J\\x1b[H')",
-    "process.stdout.write('\\x1b[44m                                                \\x1b[0m\\r\\n')",
     'process.stdout.write(`READY:${size()}\\r\\n`)',
     "process.stdout.on('resize', () => {",
     '  record(`SIZE:${size()}`)',
@@ -85,7 +82,7 @@ function shellQuote(value: string): string {
 function fixtureCommand(sinkPath: string): string {
   const command = [process.execPath, fixturePath, sinkPath]
   return process.platform === 'win32'
-    ? `& ${command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')}`
+    ? command.map((value) => `"${value.replaceAll('"', '""')}"`).join(' ')
     : command.map(shellQuote).join(' ')
 }
 
@@ -207,26 +204,6 @@ async function readPaneContent(page: Page, webTabId: string): Promise<string> {
   }, webTabId)
 }
 
-async function readPaintedPaneViewport(
-  page: Page,
-  webTabId: string
-): Promise<{ renderPaused: boolean; text: string }> {
-  return page.evaluate((id) => {
-    const manager = window.__paneManagers?.get(id)
-    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
-    if (!pane) {
-      return { renderPaused: false, text: '' }
-    }
-    const buffer = pane.terminal.buffer.active
-    const text = Array.from(
-      { length: pane.terminal.rows },
-      (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? ''
-    ).join('\n')
-    const renderService = Reflect.get(pane.terminal, '_core')?._renderService
-    return { renderPaused: renderService?._isPaused === true, text }
-  }, webTabId)
-}
-
 async function readPaneDiagnostics(
   page: Page,
   worktreeId: string,
@@ -269,95 +246,6 @@ async function waitForPaneMarker(
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   return false
-}
-
-async function waitForPaintedPaneMarker(
-  page: Page,
-  webTabId: string,
-  marker: string,
-  budgetMs: number
-): Promise<boolean> {
-  const deadline = Date.now() + budgetMs
-  while (Date.now() < deadline) {
-    const viewport = await readPaintedPaneViewport(page, webTabId)
-    if (!viewport.renderPaused && viewport.text.includes(marker)) {
-      return true
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-  return false
-}
-
-function countForegroundPixels(buffer: Buffer): number {
-  const image = PNG.sync.read(buffer)
-  const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>()
-  for (let offset = 0; offset < image.data.length; offset += 4) {
-    if ((image.data[offset + 3] ?? 0) < 128) {
-      continue
-    }
-    const red = image.data[offset] ?? 0
-    const green = image.data[offset + 1] ?? 0
-    const blue = image.data[offset + 2] ?? 0
-    const key = `${red >> 3},${green >> 3},${blue >> 3}`
-    const bucket = buckets.get(key) ?? { count: 0, red, green, blue }
-    bucket.count += 1
-    buckets.set(key, bucket)
-  }
-  const background = [...buckets.values()].sort((left, right) => right.count - left.count)[0]
-  if (!background) {
-    return 0
-  }
-  let foregroundPixels = 0
-  for (let offset = 0; offset < image.data.length; offset += 4) {
-    const distance =
-      Math.abs((image.data[offset] ?? 0) - background.red) +
-      Math.abs((image.data[offset + 1] ?? 0) - background.green) +
-      Math.abs((image.data[offset + 2] ?? 0) - background.blue)
-    if ((image.data[offset + 3] ?? 0) >= 128 && distance > 48) {
-      foregroundPixels += 1
-    }
-  }
-  return foregroundPixels
-}
-
-async function readPaneForegroundPixels(page: Page, webTabId: string): Promise<number> {
-  const clip = await page.evaluate((id) => {
-    const manager = window.__paneManagers?.get(id)
-    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
-    const screen = pane?.terminal.element?.querySelector('.xterm-screen')
-    if (!(screen instanceof HTMLElement)) {
-      return null
-    }
-    const rect = screen.getBoundingClientRect()
-    return {
-      x: Math.max(0, rect.left),
-      y: Math.max(0, rect.top),
-      width: Math.max(1, Math.min(rect.width, window.innerWidth - rect.left)),
-      height: Math.max(1, Math.min(rect.height, 64, window.innerHeight - rect.top))
-    }
-  }, webTabId)
-  if (!clip) {
-    return 0
-  }
-  return countForegroundPixels(await page.screenshot({ clip }))
-}
-
-async function waitForPaneForegroundPixels(
-  page: Page,
-  webTabId: string,
-  minimum: number,
-  budgetMs: number
-): Promise<number> {
-  const deadline = Date.now() + budgetMs
-  let foregroundPixels = 0
-  do {
-    foregroundPixels = Math.max(foregroundPixels, await readPaneForegroundPixels(page, webTabId))
-    if (foregroundPixels > minimum) {
-      return foregroundPixels
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  } while (Date.now() < deadline)
-  return foregroundPixels
 }
 
 function readPtyGridFromContent(content: string): { cols: number; rows: number } | null {
@@ -454,12 +342,6 @@ async function seedScenario(
     .poll(() => readPaneContent(client.page, target.webTabId), {
       timeout: 60_000,
       message: 'target terminal never painted its READY marker'
-    })
-    .toContain('READY:')
-  await expect
-    .poll(async () => (await readPaintedPaneViewport(client.page, target.webTabId)).text, {
-      timeout: 60_000,
-      message: 'target terminal READY marker never reached the visible viewport'
     })
     .toContain('READY:')
   return { target, decoys }
@@ -609,12 +491,6 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
   const previousParkDelay = process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS
   process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS = String(PARK_DELAY_MS)
   const client = await launchPairedElectronClient(offer, testInfo, 'parked-fast-paint')
-  const clientWindow = await client.app.browserWindow(client.page)
-  await clientWindow.evaluate((window) => {
-    window.show()
-    window.focus()
-  })
-  await expect.poll(() => clientWindow.evaluate((window) => window.isVisible())).toBe(true)
   const createdTerminals: string[] = []
   try {
     const worktreeId = await orcaPage.evaluate(() => {
@@ -655,20 +531,10 @@ test('paired client fast-paints a parked terminal before the runtime responds', 
 
     const startedAt = Date.now()
     await openClientTab(client.page, worktreeId, target.webTabId)
-    const painted = await waitForPaintedPaneMarker(client.page, target.webTabId, 'READY:', 2_000)
     expect(
-      painted,
+      await waitForPaneMarker(client.page, target.webTabId, 'READY:', 2_000),
       'cold-parked viewport stayed blank while the paired runtime was disconnected'
     ).toBe(true)
-    expect(
-      await waitForPaneForegroundPixels(
-        client.page,
-        target.webTabId,
-        1_000,
-        Math.max(1, 2_000 - (Date.now() - startedAt))
-      ),
-      'cached viewport reached the buffer but did not paint terminal pixels'
-    ).toBeGreaterThan(1_000)
     console.log(`[paired-reveal] cached viewport painted in ${Date.now() - startedAt}ms`)
   } finally {
     await client.page

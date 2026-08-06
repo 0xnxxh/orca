@@ -8,18 +8,9 @@ import {
   replayParkedTerminalViewportFrames
 } from './terminal-parked-viewport-frame'
 
-const mocks = vi.hoisted(() => ({
-  replayIntoTerminalAsync: vi.fn(
-    (
-      _pane: unknown,
-      _replayingPanesRef: unknown,
-      _data: string,
-      _options: { shouldReleaseRenderPause: () => boolean }
-    ) => Promise.resolve()
-  )
-}))
+const mocks = vi.hoisted(() => ({ replayIntoTerminal: vi.fn() }))
 
-vi.mock('./replay-guard', () => ({ replayIntoTerminalAsync: mocks.replayIntoTerminalAsync }))
+vi.mock('./replay-guard', () => ({ replayIntoTerminal: mocks.replayIntoTerminal }))
 
 function makePane(
   id = 1,
@@ -46,7 +37,7 @@ function makePane(
 }
 
 beforeEach(() => {
-  mocks.replayIntoTerminalAsync.mockClear()
+  mocks.replayIntoTerminal.mockClear()
 })
 
 describe('parked terminal viewport frames', () => {
@@ -78,14 +69,12 @@ describe('parked terminal viewport frames', () => {
     expect(local.serialize).not.toHaveBeenCalled()
   })
 
-  it('replays a matching-grid frame and repaints after reveal layout settles', async () => {
+  it('replays a matching-grid frame and skips a stale geometry', () => {
     const matching = makePane(1, 'matching')
     const stale = makePane(2, 'stale')
-    const scheduleRevealRepaint = vi.fn()
     const manager = {
       getPanes: () => [matching.pane, stale.pane],
-      hasWebglRenderer: () => false,
-      scheduleRevealRepaint
+      hasWebglRenderer: () => false
     } as unknown as PaneManager
     const replayingPanesRef = { current: new Map<number, number>() }
 
@@ -95,7 +84,6 @@ describe('parked terminal viewport frames', () => {
         { leafId: 'matching', frame: { data: 'matching frame', cols: 120, rows: 40 } },
         { leafId: 'stale', frame: { data: 'stale frame', cols: 80, rows: 24 } }
       ],
-      isVisible: () => true,
       paneByLeafId: new Map([
         ['matching', 1],
         ['stale', 2]
@@ -104,16 +92,13 @@ describe('parked terminal viewport frames', () => {
     })
 
     expect(replayed).toBe(1)
-    expect(mocks.replayIntoTerminalAsync).toHaveBeenCalledOnce()
-    expect(mocks.replayIntoTerminalAsync).toHaveBeenCalledWith(
+    expect(mocks.replayIntoTerminal).toHaveBeenCalledOnce()
+    expect(mocks.replayIntoTerminal).toHaveBeenCalledWith(
       matching.pane,
       replayingPanesRef,
       'matching frame',
-      expect.objectContaining({ shouldReleaseRenderPause: expect.any(Function) })
+      expect.any(Object)
     )
-    expect(mocks.replayIntoTerminalAsync.mock.calls[0]?.[3].shouldReleaseRenderPause()).toBe(true)
-    await Promise.resolve()
-    expect(scheduleRevealRepaint).toHaveBeenCalledWith({ invalidatePaneId: matching.pane.id })
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(true)
     expect(consumeParkedTerminalViewportFrameMarker(matching.pane)).toBe(false)
   })

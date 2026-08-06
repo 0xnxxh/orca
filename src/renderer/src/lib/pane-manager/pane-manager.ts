@@ -375,11 +375,11 @@ export class PaneManager {
     return this.atlasRecoveryVisible && !this.destroyed
   }
 
-  scheduleRevealRepaint(options?: { invalidatePaneId?: number }): void {
+  scheduleRevealRepaint(): void {
     // Why: the settled-frame callback can fire after destroy(); repainting
     // disposed panes could throw in attach and latch the global WebGL
     // attach backoff, downgrading unrelated new panes to the DOM renderer.
-    schedulePaneRevealRepaint(() => (this.destroyed ? [] : this.panes.values()), options)
+    schedulePaneRevealRepaint(() => (this.destroyed ? [] : this.panes.values()))
   }
 
   scheduleRevealPresent(): void {

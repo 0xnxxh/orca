@@ -2,7 +2,7 @@ import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { isRemoteRuntimePtyId } from '@/runtime/runtime-terminal-inspection'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
-import { replayIntoTerminalAsync, type ReplayingPanesRef } from './replay-guard'
+import { replayIntoTerminal, type ReplayingPanesRef } from './replay-guard'
 
 const MAX_PARKED_VIEWPORT_FRAME_CHARS = 256 * 1024
 const PARKED_VIEWPORT_FRAME_DATASET_KEY = 'parkedViewportFrame'
@@ -65,7 +65,6 @@ export function captureParkedTerminalViewportFrame(
 export function replayParkedTerminalViewportFrames(args: {
   manager: PaneManager
   frames: readonly ParkedTerminalViewportFrameByLeaf[]
-  isVisible: () => boolean
   paneByLeafId: ReadonlyMap<string, number>
   replayingPanesRef: ReplayingPanesRef
 }): number {
@@ -76,20 +75,10 @@ export function replayParkedTerminalViewportFrames(args: {
     if (!pane || pane.terminal.cols !== frame.cols || pane.terminal.rows !== frame.rows) {
       continue
     }
-    const replay = replayIntoTerminalAsync(pane, args.replayingPanesRef, frame.data, {
-      shouldRefreshViewportSynchronously: () => !args.manager.hasWebglRenderer(pane.id),
-      shouldReleaseRenderPause: args.isVisible
+    replayIntoTerminal(pane, args.replayingPanesRef, frame.data, {
+      shouldRefreshViewportSynchronously: () => !args.manager.hasWebglRenderer(pane.id)
     })
     pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] = 'true'
-    void replay.then(() => {
-      if (
-        pane.container.dataset[PARKED_VIEWPORT_FRAME_DATASET_KEY] === 'true' &&
-        args.isVisible()
-      ) {
-        // Why: invalidate the stale WebGL cell model only after reveal layout settles.
-        args.manager.scheduleRevealRepaint({ invalidatePaneId: pane.id })
-      }
-    })
     replayed += 1
   }
   return replayed

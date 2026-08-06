@@ -1,14 +1,10 @@
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
 import { resetAndRefreshAllTerminalWebglAtlases } from './pane-manager-registry'
-import { invalidateTerminalRenderModel } from './terminal-render-model-invalidation'
 
 type PaneGetter = () => Iterable<ManagedPaneInternal>
 
-const pendingRevealRepaints: {
-  getPanes: PaneGetter
-  invalidatePaneId?: number
-}[] = []
+const pendingRevealRepaints = new Set<PaneGetter>()
 let revealRepaintScheduled = false
 
 function scheduleSettledFrame(callback: () => void): void {
@@ -41,25 +37,23 @@ function forEachPaneOnSettledFrame(
 
 function flushPaneRevealRepaints(): void {
   revealRepaintScheduled = false
-  const paneGetters = pendingRevealRepaints.splice(0)
-  const livePanes = new Map<ManagedPaneInternal, boolean>()
+  const paneGetters = Array.from(pendingRevealRepaints)
+  pendingRevealRepaints.clear()
+  const livePanes = new Set<ManagedPaneInternal>()
 
-  for (const { getPanes, invalidatePaneId } of paneGetters) {
+  for (const getPanes of paneGetters) {
     try {
       for (const pane of getPanes()) {
-        livePanes.set(pane, livePanes.get(pane) === true || pane.id === invalidatePaneId)
+        livePanes.add(pane)
       }
     } catch {
       /* ignore — a manager may be destroyed while its repaint is pending */
     }
   }
 
-  for (const [pane, shouldInvalidate] of livePanes) {
+  for (const pane of livePanes) {
     try {
       reattachWebglIfNeeded(pane)
-      if (shouldInvalidate && pane.webglAddon && !pane.webglDisabledAfterContextLoss) {
-        invalidateTerminalRenderModel(pane.terminal)
-      }
     } catch {
       /* ignore — one pane's teardown must not block global recovery */
     }
@@ -75,14 +69,13 @@ function flushPaneRevealRepaints(): void {
  * Why: while a pane is hidden, parsed output can update the WebGL renderer's
  * per-cell model without ever presenting a frame. At reveal the model diff
  * reports those cells unchanged, so plain refreshes skip them and the canvas
- * keeps compositing pre-hide pixels. Once layout settles, invalidate the
- * replayed pane's model before one registry-wide atlas reset and refresh.
+ * keeps compositing pre-hide pixels until a selection or resize rebuilds the
+ * model. Once layout settles, reattach every revealed renderer before one
+ * registry-wide atlas reset so no delayed pane-local clear can invalidate a
+ * sibling terminal's rebuilt model.
  */
-export function schedulePaneRevealRepaint(
-  getPanes: () => Iterable<ManagedPaneInternal>,
-  options?: { invalidatePaneId?: number }
-): void {
-  pendingRevealRepaints.push({ getPanes, invalidatePaneId: options?.invalidatePaneId })
+export function schedulePaneRevealRepaint(getPanes: () => Iterable<ManagedPaneInternal>): void {
+  pendingRevealRepaints.add(getPanes)
   if (revealRepaintScheduled) {
     return
   }
