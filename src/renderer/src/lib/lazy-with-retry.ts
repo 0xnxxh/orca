@@ -228,7 +228,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     // A sibling failing under a pending reload must not clear the guard, and an
     // unrelated failure must not clear a guard it did not set.
     if (!reloadRequestInFlight && isKnownDynamicImportFailure(lastError)) {
-      // Record the veto beside the resulting report before the ring can evict it.
+      // Record the veto before the ring can evict it; the failure is then contained.
       clearChunkReloadGuard()
       recordReloadBreadcrumb(
         'lazy_chunk_reload_vetoed',

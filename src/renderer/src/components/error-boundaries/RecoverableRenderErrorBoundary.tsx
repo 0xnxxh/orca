@@ -50,8 +50,7 @@ export class RecoverableRenderErrorBoundary extends React.Component<Props, State
       return
     }
     if (isLazyChunkLoadError(error)) {
-      // Contained by this fallback; lazy-with-retry already recorded the chunk
-      // error, its call site, and the recovery outcome as a breadcrumb.
+      // Contained by this fallback; recovery breadcrumbs live on the load path.
       return
     }
     void reportReactErrorBoundaryCrash({

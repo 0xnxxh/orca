@@ -128,4 +128,17 @@ describe('loadLazyWithRetry when the recovery reload never lands', () => {
     expect(isLazyChunkLoadError(await settled)).toBe(true)
     expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBeNull()
   })
+
+  it('still surfaces ordinary evaluation bugs after a never-landed reload attempt', async () => {
+    const error = new Error('render bug from lazy module evaluation')
+    const settled = loadLazyWithRetry(() => Promise.reject(error), { retries: 0 }).catch(
+      (rejection: unknown) => rejection
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(RELOAD_SETTLE_GRACE_MS + 1)
+
+    // Containment is only for known dynamic-import failures; real bugs must still report.
+    expect(await settled).toBe(error)
+    expect(isLazyChunkLoadError(error)).toBe(false)
+  })
 })
