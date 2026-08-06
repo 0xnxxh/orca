@@ -52,7 +52,7 @@ export function subscribeAllHostListener(
 
 export function listHostClients(
   entries: ReadonlyMap<string, { client: RpcClient }>
-): Array<{ hostId: string; client: RpcClient }> {
+): { hostId: string; client: RpcClient }[] {
   return [...entries].map(([hostId, entry]) => ({ hostId, client: entry.client }))
 }
 
