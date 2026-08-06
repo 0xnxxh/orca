@@ -1,6 +1,9 @@
 import { TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS } from '../../../../shared/terminal-scrollback-policy'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const FOREGROUND_BACKLOG_WARNING =
+  '\x18\x1b[0m\r\n[Orca skipped a burst of terminal output because the backlog grew too large.]\r\n'
+
 vi.mock('@/lib/e2e-config', () => ({ e2eConfig: { exposeStore: true } }))
 vi.mock('@/lib/crash-breadcrumb-recorder', () => ({ recordRendererCrashBreadcrumb: vi.fn() }))
 
@@ -115,29 +118,33 @@ describe('terminal scheduler retained-string charge', () => {
       BACKGROUND_CHUNK_CHARS,
       configureTerminalOutputBacklogCap,
       flushTerminalOutput,
+      setRetainedRebaseCopyObserverForTesting,
       writeTerminalOutput
     } = await loadScheduler()
     const terminal = createTerminal()
-    const drained = 'd'.repeat(
+    const source = `${'d'.repeat(
       TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS - BACKGROUND_CHUNK_CHARS
-    )
-    const liveTail = 't'.repeat(BACKGROUND_CHUNK_CHARS)
+    )}${'t'.repeat(BACKGROUND_CHUNK_CHARS)}`
     const appended = 'tail'
+    const copyObserver = vi.fn()
     configureTerminalOutputBacklogCap(1_000)
+    setRetainedRebaseCopyObserverForTesting(copyObserver)
 
-    writeTerminalOutput(terminal as never, drained, { foreground: false })
-    writeTerminalOutput(terminal as never, liveTail, {
+    writeTerminalOutput(terminal as never, source, {
       foreground: true,
       latencySensitive: false
     })
-    flushTerminalOutput(terminal as never, { maxChars: drained.length })
+    flushTerminalOutput(terminal as never, {
+      maxChars: source.length - BACKGROUND_CHUNK_CHARS
+    })
     writeTerminalOutput(terminal as never, appended, {
       foreground: true,
       latencySensitive: false
     })
     flushTerminalOutput(terminal as never)
 
-    expect(readOutput(terminal)).toBe(drained + liveTail + appended)
+    expect(readOutput(terminal)).toBe(source + appended)
+    expect(copyObserver).toHaveBeenCalledTimes(1)
   })
 
   it('preserves pending output behind 63 consumed chunk references', async () => {
@@ -216,13 +223,13 @@ describe('terminal scheduler retained-string charge', () => {
         })
       }
 
+      flushTerminalOutput(terminal as never)
+      expect(readOutput(terminal)).toBe(
+        drops
+          ? `${'d'.repeat(drainedChars)}${FOREGROUND_BACKLOG_WARNING}`
+          : `${'d'.repeat(drainedChars)}${'p'.repeat(pendingChars)}${'a'.repeat(appendedChars)}`
+      )
       expect(readDebugSnapshot().droppedBacklogCount).toBe(drops ? 1 : 0)
-      if (!drops) {
-        flushTerminalOutput(terminal as never)
-        expect(readOutput(terminal)).toBe(
-          `${'d'.repeat(drainedChars)}${'p'.repeat(pendingChars)}${'a'.repeat(appendedChars)}`
-        )
-      }
     }
   )
 
@@ -242,6 +249,59 @@ describe('terminal scheduler retained-string charge', () => {
       queuedChars: BACKGROUND_CHUNK_CHARS,
       retainedChars: BACKGROUND_CHUNK_CHARS
     })
+  })
+
+  it('does not copy an unconsumed indivisible chunk above the cap', async () => {
+    const {
+      configureTerminalOutputBacklogCap,
+      flushTerminalOutput,
+      setRetainedRebaseCopyObserverForTesting,
+      writeTerminalOutput
+    } = await loadScheduler()
+    const terminal = createTerminal()
+    const source = 'x'.repeat(TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS + 1)
+    const copyObserver = vi.fn()
+    configureTerminalOutputBacklogCap(1_000)
+    setRetainedRebaseCopyObserverForTesting(copyObserver)
+
+    writeTerminalOutput(terminal as never, source, {
+      foreground: true,
+      latencySensitive: false
+    })
+    flushTerminalOutput(terminal as never)
+
+    expect(readOutput(terminal)).toBe(FOREGROUND_BACKLOG_WARNING)
+    expect(copyObserver).not.toHaveBeenCalled()
+  })
+
+  it('releases the full retained charge after partial-first prefix compaction', async () => {
+    const { BACKGROUND_CHUNK_CHARS, flushTerminalOutput, writeTerminalOutput } =
+      await loadScheduler()
+    const terminal = createTerminal()
+    const partiallyDrained = 'p'.repeat(BACKGROUND_CHUNK_CHARS * 2)
+    const consumedPrefixes = Array.from({ length: 63 }, (_, index) =>
+      String(index).padEnd(BACKGROUND_CHUNK_CHARS, 'x')
+    )
+    const survivor = 's'.repeat(BACKGROUND_CHUNK_CHARS)
+    const source = partiallyDrained + consumedPrefixes.join('') + survivor
+
+    writeTerminalOutput(terminal as never, partiallyDrained, { foreground: false })
+    flushTerminalOutput(terminal as never, { maxChars: 1 })
+    for (const prefix of consumedPrefixes) {
+      writeTerminalOutput(terminal as never, prefix, { foreground: false })
+    }
+    writeTerminalOutput(terminal as never, survivor, { foreground: false })
+    flushTerminalOutput(terminal as never, {
+      maxChars: BACKGROUND_CHUNK_CHARS * 64 - 1
+    })
+
+    expect(readDebugSnapshot()).toMatchObject({
+      queuedChars: BACKGROUND_CHUNK_CHARS,
+      retainedChars: BACKGROUND_CHUNK_CHARS,
+      droppedBacklogCount: 0
+    })
+    flushTerminalOutput(terminal as never)
+    expect(readOutput(terminal)).toBe(source)
   })
 
   it('charges consumed prefixes as retained until compaction releases them', async () => {
