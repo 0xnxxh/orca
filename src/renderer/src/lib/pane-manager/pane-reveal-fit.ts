@@ -1,6 +1,7 @@
 import type { ManagedPane, ManagedPaneInternal } from './pane-manager-types'
 import {
   canMeasurePaneForFit,
+  flushDeferredPaneMetricOptionsIfMeasurable,
   flushPendingSafeFitContinuations,
   readFitClientSize,
   safeFit
@@ -61,6 +62,13 @@ function releaseMeasurableFitContinuations(pane: ManagedPane): void {
 //    mismatch refits but a transient metric wobble does not reflow;
 //  - grid already correct → leave it alone.
 export function fitRevealedPane(pane: ManagedPane): void {
+  // Why first: the pixel/grid checks below can both say "nothing to do" and
+  // return without fitting, which would strand metric options parked while the
+  // pane was unmeasurable. A landed flush changes cell size, so it must fit.
+  if (flushDeferredPaneMetricOptionsIfMeasurable(pane)) {
+    safeFit(pane)
+    return
+  }
   if (paneFitClientSizeChanged(pane)) {
     safeFit(pane)
     return

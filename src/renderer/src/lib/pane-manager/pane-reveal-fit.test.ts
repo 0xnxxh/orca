@@ -9,14 +9,16 @@ const mocks = vi.hoisted(() => ({
   readFitClientSize: vi.fn<(pane: ManagedPane) => { width: number; height: number } | null>(),
   requestStablePaneFit: vi.fn(),
   clearPaneFitContinuationRetry: vi.fn(),
-  resumePendingFitScrollRestoreAfterFit: vi.fn()
+  resumePendingFitScrollRestoreAfterFit: vi.fn(),
+  flushDeferredPaneMetricOptionsIfMeasurable: vi.fn(() => false)
 }))
 
 vi.mock('./pane-fit', () => ({
   safeFit: mocks.safeFit,
   canMeasurePaneForFit: mocks.canMeasurePaneForFit,
   flushPendingSafeFitContinuations: mocks.flushPendingSafeFitContinuations,
-  readFitClientSize: mocks.readFitClientSize
+  readFitClientSize: mocks.readFitClientSize,
+  flushDeferredPaneMetricOptionsIfMeasurable: mocks.flushDeferredPaneMetricOptionsIfMeasurable
 }))
 vi.mock('./pane-fit-resize-observer', () => ({
   requestStablePaneFit: mocks.requestStablePaneFit
@@ -50,6 +52,25 @@ describe('fitRevealedPane routing', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.canMeasurePaneForFit.mockReturnValue(true)
+    mocks.flushDeferredPaneMetricOptionsIfMeasurable.mockReturnValue(false)
+  })
+
+  it('fits when a deferred metric flush lands on a pane the size checks would skip', () => {
+    // Without this the no-op branch below returns early and the parked font
+    // change never reaches the grid — the stuck-metrics shape the deferral
+    // is supposed to prevent.
+    mocks.flushDeferredPaneMetricOptionsIfMeasurable.mockReturnValue(true)
+    const pane = createPane({
+      lastFitClientSize: { width: 800, height: 600 },
+      currentSize: { width: 800, height: 600 },
+      terminal: { cols: 80, rows: 24 },
+      proposed: { cols: 80, rows: 24 }
+    })
+
+    fitRevealedPane(pane)
+
+    expect(mocks.safeFit).toHaveBeenCalledWith(pane)
+    expect(mocks.requestStablePaneFit).not.toHaveBeenCalled()
   })
 
   it('fits synchronously when the fit element resized while hidden', () => {

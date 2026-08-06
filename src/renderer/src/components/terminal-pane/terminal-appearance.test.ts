@@ -157,7 +157,9 @@ describe('applyTerminalAppearance theme assignment', () => {
 
   function makeManager(panes: ManagedPane[]): PaneManager {
     return {
-      getPanes: () => panes,
+      // Mirrors the real getPanes(), which allocates a fresh toPublicPane()
+      // wrapper per call over a shared terminal — per-pane state must survive that.
+      getPanes: () => panes.map((pane) => ({ ...pane })),
       setPaneLigaturesEnabled: vi.fn(),
       setPaneStyleOptions: vi.fn()
     } as unknown as PaneManager
@@ -281,9 +283,9 @@ describe('applyTerminalAppearance theme assignment', () => {
   })
 
   it('defers metric options on an unmeasurable pane and lands them on the next fit', () => {
-    // P0 bold/blurry-font regression shape: a font change applied to a hidden or
-    // mid-layout pane re-measures cell size against a wrong box and latches until
-    // a manual resize. The write must wait for a measurable pane.
+    // A metric write makes xterm clear, resize and full-refresh; on a pane with
+    // no usable box that repaint is wasted and the cols/rows re-fit that must
+    // follow it cannot run. The write waits for a measurable pane.
     let measurable = false
     const pane = {
       id: 1,

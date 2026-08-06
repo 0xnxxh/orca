@@ -1,6 +1,9 @@
 import type { ManagedPane } from './pane-manager-types'
 import { isManagedPaneDisplayNone } from './pane-display-visibility'
-import { flushDeferredPaneMetricOptions } from './pane-metric-options-deferral'
+import {
+  flushDeferredPaneMetricOptions,
+  hasDeferredPaneMetricOptions
+} from './pane-metric-options-deferral'
 
 const MIN_PANE_FIT_WIDTH_PX = 48
 const MIN_PANE_FIT_HEIGHT_PX = 24
@@ -38,10 +41,11 @@ export function canApplyPaneMetricOptions(pane: ManagedPane): boolean {
   return !isManagedPaneDisplayNone(pane) && canMeasurePaneForFit(pane)
 }
 
-/** Why measurability-gated: flushing metric options into a still-unmeasurable
- *  pane would re-measure against a wrong box — the exact bug deferral prevents. */
+/** Why the pending check comes first: it is an O(1) WeakMap lookup, while the
+ *  measurability probe forces style+layout. This runs per pane on every reveal,
+ *  so the common no-deferral case must cost zero DOM reads. */
 export function flushDeferredPaneMetricOptionsIfMeasurable(pane: ManagedPane): boolean {
-  if (!canApplyPaneMetricOptions(pane)) {
+  if (!hasDeferredPaneMetricOptions(pane) || !canApplyPaneMetricOptions(pane)) {
     return false
   }
   return flushDeferredPaneMetricOptions(pane)

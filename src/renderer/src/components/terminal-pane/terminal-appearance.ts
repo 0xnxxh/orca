@@ -11,7 +11,10 @@ import {
 import { buildFontFamily } from './layout-serialization'
 import { safeFit, safeFitAndThen } from '@/lib/pane-manager/pane-tree-ops'
 import { canApplyPaneMetricOptions } from '@/lib/pane-manager/pane-fit'
-import { applyOrDeferPaneMetricOptions } from '@/lib/pane-manager/pane-metric-options-deferral'
+import {
+  applyOrDeferPaneMetricOptions,
+  paneMetricOptionsAlreadySettled
+} from '@/lib/pane-manager/pane-metric-options-deferral'
 import {
   normalizeTerminalFastScrollSensitivity,
   normalizeTerminalScrollSensitivity,
@@ -176,20 +179,21 @@ export function applyTerminalAppearance(
     pane.terminal.options.cursorInactiveStyle = resolveTerminalCursorInactiveStyle(cursorStyle)
     pane.terminal.options.cursorBlink = settings.terminalCursorBlink
     const paneSize = paneFontSizes.get(pane.id)
-    // Why deferred: metric writes re-measure cell size; a hidden/mid-layout pane
-    // measures wrong-but-nonzero and stays wrong until a manual resize (P0
-    // bold/blurry-font reports). Deferred values land on the next fit or reveal.
-    applyOrDeferPaneMetricOptions(
-      pane,
-      {
-        fontSize: paneSize ?? settings.terminalFontSize,
-        fontFamily: buildFontFamily(settings.terminalFontFamily),
-        fontWeight: terminalFontWeights.fontWeight,
-        fontWeightBold: terminalFontWeights.fontWeightBold,
-        lineHeight: normalizeTerminalLineHeight(settings.terminalLineHeight)
-      },
-      canApplyPaneMetricOptions(pane)
-    )
+    const metricOptions = {
+      fontSize: paneSize ?? settings.terminalFontSize,
+      fontFamily: buildFontFamily(settings.terminalFontFamily),
+      fontWeight: terminalFontWeights.fontWeight,
+      fontWeightBold: terminalFontWeights.fontWeightBold,
+      lineHeight: normalizeTerminalLineHeight(settings.terminalLineHeight)
+    }
+    // Why value-gated: any settings write re-runs this over every mounted pane, and
+    // canApplyPaneMetricOptions forces style+layout; an unchanged no-op deferral
+    // would also arm a pointless refit on the next reveal.
+    // Why deferred: a metric write makes xterm clear/resize/full-refresh, which is
+    // wasted on a pane with no usable box and whose follow-up cols/rows fit can't run.
+    if (!paneMetricOptionsAlreadySettled(pane, metricOptions)) {
+      applyOrDeferPaneMetricOptions(pane, metricOptions, canApplyPaneMetricOptions(pane))
+    }
     pane.terminal.options.scrollSensitivity = normalizeTerminalScrollSensitivity(
       settings.terminalScrollSensitivity
     )
