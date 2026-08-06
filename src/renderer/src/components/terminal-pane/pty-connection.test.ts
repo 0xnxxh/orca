@@ -308,7 +308,12 @@ type ConnectCallbacks = {
   ) => void
   onReplayData?: (
     data: string,
-    meta?: { clearBeforeReplay?: boolean; snapshotCols?: number; snapshotRows?: number }
+    meta?: {
+      clearBeforeReplay?: boolean
+      pendingEscapeTailAnsi?: string
+      snapshotCols?: number
+      snapshotRows?: number
+    }
   ) => void
   onError?: (msg: string) => void
   onWriteUnavailable?: () => void
@@ -739,6 +744,46 @@ function enableActiveRuntimeEnvironment(environmentId = 'env-1'): void {
       activeRuntimeEnvironmentId: environmentId
     }
   } as StoreState
+}
+
+// Connects a remote pane whose viewport (120x40) differs from the host snapshot grid,
+// exposing the onReplayData callback plus the grid each replay write parsed at.
+async function connectRemoteSnapshotGridPane(ptyId: string) {
+  const { connectPanePty } = await import('./pty-connection')
+  enableActiveRuntimeEnvironment()
+  const pane = createPane(1)
+  const colsAtWrite = new Map<string, number>()
+  pane.terminal.write = vi.fn((data: string, callback?: () => void) => {
+    colsAtWrite.set(data, pane.terminal.cols)
+    callback?.()
+  }) as typeof pane.terminal.write
+  pane.terminal.resize.mockImplementation((cols: number, rows: number) => {
+    pane.terminal.cols = cols
+    pane.terminal.rows = rows
+  })
+  pane.fitAddon = {
+    ...pane.fitAddon,
+    fit: vi.fn(() => {
+      pane.terminal.cols = 120
+      pane.terminal.rows = 40
+    }),
+    proposeDimensions: vi.fn(() => ({ cols: 120, rows: 40 }))
+  } as never
+  const transport = createMockTransport(ptyId)
+  const replayCallback: { current: ConnectCallbacks['onReplayData'] | null } = { current: null }
+  transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+    replayCallback.current = callbacks.onReplayData ?? null
+    return { id: ptyId, replay: '' }
+  })
+  transportFactoryQueue.push(transport)
+
+  connectPanePty(pane as never, createManager(1, 1) as never, createDeps() as never)
+  await flushAsyncTicks(20)
+  transport.resize.mockClear()
+  pane.terminal.resize.mockClear()
+  vi.mocked(pane.fitAddon.fit).mockClear()
+  expect(replayCallback.current).toBeTypeOf('function')
+  return { pane, transport, replayCallback, colsAtWrite }
 }
 
 function createKeyboardEventTarget() {
@@ -8997,6 +9042,64 @@ describe('connectPanePty', () => {
     // The dangling tail is re-armed after the snapshot/reset, so the next live chunk completes it instead of rendering literally.
     expect(tailIndex).toBeGreaterThan(snapshotIndex)
     expect(writes.slice(tailIndex + 1)).toEqual([])
+  })
+
+  it('parses onReplayData at the host snapshot grid, then reports the destination fit', async () => {
+    // Why this test: the connect-result snapshot path is covered, but the remote onReplayData
+    // meta path had none — severing its source-grid resize kept the suite green.
+    const { pane, transport, replayCallback, colsAtWrite } = await connectRemoteSnapshotGridPane(
+      'remote:web-env-1@@pty-replay-grid'
+    )
+
+    replayCallback.current?.('remote snapshot bytes', { snapshotCols: 80, snapshotRows: 24 })
+    await flushAsyncTicks(20)
+
+    // Host grid while the bytes parse, destination grid once the transaction restores.
+    expect(colsAtWrite.get('remote snapshot bytes')).toBe(80)
+    expect(pane.terminal.resize).toHaveBeenCalledWith(80, 24)
+    expect(pane.fitAddon.fit).toHaveBeenCalled()
+    expect(pane.terminal.cols).toBe(120)
+    expect(transport.resize).toHaveBeenCalledWith(120, 40)
+  })
+
+  it('refits but does not report the destination grid while mobile owns the replayed PTY', async () => {
+    const { setDriverForPty } = await import('@/lib/pane-manager/mobile-driver-state')
+    const ptyId = 'remote:web-env-1@@pty-replay-grid-locked'
+    const { pane, transport, replayCallback, colsAtWrite } =
+      await connectRemoteSnapshotGridPane(ptyId)
+
+    try {
+      setDriverForPty(ptyId, { kind: 'mobile', clientId: 'phone-1' })
+      replayCallback.current?.('remote snapshot bytes', { snapshotCols: 80, snapshotRows: 24 })
+      await flushAsyncTicks(20)
+    } finally {
+      setDriverForPty(ptyId, { kind: 'idle' })
+    }
+
+    // xterm still leaves the host grid; only the SIGWINCH-bearing report is withheld.
+    expect(colsAtWrite.get('remote snapshot bytes')).toBe(80)
+    expect(pane.fitAddon.fit).toHaveBeenCalled()
+    expect(pane.terminal.cols).toBe(120)
+    expect(transport.resize).not.toHaveBeenCalled()
+  })
+
+  it('skips the source-grid trip for a body-less remote snapshot frame', async () => {
+    const { pane, transport, replayCallback } = await connectRemoteSnapshotGridPane(
+      'remote:web-env-1@@pty-replay-grid-tail'
+    )
+
+    replayCallback.current?.('', {
+      pendingEscapeTailAnsi: '\x1b[3',
+      snapshotCols: 80,
+      snapshotRows: 24
+    })
+    await flushAsyncTicks(20)
+
+    // Nothing to rewrap, so the host grid (a fallback 80x24 when the host has no
+    // serializable buffer) must not drag xterm through a two-reflow round trip.
+    expect(pane.terminal.resize).not.toHaveBeenCalled()
+    expect(pane.fitAddon.fit).not.toHaveBeenCalled()
+    expect(transport.resize).not.toHaveBeenCalled()
   })
 
   it('preserves live modes and injects focus-in after focused agent reattach', async () => {

@@ -5687,6 +5687,9 @@ export function connectPanePty(
         )
         if (
           snapshotDimensions &&
+          // Why: a body-less frame (mid-escape tail only) has no rows to rewrap, so the
+          // source-grid trip would just reflow twice at a grid nothing renders at.
+          data.length > 0 &&
           (pane.terminal.cols !== snapshotDimensions.cols ||
             pane.terminal.rows !== snapshotDimensions.rows)
         ) {
@@ -5794,7 +5797,18 @@ export function connectPanePty(
                     if (!isCurrentReplay()) {
                       return
                     }
-                    transport.resize(pane.terminal.cols, pane.terminal.rows)
+                    const destinationCols = pane.terminal.cols
+                    const destinationRows = pane.terminal.rows
+                    // Why: the fit itself must always run — xterm is parked at the host
+                    // grid — but reporting it while mobile owns the PTY would drag the
+                    // parked phone grid back to desktop dims (see forwardPtyResize).
+                    if (
+                      destinationCols > 0 &&
+                      destinationRows > 0 &&
+                      !shouldSuppressDesktopPtyResize()
+                    ) {
+                      transport.resize(destinationCols, destinationRows)
+                    }
                   },
                   { shouldContinue: isCurrentReplay, retryIfUnmeasurable: true }
                 )
