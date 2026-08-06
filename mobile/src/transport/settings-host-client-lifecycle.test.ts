@@ -1,7 +1,7 @@
 import { createElement, Fragment, useEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useAllHostClients } from './all-host-client-connections'
+import { useAllHostClients } from './use-all-host-clients'
 import { useFocusedSettingsHostClients } from './settings-host-client-connections'
 import {
   RpcClientProvider,

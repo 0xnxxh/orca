@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
-import { useAllHostClients } from './all-host-client-connections'
+import { useAllHostClients } from './use-all-host-clients'
 
 export function useFocusedSettingsHostClients(hostIds: string[]) {
   const [focused, setFocused] = useState(false)
