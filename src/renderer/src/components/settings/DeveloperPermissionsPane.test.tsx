@@ -34,6 +34,33 @@ afterEach(async () => {
   Reflect.deleteProperty(window, 'api')
 })
 
+function setPermissionStates(states: DeveloperPermissionState[]): void {
+  const api = (window as unknown as { api: { developerPermissions: { getStatus: unknown } } }).api
+  api.developerPermissions.getStatus = vi.fn(async () => states)
+}
+
+it('surfaces the silent-denial diagnostic and workaround when local network is denied', async () => {
+  setPermissionStates([{ id: 'local-network', status: 'denied' }])
+
+  await act(async () => {
+    root.render(<DeveloperPermissionsPane />)
+  })
+
+  const note = container.querySelector('[data-testid="local-network-denied-diagnostic"]')
+  expect(note?.textContent).toContain('without showing a prompt')
+  expect(note?.textContent).toContain('killall nesessionmanager nehelper')
+})
+
+it('keeps the diagnostic hidden while the local-network probe verdict is unknown', async () => {
+  setPermissionStates([{ id: 'local-network', status: 'unknown' }])
+
+  await act(async () => {
+    root.render(<DeveloperPermissionsPane />)
+  })
+
+  expect(container.querySelector('[data-testid="local-network-denied-diagnostic"]')).toBeNull()
+})
+
 it('highlights the Full Disk Access row for a targeted Settings navigation', async () => {
   await act(async () => {
     root.render(

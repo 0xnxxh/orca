@@ -105,17 +105,28 @@ function triggerAppleEventsPrompt(): Promise<void> {
   })
 }
 
-function triggerLocalNetworkPrompt(): Promise<void> {
+// EHOSTUNREACH on a multicast send to the mDNS group is macOS's Local Network
+// denial signature ("No route to host"), including NECP's silent deny on
+// macOS 27 beta (STA-3505). ENETUNREACH/ENETDOWN are excluded: they also occur
+// with no active interface, where "denied" would be a false diagnosis.
+const LOCAL_NETWORK_DENIAL_CODES = new Set(['EHOSTUNREACH', 'EHOSTDOWN'])
+
+// Probe verdicts persist for the process lifetime so the Settings chip keeps
+// showing a detected denial across refreshes. NECP re-rolls the verdict on
+// network changes, so a re-probe (Trigger Prompt) is the only way to update it.
+let lastLocalNetworkProbeStatus: DeveloperPermissionStatus | null = null
+
+function triggerLocalNetworkPrompt(): Promise<DeveloperPermissionStatus> {
   return new Promise((resolve) => {
     const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     let settled = false
     let timeout: ReturnType<typeof setTimeout> | null = null
-    function finish(): void {
+    function finish(status: DeveloperPermissionStatus): void {
       if (settled) {
         return
       }
       settled = true
-      socket.removeListener('error', finish)
+      socket.removeListener('error', onError)
       if (timeout) {
         clearTimeout(timeout)
         timeout = null
@@ -125,14 +136,26 @@ function triggerLocalNetworkPrompt(): Promise<void> {
       } catch {
         // Already closed or never fully bound.
       }
-      resolve()
+      resolve(status)
     }
-    socket.on('error', finish)
+    function classify(error: Error | null | undefined): DeveloperPermissionStatus {
+      if (!error) {
+        return 'granted'
+      }
+      const code = (error as NodeJS.ErrnoException).code
+      return code && LOCAL_NETWORK_DENIAL_CODES.has(code) ? 'denied' : 'unknown'
+    }
+    function onError(error: Error): void {
+      finish(classify(error))
+    }
+    socket.on('error', onError)
     socket.bind(() => {
       const message = Buffer.from([0])
-      socket.send(message, 0, message.length, 5353, '224.0.0.251', finish)
+      socket.send(message, 0, message.length, 5353, '224.0.0.251', (error) => {
+        finish(classify(error))
+      })
     })
-    timeout = setTimeout(finish, 1000)
+    timeout = setTimeout(() => finish('unknown'), 1000)
     if (typeof timeout.unref === 'function') {
       timeout.unref()
     }
@@ -150,8 +173,9 @@ async function getPermissionState(id: DeveloperPermissionId): Promise<DeveloperP
     case 'full-disk-access':
       return { id, status: await getMacosFullDiskAccessStatus() }
     case 'automation':
-    case 'local-network':
       return { id, status: unsupportedOffMac() ?? 'unknown' }
+    case 'local-network':
+      return { id, status: unsupportedOffMac() ?? lastLocalNetworkProbeStatus ?? 'unknown' }
     case 'usb':
     case 'bluetooth':
       return { id, status: unsupportedOffMac() ?? 'ready' }
@@ -200,8 +224,9 @@ async function requestPermission(
   }
 
   if (id === 'local-network') {
-    await triggerLocalNetworkPrompt()
-    return { id, status: 'unknown', openedSystemSettings: false }
+    const status = await triggerLocalNetworkPrompt()
+    lastLocalNetworkProbeStatus = status
+    return { id, status, openedSystemSettings: false }
   }
 
   await openPrivacyPane(id)

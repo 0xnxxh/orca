@@ -5897,7 +5897,10 @@
           "statusRestricted": "Restricted",
           "statusUnsupported": "macOS only",
           "statusEntitled": "Entitled",
-          "statusCheckManually": "Check manually"
+          "statusCheckManually": "Check manually",
+          "deniedWithoutPrompt": "macOS denied access without showing a prompt",
+          "localNetworkDeniedDiagnostic": "macOS denied local network access without showing a prompt. On macOS betas the OS may also leave Orca out of System Settings → Privacy & Security → Local Network, so there is nothing to toggle.",
+          "localNetworkDeniedWorkaround": "Workaround: in Terminal run \"sudo killall nesessionmanager nehelper\", then unplug and replug your network connection so macOS re-evaluates access, and trigger the prompt again."
         },
         "ExperimentalPane": {
           "9762364929": "Uses APFS clone-copy on macOS when possible, otherwise symlinks configured folders or files into created worktrees.",

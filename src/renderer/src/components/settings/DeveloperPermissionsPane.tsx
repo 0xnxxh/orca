@@ -24,6 +24,7 @@ import {
   developerPermissionStatusClass,
   developerPermissionStatusLabel
 } from './developer-permission-status'
+import { LocalNetworkDeniedDiagnostic } from './LocalNetworkDeniedDiagnostic'
 export { getDeveloperPermissionsPaneSearchEntries } from './developer-permissions-search'
 
 type DeveloperPermissionsPaneProps = {
@@ -303,6 +304,15 @@ export function DeveloperPermissionsPane({
             'Opened macOS Privacy & Security'
           )
         )
+      } else if (result.status === 'denied') {
+        // Why: macOS can deny without ever showing a prompt (NECP silent deny,
+        // STA-3505) — reporting "request sent" here would look like success.
+        toast.error(
+          translate(
+            'auto.components.settings.DeveloperPermissionsPane.deniedWithoutPrompt',
+            'macOS denied access without showing a prompt'
+          )
+        )
       } else {
         toast.message(
           translate(
@@ -378,6 +388,9 @@ export function DeveloperPermissionsPane({
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">{permission.description}</p>
+                  {permission.id === 'local-network' && status === 'denied' ? (
+                    <LocalNetworkDeniedDiagnostic />
+                  ) : null}
                 </div>
               </div>
               <Button

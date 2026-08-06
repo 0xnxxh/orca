@@ -14,7 +14,8 @@ const {
 } = vi.hoisted(() => {
   const handleMock = vi.fn()
   const socketState = {
-    sendCallback: null as (() => void) | null
+    sendCallback: null as ((error?: Error | null) => void) | null,
+    errorListener: null as ((error: Error) => void) | null
   }
   const socketMock = {
     on: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock('../macos-full-disk-access-status', () => ({
   getMacosFullDiskAccessStatus: getMacosFullDiskAccessStatusMock
 }))
 
+import type { DeveloperPermissionState } from '../../shared/developer-permissions-types'
 import { registerDeveloperPermissionHandlers } from './developer-permissions'
 
 describe('registerDeveloperPermissionHandlers', () => {
@@ -91,7 +93,13 @@ describe('registerDeveloperPermissionHandlers', () => {
     })
     createSocketMock.mockClear()
     socketState.sendCallback = null
-    socketMock.on.mockClear()
+    socketState.errorListener = null
+    socketMock.on.mockReset()
+    socketMock.on.mockImplementation((event: string, listener: (error: Error) => void) => {
+      if (event === 'error') {
+        socketState.errorListener = listener
+      }
+    })
     socketMock.removeListener.mockClear()
     socketMock.bind.mockReset()
     socketMock.bind.mockImplementation((callback: () => void) => callback())
@@ -103,7 +111,7 @@ describe('registerDeveloperPermissionHandlers', () => {
         _length: number,
         _port: number,
         _address: string,
-        callback: () => void
+        callback: (error?: Error | null) => void
       ) => {
         socketState.sendCallback = callback
       }
@@ -125,6 +133,24 @@ describe('registerDeveloperPermissionHandlers', () => {
       throw new Error('developerPermissions:request handler not registered')
     }
     return call[1] as (_event: unknown, args: { id: string }) => Promise<unknown>
+  }
+
+  function getStatusHandler(): () => Promise<DeveloperPermissionState[]> {
+    const call = handleMock.mock.calls.find(
+      (c: unknown[]) => c[0] === 'developerPermissions:getStatus'
+    )
+    if (!call) {
+      throw new Error('developerPermissions:getStatus handler not registered')
+    }
+    return call[1] as () => Promise<DeveloperPermissionState[]>
+  }
+
+  function necpDenialError(): Error {
+    // The macOS NECP silent-deny signature (STA-3505): multicast send to
+    // 224.0.0.251 fails with EHOSTUNREACH and no authorization prompt appears.
+    return Object.assign(new Error('send EHOSTUNREACH 224.0.0.251:5353'), {
+      code: 'EHOSTUNREACH'
+    })
   }
 
   it('returns the Full Disk Access read-probe status', async () => {
@@ -153,12 +179,66 @@ describe('registerDeveloperPermissionHandlers', () => {
 
     await expect(result).resolves.toEqual({
       id: 'local-network',
-      status: 'unknown',
+      status: 'granted',
       openedSystemSettings: false
     })
     expect(vi.getTimerCount()).toBe(0)
     expect(socketMock.removeListener).toHaveBeenCalledWith('error', expect.any(Function))
     expect(socketMock.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports denied when the local-network probe send fails with the NECP silent-deny signature', async () => {
+    registerDeveloperPermissionHandlers()
+
+    const result = getRequestHandler()({}, { id: 'local-network' })
+    socketState.sendCallback?.(necpDenialError())
+
+    await expect(result).resolves.toEqual({
+      id: 'local-network',
+      status: 'denied',
+      openedSystemSettings: false
+    })
+  })
+
+  it('reports denied when the local-network probe socket errors with the NECP silent-deny signature', async () => {
+    registerDeveloperPermissionHandlers()
+
+    const result = getRequestHandler()({}, { id: 'local-network' })
+    socketState.errorListener?.(necpDenialError())
+
+    await expect(result).resolves.toEqual({
+      id: 'local-network',
+      status: 'denied',
+      openedSystemSettings: false
+    })
+  })
+
+  it('remembers the probe verdict for later local-network status reads', async () => {
+    registerDeveloperPermissionHandlers()
+
+    const request = getRequestHandler()({}, { id: 'local-network' })
+    socketState.sendCallback?.(necpDenialError())
+    await request
+
+    await expect(getStatusHandler()()).resolves.toContainEqual({
+      id: 'local-network',
+      status: 'denied'
+    })
+  })
+
+  it('keeps the local-network status unknown when the probe fails without the denial signature', async () => {
+    registerDeveloperPermissionHandlers()
+
+    const result = getRequestHandler()({}, { id: 'local-network' })
+    socketState.sendCallback?.(
+      Object.assign(new Error('send ENETUNREACH 224.0.0.251:5353'), { code: 'ENETUNREACH' })
+    )
+
+    await expect(result).resolves.toEqual({
+      id: 'local-network',
+      status: 'unknown',
+      openedSystemSettings: false
+    })
   })
 
   it('settles the automation prompt when osascript hangs', async () => {
