@@ -69,6 +69,7 @@ import {
   safeFitAndThen,
   type SafeFitContinuationHandle
 } from '@/lib/pane-manager/pane-tree-ops'
+import { canMeasurePaneForFit } from '@/lib/pane-manager/pane-fit'
 import { requestStablePaneFit } from '@/lib/pane-manager/pane-fit-resize-observer'
 import {
   bindPanePtyId,
@@ -1082,6 +1083,9 @@ export function connectPanePty(
   let cancelHiddenOutputSnapshotScrollRestore = (): void => {}
   let pendingHiddenSnapshotFit: SafeFitContinuationHandle | null = null
   let pendingReattachFit: SafeFitContinuationHandle | null = null
+  // Why its own handle: the reattach fit can run outside the replay coordinator, so
+  // sharing pendingReattachFit would orphan whichever one assigned first.
+  let pendingReplayDestinationFit: SafeFitContinuationHandle | null = null
   let cancelFreshSpawnFollowReset = (): void => {}
   let cleanupHiddenOutputRestoreDeferredRetry = (): void => {}
   let cleanupHiddenOutputRestoreForegroundDeadline = (): void => {}
@@ -5685,23 +5689,6 @@ export function connectPanePty(
           payload.snapshotCols,
           payload.snapshotRows
         )
-        if (
-          snapshotDimensions &&
-          // Why: a body-less frame (mid-escape tail only) has no rows to rewrap, so the
-          // source-grid trip would just reflow twice at a grid nothing renders at.
-          data.length > 0 &&
-          (pane.terminal.cols !== snapshotDimensions.cols ||
-            pane.terminal.rows !== snapshotDimensions.rows)
-        ) {
-          // Why: remote snapshots carry cursor/wrap state from the host grid; parse there, then fit back after the replay transaction.
-          noteSnapshotGridReplay()
-          suppressStructuralReplayPtyResize = true
-          try {
-            pane.terminal.resize(snapshotDimensions.cols, snapshotDimensions.rows)
-          } finally {
-            suppressStructuralReplayPtyResize = false
-          }
-        }
         // Relay replay buffers may overlap with content already rendered in
         // xterm. Local eager replay decides this earlier so metadata-only frames
         // can keep restored scrollback while still using the replay guard.
@@ -5709,6 +5696,26 @@ export function connectPanePty(
           await writeReplayDataAsync('\x1b[2J\x1b[3J\x1b[H')
           if (!isCurrentPayload()) {
             continue
+          }
+        }
+        // Why below the clear: 2J/3J/H are grid-independent, so resizing first would
+        // reflow the whole scrollback the very next write discards.
+        if (
+          snapshotDimensions &&
+          // Why: a body-less frame (mid-escape tail only) has no rows to rewrap.
+          data.length > 0 &&
+          (pane.terminal.cols !== snapshotDimensions.cols ||
+            pane.terminal.rows !== snapshotDimensions.rows)
+        ) {
+          // Why: parse at the grid the sender reported, then fit back after the replay
+          // transaction. That grid is the serializer's wrap width — or, when no
+          // serializer answered, just the sender's PTY size.
+          noteSnapshotGridReplay()
+          suppressStructuralReplayPtyResize = true
+          try {
+            pane.terminal.resize(snapshotDimensions.cols, snapshotDimensions.rows)
+          } finally {
+            suppressStructuralReplayPtyResize = false
           }
         }
         if (clearBeforeReplay || data.length > 0) {
@@ -5786,6 +5793,13 @@ export function connectPanePty(
                 if (!replayUsedSnapshotGrid) {
                   return
                 }
+                // Why: a display:none pane can never propose a grid, so arming the retry
+                // would burn its whole budget holding live output for a fit that cannot
+                // land. Leaving xterm on the source grid matches what the live bytes are
+                // wrapped for; fitRevealedPane repairs the divergence on reveal.
+                if (!canMeasurePaneForFit(pane)) {
+                  return
+                }
                 const isCurrentReplay = (): boolean =>
                   !disposed &&
                   transport.getPtyId() === scheduledPtyId &&
@@ -5799,12 +5813,14 @@ export function connectPanePty(
                     }
                     const destinationCols = pane.terminal.cols
                     const destinationRows = pane.terminal.rows
-                    // Why: the fit itself must always run — xterm is parked at the host
-                    // grid — but reporting it while mobile owns the PTY would drag the
-                    // parked phone grid back to desktop dims (see forwardPtyResize).
+                    // Why guarded but still fitted: xterm must leave the source grid, yet
+                    // a background measure-lease pane is fully sized (so the fit lands)
+                    // while not visible, and even a non-claiming resize is remembered and
+                    // replayed as a claim on the next subscribe.
                     if (
                       destinationCols > 0 &&
                       destinationRows > 0 &&
+                      isRendererPtyResizeAuthoritative() &&
                       !shouldSuppressDesktopPtyResize()
                     ) {
                       transport.resize(destinationCols, destinationRows)
@@ -5812,12 +5828,12 @@ export function connectPanePty(
                   },
                   { shouldContinue: isCurrentReplay, retryIfUnmeasurable: true }
                 )
-                pendingReattachFit = fit
+                pendingReplayDestinationFit = fit
                 try {
                   await fit.completion
                 } finally {
-                  if (pendingReattachFit === fit) {
-                    pendingReattachFit = null
+                  if (pendingReplayDestinationFit === fit) {
+                    pendingReplayDestinationFit = null
                   }
                 }
               }
@@ -5867,6 +5883,8 @@ export function connectPanePty(
       pendingHiddenSnapshotFit = null
       pendingReattachFit?.cancel()
       pendingReattachFit = null
+      pendingReplayDestinationFit?.cancel()
+      pendingReplayDestinationFit = null
       const generation = (transportStreamGeneration += 1)
       const isCurrent = (): boolean => !disposed && generation === transportStreamGeneration
       return {
@@ -9395,6 +9413,7 @@ export function connectPanePty(
       cancelPendingSafeFitContinuations(pane)
       pendingHiddenSnapshotFit = null
       pendingReattachFit = null
+      pendingReplayDestinationFit = null
       // Why: park/reconnect/remount doesn't advance the recovery epoch, so invalidate this xterm or its delayed retry could hit the next instance.
       terminalRecoveryInstance.unregister()
       unregisterUndeliverableWriteHandler()

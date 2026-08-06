@@ -747,13 +747,19 @@ function enableActiveRuntimeEnvironment(environmentId = 'env-1'): void {
 }
 
 // Connects a remote pane whose viewport (120x40) differs from the host snapshot grid,
-// exposing the onReplayData callback plus the grid each replay write parsed at.
-async function connectRemoteSnapshotGridPane(ptyId: string) {
+// exposing the replay/live callbacks plus the grid each write parsed at. `unmeasurable`
+// models a display:none pane, whose FitAddon cannot propose a grid.
+async function connectRemoteSnapshotGridPane(
+  ptyId: string,
+  options: { visible?: boolean; unmeasurable?: boolean } = {}
+) {
   const { connectPanePty } = await import('./pty-connection')
   enableActiveRuntimeEnvironment()
   const pane = createPane(1)
   const colsAtWrite = new Map<string, number>()
+  const writes: string[] = []
   pane.terminal.write = vi.fn((data: string, callback?: () => void) => {
+    writes.push(data)
     colsAtWrite.set(data, pane.terminal.cols)
     callback?.()
   }) as typeof pane.terminal.write
@@ -767,23 +773,26 @@ async function connectRemoteSnapshotGridPane(ptyId: string) {
       pane.terminal.cols = 120
       pane.terminal.rows = 40
     }),
-    proposeDimensions: vi.fn(() => ({ cols: 120, rows: 40 }))
+    proposeDimensions: vi.fn(() => (options.unmeasurable ? undefined : { cols: 120, rows: 40 }))
   } as never
   const transport = createMockTransport(ptyId)
   const replayCallback: { current: ConnectCallbacks['onReplayData'] | null } = { current: null }
+  const liveCallback: { current: ConnectCallbacks['onData'] | null } = { current: null }
   transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
     replayCallback.current = callbacks.onReplayData ?? null
+    liveCallback.current = callbacks.onData ?? null
     return { id: ptyId, replay: '' }
   })
   transportFactoryQueue.push(transport)
 
-  connectPanePty(pane as never, createManager(1, 1) as never, createDeps() as never)
+  const deps = createDeps({ isVisibleRef: { current: options.visible !== false } })
+  connectPanePty(pane as never, createManager(1, 1) as never, deps as never)
   await flushAsyncTicks(20)
   transport.resize.mockClear()
   pane.terminal.resize.mockClear()
   vi.mocked(pane.fitAddon.fit).mockClear()
   expect(replayCallback.current).toBeTypeOf('function')
-  return { pane, transport, replayCallback, colsAtWrite }
+  return { pane, transport, replayCallback, liveCallback, colsAtWrite, writes }
 }
 
 function createKeyboardEventTarget() {
@@ -9060,6 +9069,8 @@ describe('connectPanePty', () => {
     expect(pane.fitAddon.fit).toHaveBeenCalled()
     expect(pane.terminal.cols).toBe(120)
     expect(transport.resize).toHaveBeenCalledWith(120, 40)
+    // The clear discards the buffer, so it must land before the reflow, not after.
+    expect(colsAtWrite.get('\x1b[2J\x1b[3J\x1b[H')).toBe(120)
   })
 
   it('refits but does not report the destination grid while mobile owns the replayed PTY', async () => {
@@ -9079,6 +9090,47 @@ describe('connectPanePty', () => {
     // xterm still leaves the host grid; only the SIGWINCH-bearing report is withheld.
     expect(colsAtWrite.get('remote snapshot bytes')).toBe(80)
     expect(pane.fitAddon.fit).toHaveBeenCalled()
+    expect(pane.terminal.cols).toBe(120)
+    expect(transport.resize.mock.calls).toEqual([])
+  })
+
+  it('refits but does not report the destination grid from a background measure-lease pane', async () => {
+    const { pane, transport, replayCallback } = await connectRemoteSnapshotGridPane(
+      'remote:web-env-1@@pty-replay-grid-hidden',
+      { visible: false }
+    )
+
+    replayCallback.current?.('remote snapshot bytes', { snapshotCols: 80, snapshotRows: 24 })
+    await flushAsyncTicks(20)
+
+    // A measure-lease pane is fully sized, so the fit lands — but a resize from a
+    // non-visible pane would SIGWINCH the host TUI and persist as the next claim.
+    expect(pane.fitAddon.fit).toHaveBeenCalled()
+    expect(pane.terminal.cols).toBe(120)
+    expect(transport.resize).not.toHaveBeenCalled()
+  })
+
+  it('arms no fit retry after replaying into an unmeasurable pane', async () => {
+    const { pane, transport, replayCallback } = await connectRemoteSnapshotGridPane(
+      'remote:web-env-1@@pty-replay-grid-unmeasurable'
+    )
+    const { safeFit } = await import('@/lib/pane-manager/pane-tree-ops')
+    // The tab goes display:none after connecting, so FitAddon can no longer propose.
+    pane.fitAddon.proposeDimensions = vi.fn(() => undefined) as never
+    transport.resize.mockClear()
+
+    replayCallback.current?.('remote snapshot bytes', { snapshotCols: 80, snapshotRows: 24 })
+    await flushAsyncTicks(20)
+    // Left on the source grid, matching the bytes just written.
+    expect(pane.terminal.cols).toBe(80)
+
+    // Reveal: the pane becomes measurable and fits. A parked replay continuation
+    // would fire here — and the retry carrying it would have spent its whole budget
+    // holding the live-data deferral first, so the replay must not have armed one.
+    pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 120, rows: 40 })) as never
+    safeFit(pane as never)
+    await flushAsyncTicks(12)
+
     expect(pane.terminal.cols).toBe(120)
     expect(transport.resize).not.toHaveBeenCalled()
   })
