@@ -6627,11 +6627,26 @@ export class Store {
       ptyId: string
       incarnationId?: string
       startupCwd?: string
+      expectedBinding?: { ptyId: string; incarnationId?: string }
     },
     hostId?: string | null
-  ): void {
+  ): boolean {
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
+    const paneKey = `${args.tabId}:${args.leafId}`
+    if (args.expectedBinding) {
+      const tab = session.tabsByWorktree?.[args.worktreeId]?.find(
+        (candidate) => candidate.id === args.tabId && candidate.worktreeId === args.worktreeId
+      )
+      const boundPtyId = session.terminalLayoutsByTabId?.[args.tabId]?.ptyIdsByLeafId?.[args.leafId]
+      if (
+        !tab ||
+        boundPtyId !== args.expectedBinding.ptyId ||
+        session.terminalPtyIncarnationsByPaneKey?.[paneKey] !== args.expectedBinding.incarnationId
+      ) {
+        return false
+      }
+    }
     if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
       this.state.workspaceSessionsByHostId = {
         ...this.state.workspaceSessionsByHostId,
@@ -6639,15 +6654,17 @@ export class Store {
       }
     }
     const sessionBeforeBinding = cloneWorkspaceSessionState(session)
-    const paneKey = `${args.tabId}:${args.leafId}`
+    const reconciledIncarnation =
+      args.expectedBinding !== undefined &&
+      args.incarnationId !== args.expectedBinding.incarnationId
     let terminalMembershipChanged = false
-    const advanceTopologyAfterMembershipChange = (): void => {
+    const advanceTopologyFence = (): void => {
       const repoId = getRepoIdFromWorktreeId(args.worktreeId)
       const currentRevision = session.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
-      if (!terminalMembershipChanged || currentRevision <= 0) {
+      if (!reconciledIncarnation && (!terminalMembershipChanged || currentRevision <= 0)) {
         return
       }
-      // Why: a real host-admitted spawn after a retirement must be distinguishable from a stale renderer replay.
+      // Why: host-admitted membership or incarnation changes must outrank a stale renderer replay.
       session.terminalTopologyRevisionByRepoId = {
         ...session.terminalTopologyRevisionByRepoId,
         [repoId]: currentRevision + 1
@@ -6702,14 +6719,14 @@ export class Store {
     }
     if (!isTerminalLeafId(args.leafId)) {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
-      advanceTopologyAfterMembershipChange()
+      advanceTopologyFence()
       try {
         this.flushOrThrow()
       } catch (err) {
         restoreSession()
         throw err
       }
-      return
+      return true
     }
     const layout = session.terminalLayoutsByTabId?.[args.tabId]
     if (layout) {
@@ -6750,13 +6767,14 @@ export class Store {
         }
       }
     }
-    advanceTopologyAfterMembershipChange()
+    advanceTopologyFence()
     try {
       this.flushOrThrow()
     } catch (err) {
       restoreSession()
       throw err
     }
+    return true
   }
 
   // ── SSH Targets ────────────────────────────────────────────────────

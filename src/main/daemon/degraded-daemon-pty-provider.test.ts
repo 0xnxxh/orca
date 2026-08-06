@@ -4,6 +4,7 @@ import { DEGRADED_DAEMON_RECOVERY_RETRY_MS } from './degraded-daemon-fresh-spawn
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import type { PtyProcessInspection } from '../providers/pty-process-inspection'
+import { TerminalSessionOwnerUnverifiedError } from './daemon-errors'
 
 type ProviderMock = IPtyProvider & {
   probePtyLiveness: (id: string) => Promise<boolean | null>
@@ -158,39 +159,45 @@ it('forwards dead-endpoint write-unavailable signals from the daemon adapters', 
   expect(recovered).toEqual(['daemon-pane', 'legacy-pane'])
 })
 
-// STA-3536: a wedged legacy daemon must not make every unmapped probe unprovable
-// once its inventory is captured — but the degraded current daemon stays probed,
-// because it can still own sessions the map missed.
-it('skips inventoried legacy daemons but keeps probing the current daemon', async () => {
+it('routes attach-only to a legacy session created after startup inventory', async () => {
   const current = createDaemonAdapter('daemon')
-  const legacy = createDaemonAdapter('legacy', ['legacy-session'])
+  const legacySessions = ['legacy-at-startup']
+  const legacy = createDaemonAdapter('legacy', legacySessions)
+  const fallback = createProvider('fallback')
   const provider = new DegradedDaemonPtyProvider({
     current,
     legacy: [legacy],
-    fallback: createProvider('fallback')
+    fallback
   })
   await provider.discoverDaemonSessions()
-  vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
+  legacySessions.push('legacy-created-later')
 
-  await expect(provider.probePtyLiveness('unknown-session')).resolves.toBe(false)
-  expect(legacy.probePtyLiveness).not.toHaveBeenCalled()
-  expect(current.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+  await provider.spawn({
+    sessionId: 'legacy-created-later',
+    attachOnly: true,
+    cols: 80,
+    rows: 24
+  })
+
+  expect(legacy.spawn).toHaveBeenCalledOnce()
+  expect(current.spawn).not.toHaveBeenCalled()
+  expect(fallback.spawn).not.toHaveBeenCalled()
 })
 
-it('keeps consulting a legacy daemon whose inventory listing failed', async () => {
+it('keeps an attach unresolved when a legacy inventory listing fails', async () => {
   const current = createDaemonAdapter('daemon')
-  const legacy = createDaemonAdapter('legacy', ['legacy-session'])
+  const legacy = createDaemonAdapter('legacy')
   vi.mocked(legacy.listProcesses).mockRejectedValue(new Error('wedged'))
-  vi.mocked(legacy.probePtyLiveness).mockResolvedValue(null)
   const provider = new DegradedDaemonPtyProvider({
     current,
     legacy: [legacy],
     fallback: createProvider('fallback')
   })
-  await provider.discoverDaemonSessions()
 
-  await expect(provider.probePtyLiveness('unknown-session')).resolves.toBeNull()
-  expect(legacy.probePtyLiveness).toHaveBeenCalledExactlyOnceWith('unknown-session')
+  await expect(
+    provider.spawn({ sessionId: 'unknown-session', attachOnly: true, cols: 80, rows: 24 })
+  ).rejects.toBeInstanceOf(TerminalSessionOwnerUnverifiedError)
+  expect(current.spawn).not.toHaveBeenCalled()
 })
 
 it('rejects completion inspection instead of borrowing the fallback provider', async () => {
@@ -403,7 +410,8 @@ describe('DegradedDaemonPtyProvider', () => {
   })
 
   it('probes daemon owners without borrowing fallback liveness', async () => {
-    const current = createDaemonAdapter('current')
+    const currentSessions: string[] = []
+    const current = createDaemonAdapter('current', currentSessions)
     const legacy = createDaemonAdapter('legacy')
     const fallback = createProvider('fallback', ['unknown-session'])
     const provider = new DegradedDaemonPtyProvider({ current, legacy: [legacy], fallback })
@@ -412,7 +420,7 @@ describe('DegradedDaemonPtyProvider', () => {
     await expect(provider.probePtyLiveness('unknown-session')).resolves.toBeNull()
     expect(fallback.probePtyLiveness).not.toHaveBeenCalled()
 
-    vi.mocked(current.probePtyLiveness).mockResolvedValue(true)
+    currentSessions.push('unknown-session')
     await expect(provider.probePtyLiveness('unknown-session')).resolves.toBe(true)
   })
 
@@ -564,6 +572,6 @@ describe('DegradedDaemonPtyProvider', () => {
     await expect(provider.listProcesses()).rejects.toThrow('legacy exited')
     expect(provider.getLegacyAdapters()).toEqual([legacy])
     expect(current.listProcesses).toHaveBeenCalledTimes(3)
-    expect(fallback.listProcesses).toHaveBeenCalledTimes(2)
+    expect(fallback.listProcesses).toHaveBeenCalledTimes(3)
   })
 })
