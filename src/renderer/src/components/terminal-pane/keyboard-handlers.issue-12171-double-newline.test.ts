@@ -87,6 +87,30 @@ const RECORDED_SHIFTED_JAMO_MARKED_KEYDOWNS = RECORDED_SESSION_KEYDOWNS.slice(2,
   ({ keyCode }) => keyCode === 229
 )
 
+// Source: .tmp/ime-handoff/evidence/windows-9803-final/ (cited by bundle; its `MANIFEST.sha256`
+// verifies 21/21 OK, rc=0)
+// file `9803-range-active-en.json`
+// SHA-256: ee09c07c0168a244547b6fb20cfcb61ec81c58d23855ab00440c1f29d7d8dce8
+// The ordinary counterpart of the session above: same probe, same host (174x56, 1684x962,
+// `scaleKind: real-os`), same injector (`code` is "" on every record), and the same trailing Space
+// and Enter the harness appends past the injected letters — en-US with no IME. Every keydown of the
+// session. TWO limits, stated because the ledger previously sourced this control to
+// `evidence/windows-current/`, which holds 12 captures and not one English one:
+// it is a DIFFERENT BUNDLE and a different run ~3.6 h later, not a same-run arm; and it is #9803's
+// `range-active` MUTANT arm, so ordinary English is byte-exact even with that saved-range mutation
+// live. The second is why it reads as a negative rather than as a baseline.
+const RECORDED_ORDINARY_EN_KEYDOWNS = [
+  event({ key: 'a', keyCode: 65 }),
+  event({ key: 'b', keyCode: 66 }),
+  event({ key: 'c', keyCode: 67 }),
+  event({ key: 'd', keyCode: 68 }),
+  event({ key: ' ', keyCode: 32 }),
+  event({ key: 'Enter', keyCode: 13 })
+]
+
+// Same capture, `result.onData[].hex`: `abcd` + Space + CR.
+const RECORDED_ORDINARY_EN_ONDATA_HEX = ['61', '62', '63', '64', '20', '0d']
+
 // Same capture, `result.onData[].hex`: what the renderer handed the PTY on the fixed build.
 const RECORDED_ONDATA_HEX = ['ec9e88', 'eb8ba4', '20', '0d']
 const WINDOWS_SHIFT_ENTER_NEWLINE = '\x1b\r'
@@ -146,5 +170,34 @@ describe('#12171 Windows Korean shifted jamo must not double the newline', () =>
     // The recorded bytes carry one CR — the Enter the user pressed — and no ESC CR anywhere.
     expect(RECORDED_ONDATA_HEX.filter((hex) => hex === CARRIAGE_RETURN_HEX)).toHaveLength(1)
     expect(RECORDED_ONDATA_HEX.join('')).not.toContain('1b0d')
+  })
+
+  it('leaves the ordinary English session on the same host routing normally', () => {
+    // Vacuity control: this arm really is the non-IME one, and the arm it pairs with really is not.
+    expect(
+      RECORDED_ORDINARY_EN_KEYDOWNS.filter(
+        ({ isComposing, keyCode }) => isComposing || keyCode === 229
+      )
+    ).toEqual([])
+    expect(
+      RECORDED_SESSION_KEYDOWNS.filter(({ isComposing, keyCode }) => isComposing || keyCode === 229)
+    ).toHaveLength(8)
+
+    const terminalInput = replayKeyDowns(RECORDED_ORDINARY_EN_KEYDOWNS)
+
+    expect(terminalInput).toEqual([])
+    // Every keydown reaches shortcut policy in order — the ownership guard claims none of them.
+    // Widening that guard to catch this row's doubling is what would drop a key from this list.
+    const routedKeys = shortcutPolicy.resolve.mock.calls.map(
+      (call: unknown[]) => (call[0] as RecordedKeyboardEvent).key
+    )
+    expect(routedKeys).toEqual(['a', 'b', 'c', 'd', ' ', 'Enter'])
+    // One Enter, one CR, no ESC CR — the same ending as the Korean arm, which is the comparison
+    // "double newline" is against.
+    expect(
+      RECORDED_ORDINARY_EN_ONDATA_HEX.filter((hex) => hex === CARRIAGE_RETURN_HEX)
+    ).toHaveLength(1)
+    expect(RECORDED_ORDINARY_EN_ONDATA_HEX.join('')).toBe('61626364200d')
+    expect(RECORDED_ORDINARY_EN_ONDATA_HEX.join('')).not.toContain('1b0d')
   })
 })
