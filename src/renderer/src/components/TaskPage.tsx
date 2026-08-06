@@ -320,6 +320,7 @@ import {
   clampLinearIssueListLimit
 } from '../../../shared/linear-issue-read-limits'
 import { shouldSuppressEnterSubmit } from '@/lib/new-workspace-enter-guard'
+import { useImeEnterGestureOwnership } from '@/lib/ime-composition-keyboard-event'
 import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import {
@@ -407,6 +408,53 @@ const GITHUB_TASK_ROW_SURFACE_CLASS =
   '[background:color-mix(in_srgb,var(--muted)_50%,var(--background))]'
 const GITHUB_TASK_ROW_HOVER_SURFACE_CLASS =
   'group-hover/github-task-row:[background:color-mix(in_srgb,var(--muted)_70%,var(--background))]'
+
+type TaskCreationTitleInputProps = {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: (value: string) => void
+  placeholder: string
+  disabled: boolean
+  variant?: 'default' | 'plain'
+  className?: string
+}
+
+export function TaskCreationTitleInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  disabled,
+  variant = 'default',
+  className
+}: TaskCreationTitleInputProps): React.JSX.Element {
+  const imeEnter = useImeEnterGestureOwnership()
+  const imeProps = {
+    onBlur: imeEnter.reset,
+    onCompositionStart: () => imeEnter.setComposing(true),
+    onCompositionEnd: () => imeEnter.setComposing(false),
+    onKeyUp: imeEnter.onKeyUp,
+    onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (imeEnter.ownsKeyDown(event)) {
+        return
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        onSubmit(event.currentTarget.value)
+      }
+    }
+  }
+  const props = {
+    autoFocus: true,
+    value,
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
+    placeholder,
+    disabled,
+    className,
+    ...imeProps
+  }
+  return variant === 'plain' ? <input {...props} /> : <Input {...props} />
+}
 
 function getGitHubWorkItemWorkspaceSeed(item: GitHubWorkItem): string {
   return getLinkedWorkItemWorkspaceName(item)?.seedName ?? getLinkedWorkItemSuggestedName(item)
@@ -2124,6 +2172,7 @@ function PRReviewCell({
   const reviewerInputRef = useRef<HTMLInputElement | null>(null)
   const reviewerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const reviewerInputFocusFrameRef = useRef<number | null>(null)
+  const reviewerImeEnter = useImeEnterGestureOwnership()
 
   const cancelReviewerInputFocusFrame = useCallback((): void => {
     if (reviewerInputFocusFrameRef.current === null) {
@@ -2559,12 +2608,19 @@ function PRReviewCell({
             ref={setReviewerInputNode}
             value={reviewerInput}
             onChange={(event) => setReviewerInput(event.target.value)}
+            onCompositionStart={() => reviewerImeEnter.setComposing(true)}
+            onCompositionEnd={() => reviewerImeEnter.setComposing(false)}
+            onKeyUp={reviewerImeEnter.onKeyUp}
+            onBlur={reviewerImeEnter.reset}
             placeholder={translate('auto.components.TaskPage.0b9b04f4b5', 'Type or choose a user')}
             disabled={!repo || submitting}
             className="h-8 rounded-md bg-background px-2 text-[13px]"
             aria-label={translate('auto.components.TaskPage.0b9b04f4b5', 'Type or choose a user')}
             aria-autocomplete="list"
             onKeyDown={(event) => {
+              if (reviewerImeEnter.ownsKeyDown(event)) {
+                return
+              }
               if (event.key === 'ArrowDown' && actionableReviewerRows.length > 0) {
                 event.preventDefault()
                 setActiveReviewerIndex((current) => (current + 1) % actionableReviewerRows.length)
@@ -6629,7 +6685,11 @@ export default function TaskPage(): React.JSX.Element {
         // React SyntheticEvent does not expose isComposing; use nativeEvent.
         if (
           shouldSuppressEnterSubmit(
-            { isComposing: event.nativeEvent.isComposing, shiftKey: event.shiftKey },
+            {
+              isComposing: event.nativeEvent.isComposing,
+              keyCode: event.keyCode,
+              shiftKey: event.shiftKey
+            },
             false
           )
         ) {
@@ -8781,6 +8841,7 @@ export default function TaskPage(): React.JSX.Element {
                                   shouldSuppressEnterSubmit(
                                     {
                                       isComposing: e.nativeEvent.isComposing,
+                                      keyCode: e.keyCode,
                                       shiftKey: e.shiftKey
                                     },
                                     false
@@ -8965,7 +9026,11 @@ export default function TaskPage(): React.JSX.Element {
                             if (e.key === 'Enter') {
                               if (
                                 shouldSuppressEnterSubmit(
-                                  { isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey },
+                                  {
+                                    isComposing: e.nativeEvent.isComposing,
+                                    keyCode: e.keyCode,
+                                    shiftKey: e.shiftKey
+                                  },
                                   false
                                 )
                               ) {
@@ -11186,16 +11251,10 @@ export default function TaskPage(): React.JSX.Element {
               <label className="text-[11px] font-medium text-muted-foreground">
                 {translate('auto.components.TaskPage.16cba35bee', 'Title')}
               </label>
-              <Input
-                autoFocus
+              <TaskCreationTitleInput
                 value={newIssueTitle}
-                onChange={(e) => setNewIssueTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                    e.preventDefault()
-                    void handleCreateNewIssue()
-                  }
-                }}
+                onChange={setNewIssueTitle}
+                onSubmit={() => void handleCreateNewIssue()}
                 placeholder={translate('auto.components.TaskPage.578f730c16', 'Short summary')}
                 disabled={newIssueSubmitting}
               />
@@ -11360,18 +11419,13 @@ export default function TaskPage(): React.JSX.Element {
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5 scrollbar-sleek">
-            <input
-              autoFocus
+            <TaskCreationTitleInput
               value={newLinearProjectName}
-              onChange={(event) => setNewLinearProjectName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                  event.preventDefault()
-                  void handleCreateNewLinearProject()
-                }
-              }}
+              onChange={setNewLinearProjectName}
+              onSubmit={() => void handleCreateNewLinearProject()}
               placeholder={translate('auto.components.TaskPage.ecbcc83140', 'Project name')}
               disabled={newLinearProjectSubmitting}
+              variant="plain"
               className="w-full border-none bg-transparent p-0 text-xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/45 focus:outline-none focus:ring-0 focus-visible:ring-0"
             />
 
@@ -11807,18 +11861,13 @@ export default function TaskPage(): React.JSX.Element {
           {/* Form Content */}
           <div className="flex flex-col px-6 py-4 gap-3">
             {/* Title */}
-            <input
-              autoFocus
+            <TaskCreationTitleInput
               value={newLinearIssueTitle}
-              onChange={(e) => setNewLinearIssueTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void handleCreateNewLinearIssue()
-                }
-              }}
+              onChange={setNewLinearIssueTitle}
+              onSubmit={() => void handleCreateNewLinearIssue()}
               placeholder={translate('auto.components.TaskPage.d9151fd4e9', 'Issue title')}
               disabled={newLinearIssueSubmitting}
+              variant="plain"
               className="text-lg font-semibold bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 p-0 placeholder:text-muted-foreground/40 text-foreground w-full"
             />
 
@@ -12407,16 +12456,10 @@ export default function TaskPage(): React.JSX.Element {
               <label className="text-[11px] font-medium text-muted-foreground">
                 {translate('auto.components.TaskPage.16cba35bee', 'Title')}
               </label>
-              <Input
-                autoFocus
+              <TaskCreationTitleInput
                 value={newJiraIssueTitle}
-                onChange={(e) => setNewJiraIssueTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                    e.preventDefault()
-                    void handleCreateNewJiraIssue()
-                  }
-                }}
+                onChange={setNewJiraIssueTitle}
+                onSubmit={() => void handleCreateNewJiraIssue()}
                 placeholder={translate('auto.components.TaskPage.578f730c16', 'Short summary')}
                 disabled={newJiraIssueSubmitting}
               />
