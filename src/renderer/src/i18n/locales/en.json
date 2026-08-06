@@ -14929,6 +14929,47 @@
     }
   },
   "dashboardPopout": {
+    "view": {
+      "label": "Dashboard view",
+      "board": "Dashboard",
+      "map": "Agent Map"
+    },
+    "map": {
+      "host": {
+        "all": "All hosts",
+        "local": "Local",
+        "ssh": "SSH",
+        "wsl": "WSL",
+        "remote": "Remote"
+      },
+      "filters": {
+        "showStates": "Agent states",
+        "canvasSummary": "{{shown}} of {{total}} agents shown",
+        "agentlessWorkspaces": "Workspaces without agents",
+        "workspaceVisibility": "Map content"
+      },
+      "liveContainmentMap": "Live containment map",
+      "hostFilter": "Host filter",
+      "empty": "No agents match the current filters.",
+      "canvasLabel": "Nested project, workspace, and agent map",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "fit": "Fit",
+      "openWorktree": "Open {{worktree}} worktree details",
+      "openFolderWorkspace": "Open {{workspace}} folder workspace details",
+      "worktreeSummary": "{{total}} agents · {{active}} active · {{done}} done",
+      "worktreeSummary_one": "{{total}} agent · {{active}} active · {{done}} done",
+      "worktreeSummary_other": "{{total}} agents · {{active}} active · {{done}} done",
+      "runningAgents": "Agents",
+      "spawnAgent": "Start a new agent",
+      "noLaunchableAgents": "No enabled agents detected.",
+      "sleepWorkspace": "Sleep",
+      "projectCount": "{{agents}} agents · {{workspaces}} workspaces",
+      "agentCount": "{{count}} agents",
+      "agentCount_one": "{{count}} agent",
+      "agentCount_other": "{{count}} agents",
+      "noWorkspaceAgents": "No agents in this workspace."
+    },
     "placeholder": {
       "title": "Agent dashboard",
       "description": "This is where all your agents will show up at a glance. The board is coming soon."
