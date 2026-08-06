@@ -196,7 +196,6 @@ import {
 } from '../shared/mobile-pairing-custom-address'
 import { normalizeOpenInApplications } from '../shared/open-in-applications'
 import { normalizeTerminalShortcutPolicy } from '../shared/keybindings'
-import { normalizeSourceControlGroupOrder } from '../shared/source-control-group-order'
 import { normalizeAppIconId } from '../shared/app-icon'
 import { normalizeTerminalCustomThemes } from '../shared/terminal-custom-themes'
 import {
@@ -695,12 +694,22 @@ function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminal
     : {}
 }
 
-function stripLegacyTerminalScrollbackBytes(
+function stripRetiredSettingsFields(
   settings: Partial<GlobalSettings> | undefined
 ): Partial<GlobalSettings> {
-  const { terminalScrollbackBytes: _legacyScrollbackBytes, ...rest } = (settings ??
-    {}) as Partial<GlobalSettings> & { terminalScrollbackBytes?: unknown }
+  const {
+    terminalScrollbackBytes: _legacyScrollbackBytes,
+    sourceControlGroupOrder: _sourceControlGroupOrder,
+    sourceControlHierarchyDefaultedV2: _sourceControlHierarchyDefaultedV2,
+    ...rest
+  } = (settings ?? {}) as Partial<GlobalSettings> & {
+    terminalScrollbackBytes?: unknown
+    sourceControlGroupOrder?: unknown
+    sourceControlHierarchyDefaultedV2?: unknown
+  }
   void _legacyScrollbackBytes
+  void _sourceControlGroupOrder
+  void _sourceControlHierarchyDefaultedV2
   return rest
 }
 
@@ -3100,6 +3109,7 @@ export class Store {
   private quitFlushPromise: Promise<void> | null = null
   // Content hash at last write, to skip no-op writes; derived from the payload with encrypted blobs normalized back to plaintext (see buildStateToSave), since encrypt() uses a random IV per call.
   private lastWrittenStateHash: string | null = null
+  private lastDurableWriteGeneration = -1
   private firstPendingSaveAt: number | null = null
   private githubCacheDirty = false
   private githubCacheGeneration = 0
@@ -3680,15 +3690,6 @@ export class Store {
         ) {
           this.loadNeedsSave = true
         }
-        const normalizedSourceControlGroupOrder = normalizeSourceControlGroupOrder(
-          parsed.settings?.sourceControlGroupOrder
-        )
-        if (
-          parsed.settings?.sourceControlGroupOrder !== undefined &&
-          parsed.settings.sourceControlGroupOrder !== normalizedSourceControlGroupOrder
-        ) {
-          this.loadNeedsSave = true
-        }
         result = {
           ...defaults,
           ...parsed,
@@ -3712,7 +3713,7 @@ export class Store {
           settings: {
             ...defaults.settings,
             // Why (#7977): keep persisted experimentalNewWorktreeCardStyle:true — v1.4.130's onboarding auto-wrote it as a plain boolean, so it's indistinguishable from a real opt-in; only the default changed.
-            ...stripLegacyTerminalScrollbackBytes(parsed.settings),
+            ...stripRetiredSettingsFields(parsed.settings),
             prBotAuthorOverrides: normalizePRBotAuthorOverrides(
               parsed.settings?.prBotAuthorOverrides
             ),
@@ -3786,7 +3787,6 @@ export class Store {
             }),
             notifications: normalizeNotificationSettings(parsed.settings?.notifications),
             sourceControlAi: migratedSourceControlAi,
-            sourceControlGroupOrder: normalizedSourceControlGroupOrder,
             // Why: rollback builds still read commitMessageAi, so refresh the legacy projection from sourceControlAi for compat.
             commitMessageAi: projectSourceControlAiToLegacyCommitMessageAi(
               migratedSourceControlAi,
@@ -4308,6 +4308,7 @@ export class Store {
     const { payload, stateHash } = this.buildStateToSave()
     // Why: don't rewrite a byte-identical multi-MB file when state nets out to already-persisted.
     if (stateHash === this.lastWrittenStateHash) {
+      this.lastDurableWriteGeneration = Math.max(this.lastDurableWriteGeneration, gen)
       return
     }
     const dataFile = this.dataFile
@@ -4343,9 +4344,14 @@ export class Store {
           this.inFlightAsyncTmpFile = null
         }
       }
-      // Why re-check gen: a sync flush during the rename await may have written fresher state; don't record a stale hash over it.
+      // Why re-check gen: a mutation or sync flush during rename makes the installed hash ambiguous; invalidate the no-op guard.
       if (renamed && this.writeGeneration === gen) {
         this.lastWrittenStateHash = stateHash
+      } else if (renamed) {
+        this.lastWrittenStateHash = null
+      }
+      if (renamed) {
+        this.lastDurableWriteGeneration = Math.max(this.lastDurableWriteGeneration, gen)
       }
     } finally {
       if (!renamed) {
@@ -4387,6 +4393,10 @@ export class Store {
       writeFileDurableSync(tmpFile, dataFile, payload)
       renamed = true
       this.lastWrittenStateHash = stateHash
+      this.lastDurableWriteGeneration = Math.max(
+        this.lastDurableWriteGeneration,
+        this.writeGeneration
+      )
     } finally {
       if (!renamed) {
         try {
@@ -4564,11 +4574,16 @@ export class Store {
     if (!project) {
       return null
     }
+    // Why: the same repo id can exist on multiple execution hosts, so match this setup's own host
+    // row and never fall back to a sibling host's row — a stale repoId/hostId would delete that host's
+    // registration. With no exact match the setup is stale, and the path below drops just the setup.
     const repo = setup.repoId
-      ? this.state.repos.find((entry) => entry.id === setup.repoId)
+      ? this.state.repos.find(
+          (entry) => entry.id === setup.repoId && getRepoExecutionHostId(entry) === setup.hostId
+        )
       : undefined
     if (repo) {
-      this.removeProject(repo.id)
+      this.removeProjectForHost(repo.id, setup.hostId)
       return { project, setup, repo: this.hydrateRepo(repo) }
     }
     this.state.projectHostSetups = this.state.projectHostSetups.filter(
@@ -7052,7 +7067,7 @@ export class Store {
     updates: Partial<GlobalSettings>,
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
-    const sanitizedUpdates = stripLegacyTerminalScrollbackBytes(updates)
+    const sanitizedUpdates = stripRetiredSettingsFields(updates)
     // Why: coerce to boolean here (not the IPC edge) so every write path is covered and a truthy non-bool can't persist as "tray-minimize on".
     if ('minimizeToTrayOnClose' in updates) {
       sanitizedUpdates.minimizeToTrayOnClose = updates.minimizeToTrayOnClose === true
@@ -7118,11 +7133,6 @@ export class Store {
     if ('terminalShortcutPolicy' in updates) {
       sanitizedUpdates.terminalShortcutPolicy = normalizeTerminalShortcutPolicy(
         updates.terminalShortcutPolicy
-      )
-    }
-    if ('sourceControlGroupOrder' in updates) {
-      sanitizedUpdates.sourceControlGroupOrder = normalizeSourceControlGroupOrder(
-        updates.sourceControlGroupOrder
       )
     }
     if ('appIcon' in updates) {
@@ -8011,9 +8021,10 @@ export class Store {
       ptyId: string
       incarnationId?: string
       startupCwd?: string
+      expectedBinding?: { ptyId: string; incarnationId?: string }
     },
     hostId?: string | null
-  ): void {
+  ): boolean {
     const scope = parseWorkspaceKey(args.worktreeId)
     const rawOwnerKey = scope?.type === 'worktree' ? scope.worktreeId : args.worktreeId
     if (
@@ -8026,6 +8037,7 @@ export class Store {
     }
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
+    const paneKey = `${args.tabId}:${args.leafId}`
     const terminalOwnerKey = resolveWorkspaceSessionRecordOwnerKey(
       session.tabsByWorktree,
       args.worktreeId
@@ -8038,6 +8050,16 @@ export class Store {
     }
     const tabs = session.tabsByWorktree?.[terminalOwnerKey]
     const tab = tabs?.find((candidate) => candidate.id === args.tabId)
+    if (args.expectedBinding) {
+      const boundPtyId = session.terminalLayoutsByTabId?.[args.tabId]?.ptyIdsByLeafId?.[args.leafId]
+      if (
+        !tab ||
+        boundPtyId !== args.expectedBinding.ptyId ||
+        session.terminalPtyIncarnationsByPaneKey?.[paneKey] !== args.expectedBinding.incarnationId
+      ) {
+        return false
+      }
+    }
     const activeTerminalOwnerKey = tab
       ? null
       : resolveWorkspaceSessionRecordOwnerKey(session.activeTabIdByWorktree, args.worktreeId)
@@ -8051,15 +8073,17 @@ export class Store {
       }
     }
     const sessionBeforeBinding = cloneWorkspaceSessionState(session)
-    const paneKey = `${args.tabId}:${args.leafId}`
+    const reconciledIncarnation =
+      args.expectedBinding !== undefined &&
+      args.incarnationId !== args.expectedBinding.incarnationId
     let terminalMembershipChanged = false
-    const advanceTopologyAfterMembershipChange = (): void => {
+    const advanceTopologyFence = (): void => {
       const repoId = getRepoIdFromWorktreeId(rawOwnerKey)
       const currentRevision = session.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
-      if (!terminalMembershipChanged || currentRevision <= 0) {
+      if (!reconciledIncarnation && (!terminalMembershipChanged || currentRevision <= 0)) {
         return
       }
-      // Why: a real host-admitted spawn after a retirement must be distinguishable from a stale renderer replay.
+      // Why: host-admitted membership or incarnation changes must outrank a stale renderer replay.
       session.terminalTopologyRevisionByRepoId = {
         ...session.terminalTopologyRevisionByRepoId,
         [repoId]: currentRevision + 1
@@ -8114,14 +8138,14 @@ export class Store {
     }
     if (!isTerminalLeafId(args.leafId)) {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
-      advanceTopologyAfterMembershipChange()
+      advanceTopologyFence()
       try {
         this.flushOrThrow()
       } catch (err) {
         restoreSession()
         throw err
       }
-      return
+      return true
     }
     const layout = session.terminalLayoutsByTabId?.[args.tabId]
     if (layout) {
@@ -8162,13 +8186,14 @@ export class Store {
         }
       }
     }
-    advanceTopologyAfterMembershipChange()
+    advanceTopologyFence()
     try {
       this.flushOrThrow()
     } catch (err) {
       restoreSession()
       throw err
     }
+    return true
   }
 
   // ── PTY Binding Rollback ───────────────────────────────────────────
@@ -8542,6 +8567,13 @@ export class Store {
     }
   }
 
+  // Why no write of its own: the committed quit path calls this immediately before the final store
+  // flush, and that flush is what persists it. A durable write here would race the flush and be
+  // rejected the moment it latches, which is exactly how an attached lease used to survive quit.
+  markSshRemotePtyLeasesForShutdown(targetId: string, state: SshRemotePtyLease['state']): void {
+    this.updateSshRemotePtyLeaseStates(targetId, state)
+  }
+
   async markSshRemotePtyLeasesAsync(
     targetId: string,
     state: SshRemotePtyLease['state']
@@ -8774,11 +8806,13 @@ export class Store {
     return this.flushCurrentStateAsync(false, undefined, false).catch(() => {})
   }
 
-  flushPendingOrThrowAsync(options: { signal?: AbortSignal } = {}): Promise<void> {
+  flushPendingOrThrowAsync(
+    options: { signal?: AbortSignal; drainToStableGeneration?: boolean } = {}
+  ): Promise<void> {
     if (this.writesFrozen || this.quitFlushStarted) {
       return Promise.reject(new Error('Cannot flush while persistence is finalized'))
     }
-    return this.flushCurrentStateAsync(false, options.signal)
+    return this.flushCurrentStateAsync(false, options.signal, options.drainToStableGeneration, true)
   }
 
   // Async twin of flushOrThrow: durable state only. Active-view and GitHub sidecars are
@@ -8804,8 +8838,10 @@ export class Store {
   private async flushCurrentStateAsync(
     final: boolean,
     signal?: AbortSignal,
-    drainToStableGeneration = true
+    drainToStableGeneration = true,
+    requireInitialGenerationDurable = false
   ): Promise<void> {
+    const requiredDurableGeneration = requireInitialGenerationDurable ? this.writeGeneration : null
     for (;;) {
       if (signal?.aborted) {
         throw new Error('Persistence flush aborted')
@@ -8832,7 +8868,16 @@ export class Store {
       if (signal?.aborted) {
         throw new Error('Persistence flush aborted')
       }
-      if (!drainToStableGeneration || generation === this.writeGeneration) {
+      if (!drainToStableGeneration) {
+        if (
+          requiredDurableGeneration === null ||
+          this.lastDurableWriteGeneration >= requiredDurableGeneration
+        ) {
+          break
+        }
+        continue
+      }
+      if (generation === this.writeGeneration) {
         break
       }
     }

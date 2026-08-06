@@ -22,12 +22,16 @@ import type {
 } from '../shared/agent-session-resume'
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
+import type { RuntimePairingReach } from '../shared/runtime-pairing-reach'
 import type { MobileRelayMintFailure } from '../shared/mobile-relay-mint-failure'
 import type { PtySpawnDisposition } from '../shared/pty-spawn-disposition'
 import type { VerifyAndAddRuntimeEnvironmentResult } from '../shared/remote-pairing-verification'
 import type {
   SshMutationExpectation,
   SshConnectionState,
+  SshConfigHostListArgs,
+  SshConfigHostListResult,
+  SshConfigHostResolution,
   SshConfigImportResult,
   SshTargetAddResult,
   SshTarget,
@@ -182,7 +186,9 @@ import type {
 } from '../shared/github-project-types'
 import {
   richMarkdownContextMenuCommandChannel,
-  type RichMarkdownContextMenuCommandPayload
+  richMarkdownContextMenuTargetChannel,
+  type RichMarkdownContextMenuCommandPayload,
+  type RichMarkdownContextMenuTableTarget
 } from '../shared/rich-markdown-context-menu'
 import type {
   AgentStatusClearIpcPayload,
@@ -239,11 +245,7 @@ import type {
 } from '../shared/ai-vault-types'
 import type { AiVaultPrepareSessionResumeArgs } from '../shared/ai-vault-resume-preparation'
 import type { AgentType } from '../shared/native-chat-types'
-import {
-  ORCA_APP_RESTART_ABORTED_EVENT,
-  ORCA_APP_RESTART_STARTED_EVENT,
-  ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT
-} from '../shared/updater-renderer-events'
+import { ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT } from '../shared/updater-renderer-events'
 import {
   ORCA_INTERNAL_FILE_DRAG_TYPE,
   createNativeFileDropPayload,
@@ -279,14 +281,23 @@ import type {
 } from '../shared/crash-reporting'
 import type { RendererHeapStatistics } from '../shared/renderer-heap-statistics'
 import { readRendererHeapStatistics } from './renderer-heap-statistics-reader'
+import { createUpdaterQuitAbortRelay } from '../shared/renderer-restart-preparation'
 import {
-  createUpdaterQuitAbortRelay,
-  prepareRendererForAppRestart
-} from '../shared/renderer-restart-preparation'
-import {
+  prepareAndInvokeAppRestart,
   prepareAndInvokeUpdaterInstall,
   registerRendererRestartIpcRelays
 } from './renderer-restart-wiring'
+
+// Why: the sync checkpoint only stages; this joins its durable write so a
+// navigating path can abort instead of losing the staged session.
+async function awaitBeforeUnloadCheckpoint(): Promise<void> {
+  const result = (await ipcRenderer.invoke('app:await-before-unload-checkpoint')) as {
+    ok?: unknown
+  }
+  if (result?.ok !== true) {
+    throw new Error('Failed to persist renderer state before unload.')
+  }
+}
 
 type NativeFileDropCallback = (data: NativeFileDropPayload) => void
 
@@ -473,20 +484,24 @@ const api = {
     getIdentity: (): Promise<AppIdentity> => ipcRenderer.invoke('app:getIdentity'),
     getFeatureWallAssetBaseUrl: (): Promise<string> =>
       ipcRenderer.invoke('app:getFeatureWallAssetBaseUrl'),
-    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
-    restart: async (): Promise<void> => {
-      await prepareRendererForAppRestart(window, {
-        startedEventName: ORCA_APP_RESTART_STARTED_EVENT,
-        abortedEventName: ORCA_APP_RESTART_ABORTED_EVENT
-      })
-      try {
-        return await ipcRenderer.invoke('app:restart')
-      } catch (error) {
-        window.dispatchEvent(new Event(ORCA_APP_RESTART_ABORTED_EVENT))
-        throw error
-      }
-    },
-    reload: (): Promise<void> => ipcRenderer.invoke('app:reload'),
+    relaunch: (): Promise<void> =>
+      prepareAndInvokeAppRestart(
+        window,
+        () => ipcRenderer.invoke('app:relaunch'),
+        awaitBeforeUnloadCheckpoint
+      ),
+    restart: (): Promise<void> =>
+      prepareAndInvokeAppRestart(
+        window,
+        () => ipcRenderer.invoke('app:restart'),
+        awaitBeforeUnloadCheckpoint
+      ),
+    reload: (): Promise<void> =>
+      prepareAndInvokeAppRestart(
+        window,
+        () => ipcRenderer.invoke('app:reload'),
+        awaitBeforeUnloadCheckpoint
+      ),
     stageBeforeUnloadSync: (args: Parameters<PreloadApi['app']['stageBeforeUnloadSync']>[0]) => {
       const result = ipcRenderer.sendSync('app:stage-before-unload-sync', args) as {
         ok?: unknown
@@ -751,6 +766,9 @@ const api = {
     list: (args) => ipcRenderer.invoke('worktrees:list', args),
 
     listDetected: (args) => ipcRenderer.invoke('worktrees:listDetected', args),
+
+    listKnownForExecutionHost: (args) =>
+      ipcRenderer.invoke('worktrees:listKnownForExecutionHost', args),
 
     cancelListDetected: (args) => ipcRenderer.invoke('worktrees:cancelListDetected', args),
 
@@ -2739,6 +2757,7 @@ const api = {
     sessionCreateProfile: (args: {
       scope: 'default' | 'isolated' | 'imported'
       label: string
+      userAgentMode?: 'clean' | 'native'
     }): Promise<unknown> => ipcRenderer.invoke('browser:session:createProfile', args),
 
     sessionDeleteProfile: (args: { profileId: string }): Promise<boolean> =>
@@ -2980,8 +2999,11 @@ const api = {
     showLinuxPackage: () => ipcRenderer.invoke('updater:showLinuxPackage'),
     listBuilds: (channel) => ipcRenderer.invoke('updater:listBuilds', channel),
     quitAndInstall: (): Promise<void> =>
-      prepareAndInvokeUpdaterInstall(window, updaterQuitAbortRelay, () =>
-        ipcRenderer.invoke('updater:quitAndInstall')
+      prepareAndInvokeUpdaterInstall(
+        window,
+        updaterQuitAbortRelay,
+        () => ipcRenderer.invoke('updater:quitAndInstall'),
+        awaitBeforeUnloadCheckpoint
       ),
 
     onStatus: (callback) => {
@@ -3220,10 +3242,19 @@ const api = {
       includeIgnored?: boolean
       bypassEffectiveUpstreamNegativeCache?: boolean
       reuseLineStats?: boolean
+      branchLineTotalMergeBase?: string
       requestToken?: string
     }): Promise<unknown> => ipcRenderer.invoke('git:status', args),
     cancelStatus: (args: { requestToken: string }): Promise<void> =>
       ipcRenderer.invoke('git:cancelStatus', args),
+    setStatusUpstreamRefWatch: (args: {
+      worktreeId: string
+      worktreePath: string
+      executionHostId: string
+      connectionId?: string
+      branch?: string
+      upstreamName?: string
+    }): Promise<void> => ipcRenderer.invoke('git:setStatusUpstreamRefWatch', args),
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string
@@ -4021,6 +4052,9 @@ const api = {
     setMarkdownEditorFocused: (focused: boolean): void => {
       ipcRenderer.send('ui:setMarkdownEditorFocused', focused)
     },
+    setRichMarkdownContextMenuTarget: (target: RichMarkdownContextMenuTableTarget | null): void => {
+      ipcRenderer.send(richMarkdownContextMenuTargetChannel, target)
+    },
     setTerminalInputFocused: (focused: boolean): void => {
       ipcRenderer.send('ui:setTerminalInputFocused', focused)
     },
@@ -4173,6 +4207,8 @@ const api = {
   aiVault: {
     listSessions: (args?: AiVaultListArgs): Promise<unknown> =>
       ipcRenderer.invoke('aiVault:listSessions', args),
+    cancelListSessions: (args: { requestToken: string }): Promise<void> =>
+      ipcRenderer.invoke('aiVault:cancelListSessions', args),
     prepareSessionResume: (args: AiVaultPrepareSessionResumeArgs): Promise<unknown> =>
       ipcRenderer.invoke('aiVault:prepareSessionResume', args),
     listSubagentSessions: (args: AiVaultSubagentListArgs): Promise<unknown> =>
@@ -4419,6 +4455,12 @@ const api = {
     importConfig: (args?: { reAdopt?: boolean }): Promise<SshConfigImportResult> =>
       ipcRenderer.invoke('ssh:importConfig', args),
 
+    listConfigHosts: (args?: SshConfigHostListArgs): Promise<SshConfigHostListResult> =>
+      ipcRenderer.invoke('ssh:listConfigHosts', args),
+
+    resolveConfigHost: (args: { alias: string }): Promise<SshConfigHostResolution | null> =>
+      ipcRenderer.invoke('ssh:resolveConfigHost', args),
+
     connect: async (args: { targetId: string }): Promise<SshConnectionState | null> => {
       const state: unknown = await ipcRenderer.invoke('ssh:connect', args)
       return state ? admitSshConnectionStateForAuthorityReconciliation(state, args.targetId) : null
@@ -4637,6 +4679,9 @@ const api = {
     getRuntimePairingUrl: (args?: {
       address?: string
       rotate?: boolean
+      // Why: the widen is one-way and host-wide, so main must gate it on the reach the user picked, not
+      // on how the typed address happens to look (a Custom loopback may front an SSH tunnel).
+      reach?: RuntimePairingReach
     }): Promise<
       | { available: false; reason?: 'network_exposure_failed'; guidance?: string }
       | {
