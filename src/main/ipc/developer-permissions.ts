@@ -140,7 +140,8 @@ function triggerLocalNetworkPrompt(): Promise<DeveloperPermissionStatus> {
     }
     function classify(error: Error | null | undefined): DeveloperPermissionStatus {
       if (!error) {
-        return 'granted'
+        // A queued UDP datagram does not prove Local Network access was granted.
+        return 'unknown'
       }
       const code = (error as NodeJS.ErrnoException).code
       return code && LOCAL_NETWORK_DENIAL_CODES.has(code) ? 'denied' : 'unknown'

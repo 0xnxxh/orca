@@ -168,7 +168,7 @@ describe('registerDeveloperPermissionHandlers', () => {
     })
   })
 
-  it('clears the local-network prompt fallback timer when UDP send settles first', async () => {
+  it('keeps the local-network status unknown when UDP send settles without an error', async () => {
     registerDeveloperPermissionHandlers()
 
     const result = getRequestHandler()({}, { id: 'local-network' })
@@ -179,7 +179,7 @@ describe('registerDeveloperPermissionHandlers', () => {
 
     await expect(result).resolves.toEqual({
       id: 'local-network',
-      status: 'granted',
+      status: 'unknown',
       openedSystemSettings: false
     })
     expect(vi.getTimerCount()).toBe(0)
