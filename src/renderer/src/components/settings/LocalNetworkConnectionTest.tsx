@@ -188,7 +188,7 @@ export function LocalNetworkConnectionTest(): React.JSX.Element {
                 disabled={running}
               />
             </div>
-            <Button type="submit" variant="outline" size="sm" disabled={running || !host || !port}>
+            <Button type="submit" disabled={running || !host || !port}>
               {running
                 ? translate(
                     'auto.components.settings.DeveloperPermissionsPane.connectionTestRunning',
