@@ -21,7 +21,9 @@
 //    the timer cleared _pendingCompositionStart; handleCompositionInput passes the first
 //    check, then reads the cleared sentinel and substitutes '' for the data.
 //
-//    THIS IS BROADER THAN THE Cmd FRAMING ABOVE. A differential run through Japanese
+//    THIS NAMES THE TRIGGER (2) PREVIOUSLY LACKED, and it is an ordinary one. Hazard (1)
+//    is Cmd's; this one was left with no trigger at all, which reads as exotic. It is
+//    not. A differential run through Japanese
 //    multi-segment conversion found shipped behaviour swallows an ordinary Latin key
 //    typed one macrotask after a conversion commit: type a segment, convert, then press
 //    `a`, and the `a` is lost. No modifier, no exotic gesture — every Japanese user who
@@ -38,8 +40,18 @@
 //    flips a reported row's test, and is blocked regardless while the patch cannot be
 //    regenerated. See .tmp/ime-handoff/swarm-scratch/lane-group-e-redesign/.
 //
-//    The Japanese arrays in that differential are EXPLICITLY AUTHORED, not observed —
-//    no Japanese DOM composition trace exists in this corpus.
+//    CORRECTION to an earlier claim in this file that no Japanese DOM composition trace
+//    exists in the corpus. One does, filed under the Linux bundles rather than the bundle
+//    named for Japanese: evidence/12261-linux-x11/terminal-ime-evidence/terminal-ime-
+//    evidence/terminal-ime-boundaries-does-not-suppress-repeated-legitimate-japanese-
+//    conversions.json, sha256
+//    c5ff8c931c4d936302e9b068de2d8a54434c558dd079328b3c616482d89e205d — 30 DOM events,
+//    two にほんご->日本語 conversions, retained byte-identically in three further bundles
+//    (ONE capture copied four times, not four observations). Replayed against this bundle
+//    it emits 日本語日本語 under both sequencing extremes, matching its own recorded
+//    onData, so repeated conversion is undisturbed and THAT much is captured.
+//    It contains no post-compositionend insertText, so it cannot speak to the swallow:
+//    the `a`-after-conversion figure above stays AUTHORED and unobserved.
 //
 // Four things a future reader must not misread:
 //   1. No reporter has filed either of these. #12164 was considered and rejected: its
