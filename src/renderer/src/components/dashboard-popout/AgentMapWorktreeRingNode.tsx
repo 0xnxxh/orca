@@ -187,6 +187,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
+  const working = worktree.statusCounts.working > 0
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
 
@@ -203,9 +204,19 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
           }
         }}
       >
+        {working ? (
+          <circle
+            className="agent-map-worktree-working-glow"
+            data-agent-map-worktree-working-glow=""
+            cx={worktree.x}
+            cy={worktree.y}
+            r={worktree.radius}
+            aria-hidden="true"
+          />
+        ) : null}
         <PopoverTrigger asChild>
           <circle
-            className={`agent-map-worktree-ring${selected ? ' is-selected' : ''}${detailsOpen ? ' is-open' : ''}`}
+            className={`agent-map-worktree-ring${working ? ' is-working' : ''}${selected ? ' is-selected' : ''}${detailsOpen ? ' is-open' : ''}`}
             data-agent-map-worktree=""
             data-agent-count={worktree.agents.length}
             cx={worktree.x}
@@ -297,6 +308,14 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   }}
                   onKeyDown={(event) => onAgentKeyDown(event, agent)}
                 >
+                  {agent.status === 'working' ? (
+                    <circle
+                      className="agent-map-agent-working-glow"
+                      data-agent-map-agent-working-glow=""
+                      r={agent.radius + 1}
+                      aria-hidden="true"
+                    />
+                  ) : null}
                   <circle className="agent-map-agent-hit" r={Math.max(10, agent.radius + 3)} />
                   <circle className="agent-map-agent-mark" r={agent.radius} />
                   <foreignObject

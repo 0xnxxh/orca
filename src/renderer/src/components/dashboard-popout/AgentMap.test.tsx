@@ -161,6 +161,55 @@ describe('AgentMap', () => {
     expect(doneNode).toHaveAccessibleName(/unread/)
   })
 
+  it('glows working agents and their worktree ring only', () => {
+    const done = card({
+      paneKey: 'done',
+      conversationName: 'Finished agent',
+      worktreeId: 'worktree-done',
+      worktreeName: 'Finished worktree',
+      bucket: 'done',
+      dotState: 'done',
+      finishedAt: NOW - 60_000
+    })
+    const { container } = renderMap([card(), done])
+
+    const workingNode = screen.getByRole('button', { name: /Agent alpha/ })
+    const doneNode = screen.getByRole('button', { name: /Finished agent/ })
+    const workingRing = screen.getByRole('button', {
+      name: /Open Agent map worktree details/
+    })
+    const doneRing = screen.getByRole('button', {
+      name: /Open Finished worktree worktree details/
+    })
+
+    expect(workingNode.querySelector('[data-agent-map-agent-working-glow]')).toBeInTheDocument()
+    expect(doneNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
+    expect(workingRing).toHaveClass('is-working')
+    expect(doneRing).not.toHaveClass('is-working')
+    expect(container.querySelectorAll('[data-agent-map-worktree-working-glow]')).toHaveLength(1)
+  })
+
+  it('keeps glow markup bounded for a large visible worktree', () => {
+    const cards = Array.from({ length: 120 }, (_, index) => {
+      const working = index % 2 === 0
+      return card({
+        paneKey: `pane-${index}`,
+        ptyId: `pty-${index}`,
+        tabId: `tab-${index}`,
+        leafId: `leaf-${index}`,
+        conversationName: `Agent ${index}`,
+        bucket: working ? 'working' : 'done',
+        dotState: working ? 'working' : 'done',
+        finishedAt: working ? null : NOW - 60_000
+      })
+    })
+    const { container } = renderMap(cards, { selectedPaneKey: 'pane-0' })
+
+    expect(container.querySelectorAll('[data-agent-map-agent-working-glow]')).toHaveLength(60)
+    expect(container.querySelectorAll('[data-agent-map-worktree-working-glow]')).toHaveLength(1)
+    expect(container.querySelectorAll('filter')).toHaveLength(0)
+  })
+
   it('enlarges unread markers when the full fleet is zoomed out', () => {
     const fleet = Array.from({ length: 72 }, (_, index) =>
       card({

@@ -95,6 +95,14 @@
   vector-effect: non-scaling-stroke;
 }
 
+.agent-map-worktree-working-glow {
+  fill: none;
+  pointer-events: none;
+  stroke: color-mix(in srgb, var(--color-yellow-500) 28%, transparent);
+  stroke-width: 9;
+  vector-effect: non-scaling-stroke;
+}
+
 .agent-map-worktree-ring:hover {
   fill: color-mix(in srgb, var(--card) 72%, transparent);
   stroke: var(--ring);
@@ -117,6 +125,10 @@
   fill: color-mix(in srgb, var(--ring) 18%, var(--card));
   stroke: var(--ring);
   stroke-width: 2.5;
+}
+
+.agent-map-worktree-ring.is-working {
+  stroke: var(--color-yellow-500);
 }
 
 .agent-map-worktree-label {
@@ -184,6 +196,14 @@
 .agent-map-agent-mark {
   fill: var(--background);
   stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.agent-map-agent-working-glow {
+  fill: none;
+  pointer-events: none;
+  stroke: color-mix(in srgb, var(--color-yellow-500) 32%, transparent);
+  stroke-width: 7;
   vector-effect: non-scaling-stroke;
 }
 
