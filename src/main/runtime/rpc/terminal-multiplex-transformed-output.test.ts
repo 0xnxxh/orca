@@ -30,6 +30,11 @@ function startMultiplexHarness() {
   const runtime = {
     getRuntimeId: () => 'test-runtime',
     registerRemoteTerminalViewSubscriber: () => () => {},
+    // Why: a mobile-typed multiplex peer routes through these; without them the subscribe throws
+    // before any output is emitted, which would hide the frame assertions rather than test them.
+    handleMobileSubscribe: vi.fn().mockResolvedValue(undefined),
+    handleMobileUnsubscribe: vi.fn(),
+    updateMobileViewport: vi.fn().mockResolvedValue({ updated: false, applied: false }),
     resolveLiveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-1' }),
     requestRendererTerminalTabMount: vi.fn().mockReturnValue(true),
     updateRemoteDesktopViewer: vi.fn().mockResolvedValue(true),
@@ -119,7 +124,8 @@ function startMultiplexHarness() {
 
 async function subscribe(
   harness: ReturnType<typeof startMultiplexHarness>,
-  capabilities: Record<string, 1>
+  capabilities: Record<string, 1>,
+  client: { id: string; type: 'desktop' | 'mobile' } = { id: 'desktop-1', type: 'desktop' }
 ) {
   await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
   harness.handlers.get(0)?.(
@@ -131,7 +137,7 @@ async function subscribe(
         payload: encodeTerminalStreamJson({
           streamId: STREAM_ID,
           terminal: 'terminal-1',
-          client: { id: 'desktop-1', type: 'desktop' },
+          client,
           capabilities,
           viewport: { cols: 120, rows: 40 }
         })
@@ -186,6 +192,29 @@ const SHIPPED_DESKTOP_CAPABILITIES = {
 } as const
 
 describe('terminal multiplex transformed output', () => {
+  // Why: `client.type` admits 'mobile' on this path too — `TerminalMultiplexStream.isMobile` exists
+  // and terminal-multiplex.test.ts already exercises mobile multiplex streams. A mobile decoder does
+  // not know opcode 15 and drops the frame silently, so sending a span here is STA-3482 on a second
+  // path. Mobile keeps no seq accounting, so the text downgrade is lossless for it.
+  it('downgrades a transformed run to text for a mobile multiplex peer', async () => {
+    const harness = startMultiplexHarness()
+    await subscribe(harness, { ...SHIPPED_DESKTOP_CAPABILITIES }, { id: 'phone-1', type: 'mobile' })
+    harness.getDataListener()!('visible output', { seq: 12, rawLength: 9, transformed: true })
+
+    await vi.waitFor(() => expect(harness.outputFrames().length).toBeGreaterThan(0))
+    const opcodes = harness.outputFrames().map((frame) => frame.opcode)
+    expect(opcodes).not.toContain(TerminalStreamOpcode.OutputSpan)
+    // The text must still arrive — the failure this guards is silent loss, not a suppressed frame.
+    expect(
+      harness
+        .outputFrames()
+        .map((frame) => decodeTerminalStreamText(frame.payload))
+        .join('')
+    ).toContain('visible output')
+
+    harness.cleanups.get('terminal-multiplex:conn-transformed-output')?.()
+  })
+
   // OutputSpan (opcode 15) shipped on this path in v1.4.147 (2026-07-19), before every
   // capability a peer could declare to prove it decodes spans. Keying spans off any
   // declared capability therefore reads the whole installed base as incapable.

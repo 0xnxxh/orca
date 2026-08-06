@@ -2539,13 +2539,17 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
                 meta.seq
               )
             }
-            // Why always spans: multiplex peers are desktops, which track output `seq`
-            // and run the ack/source-range ledger. Downgrading a transformed run to plain
-            // Output would strip the raw high-water mark the ledger and the client's
-            // gap detector both depend on. OutputSpan has also shipped unconditionally on
-            // this path since v1.4.147, so there is no peer a downgrade would help.
+            // Why spans for desktop: it tracks output `seq` and runs the ack/source-range ledger, so
+            // downgrading a transformed run to plain Output would strip the raw high-water mark both
+            // the ledger and its gap detector depend on. OutputSpan has also shipped unconditionally
+            // on this path since v1.4.147, so no desktop peer exists that a downgrade would help.
+            //
+            // Why not for mobile: `client.type` admits 'mobile' here (see `stream.isMobile`, and the
+            // mobile multiplex cases in terminal-multiplex.test.ts), and a mobile decoder does not
+            // know opcode 15 — it would drop the frame silently, which is STA-3482 on a second path.
+            // Mobile keeps no seq accounting, so the text downgrade is lossless for it.
             for (const chunk of iterateTerminalOutputFrameChunks(data, meta, {
-              transformedRuns: 'span'
+              transformedRuns: stream.isMobile ? 'downgrade-to-text' : 'span'
             })) {
               queueOrSendOutput(stream, chunk)
             }
