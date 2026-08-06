@@ -151,19 +151,23 @@ function exhaustedRecoveryFailure(
   outcome: string,
   // Set when the caller already recorded a vetoed breadcrumb for this outcome;
   // the 30-entry ring is the only diagnostic left, so it must not self-evict.
-  alreadyRecorded = false,
-  isChunkFailure = isKnownDynamicImportFailure(lastError)
+  alreadyRecorded = false
 ): unknown {
-  if (!isChunkFailure) {
+  if (!isKnownDynamicImportFailure(lastError)) {
     return lastError
   }
   const failureName = lastError instanceof Error ? lastError.name : 'unknown'
   const crumbKey = `${reloadKey}:${outcome}:${failureName}`
   if (!alreadyRecorded && !recordedExhaustionKeys.has(crumbKey)) {
     // error.name is library-controlled, so bound the set the way the breadcrumb
-    // and renderer-error key stores do rather than trusting its cardinality.
-    if (recordedExhaustionKeys.size >= MAX_RECORDED_EXHAUSTION_KEYS) {
-      recordedExhaustionKeys.clear()
+    // and renderer-error key stores do: evict oldest-first, never wholesale, so
+    // an overflow cannot re-open the whole set to a repeat burst.
+    while (recordedExhaustionKeys.size >= MAX_RECORDED_EXHAUSTION_KEYS) {
+      const oldestKey = recordedExhaustionKeys.values().next().value
+      if (oldestKey === undefined) {
+        break
+      }
+      recordedExhaustionKeys.delete(oldestKey)
     }
     recordedExhaustionKeys.add(crumbKey)
     recordReloadBreadcrumb('lazy_chunk_recovery_exhausted', reloadKey, failureMessage, outcome)
@@ -271,7 +275,6 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       // An unrelated failure must not clear a guard it did not set.
       throw lastError
     }
-    // Already classified just above; do not re-run the regex set.
     // Record the veto beside the resulting report before the ring can evict it.
     clearChunkReloadGuard()
     recordReloadBreadcrumb(
@@ -280,14 +283,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       failureMessage,
       'guard-not-landed'
     )
-    throw exhaustedRecoveryFailure(
-      lastError,
-      reloadKey,
-      failureMessage,
-      'guard-not-landed',
-      true,
-      true
-    )
+    throw exhaustedRecoveryFailure(lastError, reloadKey, failureMessage, 'guard-not-landed', true)
   }
 
   if (reloadGuardState === 'not-attempted') {
