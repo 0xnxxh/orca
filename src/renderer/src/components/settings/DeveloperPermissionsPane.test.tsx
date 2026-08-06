@@ -65,25 +65,33 @@ it('requests Local Network access without claiming a permission verdict', async 
   const row = container.querySelector<HTMLElement>(
     '[data-settings-section="developer-permissions-local-network"]'
   )
-  const button = row?.querySelector<HTMLButtonElement>('button')
-  expect(row?.textContent).toContain('Check manually')
-  expect(button?.textContent).toContain('Request Access')
+  const [requestButton, settingsButton] = Array.from(
+    row?.querySelectorAll<HTMLButtonElement>('button') ?? []
+  )
+  expect(row?.textContent).toContain('Managed by macOS')
+  expect(row?.textContent).toContain("macOS does not report this permission's current status")
+  expect(requestButton?.textContent).toContain('Request Access')
+  expect(settingsButton?.textContent).toContain('Open System Settings')
 
-  await act(async () => button?.click())
+  await act(async () => requestButton?.click())
 
   const api = window.api.developerPermissions
   expect(api.request).toHaveBeenCalledWith({ id: 'local-network' })
   expect(toastMessageMock).toHaveBeenCalledWith(
-    'Check macOS for a Local Network prompt',
+    'Check for a macOS prompt',
     expect.objectContaining({
-      description: 'If no prompt appeared, open Local Network settings.',
-      action: expect.objectContaining({ label: 'Open Settings' })
+      description:
+        'If prompted, choose Allow. If no prompt appears, open System Settings and enable Orca under Privacy & Security → Local Network.',
+      action: expect.objectContaining({ label: 'Open System Settings' })
     })
   )
 
   const options = toastMessageMock.mock.calls[0]?.[1] as { action?: { onClick?: () => void } }
   options.action?.onClick?.()
   expect(api.openSettings).toHaveBeenCalledWith({ id: 'local-network' })
+
+  await act(async () => settingsButton?.click())
+  expect(api.openSettings).toHaveBeenCalledTimes(2)
 })
 
 it('highlights the Full Disk Access row for a targeted Settings navigation', async () => {

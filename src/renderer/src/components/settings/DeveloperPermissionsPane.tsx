@@ -3,7 +3,6 @@ import {
   Accessibility,
   Bluetooth,
   Camera,
-  ExternalLink,
   HardDrive,
   Mic,
   MonitorUp,
@@ -20,11 +19,13 @@ import type {
 } from '../../../../shared/developer-permissions-types'
 import { Button } from '../ui/button'
 import { translate } from '@/i18n/i18n'
+import { DeveloperPermissionActions } from './DeveloperPermissionActions'
 import {
   developerPermissionStatusClass,
   developerPermissionStatusLabel
 } from './developer-permission-status'
 import { showDeveloperPermissionRequestNotice } from './developer-permission-request-notice'
+import { TerminalTccAttributionNotice } from './TerminalTccAttributionNotice'
 export { getDeveloperPermissionsPaneSearchEntries } from './developer-permissions-search'
 
 type DeveloperPermissionsPaneProps = {
@@ -157,12 +158,15 @@ const PERMISSIONS: PermissionDefinition[] = [
   {
     id: 'local-network',
     get label() {
-      return translate('auto.components.settings.DeveloperPermissionsPane.e7bb06007c', 'LAN')
+      return translate(
+        'auto.components.settings.DeveloperPermissionsPane.e7bb06007c',
+        'Local Network'
+      )
     },
     get description() {
       return translate(
         'auto.components.settings.DeveloperPermissionsPane.f903bf20b5',
-        'Discovery and access for development servers on your network.'
+        "Allows terminals and development tools to connect to services on your local network. macOS does not report this permission's current status to Orca."
       )
     },
     get actionLabel() {
@@ -311,6 +315,7 @@ export function DeveloperPermissionsPane({
 
   return (
     <div className="space-y-5">
+      <TerminalTccAttributionNotice />
       <div className="flex items-start justify-between gap-4 rounded-lg border border-border/60 bg-muted/25 px-4 py-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -356,27 +361,19 @@ export function DeveloperPermissionsPane({
                         status
                       )}`}
                     >
-                      {developerPermissionStatusLabel(status)}
+                      {developerPermissionStatusLabel(permission.id, status)}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">{permission.description}</p>
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending || status === 'unsupported'}
-                onClick={() => void request(permission.id)}
-                className="shrink-0 gap-1.5"
-              >
-                <ExternalLink className="size-3.5" />
-                {pending
-                  ? translate(
-                      'auto.components.settings.DeveloperPermissionsPane.dac08ec03e',
-                      'Working...'
-                    )
-                  : permission.actionLabel}
-              </Button>
+              <DeveloperPermissionActions
+                id={permission.id}
+                actionLabel={permission.actionLabel}
+                pending={pending}
+                status={status}
+                onRequest={(id) => void request(id)}
+              />
             </div>
           )
         })}

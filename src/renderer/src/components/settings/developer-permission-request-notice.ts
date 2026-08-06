@@ -29,17 +29,17 @@ export function showDeveloperPermissionRequestNotice(
     toast.message(
       translate(
         'auto.components.settings.DeveloperPermissionsPane.localNetworkPromptCheck',
-        'Check macOS for a Local Network prompt'
+        'Check for a macOS prompt'
       ),
       {
         description: translate(
           'auto.components.settings.DeveloperPermissionsPane.localNetworkPromptGuidance',
-          'If no prompt appeared, open Local Network settings.'
+          'If prompted, choose Allow. If no prompt appears, open System Settings and enable Orca under Privacy & Security → Local Network.'
         ),
         action: {
           label: translate(
             'auto.components.settings.DeveloperPermissionsPane.localNetworkOpenSettings',
-            'Open Settings'
+            'Open System Settings'
           ),
           onClick: openLocalNetworkSettings
         }
