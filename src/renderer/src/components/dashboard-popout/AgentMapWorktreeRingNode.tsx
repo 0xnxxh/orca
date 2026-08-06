@@ -14,6 +14,7 @@ import type {
   AgentMapWorktreeRing
 } from './agent-map-layout'
 import { shouldAggregateAgentMapWorktree } from './agent-map-layout'
+import { agentMapWorktreeActiveStatus } from './agent-map-worktree-active-status'
 
 type AgentMapWorktreeRingNodeProps = {
   project: AgentMapProjectRing
@@ -187,7 +188,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
-  const working = worktree.statusCounts.working > 0
+  const activeStatus = agentMapWorktreeActiveStatus(worktree.statusCounts)
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
 
@@ -204,10 +205,11 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
           }
         }}
       >
-        {working ? (
+        {activeStatus ? (
           <circle
-            className="agent-map-worktree-working-glow"
-            data-agent-map-worktree-working-glow=""
+            className={`agent-map-worktree-status-glow fleet-status-${activeStatus}`}
+            data-agent-map-worktree-status-glow=""
+            data-worktree-active-status={activeStatus}
             cx={worktree.x}
             cy={worktree.y}
             r={worktree.radius}
@@ -216,7 +218,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
         ) : null}
         <PopoverTrigger asChild>
           <circle
-            className={`agent-map-worktree-ring${working ? ' is-working' : ''}${selected ? ' is-selected' : ''}${detailsOpen ? ' is-open' : ''}`}
+            className={`agent-map-worktree-ring${activeStatus ? ` is-${activeStatus}` : ''}${selected ? ' is-selected' : ''}${detailsOpen ? ' is-open' : ''}`}
             data-agent-map-worktree=""
             data-agent-count={worktree.agents.length}
             cx={worktree.x}

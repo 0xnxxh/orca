@@ -161,7 +161,7 @@ describe('AgentMap', () => {
     expect(doneNode).toHaveAccessibleName(/unread/)
   })
 
-  it('glows working agents and their worktree ring only', () => {
+  it('lets attention override working on the worktree glow', () => {
     const done = card({
       paneKey: 'done',
       conversationName: 'Finished agent',
@@ -171,9 +171,16 @@ describe('AgentMap', () => {
       dotState: 'done',
       finishedAt: NOW - 60_000
     })
-    const { container } = renderMap([card(), done])
+    const waiting = card({
+      paneKey: 'waiting',
+      conversationName: 'Question agent',
+      bucket: 'attention',
+      dotState: 'waiting'
+    })
+    const { container } = renderMap([card(), waiting, done])
 
     const workingNode = screen.getByRole('button', { name: /Agent alpha/ })
+    const waitingNode = screen.getByRole('button', { name: /Question agent/ })
     const doneNode = screen.getByRole('button', { name: /Finished agent/ })
     const workingRing = screen.getByRole('button', {
       name: /Open Agent map worktree details/
@@ -183,10 +190,16 @@ describe('AgentMap', () => {
     })
 
     expect(workingNode.querySelector('[data-agent-map-agent-working-glow]')).toBeInTheDocument()
+    expect(waitingNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
     expect(doneNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
-    expect(workingRing).toHaveClass('is-working')
+    expect(workingRing).toHaveClass('is-waiting')
+    expect(workingRing).not.toHaveClass('is-working')
     expect(doneRing).not.toHaveClass('is-working')
-    expect(container.querySelectorAll('[data-agent-map-worktree-working-glow]')).toHaveLength(1)
+    expect(container.querySelector('[data-agent-map-worktree-status-glow]')).toHaveAttribute(
+      'data-worktree-active-status',
+      'waiting'
+    )
+    expect(container.querySelectorAll('[data-agent-map-worktree-status-glow]')).toHaveLength(1)
   })
 
   it('keeps glow markup bounded for a large visible worktree', () => {
@@ -206,7 +219,7 @@ describe('AgentMap', () => {
     const { container } = renderMap(cards, { selectedPaneKey: 'pane-0' })
 
     expect(container.querySelectorAll('[data-agent-map-agent-working-glow]')).toHaveLength(60)
-    expect(container.querySelectorAll('[data-agent-map-worktree-working-glow]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-agent-map-worktree-status-glow]')).toHaveLength(1)
     expect(container.querySelectorAll('filter')).toHaveLength(0)
   })
 
