@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createInitialHostRouteActionState,
+  hostNewWorktreeRoute,
   resolveHostRouteActionState,
   setHostRouteNewWorktreeVisible
 } from './host-route-action-state'
 
 describe('host route action state', () => {
+  it('encodes opaque host ids in the new-worktree route segment', () => {
+    expect(hostNewWorktreeRoute('relay/one#50%')).toBe('/h/relay%2Fone%2350%25?action=newWorktree')
+  })
+
   it('opens new worktree modal on an initial newWorktree action', () => {
     expect(createInitialHostRouteActionState('newWorktree')).toEqual({
       routeAction: 'newWorktree',

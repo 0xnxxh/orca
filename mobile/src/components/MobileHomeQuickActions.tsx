@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Plus, QrCode } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { HostProfile } from '../transport/types'
@@ -33,14 +33,14 @@ function hostPickerOptions(hosts: HostProfile[]) {
 }
 
 export function MobileHomeQuickActions(props: Props) {
-  // Why: a connectivity topology change invalidates an open destination picker.
-  const hostSetKey = JSON.stringify(props.connectedHosts.map((host) => host.id))
-  return <MobileHomeQuickActionsContent key={hostSetKey} {...props} />
-}
-
-function MobileHomeQuickActionsContent(props: Props) {
-  const [hostPickerVisible, setHostPickerVisible] = useState(false)
+  const [hostPickerForHostSet, setHostPickerForHostSet] = useState<string | null>(null)
+  const pendingHostIdRef = useRef<string | null>(null)
   const canCreateWorkspace = props.connectedHosts.length > 0
+  const hostSetKey = JSON.stringify(props.connectedHosts.map((host) => host.id))
+  const hostPickerVisible = hostPickerForHostSet === hostSetKey
+  if (hostPickerForHostSet !== null && !hostPickerVisible) {
+    setHostPickerForHostSet(null)
+  }
 
   function handleCreateWorkspace() {
     if (props.connectedHosts.length === 1) {
@@ -48,7 +48,21 @@ function MobileHomeQuickActionsContent(props: Props) {
       return
     }
     if (props.connectedHosts.length > 1) {
-      setHostPickerVisible(true)
+      setHostPickerForHostSet(hostSetKey)
+    }
+  }
+
+  function handleHostSelect(hostId: string) {
+    pendingHostIdRef.current = hostId
+    setHostPickerForHostSet(null)
+  }
+
+  function handleHostPickerClosed() {
+    setHostPickerForHostSet(null)
+    const hostId = pendingHostIdRef.current
+    pendingHostIdRef.current = null
+    if (hostId && props.connectedHosts.some((host) => host.id === hostId)) {
+      props.onCreateWorkspace(hostId)
     }
   }
 
@@ -88,8 +102,9 @@ function MobileHomeQuickActionsContent(props: Props) {
         title="Create Workspace On"
         options={hostPickerOptions(props.connectedHosts)}
         selected=""
-        onSelect={props.onCreateWorkspace}
-        onClose={() => setHostPickerVisible(false)}
+        onSelect={handleHostSelect}
+        onClose={() => setHostPickerForHostSet(null)}
+        onAfterClose={handleHostPickerClosed}
       />
     </>
   )

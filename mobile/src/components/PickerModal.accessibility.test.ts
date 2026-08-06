@@ -56,6 +56,7 @@ describe('PickerModal accessibility', () => {
     })
 
     const rows = renderer!.root.findAllByType('Pressable')
+    expect(rows.map((row) => row.props.accessible)).toEqual([true, true])
     expect(rows.map((row) => row.props.accessibilityRole)).toEqual(['button', 'button'])
     expect(rows.map((row) => row.props.accessibilityState)).toEqual([
       { disabled: false, selected: true },

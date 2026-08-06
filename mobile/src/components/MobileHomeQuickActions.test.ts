@@ -116,6 +116,10 @@ describe('MobileHomeQuickActions', () => {
     ])
 
     act(() => picker().props.onSelect('laptop'))
+    expect(callbacks.onCreateWorkspace).not.toHaveBeenCalled()
+    expect(picker().props.visible).toBe(false)
+
+    act(() => picker().props.onAfterClose())
     expect(callbacks.onCreateWorkspace).toHaveBeenCalledWith('laptop')
   })
 
@@ -167,8 +171,53 @@ describe('MobileHomeQuickActions', () => {
 
     await callbacks.rerender([desk])
     expect(picker().props.visible).toBe(false)
+    act(() => picker().props.onAfterClose())
 
     await callbacks.rerender([desk, laptop])
     expect(picker().props.visible).toBe(false)
+  })
+
+  it('does not reopen a stale picker if its old host set returns while closing', async () => {
+    const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
+    const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')
+    const callbacks = await renderQuickActions([desk, laptop])
+
+    act(() => newWorkspaceButton().props.onPress())
+    await callbacks.rerender([desk])
+    await callbacks.rerender([desk, laptop])
+
+    expect(picker().props.visible).toBe(false)
+    act(() => picker().props.onAfterClose())
+    expect(callbacks.onCreateWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('keeps a selected host through an unrelated topology change while closing', async () => {
+    const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
+    const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')
+    const callbacks = await renderQuickActions([desk, laptop])
+
+    act(() => newWorkspaceButton().props.onPress())
+    act(() => picker().props.onSelect('laptop'))
+    await callbacks.rerender([
+      desk,
+      laptop,
+      host('server', 'Server', 'wss://ssh.example.com/mobile')
+    ])
+    act(() => picker().props.onAfterClose())
+
+    expect(callbacks.onCreateWorkspace).toHaveBeenCalledWith('laptop')
+  })
+
+  it('drops a selection that disconnects while the picker is closing', async () => {
+    const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
+    const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')
+    const callbacks = await renderQuickActions([desk, laptop])
+
+    act(() => newWorkspaceButton().props.onPress())
+    act(() => picker().props.onSelect('laptop'))
+    await callbacks.rerender([desk])
+    act(() => picker().props.onAfterClose())
+
+    expect(callbacks.onCreateWorkspace).not.toHaveBeenCalled()
   })
 })

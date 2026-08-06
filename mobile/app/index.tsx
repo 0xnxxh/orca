@@ -72,6 +72,7 @@ import {
   type HomeResumeCard
 } from '../src/worktree/home-resume-card'
 import { hostRouteWithNotice } from '../src/host-route-notice'
+import { hostNewWorktreeRoute } from '../src/host-route-action-state'
 import { hostEndpointLabel } from '../src/transport/host-endpoint-label'
 
 type HomeTaskSettings = {
@@ -837,7 +838,7 @@ export default function HomeScreen() {
               <MobileHomeQuickActions
                 connectedHosts={connectedHosts}
                 onPairDesktop={() => router.push('/pair-scan')}
-                onCreateWorkspace={(hostId) => router.push(`/h/${hostId}?action=newWorktree`)}
+                onCreateWorkspace={(hostId) => router.push(hostNewWorktreeRoute(hostId))}
               />
 
               {/* ─── Account usage ─── */}
