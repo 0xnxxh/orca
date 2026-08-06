@@ -11,10 +11,7 @@ export type DaemonSessionOwnerResolution<T extends IPtyProvider> =
   | { kind: 'absent' }
   | { kind: 'unknown' }
 
-type ProviderInventory<T extends IPtyProvider> = {
-  provider: T
-  processes: PtyProcessInfo[] | null
-}
+type ProviderInventory<T> = { provider: T; processes: PtyProcessInfo[] | null }
 
 type OwnerInventory<T extends IPtyProvider> = {
   candidatesBySessionId: Map<string, { provider: T; process: PtyProcessInfo }[]>
@@ -25,6 +22,12 @@ type OwnerInventory<T extends IPtyProvider> = {
 const OWNER_RESOLUTION_TIMEOUT_MS = 2_000
 const OWNER_INVENTORY_CACHE_MS = 1_000
 const FAILED_PROVIDER_COOLDOWN_MS = 1_000
+
+function assertClientConnected(signal: PtySpawnOptions['signal']): void {
+  if (signal?.aborted) {
+    throw new Error('client_disconnected')
+  }
+}
 
 export class DaemonSessionOwnerResolver<T extends IPtyProvider> {
   private inventoryInFlight: Promise<OwnerInventory<T>> | null = null
@@ -52,9 +55,7 @@ export class DaemonSessionOwnerResolver<T extends IPtyProvider> {
   }
 
   async spawnAttachOnly(opts: PtySpawnOptions & { sessionId: string }): Promise<PtySpawnResult> {
-    if (opts.signal?.aborted) {
-      throw new Error('client_disconnected')
-    }
+    assertClientConnected(opts.signal)
     const routed = this.providers.find((provider) => provider === this.routes.get(opts.sessionId))
     const direct = routed ?? (this.providers.length === 1 ? this.providers[0] : undefined)
     const routedIncarnation = this.routeIncarnations.get(opts.sessionId)
@@ -87,17 +88,13 @@ export class DaemonSessionOwnerResolver<T extends IPtyProvider> {
       }
     }
 
-    if (opts.signal?.aborted) {
-      throw new Error('client_disconnected')
-    }
+    assertClientConnected(opts.signal)
     const resolution = await this.resolve(
       opts.sessionId,
       opts.expectedIncarnationId,
       opts.expectedIncarnationIsAuthoritative
     )
-    if (opts.signal?.aborted) {
-      throw new Error('client_disconnected')
-    }
+    assertClientConnected(opts.signal)
     if (resolution.kind === 'unknown') {
       throw new TerminalSessionOwnerUnverifiedError(opts.sessionId)
     }
@@ -180,7 +177,6 @@ export class DaemonSessionOwnerResolver<T extends IPtyProvider> {
 
   async discoverRoutes(): Promise<void> {
     await this.inventory()
-    // Startup inventory is advisory; restore must retry a daemon that becomes ready immediately after it.
     this.failedProviderCooldowns.clear()
     this.cachedInventory = null
   }
@@ -245,7 +241,6 @@ export class DaemonSessionOwnerResolver<T extends IPtyProvider> {
       return Promise.resolve(this.cachedInventory.value)
     }
     this.cachedInventory = null
-    // One shared deadline bounds all owners without serial retries or per-pane sleep ladders.
     const deadlineMs = Date.now() + OWNER_RESOLUTION_TIMEOUT_MS
     const epoch = this.epoch
     const inventory = Promise.all(
