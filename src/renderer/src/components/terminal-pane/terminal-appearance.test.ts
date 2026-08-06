@@ -7,6 +7,7 @@ import {
   publishTerminalViewAttributesAtAppStart
 } from './terminal-appearance'
 import { maybePushMode2031Flip } from './terminal-mode-2031-replies'
+import { safeFit } from '@/lib/pane-manager/pane-fit'
 import { mode2031SequenceFor } from '../../../../shared/terminal-color-scheme-protocol'
 import { _resetTerminalViewAttributesPublisherForTest } from './terminal-view-attributes-publisher'
 import type { TerminalViewAttributes } from '../../../../shared/terminal-view-attributes'
@@ -137,8 +138,21 @@ describe('maybePushMode2031Flip', () => {
 })
 describe('applyTerminalAppearance theme assignment', () => {
   // xterm rebuilds the palette on any new theme-object identity (wiping OSC color mutations), so the assignment must be value-gated.
-  function makePane(id: number): ManagedPane {
-    return { id, terminal: { options: {}, cols: 80, rows: 24 } } as unknown as ManagedPane
+  // Measurable by default: metric options (fontSize/fontFamily/…) only land on
+  // panes that can measure; unmeasurable panes defer them until fit/reveal.
+  function makePane(id: number, overrides?: { measurable?: boolean }): ManagedPane {
+    const measurable = overrides?.measurable ?? true
+    return {
+      id,
+      terminal: { options: {}, cols: 80, rows: 24 },
+      container: {
+        dataset: {},
+        getBoundingClientRect: () => ({ width: measurable ? 800 : 0, height: measurable ? 600 : 0 })
+      },
+      fitAddon: {
+        proposeDimensions: () => (measurable ? { cols: 80, rows: 24 } : undefined)
+      }
+    } as unknown as ManagedPane
   }
 
   function makeManager(panes: ManagedPane[]): PaneManager {
@@ -264,6 +278,75 @@ describe('applyTerminalAppearance theme assignment', () => {
 
     // The value-gate must not rewrite an unchanged ratio — each write clears xterm's contrast cache.
     expect(writes).toBe(writesAfterFirst)
+  })
+
+  it('defers metric options on an unmeasurable pane and lands them on the next fit', () => {
+    // P0 bold/blurry-font regression shape: a font change applied to a hidden or
+    // mid-layout pane re-measures cell size against a wrong box and latches until
+    // a manual resize. The write must wait for a measurable pane.
+    let measurable = false
+    const pane = {
+      id: 1,
+      terminal: { options: {}, cols: 80, rows: 24 },
+      container: {
+        dataset: {},
+        getBoundingClientRect: () => ({ width: measurable ? 800 : 0, height: measurable ? 600 : 0 })
+      },
+      fitAddon: {
+        fit: vi.fn(),
+        proposeDimensions: () => (measurable ? { cols: 80, rows: 24 } : undefined)
+      }
+    } as unknown as ManagedPane
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, terminalFontSize: 19 })
+
+    expect(pane.terminal.options.fontSize).toBeUndefined()
+    expect(pane.terminal.options.fontFamily).toBeUndefined()
+    // Non-metric options are safe while hidden and must not be deferred with them.
+    expect(pane.terminal.options.cursorStyle).toBeDefined()
+
+    measurable = true
+    safeFit(pane)
+
+    expect(pane.terminal.options.fontSize).toBe(19)
+    expect(pane.terminal.options.fontFamily).toContain('monospace')
+  })
+
+  it('applies only the latest deferred metric options after repeated hidden changes', () => {
+    let measurable = false
+    const writes: number[] = []
+    const options: Record<string, unknown> = {}
+    Object.defineProperty(options, 'fontSize', {
+      configurable: true,
+      enumerable: true,
+      get: () => writes.at(-1),
+      set: (value: number) => {
+        writes.push(value)
+      }
+    })
+    const pane = {
+      id: 1,
+      terminal: { options, cols: 80, rows: 24 },
+      container: {
+        dataset: {},
+        getBoundingClientRect: () => ({ width: measurable ? 800 : 0, height: measurable ? 600 : 0 })
+      },
+      fitAddon: {
+        fit: vi.fn(),
+        proposeDimensions: () => (measurable ? { cols: 80, rows: 24 } : undefined)
+      }
+    } as unknown as ManagedPane
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, terminalFontSize: 15 })
+    apply(pane, { ...settings, terminalFontSize: 21 })
+
+    measurable = true
+    safeFit(pane)
+
+    // Latest wins, exactly one write: intermediate hidden values never touch xterm.
+    expect(writes).toEqual([21])
   })
 })
 

@@ -15,6 +15,7 @@ import {
 } from '@/lib/pane-manager/terminal-linkifier-hover-reset'
 import { focusActivePane } from './pane-helpers'
 import { scheduleTabRevealWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
+import { flushDeferredPaneMetricOptionsIfMeasurable } from '@/lib/pane-manager/pane-fit'
 
 const VISIBLE_RESUME_FLUSH_CHARS = 256 * 1024
 const WINDOW_WAKE_FLUSH_CHARS = 64 * 1024
@@ -71,6 +72,15 @@ export function resumeTerminalVisibility({
   // not jump to the wrong history entry.
   captureViewportPositions(!wasVisible)
   withSuppressedScrollTracking(() => {
+    // Why before the branch: metric options deferred while hidden must land ahead
+    // of any fit/repaint below so the first visible frame uses correct metrics.
+    // Still-unmeasurable panes keep their deferral; the fit path flushes those.
+    let flushedDeferredMetrics = false
+    for (const pane of manager.getPanes()) {
+      if (flushDeferredPaneMetricOptionsIfMeasurable(pane)) {
+        flushedDeferredMetrics = true
+      }
+    }
     if (shouldUseLightTabResume) {
       // Why: intra-worktree tab switches only toggle the overlay. Keeping
       // synchronous drain and atlas rebuilds off this path avoids racing the
@@ -81,6 +91,11 @@ export function resumeTerminalVisibility({
       // — a background agent streaming in another pane must not defer this tab's
       // atlas rebuild.
       scheduleTabRevealWebglAtlasRecovery()
+      if (flushedDeferredMetrics) {
+        // Why: the light path normally skips fitting, but flushed metrics changed
+        // cell size — refit so cols/rows match before the overlay settles.
+        manager.fitAllRevealedPanes()
+      }
       if (isActive) {
         focusActivePane(manager)
       }

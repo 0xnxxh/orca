@@ -10,6 +10,8 @@ import {
 } from '@/lib/terminal-theme'
 import { buildFontFamily } from './layout-serialization'
 import { safeFit, safeFitAndThen } from '@/lib/pane-manager/pane-tree-ops'
+import { canApplyPaneMetricOptions } from '@/lib/pane-manager/pane-fit'
+import { applyOrDeferPaneMetricOptions } from '@/lib/pane-manager/pane-metric-options-deferral'
 import {
   normalizeTerminalFastScrollSensitivity,
   normalizeTerminalScrollSensitivity,
@@ -174,10 +176,20 @@ export function applyTerminalAppearance(
     pane.terminal.options.cursorInactiveStyle = resolveTerminalCursorInactiveStyle(cursorStyle)
     pane.terminal.options.cursorBlink = settings.terminalCursorBlink
     const paneSize = paneFontSizes.get(pane.id)
-    pane.terminal.options.fontSize = paneSize ?? settings.terminalFontSize
-    pane.terminal.options.fontFamily = buildFontFamily(settings.terminalFontFamily)
-    pane.terminal.options.fontWeight = terminalFontWeights.fontWeight
-    pane.terminal.options.fontWeightBold = terminalFontWeights.fontWeightBold
+    // Why deferred: metric writes re-measure cell size; a hidden/mid-layout pane
+    // measures wrong-but-nonzero and stays wrong until a manual resize (P0
+    // bold/blurry-font reports). Deferred values land on the next fit or reveal.
+    applyOrDeferPaneMetricOptions(
+      pane,
+      {
+        fontSize: paneSize ?? settings.terminalFontSize,
+        fontFamily: buildFontFamily(settings.terminalFontFamily),
+        fontWeight: terminalFontWeights.fontWeight,
+        fontWeightBold: terminalFontWeights.fontWeightBold,
+        lineHeight: normalizeTerminalLineHeight(settings.terminalLineHeight)
+      },
+      canApplyPaneMetricOptions(pane)
+    )
     pane.terminal.options.scrollSensitivity = normalizeTerminalScrollSensitivity(
       settings.terminalScrollSensitivity
     )
@@ -186,7 +198,6 @@ export function applyTerminalAppearance(
     )
     // Why only 'true': 'left'/'right' are handled in the keydown policy, which needs Option composable at the xterm level.
     pane.terminal.options.macOptionIsMeta = effectiveMacOptionAsAlt === 'true'
-    pane.terminal.options.lineHeight = normalizeTerminalLineHeight(settings.terminalLineHeight)
     // Why unconditional: the helper no-ops when addon state already matches, so this keeps new panes and live toggles in sync.
     manager.setPaneLigaturesEnabled(pane.id, ligaturesEnabled)
     const transport = paneTransports.get(pane.id)

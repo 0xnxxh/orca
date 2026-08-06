@@ -21,11 +21,14 @@ import {
   deferTerminalGeometryMutationDuringRebuild,
   isTerminalScrollIntentRebuildInFlight
 } from './terminal-scroll-intent-rebuild'
+import { flushDeferredPaneMetricOptions } from './pane-metric-options-deferral'
+import { canMeasurePaneForFit, getProposedPaneDimensions } from './pane-fit-measurability'
 
-const MIN_PANE_FIT_WIDTH_PX = 48
-const MIN_PANE_FIT_HEIGHT_PX = 24
-const MIN_PANE_FIT_COLS = 8
-const MIN_PANE_FIT_ROWS = 4
+export {
+  canApplyPaneMetricOptions,
+  canMeasurePaneForFit,
+  flushDeferredPaneMetricOptionsIfMeasurable
+} from './pane-fit-measurability'
 
 export type SafeFitContinuationHandle = {
   completion: Promise<boolean>
@@ -42,14 +45,6 @@ const pendingSafeFitContinuations = new WeakMap<
   ManagedPane,
   Map<string, PendingSafeFitContinuation>
 >()
-
-function getProposedDimensions(pane: ManagedPane): { cols: number; rows: number } | null {
-  try {
-    return pane.fitAddon.proposeDimensions() ?? null
-  } catch {
-    return null
-  }
-}
 
 // Why: measure the element FitAddon fits (the xterm host), not the outer .pane —
 // a title/banner can shrink the inner fittable area while the outer stays put.
@@ -71,23 +66,6 @@ function recordPaneFitClientSize(pane: ManagedPane): void {
   }
 }
 
-export function canMeasurePaneForFit(pane: ManagedPane): boolean {
-  const measure = pane.container?.getBoundingClientRect
-  if (typeof measure === 'function') {
-    const rect = measure.call(pane.container)
-    if (rect.width < MIN_PANE_FIT_WIDTH_PX || rect.height < MIN_PANE_FIT_HEIGHT_PX) {
-      return false
-    }
-  }
-  const dims = getProposedDimensions(pane)
-  if (!dims) {
-    return false
-  }
-  // Why: worktree switches can briefly measure a near-zero overlay before
-  // fallback positioning lands. Fitting there pins the PTY at ~2 cols.
-  return dims.cols >= MIN_PANE_FIT_COLS && dims.rows >= MIN_PANE_FIT_ROWS
-}
-
 function canPreserveScrollIntentForFit(pane: ManagedPane): boolean {
   // Why: split reparent has its own delayed restore; restoring here can fight that timer.
   return !(
@@ -102,6 +80,9 @@ function performSafeFit(pane: ManagedPane): boolean {
   if (!canMeasurePaneForFit(pane)) {
     return false
   }
+  // Why here: metric options deferred while the pane was unmeasurable must land
+  // before this fit reads dimensions, or the fit pins cols/rows to stale metrics.
+  flushDeferredPaneMetricOptions(pane)
   let scrollIntent = null as ReturnType<typeof captureTerminalStructuralScrollIntent>
   let pinnedScrollState: ScrollState | null = null
   let shouldRestoreScroll = false
@@ -129,7 +110,7 @@ function performSafeFit(pane: ManagedPane): boolean {
       return true
     }
 
-    const dims = getProposedDimensions(pane)
+    const dims = getProposedPaneDimensions(pane)
     if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
       // Why: divider drags often stay within one cell; avoid needless clear/refresh churn.
       resumePendingFitScrollRestoreAfterFit(pane.terminal)
