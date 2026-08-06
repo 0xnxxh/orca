@@ -137,6 +137,10 @@ describe('terminal scheduler retained-string charge', () => {
     flushTerminalOutput(terminal as never, {
       maxChars: source.length - BACKGROUND_CHUNK_CHARS
     })
+    expect(readDebugSnapshot()).toMatchObject({
+      queuedChars: BACKGROUND_CHUNK_CHARS,
+      retainedChars: source.length
+    })
     writeTerminalOutput(terminal as never, appended, {
       foreground: true,
       latencySensitive: false

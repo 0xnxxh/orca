@@ -765,7 +765,6 @@ function enqueueChunk(
   })
   entry.pendingChars += data.length
   entry.retainedChars += data.length
-  rebaseRetainedChunks(entry)
   recordQueueDebugPressure()
 }
 
@@ -1151,6 +1150,7 @@ export function writeTerminalOutput(
         scheduleDrain(0)
         return
       }
+      rebaseRetainedChunks(queued)
       if (options.holdForeground) {
         // Why: synchronized-output start/body chunks contain transient cursor moves; holding them prevents Chromium from rasterizing those states.
         if (options.latencySensitive === true) {
@@ -1216,6 +1216,8 @@ export function writeTerminalOutput(
       }
       if (queueCapExceeded(entry)) {
         replaceBacklogWithWarning(entry, FOREGROUND_BACKLOG_WARNING)
+      } else {
+        rebaseRetainedChunks(entry)
       }
       // Why: returning from a hidden window can have megabytes queued — keep byte order but drain async so the first foreground frame isn't pinned behind the whole backlog.
       scheduleDrain(0)
@@ -1246,6 +1248,8 @@ export function writeTerminalOutput(
       }
       if (queueCapExceeded(queued)) {
         replaceBacklogWithWarning(queued, FOREGROUND_BACKLOG_WARNING)
+      } else {
+        rebaseRetainedChunks(queued)
       }
       // Why: visible command floods are throughput work, not keystroke echo — queue behind a zero-delay drain so one IPC callback can't pin the renderer while input/paint wait.
       scheduleDrain(0)
@@ -1300,6 +1304,8 @@ export function writeTerminalOutput(
   })
   if (queueCapExceeded(entry)) {
     replaceBacklogWithWarning(entry)
+  } else {
+    rebaseRetainedChunks(entry)
   }
   if (debugEnabled) {
     debugState.backgroundEnqueueCount++
