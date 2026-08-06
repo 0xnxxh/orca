@@ -32,7 +32,7 @@ export function assertTaskPageGitHubDialogStateAuthority(args: {
   itemId: string
   state: GitHubWorkItem['state']
   sourceContext?: TaskSourceContext | null
-}): { revert: () => void } {
+}): { revert: () => boolean } {
   const sourceScope =
     args.sourceContext?.provider === 'github' ? getTaskSourceCacheScope(args.sourceContext) : null
   const previous = getLastConfirmedClientValue(sourceScope, args.repoId, args.itemId, 'state')
@@ -41,6 +41,11 @@ export function assertTaskPageGitHubDialogStateAuthority(args: {
   notifyTaskPageGitHubMutationRegistry()
   return {
     revert: () => {
+      const current = getLastConfirmedClientValue(sourceScope, args.repoId, args.itemId, 'state')
+      // A matching search adopt or newer mutation owns the state now.
+      if (current !== args.state) {
+        return false
+      }
       if (previous === undefined) {
         deleteLastConfirmedClientValue(sourceScope, args.repoId, args.itemId, 'state')
       } else {
@@ -48,6 +53,7 @@ export function assertTaskPageGitHubDialogStateAuthority(args: {
       }
       markStateFamilyDirty(args.repoId, args.itemId)
       notifyTaskPageGitHubMutationRegistry()
+      return true
     }
   }
 }

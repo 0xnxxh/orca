@@ -249,7 +249,7 @@ describe('GitHubItemDialog source host boundaries', () => {
     // Issue close/reopen: assert on optimistic apply, revert on failure.
     const editSection = sourceBetween(source, 'function GHEditSection', 'const closeAsDuplicate')
     expect(editSection).toContain('assertTaskPageGitHubDialogStateAuthority({')
-    expect(editSection).toContain('authority?.revert()')
+    expect(editSection).toContain('if (authority?.revert())')
 
     // PR close/reopen + merge: same protection for the shared Tasks list rows.
     const actionsSection = sourceBetween(
@@ -258,7 +258,7 @@ describe('GitHubItemDialog source host boundaries', () => {
       'function CommentReplyForm'
     )
     expect(actionsSection.match(/assertTaskPageGitHubDialogStateAuthority\(\{/g)).toHaveLength(2)
-    expect(actionsSection).toContain('authority.revert()')
+    expect(actionsSection).toContain('if (authority.revert())')
     expect(actionsSection).toContain("state: 'merged'")
   })
 })

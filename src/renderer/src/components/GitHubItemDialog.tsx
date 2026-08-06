@@ -2862,8 +2862,9 @@ function PRActionsPanel({
       )
       onMutated()
     } catch (err) {
-      authority.revert()
-      applyStatePatch(previousState)
+      if (authority.revert()) {
+        applyStatePatch(previousState)
+      }
       toast.error(
         err instanceof Error
           ? err.message
@@ -4194,7 +4195,7 @@ function GHEditSection({
       const prevState = localState
       // Why: without registry authority a search-lagged Tasks refetch silently
       // reverts this row to its pre-mutation state (STA-3343).
-      let authority: { revert: () => void } | null = null
+      let authority: { revert: () => boolean } | null = null
       run('state', {
         mutate: () =>
           runIssueUpdate({
@@ -4220,10 +4221,11 @@ function GHEditSection({
           patchProjectRowIfNeeded({ state: newState })
         },
         onRevert: () => {
-          authority?.revert()
-          onStateChange(prevState)
-          patchWorkItem(item.id, { state: prevState }, item.repoId, { sourceContext })
-          patchProjectRowIfNeeded({ state: prevState })
+          if (authority?.revert()) {
+            onStateChange(prevState)
+            patchWorkItem(item.id, { state: prevState }, item.repoId, { sourceContext })
+            patchProjectRowIfNeeded({ state: prevState })
+          }
         },
         onSuccess: () => {
           useAppStore.getState().recordFeatureInteraction('github-tasks')
