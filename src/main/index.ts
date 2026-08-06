@@ -2098,7 +2098,11 @@ void app.whenReady().then(async () => {
   }
   try {
     // Why: Dock/Launchpad launches don't inherit shell proxy env vars, so apply the persisted proxy before any app-owned network fetchers run.
-    await applyElectronProxySettings(store.getSettings())
+    const proxyApplyResult = await applyElectronProxySettings(store.getSettings())
+    if (proxyApplyResult.source === 'invalid-settings') {
+      // Why (STA-3442): a silent DIRECT fallback made a dead configured proxy undiagnosable.
+      console.warn('[proxy] persisted proxy settings are invalid; using direct networking')
+    }
   } catch {
     console.warn('[proxy] Failed to apply network proxy settings')
   }
