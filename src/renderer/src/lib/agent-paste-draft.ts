@@ -1,5 +1,5 @@
 import type { TuiAgent, GlobalSettings } from '../../../shared/types'
-import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
+import { TUI_AGENT_CONFIG, type DraftPasteReadySignal } from '../../../shared/tui-agent-config'
 import { useAppStore } from '@/store'
 import {
   inspectRuntimeTerminalProcess,
@@ -43,6 +43,20 @@ export function sanitizeBracketedPasteContent(content: string): string {
 // or (2) the launch fails outright. The hard timeout caps the wait so a
 // stuck launch doesn't pin a Promise forever.
 const READINESS_TIMEOUT_MS = 8000
+
+// Why: marker-gated signals (Codex '›', opencode show-cursor) are positive
+// readiness proofs — the paste fires only when the marker actually renders, so a
+// longer budget can never paste prematurely; it only tolerates a slow cold boot.
+// First-run codex on a cold app can take >8s to mount its composer, past which
+// the old budget gave up and dropped the launch prompt (STA-3367). The default
+// quiet-window signal has no such proof, so it keeps the tighter budget.
+const MARKER_READINESS_TIMEOUT_MS = 20000
+
+function readinessBudgetForSignal(readySignal: DraftPasteReadySignal): number {
+  return readySignal === 'render-quiet-after-bracketed-paste'
+    ? READINESS_TIMEOUT_MS
+    : MARKER_READINESS_TIMEOUT_MS
+}
 
 export function getSettingsForAgentTabRuntimeOwner(
   tabId: string
@@ -96,8 +110,8 @@ export async function pasteDraftWhenAgentReady(args: {
     return false
   }
 
-  const budget = timeoutMs ?? READINESS_TIMEOUT_MS
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
+  const budget = timeoutMs ?? readinessBudgetForSignal(readySignal)
   const ptyId = await waitForPtyId(tabId, budget)
   if (!ptyId) {
     onTimeout?.()
@@ -145,9 +159,9 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
     return false
   }
 
-  const budget = timeoutMs ?? READINESS_TIMEOUT_MS
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
+  const budget = timeoutMs ?? readinessBudgetForSignal(readySignal)
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
     const fallbackReady = agentConfig

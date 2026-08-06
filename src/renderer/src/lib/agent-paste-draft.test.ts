@@ -286,7 +286,7 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
     // Only the hard timeout (and failed process check) resolves it — to false.
-    await vi.advanceTimersByTimeAsync(8000)
+    await vi.advanceTimersByTimeAsync(20000)
     await flushMicrotasks(5)
     await vi.advanceTimersByTimeAsync(1000)
     await expect(promise).resolves.toBe(false)
@@ -309,7 +309,7 @@ describe('pasteDraftWhenAgentReady', () => {
     await flushMicrotasks()
 
     testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
-    await vi.advanceTimersByTimeAsync(8000)
+    await vi.advanceTimersByTimeAsync(20000)
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
@@ -419,7 +419,7 @@ describe('pasteDraftWhenAgentReady', () => {
     })
     await flushMicrotasks()
 
-    await vi.advanceTimersByTimeAsync(8000)
+    await vi.advanceTimersByTimeAsync(20000)
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
@@ -427,6 +427,35 @@ describe('pasteDraftWhenAgentReady', () => {
       'pty-1',
       PASTED_ISSUE_URL
     )
+  })
+
+  it('waits past the default budget for a cold-boot Codex composer glyph (STA-3367)', async () => {
+    // Why: first-run/cold codex can take >8s to mount its composer. The '›' glyph
+    // is a positive readiness proof, so the marker-gated budget waits for it
+    // instead of giving up at 8s and dropping the handoff prompt. Process
+    // inspection stays 'bash' so only the real marker — not the fallback — delivers.
+    const promise = pasteDraftWhenAgentReady({
+      tabId: 'tab-1',
+      content: ISSUE_URL,
+      agent: 'codex'
+    })
+    await flushMicrotasks()
+
+    testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
+    // Old 8s budget would have already timed out and dropped the prompt here.
+    await vi.advanceTimersByTimeAsync(8000)
+    await flushMicrotasks()
+    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+
+    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
+
+    await expect(promise).resolves.toBe(true)
+    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
+      {},
+      'pty-1',
+      PASTED_ISSUE_URL
+    )
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('honors the fallback inspection deadline for pty-bound draft paste', async () => {
