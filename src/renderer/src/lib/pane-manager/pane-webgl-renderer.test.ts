@@ -8,6 +8,7 @@ import {
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
 import { notifyPaneFitSucceeded } from './pane-fit-webgl-attach-signal'
+import { safeFit } from './pane-fit'
 
 function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
   const leafId = '22222222-2222-4222-8222-222222222222' as never
@@ -228,5 +229,72 @@ describe('fit-anchored WebGL reattach', () => {
     notifyPaneFitSucceeded(pane)
 
     expect(pane.webglAddon).toBe(liveAddon)
+  })
+})
+
+// Why a separate suite: the tests above drive the signal directly, so they stay
+// green even if safeFit stops calling it. These go through the real fit path so
+// the wiring — and the import-time hook registration — is what is under test.
+describe('safeFit drives the fit-anchored WebGL reattach', () => {
+  function createFittablePane(): ManagedPaneInternal {
+    const pane = createPane()
+    const rect = { width: 800, height: 400 }
+    pane.container = { dataset: {}, getBoundingClientRect: () => rect } as never
+    pane.xtermContainer = { getBoundingClientRect: () => rect } as never
+    // Why: WebGL floors the device cell width, so the same box proposes a wider
+    // grid once the addon is live — the divergence the reattach has to settle.
+    pane.fitAddon.proposeDimensions = vi.fn(() =>
+      pane.webglAddon ? { cols: 84, rows: 24 } : { cols: 80, rows: 24 }
+    ) as never
+    return pane
+  }
+
+  beforeEach(() => {
+    resetTerminalWebglSuggestion()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(16)
+      return 1
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('attaches WebGL when a real safeFit completes', () => {
+    const pane = createFittablePane()
+
+    expect(safeFit(pane)).toBe(true)
+
+    expect(pane.webglAddon).not.toBeNull()
+  })
+
+  it('refits the pane onto the WebGL cell metrics after attaching', () => {
+    // Without the follow-up fit the healed pane keeps the DOM-derived column
+    // count, leaving an unpainted gutter and a PTY narrower than the pane.
+    const pane = createFittablePane()
+    const hadAddonPerFit: boolean[] = []
+    pane.fitAddon.fit = vi.fn(() => {
+      hadAddonPerFit.push(pane.webglAddon != null)
+    }) as never
+
+    safeFit(pane)
+
+    expect(hadAddonPerFit).toEqual([true])
+  })
+
+  it('does not fit when the pane is unmeasurable', () => {
+    const pane = createFittablePane()
+    pane.container = {
+      dataset: {},
+      getBoundingClientRect: () => ({ width: 0, height: 0 })
+    } as never
+
+    expect(safeFit(pane)).toBe(false)
+
+    expect(pane.webglAddon).toBeNull()
   })
 })

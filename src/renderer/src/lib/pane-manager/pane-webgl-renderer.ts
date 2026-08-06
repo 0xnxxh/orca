@@ -7,7 +7,7 @@ import {
   getTerminalWebglAutoDecision,
   resetTerminalWebglAutoDecision
 } from './terminal-webgl-auto-policy'
-import { safeFitAndThen } from './pane-fit'
+import { safeFit, safeFitAndThen } from './pane-fit'
 import { setPaneFitWebglAttachHook } from './pane-fit-webgl-attach-signal'
 
 export const ENABLE_WEBGL_RENDERER = true
@@ -150,6 +150,25 @@ export function resetWebglTextureAtlas(pane: ManagedPaneInternal): void {
   }
 }
 
+function refitAfterFitAnchoredWebglAttach(pane: ManagedPaneInternal): void {
+  // Why: the fit that triggered this attach measured DOM cell metrics, but WebGL
+  // floors the device cell width — keeping that grid leaves an unpainted right
+  // gutter and a PTY narrower than the pane. Refit on the next frame (mirroring
+  // the dispose-side refreshDimensions) so xterm has re-measured against the new
+  // renderer, and so the running fit is never re-entered.
+  if (typeof globalThis.requestAnimationFrame !== 'function') {
+    return
+  }
+  pane.pendingWebglRefreshRafId = globalThis.requestAnimationFrame(() => {
+    pane.pendingWebglRefreshRafId = null
+    try {
+      safeFit(pane)
+    } catch {
+      /* ignore — pane may have been disposed in the meantime */
+    }
+  })
+}
+
 export function attachWebglAfterFitIfMissing(pane: ManagedPaneInternal): void {
   // Why: a successful fit is the event-anchored moment a WebGL-eligible pane
   // that is stuck on the DOM renderer can heal — a late mount that missed the
@@ -168,6 +187,7 @@ export function attachWebglAfterFitIfMissing(pane: ManagedPaneInternal): void {
     attachWebgl(pane)
     if (pane.webglAddon) {
       recordTerminalWebglDiagnostic('webgl-fit-attach', { paneId: pane.id })
+      refitAfterFitAnchoredWebglAttach(pane)
     }
   }
 }
