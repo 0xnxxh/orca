@@ -26,12 +26,29 @@
  *  surviving contract below is what actually holds. Drive composition through
  *  the frames below or the artifact reappears and looks like a defect again.
  *
- *  THIS OWNS NO REPORTED ROW. It is not a regression guard for #12118 or
- *  STA-3219. Those reporters describe continuous flicker keyed to streaming
- *  token counters and elapsed timers, and those drivers provably do not remount
- *  the composer — `native-chat-composer-autogrow.test.tsx` holds node identity
- *  across 120 such rerenders. An AskUserQuestion card arrives once per question,
- *  which does not match that cadence.
+ *  STILL NOT A REGRESSION GUARD for #12118 or STA-3219 — but the reason has
+ *  narrowed, so read this before reusing it as one. The remount site IS now the
+ *  attributed owner of those rows: on real Windows TSF the swap ABORTS a live
+ *  composition, giving the old node only a `blur` and no `compositionend`, after
+ *  which the text returns as committed and the next jamo yields `아ㄴ` rather
+ *  than `안`. What this file pins is the opposite property — that the text
+ *  SURVIVES — which is the half the reporters already agree with ("값은 보존되나").
+ *  Mutation confirms the gap: deleting the unmount entirely leaves three of four
+ *  tests green, because every substantive assertion here is `after.value === …`
+ *  and an unmounted-never composer keeps its value trivially.
+ *
+ *  The abort is not assertable here at all. The DOM exposes no observable that
+ *  separates committed text from a live preedit — `value` is the same string
+ *  either way, there is no EditContext, and the only composing-ness state is a
+ *  per-instance ref discarded with the node. A test pinning "no compositionend
+ *  fires" would also be an anti-guard: it goes red the day the bug is fixed.
+ *
+ *  The cadence objection stands and is still the open question. Those reporters
+ *  describe continuous flicker keyed to streaming token counters and elapsed
+ *  timers, and those drivers provably do not remount the composer —
+ *  `native-chat-composer-autogrow.test.tsx` holds node identity across 120 such
+ *  rerenders. An AskUserQuestion card arrives once per question, which does not
+ *  match that cadence, so whether this owner is the one they hit is unproven.
  *
  *  RESIDUAL, USER-FACING, AND NOT JS-REACHABLE. The text survives but the
  *  composition does not: the OS aborts it when the field disappears, so what
