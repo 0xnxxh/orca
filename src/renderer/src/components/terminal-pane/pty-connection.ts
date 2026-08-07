@@ -128,8 +128,6 @@ import {
 } from '../../../../shared/terminal-mode-reset-profiles'
 import { buildFreshShellViewportBlankingSequence } from './terminal-restored-viewport'
 import { createShellReadyMarkerScanState, scanForShellReadyMarker } from './shell-ready-marker-scan'
-import { shouldUseShellReadyStartupDelivery } from '../../../../shared/codex-startup-delivery'
-import { resolveSetupAgentSequenceLaunchCommand } from '../../../../shared/setup-agent-sequencing'
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import {
   INITIAL_MODE_2031_REPLY_SCAN_STATE,
@@ -4752,16 +4750,13 @@ export function connectPanePty(
           ? { command: paneStartup.command }
           : null
         : null
-    const startupShellReadyCommandHint = resolveSetupAgentSequenceLaunchCommand(
-      paneStartup?.env ?? {},
-      paneStartup?.command
-    )
+    // Why every startup command and not a per-agent list: a shell that has not reached its
+    // prompt drops whatever is written to it, whichever agent the command names. The relay
+    // already gates its own delivery on the marker it armed; this mirrors that for the
+    // renderer-delivered path, bounded by the existing fallback timer.
     const shouldWaitForSshShellReady =
       Boolean(connectionId) &&
-      shouldUseShellReadyStartupDelivery({
-        command: startupShellReadyCommandHint,
-        startupCommandDelivery: paneStartup?.startupCommandDelivery
-      }) &&
+      Boolean(pendingStartupCommand) &&
       !shouldDeliverStartupViaTerminalPaste
     const sshShellReadyMarkerScan = shouldWaitForSshShellReady
       ? createShellReadyMarkerScanState()
