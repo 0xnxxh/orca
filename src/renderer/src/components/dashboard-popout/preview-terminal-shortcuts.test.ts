@@ -11,6 +11,7 @@ const LOCAL_MAC: DashboardCardTerminalInput = {
   hostPlatform: 'darwin',
   localWindowsConpty: false,
   windowsShiftEnterEncoding: 'alt-enter',
+  ctrlEnterCsiU: false,
   kittyKeyboardAdvertised: true
 }
 
@@ -73,6 +74,7 @@ describe('resolvePreviewShortcutAction', () => {
         hostPlatform: 'win32',
         localWindowsConpty: true,
         windowsShiftEnterEncoding: 'alt-enter',
+        ctrlEnterCsiU: false,
         kittyKeyboardAdvertised: false
       }
     })
@@ -94,6 +96,7 @@ describe('resolvePreviewShortcutAction', () => {
         hostPlatform: 'win32',
         localWindowsConpty: false,
         windowsShiftEnterEncoding: 'csi-u',
+        ctrlEnterCsiU: false,
         kittyKeyboardAdvertised: true
       }
     })
@@ -105,17 +108,42 @@ describe('resolvePreviewShortcutAction', () => {
     ).toEqual({ type: 'sendInput', data: '\x1b\r' })
   })
 
-  it('gates the Ctrl+Enter CSI-u chord on the preview pty kitty flags', () => {
+  it('protects local ConPTY shells while preserving trusted Ctrl+Enter consumers', () => {
+    const conpty = contextFor({
+      clientPlatform: 'win32',
+      terminalInput: {
+        hostPlatform: 'win32',
+        localWindowsConpty: true,
+        windowsShiftEnterEncoding: 'alt-enter',
+        ctrlEnterCsiU: false,
+        kittyKeyboardAdvertised: false
+      }
+    })
+    expect(
+      resolvePreviewShortcutAction(keydown({ key: 'Enter', ctrlKey: true }), {
+        ...conpty,
+        kittyKeyboardActive: () => true
+      })
+    ).toEqual({ type: 'sendInput', data: '\x1b[13;5u' })
+    expect(resolvePreviewShortcutAction(keydown({ key: 'Enter', ctrlKey: true }), conpty)).toEqual({
+      type: 'sendInput',
+      data: '\r'
+    })
     expect(
       resolvePreviewShortcutAction(
         keydown({ key: 'Enter', ctrlKey: true }),
-        contextFor({ kitty: true })
+        contextFor({
+          clientPlatform: 'win32',
+          terminalInput: {
+            hostPlatform: 'win32',
+            localWindowsConpty: true,
+            windowsShiftEnterEncoding: 'alt-enter',
+            ctrlEnterCsiU: true,
+            kittyKeyboardAdvertised: false
+          }
+        })
       )
     ).toEqual({ type: 'sendInput', data: '\x1b[13;5u' })
-    // Why: kittyKeyboardAdvertised is only an advertisement — live flags decide (#12329).
-    expect(
-      resolvePreviewShortcutAction(keydown({ key: 'Enter', ctrlKey: true }), contextFor())
-    ).toEqual({ type: 'sendInput', data: '\r' })
   })
 
   it('reports pane-scoped chords so the caller can swallow them', () => {

@@ -379,9 +379,18 @@ async function assertShiftOutcome(page: Page): Promise<void> {
   ])
 }
 
-// Why: this harness never negotiates the kitty protocol, so Ctrl+Enter falls back to
-// the legacy CR (#12329) instead of printing CSI-u verbatim into the prompt.
 async function assertCtrlOutcome(page: Page): Promise<void> {
+  if (process.platform !== 'win32') {
+    await expect
+      .poll(() => readReceived(page), {
+        timeout: 10_000,
+        message: 'PTY bytes must contain committed Hangul before exactly one Ctrl+Enter chord'
+      })
+      .toBe('하 하 하\u001b[13;5u')
+    expect(await readSubmitted(page), 'CSI-u must not submit the line').toEqual([])
+    return
+  }
+
   await expect
     .poll(() => readReceived(page), {
       timeout: 10_000,
@@ -417,8 +426,8 @@ const COMMITTING_ENTER_CHORDS: CommittingEnterChordCase[] = [
     modifiers: 2,
     assertOutcome: assertCtrlOutcome,
     expectedAfterPlainEnter: {
-      received: '하 하 하\r\r',
-      submitted: ['하 하 하', '']
+      received: process.platform === 'win32' ? '하 하 하\r\r' : '하 하 하\u001b[13;5u\r',
+      submitted: process.platform === 'win32' ? ['하 하 하', ''] : ['하 하 하\u001b[13;5u']
     }
   },
   {

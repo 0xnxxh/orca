@@ -526,31 +526,30 @@ test.describe('Terminal Shortcuts', () => {
     await pressAndExpectWrite(orcaPage, electronApp, 'Control+Alt+;', '\x1b;')
   })
 
-  test('Ctrl+Enter writes the kitty modified-enter chord only once the TUI negotiates it', async ({
+  test('Ctrl+Enter protects local ConPTY shells without breaking trusted TUI chords', async ({
     orcaPage,
     electronApp
   }) => {
     await installMainProcessPtyWriteSpy(electronApp)
-    const ptyId = await waitForActivePanePtyId(orcaPage)
+    await waitForActivePanePtyId(orcaPage)
 
-    // Why: a plain shell never negotiates kitty, so CSI-u would print verbatim (#12329).
-    await pressAndExpectWrite(orcaPage, electronApp, 'Control+Enter', '\r')
     if (process.platform === 'win32') {
+      await pressAndExpectWrite(orcaPage, electronApp, 'Control+Enter', '\r')
+      const paneKey = await setActivePaneForegroundAgent(orcaPage, 'droid')
+      try {
+        // Droid queries CSI-u without activating live flags; trusted process evidence preserves cue/queue.
+        await pressAndExpectWrite(orcaPage, electronApp, 'Control+Enter', '\x1b[13;5u')
+      } finally {
+        await orcaPage.evaluate(
+          (key) => window.__store?.getState().clearPaneForegroundAgent(key),
+          paneKey
+        )
+      }
       return
     }
 
-    // Why: the gate reads the PTY-output tracker, not xterm's renderer-local flags,
-    // so negotiation has to come from the application side like a real TUI's.
-    await execInTerminal(orcaPage, ptyId, "printf '\\033[>1u'")
-    await expect.poll(() => getKittyKeyboardFlags(orcaPage)).toBe(1)
+    // Preserve the established query-only Droid/Grok contract outside local ConPTY.
     await pressAndExpectWrite(orcaPage, electronApp, 'Control+Enter', '\x1b[13;5u')
-
-    // Clear the shell's unconsumed CSI-u line before resetting flags in a settled
-    // command; otherwise its line editor can swallow the reset bytes.
-    await sendToTerminal(orcaPage, ptyId, '\x15\x03')
-    await execInTerminal(orcaPage, ptyId, "printf '\\033[=0u'")
-    await expect.poll(() => getKittyKeyboardFlags(orcaPage)).toBe(0)
-    await pressAndExpectWrite(orcaPage, electronApp, 'Control+Enter', '\r')
   })
 
   test('plain Ctrl+C sends ETX under kitty keyboard reporting', async ({
@@ -747,8 +746,8 @@ test.describe('Terminal Shortcuts', () => {
     await pressAndExpectWrite(orcaPage, electronApp, 'Alt+ArrowRight', '\x1bf')
 
     // Ctrl+←/→ on non-mac → readline backward-word / forward-word (\eb / \ef).
-    // Mac-gated: Ctrl+Arrow on macOS is reserved for Mission Control / Spaces.
-    if (!isMac) {
+    // macOS reserves Ctrl+Arrow; Windows ConPTY leaves it to PSReadLine.
+    if (!isMac && process.platform !== 'win32') {
       await pressAndExpectWrite(orcaPage, electronApp, 'Control+ArrowLeft', '\x1bb')
       await pressAndExpectWrite(orcaPage, electronApp, 'Control+ArrowRight', '\x1bf')
     }
