@@ -35,7 +35,7 @@ export function computeSessionScrollbackRows(
     options.budgetRows ??
     parseBudgetOverrideRows((options.env ?? process.env)[DAEMON_SCROLLBACK_ENV_VAR]) ??
     DAEMON_SCROLLBACK_BUDGET_ROWS
-  if (!Number.isFinite(liveSessionCount) || liveSessionCount <= 1) {
+  if (!Number.isFinite(liveSessionCount) || liveSessionCount <= 0) {
     return DAEMON_SCROLLBACK_FULL_ROWS
   }
   const evenShare = Math.floor(budgetRows / liveSessionCount)

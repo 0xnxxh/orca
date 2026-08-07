@@ -89,6 +89,16 @@ describe('TerminalHost scrollback budget', () => {
     }
   })
 
+  it('does not scan every session again when attaching to an existing session', async () => {
+    await create('a')
+    await create('b')
+    applyRows.mockClear()
+
+    await create('a')
+
+    expect(applyRows).not.toHaveBeenCalled()
+  })
+
   it('reduces per-session depth as the session count grows past the budget', async () => {
     const SESSIONS = 60
     for (let i = 0; i < SESSIONS; i++) {
@@ -97,6 +107,13 @@ describe('TerminalHost scrollback budget', () => {
     const applied = lastAppliedRows()
     expect(applied).toBe(computeSessionScrollbackRows(SESSIONS))
     expect(applied).toBeLessThan(DAEMON_SCROLLBACK_FULL_ROWS)
+  })
+
+  it('applies each concurrent create before yielding', async () => {
+    const pending = Array.from({ length: 30 }, (_, i) => create(`concurrent-${i}`))
+
+    expect(lastAppliedRows()).toBe(computeSessionScrollbackRows(30))
+    await Promise.all(pending)
   })
 
   it('restores depth to survivors when sessions exit', async () => {
@@ -115,5 +132,49 @@ describe('TerminalHost scrollback budget', () => {
     const afterDrain = lastAppliedRows()
     expect(afterDrain).toBeGreaterThan(underLoad)
     expect(afterDrain).toBe(DAEMON_SCROLLBACK_FULL_ROWS)
+  })
+})
+
+describe('HeadlessEmulator scrollback budget application', () => {
+  it('trims immediately without misplacing restored OSC links', () => {
+    const emulator = new HeadlessEmulator({ cols: 20, rows: 2, scrollback: 20 })
+    try {
+      emulator.writeSync(Array.from({ length: 10 }, (_, i) => `L${i}\r\n`).join(''))
+      emulator.setRestoredOscLinks([
+        { row: 8, startCol: 0, endCol: 2, uri: 'https://retained.invalid' },
+        { row: 2, startCol: 0, endCol: 2, uri: 'https://trimmed.invalid' }
+      ])
+
+      emulator.setRetainedScrollbackRows(3)
+
+      const snapshot = emulator.getSnapshot()
+      expect(snapshot.scrollbackLines).toBe(3)
+      expect(snapshot.oscLinks).toEqual([
+        { row: 2, startCol: 0, endCol: 2, uri: 'https://retained.invalid' }
+      ])
+    } finally {
+      emulator.dispose()
+    }
+  })
+
+  it('keeps alternate-buffer restored OSC links fixed while trimming the normal buffer', () => {
+    const emulator = new HeadlessEmulator({ cols: 20, rows: 2, scrollback: 20 })
+    try {
+      emulator.writeSync(Array.from({ length: 10 }, (_, i) => `L${i}\r\n`).join(''))
+      emulator.writeSync('\x1b[?1049hALT')
+      emulator.setRestoredOscLinks([
+        { row: 0, startCol: 0, endCol: 3, uri: 'https://alternate.invalid' }
+      ])
+
+      emulator.setRetainedScrollbackRows(3)
+
+      const snapshot = emulator.getSnapshot()
+      expect(snapshot.scrollbackLines).toBe(3)
+      expect(snapshot.oscLinks).toEqual([
+        { row: 0, startCol: 0, endCol: 3, uri: 'https://alternate.invalid' }
+      ])
+    } finally {
+      emulator.dispose()
+    }
   })
 })

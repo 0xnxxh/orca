@@ -65,15 +65,17 @@ export class TerminalHost {
           spawnSubprocess: this.spawnSubprocess,
           creationFenced: this.creationFenced,
           onDeadSessionRemoved: (sessionId) => this.agentSessionGenerations.forget(sessionId),
-          onSessionCreated: (sessionId, generation, isAlive) =>
-            this.agentSessionGenerations.remember(sessionId, generation, isAlive),
+          onSessionCreated: (sessionId, generation, isAlive) => {
+            this.agentSessionGenerations.remember(sessionId, generation, isAlive)
+            // Apply synchronously with map insertion so concurrent creates cannot retain full depth.
+            this.applyScrollbackBudget()
+          },
           onSessionExit: (sessionId, generation) => {
             this.agentSessionOwners.release(sessionId, generation)
             this.agentSessionGenerations.forget(sessionId, generation)
             this.reapSession(sessionId)
           }
         })
-        this.applyScrollbackBudget()
         return result
       }
     })

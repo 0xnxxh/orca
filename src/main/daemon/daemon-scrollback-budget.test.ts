@@ -16,6 +16,11 @@ describe('computeSessionScrollbackRows', () => {
     )
   })
 
+  it('preserves the default 5000-row restore depth through 25 sessions', () => {
+    expect(computeSessionScrollbackRows(25)).toBe(DAEMON_SCROLLBACK_FULL_ROWS)
+    expect(computeSessionScrollbackRows(26)).toBe(Math.floor(DAEMON_SCROLLBACK_BUDGET_ROWS / 26))
+  })
+
   it('splits the budget evenly once it binds', () => {
     expect(computeSessionScrollbackRows(40, { budgetRows: 100_000 })).toBe(2500)
     expect(computeSessionScrollbackRows(50, { budgetRows: 100_000 })).toBe(2000)
@@ -57,6 +62,7 @@ describe('computeSessionScrollbackRows', () => {
 
   it('accepts an env override and ignores an unusable one', () => {
     const env = { ORCA_DAEMON_SCROLLBACK_BUDGET_ROWS: '20000' } as NodeJS.ProcessEnv
+    expect(computeSessionScrollbackRows(1, { env })).toBe(DAEMON_SCROLLBACK_FULL_ROWS)
     expect(computeSessionScrollbackRows(10, { env })).toBe(2000)
     // Why: an unparseable or non-positive override must not disable the budget — unbounded is the bug.
     for (const raw of ['nonsense', '0', '-5']) {
@@ -65,5 +71,10 @@ describe('computeSessionScrollbackRows', () => {
         computeSessionScrollbackRows(100, { budgetRows: DAEMON_SCROLLBACK_BUDGET_ROWS })
       )
     }
+  })
+
+  it('honors a tightened budget that binds with one session', () => {
+    const env = { ORCA_DAEMON_SCROLLBACK_BUDGET_ROWS: '2000' } as NodeJS.ProcessEnv
+    expect(computeSessionScrollbackRows(1, { env })).toBe(2000)
   })
 })

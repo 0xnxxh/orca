@@ -340,7 +340,15 @@ export class HeadlessEmulator {
     if (this.terminal.options.scrollback === next) {
       return
     }
+    const normalBufferWasActive = this.terminal.buffer.active.type === 'normal'
+    const previousNormalLength = this.terminal.buffer.normal.length
     this.terminal.options.scrollback = next
+    const trimmedRows = previousNormalLength - this.terminal.buffer.normal.length
+    if (normalBufferWasActive && trimmedRows > 0) {
+      this.restoredOscLinks = this.restoredOscLinks
+        .filter((link) => link.row >= trimmedRows)
+        .map((link) => ({ ...link, row: link.row - trimmedRows }))
+    }
   }
 
   dispose(): void {
