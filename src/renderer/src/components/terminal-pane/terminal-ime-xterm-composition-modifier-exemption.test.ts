@@ -1,24 +1,29 @@
 // @vitest-environment happy-dom
-// HAZARD PIN — owns no reported row. Read this before treating it as a regression guard.
+// Guards the Meta entries in xterm's composition modifier exemption (our patch to
+// CompositionHelper.keydown). Every event shape below was recorded on real macOS 2-Set Korean
+// hardware — m4air, macOS 26.5.2, Apple M4 — not constructed from the spec; see
+// `.tmp/ime-handoff/swarm-scratch/wave31-cmd-preedit/evidence/`.
 //
-// xterm's CompositionHelper.keydown exempts keyCode 16/17/18 (Shift/Ctrl/Alt) and
-// 20/229 from tearing down a live composition. macOS Meta is 91/93/224 and is NOT in
-// that set, so a Cmd press mid-composition reaches _finalizeComposition(false), which
-// drops the compositionView's `active` class. The overlay never recovers, because the
-// IME does not re-fire compositionstart — the rest of the word composes with no visible
-// preedit. Linux/Windows users press Ctrl (17) and are exempt; macOS users are not.
+// What the hardware showed, A/B'd against a build with the guard removed:
+//   - A lone Cmd press mid-composition arrives as `keydown key="Meta" code="MetaLeft"
+//     keyCode=91 isComposing=true`, and macOS keeps the marked text alive across it.
+//   - Without the exemption that keydown reaches `_finalizeComposition(false)`, which drops the
+//     overlay's `active` class AND commits the live syllable early. The IME then keeps composing
+//     the same syllable with no `compositionstart`, so nothing ever re-arms the overlay and the
+//     rest of the word is invisible.
+//   - A Cmd *chord* never travels this path: while composing, Chromium reports it as keyCode 229
+//     (already exempt), and the IME ends the composition itself with a real `compositionend`.
+//     So exempting Meta cannot keep a composition alive across Cmd+A — only across a lone Cmd.
 //
-// Three things a future reader must not misread:
-//   1. No reporter has filed this. It matched no open row: every candidate is bound to a
-//      version window, and this is version-NEUTRAL — defective on both 1.4.162 (pristine
-//      beta.287) and 1.4.163 (patched), in different shapes.
-//   2. The branch is unexercised in all 328 recorded IME traces. Every keydown ever
-//      captured during composition is either 229 or Shift/16, so the exemption set covers
-//      the whole corpus and nothing observed reaches the teardown.
-//   3. Only the teardown is asserted. A Cmd press also makes the syllable commit twice,
-//      but that depends on the IME delivering a later compositionend for a composition it
-//      kept alive across the Cmd — normal IME behavior, yet unverified on hardware, since
-//      no capture contains this gesture. Deliberately not pinned.
+// Ghostty makes the same call independently: `flagsChanged` returns early under `hasMarkedText()`
+// for every modifier including Super (macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift).
+//
+// Scope, so nobody over-reads this file: the terminal PANE was never affected, because
+// `shouldSuppressTerminalModifierKeyboardEvent` drops a standalone Meta keydown before xterm sees
+// it — added for stale Kitty reporting, protective here by accident. That was proven on hardware:
+// deleting only 'Meta' from TERMINAL_MODIFIER_KEYS is what flipped the clean arm to the broken one.
+// The surfaces that did reach the teardown are the popout preview terminal, whose handler returns
+// `true` for an IME-owned event, and mobile's webview, which installs no handler at all.
 import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,6 +34,7 @@ function nextEventLoop(): Promise<void> {
 type Harness = {
   compositionView: HTMLElement
   textarea: HTMLTextAreaElement
+  emitted: string[]
 }
 
 function openTerminal(): Harness {
@@ -44,7 +50,9 @@ function openTerminal(): Harness {
   if (!(compositionView instanceof HTMLElement)) {
     throw new Error('xterm composition view was not created')
   }
-  return { compositionView, textarea }
+  const emitted: string[] = []
+  terminal.onData((data) => emitted.push(data))
+  return { compositionView, textarea, emitted }
 }
 
 function dispatchCompositionEvent(
@@ -65,7 +73,7 @@ function dispatchKey(
   key: string,
   code: string
 ): void {
-  const event = new KeyboardEvent(type, { key, code, isComposing: keyCode === 229, bubbles: true })
+  const event = new KeyboardEvent(type, { key, code, isComposing: true, bubbles: true })
   Object.defineProperty(event, 'keyCode', { value: keyCode })
   textarea.dispatchEvent(event)
 }
@@ -99,7 +107,7 @@ async function composeHan(harness: Harness): Promise<void> {
   await typeJamo(harness, '한', 'KeyS')
 }
 
-/** Press and release a modifier while the composition is live, then keep composing. */
+/** Press and release a lone modifier while the composition is live. */
 async function pressModifierMidComposition(
   harness: Harness,
   keyCode: number,
@@ -115,10 +123,13 @@ async function pressModifierMidComposition(
 const EXEMPT_MODIFIERS: [string, number, string, string][] = [
   ['Shift', 16, 'Shift', 'ShiftLeft'],
   ['Ctrl', 17, 'Control', 'ControlLeft'],
-  ['Alt', 18, 'Alt', 'AltLeft']
+  ['Alt', 18, 'Alt', 'AltLeft'],
+  ['left Cmd', 91, 'Meta', 'MetaLeft'],
+  ['right Cmd', 93, 'Meta', 'MetaRight'],
+  ['Firefox Meta', 224, 'Meta', 'MetaLeft']
 ]
 
-describe('xterm composition modifier exemption — macOS Cmd is missing from the safe set', () => {
+describe('xterm composition modifier exemption', () => {
   beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       measureText: () => ({ width: 10 })
@@ -130,42 +141,39 @@ describe('xterm composition modifier exemption — macOS Cmd is missing from the
     document.body.replaceChildren()
   })
 
-  it.each([
-    ['left Cmd', 91, 'Meta', 'MetaLeft'],
-    ['right Cmd', 93, 'Meta', 'MetaRight']
-  ])(
-    '%s tears the preedit overlay down and it never comes back',
-    async (_label, keyCode, key, code) => {
-      const harness = await openTerminal()
-      await composeHan(harness)
-      // Precondition: without it, "inactive" below would be vacuous.
-      expect(harness.compositionView.classList.contains('active')).toBe(true)
-
-      await pressModifierMidComposition(harness, keyCode, key, code)
-      expect(harness.compositionView.classList.contains('active')).toBe(false)
-
-      // The IME never ended the composition, so the user keeps typing the same word —
-      // and every further jamo stays invisible, because only compositionstart re-arms
-      // the overlay and the IME has no reason to send one.
-      await typeJamo(harness, '한ㄱ', 'KeyR')
-      expect(harness.compositionView.textContent).toContain('한ㄱ')
-      expect(harness.compositionView.classList.contains('active')).toBe(false)
-    }
-  )
-
   it.each(EXEMPT_MODIFIERS)(
-    'paired negative: %s is exempt, so the same gesture keeps the preedit displayed',
+    'a lone %s keeps the preedit displayed and uncommitted',
     async (_label, keyCode, key, code) => {
       const harness = await openTerminal()
       await composeHan(harness)
+      // Precondition: without it, "still active" below would be vacuous.
       expect(harness.compositionView.classList.contains('active')).toBe(true)
 
       await pressModifierMidComposition(harness, keyCode, key, code)
       expect(harness.compositionView.classList.contains('active')).toBe(true)
+      // The IME still owns the syllable, so nothing may reach the PTY yet.
+      expect(harness.emitted).toEqual([])
 
+      // Recorded on hardware: composition continues with no further compositionstart, so an
+      // overlay dropped by the modifier would never come back.
       await typeJamo(harness, '한ㄱ', 'KeyR')
       expect(harness.compositionView.textContent).toContain('한ㄱ')
       expect(harness.compositionView.classList.contains('active')).toBe(true)
+      expect(harness.emitted).toEqual([])
     }
   )
+
+  it('ordinary negative: Enter still finalizes the composition immediately', async () => {
+    const harness = await openTerminal()
+    await composeHan(harness)
+    expect(harness.compositionView.classList.contains('active')).toBe(true)
+
+    dispatchKey(harness.textarea, 'keydown', 13, 'Enter', 'Enter')
+    await nextEventLoop()
+
+    // This is the case the immediate-finalize branch exists for, so the ordering is the
+    // assertion: the composition must reach the PTY before the carriage return does.
+    expect(harness.compositionView.classList.contains('active')).toBe(false)
+    expect(harness.emitted).toEqual(['한', '\r'])
+  })
 })

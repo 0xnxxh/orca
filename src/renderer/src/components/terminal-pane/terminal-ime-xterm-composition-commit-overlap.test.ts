@@ -4,17 +4,26 @@
 // Two ways xterm's composition commit path corrupts the bytes the PTY child reads.
 // Both are asserted at onData, not in the DOM: the defect is in the data, not the paint.
 //
-// 1. A non-exempt keydown during a live composition reaches _finalizeComposition(false)
-//    — the IMMEDIATE branch, which computes its range from a live selectionEnd and does
-//    not consult _compositionSuffix at all. It commits that range at once, and nothing
-//    records what it consumed, so the IME's own compositionend commits an overlapping
-//    range and the syllable reaches onData TWICE. macOS Meta (91/93/224) is the
-//    production instance: CompositionHelper.keydown exempts only 16/17/18 and 20/229, so
-//    Cmd takes this path where Ctrl does not. This is the data consequence of the
-//    teardown pinned by terminal-ime-xterm-composition-modifier-exemption.test.ts, which
-//    deliberately asserted only the overlay and left the duplicated commit unpinned.
-//    Cmd was checked against the swallow in (2) and does NOT reach it: Cmd duplicates,
-//    it does not drop. The two hazards below share no trigger.
+// 1. FIXED — the two Cmd arms below now assert the repaired contract. A non-exempt keydown
+//    during a live composition reaches _finalizeComposition(false) — the IMMEDIATE branch,
+//    which computes its range from a live selectionEnd and does not consult
+//    _compositionSuffix at all. It commits that range at once, and nothing records what it
+//    consumed, so the IME's own compositionend commits an overlapping range and the
+//    syllable reaches onData TWICE. macOS Meta was the production instance, because
+//    CompositionHelper.keydown exempted only 16/17/18 and 20/229 and so Cmd took this path
+//    where Ctrl did not. Our patch adds 91/93/224 to that exemption set, and both arms now
+//    emit the single ['한'] this file already named as correct.
+//
+//    ITS CAVEAT 3 BELOW IS NOW PART-MEASURED, and only part. Wave31 drove a bare Cmd into a
+//    live 2-Set Korean preedit on real hardware (m4air, macOS 26.5.2, Apple M4) as a
+//    CGEventType.flagsChanged — AppleScript `key code 55` posts nothing a browser can see,
+//    which is why no earlier lane could reach this gesture. Chromium delivers
+//    `keydown key="Meta" keyCode=91 isComposing=true`, and with the exemption removed the
+//    preedit overlay went dark AND the live syllable was committed early to onData. So the
+//    early commit is now observed rather than inferred. The SECOND half — a later
+//    compositionend re-emitting the same range — is still inferred: that run escaped the
+//    composition instead of finishing it. Evidence:
+//    .tmp/ime-handoff/swarm-scratch/wave31-cmd-preedit/evidence/.
 //
 // 2. FIXED — the arm below now asserts the repaired contract, not a defect. An uncomposed
 //    insertText landing in the window after the commit timer had already sent used to be
@@ -84,9 +93,8 @@
 //      The swallowed insertText was NOT: stock delivered the syllable and this bundle
 //      dropped it, making it the one defect here that was ours rather than inherited.
 //      That arm now asserts parity with stock.
-//   3. Inferred, not measured: that a real macOS IME delivers a compositionend for a
-//      composition it kept alive across the Cmd. That is ordinary IME behaviour but no
-//      capture contains the gesture, so the trigger is unverified on hardware.
+//   3. Partly measured now — see the wave31 note under hazard 1. The trigger and the early
+//      commit are observed on hardware; the duplicating compositionend is still inferred.
 //   4. Unobserved, and the corpus cannot say more than that. Of 731 retained evidence
 //      JSONs, 82 carry a keydown-bearing DOM trace; across those, all 3508 keydowns
 //      during a live composition are 229 (3443) or Shift/16 (65), and none is
@@ -97,9 +105,8 @@
 //      during composition is keyCode 229 in every capture, and 229 returns early.
 //      Do not reintroduce a Space arm.
 //
-// The Cmd arms still pin CURRENT broken behaviour. When someone fixes them they will fail
-// — update the expectations to the correct values named in each comment. Do not work
-// around them.
+// Nothing in this file pins broken behaviour any more. Both hazards are repaired and every
+// arm asserts the contract, so a failure here is a regression, not a known defect.
 import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -205,17 +212,17 @@ describe('xterm CompositionHelper — overlapping and swallowed commits at onDat
     document.body.replaceChildren()
   })
 
-  it('commits the syllable twice when Cmd interrupts the composition', async () => {
+  it('commits the syllable once when Cmd interrupts the composition', async () => {
     const { emitted, textarea } = openTerminal()
     await composeHanInterruptedBy(textarea, 'Meta')
 
-    // The early commit emits the bare jamo, then compositionend emits the finished
-    // syllable over the same range. CORRECT would be ['한'].
-    // Pristine beta.287 is worse here, emitting ['ㅎ', '한', '한'].
-    expect(emitted).toEqual(['ㅎ', '한'])
+    // Was ['ㅎ', '한'] — the early commit emitted the bare jamo, then compositionend emitted
+    // the finished syllable over the same range. Pristine beta.287 is worse still, emitting
+    // ['ㅎ', '한', '한'].
+    expect(emitted).toEqual(['한'])
   })
 
-  it('commits the syllable twice when Cmd arrives after the last preedit', async () => {
+  it('commits the syllable once when Cmd arrives after the last preedit', async () => {
     const { emitted, textarea } = openTerminal()
     dispatchProcessKeydown(textarea)
     dispatchCompositionEvent(textarea, 'compositionstart')
@@ -226,9 +233,9 @@ describe('xterm CompositionHelper — overlapping and swallowed commits at onDat
     await nextEventLoop()
     await nextEventLoop()
 
-    // CORRECT would be ['한']. Pristine beta.287 emits the same two commits, which is
-    // what makes this arm version-neutral.
-    expect(emitted).toEqual(['한', '한'])
+    // Was ['한', '한'], and pristine beta.287 still emits both — the defect this arm covers
+    // was inherited, not ours, so the repair is ours alone.
+    expect(emitted).toEqual(['한'])
   })
 
   it('leaves the composition intact when Ctrl interrupts in the same position', async () => {
