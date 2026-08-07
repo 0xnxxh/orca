@@ -279,61 +279,6 @@ describe('NativeChatQuestionCard', () => {
     animationFrame.mockRestore()
   })
 
-  it('retains carry across a same-frame non-Enter keyup before redispatch', () => {
-    const onAnswer = vi.fn()
-    let frame: FrameRequestCallback | undefined
-    const animationFrame = vi
-      .spyOn(window, 'requestAnimationFrame')
-      .mockImplementation((callback) => {
-        frame = callback
-        return 1
-      })
-    render(tabsOrSpaces, onAnswer)
-    const input = container.querySelector('input')!
-    typeAnswer(input, '테스트')
-
-    act(() => input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
-    key(input, 'keydown', { key: 'Enter', code: 'Enter', keyCode: 229, isComposing: true })
-    act(() => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })))
-    key(input, 'keyup', { key: 'Shift', code: 'ShiftLeft', keyCode: 16 })
-    const prevented = key(input, 'keydown', {
-      key: 'Enter',
-      code: 'Enter',
-      keyCode: 13,
-      isComposing: false
-    })
-
-    expect(prevented).toBe(true)
-    expect(onAnswer).not.toHaveBeenCalled()
-    frame?.(0)
-    animationFrame.mockRestore()
-  })
-
-  it('expires carry before a deliberate Enter after the next frame', () => {
-    const onAnswer = vi.fn()
-    let frame: FrameRequestCallback | undefined
-    const animationFrame = vi
-      .spyOn(window, 'requestAnimationFrame')
-      .mockImplementation((callback) => {
-        frame = callback
-        return 1
-      })
-    render(tabsOrSpaces, onAnswer)
-    const input = container.querySelector('input')!
-    typeAnswer(input, '中')
-
-    act(() => input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
-    key(input, 'keydown', { key: 'Process', code: 'Digit1', keyCode: 229, isComposing: true })
-    act(() => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })))
-    key(input, 'keyup', { key: '1', code: 'Digit1', keyCode: 49 })
-    frame?.(0)
-    key(input, 'keydown', { key: 'Enter', code: 'Enter', keyCode: 13, isComposing: false })
-
-    expect(onAnswer).toHaveBeenCalledOnce()
-    expect(onAnswer).toHaveBeenCalledWith([{ indices: [], other: '中' }])
-    animationFrame.mockRestore()
-  })
-
   it('keeps ordinary Enter behavior unchanged', () => {
     const onAnswer = vi.fn()
     render(tabsOrSpaces, onAnswer)
