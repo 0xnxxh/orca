@@ -38,6 +38,9 @@ const FOLDER: AgentSessionExecutionLocation = {
 const MATCHED: AgentSessionOwnerProbe = { outcome: 'identity-matched', matchedOn: ['spawn-token'] }
 const INDETERMINATE: AgentSessionOwnerProbe = { outcome: 'indeterminate', reason: 'no answer' }
 const UNUSED: AgentSessionOwnerProbe = { outcome: 'reservation-unused' }
+const BAD_OP_STORE = '{"schemaVersion":0,"hostId":"","records":{},"operations":{"x":0}}'
+const BAD_KEY_STORE =
+  '{"schemaVersion":1,"hostId":"","records":{},"operations":{},"retiredClaimKeys":[0]}'
 
 let counter = 0
 
@@ -834,6 +837,8 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
   it.each([
     ['corrupt', ['{ truncated']],
     ['missing required collections', ['{"schemaVersion":1,"hostId":"local"}']],
+    ['invalid operation row', [BAD_OP_STORE]],
+    ['invalid retired key', [BAD_KEY_STORE]],
     ['corrupt in both committed copies', ['{ truncated', '{ also truncated']]
   ])('fails closed when the store is %s', async (_name, copies) => {
     const filePath = agentSessionStorePath(directory)

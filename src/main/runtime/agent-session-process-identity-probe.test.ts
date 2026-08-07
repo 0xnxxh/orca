@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AgentSessionProcessIdentity } from '../../shared/agent-session-record'
 import {
   PROCESS_START_TIME_TOLERANCE_MS,
@@ -49,6 +49,21 @@ describe('owner identity probe', () => {
         deps: deps({ isPidPresent: () => false })
       })
     ).resolves.toEqual({ outcome: 'pid-absent' })
+  })
+
+  it('does not call an unexpected host probe error proof of death', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('host probe unavailable'), { code: 'EIO' })
+    })
+    try {
+      const probe = await probeAgentSessionProcessIdentity({
+        identity: { ...IDENTITY, processStartTimeMs: null },
+        deps: { readEchoedSpawnToken: async () => null }
+      })
+      expect(probe.outcome).toBe('indeterminate')
+    } finally {
+      kill.mockRestore()
+    }
   })
 
   it('catches pid reuse through the spawn token', async () => {

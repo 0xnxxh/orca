@@ -38,8 +38,8 @@ function defaultIsPidPresent(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    // Why: EPERM proves the pid exists under another user; only ESRCH proves absence.
-    return (error as NodeJS.ErrnoException)?.code === 'EPERM'
+    // Why: only ESRCH proves absence; permission and transient host failures must fail closed.
+    return (error as NodeJS.ErrnoException)?.code !== 'ESRCH'
   }
 }
 

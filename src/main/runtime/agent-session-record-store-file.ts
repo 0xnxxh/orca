@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
+  agentSessionOperationKey,
   isAgentSessionOperationRow,
   type AgentSessionOperationRow
 } from '../../shared/agent-session-operation-ledger'
@@ -92,21 +93,22 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
   ) {
     return null
   }
+  const schemaVersion = file.schemaVersion as number
   if (
-    (file.schemaVersion as number) <= AGENT_SESSION_STORE_SCHEMA_VERSION &&
+    schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION &&
     (typeof file.records !== 'object' ||
       file.records === null ||
       Array.isArray(file.records) ||
       typeof file.operations !== 'object' ||
       file.operations === null ||
       Array.isArray(file.operations) ||
-      ((file.schemaVersion as number) === AGENT_SESSION_STORE_SCHEMA_VERSION &&
+      (schemaVersion === AGENT_SESSION_STORE_SCHEMA_VERSION &&
         !Array.isArray(file.retiredClaimKeys)))
   ) {
     return null
   }
   const state = emptyState(hostId)
-  state.schemaVersion = file.schemaVersion as number
+  state.schemaVersion = schemaVersion
   state.hostId = file.hostId
   if (typeof file.records === 'object' && file.records !== null) {
     for (const [sessionId, value] of Object.entries(file.records)) {
@@ -121,21 +123,37 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
   }
   if (typeof file.operations === 'object' && file.operations !== null) {
     for (const [key, value] of Object.entries(file.operations)) {
-      if (isAgentSessionOperationRow(value)) {
-        state.operations.set(key, value)
+      if (!isAgentSessionOperationRow(value)) {
+        if (schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION) {
+          return null
+        }
+        continue
       }
+      if (key !== agentSessionOperationKey(value.callerKey, value.operationId)) {
+        if (schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION) {
+          return null
+        }
+        continue
+      }
+      state.operations.set(key, value)
     }
   }
   if (Array.isArray(file.retiredClaimKeys)) {
     for (const entry of file.retiredClaimKeys) {
       const key = entry as Partial<RetiredAgentSessionClaimKey>
       if (
-        typeof key?.keyId === 'string' &&
-        typeof key.retiredAt === 'number' &&
-        Number.isSafeInteger(key.retiredAt)
+        typeof key?.keyId !== 'string' ||
+        key.keyId.length === 0 ||
+        key.keyId.length > 512 ||
+        !Number.isSafeInteger(key.retiredAt) ||
+        (key.retiredAt as number) < 0
       ) {
-        state.retiredClaimKeys.push({ keyId: key.keyId, retiredAt: key.retiredAt })
+        if (schemaVersion <= AGENT_SESSION_STORE_SCHEMA_VERSION) {
+          return null
+        }
+        continue
       }
+      state.retiredClaimKeys.push({ keyId: key.keyId, retiredAt: key.retiredAt as number })
     }
   }
   return { state }
