@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   humanizeTerminalError,
+  isExplainedTerminalError,
   isSshReconnectOwnedTerminalError,
   shouldOfferDaemonRestart,
   stripSshReconnectOwnedErrorLines
@@ -52,6 +53,33 @@ describe('humanizeTerminalError', () => {
 
   it('leaves other errors untouched', () => {
     expect(humanizeTerminalError('Paste failed.')).toBe('Paste failed.')
+  })
+
+  it('replaces the terminal-host-gone code with copy that explains the loss', () => {
+    const humanized = humanizeTerminalError('terminal_host_gone')
+    expect(humanized).not.toContain('terminal_host_gone')
+    expect(humanized).toContain('Open a new terminal to continue')
+  })
+
+  it('humanizes an IPC-wrapped terminal-host-gone error', () => {
+    const wrapped = "Error invoking remote method 'pty:spawn': Error: terminal_host_gone"
+    expect(humanizeTerminalError(wrapped)).not.toContain('terminal_host_gone')
+  })
+})
+
+describe('isExplainedTerminalError', () => {
+  it('suppresses the issue link for a provably dead terminal host', () => {
+    expect(isExplainedTerminalError('terminal_host_gone')).toBe(true)
+    expect(
+      isExplainedTerminalError(
+        "Error invoking remote method 'pty:spawn': Error: terminal_host_gone"
+      )
+    ).toBe(true)
+  })
+
+  it('keeps the issue link for errors Orca cannot explain', () => {
+    expect(isExplainedTerminalError('Paste failed.')).toBe(false)
+    expect(isExplainedTerminalError('node-pty: open_slave failed: EMFILE')).toBe(false)
   })
 })
 

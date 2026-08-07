@@ -28,6 +28,28 @@ export class TerminalSessionOwnerUnverifiedError extends Error {
   }
 }
 
+export class TerminalHostGoneError extends Error {
+  constructor(sessionId: string) {
+    super(`Terminal host that owned session ${sessionId} is gone`)
+    this.name = 'TerminalHostGoneError'
+  }
+}
+
+/**
+ * A connect-time ENOENT/ECONNREFUSED proves the endpoint is absent rather than busy — on Windows a
+ * named pipe disappears with its server process — so the daemon that owned the session is gone. Reaching
+ * a caller at all means respawn-and-retry already failed or was unavailable (legacy adapters never respawn).
+ */
+export function isDaemonEndpointGoneError(err: unknown): boolean {
+  const candidate = err as { code?: unknown; syscall?: unknown } | null
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    candidate.syscall === 'connect' &&
+    (candidate.code === 'ENOENT' || candidate.code === 'ECONNREFUSED')
+  )
+}
+
 export function decodeDaemonResponseError(message: string): Error {
   const prefix = 'Session not found: '
   return message.startsWith(prefix)
