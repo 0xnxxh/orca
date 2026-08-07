@@ -48,7 +48,7 @@ function childrenText(children: React.ReactNode): string {
     .join('')
 }
 
-function renderMenu(overrides: Record<string, unknown> = {}): void {
+function renderMenu(overrides: Record<string, unknown> = {}): string {
   const props = {
     open: true,
     onOpenChange: vi.fn(),
@@ -73,9 +73,9 @@ function renderMenu(overrides: Record<string, unknown> = {}): void {
     isNativeChatView: false,
     onToggleNativeChat: vi.fn(),
     onCopyAgentSessionContext: vi.fn(),
-    repoQuickCommands: [],
-    globalQuickCommands: [],
-    quickCommandRepoLabel: null,
+    quickCommandHosts: [
+      { hostId: 'local' as const, label: 'Local Linux', repoCommands: [], globalCommands: [] }
+    ],
     onQuickCommand: vi.fn(),
     onAddQuickCommand: vi.fn(),
     onToggleExpand: vi.fn(),
@@ -86,7 +86,7 @@ function renderMenu(overrides: Record<string, unknown> = {}): void {
     onCopyPaneId: vi.fn(),
     ...overrides
   }
-  renderToStaticMarkup(React.createElement(TerminalContextMenu, props))
+  return renderToStaticMarkup(React.createElement(TerminalContextMenu, props))
 }
 
 describe('TerminalContextMenu', () => {
@@ -149,5 +149,43 @@ describe('TerminalContextMenu', () => {
     expect(shortcuts.list).toContain('Ctrl+Shift+D')
     expect(shortcuts.list).toContain('Alt+Shift+D')
     expect(shortcuts.list.some((shortcut) => shortcut.includes(','))).toBe(false)
+  })
+
+  it('labels commands and add actions by their owning host', () => {
+    const rendered = renderMenu({
+      quickCommandHosts: [
+        {
+          hostId: 'local',
+          label: 'Local Mac',
+          repoCommands: [],
+          globalCommands: [
+            {
+              id: 'local-review',
+              label: 'Review',
+              command: 'review',
+              appendEnter: true
+            }
+          ]
+        },
+        {
+          hostId: 'runtime:build',
+          label: 'Build Server',
+          repoCommands: [],
+          globalCommands: [
+            {
+              id: 'deploy',
+              label: 'Deploy',
+              command: 'deploy',
+              appendEnter: true
+            }
+          ]
+        }
+      ]
+    })
+
+    const markup = items.list.map((item) => childrenText(item.children)).join('\n')
+    expect(rendered).toContain('Local Mac')
+    expect(rendered).toContain('Build Server')
+    expect(markup.match(/Add to \{\{value0\}\}…/g)).toHaveLength(2)
   })
 })

@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { shouldIgnoreTerminalMenuPointerDownOutside } from './terminal-context-menu-dismiss'
 import type { TerminalQuickCommand } from '../../../../shared/types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { isTerminalAgentQuickCommand } from '../../../../shared/terminal-quick-commands'
 import { formatPrimaryShortcutLabel } from '@/hooks/useShortcutLabel'
 import { AgentIcon } from '@/lib/agent-catalog'
@@ -38,6 +39,7 @@ import type { KeybindingOverrides } from '../../../../shared/keybindings'
 import { translate } from '@/i18n/i18n'
 import { isMacPlatform, nativeChatToggleShortcutLabel } from '../native-chat/native-chat-shortcut'
 import { AgentSessionContinuationMenuItem } from './AgentSessionContinuationMenuItem'
+import type { TerminalQuickCommandMenuHost } from '@/hooks/use-terminal-quick-command-hosts'
 
 type TerminalContextMenuProps = {
   open: boolean
@@ -63,11 +65,9 @@ type TerminalContextMenuProps = {
   isNativeChatView: boolean
   onToggleNativeChat: () => void
   onCopyAgentSessionContext: () => void
-  repoQuickCommands: TerminalQuickCommand[]
-  globalQuickCommands: TerminalQuickCommand[]
-  quickCommandRepoLabel: string | null
+  quickCommandHosts: TerminalQuickCommandMenuHost[]
   onQuickCommand: (command: TerminalQuickCommand) => void
-  onAddQuickCommand: () => void
+  onAddQuickCommand: (hostId: ExecutionHostId) => void
   onToggleExpand: () => void
   onSetTitle: () => void
   onClearPaneTitle: () => void
@@ -100,9 +100,7 @@ export default function TerminalContextMenu({
   isNativeChatView,
   onToggleNativeChat,
   onCopyAgentSessionContext,
-  repoQuickCommands,
-  globalQuickCommands,
-  quickCommandRepoLabel,
+  quickCommandHosts,
   onQuickCommand,
   onAddQuickCommand,
   onToggleExpand,
@@ -112,8 +110,7 @@ export default function TerminalContextMenu({
   onCopyTerminalId,
   onCopyPaneId
 }: TerminalContextMenuProps): React.JSX.Element {
-  // Why: Windows/Linux shortcut labels are long; context menu rows should show
-  // the primary binding only so alternative bindings do not force row wraps.
+  // Why: one primary binding prevents Windows/Linux shortcut labels from forcing row wraps.
   const shortcuts = useMemo(
     () => ({
       copy: formatPrimaryShortcutLabel('terminal.copySelection', keybindings),
@@ -129,12 +126,18 @@ export default function TerminalContextMenu({
     }),
     [keybindings]
   )
-  const hasQuickCommands = repoQuickCommands.length > 0 || globalQuickCommands.length > 0
+  const nonEmptyQuickCommandHosts = quickCommandHosts.filter(
+    (host) => host.repoCommands.length > 0 || host.globalCommands.length > 0
+  )
+  const hasQuickCommands = nonEmptyQuickCommandHosts.length > 0
   const showEqualizeShortcut = shortcuts.equalize !== 'Unassigned'
   const showSetTitleShortcut = shortcuts.setTitle !== 'Unassigned'
   const showClearPaneTitleShortcut = shortcuts.clearPaneTitle !== 'Unassigned'
-  const renderQuickCommandItem = (command: TerminalQuickCommand): React.JSX.Element => (
-    <DropdownMenuItem key={command.id} onSelect={() => onQuickCommand(command)}>
+  const renderQuickCommandItem = (
+    hostId: ExecutionHostId,
+    command: TerminalQuickCommand
+  ): React.JSX.Element => (
+    <DropdownMenuItem key={`${hostId}:${command.id}`} onSelect={() => onQuickCommand(command)}>
       {isTerminalAgentQuickCommand(command) ? (
         <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
           <AgentIcon agent={command.agent} size={14} />
@@ -179,13 +182,11 @@ export default function TerminalContextMenu({
         sideOffset={0}
         align="start"
         onCloseAutoFocus={(e) => {
-          // Prevent Radix from moving focus back to the hidden trigger;
-          // let xterm keep focus naturally.
+          // Keep xterm focused instead of Radix's hidden trigger.
           e.preventDefault()
         }}
         onFocusOutside={(e) => {
-          // xterm reclaims focus after the contextmenu event; don't let
-          // Radix treat that as a dismiss signal.
+          // xterm reclaiming focus after contextmenu is not an outside dismissal.
           e.preventDefault()
         }}
         onPointerDownOutside={(e) => {
@@ -220,28 +221,16 @@ export default function TerminalContextMenu({
           <DropdownMenuSubContent className="w-60">
             {hasQuickCommands ? (
               <>
-                {quickCommandRepoLabel && repoQuickCommands.length > 0 ? (
-                  <>
-                    <DropdownMenuLabel className="truncate">
-                      {quickCommandRepoLabel}
-                    </DropdownMenuLabel>
-                    {repoQuickCommands.map(renderQuickCommandItem)}
-                  </>
-                ) : null}
-                {globalQuickCommands.length > 0 ? (
-                  <>
-                    {repoQuickCommands.length > 0 ? <DropdownMenuSeparator /> : null}
-                    {repoQuickCommands.length > 0 ? (
-                      <DropdownMenuLabel>
-                        {translate(
-                          'auto.components.terminal.pane.TerminalContextMenu.3ce594a4a0',
-                          'Global'
-                        )}
-                      </DropdownMenuLabel>
-                    ) : null}
-                    {globalQuickCommands.map(renderQuickCommandItem)}
-                  </>
-                ) : null}
+                {nonEmptyQuickCommandHosts.map((host, index) => {
+                  const commands = [...host.repoCommands, ...host.globalCommands]
+                  return (
+                    <div key={host.hostId}>
+                      {index > 0 ? <DropdownMenuSeparator /> : null}
+                      <DropdownMenuLabel className="truncate">{host.label}</DropdownMenuLabel>
+                      {commands.map((command) => renderQuickCommandItem(host.hostId, command))}
+                    </div>
+                  )
+                })}
               </>
             ) : (
               <DropdownMenuItem disabled className="text-muted-foreground">
@@ -252,20 +241,29 @@ export default function TerminalContextMenu({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => {
-                // Why: the dropdown sits above dialogs; force-close before
-                // opening the add modal even during the open-gesture guard.
-                onOpenChange(false)
-                onAddQuickCommand()
-              }}
-            >
-              <Plus />
-              {translate(
-                'auto.components.terminal.pane.TerminalContextMenu.0a82b0608c',
-                'Add Quick Command…'
-              )}
-            </DropdownMenuItem>
+            {quickCommandHosts.map((host) => (
+              <DropdownMenuItem
+                key={host.hostId}
+                onSelect={() => {
+                  // Why: the dropdown sits above dialogs; force-close before
+                  // opening the add modal even during the open-gesture guard.
+                  onOpenChange(false)
+                  onAddQuickCommand(host.hostId)
+                }}
+              >
+                <Plus />
+                {quickCommandHosts.length === 1
+                  ? translate(
+                      'auto.components.terminal.pane.TerminalContextMenu.0a82b0608c',
+                      'Add Quick Command…'
+                    )
+                  : translate(
+                      'auto.components.terminal.pane.TerminalContextMenu.addQuickCommandToHost',
+                      'Add to {{value0}}…',
+                      { value0: host.label }
+                    )}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         {canContinueAgentSessionInNewSession ? (

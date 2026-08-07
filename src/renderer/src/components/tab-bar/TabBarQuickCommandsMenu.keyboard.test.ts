@@ -128,6 +128,7 @@ function makeProps() {
     repoCommands: [] as never[],
     globalCommands: [] as never[],
     mostRecent: null,
+    addHosts: [],
     onAddCommand: vi.fn(),
     onDeleteCommand: vi.fn(),
     onEditCommand: vi.fn(),

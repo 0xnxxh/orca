@@ -370,6 +370,9 @@
             "runtimeHostUnreachable": "Can't reach Orca server",
             "tryAgain": "Try again"
           }
+        },
+        "terminalQuickCommandHosts": {
+          "saveFailed": "Failed to save quick command"
         }
       }
     },
@@ -2805,7 +2808,8 @@
             "c2f0b72b8d": "Insert",
             "925f49f210": "Expand Pane",
             "df766809e0": "Collapse Pane",
-            "cff67afad1": "Copy Context"
+            "cff67afad1": "Copy Context",
+            "addQuickCommandToHost": "Add to {{value0}}…"
           },
           "TerminalErrorToast": {
             "e4aa243f8c": "Restart daemon",
@@ -3095,7 +3099,8 @@
             "c781f992e4": "destructive",
             "be8f0ff166": "Delete",
             "f3a8c2d1e7": "Search quick commands...",
-            "b4e7f9a2c1": "No commands match"
+            "b4e7f9a2c1": "No commands match",
+            "commandOnHost": "Command on {{value0}}"
           },
           "shell": {
             "icons": {
@@ -6663,7 +6668,12 @@
           "38d61927e6": "No quick commands saved.",
           "44923dd982": "destructive",
           "ec1ed99e70": "Delete",
-          "d1d0976320": "None"
+          "d1d0976320": "None",
+          "savedOn": "Saved on",
+          "unsupportedHost": "Update this Orca server to manage its quick commands.",
+          "loadFailed": "Could not load commands from this host.",
+          "retry": "Retry",
+          "loading": "Loading commands…"
         },
         "RecentTabOrderControl": {
           "3b17c81ede": "Tab strip order",
@@ -9540,7 +9550,9 @@
           "hostOverride": "Host override",
           "workspaceDirectory": "The client default is inherited until a host needs its own worktree directory.",
           "providerHost": "Provider host",
-          "providerAccounts": "Credentials and account checks belong to the local client or selected remote server that owns the provider integration."
+          "providerAccounts": "Credentials and account checks belong to the local client or selected remote server that owns the provider integration.",
+          "hostCollectionProjectScopes": "Host collection + project scopes",
+          "terminalQuickCommandHostCollections": "Commands are saved on the selected Orca host, then scoped globally or to a project setup. Commands from this device also remain available in remote workspaces."
         },
         "RepositoryForkSyncSection": {
           "defaultBranch": "default branch",
