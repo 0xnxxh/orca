@@ -147,10 +147,7 @@ describe('shouldBypassXtermKeyboardEvent — Windows/Linux', () => {
 
   it('does not apply the macOS initial-jamo bypass', () => {
     expect(
-      shouldBypassXtermKeyboardEvent(
-        event({ key: 'ㄱ', code: 'KeyR', keyCode: 82, isComposing: false }),
-        noSel
-      )
+      shouldBypassXtermKeyboardEvent(event({ key: 'ㄱ', code: 'KeyR', keyCode: 82 }), noSel)
     ).toBe(false)
   })
 
