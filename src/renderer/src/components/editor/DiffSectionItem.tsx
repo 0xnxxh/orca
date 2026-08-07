@@ -346,8 +346,7 @@ export function DiffSectionItem({
         openSectionTitle={openSectionTitle}
         onOpenPreview={
           onOpenPreview
-            ? (event) => {
-                event.stopPropagation()
+            ? () => {
                 onOpenPreview(section, index)
               }
             : undefined

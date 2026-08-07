@@ -22,6 +22,33 @@ describe('canOpenDiffSectionPreviewToSide', () => {
     ).toBe(true)
   })
 
+  it('enables untracked and renamed HTML files still present on disk', () => {
+    expect(
+      canOpenDiffSectionPreviewToSide({
+        path: 'scratch.html',
+        status: 'untracked',
+        isCommitSurface: false
+      })
+    ).toBe(true)
+    expect(
+      canOpenDiffSectionPreviewToSide({
+        path: 'renamed.html',
+        status: 'renamed',
+        isCommitSurface: false
+      })
+    ).toBe(true)
+  })
+
+  it('enables uppercase HTML extensions', () => {
+    expect(
+      canOpenDiffSectionPreviewToSide({
+        path: 'Docs/DEMO.HTML',
+        status: 'modified',
+        isCommitSurface: false
+      })
+    ).toBe(true)
+  })
+
   it('disables deleted HTML files', () => {
     expect(
       canOpenDiffSectionPreviewToSide({

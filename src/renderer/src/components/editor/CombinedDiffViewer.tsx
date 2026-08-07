@@ -1299,14 +1299,24 @@ export default function CombinedDiffViewer({
       ) {
         return
       }
+      // Why: use this combined-diff tab's group, not worktree activeGroupId —
+      // in a multi-pane layout the active group may be a different split.
+      const state = useAppStore.getState()
+      const sourceGroupId =
+        (state.unifiedTabsByWorktree[file.worktreeId] ?? []).find(
+          (tab) =>
+            tab.entityId === file.id && (tab.contentType === 'diff' || tab.contentType === 'editor')
+        )?.groupId ??
+        activeGroupId ??
+        null
       openFilePreviewToSide({
         language: detectLanguage(section.path),
         filePath: joinPath(file.filePath, section.path),
         worktreeId: file.worktreeId,
-        sourceGroupId: activeGroupId ?? null
+        sourceGroupId
       })
     },
-    [activeGroupId, file.filePath, file.worktreeId, isCommitMode]
+    [activeGroupId, file.filePath, file.id, file.worktreeId, isCommitMode]
   )
 
   const handleSectionSave = useCallback(
@@ -2055,7 +2065,7 @@ export default function CombinedDiffViewer({
                             status: section.status,
                             isCommitSurface: isCommitMode
                           })
-                            ? (previewSection) => openSectionPreview(previewSection)
+                            ? openSectionPreview
                             : undefined
                         }
                         setSectionHeights={setSectionHeights}
