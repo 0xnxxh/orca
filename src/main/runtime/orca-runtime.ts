@@ -10804,10 +10804,7 @@ export class OrcaRuntimeService {
     // A spawn published (or admission pending) this generation already
     // attaches the provider stream; a replacement under a reused id must not
     // read as the discovered never-attached session it replaced.
-    if (
-      this.spawnPublishedPtys.has(ptyId) ||
-      this.pendingPtyRegistrationIncarnations.has(ptyId)
-    ) {
+    if (this.spawnPublishedPtys.has(ptyId) || this.pendingPtyRegistrationIncarnations.has(ptyId)) {
       return false
     }
     // SSH panes have their own lease/reattach machinery.
@@ -10842,6 +10839,12 @@ export class OrcaRuntimeService {
         this.subscriberDrivenProviderAttachesByPtyId.delete(ptyId)
       }
     })
+  }
+
+  private reconcileSubscriberDrivenProviderAttach(ptyId: string): void {
+    if (this.hasRemoteTerminalViewSubscriber(ptyId)) {
+      this.ensureSubscriberDrivenProviderAttach(ptyId)
+    }
   }
 
   /** Mark a raw-output viewer without transferring terminal query authority. */
@@ -29251,6 +29254,7 @@ export class OrcaRuntimeService {
           this.restoredOrchestrationAuthorityByPtyId.delete(session.id)
         }
         pty.controllerTitle = session.title?.trim() || null
+        this.reconcileSubscriberDrivenProviderAttach(session.id)
       }
       // Why: fire-and-forget so this listing hot path doesn't serialize a relay round-trip per session and a throw can't abort the sweep below.
       this.refreshPtyForegroundAgent(session.id)
