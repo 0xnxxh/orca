@@ -26,22 +26,23 @@
  *  surviving contract below is what actually holds. Drive composition through
  *  the frames below or the artifact reappears and looks like a defect again.
  *
- *  STILL NOT A REGRESSION GUARD for #12118 or STA-3219 — but the reason has
- *  narrowed, so read this before reusing it as one. The remount site IS now the
- *  attributed owner of those rows: on real Windows TSF the swap ABORTS a live
- *  composition, giving the old node only a `blur` and no `compositionend`, after
- *  which the text returns as committed and the next jamo yields `아ㄴ` rather
- *  than `안`. What this file pins is the opposite property — that the text
- *  SURVIVES — which is the half the reporters already agree with ("값은 보존되나").
- *  Mutation confirms the gap: deleting the unmount entirely leaves three of four
- *  tests green, because every substantive assertion here is `after.value === …`
- *  and an unmounted-never composer keeps its value trivially.
+ *  NOW A REGRESSION GUARD, because the defect it characterized is fixed.
+ *  The swap used to ABORT a live composition on real Windows TSF: the old node
+ *  got a `blur` and no `compositionend`, the text returned committed, and the
+ *  next jamo yielded `아ㄴ` rather than `안`. `useNativeChatComposerCompositionHold`
+ *  now defers the unmount while a composition is in flight, so the composing
+ *  node is never destroyed. The cases below pin BOTH halves: the text survives
+ *  (what reporters already agreed with — "값은 보존되나") and the node itself
+ *  survives, which is what keeps the composition alive.
  *
- *  The abort is not assertable here at all. The DOM exposes no observable that
- *  separates committed text from a live preedit — `value` is the same string
- *  either way, there is no EditContext, and the only composing-ness state is a
- *  per-instance ref discarded with the node. A test pinning "no compositionend
- *  fires" would also be an anti-guard: it goes red the day the bug is fixed.
+ *  Why the node identity assertions are load-bearing: value-only assertions are
+ *  trivially satisfied by a composer that never unmounts, so they cannot tell a
+ *  held composition from a destroyed one. `isConnected` and node identity can.
+ *
+ *  The abort itself is still not directly assertable in happy-dom — `value` reads
+ *  the same for committed text and a live preedit, and there is no EditContext —
+ *  so the guard is the node's survival, and the drawn proof lives on Windows
+ *  (`.tmp/ime-handoff/swarm-scratch/wave26-12118-fix/`).
  *
  *  The cadence objection stands and is still the open question. Those reporters
  *  describe continuous flicker keyed to streaming token counters and elapsed
@@ -50,18 +51,13 @@
  *  rerenders. An AskUserQuestion card arrives once per question, which does not
  *  match that cadence, so whether this owner is the one they hit is unproven.
  *
- *  RESIDUAL, USER-FACING, AND NOT JS-REACHABLE. The text survives but the
- *  composition does not: the OS aborts it when the field disappears, so what
- *  returns is committed text. Mid-syllable Hangul is the bad case — a lone
- *  leading jamo comes back as a standalone compatibility jamo (U+3131 ㄱ), which
- *  is not a composable state. The user cannot resume the syllable; they must
- *  delete it and retype. The text is preserved but degraded into something
- *  unusable. No JS owns this — the IME's internal state is gone before any
- *  handler could run — so it is recorded rather than asserted. If a reporter
- *  ever describes exactly this, it is the note they are looking for.
+ *  RESIDUAL, now addressed AT THIS SITE. Mid-syllable Hangul used to return as a
+ *  standalone compatibility jamo (U+3131 ㄱ) — not a composable state, so the
+ *  user had to delete and retype. That degradation was downstream of the abort;
+ *  with no abort there is nothing to degrade. Any OTHER path that aborts a
+ *  composition would still produce it, so the note is kept rather than deleted.
  *
- *  Also unasserted: the remounted composer is unfocused, because the card owned
- *  focus. Geometry too — happy-dom has no layout engine. */
+ *  Geometry stays unasserted — happy-dom has no layout engine. */
 
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -230,21 +226,39 @@ describe('native chat question card vs an in-flight composition', () => {
     composeFrame(before!, 'abcㄱ', 'ㄱ')
     composeFrame(before!, 'abc가', '가')
 
-    // An AskUserQuestion card arrives mid-composition and takes the input
-    // region. No compositionend ever reaches the composer.
+    // An AskUserQuestion card arrives mid-composition. The swap is DEFERRED:
+    // destroying this node is what aborts the composition in the OS.
     setInteractivePrompt(ASK_USER_QUESTION, rendered)
-    expect(composerTextarea()).toBeNull()
-    expect(before!.isConnected).toBe(false)
+    expect(composerTextarea()).toBe(before)
+    expect(before!.isConnected).toBe(true)
 
-    // The agent moves on and the prompt clears, so the composer comes back.
+    // The agent moves on and the prompt clears.
     setInteractivePrompt(null, rendered)
     const after = composerTextarea()
-    expect(after).not.toBeNull()
 
-    // A different node — the swap does remount — carrying the whole in-flight
-    // text, preedit included.
-    expect(after).not.toBe(before)
+    // The SAME node throughout — never remounted, so the composition it owns is
+    // still live and the next jamo can still join the open syllable.
+    expect(after).toBe(before)
     expect(after!.value).toBe('abc가')
+  })
+
+  it('yields the input region once the composition ends under a live card', () => {
+    const rendered = render(view())
+    const before = composerTextarea()
+    expect(before).not.toBeNull()
+
+    fireEvent.compositionStart(before!)
+    composeFrame(before!, '가', '가')
+    setInteractivePrompt(ASK_USER_QUESTION, rendered)
+    expect(composerTextarea()).toBe(before)
+
+    // The hold is only owed to a composition in flight; once it resolves the
+    // card takes the input region as designed.
+    act(() => {
+      fireEvent.compositionEnd(before!, { data: '가', target: { value: '가' } })
+    })
+    expect(composerTextarea()).toBeNull()
+    expect(before!.isConnected).toBe(false)
   })
 
   it('keeps the live conversion candidate of a multi-segment Japanese composition', () => {
@@ -271,7 +285,7 @@ describe('native chat question card vs an in-flight composition', () => {
     expect(after!.value).toBe('漢字変換')
   })
 
-  it('holds the preedit in the draft cache while the card owns the input region', () => {
+  it('mirrors the preedit into the draft cache as the card arrives', () => {
     const rendered = render(view())
     const before = composerTextarea()
     expect(before).not.toBeNull()
@@ -297,9 +311,14 @@ describe('native chat question card vs an in-flight composition', () => {
     // No composition in flight, so there is nothing browser-owned to lose.
     fireEvent.change(before!, { target: { value: 'abc' } })
 
+    // THE NEGATIVE: with nothing composing, the card replaces the composer
+    // immediately, exactly as before the hold existed. A hold that fired here
+    // would leave a stray "Send a message" beside the card.
     setInteractivePrompt(ASK_USER_QUESTION, rendered)
-    setInteractivePrompt(null, rendered)
+    expect(composerTextarea()).toBeNull()
+    expect(before!.isConnected).toBe(false)
 
+    setInteractivePrompt(null, rendered)
     const after = composerTextarea()
     expect(after).not.toBeNull()
     expect(after!.value).toBe('abc')
