@@ -21085,7 +21085,7 @@ describe('connectPanePty', () => {
     expect(api.pty.signal).toHaveBeenCalledWith('leaf-session', 'SIGWINCH')
   })
 
-  it('paints a parked SSH model before the remote connection settles', async () => {
+  it('keeps a too-wide parked SSH alt frame while no live process can repaint it', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const sshPtyId = toAppSshPtyId('conn-1', 'relay-pty-1')
     const sshConnect = createDeferred<SshConnectionState | null>()
@@ -21094,10 +21094,12 @@ describe('connectPanePty', () => {
     vi.mocked(window.api.ssh.connect).mockReturnValue(sshConnect.promise)
     vi.mocked(window.api.pty.getMainBufferSnapshot).mockResolvedValue({
       data: 'PARKED-SSH-PAINTED-WITHOUT-NETWORK\r\n',
-      cols: 101,
+      cols: 140,
       rows: 31,
       seq: 123,
-      source: 'headless'
+      source: 'headless',
+      alternateScreen: true,
+      scrollbackAnsi: 'PARKED-SSH-SCROLLBACK\r\n'
     })
     await parkTabForReveal('tab-1', sshPtyId)
     mockStoreState = {
@@ -21111,6 +21113,7 @@ describe('connectPanePty', () => {
     }
 
     const pane = createPane(1)
+    pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 80, rows: 24 }))
     const { writes } = captureCallbackTerminalWrites(pane)
     const binding = connectPanePty(
       pane as never,
@@ -21124,6 +21127,7 @@ describe('connectPanePty', () => {
 
     expect(window.api.ssh.connect).toHaveBeenCalledWith({ targetId: 'conn-1' })
     expect(window.api.pty.getMainBufferSnapshot).toHaveBeenCalledOnce()
+    // No live SSH process can repaint this preconnect frame after a SIGWINCH.
     expect(writes.join('')).toContain('PARKED-SSH-PAINTED-WITHOUT-NETWORK')
     expect(transport.connect).not.toHaveBeenCalled()
 

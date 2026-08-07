@@ -7996,12 +7996,8 @@ export function connectPanePty(
                 }
               }
               kittyKeyboardModes.scanReplay(modelData)
-              for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
-                skipAltFrame: shouldSkipAltFrameForWidthMismatch(
-                  snapshot.cols,
-                  readProposedTerminalCols(pane)
-                )
-              })) {
+              // Why keep a too-wide frame: preconnect SSH has no live repaint owner or post-restore fit.
+              for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
                 writeReplayData(replayChunk)
               }
               writeReplayData(reattachReplayResetSequence(modelData))
