@@ -72,16 +72,13 @@ export function resumeTerminalVisibility({
   // not jump to the wrong history entry.
   captureViewportPositions(!wasVisible)
   withSuppressedScrollTracking(() => {
-    // Why before the branch: metric options deferred while hidden must land ahead
-    // of any fit/repaint below so the first visible frame uses correct metrics.
-    // Still-unmeasurable panes keep their deferral; the fit path flushes those.
-    let flushedDeferredMetrics = false
-    for (const pane of manager.getPanes()) {
-      if (flushDeferredPaneMetricOptionsIfMeasurable(pane)) {
-        flushedDeferredMetrics = true
-      }
-    }
     if (shouldUseLightTabResume) {
+      let flushedDeferredMetrics = false
+      for (const pane of manager.getPanes()) {
+        if (flushDeferredPaneMetricOptionsIfMeasurable(pane)) {
+          flushedDeferredMetrics = true
+        }
+      }
       // Why: intra-worktree tab switches only toggle the overlay. Keeping
       // synchronous drain and atlas rebuilds off this path avoids racing the
       // overlay's delayed geometry fit. Still request hidden-output recovery:
@@ -100,6 +97,8 @@ export function resumeTerminalVisibility({
         focusActivePane(manager)
       }
     } else {
+      // fitAllRevealedPanes flushes after WebGL reattaches, avoiding a redundant
+      // full refresh in the suspended DOM renderer while preserving first paint.
       resumeTerminalVisibilityHeavy(manager, isActive)
     }
     enforceTerminalViewportIntents(manager)
