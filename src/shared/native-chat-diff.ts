@@ -17,33 +17,53 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/
 // Lines that open a new file section, so any hunk before them has ended.
 const FILE_SECTION_START =
   /^(?:diff |index |old mode |new mode |new file mode |deleted file mode |similarity index |dissimilarity index |rename |copy |Binary files )/
+// Markdown thematic break or YAML document separator, not a marker.
+const BARE_RULE = /^(?:-{3,}|\+{3,})$/
+
+type DiffStructure = {
+  /** Lines that are structure rather than content, so they never count as add/del. */
+  metaIndices: Set<number>
+  /** The text carries a hunk header or `diff --git`, so it is provably a diff. */
+  isStructuredDiff: boolean
+}
 
 /**
- * Indices of the `--- <old>` / `+++ <new>` file headers. A bare `---`/`+++`
- * prefix is not enough to spot one: a removed line whose content began with `--`
+ * Locates the `--- <old>` / `+++ <new>` file headers. A bare `---`/`+++` prefix
+ * is not enough to spot one: a removed line whose content began with `--`
  * (SQL/Lua `-- comment`, C `--i`) is emitted as `---<content>`. Real headers
  * always come as an adjacent pair and never appear inside a hunk.
  */
-function fileHeaderIndices(lines: string[]): Set<number> {
-  const indices = new Set<number>()
+function scanDiffStructure(lines: string[]): DiffStructure {
+  const metaIndices = new Set<number>()
+  let isStructuredDiff = false
   let inHunk = false
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
     if (line.startsWith('@@')) {
       inHunk = true
+      isStructuredDiff ||= HUNK_HEADER.test(line)
       continue
     }
     if (FILE_SECTION_START.test(line)) {
       inHunk = false
+      isStructuredDiff ||= line.startsWith('diff --git ')
       continue
     }
-    if (!inHunk && line.startsWith('--- ') && (lines[index + 1] ?? '').startsWith('+++ ')) {
-      indices.add(index)
-      indices.add(index + 1)
+    // Only marker lines can be a header or a rule; skip context and prose early.
+    if (inHunk || !(line.startsWith('-') || line.startsWith('+'))) {
+      continue
+    }
+    if (BARE_RULE.test(line)) {
+      metaIndices.add(index)
+      continue
+    }
+    if (line.startsWith('--- ') && (lines[index + 1] ?? '').startsWith('+++ ')) {
+      metaIndices.add(index)
+      metaIndices.add(index + 1)
       index += 1
     }
   }
-  return indices
+  return { metaIndices, isStructuredDiff }
 }
 
 function toLines(value: unknown, maxLines: number): { lines: string[]; truncated: boolean } {
@@ -95,12 +115,12 @@ export function diffFromText(
     return null
   }
   const bounded = toLines(text, maxLines)
-  const headers = fileHeaderIndices(bounded.lines)
+  const { metaIndices, isStructuredDiff } = scanDiffStructure(bounded.lines)
   let added = 0
   let removed = 0
   const lines = bounded.lines.map((line, index): NativeChatDiffLine => {
     if (
-      headers.has(index) ||
+      metaIndices.has(index) ||
       line.startsWith('@@') ||
       line.startsWith('diff ') ||
       line.startsWith('index ')
@@ -117,12 +137,8 @@ export function diffFromText(
     }
     return { kind: 'context', text: line }
   })
-  // A hunk header or `diff --git` proves this really is diff text, so a
-  // single-line change renders; without one, two markers guard against
-  // colouring prose that merely opens a line with `-`.
-  const isStructuredDiff = bounded.lines.some(
-    (line) => HUNK_HEADER.test(line) || line.startsWith('diff --git ')
-  )
+  // Proven diff text renders a single-line change; without that proof, two
+  // markers guard against colouring prose that merely opens a line with `-`.
   if (added + removed < (isStructuredDiff ? 1 : 2)) {
     return null
   }

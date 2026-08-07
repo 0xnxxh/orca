@@ -173,4 +173,23 @@ describe('diffFromText', () => {
     ])
     expect(diff?.filter((l) => l.kind === 'del')).toEqual([])
   })
+
+  it('leaves a YAML document separator out of the marker count', () => {
+    expect(diffFromText('---\na: 1\n---\nb: 2')).toBeNull()
+  })
+
+  it('keeps a Markdown thematic break as meta rather than a deletion', () => {
+    const diff = diffFromText('Intro\n-----\n- alpha\n- beta')
+    expect(diff).toEqual([
+      { kind: 'context', text: 'Intro' },
+      { kind: 'meta', text: '-----' },
+      { kind: 'del', text: ' alpha' },
+      { kind: 'del', text: ' beta' }
+    ])
+  })
+
+  it('still reads a bare --- inside a hunk as a deletion', () => {
+    const diff = diffFromText('@@ -1,3 +1,1 @@\n ctx\n---\n-SELECT 1;')
+    expect(diff?.filter((l) => l.kind === 'del').map((l) => l.text)).toEqual(['--', 'SELECT 1;'])
+  })
 })
