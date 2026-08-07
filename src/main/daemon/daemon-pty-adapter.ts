@@ -2247,6 +2247,34 @@ export class DaemonPtyAdapter implements IPtyProvider {
     await this.respawnPromise
   }
 
+  /**
+   * Retire a superseded daemon that owns nothing. Windows has no endpoint-ownership retirement, so one
+   * daemon strands per protocol bump and each becomes an unmonitored owner of whatever it still holds.
+   * Fail closed: an unverifiable inventory preserves the daemon, and `shutdownIfIdle` re-proves emptiness
+   * daemon-side before it exits. Bounded because this runs on the startup path.
+   */
+  async retireIfEmpty(budgetMs = 1_000): Promise<boolean> {
+    const deadlineMs = Date.now() + budgetMs
+    const remaining = (): number => Math.max(1, deadlineMs - Date.now())
+    try {
+      if (!this.client.isConnected()) {
+        await this.client.ensureConnectedWithin(remaining())
+      }
+      const result = await this.client.request<ListSessionsResult>(
+        'listSessions',
+        undefined,
+        remaining()
+      )
+      if (result.sessions.some((session) => session.isAlive)) {
+        return false
+      }
+    } catch {
+      return false
+    }
+    await this.disconnectOnly()
+    return true
+  }
+
   private async getDaemonLiveSessionCount(): Promise<number | null> {
     try {
       await this.client.ensureConnected()

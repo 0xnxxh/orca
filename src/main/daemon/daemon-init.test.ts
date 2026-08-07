@@ -42,6 +42,7 @@ const {
   lifecycleLeaseErrors,
   disconnectOnlyErrors,
   routerSubscriptionError,
+  retireEmptyLegacyDaemons,
   adapterInstances,
   defaultListSessionsSessions,
   listProcessesControl,
@@ -138,6 +139,8 @@ const {
   const lifecycleLeaseErrors: Error[] = []
   const disconnectOnlyErrors: Error[] = []
   const routerSubscriptionError: { current: Error | null } = { current: null }
+  // Why: legacy adapters retire only when provably empty, so tests opt in rather than defaulting to it.
+  const retireEmptyLegacyDaemons: { current: boolean } = { current: false }
   // Same for DaemonPtyAdapter — tests assert the replacement adapter is fresh but its respawn closure targets the *original* spawner.
   const adapterInstances: MockAdapter[] = []
   // Why: adapters are built inside initDaemonPtyProvider, so tests set this before init to make listSessions report live sessions.
@@ -210,6 +213,7 @@ const {
     lifecycleLeaseErrors,
     disconnectOnlyErrors,
     routerSubscriptionError,
+    retireEmptyLegacyDaemons,
     adapterInstances,
     defaultListSessionsSessions,
     listProcessesControl,
@@ -375,6 +379,7 @@ vi.mock('./daemon-pty-adapter', () => ({
     readonly shutdown: ReturnType<typeof vi.fn>
     readonly dispose: ReturnType<typeof vi.fn>
     readonly disconnectOnly: ReturnType<typeof vi.fn>
+    readonly retireIfEmpty: ReturnType<typeof vi.fn>
     readonly onData: ReturnType<typeof vi.fn>
     readonly onExit: ReturnType<typeof vi.fn>
     readonly callOrder: string[]
@@ -404,6 +409,8 @@ vi.mock('./daemon-pty-adapter', () => ({
           throw disconnectOnlyError
         }
       })
+      // Default preserves the daemon: retirement is opt-in per test, and fail-closed is the production rule.
+      this.retireIfEmpty = vi.fn(async () => retireEmptyLegacyDaemons.current)
       this.onData = vi.fn(() => {
         if (routerSubscriptionError.current) {
           const error = routerSubscriptionError.current
@@ -432,6 +439,7 @@ async function importFresh() {
   adoptionLeaseReleases.length = 0
   lifecycleLeaseErrors.length = 0
   disconnectOnlyErrors.length = 0
+  retireEmptyLegacyDaemons.current = false
   routerSubscriptionError.current = null
   adapterInstances.length = 0
   defaultListSessionsSessions.length = 0

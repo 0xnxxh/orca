@@ -1368,16 +1368,21 @@ export async function createLegacyDaemonAdapters(
     }
     // Keep old-protocol PTYs routed to their original daemon during upgrade; legacy adapters never respawn (new code would recreate stale env semantics).
     // historyPath is still needed for cleanup — without it a later v4 session reusing the same ID could false-restore stale scrollback.bin.
-    adapters.push(
-      new DaemonPtyAdapter({
-        socketPath,
-        tokenPath,
-        pidPath: getDaemonPidPath(runtimeDir, protocolVersion),
-        profileScope: runtimeDir,
-        protocolVersion,
-        historyPath
-      })
-    )
+    const adapter = new DaemonPtyAdapter({
+      socketPath,
+      tokenPath,
+      pidPath: getDaemonPidPath(runtimeDir, protocolVersion),
+      profileScope: runtimeDir,
+      protocolVersion,
+      historyPath
+    })
+    // Why: a superseded daemon has no retirement path on win32, so one strands per protocol bump and
+    // lingers for the machine's uptime. Retiring the provably empty ones keeps the stranded set to the
+    // daemons that still own something; a non-empty or unverifiable daemon is preserved and routed.
+    if (await adapter.retireIfEmpty()) {
+      continue
+    }
+    adapters.push(adapter)
   }
   return adapters
 }
