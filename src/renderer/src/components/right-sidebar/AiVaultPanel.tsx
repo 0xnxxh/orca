@@ -49,6 +49,7 @@ import {
 import { usePersistedAiVaultViewOptions } from './use-persisted-ai-vault-view-options'
 import { AgentSessionContinuationDialog } from '@/components/agent-session-continuation/AgentSessionContinuationDialog'
 import { AiVaultScanIssueBanners } from './AiVaultScanIssueBanners'
+import { AiVaultSessionLimitNotice } from './AiVaultSessionLimitNotice'
 
 export default function AiVaultPanel(): React.JSX.Element {
   const activeWorktreeId = useActiveWorktreeId()
@@ -79,12 +80,14 @@ export default function AiVaultPanel(): React.JSX.Element {
     group,
     hideEmptySessions,
     sessionLimit,
+    sessionLimitNoticePending,
     setSort,
     setGroup,
     setHideEmptySessions,
     setSessionLimit,
     setAgentEnabled,
     setAllAgentsEnabled,
+    acknowledgeSessionLimitNotice,
     resetViewOptions
   } = usePersistedAiVaultViewOptions()
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
@@ -335,6 +338,10 @@ export default function AiVaultPanel(): React.JSX.Element {
         onReset={resetViewOptions}
         onRefresh={() => void refresh({ force: true })}
       />
+
+      {sessionLimitNoticePending ? (
+        <AiVaultSessionLimitNotice onAcknowledge={acknowledgeSessionLimitNotice} />
+      ) : null}
 
       {error ? (
         <div className="border-b border-sidebar-border px-3 py-2 text-xs text-destructive">

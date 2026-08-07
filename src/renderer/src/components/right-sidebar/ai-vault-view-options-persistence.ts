@@ -9,11 +9,12 @@ import {
   DEFAULT_AI_VAULT_HIDE_EMPTY_SESSIONS,
   DEFAULT_AI_VAULT_SORT
 } from './ai-vault-view-defaults'
+import type { AiVaultSessionLimit } from './ai-vault-session-limit'
 import {
-  DEFAULT_AI_VAULT_SESSION_LIMIT,
-  normalizeAiVaultSessionLimit,
-  type AiVaultSessionLimit
-} from './ai-vault-session-limit'
+  createAppliedAiVaultSessionLimitReset,
+  hasCurrentAiVaultSessionLimitReset,
+  resolveAiVaultSessionLimitReset
+} from './ai-vault-session-limit-reset'
 
 export const AI_VAULT_VIEW_OPTIONS_STORAGE_KEY = 'orca.aiVault.viewOptions.v1'
 
@@ -23,6 +24,8 @@ export type AiVaultViewOptions = {
   group: AiVaultGroup
   hideEmptySessions: boolean
   sessionLimit: AiVaultSessionLimit
+  sessionLimitResetRevision: number
+  sessionLimitNoticeAcknowledged: boolean
 }
 
 type AiVaultViewOptionsStorage = {
@@ -36,7 +39,7 @@ export function createDefaultAiVaultViewOptions(): AiVaultViewOptions {
     sort: DEFAULT_AI_VAULT_SORT,
     group: DEFAULT_AI_VAULT_GROUP,
     hideEmptySessions: DEFAULT_AI_VAULT_HIDE_EMPTY_SESSIONS,
-    sessionLimit: DEFAULT_AI_VAULT_SESSION_LIMIT
+    ...createAppliedAiVaultSessionLimitReset()
   }
 }
 
@@ -71,7 +74,7 @@ export function normalizeAiVaultViewOptions(value: unknown): AiVaultViewOptions 
       typeof record.hideEmptySessions === 'boolean'
         ? record.hideEmptySessions
         : DEFAULT_AI_VAULT_HIDE_EMPTY_SESSIONS,
-    sessionLimit: normalizeAiVaultSessionLimit(record.sessionLimit)
+    ...resolveAiVaultSessionLimitReset(record)
   }
 }
 
@@ -94,7 +97,17 @@ export function readAiVaultViewOptions(
   }
   try {
     const raw = storage.getItem(AI_VAULT_VIEW_OPTIONS_STORAGE_KEY)
-    return raw ? normalizeAiVaultViewOptions(JSON.parse(raw)) : createDefaultAiVaultViewOptions()
+    if (!raw) {
+      return createDefaultAiVaultViewOptions()
+    }
+    const stored: unknown = JSON.parse(raw)
+    const options = normalizeAiVaultViewOptions(stored)
+    // Why: persist the one-time reset on first read, otherwise a user who opts back
+    // up to a deeper history would be pulled down to the default again next launch.
+    if (!hasCurrentAiVaultSessionLimitReset(stored)) {
+      writeAiVaultViewOptions(options, storage)
+    }
+    return options
   } catch {
     return createDefaultAiVaultViewOptions()
   }

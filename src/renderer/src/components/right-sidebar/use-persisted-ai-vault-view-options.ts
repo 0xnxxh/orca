@@ -22,12 +22,14 @@ export function usePersistedAiVaultViewOptions(): {
   group: AiVaultGroup
   hideEmptySessions: boolean
   sessionLimit: AiVaultSessionLimit
+  sessionLimitNoticePending: boolean
   setSort: (sort: AiVaultSort) => void
   setGroup: (group: AiVaultGroup) => void
   setHideEmptySessions: (hide: boolean) => void
   setSessionLimit: (limit: AiVaultSessionLimit) => void
   setAgentEnabled: (agent: AiVaultAgent, enabled: boolean) => void
   setAllAgentsEnabled: (enabled: boolean) => void
+  acknowledgeSessionLimitNotice: () => void
   resetViewOptions: () => void
 } {
   const [options, setOptions] = useState<AiVaultViewOptions>(() => readAiVaultViewOptions())
@@ -106,8 +108,24 @@ export function usePersistedAiVaultViewOptions(): {
     },
     [updateOptions]
   )
+  const acknowledgeSessionLimitNotice = useCallback(
+    () =>
+      updateOptions((current) =>
+        current.sessionLimitNoticeAcknowledged
+          ? current
+          : { ...current, sessionLimitNoticeAcknowledged: true }
+      ),
+    [updateOptions]
+  )
   const resetViewOptions = useCallback(
-    () => updateOptions(() => createDefaultAiVaultViewOptions()),
+    () =>
+      // Why: Reset view restores view preferences only — it must not replay the
+      // one-time depth reset or re-open a notice the user already acknowledged.
+      updateOptions((current) => ({
+        ...createDefaultAiVaultViewOptions(),
+        sessionLimitResetRevision: current.sessionLimitResetRevision,
+        sessionLimitNoticeAcknowledged: current.sessionLimitNoticeAcknowledged
+      })),
     [updateOptions]
   )
 
@@ -121,12 +139,14 @@ export function usePersistedAiVaultViewOptions(): {
     group: options.group,
     hideEmptySessions: options.hideEmptySessions,
     sessionLimit: options.sessionLimit,
+    sessionLimitNoticePending: !options.sessionLimitNoticeAcknowledged,
     setSort,
     setGroup,
     setHideEmptySessions,
     setSessionLimit,
     setAgentEnabled,
     setAllAgentsEnabled,
+    acknowledgeSessionLimitNotice,
     resetViewOptions
   }
 }

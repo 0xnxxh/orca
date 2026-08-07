@@ -11693,6 +11693,11 @@
             "mayBeSlower": "May be slower",
             "slowest": "Slowest",
             "unlimited": "Unlimited"
+          },
+          "AiVaultSessionLimitNotice": {
+            "title": "History depth is now {{value0}}",
+            "body": "We lowered your Agent Session History depth for performance — deeper histories slow the whole app, especially on remote hosts. Change it any time under View options → History depth.",
+            "gotIt": "Got it"
           }
         }
       },
