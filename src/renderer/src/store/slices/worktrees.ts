@@ -277,10 +277,7 @@ function showLocalBaseRefRefreshToast(
   const worktreeName = createdWorktree ? resolveWorktreeDisplayName(createdWorktree).trim() : ''
   const detail = localBaseRefRefreshFailureDetail(result)
 
-  // Why: stick until dismiss so a short auto-expire can't bury a create-time
-  // failure that still needs manual cleanup in a specific worktree.
-  // Id is per created worktree so each failed create stays attributable; same-id
-  // re-entry de-dupes without collapsing distinct create events.
+  // Why: Infinity so create-time failures aren't buried; id is per worktree so each create stays attributable.
   toast.warning(
     worktreeName
       ? translate(
