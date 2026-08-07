@@ -35,6 +35,8 @@ const scheduledNotificationsByHostAndNotificationId = new Map<string, ScheduledN
 // Why: keys never repeat and are only freed on desktop dismiss (which remote users often miss), so bound the map to stop unbounded growth.
 const MAX_SCHEDULED_NOTIFICATIONS = 256
 let maxScheduledNotifications = MAX_SCHEDULED_NOTIFICATIONS
+let notificationChannelConfigured = false
+let notificationChannelConfiguring = false
 
 function getStoredNotificationKey(hostId: string, notificationId: string): string {
   return `${encodeURIComponent(hostId)}:${encodeURIComponent(notificationId)}`
@@ -62,15 +64,35 @@ export function setScheduledNotificationsMaxForTests(max?: number): void {
   maxScheduledNotifications = max ?? MAX_SCHEDULED_NOTIFICATIONS
 }
 
+export function resetNotificationChannelConfigurationForTests(): void {
+  notificationChannelConfigured = false
+  notificationChannelConfiguring = false
+}
+
 export function configureNotificationChannel(): void {
-  if (Platform.OS === 'android') {
-    void Notifications.setNotificationChannelAsync('orca-desktop', {
+  if (
+    Platform.OS !== 'android' ||
+    notificationChannelConfigured ||
+    notificationChannelConfiguring
+  ) {
+    return
+  }
+  notificationChannelConfiguring = true
+  void Promise.resolve(
+    Notifications.setNotificationChannelAsync('orca-desktop', {
       name: 'Desktop Notifications',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250],
       lightColor: '#6366f1'
     })
-  }
+  )
+    .then(() => {
+      notificationChannelConfigured = true
+    })
+    .catch(() => {})
+    .finally(() => {
+      notificationChannelConfiguring = false
+    })
 }
 
 export async function showLocalNotification(

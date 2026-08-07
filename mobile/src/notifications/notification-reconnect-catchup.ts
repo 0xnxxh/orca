@@ -129,6 +129,7 @@ export function createSeenNotificationGuard(): {
 // at module scope is what makes the catch-up recognise a reconnect (instead of
 // mistaking it for a cold open) and keeps dedup effective across the teardown.
 export type HostNotificationSession = {
+  retired: boolean
   // Highest desktop seq delivered for this host in this app process. Outranks
   // the persisted value, which lags because saveLastSeenSeq is fire-and-forget.
   lastDeliveredSeq: number
@@ -157,11 +158,13 @@ export type HostNotificationSession = {
 }
 
 const sessionsByHost = new Map<string, HostNotificationSession>()
+const retirementByHost = new Map<string, Promise<void>>()
 
 export function getHostNotificationSession(hostId: string): HostNotificationSession {
   let session = sessionsByHost.get(hostId)
   if (!session) {
     session = {
+      retired: false,
       lastDeliveredSeq: 0,
       lastDeliveredEpoch: null,
       catchUpQuarantineSeq: null,
@@ -241,6 +244,7 @@ export function releaseQueuedShowNotificationId(
 /** Test-only: drop per-host session state so each test starts from a cold open. */
 export function resetHostNotificationSessionsForTests(): void {
   sessionsByHost.clear()
+  retirementByHost.clear()
 }
 
 /**
@@ -257,6 +261,9 @@ export function quarantineCatchUpWatermark(
   hostId: string,
   contiguousSeq: number
 ): void {
+  if (session.retired) {
+    return
+  }
   session.catchUpQuarantineSeq =
     session.catchUpQuarantineSeq == null
       ? contiguousSeq
@@ -272,7 +279,7 @@ export function quarantineCatchUpWatermark(
 
 /** Lift the quarantine once a catch-up completes, persisting what it held back. */
 export function resolveCatchUpQuarantine(session: HostNotificationSession, hostId: string): void {
-  if (session.catchUpQuarantineSeq == null) {
+  if (session.retired || session.catchUpQuarantineSeq == null) {
     return
   }
   session.catchUpQuarantineSeq = null
@@ -302,7 +309,7 @@ export function adoptNotificationEpoch(
   hostId: string,
   epoch: string | undefined
 ): void {
-  if (!epoch || epoch === session.lastDeliveredEpoch) {
+  if (session.retired || !epoch || epoch === session.lastDeliveredEpoch) {
     return
   }
   // Why reset on a FIRST observation too (lastDeliveredEpoch === null): a seq seeded
@@ -357,6 +364,9 @@ export function seedWatermarkFromStorage(session: HostNotificationSession, hostI
     return
   }
   const seeded = loadWatermark(hostId).then(({ seq, epoch, stored }) => {
+    if (session.retired) {
+      return
+    }
     // Why the record's existence and not `seq > 0`: adoptNotificationEpoch persists
     // `{seq: 0, epoch}` when it voids a watermark, so a device that HAS delivered for
     // this host reloads as seq 0. Keying on the seq would read that as a first pairing
@@ -386,6 +396,31 @@ export function seedWatermarkFromStorage(session: HostNotificationSession, hostI
 // and re-paired would retain its session and up to 512 seen keys until app restart.
 export function forgetHostNotificationSession(hostId: string): void {
   sessionsByHost.delete(hostId)
+}
+
+export function retireHostNotificationState(hostId: string): Promise<void> {
+  const existing = retirementByHost.get(hostId)
+  if (existing) {
+    return existing
+  }
+  const session = sessionsByHost.get(hostId)
+  if (session) {
+    session.retired = true
+  }
+  const retirement = (async () => {
+    await session?.deliveryTail
+    if (!session || sessionsByHost.get(hostId) === session) {
+      sessionsByHost.delete(hostId)
+    }
+    await clearWatermark(hostId)
+  })()
+  retirementByHost.set(hostId, retirement)
+  void retirement.finally(() => {
+    if (retirementByHost.get(hostId) === retirement) {
+      retirementByHost.delete(hostId)
+    }
+  })
+  return retirement
 }
 
 // Why: key for the replay dedup guard. Uses notificationId when present, but

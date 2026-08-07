@@ -390,6 +390,36 @@ describe('useHostClient', () => {
 })
 
 describe('useAllHostClients', () => {
+  it('observes a client opened by an earlier sibling effect in the same commit', async () => {
+    connectMock.mockReturnValue(makeFakeClient('connected'))
+    loadHostsMock.mockResolvedValue([HOST])
+    let observerHasClient = false
+
+    function Acquirer(): null {
+      useAllHostClients([HOST.id])
+      return null
+    }
+    function Observer(): null {
+      observerHasClient = useAllHostClients([HOST.id]).length === 1
+      return null
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(RpcClientProvider, null, createElement(Acquirer), createElement(Observer))
+        )
+        await Promise.resolve()
+      })
+      expect(observerHasClient).toBe(true)
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
+  })
+
   it('only opens the requested startup subset', async () => {
     const host2 = { ...HOST, id: 'host-2', name: 'Host 2' }
     connectMock.mockReturnValue(makeFakeClient('connected'))

@@ -12,12 +12,11 @@ import {
 } from 'react'
 import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
-import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { decrementPendingAcquisition } from './host-client-acquisition-count'
+import { subscribeHostClientRevival } from './host-client-revival-scheduler'
 import {
   clientActivePath,
-  listHostClients,
   notifyAllHostListeners,
   notifyHostStateListeners,
   primeHostProfiles,
@@ -51,8 +50,8 @@ export type RpcClientContextValue = {
   // Why: ms-epoch of the last 'connected' (null if never this session); UI escalates "Reconnecting…" into a re-pair prompt.
   getLastConnectedAt: (hostId: string) => number | null
   getActivePath: (hostId: string) => MobileConnectionPath
+  getClient: (hostId: string) => RpcClient | null
   subscribeHostState: (hostId: string, listener: (state: ConnectionState) => void) => () => void
-  getAllClients: () => Array<{ hostId: string; client: RpcClient }>
   subscribeAllHosts: (listener: () => void) => () => void
   // Why: lets the home screen feed already-loaded HostProfiles so we don't pay loadHosts() latency twice.
   primeHosts: (hosts: HostProfile[]) => void
@@ -302,13 +301,16 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     return clientActivePath(storeRef.current.get(hostId)?.client)
   }, [])
 
+  const getClient = useCallback(
+    (hostId: string) => storeRef.current.get(hostId)?.client ?? null,
+    []
+  )
+
   const subscribeHostState = useCallback(
     (hostId: string, listener: (state: ConnectionState) => void) =>
       subscribeHostStateListener(stateListenersRef.current, hostId, listener),
     []
   )
-
-  const getAllClients = useCallback(() => listHostClients(storeRef.current), [])
 
   const subscribeAllHosts = useCallback(
     (listener: () => void) => subscribeAllHostListener(allHostsListenersRef.current, listener),
@@ -330,11 +332,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   // Why: nudge live clients when the OS signals the link may be back so sessions recover without a restart (issue #5049).
   useEffect(() => {
-    return subscribeConnectionRevivalTriggers((reason) => {
-      for (const entry of storeRef.current.values()) {
-        entry.client.notifyForeground(reason)
-      }
-    })
+    return subscribeHostClientRevival(() =>
+      [...storeRef.current.values()].map(({ client }) => client)
+    )
   }, [])
 
   const value = useMemo<RpcClientContextValue>(
@@ -350,8 +350,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       getReconnectAttempt,
       getLastConnectedAt,
       getActivePath,
+      getClient,
       subscribeHostState,
-      getAllClients,
       subscribeAllHosts,
       primeHosts
     }),
@@ -367,8 +367,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       getReconnectAttempt,
       getLastConnectedAt,
       getActivePath,
+      getClient,
       subscribeHostState,
-      getAllClients,
       subscribeAllHosts,
       primeHosts
     ]
@@ -416,9 +416,9 @@ export function useHostClient(hostId: string | undefined): {
       }
       setState(next)
       // Why: async open and forceReconnect swap the client object; re-read each state change so screens never drive a stale one.
-      const found = ctx.getAllClients().find((entry) => entry.hostId === hostId)
-      if (found && found.client !== clientRef.current) {
-        clientRef.current = found.client
+      const found = ctx.getClient(hostId)
+      if (found && found !== clientRef.current) {
+        clientRef.current = found
         force((n) => n + 1)
       } else if (!found && clientRef.current) {
         // Why: closeHost deletes the entry with no replacement; null it so screens don't drive a dead client (STA-1511).
