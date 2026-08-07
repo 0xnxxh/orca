@@ -17,12 +17,13 @@ function isCmdJPaletteWhitespace(code: number): boolean {
   )
 }
 
+// Why: iterating code units would lowercase surrogate halves separately, leaving
+// supplementary-plane characters uncased and unmatchable.
 export function normalizeCmdJPaletteQuery(value: string): string {
   let normalized = ''
   let pendingWhitespace = false
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (isCmdJPaletteWhitespace(code)) {
+  for (const character of value) {
+    if (isCmdJPaletteWhitespace(character.codePointAt(0) ?? 0)) {
       pendingWhitespace = normalized.length > 0
       continue
     }
@@ -30,7 +31,7 @@ export function normalizeCmdJPaletteQuery(value: string): string {
       normalized += ' '
       pendingWhitespace = false
     }
-    normalized += value.charAt(index).toLowerCase()
+    normalized += character.toLowerCase()
   }
   return normalized
 }

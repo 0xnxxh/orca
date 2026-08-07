@@ -242,6 +242,13 @@ describe('Cmd+J palette middle-band ranking', () => {
     expect(rank('linear integrations triage')).toEqual(['settings:integrations'])
   })
 
+  it('drops verb-prefixed settings queries whose middle words match nothing', () => {
+    // Why: the verb-plus-settings-keyword rule reads only the head and tail of the query, so
+    // "new terminal <junk> browser settings" used to win on those two ends alone.
+    expect(top('new terminal sparkles glitter browser settings')).toBeUndefined()
+    expect(top('new terminal settings')).toBe('settings:terminal')
+  })
+
   it('keeps out-of-order partial-word matches when every query word lands somewhere', () => {
     expect(top('font term')).toBe('settings:terminal')
     expect(top('font sparkles')).toBeUndefined()

@@ -131,6 +131,17 @@ function rankingForCandidate(
     return null
   }
 
+  // Why: the shortcut rules below only inspect the head and tail of the query, so coverage has
+  // to gate all of them — otherwise "new terminal <junk> browser settings" still wins on rule 3.
+  const values =
+    candidate.kind === 'settings'
+      ? [candidate.title, ...candidate.configKeywords]
+      : [candidate.title, ...candidate.verbKeywords]
+  const score = cmdJPaletteTokenScore(query, values)
+  if (score === 0) {
+    return null
+  }
+
   if (candidate.kind === 'action' && candidate.verbKeywords.some((keyword) => query === keyword)) {
     return { result: candidate, rule: 1, score: 0 }
   }
@@ -165,12 +176,7 @@ function rankingForCandidate(
     return { result: candidate, rule: 5, score: 0 }
   }
 
-  const values =
-    candidate.kind === 'settings'
-      ? [candidate.title, ...candidate.configKeywords]
-      : [candidate.title, ...candidate.verbKeywords]
-  const score = cmdJPaletteTokenScore(query, values)
-  return score > 0 ? { result: candidate, rule: 6, score } : null
+  return { result: candidate, rule: 6, score }
 }
 
 function compareRanked(a: RankedResult, b: RankedResult): number {
