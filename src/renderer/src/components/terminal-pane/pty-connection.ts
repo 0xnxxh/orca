@@ -259,7 +259,9 @@ import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-sc
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
-  resolvePositiveTerminalDimensions
+  readProposedTerminalCols,
+  resolvePositiveTerminalDimensions,
+  shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 import {
   decideSshReattachPaintSource,
@@ -7257,7 +7259,12 @@ export function connectPanePty(
             // Why shared: the SSH reattach model paint inlines the same
             // choreography (coordinator nesting would deadlock there); one
             // builder keeps the alt-screen branches from drifting.
-            for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
+            for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
+              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
+                snapshot.cols,
+                readProposedTerminalCols(pane)
+              )
+            })) {
               writeReplayData(replayChunk)
             }
             // Why: live agents own ?25l/?1004h; a forced ?1004l here would silence focus events until restart (agents enable focus reporting only at startup).
@@ -7989,7 +7996,12 @@ export function connectPanePty(
                 }
               }
               kittyKeyboardModes.scanReplay(modelData)
-              for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
+              for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
+                skipAltFrame: shouldSkipAltFrameForWidthMismatch(
+                  snapshot.cols,
+                  readProposedTerminalCols(pane)
+                )
+              })) {
                 writeReplayData(replayChunk)
               }
               writeReplayData(reattachReplayResetSequence(modelData))
@@ -8256,7 +8268,12 @@ export function connectPanePty(
             // ?1049l/?1049h rebuild as applyMainBufferSnapshot (main strips
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here
             // because nesting structuralReplayCoordinator would deadlock.
-            for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot)) {
+            for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
+              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
+                modelCols,
+                readProposedTerminalCols(pane)
+              )
+            })) {
               writeReplayData(replayChunk)
             }
             writeReplayData(

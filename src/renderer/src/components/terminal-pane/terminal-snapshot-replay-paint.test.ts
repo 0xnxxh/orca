@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
-  resolvePositiveTerminalDimensions
+  resolvePositiveTerminalDimensions,
+  shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 
 describe('hasPositiveTerminalDimensions', () => {
@@ -64,5 +65,58 @@ describe('buildMainModelSnapshotReplayWrites', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'alt-frame', alternateScreen: true })
     ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'alt-frame'])
+  })
+})
+
+describe('shouldSkipAltFrameForWidthMismatch', () => {
+  it('skips only when the snapshot is WIDER than the target', () => {
+    expect(shouldSkipAltFrameForWidthMismatch(135, 128)).toBe(true)
+    // One column is enough: _reflowSmaller splits every row longer than the new width.
+    expect(shouldSkipAltFrameForWidthMismatch(129, 128)).toBe(true)
+    expect(shouldSkipAltFrameForWidthMismatch(128, 128)).toBe(false)
+    // Widening only joins soft-wrapped lines, so an unwrapped frame row survives
+    // intact — keep it rather than blanking the pane.
+    expect(shouldSkipAltFrameForWidthMismatch(100, 120)).toBe(false)
+  })
+
+  it('never skips when a width is missing or nonsensical', () => {
+    // Why: an unknown width must not cost the user their restored frame.
+    expect(shouldSkipAltFrameForWidthMismatch(undefined, 128)).toBe(false)
+    expect(shouldSkipAltFrameForWidthMismatch(135, undefined)).toBe(false)
+    expect(shouldSkipAltFrameForWidthMismatch(0, 128)).toBe(false)
+    expect(shouldSkipAltFrameForWidthMismatch(Number.NaN, 128)).toBe(false)
+    expect(shouldSkipAltFrameForWidthMismatch(Number.POSITIVE_INFINITY, 128)).toBe(false)
+  })
+})
+
+describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
+  it('drops only the frame paint, keeping scrollback and the alt-buffer choreography', () => {
+    expect(
+      buildMainModelSnapshotReplayWrites(
+        { data: 'alt-frame', alternateScreen: true, scrollbackAnsi: 'normal-history' },
+        { skipAltFrame: true }
+      )
+    ).toEqual([
+      '\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      'normal-history',
+      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H'
+    ])
+  })
+
+  it('still enters a cleared alt screen when skipping without split scrollback', () => {
+    // Why the clear still runs: the caller's SIGWINCH must land on a clean
+    // screen the application repaints, not the stale pre-park frame.
+    expect(
+      buildMainModelSnapshotReplayWrites(
+        { data: 'alt-frame', alternateScreen: true },
+        { skipAltFrame: true }
+      )
+    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H'])
+  })
+
+  it('never drops a normal-buffer snapshot, whose rows reflow correctly', () => {
+    expect(
+      buildMainModelSnapshotReplayWrites({ data: 'shell-output' }, { skipAltFrame: true })
+    ).toEqual(['\x1b[2J\x1b[3J\x1b[H', 'shell-output'])
   })
 })
