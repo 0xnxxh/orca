@@ -44,6 +44,7 @@ import {
 } from './browser-clicked-link-routing'
 import { cleanElectronUserAgent } from './browser-session-ua'
 import { googleAuthUserAgent, isGoogleAuthUrl } from './browser-google-auth-ua'
+import { buildViewportUserAgentOverride } from './browser-viewport-user-agent'
 import type {
   BrowserViewportOverride,
   BrowserCertificateFailure,
@@ -129,16 +130,6 @@ function createNoopRestoreForTimedOutAutomationAcquire(
 
 function isAutomationVisibilityToken(token: unknown): token is string {
   return typeof token === 'string' && token.length > 0
-}
-
-// Why: responsive sites UA-sniff; this is Chrome DevTools' default iPhone UA template with the real Chrome major spliced in to keep sec-ch-ua consistent (see setupClientHintsOverride).
-function buildMobileUserAgent(chromeMajor: string): string {
-  return `Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/${chromeMajor}.0.0.0 Mobile/15E148 Safari/604.1`
-}
-
-function extractChromeMajor(ua: string): string {
-  const match = ua.match(/Chrome\/(\d+)/)
-  return match ? match[1] : '134'
 }
 
 export type BrowserGuestRegistration = {
@@ -232,6 +223,9 @@ export class BrowserManager {
   private readonly rendererWebContentsIdByTabId = new Map<string, number>()
   // Why: serialize per-tab setViewportOverride so rapid toggles don't interleave CDP commands and leave emulation in a wrong state.
   private readonly viewportOpsByTabId = new Map<string, Promise<unknown>>()
+  // Why: presence means a CDP UA override is standing for the tab (value = the preset's mobile flag),
+  // so navigation can re-issue it against the target URL's identity.
+  private readonly viewportUaOverrideMobileByTabId = new Map<string, boolean>()
   private readonly contextMenuCleanupByTabId = new Map<string, () => void>()
   private readonly grabShortcutCleanupByTabId = new Map<string, () => void>()
   private readonly shortcutForwardingCleanupByTabId = new Map<string, () => void>()
@@ -937,6 +931,43 @@ export class BrowserManager {
       // navigation never touches the session UA.
       guest.setUserAgent(guest.session.getUserAgent())
     }
+    if (browserPageId) {
+      this.reapplyViewportUserAgentOverride(guest, browserPageId, url)
+    }
+  }
+
+  // Why: Emulation.setUserAgentOverride is set once and stands across every later navigation,
+  // outranking setUserAgent for navigator.userAgent. A viewport preset applied before reaching an
+  // auth host would otherwise pin navigator.userAgent to the Chrome-shaped preset UA while the
+  // request header says Firefox — the two-layer disagreement this scope exists to remove.
+  private reapplyViewportUserAgentOverride(
+    guest: Electron.WebContents,
+    browserTabId: string,
+    url: string
+  ): void {
+    const mobile = this.viewportUaOverrideMobileByTabId.get(browserTabId)
+    if (mobile === undefined) {
+      return
+    }
+    try {
+      if (!guest.debugger.isAttached()) {
+        return
+      }
+      // Why: navigator.userAgent is read by page JS after commit, so landing this override
+      // asynchronously still beats every reader; the header layer already forces Firefox on the wire.
+      void guest.debugger
+        .sendCommand(
+          'Emulation.setUserAgentOverride',
+          buildViewportUserAgentOverride({
+            url,
+            mobile,
+            baseUserAgent: cleanElectronUserAgent(guest.getUserAgent())
+          })
+        )
+        .catch(() => {})
+    } catch {
+      // guest may be mid-teardown or the debugger taken over by DevTools
+    }
   }
 
   private createPopupChildWindowWithOriginBar(
@@ -1120,6 +1151,7 @@ export class BrowserManager {
     this.worktreeIdByTabId.delete(browserTabId)
     // Why: drop the viewport-op chain so the Map doesn't retain a promise keyed to a destroyed guest.
     this.viewportOpsByTabId.delete(browserTabId)
+    this.viewportUaOverrideMobileByTabId.delete(browserTabId)
     this.annotationViewportBridgeOpsByTabId.delete(browserTabId)
   }
 
@@ -1185,6 +1217,7 @@ export class BrowserManager {
     this.worktreeIdByTabId.clear()
     this.sessionProfileIdByPageId.clear()
     this.userAgentModeByPageId.clear()
+    this.viewportUaOverrideMobileByTabId.clear()
     this.pendingLoadFailuresByGuestId.clear()
     this.loadErrorsByGuestId.clear()
     this.clearedLoadErrorsByGuestId.clear()
@@ -1578,38 +1611,20 @@ export class BrowserManager {
         })
         // Why: viewport sizing must not override a profile's explicit native-UA identity.
         if (this.userAgentModeByPageId.get(browserTabId) !== 'native') {
-          if (override.mobile) {
-            const chromeMajor = extractChromeMajor(cleanElectronUserAgent(guest.getUserAgent()))
-            // Why: userAgentMetadata must accompany the mobile UA so client hints match, or bot-detection flags the desktop-hint leak.
-            await dbg.sendCommand('Emulation.setUserAgentOverride', {
-              userAgent: buildMobileUserAgent(chromeMajor),
-              userAgentMetadata: {
-                brands: [
-                  { brand: 'Google Chrome', version: chromeMajor },
-                  { brand: 'Chromium', version: chromeMajor },
-                  { brand: 'Not/A)Brand', version: '24' }
-                ],
-                fullVersionList: [
-                  { brand: 'Google Chrome', version: `${chromeMajor}.0.0.0` },
-                  { brand: 'Chromium', version: `${chromeMajor}.0.0.0` },
-                  { brand: 'Not/A)Brand', version: '24.0.0.0' }
-                ],
-                fullVersion: `${chromeMajor}.0.0.0`,
-                platform: 'iOS',
-                platformVersion: '17.0',
-                architecture: '',
-                model: 'iPhone',
-                mobile: true
-              }
+          // Why: remember the standing override so later navigations can re-issue it; it outranks
+          // setUserAgent and would otherwise pin the auth-host identity to whatever was set here.
+          this.viewportUaOverrideMobileByTabId.set(browserTabId, override.mobile)
+          await dbg.sendCommand(
+            'Emulation.setUserAgentOverride',
+            buildViewportUserAgentOverride({
+              url: guest.getURL(),
+              mobile: override.mobile,
+              baseUserAgent: cleanElectronUserAgent(guest.getUserAgent())
             })
-          } else {
-            // Why: desktop presets still need the clean (non-Electron) UA so Cloudflare/Turnstile don't flag the session.
-            await dbg.sendCommand('Emulation.setUserAgentOverride', {
-              userAgent: cleanElectronUserAgent(guest.getUserAgent())
-            })
-          }
+          )
         }
       } else {
+        this.viewportUaOverrideMobileByTabId.delete(browserTabId)
         await dbg.sendCommand('Emulation.clearDeviceMetricsOverride', {})
         await dbg.sendCommand('Emulation.setTouchEmulationEnabled', {
           enabled: false,
