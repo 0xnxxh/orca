@@ -114,9 +114,9 @@ describe('isExplainedTerminalError', () => {
     expect(isExplainedTerminalError('node-pty: open_slave failed: EMFILE')).toBe(false)
     expect(isExplainedTerminalError('terminal_gone')).toBe(false)
     expect(isExplainedTerminalError('terminal_host_gone_extra')).toBe(false)
-    expect(isExplainedTerminalError('aterminal_host_gonea')).toBe(false)
-    expect(isExplainedTerminalError('0terminal_host_gone0')).toBe(false)
-    expect(isExplainedTerminalError('_terminal_host_gone_')).toBe(false)
+    expect(isExplainedTerminalError('aterminal_host_gone.')).toBe(false)
+    expect(isExplainedTerminalError('0terminal_host_gone.')).toBe(false)
+    expect(isExplainedTerminalError('_terminal_host_gone.')).toBe(false)
     expect(isExplainedTerminalError('open ENOENT \\\\?\\pipe\\orca-terminal-host-v30-dead')).toBe(
       false
     )
