@@ -37,6 +37,17 @@ describe('hasCtrlEnterCsiUAuthorityForPane', () => {
     }
     expect(hasCtrlEnterCsiUAuthorityForPane(state, PANE_KEY, '⠋ Droid')).toBe(true)
     expect(hasCtrlEnterCsiUAuthorityForPane(state, PANE_KEY, 'C:\\work\\grok-project')).toBe(false)
+    expect(
+      hasCtrlEnterCsiUAuthorityForPane(
+        {
+          paneForegroundAgentByPaneKey: {
+            [PANE_KEY]: { agent: 'pi', shellForeground: false }
+          }
+        },
+        PANE_KEY,
+        'Droid'
+      )
+    ).toBe(false)
 
     for (const foreground of [
       { agent: 'grok' as const, routingRevoked: true, shellForeground: false },

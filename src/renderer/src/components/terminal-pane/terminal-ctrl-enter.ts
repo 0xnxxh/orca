@@ -24,5 +24,8 @@ export function hasCtrlEnterCsiUAuthorityForPane(
     return agentAcceptsCtrlEnterCsiU(foreground.agent)
   }
   const titleAgent = terminalTitle ? resolveCommittedTitleAgentType(terminalTitle) : null
+  if (foreground?.agent != null && foreground.agent !== titleAgent) {
+    return false
+  }
   return agentAcceptsCtrlEnterCsiU(titleAgent)
 }
