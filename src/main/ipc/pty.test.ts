@@ -3074,16 +3074,25 @@ describe('registerPtyHandlers', () => {
         new Promise<void>((resolve) => (releaseRecovery = resolve))
       )
       readFileSyncMock.mockReturnValue(TEST_CODEX_AUTH_JSON)
+      const onCodexPtySpawned = vi.fn()
       handlers.clear()
-      registerPtyHandlers(mainWindow as never, undefined, () => TEST_CODEX_HOME, (() => ({
-        codexManagedAccounts: [
-          {
-            id: 'account-1',
-            managedHomePath: TEST_CODEX_HOME,
-            managedHomeRuntime: 'host'
-          }
-        ]
-      })) as never)
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        () => TEST_CODEX_HOME,
+        (() => ({
+          codexManagedAccounts: [
+            {
+              id: 'account-1',
+              managedHomePath: TEST_CODEX_HOME,
+              managedHomeRuntime: 'host'
+            }
+          ]
+        })) as never,
+        undefined,
+        undefined,
+        { onCodexPtySpawned }
+      )
 
       const spawnPromise = handlers.get('pty:spawn')!(null, {
         cols: 80,
@@ -3094,10 +3103,15 @@ describe('registerPtyHandlers', () => {
         expect(ensureCodexBackfillRecoveryMock).toHaveBeenCalledWith(TEST_CODEX_HOME)
       )
       expect(spawnMock).not.toHaveBeenCalled()
+      expect(onCodexPtySpawned).not.toHaveBeenCalled()
 
       releaseRecovery()
-      await spawnPromise
+      const result = (await spawnPromise) as { id: string }
       expect(spawnMock).toHaveBeenCalledTimes(1)
+      expect(onCodexPtySpawned).toHaveBeenCalledWith({
+        id: result.id,
+        codexHomePath: TEST_CODEX_HOME
+      })
     })
 
     it('does not gate a bare local shell on managed Codex auth', async () => {

@@ -184,7 +184,6 @@ export class CodexRuntimeHomeService {
   private sharedAuthRefreshBlockedByManagedTransition = false
   // Why: transient auth.json read/parse failures must not deselect an account.
   private readonly credentialAbsenceGrace = new CodexCredentialAbsenceGrace()
-  private scheduleHostSystemDefaultSessionMigration: (fullScanRequired: boolean) => void = () => {}
   private hostSystemDefaultSessionMigrationPending = false
   private pendingHostSystemDefaultSessionMigrationNeedsFullScan = false
   private pendingHostSystemDefaultSessionMigrationTarget: string | null = null
@@ -248,8 +247,7 @@ export class CodexRuntimeHomeService {
       this.reconcileLegacySharedHomeForRetainedPanes()
       return null
     }
-    const sessionMigrationFullScanRequired =
-      this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
+    this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
     this.syncForCurrentSelection(target, launchEnv)
     syncSystemCodexResourcesIntoManagedHome()
     syncSystemConfigIntoManagedCodexHome()
@@ -258,16 +256,20 @@ export class CodexRuntimeHomeService {
       {},
       resolveHostCodexSessionSourceHome(this.store.getSettings())
     )
-    if (sessionMigrationFullScanRequired !== null) {
-      this.scheduleHostSystemDefaultSessionMigration(sessionMigrationFullScanRequired)
-    }
     return this.getRuntimeHomePath()
   }
 
-  setHostSystemDefaultSessionMigrationScheduler(
-    schedule: (fullScanRequired: boolean) => void
-  ): void {
-    this.scheduleHostSystemDefaultSessionMigration = schedule
+  beginHostSystemDefaultSessionMigrationLaunch(codexHomePath: string | null): boolean | null {
+    if (
+      !this.hostSystemDefaultSessionMigrationPending ||
+      !this.isHostSystemDefaultSessionMigrationEligible() ||
+      !codexHomePath ||
+      normalizeRuntimePathForComparison(codexHomePath) !==
+        normalizeRuntimePathForComparison(this.getRuntimeHomePath())
+    ) {
+      return null
+    }
+    return this.pendingHostSystemDefaultSessionMigrationNeedsFullScan
   }
 
   isHostSystemDefaultSessionMigrationEligible(): boolean {

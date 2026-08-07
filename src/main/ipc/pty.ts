@@ -2243,6 +2243,8 @@ export function registerPtyHandlers(
     awaitLocalPtyProviderStartup?: () => Promise<void>
     // Why: returns true once for the crash-recovery reload so its did-finish-load skips the orphan sweep and keeps live PTYs (#5787).
     isRecoveryReloadInFlight?: (webContentsId: number) => boolean
+    onCodexPtySpawned?: (args: { id: string; codexHomePath: string | null }) => void
+    onPtyExit?: (id: string) => void
   }
 ): void {
   // Why: a re-registration means a new window owns delivery — cancel the prior closure's watchdog and neutralize its bridged reset so mark-hidden below can't arm a timer against the dead closure.
@@ -3563,6 +3565,7 @@ export function registerPtyHandlers(
   }
 
   function sendPtyExitToRenderer(payload: { id: string; code: number }): void {
+    options?.onPtyExit?.(payload.id)
     const release = preparePtyExitForRenderer(payload)
     if (!release) {
       return
@@ -4976,6 +4979,9 @@ export function registerPtyHandlers(
             leafId: owner.surface.leafId,
             ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
           })
+          if (args.launchAgent === 'codex' && !args.connectionId) {
+            options?.onCodexPtySpawned?.({ id: result.id, codexHomePath: selectedCodexHomePath })
+          }
           return {
             id: result.id,
             ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
@@ -5140,6 +5146,9 @@ export function registerPtyHandlers(
         }
         // Why: runtime-owned/background spawns bypass mounted-pane state, so inventory consumers need an explicit signal.
         sendPtySpawnedToRenderer(result.id)
+        if (args.launchAgent === 'codex' && !args.connectionId) {
+          options?.onCodexPtySpawned?.({ id: result.id, codexHomePath: selectedCodexHomePath })
+        }
         const response = {
           id: result.id,
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
@@ -6601,6 +6610,9 @@ export function registerPtyHandlers(
         }
         // Why: renderer tab state cannot reliably infer background and reattached PTYs in the daemon inventory.
         sendPtySpawnedToRenderer(result.id)
+        if (args.launchAgent === 'codex' && !args.connectionId) {
+          options?.onCodexPtySpawned?.({ id: result.id, codexHomePath: selectedCodexHomePath })
+        }
         return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, response)
       } catch (err) {
         if (pendingRegistrationPtyId) {
@@ -7387,7 +7399,11 @@ export function registerHeadlessPtyRuntime(
   getSettings?: () => GlobalSettings,
   prepareClaudeAuth?: PrepareClaudeAuth,
   store?: Store,
-  prepareCodexSessionResume?: PrepareCodexSessionResume
+  prepareCodexSessionResume?: PrepareCodexSessionResume,
+  lifecycle?: {
+    onCodexPtySpawned?: (args: { id: string; codexHomePath: string | null }) => void
+    onPtyExit?: (id: string) => void
+  }
 ): void {
   // Why: headless `orca serve` has no renderer window but still needs the same PTY handlers so remote clients can drive terminals.
   const headlessWindow = {
@@ -7405,7 +7421,7 @@ export function registerHeadlessPtyRuntime(
     getSettings,
     prepareClaudeAuth,
     store,
-    { prepareCodexSessionResume }
+    { prepareCodexSessionResume, ...lifecycle }
   )
 }
 

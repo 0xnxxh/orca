@@ -24,13 +24,11 @@ const { homedirMock } = vi.hoisted(() => ({
 const { fsMockState } = vi.hoisted(() => ({
   fsMockState: {
     failLink: false,
-    failInstallLink: false,
-    failInstallLinkTransiently: false,
-    growSourceDuringCopy: false,
+    failLinkTransiently: false,
     raceTargetIntoExistence: false,
-    failCopy: false,
     failAuditMkdirOnce: false,
     failAuditWrites: false,
+    failMkdirPath: null as string | null,
     failDirectoryPath: null as string | null,
     failLstatPath: null as string | null
   }
@@ -54,6 +52,11 @@ vi.mock('node:fs/promises', async () => {
   return {
     ...actual,
     mkdir: (...args: Parameters<typeof actual.mkdir>) => {
+      if (args[0] === fsMockState.failMkdirPath) {
+        const error = new Error('EACCES: target directory inaccessible') as NodeJS.ErrnoException
+        error.code = 'EACCES'
+        throw error
+      }
       if (fsMockState.failAuditMkdirOnce && String(args[0]).includes('codex-session-backfill')) {
         fsMockState.failAuditMkdirOnce = false
         const error = new Error(
@@ -93,36 +96,12 @@ vi.mock('node:fs/promises', async () => {
         error.code = 'EXDEV'
         throw error
       }
-      // Simulate a target filesystem with no hardlink support: even the
-      // same-volume staged-copy install link (.orca-backfill-*.tmp) fails.
-      if (fsMockState.failInstallLink && String(args[0]).includes('.orca-backfill-')) {
-        const error = new Error('EPERM: hardlinks unsupported') as NodeJS.ErrnoException
-        error.code = 'EPERM'
-        throw error
-      }
-      if (fsMockState.failInstallLinkTransiently && String(args[0]).includes('.orca-backfill-')) {
-        const error = new Error('EIO: transient install failure') as NodeJS.ErrnoException
+      if (fsMockState.failLinkTransiently && String(args[0]).includes('codex-runtime-home')) {
+        const error = new Error('EIO: transient hardlink failure') as NodeJS.ErrnoException
         error.code = 'EIO'
         throw error
       }
       return actual.link(...args)
-    },
-    copyFile: async (...args: Parameters<typeof actual.copyFile>) => {
-      if (fsMockState.failCopy) {
-        // Simulate a copy that fails after opening its destination, which is
-        // the dangerous case for resumability rather than a preflight error.
-        await actual.writeFile(args[1], 'partial copy\n', 'utf-8')
-        const error = new Error(
-          `EACCES: copy disabled for test, '${String(args[1])}'`
-        ) as NodeJS.ErrnoException
-        error.code = 'EACCES'
-        throw error
-      }
-      await actual.copyFile(...args)
-      if (fsMockState.growSourceDuringCopy) {
-        fsMockState.growSourceDuringCopy = false
-        await actual.appendFile(args[0], '{"event":"during-copy"}\n', 'utf-8')
-      }
     },
     opendir: (...args: Parameters<typeof actual.opendir>) => {
       if (args[0] === fsMockState.failDirectoryPath) {
@@ -203,13 +182,11 @@ function readAuditActions(): string[] {
 
 beforeEach(() => {
   fsMockState.failLink = false
-  fsMockState.failInstallLink = false
-  fsMockState.failInstallLinkTransiently = false
-  fsMockState.growSourceDuringCopy = false
+  fsMockState.failLinkTransiently = false
   fsMockState.raceTargetIntoExistence = false
-  fsMockState.failCopy = false
   fsMockState.failAuditMkdirOnce = false
   fsMockState.failAuditWrites = false
+  fsMockState.failMkdirPath = null
   fsMockState.failDirectoryPath = null
   fsMockState.failLstatPath = null
   fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-codex-backfill-home-'))
@@ -388,73 +365,22 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(readAuditActions()).toEqual(['hardlink', 'run-summary'])
   })
 
-  it('falls back to copy when hardlinking fails across volumes', async () => {
+  it('skips cross-volume rollouts instead of freezing a mutable snapshot', async () => {
     fsMockState.failLink = true
-    const managedPath = writeManagedSession(
-      join('2026', '05', '26', 'rollout-a ü.jsonl'),
-      '{"id":"a"}\n'
-    )
-
-    const summary = await backfillManagedCodexSessionsIntoSystemHome(
-      resolveCodexSessionBackfillPaths()
-    )
-
-    expect(summary).toMatchObject({ linkedFiles: 0, copiedFiles: 1, failedFiles: 0 })
-    const targetPath = join(getSystemSessionsRoot(), '2026', '05', '26', 'rollout-a ü.jsonl')
-    expect(readFileSync(targetPath, 'utf-8')).toBe(readFileSync(managedPath, 'utf-8'))
-    expect(lstatSync(targetPath).ino).not.toBe(lstatSync(managedPath).ino)
-    expect(readAuditActions()).toEqual(['copy', 'run-summary'])
-  })
-
-  it('refreshes an unchanged owned copy after its source grows', async () => {
-    fsMockState.failLink = true
-    const relativePath = join('2026', '05', '26', 'rollout-growing.jsonl')
-    const managedPath = writeManagedSession(relativePath, '{"id":"a"}\n')
-    const paths = resolveCodexSessionBackfillPaths()
-
-    await backfillManagedCodexSessionsIntoSystemHome(paths)
-    appendFileSync(managedPath, '{"event":"later"}\n', 'utf-8')
-    const refreshed = await backfillManagedCodexSessionsIntoSystemHome(paths)
-
-    expect(refreshed).toMatchObject({ copiedFiles: 1, failedFiles: 0 })
-    expect(readFileSync(join(getSystemSessionsRoot(), relativePath), 'utf-8')).toBe(
-      '{"id":"a"}\n{"event":"later"}\n'
-    )
-  })
-
-  it('does not publish a cross-volume snapshot while its source grows', async () => {
-    fsMockState.failLink = true
-    fsMockState.growSourceDuringCopy = true
-    const relativePath = join('2026', '05', '26', 'rollout-active.jsonl')
+    const relativePath = join('2026', '05', '26', 'rollout-a ü.jsonl')
     writeManagedSession(relativePath, '{"id":"a"}\n')
 
     const summary = await backfillManagedCodexSessionsIntoSystemHome(
       resolveCodexSessionBackfillPaths()
     )
 
-    expect(summary).toMatchObject({ copiedFiles: 0, failedFiles: 1 })
+    expect(summary).toMatchObject({ copiedFiles: 0, skippedUnsupportedFilesystemFiles: 1 })
     expect(existsSync(join(getSystemSessionsRoot(), relativePath))).toBe(false)
-  })
-
-  it('does not refresh an owned copy after the target changes', async () => {
-    fsMockState.failLink = true
-    const relativePath = join('2026', '05', '26', 'rollout-diverged.jsonl')
-    const managedPath = writeManagedSession(relativePath, '{"id":"a"}\n')
-    const targetPath = join(getSystemSessionsRoot(), relativePath)
-    const paths = resolveCodexSessionBackfillPaths()
-
-    await backfillManagedCodexSessionsIntoSystemHome(paths)
-    writeFileSync(targetPath, 'user-owned continuation\n', 'utf-8')
-    appendFileSync(managedPath, '{"event":"later"}\n', 'utf-8')
-    const repeated = await backfillManagedCodexSessionsIntoSystemHome(paths)
-
-    expect(repeated).toMatchObject({ copiedFiles: 0, skippedExistingFiles: 1 })
-    expect(readFileSync(targetPath, 'utf-8')).toBe('user-owned continuation\n')
+    expect(readAuditActions()).toEqual(['copy-unsupported', 'run-summary'])
   })
 
   it('fails closed when the target filesystem cannot install without overwrite', async () => {
     fsMockState.failLink = true
-    fsMockState.failInstallLink = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const summary = await backfillManagedCodexSessionsIntoSystemHome(
@@ -473,9 +399,8 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(readAuditActions()).toEqual(['copy-unsupported', 'run-summary'])
   })
 
-  it('keeps transient install failures retryable', async () => {
-    fsMockState.failLink = true
-    fsMockState.failInstallLinkTransiently = true
+  it('keeps transient hardlink failures retryable', async () => {
+    fsMockState.failLinkTransiently = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const summary = await backfillManagedCodexSessionsIntoSystemHome(
@@ -489,9 +414,21 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(readAuditActions()).toEqual(['failed', 'run-summary'])
   })
 
+  it('keeps target directory permission failures retryable', async () => {
+    const relativePath = join('2026', '05', '26', 'rollout-a.jsonl')
+    writeManagedSession(relativePath, '{"id":"a"}\n')
+    fsMockState.failMkdirPath = dirname(join(getSystemSessionsRoot(), relativePath))
+
+    const summary = await startCodexSessionBackfillInBackground()
+
+    expect(summary).toMatchObject({ failedFiles: 1, skippedUnsupportedFilesystemFiles: 0 })
+    expect(existsSync(join(getSystemSessionsRoot(), relativePath))).toBe(false)
+    expect(existsSync(getMarkerPath())).toBe(false)
+    expect(readAuditActions()).toEqual(['failed', 'run-summary'])
+  })
+
   it('records per-file failures without aborting the run', async () => {
-    fsMockState.failLink = true
-    fsMockState.failCopy = true
+    fsMockState.failLinkTransiently = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const summary = await backfillManagedCodexSessionsIntoSystemHome(
@@ -573,6 +510,20 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(existsSync(getMarkerPath())).toBe(false)
   })
 
+  it('defers completion while a launch lease is active', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+
+    const active = await startCodexSessionBackfillInBackground({
+      writeCompletionMarker: false
+    })
+    expect(active).toMatchObject({ linkedFiles: 1 })
+    expect(existsSync(getMarkerPath())).toBe(false)
+
+    const completed = await startCodexSessionBackfillInBackground()
+    expect(completed).toMatchObject({ skippedExistingFiles: 1 })
+    expect(existsSync(getMarkerPath())).toBe(true)
+  })
+
   it('keeps an invalidated active pass from recreating the completion marker', async () => {
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
     let invalidated = false
@@ -640,6 +591,23 @@ describe('startCodexSessionBackfillInBackground', () => {
     const recovered = await startCodexSessionBackfillInBackground()
     expect(recovered).toMatchObject({ scannedFiles: 3, linkedFiles: 1 })
     expect(existsSync(join(getSystemSessionsRoot(), missedRelativePath))).toBe(true)
+    expect(existsSync(getMarkerPath())).toBe(true)
+  })
+
+  it('lets an explicit bounded final pass restore a certified baseline', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-baseline.jsonl'), 'baseline\n')
+    await startCodexSessionBackfillInBackground()
+
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+    writeManagedSession(join('2026', '08', '05', 'rollout-launch.jsonl'), 'launch\n')
+
+    const bounded = await startCodexSessionBackfillInBackground({
+      ignoreCompletionMarker: true,
+      scanDates: [['2026', '08', '05']],
+      writeBoundedCompletionMarker: true
+    })
+
+    expect(bounded).toMatchObject({ scannedFiles: 1, linkedFiles: 1 })
     expect(existsSync(getMarkerPath())).toBe(true)
   })
 
@@ -783,7 +751,6 @@ describe('startCodexSessionBackfillInBackground', () => {
 
   it('does not retry a stable hardlink-less filesystem limitation', async () => {
     fsMockState.failLink = true
-    fsMockState.failInstallLink = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const first = await startCodexSessionBackfillInBackground()
@@ -801,8 +768,7 @@ describe('startCodexSessionBackfillInBackground', () => {
   })
 
   it('keeps repeated unchanged per-file failures audit-stable', async () => {
-    fsMockState.failLink = true
-    fsMockState.failCopy = true
+    fsMockState.failLinkTransiently = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const first = await startCodexSessionBackfillInBackground()
@@ -816,8 +782,7 @@ describe('startCodexSessionBackfillInBackground', () => {
   })
 
   it('records a new failure event when the source file changes', async () => {
-    fsMockState.failLink = true
-    fsMockState.failCopy = true
+    fsMockState.failLinkTransiently = true
     const relativePath = join('2026', '05', '26', 'rollout-a.jsonl')
     writeManagedSession(relativePath, '{"id":"a"}\n')
     await startCodexSessionBackfillInBackground()
@@ -830,24 +795,8 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(new Set(failedRecords.map((record) => record.diagnosticEventId)).size).toBe(2)
   })
 
-  it('records a new failure event when the filesystem outcome changes', async () => {
-    fsMockState.failLink = true
-    fsMockState.failCopy = true
-    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
-    await startCodexSessionBackfillInBackground()
-
-    fsMockState.failCopy = false
-    fsMockState.failInstallLinkTransiently = true
-    await startCodexSessionBackfillInBackground()
-
-    const failedRecords = readBackfillAuditRecords().filter((record) => record.action === 'failed')
-    expect(failedRecords).toHaveLength(2)
-    expect(new Set(failedRecords.map((record) => record.diagnosticEventId)).size).toBe(2)
-  })
-
   it('leaves the marker unset when any file fails so the next startup retries', async () => {
-    fsMockState.failLink = true
-    fsMockState.failCopy = true
+    fsMockState.failLinkTransiently = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
 
     const first = await startCodexSessionBackfillInBackground()
@@ -856,8 +805,7 @@ describe('startCodexSessionBackfillInBackground', () => {
     const targetPath = join(getSystemSessionsRoot(), '2026', '05', '26', 'rollout-a.jsonl')
     expect(existsSync(targetPath)).toBe(false)
 
-    fsMockState.failLink = false
-    fsMockState.failCopy = false
+    fsMockState.failLinkTransiently = false
     const second = await startCodexSessionBackfillInBackground()
     expect(second).toMatchObject({ linkedFiles: 1, failedFiles: 0 })
     expect(readFileSync(targetPath, 'utf-8')).toBe('{"id":"a"}\n')

@@ -11,7 +11,6 @@ export type CodexSessionBackfillAuditWriter = (record: Record<string, unknown>) 
 export type CodexSessionBackfillAuditCoverage = {
   fileEventIds: Set<string>
   diagnosticEventIds: Set<string>
-  ownedCopyEventIds: Map<string, Set<string>>
   hasRunSummary: boolean
 }
 
@@ -67,7 +66,6 @@ export async function readCodexSessionBackfillAuditCoverage(
   const coverage: CodexSessionBackfillAuditCoverage = {
     fileEventIds: new Set<string>(),
     diagnosticEventIds: new Set<string>(),
-    ownedCopyEventIds: new Map<string, Set<string>>(),
     hasRunSummary: false
   }
   const input = createReadStream(auditLogPath, { encoding: 'utf-8' })
@@ -87,13 +85,6 @@ export async function readCodexSessionBackfillAuditCoverage(
           typeof record.fileEventId === 'string'
         ) {
           coverage.fileEventIds.add(record.fileEventId)
-          if (
-            record.action === 'copy' &&
-            typeof record.source === 'string' &&
-            typeof record.target === 'string'
-          ) {
-            addOwnedCopyEventId(coverage, record.source, record.target, record.fileEventId)
-          }
         }
         if (
           typeof record.action === 'string' &&
@@ -128,22 +119,6 @@ export function createCodexSessionBackfillFileEventId(targetPath: string, stat: 
     .update('\0')
     .update(fileIdentity)
     .digest('hex')
-}
-
-export function createCodexSessionBackfillCopyOwnershipKey(source: string, target: string): string {
-  return `${normalizeRuntimePathForComparison(source)}\0${normalizeRuntimePathForComparison(target)}`
-}
-
-export function addOwnedCopyEventId(
-  coverage: CodexSessionBackfillAuditCoverage,
-  source: string,
-  target: string,
-  fileEventId: string
-): void {
-  const key = createCodexSessionBackfillCopyOwnershipKey(source, target)
-  const eventIds = coverage.ownedCopyEventIds.get(key) ?? new Set<string>()
-  eventIds.add(fileEventId)
-  coverage.ownedCopyEventIds.set(key, eventIds)
 }
 
 export function createCodexSessionBackfillDiagnosticEventId(args: {

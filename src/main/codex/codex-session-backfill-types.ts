@@ -28,6 +28,10 @@ export type CodexSessionBackfillOptions = CodexSessionBridgeIncrementalOptions &
   scanDates?: readonly CodexSessionBackfillDate[]
   /** A scheduled launch pass must not be suppressed by a marker it just invalidated. */
   ignoreCompletionMarker?: boolean
+  /** Active launch passes defer global completion until their final exit scan. */
+  writeCompletionMarker?: boolean
+  /** Final launch scans can extend a previously certified full-tree baseline. */
+  writeBoundedCompletionMarker?: boolean
 }
 
 export type CodexSessionBackfillDate = readonly [year: string, month: string, day: string]

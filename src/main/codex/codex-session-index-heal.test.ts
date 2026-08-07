@@ -255,6 +255,28 @@ describe('runCodexSessionIndexHeal', () => {
     expect(rig.readLog().serverStarts).toBe(1)
   })
 
+  it('re-reads a healed thread after a later publication event', async () => {
+    const id = threadId('1')
+    const stamp = '2026-07-01T10-00-00'
+    const rig = createHealRig({ auditedThreads: [{ stamp, id }] })
+    await runCodexSessionIndexHeal(rig.paths, {
+      buildInvocation: rig.buildInvocation,
+      interBatchDelayMs: 0
+    })
+
+    await createCodexSessionBackfillAuditWriter(rig.paths.auditLogPath)({
+      action: 'existing',
+      target: rolloutTarget(rig.paths.systemSessionsRoot, stamp, id)
+    })
+    const repeated = await runCodexSessionIndexHeal(rig.paths, {
+      buildInvocation: rig.buildInvocation,
+      interBatchDelayMs: 0
+    })
+
+    expect(repeated).toMatchObject({ pendingThreads: 1, healedThreads: 1 })
+    expect(rig.readLog().threadIds).toEqual([id, id])
+  })
+
   it('resumes only unprocessed sessions when the audit ledger grows', async () => {
     const rig = createHealRig({
       auditedThreads: [{ stamp: '2026-07-01T10-00-00', id: threadId('1') }]

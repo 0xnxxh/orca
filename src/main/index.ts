@@ -335,6 +335,7 @@ let codexUsage: CodexUsageStore | null = null
 let openCodeUsage: OpenCodeUsageStore | null = null
 let codexAccounts: CodexAccountService | null = null
 let codexRuntimeHome: CodexRuntimeHomeService | null = null
+let codexSessionMigration: ReturnType<typeof createCodexSessionMigrationScheduler> | null = null
 let claudeAccounts: ClaudeAccountService | null = null
 let claudeRuntimeAuth: ClaudeRuntimeAuthService | null = null
 let runtime: OrcaRuntimeService | null = null
@@ -388,6 +389,18 @@ let gpuFeatureStatus: Electron.GPUFeatureStatus | null = null
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
+
+function handleCodexPtySpawned(args: { id: string; codexHomePath: string | null }): void {
+  const fullScanRequired =
+    codexRuntimeHome?.beginHostSystemDefaultSessionMigrationLaunch(args.codexHomePath) ?? null
+  if (fullScanRequired !== null) {
+    codexSessionMigration?.beginLaunch(args.id, fullScanRequired)
+  }
+}
+
+function handlePtyExit(id: string): void {
+  codexSessionMigration?.finishLaunch(id)
+}
 // Why: on Windows a CLI launch that lost ELECTRON_RUN_AS_NODE would boot the GUI and exit silently; redirect to node mode before the lock gate below.
 // Both redirects run before the serve-argv rewrite so they still match on the launch argv verbatim.
 // It is load-bearing for the AppImage one: rewriting first replaces the `serve` positional, so its
@@ -1396,6 +1409,8 @@ function openMainWindow(): BrowserWindow {
       },
       // Why: let the PTY layer skip its orphan sweep on the recovery reload that re-fires did-finish-load, so live local sessions survive (#5787).
       isRecoveryReloadInFlight,
+      onCodexPtySpawned: handleCodexPtySpawned,
+      onPtyExit: handlePtyExit,
       onBeforeUpdateQuit: () =>
         preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store }),
       updateInstallMode: resolveUpdateInstallMode(isServeMode),
@@ -2250,7 +2265,7 @@ void app.whenReady().then(async () => {
       codexRuntimeHome.isHostSystemDefaultRealHome() &&
       isAgentStatusHooksEnabled(store?.getSettings())
   )
-  const codexSessionMigration = createCodexSessionMigrationScheduler({
+  codexSessionMigration = createCodexSessionMigrationScheduler({
     isEligible: () => codexRuntimeHome?.isHostSystemDefaultSessionMigrationEligible() === true,
     isQuitting: () => isQuitting,
     resolveSystemCodexHomePathOverride: () =>
@@ -2260,7 +2275,6 @@ void app.whenReady().then(async () => {
     startBackfill: startCodexSessionBackfillInBackground,
     startIndexHeal: startCodexSessionIndexHealInBackground
   })
-  codexRuntimeHome.setHostSystemDefaultSessionMigrationScheduler(codexSessionMigration.scheduleRun)
   codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome, {
     onHostSystemDefaultSelected: codexSessionMigration.requestRun
   })
@@ -2880,7 +2894,11 @@ void app.whenReady().then(async () => {
       () => store!.getSettings(),
       (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
       store,
-      prepareCodexSessionResumeForLaunch
+      prepareCodexSessionResumeForLaunch,
+      {
+        onCodexPtySpawned: handleCodexPtySpawned,
+        onPtyExit: handlePtyExit
+      }
     )
     await runtime.refreshRestoredOrchestrationAuthority()
     await runtime.reconcileLegacyWorkerTerminals()

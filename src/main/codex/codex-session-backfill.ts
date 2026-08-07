@@ -12,10 +12,6 @@ import {
 } from './codex-session-backfill-audit-pass'
 import { describeCodexSessionBackfillErrorCode } from './codex-session-backfill-audit'
 import {
-  copySessionFileWithoutOverwrite,
-  isAtomicNoReplaceUnsupportedError
-} from './codex-session-backfill-copy'
-import {
   isCodexSessionRolloutPath,
   listCodexSessionBackfillFilesForDates
 } from './codex-session-backfill-date'
@@ -24,7 +20,6 @@ import {
   hasCompletedCodexSessionBackfillMarker,
   writeCodexSessionBackfillMarker as writeBackfillMarker
 } from './codex-session-backfill-marker'
-import { refreshOwnedCodexSessionCopy } from './codex-session-backfill-owned-copy'
 import type {
   CodexSessionBackfillOptions,
   CodexSessionBackfillPaths,
@@ -105,7 +100,8 @@ async function runCodexSessionBackfillOncePerHost(
   if (
     !summary.stopped &&
     options.shouldStop?.() !== true &&
-    options.scanDates === undefined &&
+    options.writeCompletionMarker !== false &&
+    (options.scanDates === undefined || options.writeBoundedCompletionMarker === true) &&
     summary.failedFiles === 0 &&
     summary.failedDirectories === 0 &&
     summary.failedHealAuditRecords === 0
@@ -119,8 +115,8 @@ async function runCodexSessionBackfillOncePerHost(
  * Backfills managed-home session rollout files into the real Codex home.
  *
  * Non-destructive by contract: existing target files are always skipped, and
- * nothing in either home is deleted or moved. Hardlink first so resume sees
- * one physical JSONL log; copy is the cross-volume fallback.
+ * nothing in either home is deleted or moved. A hardlink keeps mutable rollout
+ * contents coherent; cross-volume snapshots are skipped as unsupported.
  */
 export async function backfillManagedCodexSessionsIntoSystemHome(
   paths: CodexSessionBackfillPaths,
@@ -228,17 +224,6 @@ async function backfillOneManagedSessionFile(
   const systemSessionFilePath = join(paths.systemSessionsRoot, relativePath)
   const existingTargetStat = await readCodexSessionTargetStat(systemSessionFilePath)
   if (existingTargetStat) {
-    if (
-      await refreshOwnedCodexSessionCopy({
-        source: managedSessionFilePath,
-        target: systemSessionFilePath,
-        targetStat: existingTargetStat,
-        summary,
-        auditPass
-      })
-    ) {
-      return
-    }
     await auditPass.recordExisting(
       summary,
       managedSessionFilePath,
@@ -248,6 +233,7 @@ async function backfillOneManagedSessionFile(
     return
   }
 
+  let linkAttempted = false
   try {
     const targetDirectory = dirname(systemSessionFilePath)
     if (!ensuredTargetDirectories.has(targetDirectory)) {
@@ -256,6 +242,7 @@ async function backfillOneManagedSessionFile(
       await mkdir(targetDirectory, { recursive: true })
       ensuredTargetDirectories.add(targetDirectory)
     }
+    linkAttempted = true
     await link(managedSessionFilePath, systemSessionFilePath)
     summary.linkedFiles += 1
     await auditPass.recordPublished(
@@ -265,7 +252,7 @@ async function backfillOneManagedSessionFile(
       systemSessionFilePath
     )
   } catch (linkError) {
-    if (isExistsError(linkError)) {
+    if (linkAttempted && isExistsError(linkError)) {
       // Why: another window can publish the target after our existence probe;
       // enqueue it here too in case that writer died before its audit append.
       await auditPass.recordExisting(
@@ -279,55 +266,32 @@ async function backfillOneManagedSessionFile(
     if (isNotFoundError(linkError)) {
       ensuredTargetDirectories.delete(dirname(systemSessionFilePath))
     }
-    try {
-      // Why: cross-volume copies are staged so failures cannot strand a
-      // truncated rollout, then installed without overwriting collisions.
-      await copySessionFileWithoutOverwrite(managedSessionFilePath, systemSessionFilePath)
-      summary.copiedFiles += 1
-      await auditPass.recordPublished(
-        summary,
-        'copy',
-        managedSessionFilePath,
-        systemSessionFilePath
-      )
-    } catch (copyError) {
-      if (isExistsError(copyError)) {
-        await auditPass.recordExisting(
-          summary,
-          managedSessionFilePath,
-          systemSessionFilePath,
-          await readCodexSessionTargetStat(systemSessionFilePath)
-        )
-        return
-      }
-      if (isAtomicNoReplaceUnsupportedError(copyError)) {
-        summary.skippedUnsupportedFilesystemFiles += 1
-        await auditPass.recordDiagnostic(
-          {
-            action: 'copy-unsupported',
-            source: managedSessionFilePath,
-            target: systemSessionFilePath,
-            errorCode: describeCodexSessionBackfillErrorCode(copyError),
-            linkErrorCode: describeCodexSessionBackfillErrorCode(linkError)
-          },
-          await readCodexSessionTargetStat(managedSessionFilePath)
-        )
-        return
-      }
-      summary.failedFiles += 1
+    const sourceStat = await readCodexSessionTargetStat(managedSessionFilePath)
+    if (linkAttempted && isUnsupportedHardlinkError(linkError)) {
+      // Why: a mutable rollout cannot be kept coherent by a cross-volume snapshot.
+      summary.skippedUnsupportedFilesystemFiles += 1
       await auditPass.recordDiagnostic(
         {
-          action: 'failed',
+          action: 'copy-unsupported',
           source: managedSessionFilePath,
           target: systemSessionFilePath,
-          error: describeError(copyError),
-          linkError: describeError(linkError),
-          errorCode: describeCodexSessionBackfillErrorCode(copyError),
           linkErrorCode: describeCodexSessionBackfillErrorCode(linkError)
         },
-        await readCodexSessionTargetStat(managedSessionFilePath)
+        sourceStat
       )
+      return
     }
+    summary.failedFiles += 1
+    await auditPass.recordDiagnostic(
+      {
+        action: 'failed',
+        source: managedSessionFilePath,
+        target: systemSessionFilePath,
+        linkError: describeError(linkError),
+        linkErrorCode: describeCodexSessionBackfillErrorCode(linkError)
+      },
+      sourceStat
+    )
   }
 }
 
@@ -345,6 +309,18 @@ function isExistsError(error: unknown): boolean {
 
 function isNotFoundError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
+
+function isUnsupportedHardlinkError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return (
+    code === 'EXDEV' ||
+    code === 'EPERM' ||
+    code === 'EACCES' ||
+    code === 'ENOTSUP' ||
+    code === 'EOPNOTSUPP' ||
+    code === 'ENOSYS'
+  )
 }
 
 function describeError(error: unknown): string {

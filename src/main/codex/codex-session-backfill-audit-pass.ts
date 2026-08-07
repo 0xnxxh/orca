@@ -2,8 +2,6 @@ import type { Stats } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import {
   appendCodexSessionHealAuditRecord,
-  addOwnedCopyEventId,
-  createCodexSessionBackfillCopyOwnershipKey,
   createCodexSessionBackfillAuditWriter,
   createCodexSessionBackfillDiagnosticEventId,
   createCodexSessionBackfillFileEventId,
@@ -15,7 +13,6 @@ import type { CodexSessionBackfillSummary } from './codex-session-backfill-types
 
 export type CodexSessionBackfillAuditPass = {
   appendRecord: CodexSessionBackfillAuditWriter
-  isOwnedCopy(source: string, target: string, targetStat: Stats): boolean
   recordExisting(
     summary: CodexSessionBackfillSummary,
     source: string,
@@ -57,12 +54,6 @@ export async function createCodexSessionBackfillAuditPass(
 
   return {
     appendRecord,
-    isOwnedCopy(source, target, targetStat): boolean {
-      const eventIds = coverage.ownedCopyEventIds.get(
-        createCodexSessionBackfillCopyOwnershipKey(source, target)
-      )
-      return eventIds?.has(createCodexSessionBackfillFileEventId(target, targetStat)) === true
-    },
     async recordExisting(summary, source, target, targetStat): Promise<void> {
       const fileEventId = targetStat
         ? createCodexSessionBackfillFileEventId(target, targetStat)
@@ -94,9 +85,6 @@ export async function createCodexSessionBackfillAuditPass(
       ) {
         if (fileEventId) {
           coverage.fileEventIds.add(fileEventId)
-          if (action === 'copy') {
-            addOwnedCopyEventId(coverage, source, target, fileEventId)
-          }
         }
       }
     },
