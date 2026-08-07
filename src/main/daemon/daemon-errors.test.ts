@@ -3,8 +3,10 @@ import {
   DaemonProtocolError,
   decodeDaemonResponseError,
   isDaemonEndpointGoneError,
-  SessionNotFoundError
+  SessionNotFoundError,
+  TerminalHostGoneError
 } from './daemon-errors'
+import { mapRuntimeError } from '../runtime/rpc/errors'
 
 function socketError(code: string, syscall: string): Error & { code: string; syscall: string } {
   return Object.assign(new Error(`${syscall} ${code}`), { code, syscall })
@@ -24,10 +26,6 @@ describe('decodeDaemonResponseError', () => {
   })
 })
 
-/**
- * On Windows a named pipe vanishes with its server process, so `connect ENOENT
- * \\?\pipe\orca-terminal-host-vNN-…` is proof the owning daemon died — it used to reach the user raw.
- */
 describe('isDaemonEndpointGoneError', () => {
   it('recognizes a missing Windows named pipe', () => {
     const err = Object.assign(
@@ -42,7 +40,6 @@ describe('isDaemonEndpointGoneError', () => {
   })
 
   it('ignores a missing token file, which does not prove the endpoint is gone', () => {
-    // Why: ENOENT on open is the token path, and an initially missing token can still hide a live daemon.
     expect(isDaemonEndpointGoneError(socketError('ENOENT', 'open'))).toBe(false)
   })
 
@@ -57,5 +54,15 @@ describe('isDaemonEndpointGoneError', () => {
     expect(isDaemonEndpointGoneError('connect ENOENT')).toBe(false)
     expect(isDaemonEndpointGoneError(null)).toBe(false)
     expect(isDaemonEndpointGoneError(undefined)).toBe(false)
+  })
+
+  it('keeps the host-gone marker across runtime RPC error mapping', () => {
+    const response = mapRuntimeError(
+      'req-1',
+      { runtimeId: 'runtime-1' },
+      new TerminalHostGoneError()
+    )
+
+    expect(response.error).toEqual({ code: 'runtime_error', message: 'terminal_host_gone' })
   })
 })

@@ -12,6 +12,8 @@ const SSH_FAILURE =
 // Relay loss reaches reportError already IPC-wrapped, so the marker is mid-string.
 const RELAY_LOST =
   "Error invoking remote method 'pty:attach': Error: SSH connection lost, reconnecting..."
+const LEGACY_HOST_GONE =
+  "Error invoking remote method 'pty:spawn': Error: connect ENOENT \\\\?\\pipe\\orca-terminal-host-v30-14cb7f94b511"
 
 describe('isSshReconnectOwnedTerminalError', () => {
   it('matches raw ssh:connect failures and inactive-host messages', () => {
@@ -65,6 +67,13 @@ describe('humanizeTerminalError', () => {
     const wrapped = "Error invoking remote method 'pty:spawn': Error: terminal_host_gone"
     expect(humanizeTerminalError(wrapped)).not.toContain('terminal_host_gone')
   })
+
+  it('humanizes a legacy host raw named-pipe error', () => {
+    const humanized = humanizeTerminalError(LEGACY_HOST_GONE)
+    expect(humanized).not.toContain('connect ENOENT')
+    expect(humanized).not.toContain('orca-terminal-host-v30')
+    expect(humanized).toContain('Open a new terminal to continue')
+  })
 })
 
 describe('isExplainedTerminalError', () => {
@@ -75,11 +84,24 @@ describe('isExplainedTerminalError', () => {
         "Error invoking remote method 'pty:spawn': Error: terminal_host_gone"
       )
     ).toBe(true)
+    expect(isExplainedTerminalError(LEGACY_HOST_GONE)).toBe(true)
+    expect(
+      isExplainedTerminalError('connect ECONNREFUSED /tmp/orca-terminal-host-v30-14cb7f94b511.sock')
+    ).toBe(true)
   })
 
   it('keeps the issue link for errors Orca cannot explain', () => {
     expect(isExplainedTerminalError('Paste failed.')).toBe(false)
     expect(isExplainedTerminalError('node-pty: open_slave failed: EMFILE')).toBe(false)
+    expect(isExplainedTerminalError('terminal_gone')).toBe(false)
+    expect(isExplainedTerminalError('terminal_host_gone_extra')).toBe(false)
+    expect(isExplainedTerminalError('open ENOENT \\\\?\\pipe\\orca-terminal-host-v30-dead')).toBe(
+      false
+    )
+    expect(
+      isExplainedTerminalError('connect ETIMEDOUT \\\\?\\pipe\\orca-terminal-host-v30-dead')
+    ).toBe(false)
+    expect(isExplainedTerminalError('connect ENOENT \\\\?\\pipe\\unrelated')).toBe(false)
   })
 })
 

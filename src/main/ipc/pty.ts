@@ -95,6 +95,7 @@ import { addNodePtyRecoveryHint } from '../daemon/node-pty-error-hints'
 import { recordDaemonStreamBacklogEvent } from '../daemon/daemon-stream-backlog-probe'
 import {
   isDaemonEndpointGoneError,
+  TerminalHostGoneError,
   TerminalSessionOwnerUnverifiedError
 } from '../daemon/daemon-errors'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
@@ -818,10 +819,9 @@ async function attachStablePaneOwner(
     if (error instanceof TerminalSessionOwnerUnverifiedError) {
       throw new Error('terminal_pane_owner_unverified')
     }
-    // Why: a raw `connect ENOENT \\?\pipe\orca-terminal-host-vNN-…` is unactionable in a toast, and the
-    // session it names is unrecoverable — translate it before it can reach the renderer.
+    // Why: translate before paired-runtime RPC strips the socket error's code and syscall.
     if (isDaemonEndpointGoneError(error)) {
-      throw new Error('terminal_host_gone')
+      throw new TerminalHostGoneError()
     }
     if (!isPtyAlreadyGoneError(error)) {
       throw error

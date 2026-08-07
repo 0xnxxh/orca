@@ -14,8 +14,10 @@ const STALE_DAEMON_CWD_MARKERS = [
 ]
 // Thrown by ipc/pty.ts when a persisted pane owner can't be proven alive or dead (STA-3536).
 const PANE_OWNER_UNVERIFIED_MARKER = 'terminal_pane_owner_unverified'
-// Thrown by ipc/pty.ts when the daemon that owned this session is provably gone (its endpoint is absent).
 const TERMINAL_HOST_GONE_MARKER = 'terminal_host_gone'
+const TERMINAL_HOST_GONE_PATTERN = /(?:^|[^a-z0-9_])terminal_host_gone(?:$|[^a-z0-9_])/
+const LEGACY_TERMINAL_HOST_ENDPOINT_MARKER = 'orca-terminal-host-v'
+const LEGACY_TERMINAL_HOST_GONE_PATTERN = /connect (?:ENOENT|ECONNREFUSED) [^\n]*/
 
 function isSshError(error: string): boolean {
   return error.startsWith(SSH_PREFIX) || error.includes(SSH_RELAY_LOST_MARKER)
@@ -46,9 +48,12 @@ export function shouldOfferDaemonRestart(error: string): boolean {
   )
 }
 
-/** A condition the copy already fully explains — an issue link would just add noise. */
 export function isExplainedTerminalError(error: string): boolean {
-  return error.includes(TERMINAL_HOST_GONE_MARKER)
+  return (
+    TERMINAL_HOST_GONE_PATTERN.test(error) ||
+    (error.includes(LEGACY_TERMINAL_HOST_ENDPOINT_MARKER) &&
+      LEGACY_TERMINAL_HOST_GONE_PATTERN.test(error))
+  )
 }
 
 /** Swaps raw daemon-boundary codes for copy a user can act on. */
@@ -63,14 +68,18 @@ export function humanizeTerminalError(error: string): string {
       )
     )
   }
-  if (humanized.includes(TERMINAL_HOST_GONE_MARKER)) {
-    humanized = humanized.replace(
-      TERMINAL_HOST_GONE_MARKER,
-      translate(
-        'auto.components.terminal.pane.TerminalErrorToast.e16012e31e',
-        'The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue.'
-      )
+  if (isExplainedTerminalError(humanized)) {
+    const explanation = translate(
+      'auto.components.terminal.pane.TerminalErrorToast.e16012e31e',
+      'The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue.'
     )
+    humanized = humanized.replaceAll(TERMINAL_HOST_GONE_MARKER, explanation)
+    if (humanized.includes(LEGACY_TERMINAL_HOST_ENDPOINT_MARKER)) {
+      humanized = humanized
+        .split('\n')
+        .map((line) => line.replace(LEGACY_TERMINAL_HOST_GONE_PATTERN, explanation))
+        .join('\n')
+    }
   }
   return humanized
 }
@@ -86,7 +95,7 @@ export function TerminalErrorToast({
 }): React.JSX.Element {
   const ssh = isSshError(error)
   const showDaemonRestart = !ssh && onRestartDaemon && shouldOfferDaemonRestart(error)
-  // Why: restarting the daemon cannot recover a session whose owner already exited, so the copy stands alone.
+  // Restart cannot recover a session after its owning daemon exits.
   const showIssueLink = !ssh && !showDaemonRestart && !isExplainedTerminalError(error)
   const displayError = humanizeTerminalError(error)
 
