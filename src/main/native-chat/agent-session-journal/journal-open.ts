@@ -6,6 +6,7 @@
 // A gap in the surviving sequence is corruption, and the caller rolls the epoch
 // rather than rendering a partial timeline.
 
+import { isDeepStrictEqual } from 'node:util'
 import type { AgentJournalSubmission } from '../../../shared/agent-session-journal-types'
 import { findSequenceGap } from './journal-cursor'
 import {
@@ -42,15 +43,19 @@ export async function loadJournal(
   const snapshotRead = await readJournalSnapshotFile(journalDir)
   const snapshot = snapshotRead.snapshot
   const log = await readJournalLog(journalDir)
+  if (snapshotRead.unreadable || log.unreadable) {
+    return emptyReadOnlyLoad(sessionId)
+  }
   const epoch = resolveEpoch(snapshot, log.rows)
   if (!epoch) {
-    return log.unreadable || snapshotRead.unreadable ? emptyReadOnlyLoad(sessionId) : null
+    return null
   }
 
   const compactedThrough = snapshot?.epoch === epoch ? snapshot.compactedThrough : 0
   const state = seedState(sessionId, epoch, snapshot?.epoch === epoch ? snapshot : null)
   const liveRows = log.rows.filter((row) => row.epoch === epoch)
-  const tailRows = unionBySequence(snapshot?.epoch === epoch ? snapshot.tail : [], liveRows, epoch)
+  const union = unionBySequence(snapshot?.epoch === epoch ? snapshot.tail : [], liveRows, epoch)
+  const tailRows = union.rows
 
   const oldest = tailRows[0]?.seq ?? compactedThrough + 1
   const gap = findSequenceGap(
@@ -59,7 +64,7 @@ export async function loadJournal(
   )
   // A hole below the snapshot boundary is unrecoverable too: the snapshot only
   // covers `compactedThrough`, so a tail that starts above it lost rows.
-  const corrupt = Boolean(gap) || oldest > compactedThrough + 1
+  const corrupt = union.conflict || Boolean(gap) || oldest > compactedThrough + 1
 
   for (const row of tailRows) {
     if (row.seq > compactedThrough) {
@@ -73,7 +78,7 @@ export async function loadJournal(
     state,
     tailRows,
     compactedThrough,
-    readOnly: log.unreadable || snapshotRead.unreadable,
+    readOnly: false,
     corrupt,
     sizeBytes:
       (snapshot?.epoch === epoch ? journalSnapshotByteLength(snapshot) : 0) +
@@ -148,15 +153,23 @@ function unionBySequence(
   retained: readonly JournalRow[],
   live: readonly JournalRow[],
   epoch: string
-): JournalRow[] {
+): { rows: JournalRow[]; conflict: boolean } {
   const bySequence = new Map<number, JournalRow>()
+  let conflict = false
+  const add = (row: JournalRow): void => {
+    const existing = bySequence.get(row.seq)
+    if (existing && !isDeepStrictEqual(existing, row)) {
+      conflict = true
+    }
+    bySequence.set(row.seq, row)
+  }
   for (const row of retained) {
     if (row.epoch === epoch) {
-      bySequence.set(row.seq, row)
+      add(row)
     }
   }
   for (const row of live) {
-    bySequence.set(row.seq, row)
+    add(row)
   }
-  return [...bySequence.values()].sort((a, b) => a.seq - b.seq)
+  return { rows: [...bySequence.values()].sort((a, b) => a.seq - b.seq), conflict }
 }

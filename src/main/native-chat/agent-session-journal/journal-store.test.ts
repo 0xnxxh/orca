@@ -210,6 +210,29 @@ describe('replay', () => {
     expect(reopened.epoch).not.toBe(before)
     expect(reopened.snapshot().items).toHaveLength(0)
   })
+
+  it('rolls the epoch when one sequence names two different rows', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('first'), { fence: 1 })
+    const before = journal.epoch
+    const logPath = join(root, JOURNAL_LOG_FILE)
+    const conflicting = JSON.stringify({
+      v: 1,
+      kind: 'item',
+      epoch: before,
+      seq: 2,
+      fence: 1,
+      ts: 1_002,
+      itemId: 'conflicting-item',
+      revision: 1,
+      body: body('conflict')
+    })
+    await writeFile(logPath, `${await readFile(logPath, 'utf-8')}${conflicting}\n`, 'utf-8')
+
+    const reopened = await open()
+    expect(reopened.epoch).not.toBe(before)
+    expect(reopened.snapshot().items).toEqual([])
+  })
 })
 
 describe('compaction and retention', () => {
@@ -406,6 +429,7 @@ describe('schema', () => {
 
     const reopened = await open()
     expect(reopened.isReadOnly).toBe(true)
+    expect(reopened.snapshot().items).toEqual([])
     await expect(reopened.appendItem(item(1), body('b'), { fence: 1 })).rejects.toMatchObject({
       code: 'journal_read_only'
     })
@@ -429,6 +453,7 @@ describe('schema', () => {
 
     const reopened = await open()
     expect(reopened.isReadOnly).toBe(true)
+    expect(reopened.snapshot().items).toEqual([])
     await expect(reopened.appendItem(item(1), body('b'), { fence: 1 })).rejects.toMatchObject({
       code: 'journal_read_only'
     })
