@@ -16,7 +16,22 @@ import type {
   AgentJournalSubmission
 } from '../../../shared/agent-session-journal-types'
 import { AGENT_SESSION_JOURNAL_SCHEMA_VERSION } from '../../../shared/agent-session-journal-types'
-import { parseJournalRow, serializeJournalRow, type JournalRow } from './journal-row-schema'
+import {
+  isJournalAlias,
+  isJournalReceipt,
+  isJournalRenderItem,
+  isJournalSubmission,
+  isJournalTombstone,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isRecord
+} from './journal-persisted-shapes'
+import {
+  parseJournalRow,
+  parseJournalRowValue,
+  serializeJournalRow,
+  type JournalRow
+} from './journal-row-schema'
 
 export const JOURNAL_LOG_FILE = 'log.jsonl'
 export const JOURNAL_SNAPSHOT_FILE = 'snapshot.json'
@@ -69,19 +84,54 @@ export async function readJournalSnapshotFile(
 ): Promise<JournalSnapshotReadResult> {
   try {
     const raw = await readFile(join(journalDir, JOURNAL_SNAPSHOT_FILE), 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<JournalSnapshotFile>
-    if (typeof parsed?.v !== 'number' || !Number.isInteger(parsed.v) || parsed.v < 1) {
-      return { snapshot: null, unreadable: false }
-    }
-    if (parsed.v > AGENT_SESSION_JOURNAL_SCHEMA_VERSION) {
-      return { snapshot: null, unreadable: true }
-    }
-    return {
-      snapshot: typeof parsed?.epoch === 'string' ? (parsed as JournalSnapshotFile) : null,
-      unreadable: false
-    }
+    return parseJournalSnapshot(JSON.parse(raw))
   } catch {
     return { snapshot: null, unreadable: false }
+  }
+}
+
+function parseJournalSnapshot(value: unknown): JournalSnapshotReadResult {
+  if (!isRecord(value) || !Number.isInteger(value.v) || (value.v as number) < 1) {
+    return { snapshot: null, unreadable: false }
+  }
+  if ((value.v as number) > AGENT_SESSION_JOURNAL_SCHEMA_VERSION) {
+    return { snapshot: null, unreadable: true }
+  }
+  if (
+    !isNonEmptyString(value.epoch) ||
+    !isNonNegativeInteger(value.compactedThrough) ||
+    !(value.highestFence === undefined || isNonNegativeInteger(value.highestFence)) ||
+    !Array.isArray(value.items) ||
+    !value.items.every(isJournalRenderItem) ||
+    !(value.tombstones === undefined || Array.isArray(value.tombstones)) ||
+    (Array.isArray(value.tombstones) && !value.tombstones.every(isJournalTombstone)) ||
+    !Array.isArray(value.submissions) ||
+    !value.submissions.every(isJournalSubmission) ||
+    !Array.isArray(value.receipts) ||
+    !value.receipts.every(isJournalReceipt) ||
+    !Array.isArray(value.aliases) ||
+    !value.aliases.every(isJournalAlias) ||
+    !Array.isArray(value.tail)
+  ) {
+    return { snapshot: null, unreadable: false }
+  }
+
+  const tail: JournalRow[] = []
+  for (const candidate of value.tail) {
+    const parsed = parseJournalRowValue(candidate)
+    if (!parsed.ok) {
+      return { snapshot: null, unreadable: parsed.unreadable }
+    }
+    tail.push(parsed.row)
+  }
+  return {
+    snapshot: {
+      ...value,
+      highestFence: value.highestFence ?? 0,
+      tombstones: value.tombstones ?? [],
+      tail
+    } as JournalSnapshotFile,
+    unreadable: false
   }
 }
 

@@ -12,6 +12,13 @@ import {
   type AgentJournalMessageItem,
   type AgentSessionProviderHandle
 } from '../../../shared/agent-session-journal-types'
+import {
+  isAgentJournalItemBody,
+  isAgentSessionProviderHandle,
+  isFiniteNumber,
+  isNonEmptyString,
+  isNonNegativeInteger
+} from './journal-persisted-shapes'
 
 export type JournalRowBase = {
   /** Schema version of THIS row. */
@@ -91,6 +98,8 @@ export type JournalRowParse =
   | { ok: false; unreadable: true }
 
 const ROW_KINDS = new Set(['epoch', 'item', 'tombstone', 'submission', 'dispatch'])
+const EPOCH_REASONS = new Set(AGENT_JOURNAL_EPOCH_REASONS)
+const DISPATCH_STATES = new Set(['accepted', 'rejected', 'unknown'])
 
 export function journalRowBase(
   epoch: string,
@@ -116,6 +125,10 @@ export function parseJournalRow(line: string): JournalRowParse {
   } catch {
     return { ok: false, unreadable: false }
   }
+  return parseJournalRowValue(parsed)
+}
+
+export function parseJournalRowValue(parsed: unknown): JournalRowParse {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { ok: false, unreadable: false }
   }
@@ -148,22 +161,52 @@ function isJournalRow(record: Record<string, unknown>): record is JournalRow {
     return false
   }
   if (
-    typeof record.epoch !== 'string' ||
-    !record.epoch ||
+    !isNonEmptyString(record.epoch) ||
     !Number.isInteger(record.seq) ||
     (record.seq as number) < 1 ||
-    !Number.isInteger(record.fence) ||
-    typeof record.ts !== 'number'
+    !isNonNegativeInteger(record.fence) ||
+    !isFiniteNumber(record.ts) ||
+    (record.recovered !== undefined && record.recovered !== true)
   ) {
     return false
   }
-  if (record.kind === 'item' || record.kind === 'tombstone') {
-    return typeof record.itemId === 'string' && Number.isInteger(record.revision)
+  if (record.kind === 'epoch') {
+    return (
+      typeof record.reason === 'string' &&
+      EPOCH_REASONS.has(record.reason as AgentJournalEpochReason) &&
+      isAgentSessionProviderHandle(record.providerHandle)
+    )
   }
-  if (record.kind === 'submission' || record.kind === 'dispatch') {
-    return typeof record.clientMessageId === 'string' && record.clientMessageId.length > 0
+  if (record.kind === 'item') {
+    return (
+      isNonEmptyString(record.itemId) &&
+      isNonNegativeInteger(record.revision) &&
+      isAgentJournalItemBody(record.body)
+    )
   }
-  return typeof record.reason === 'string'
+  if (record.kind === 'tombstone') {
+    return isNonEmptyString(record.itemId) && isNonNegativeInteger(record.revision)
+  }
+  if (record.kind === 'submission') {
+    return (
+      isNonEmptyString(record.clientMessageId) &&
+      typeof record.payloadFingerprint === 'string' &&
+      isAgentSessionProviderHandle(record.providerHandle) &&
+      isAgentJournalItemBody(record.body) &&
+      record.body.kind === 'message'
+    )
+  }
+  if (
+    !isNonEmptyString(record.clientMessageId) ||
+    typeof record.state !== 'string' ||
+    !DISPATCH_STATES.has(record.state) ||
+    !(record.reason === null || typeof record.reason === 'string')
+  ) {
+    return false
+  }
+  return record.state === 'accepted'
+    ? isNonEmptyString(record.providerItemId) && record.reason === null
+    : record.providerItemId === null
 }
 
 /** Approximate on-disk cost of a row, used for the per-session size bound. */
