@@ -621,7 +621,7 @@ describe('windows terminal capabilities', () => {
     }
   })
 
-  it('stops re-probing a Windows host that keeps answering "no WSL"', async () => {
+  it('bounds re-probes for a Windows host that keeps answering "no WSL"', async () => {
     vi.useFakeTimers()
     const { wslIsAvailable, pwshIsAvailable } = stubTerminalCapabilityApi({
       wslAvailable: false,
@@ -650,10 +650,9 @@ describe('windows terminal capabilities', () => {
         await vi.advanceTimersByTimeAsync(30 * 60_000)
       })
 
-      // Each read spawns a blocking wsl.exe/pwsh.exe on the main process, so the backoff
-      // must park rather than keep firing every 30s for the lifetime of the app.
-      expect(wslIsAvailable.mock.calls.length).toBeLessThanOrEqual(4)
-      expect(pwshIsAvailable.mock.calls.length).toBeLessThanOrEqual(4)
+      // The ceiling poll preserves install discovery while cutting the old 30s spawn rate.
+      expect(wslIsAvailable.mock.calls.length).toBeLessThanOrEqual(10)
+      expect(pwshIsAvailable.mock.calls.length).toBeLessThanOrEqual(10)
     } finally {
       vi.useRealTimers()
     }

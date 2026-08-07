@@ -320,12 +320,17 @@ export function _setWslCachesForTests(args: {
 
 function execFileUtf8(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: 'utf-8', timeout: 5000 }, (error, stdout) => {
-      if (error) {
-        reject(error)
-        return
+    execFile(
+      command,
+      args,
+      { encoding: 'utf-8', timeout: 5000, windowsHide: true },
+      (error, stdout) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(stdout)
       }
-      resolve(stdout)
-    })
+    )
   })
 }

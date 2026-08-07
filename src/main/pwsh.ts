@@ -11,6 +11,7 @@ type PwshAvailabilityCache =
 let pwshAvailableCache: PwshAvailabilityCache | null = null
 let pwshWarmupInFlight: Promise<boolean> | null = null
 let pwshProbeInFlight: Promise<boolean> | null = null
+let pwshAvailabilityCacheGeneration = 0
 
 function isCacheFresh(cache: PwshAvailabilityCache): boolean {
   return (
@@ -29,14 +30,23 @@ function isTimeoutError(error: unknown): boolean {
   return failure.code === 'ETIMEDOUT' || (failure.killed === true && failure.signal === 'SIGTERM')
 }
 
-function cachePwshProbeFailure(error: unknown): void {
+function writePwshAvailabilityCache(cache: PwshAvailabilityCache | null): void {
+  pwshAvailableCache = cache
+  pwshAvailabilityCacheGeneration += 1
+}
+
+function cachePwshProbeFailure(error: unknown, startedAtGeneration: number): boolean {
+  if (startedAtGeneration !== pwshAvailabilityCacheGeneration) {
+    return pwshAvailableCache?.available ?? false
+  }
   // Why: pwsh.exe cold starts can exceed the sync timeout; do not let one slow
   // .NET startup disable the user's PowerShell 7 preference for the daemon.
   if (isTimeoutError(error)) {
-    pwshAvailableCache = null
-    return
+    writePwshAvailabilityCache(null)
+    return false
   }
-  pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: true }
+  writePwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: true })
+  return false
 }
 
 /**
@@ -50,18 +60,19 @@ export function isPwshAvailable(): boolean {
   }
 
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    writePwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return false
   }
 
+  const startedAtGeneration = pwshAvailabilityCacheGeneration
   try {
     execFileSync('pwsh.exe', ['-Version'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: PWSH_SYNC_PROBE_TIMEOUT_MS
     })
-    pwshAvailableCache = { available: true }
+    writePwshAvailabilityCache({ available: true })
   } catch (error) {
-    cachePwshProbeFailure(error)
+    return cachePwshProbeFailure(error, startedAtGeneration)
   }
 
   return pwshAvailableCache?.available ?? false
@@ -79,7 +90,7 @@ export function isPwshAvailableAsync(): Promise<boolean> {
   }
 
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    writePwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return Promise.resolve(false)
   }
 
@@ -87,16 +98,22 @@ export function isPwshAvailableAsync(): Promise<boolean> {
     return pwshProbeInFlight
   }
 
+  const startedAtGeneration = pwshAvailabilityCacheGeneration
   pwshProbeInFlight = new Promise((resolve) => {
-    execFile('pwsh.exe', ['-Version'], { timeout: PWSH_SYNC_PROBE_TIMEOUT_MS }, (error) => {
-      pwshProbeInFlight = null
-      if (error) {
-        cachePwshProbeFailure(error)
-      } else {
-        pwshAvailableCache = { available: true }
+    execFile(
+      'pwsh.exe',
+      ['-Version'],
+      { timeout: PWSH_SYNC_PROBE_TIMEOUT_MS, windowsHide: true },
+      (error) => {
+        pwshProbeInFlight = null
+        if (error) {
+          resolve(cachePwshProbeFailure(error, startedAtGeneration))
+        } else {
+          writePwshAvailabilityCache({ available: true })
+          resolve(true)
+        }
       }
-      resolve(pwshAvailableCache?.available ?? false)
-    })
+    )
   })
   return pwshProbeInFlight
 }
@@ -106,24 +123,29 @@ export function warmPwshAvailabilityCache(): Promise<boolean> {
     return Promise.resolve(true)
   }
   if (process.platform !== 'win32') {
-    pwshAvailableCache = { available: false, cachedAt: Date.now(), retryable: false }
+    writePwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return Promise.resolve(false)
   }
   if (pwshWarmupInFlight) {
     return pwshWarmupInFlight
   }
 
+  const startedAtGeneration = pwshAvailabilityCacheGeneration
   pwshWarmupInFlight = new Promise((resolve) => {
-    execFile('pwsh.exe', ['-Version'], { timeout: PWSH_WARMUP_PROBE_TIMEOUT_MS }, (error) => {
-      pwshWarmupInFlight = null
-      if (!error) {
-        pwshAvailableCache = { available: true }
-        resolve(true)
-        return
+    execFile(
+      'pwsh.exe',
+      ['-Version'],
+      { timeout: PWSH_WARMUP_PROBE_TIMEOUT_MS, windowsHide: true },
+      (error) => {
+        pwshWarmupInFlight = null
+        if (!error) {
+          writePwshAvailabilityCache({ available: true })
+          resolve(true)
+          return
+        }
+        resolve(cachePwshProbeFailure(error, startedAtGeneration))
       }
-      cachePwshProbeFailure(error)
-      resolve(false)
-    })
+    )
   })
   return pwshWarmupInFlight
 }

@@ -40,17 +40,17 @@ afterEach(() => {
 })
 
 describe('windows terminal capability re-probe', () => {
-  it('backs off and parks on a stable answer instead of probing forever', async () => {
+  it('backs off to a five-minute ceiling on a stable answer', async () => {
     vi.useFakeTimers()
     const { probe, readCached } = createWatcher()
     startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
 
-    // 30s, then +60s, then +120s: three unchanged answers settle the watcher.
+    // 30s, then +60s, then +120s: three unchanged answers reach the ceiling.
     await vi.advanceTimersByTimeAsync(210_000)
     expect(probe).toHaveBeenCalledTimes(3)
 
     await vi.advanceTimersByTimeAsync(30 * 60_000)
-    expect(probe).toHaveBeenCalledTimes(3)
+    expect(probe).toHaveBeenCalledTimes(9)
   })
 
   it('still re-checks a transient absent answer, then stops once WSL answers', async () => {
@@ -110,16 +110,33 @@ describe('windows terminal capability re-probe', () => {
     expect(probe).toHaveBeenCalledTimes(2)
   })
 
-  it('re-arms a parked watcher when the window regains focus', async () => {
+  it('keeps the earned backoff when another consumer joins', async () => {
     vi.useFakeTimers()
     const { probe, readCached } = createWatcher()
     startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
 
-    await vi.advanceTimersByTimeAsync(210_000 + 30 * 60_000)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    await vi.advanceTimersByTimeAsync(49_999)
+    expect(probe).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('accelerates a ceiling poll when the window regains focus', async () => {
+    vi.useFakeTimers()
+    const { probe, readCached } = createWatcher()
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    await vi.advanceTimersByTimeAsync(210_000)
     expect(probe).toHaveBeenCalledTimes(3)
 
-    globalThis.dispatchEvent(new Event('focus'))
     await vi.advanceTimersByTimeAsync(30_000)
+    globalThis.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
     expect(probe).toHaveBeenCalledTimes(4)
   })
 
@@ -135,6 +152,39 @@ describe('windows terminal capability re-probe', () => {
       globalThis.dispatchEvent(new Event('focus'))
     }
     expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let focus churn starve an already-backed-off probe', async () => {
+    vi.useFakeTimers()
+    const { probe, readCached } = createWatcher()
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += 25_000) {
+      await vi.advanceTimersByTimeAsync(25_000)
+      globalThis.dispatchEvent(new Event('focus'))
+    }
+
+    expect(probe.mock.calls.length).toBeGreaterThan(1)
+    expect(probe.mock.calls.length).toBeLessThanOrEqual(21)
+  })
+
+  it('defers a parked watcher demand signal to the base-delay deadline', async () => {
+    vi.useFakeTimers()
+    const { probe, readCached } = createWatcher()
+    startWindowsTerminalCapabilityReprobe({ ownerKey: 'local', probe, readCached })
+
+    await vi.advanceTimersByTimeAsync(210_000)
+    expect(probe).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1_000)
+    globalThis.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(9_000)
+    globalThis.dispatchEvent(new Event('focus'))
+
+    await vi.advanceTimersByTimeAsync(19_999)
+    expect(probe).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(probe).toHaveBeenCalledTimes(4)
   })
 
   it('drops the focus listener when no owner is watched', () => {

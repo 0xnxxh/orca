@@ -509,7 +509,7 @@ describe('WSL availability cache', () => {
       expect(execFileMock).toHaveBeenCalledWith(
         'wsl.exe',
         ['--status'],
-        expect.anything(),
+        expect.objectContaining({ timeout: 5000, windowsHide: true }),
         expect.any(Function)
       )
       expect(execFileSyncMock).not.toHaveBeenCalled()
@@ -525,6 +525,46 @@ describe('WSL availability cache', () => {
       const results = await Promise.all([isWslAvailableAsync(), isWslAvailableAsync()])
       expect(results).toEqual([true, true])
       expect(execFileMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('does not let an older async failure overwrite a newer sync success', async () => {
+    let finishAsyncProbe: ((error: Error | null) => void) | null = null
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      finishAsyncProbe = (error) => callback(error, '', '')
+    })
+    execFileSyncMock.mockReturnValue('')
+
+    await withPlatformAsync('win32', async () => {
+      const staleProbe = isWslAvailableAsync()
+      expect(isWslAvailable()).toBe(true)
+
+      finishAsyncProbe?.(Object.assign(new Error('older failure'), { code: 1 }))
+
+      await expect(staleProbe).resolves.toBe(true)
+      expect(getCachedWslAvailability()).toBe(true)
+    })
+  })
+
+  it('does not restore a failure after distro discovery disproves it mid-probe', async () => {
+    const callbacks = new Map<string, (error: Error | null, stdout: string) => void>()
+    execFileMock.mockImplementation((_command, args, _options, callback) => {
+      callbacks.set(args.join(' '), callback)
+    })
+
+    await withPlatformAsync('win32', async () => {
+      const staleAvailability = isWslAvailableAsync()
+      const distroProbe = listWslDistrosAsync()
+      callbacks.get('--list --quiet')?.(null, 'Ubuntu\n')
+      await expect(distroProbe).resolves.toEqual(['Ubuntu'])
+
+      callbacks.get('--status')?.(Object.assign(new Error('older failure'), { code: 1 }), '')
+      await expect(staleAvailability).resolves.toBe(false)
+      expect(getCachedWslAvailability()).toBeNull()
+
+      const retry = isWslAvailableAsync()
+      callbacks.get('--status')?.(null, '')
+      await expect(retry).resolves.toBe(true)
     })
   })
 

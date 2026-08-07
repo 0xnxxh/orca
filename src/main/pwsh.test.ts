@@ -122,7 +122,7 @@ describe('isPwshAvailable', () => {
       expect(execFileMock).toHaveBeenCalledWith(
         'pwsh.exe',
         ['-Version'],
-        { timeout: 30_000 },
+        { timeout: 30_000, windowsHide: true },
         expect.any(Function)
       )
       expect(isPwshAvailable()).toBe(true)
@@ -149,7 +149,7 @@ describe('isPwshAvailable', () => {
       expect(execFileMock).toHaveBeenCalledWith(
         'pwsh.exe',
         ['-Version'],
-        { timeout: 5000 },
+        { timeout: 5000, windowsHide: true },
         expect.any(Function)
       )
       expect(execFileSyncMock).not.toHaveBeenCalled()
@@ -174,6 +174,29 @@ describe('isPwshAvailable', () => {
     } finally {
       restorePlatform()
       vi.useRealTimers()
+    }
+  })
+
+  it('does not let an older async failure overwrite a newer sync success', async () => {
+    const restorePlatform = setPlatform('win32')
+    let finishAsyncProbe!: (error: Error | null) => void
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      finishAsyncProbe = (error) => callback(error, '', '')
+    })
+    execFileSyncMock.mockReturnValue('PowerShell 7.5.0')
+
+    try {
+      const { isPwshAvailable, isPwshAvailableAsync } = await import('./pwsh')
+      const staleProbe = isPwshAvailableAsync()
+      expect(isPwshAvailable()).toBe(true)
+
+      finishAsyncProbe(new Error('older failure'))
+
+      await expect(staleProbe).resolves.toBe(true)
+      expect(isPwshAvailable()).toBe(true)
+      expect(execFileSyncMock).toHaveBeenCalledTimes(1)
+    } finally {
+      restorePlatform()
     }
   })
 

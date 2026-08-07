@@ -8,6 +8,7 @@ type WslAvailabilityCache =
 
 let wslAvailableCache: WslAvailabilityCache | null = null
 let wslAvailabilityProbeInFlight: Promise<boolean> | null = null
+let wslAvailabilityCacheGeneration = 0
 
 const WSL_AVAILABILITY_PROBE_TIMEOUT_MS = 5000
 // Why: availability is a separate, blocking probe. Deliberately not a multiple of the
@@ -67,16 +68,26 @@ function previousWslAvailabilityFailures(): number {
   return wslAvailableCache && 'failures' in wslAvailableCache ? wslAvailableCache.failures : 0
 }
 
-function cacheWslAvailabilityProbeResult(error: unknown, previousFailures: number): boolean {
-  wslAvailableCache = error
-    ? {
-        available: false,
-        cachedAt: Date.now(),
-        retryable: isRetryableWslProbeFailure(error),
-        failures: previousFailures + 1
-      }
-    : { available: true }
-  return wslAvailableCache.available
+function writeWslAvailabilityCache(cache: WslAvailabilityCache | null): void {
+  wslAvailableCache = cache
+  wslAvailabilityCacheGeneration += 1
+}
+
+function cacheWslAvailabilityProbeResult(error: unknown, startedAtGeneration: number): boolean {
+  if (error && startedAtGeneration !== wslAvailabilityCacheGeneration) {
+    return wslAvailableCache?.available ?? false
+  }
+  writeWslAvailabilityCache(
+    error
+      ? {
+          available: false,
+          cachedAt: Date.now(),
+          retryable: isRetryableWslProbeFailure(error),
+          failures: previousWslAvailabilityFailures() + 1
+        }
+      : { available: true }
+  )
+  return !error
 }
 
 function probeWslStatus(): Promise<void> {
@@ -84,7 +95,7 @@ function probeWslStatus(): Promise<void> {
     execFile(
       'wsl.exe',
       ['--status'],
-      { timeout: WSL_AVAILABILITY_PROBE_TIMEOUT_MS },
+      { timeout: WSL_AVAILABILITY_PROBE_TIMEOUT_MS, windowsHide: true },
       (error: unknown) => {
         if (error) {
           reject(error)
@@ -108,10 +119,10 @@ export function isWslAvailable(): boolean {
     return cached
   }
 
-  const previousFailures = previousWslAvailabilityFailures()
+  const startedAtGeneration = wslAvailabilityCacheGeneration
 
   if (process.platform !== 'win32') {
-    wslAvailableCache = { available: false, unsupported: true }
+    writeWslAvailabilityCache({ available: false, unsupported: true })
     return false
   }
 
@@ -120,9 +131,9 @@ export function isWslAvailable(): boolean {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: WSL_AVAILABILITY_PROBE_TIMEOUT_MS
     })
-    return cacheWslAvailabilityProbeResult(null, previousFailures)
+    return cacheWslAvailabilityProbeResult(null, startedAtGeneration)
   } catch (error) {
-    return cacheWslAvailabilityProbeResult(error, previousFailures)
+    return cacheWslAvailabilityProbeResult(error, startedAtGeneration)
   }
 }
 
@@ -140,7 +151,7 @@ export function isWslAvailableAsync(): Promise<boolean> {
   }
 
   if (process.platform !== 'win32') {
-    wslAvailableCache = { available: false, unsupported: true }
+    writeWslAvailabilityCache({ available: false, unsupported: true })
     return Promise.resolve(false)
   }
 
@@ -148,10 +159,10 @@ export function isWslAvailableAsync(): Promise<boolean> {
     return wslAvailabilityProbeInFlight
   }
 
-  const previousFailures = previousWslAvailabilityFailures()
+  const startedAtGeneration = wslAvailabilityCacheGeneration
   wslAvailabilityProbeInFlight = probeWslStatus()
-    .then(() => cacheWslAvailabilityProbeResult(null, previousFailures))
-    .catch((error: unknown) => cacheWslAvailabilityProbeResult(error, previousFailures))
+    .then(() => cacheWslAvailabilityProbeResult(null, startedAtGeneration))
+    .catch((error: unknown) => cacheWslAvailabilityProbeResult(error, startedAtGeneration))
     .finally(() => {
       wslAvailabilityProbeInFlight = null
     })
@@ -176,6 +187,7 @@ export function getCachedWslAvailability(): boolean | null {
 // stale failure and let the next call re-probe. Non-empty lists are cached for the process
 // lifetime, so this cannot re-spawn the blocking probe more than once.
 export function dropStaleWslAvailabilityFailure(): void {
+  wslAvailabilityCacheGeneration += 1
   if (wslAvailableCache && !wslAvailableCache.available && !('unsupported' in wslAvailableCache)) {
     wslAvailableCache = null
   }
@@ -184,16 +196,18 @@ export function dropStaleWslAvailabilityFailure(): void {
 export function _resetWslAvailabilityCacheForTests(): void {
   wslAvailableCache = null
   wslAvailabilityProbeInFlight = null
+  wslAvailabilityCacheGeneration = 0
 }
 
 export function _setWslAvailabilityCacheForTests(
   available: boolean | null | undefined,
   retryable: boolean
 ): void {
-  wslAvailableCache =
+  writeWslAvailabilityCache(
     available === true
       ? { available: true }
       : available === false
         ? { available: false, cachedAt: Date.now(), retryable, failures: 1 }
         : null
+  )
 }

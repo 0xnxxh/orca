@@ -1,20 +1,23 @@
 import type { WindowsTerminalCapabilities } from './windows-terminal-capabilities'
 
 // Why: an absent WSL must stay re-checkable (a distro can finish provisioning while Orca runs),
-// but every re-check spawns wsl.exe/pwsh.exe on the Electron main process, so the re-check backs
-// off and parks on a stable answer instead of running on a fixed interval for the app's lifetime.
+// but every re-check spawns wsl.exe/pwsh.exe, so stable answers fall back to a low-frequency poll.
 const REPROBE_BASE_DELAY_MS = 30_000
 const REPROBE_MAX_DELAY_MS = 5 * 60_000
-/** Consecutive identical answers that count as settled; window focus re-arms afterwards. */
+/** Consecutive identical answers before switching to the five-minute ceiling. */
 const REPROBE_SETTLE_STREAK = 3
+
+type CapabilityReprobeTimerKind = 'backoff' | 'ceiling'
 
 type CapabilityReprobeRunner = {
   consumers: number
   timer: ReturnType<typeof globalThis.setTimeout> | null
-  attempt: number
+  timerDeadline: number
+  timerKind: CapabilityReprobeTimerKind | null
   unchangedStreak: number
   signature: string
   lastProbeAt: number
+  probeInFlight: boolean
   probe: () => Promise<WindowsTerminalCapabilities>
   readCached: () => WindowsTerminalCapabilities
 }
@@ -42,58 +45,84 @@ function clearRunnerTimer(runner: CapabilityReprobeRunner): void {
     globalThis.clearTimeout(runner.timer)
     runner.timer = null
   }
+  runner.timerDeadline = 0
+  runner.timerKind = null
+}
+
+function scheduleProbe(
+  runner: CapabilityReprobeRunner,
+  kind: CapabilityReprobeTimerKind,
+  deadline: number
+): void {
+  clearRunnerTimer(runner)
+  runner.timerKind = kind
+  runner.timerDeadline = deadline
+  runner.timer = globalThis.setTimeout(
+    () => {
+      runner.timer = null
+      runner.timerDeadline = 0
+      runner.timerKind = null
+      void runProbe(runner)
+    },
+    Math.max(0, deadline - Date.now())
+  )
 }
 
 function scheduleNextProbe(runner: CapabilityReprobeRunner): void {
-  clearRunnerTimer(runner)
-  const delay = Math.min(REPROBE_BASE_DELAY_MS * 2 ** runner.attempt, REPROBE_MAX_DELAY_MS)
-  runner.timer = globalThis.setTimeout(() => {
-    runner.timer = null
-    void runProbe(runner)
-  }, delay)
+  if (runner.unchangedStreak >= REPROBE_SETTLE_STREAK) {
+    scheduleProbe(runner, 'ceiling', Date.now() + REPROBE_MAX_DELAY_MS)
+    return
+  }
+  const delay = REPROBE_BASE_DELAY_MS * 2 ** runner.unchangedStreak
+  scheduleProbe(runner, 'backoff', Date.now() + delay)
 }
 
 async function runProbe(runner: CapabilityReprobeRunner): Promise<void> {
-  if (runner.consumers <= 0 || isSettled(runner.readCached())) {
+  if (runner.consumers <= 0 || runner.probeInFlight || isSettled(runner.readCached())) {
     return
   }
+  runner.probeInFlight = true
   runner.lastProbeAt = Date.now()
-  const capabilities = await runner.probe().catch(() => runner.readCached())
+  let capabilities: WindowsTerminalCapabilities
+  try {
+    capabilities = await runner.probe().catch(() => runner.readCached())
+  } finally {
+    runner.probeInFlight = false
+  }
   if (runner.consumers <= 0) {
     return
   }
   if (capabilitySignature(capabilities) === runner.signature) {
     runner.unchangedStreak += 1
-    runner.attempt += 1
   } else {
     // A moving answer means the host is still changing; watch it closely again.
     runner.signature = capabilitySignature(capabilities)
     runner.unchangedStreak = 0
-    runner.attempt = 0
   }
-  if (isSettled(capabilities) || runner.unchangedStreak >= REPROBE_SETTLE_STREAK) {
+  if (isSettled(capabilities)) {
     return
   }
   scheduleNextProbe(runner)
 }
 
-function armRunner(runner: CapabilityReprobeRunner): void {
+function armNewRunner(runner: CapabilityReprobeRunner): void {
   if (isSettled(runner.readCached())) {
     clearRunnerTimer(runner)
     return
   }
-  runner.attempt = 0
-  runner.unchangedStreak = 0
   scheduleNextProbe(runner)
 }
 
 function handleWindowFocus(): void {
   const now = Date.now()
   for (const runner of runnersByOwnerKey.values()) {
-    if (now - runner.lastProbeAt < REPROBE_BASE_DELAY_MS) {
+    if (runner.probeInFlight || runner.timerKind !== 'ceiling') {
       continue
     }
-    armRunner(runner)
+    const demandDeadline = Math.max(now, runner.lastProbeAt + REPROBE_BASE_DELAY_MS)
+    if (demandDeadline < runner.timerDeadline) {
+      scheduleProbe(runner, 'ceiling', demandDeadline)
+    }
   }
 }
 
@@ -125,12 +154,12 @@ export function startWindowsTerminalCapabilityReprobe(options: {
   const runner: CapabilityReprobeRunner = runnersByOwnerKey.get(options.ownerKey) ?? {
     consumers: 0,
     timer: null,
-    attempt: 0,
+    timerDeadline: 0,
+    timerKind: null,
     unchangedStreak: 0,
     signature: capabilitySignature(options.readCached()),
-    // Why: seed from now, or the focus guard has nothing to compare against and repeated
-    // alt-tabbing right after mount re-arms every time, pushing the first probe out forever.
     lastProbeAt: Date.now(),
+    probeInFlight: false,
     probe: options.probe,
     readCached: options.readCached
   }
@@ -138,8 +167,9 @@ export function startWindowsTerminalCapabilityReprobe(options: {
   runner.readCached = options.readCached
   runner.consumers += 1
   runnersByOwnerKey.set(options.ownerKey, runner)
-  // A newly mounted surface is a demand signal, so restart the backoff window.
-  armRunner(runner)
+  if (runner.consumers === 1) {
+    armNewRunner(runner)
+  }
   attachFocusListener()
 
   let released = false

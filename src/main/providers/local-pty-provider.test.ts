@@ -13,7 +13,8 @@ const {
   prepareMacosTccLoginShellMock,
   resolveAgentForegroundProcessMock,
   readWindowsConptyProcessIdsMock,
-  killWithDescendantSweepMock
+  killWithDescendantSweepMock,
+  isWslAvailableAsyncMock
 } = vi.hoisted(() => ({
   existsSyncMock: vi.fn(),
   statSyncMock: vi.fn(),
@@ -24,7 +25,8 @@ const {
   prepareMacosTccLoginShellMock: vi.fn(),
   resolveAgentForegroundProcessMock: vi.fn(),
   readWindowsConptyProcessIdsMock: vi.fn(),
-  killWithDescendantSweepMock: vi.fn()
+  killWithDescendantSweepMock: vi.fn(),
+  isWslAvailableAsyncMock: vi.fn()
 }))
 
 vi.mock('fs', () => ({
@@ -97,7 +99,7 @@ vi.mock('../wsl', () => ({
   toWindowsWslPath: (path: string, distro: string) =>
     `\\\\wsl.localhost\\${distro}${path.replace(/\//g, '\\')}`,
   getDefaultWslDistro: () => 'Ubuntu',
-  isWslAvailable: () => true,
+  isWslAvailableAsync: () => isWslAvailableAsyncMock(),
   // Why: WSL worktree validation now asks the distro; these tests use WSL UNC
   // cwds that are meant to exist, so report them present without spawning wsl.exe.
   wslUncDirectoryExists: () => true
@@ -166,6 +168,8 @@ describe('LocalPtyProvider', () => {
     )
     readWindowsConptyProcessIdsMock.mockReset()
     readWindowsConptyProcessIdsMock.mockResolvedValue(null)
+    isWslAvailableAsyncMock.mockReset()
+    isWslAvailableAsyncMock.mockResolvedValue(true)
 
     exitCb = undefined
     mockProc = {
@@ -2005,6 +2009,30 @@ describe('LocalPtyProvider', () => {
           process.env.SHELL = originalShell
         }
       }
+    })
+  })
+
+  describe('getProfiles', () => {
+    it('awaits asynchronous WSL availability on Windows', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      let resolveAvailability!: (available: boolean) => void
+      isWslAvailableAsyncMock.mockReturnValue(
+        new Promise((resolve) => {
+          resolveAvailability = resolve
+        })
+      )
+
+      const profiles = provider.getProfiles()
+      let settled = false
+      void profiles.then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
+      resolveAvailability(true)
+      await expect(profiles).resolves.toContainEqual({ name: 'WSL', path: 'wsl.exe' })
+      expect(isWslAvailableAsyncMock).toHaveBeenCalledOnce()
     })
   })
 

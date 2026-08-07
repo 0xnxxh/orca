@@ -251,8 +251,7 @@ export function useWindowsTerminalCapabilities(
         return
       }
       setState({ ownerKey: resolvedOwnerKey, capabilities: nextCapabilities })
-      // Why: each re-probe is a blocking wsl.exe/pwsh.exe spawn on the main process, so only a
-      // local host is watched, only once it has answered, and only on a backoff that parks itself.
+      // Why: each re-probe spawns wsl.exe/pwsh.exe, so local consumers share a bounded backoff.
       if (resolvedTarget.kind === 'local' && !sshConnectionIdKey) {
         reprobe.stop = startWindowsTerminalCapabilityReprobe({
           ownerKey: resolvedOwnerKey,
