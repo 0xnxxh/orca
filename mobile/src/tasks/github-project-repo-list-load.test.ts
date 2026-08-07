@@ -89,12 +89,21 @@ describe('mobile GitHub Project readiness and refresh', () => {
 
   // Regression: Expo reuses this screen for the next host, so an effect-based
   // reset runs a render too late and the previous host's rows show through.
-  it('clears the other client-scoped caches during render, not in an effect', () => {
+  it('clears the other client-scoped caches during render', () => {
     const start = source.indexOf('if (boundClient !== client) {')
     expect(start, 'the client-scoped reset must run during render').toBeGreaterThan(-1)
     const body = source.slice(start, source.indexOf('\n  }', start))
     expect(body).toContain('setItems([])')
     expect(body).toContain('setGithubRepoSlugCache({})')
-    expect(body).toContain('repoSelectionHydratedRef.current = false')
+    expect(body, 'a ref write here would leak from an abandoned render').not.toContain('.current =')
+  })
+
+  // ...and the ref half belongs in the commit phase, for the same reason.
+  it('resets the selection-hydration ref in the commit phase', () => {
+    const start = source.indexOf('clientRef.current = client')
+    expect(start, 'the client ref effect must exist').toBeGreaterThan(-1)
+    expect(source.slice(start, source.indexOf('}, [client])', start))).toContain(
+      'repoSelectionHydratedRef.current = false'
+    )
   })
 })

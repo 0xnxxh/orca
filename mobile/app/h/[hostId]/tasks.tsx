@@ -2645,11 +2645,13 @@ export default function MobileTasksScreen() {
     setBoundClient(client)
     setItems([])
     setGithubRepoSlugCache({})
-    repoSelectionHydratedRef.current = false
   }
 
   useLayoutEffect(() => {
     clientRef.current = client
+    // Why: ref writes belong in the commit phase. Doing this during render would
+    // leak out of a concurrent render React later abandons.
+    repoSelectionHydratedRef.current = false
   }, [client])
 
   const persistTaskResumeState = useCallback(

@@ -8,7 +8,7 @@ type Repo = { id: string }
 /** Renders the hook and exposes the latest resource plus a deferred fetcher so a
  *  test can decide exactly when (and for which client) a response lands. */
 function mountResource() {
-  const pending: Array<{ resolve: (repos: Repo[]) => void; reject: (err: Error) => void }> = []
+  const pending: { resolve: (repos: Repo[]) => void; reject: (err: Error) => void }[] = []
   let latest: HostRepoListResource<Repo> | null = null
   let calls = 0
 
