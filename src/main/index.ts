@@ -298,6 +298,7 @@ import {
   type ExpectedTeardownScope
 } from './crash-reporting/process-gone-classification'
 import { recordProcessGoneCrash as recordProcessGoneCrashEvent } from './crash-reporting/process-gone-recorder'
+import { resolveExpectedTeardownScope } from './crash-reporting/expected-teardown-state'
 import {
   advanceSyntheticTitleSpinnerEntries,
   type SyntheticTitleSpinnerEntry
@@ -697,14 +698,17 @@ function clearExpectedRendererReload(webContentsId?: number): void {
   expectedRendererReload.clear(webContentsId)
 }
 
-function getExpectedTeardownScope(webContentsId?: number): ExpectedTeardownScope {
-  if (isQuitting || isQuittingForUpdate()) {
-    return 'app-shutdown'
-  }
-  if (webContentsId === undefined) {
-    return 'none'
-  }
-  return expectedRendererReload.matches(webContentsId) ? 'renderer-reload' : 'none'
+function getExpectedTeardownScope(
+  webContentsId?: number,
+  includeSystemSessionEnd = true
+): ExpectedTeardownScope {
+  return resolveExpectedTeardownScope({
+    isQuitting,
+    isQuittingForUpdate: isQuittingForUpdate(),
+    isExpectedRendererReload:
+      webContentsId !== undefined && expectedRendererReload.matches(webContentsId),
+    includeSystemSessionEnd
+  })
 }
 
 function markRecoveryReloadInFlight(webContentsId: number, durationMs = 10_000): void {
@@ -1263,7 +1267,7 @@ function openMainWindow(): BrowserWindow {
     shouldRecoverRenderer: (details, webContentsId) =>
       shouldRecoverRendererAfterProcessGone({
         reason: details.reason,
-        expectedTeardown: getExpectedTeardownScope(webContentsId)
+        expectedTeardown: getExpectedTeardownScope(webContentsId, false)
       }),
     onRendererRecoveryExhausted: ({ details, recentRecoveryCount }) => {
       recordDurableCrashBreadcrumb('renderer_recovery_circuit_breaker_open', {
