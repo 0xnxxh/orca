@@ -6,13 +6,18 @@
  * scanner, the shared budget, and the fallback are all exercised.
  */
 import { beforeEach, afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { draftPasteReadyBudgetMs } from '../../shared/draft-paste-ready-scanner'
 import { OrcaRuntimeService } from './orca-runtime'
 
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const CODEX_COMPOSER_PROMPT_RENDER = '\x1b[1m›\x1b[0m Ask Codex to do anything'
 const PTY_ID = 'pty-1'
 const HANDLE = 'term-1'
-const CODEX_MARKER_BUDGET_MS = 20000
+// Why: pull the budgets from the shared policy rather than restating them, so
+// this fails if the runtime waiter ever stops consuming it. The literal values
+// are pinned once, in draft-paste-ready-scanner.test.ts.
+const CODEX_MARKER_BUDGET_MS = draftPasteReadyBudgetMs('codex-composer-prompt')
+const QUIET_WINDOW_BUDGET_MS = draftPasteReadyBudgetMs('render-quiet-after-bracketed-paste')
 
 type RuntimeHost = {
   getLivePtyForHandle: (handle: string) => { pty: { ptyId: string } } | null
@@ -80,13 +85,13 @@ describe('waitForStartupDraftReady', () => {
     await Promise.resolve()
     observer?.(DECSET_BRACKETED_PASTE)
 
-    // The old 8s budget would already have resolved (to null) here.
-    await vi.advanceTimersByTimeAsync(8000)
+    // The old markerless-length budget would already have resolved (to null) here.
+    await vi.advanceTimersByTimeAsync(QUIET_WINDOW_BUDGET_MS)
     expect(getForegroundProcess).not.toHaveBeenCalled()
 
     // Still inside the marker budget: a late glyph is the real ready proof, and
     // must win over the ownership fallback.
-    await vi.advanceTimersByTimeAsync(CODEX_MARKER_BUDGET_MS - 8000 - 1)
+    await vi.advanceTimersByTimeAsync(CODEX_MARKER_BUDGET_MS - QUIET_WINDOW_BUDGET_MS - 1)
     observer?.(CODEX_COMPOSER_PROMPT_RENDER)
     await expect(promise).resolves.toBe(PTY_ID)
     expect(getForegroundProcess).not.toHaveBeenCalled()
