@@ -1051,6 +1051,13 @@ private func screenCaptureTrustedSettled() -> Bool {
     )
 }
 
+private func permissionStatusSnapshotSettled() -> PermissionStatusSnapshot {
+    PermissionStatusSnapshotProbe.capture(
+        accessibilityProbe: accessibilityTrustedSettled,
+        screenshotsProbe: screenCaptureTrustedSettled
+    )
+}
+
 private func screenCaptureTrustedByCaptureProbe() -> Bool {
     guard let infos = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly],
@@ -2931,6 +2938,7 @@ private final class PermissionRuntime: NSObject, NSApplicationDelegate {
             windowController?.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+        windowController?.refreshPermissions()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -2947,6 +2955,7 @@ private final class PermissionWindowController: NSWindowController {
     private var dragAssistantPermission: PermissionKind?
     private let initialPermission: PermissionKind?
     private let terminateWhenDragAssistantCloses: Bool
+    private var permissionStatusRefresh: PermissionStatusRefreshCoordinator?
 
     convenience init(initialPermission: PermissionKind? = nil, terminateWhenDragAssistantCloses: Bool = false) {
         let window = NSWindow(
@@ -2977,6 +2986,14 @@ private final class PermissionWindowController: NSWindowController {
         self.initialPermission = initialPermission
         self.terminateWhenDragAssistantCloses = terminateWhenDragAssistantCloses
         super.init(window: window)
+        permissionStatusRefresh = PermissionStatusRefreshCoordinator(
+            probe: permissionStatusSnapshotSettled,
+            handler: { [weak self] snapshot in
+                Task { @MainActor in
+                    self?.applyPermissionStatus(snapshot)
+                }
+            }
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -3033,21 +3050,25 @@ private final class PermissionWindowController: NSWindowController {
     }
 
     func refreshPermissions() {
-        if let initialPermission, initialPermission.isGranted {
+        permissionStatusRefresh?.refresh()
+    }
+
+    private func applyPermissionStatus(_ snapshot: PermissionStatusSnapshot) {
+        if let initialPermission, initialPermission.isGranted(in: snapshot) {
             // Why: targeted permission helpers should finish once the requested
             // grant lands, even if other Computer Use permissions remain unset.
             completeDragAssistant()
             return
         }
-        if dragAssistantPermission?.isGranted == true {
+        if dragAssistantPermission?.isGranted(in: snapshot) == true {
             // Why: after one grant in full setup, the remaining missing permission
             // needs fresh guidance instead of the old assistant's instructions.
             closeDragAssistant()
         }
-        if PermissionKind.allCases.allSatisfy(\.isGranted) {
+        if PermissionKind.allCases.allSatisfy({ $0.isGranted(in: snapshot) }) {
             closeDragAssistant()
         }
-        (window?.contentView as? PermissionView)?.refreshPermissions()
+        (window?.contentView as? PermissionView)?.refreshPermissions(snapshot)
     }
 }
 
@@ -3102,12 +3123,12 @@ private enum PermissionKind: CaseIterable {
         }
     }
 
-    var isGranted: Bool {
+    func isGranted(in snapshot: PermissionStatusSnapshot) -> Bool {
         switch self {
         case .accessibility:
-            accessibilityTrustedSettled()
+            snapshot.accessibilityGranted
         case .screenshots:
-            screenCaptureTrustedSettled()
+            snapshot.screenshotsGranted
         }
     }
 
@@ -3128,6 +3149,7 @@ private final class PermissionView: NSView {
     private let close: () -> Void
     private var contentStack: NSStackView?
     private var contentConstraints: [NSLayoutConstraint] = []
+    private var permissionStatus: PermissionStatusSnapshot?
 
     init(frame frameRect: NSRect, showDragAssistant: @escaping (PermissionKind) -> Void, close: @escaping () -> Void) {
         self.showDragAssistant = showDragAssistant
@@ -3164,12 +3186,22 @@ private final class PermissionView: NSView {
             icon.heightAnchor.constraint(equalToConstant: 58)
         ])
 
-        let missingPermissions = PermissionKind.allCases.filter { !$0.isGranted }
-        let ready = missingPermissions.isEmpty
+        let missingPermissions = permissionStatus.map { snapshot in
+            PermissionKind.allCases.filter { !$0.isGranted(in: snapshot) }
+        } ?? []
+        let checking = permissionStatus == nil
+        let ready = !checking && missingPermissions.isEmpty
 
-        let title = label(ready ? "Computer Use is Ready" : "Enable Orca Computer Use", size: 22, weight: .bold)
+        let titleText = checking
+            ? "Checking Computer Use"
+            : (ready ? "Computer Use is Ready" : "Enable Orca Computer Use")
+        let title = label(titleText, size: 22, weight: .bold)
         let subtitle = label(
-            ready ? "Orca can use local apps when you ask." : "Grant permissions so Orca can use apps when you ask.",
+            checking
+                ? "Checking Accessibility and Screenshots."
+                : (ready
+                    ? "Orca can use local apps when you ask."
+                    : "Grant permissions so Orca can use apps when you ask."),
             size: 12,
             weight: .regular
         )
@@ -3186,7 +3218,16 @@ private final class PermissionView: NSView {
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -10).isActive = true
 
-        if ready {
+        if checking {
+            let progress = NSProgressIndicator()
+            progress.style = .spinning
+            progress.controlSize = .small
+            progress.translatesAutoresizingMaskIntoConstraints = false
+            progress.startAnimation(nil)
+            stack.addArrangedSubview(progress)
+            progress.setContentHuggingPriority(.required, for: .horizontal)
+            progress.centerXAnchor.constraint(equalTo: stack.centerXAnchor).isActive = true
+        } else if ready {
             stack.addArrangedSubview(doneButton())
         } else {
             for permission in missingPermissions {
@@ -3206,8 +3247,9 @@ private final class PermissionView: NSView {
         NSLayoutConstraint.activate(contentConstraints)
     }
 
-    func refreshPermissions() {
-        // Why: TCC grants can change in System Settings while this window stays open.
+    func refreshPermissions(_ snapshot: PermissionStatusSnapshot) {
+        guard permissionStatus != snapshot else { return }
+        permissionStatus = snapshot
         build()
     }
 
@@ -4096,14 +4138,16 @@ private func runPermissionCheck(initialPermission: PermissionKind? = nil) {
 }
 
 private func printPermissionStatus() {
-    let accessibility = accessibilityTrustedSettled() ? "granted" : "not-granted"
-    let screenshots = screenCaptureTrustedSettled() ? "granted" : "not-granted"
+    let snapshot = permissionStatusSnapshotSettled()
+    let accessibility = snapshot.accessibilityGranted ? "granted" : "not-granted"
+    let screenshots = snapshot.screenshotsGranted ? "granted" : "not-granted"
     print(#"{"accessibility":"\#(accessibility)","screenshots":"\#(screenshots)"}"#)
 }
 
 private func writePermissionStatus(to path: String) {
-    let accessibility = accessibilityTrustedSettled() ? "granted" : "not-granted"
-    let screenshots = screenCaptureTrustedSettled() ? "granted" : "not-granted"
+    let snapshot = permissionStatusSnapshotSettled()
+    let accessibility = snapshot.accessibilityGranted ? "granted" : "not-granted"
+    let screenshots = snapshot.screenshotsGranted ? "granted" : "not-granted"
     let text = #"{"accessibility":"\#(accessibility)","screenshots":"\#(screenshots)"}"#
     do {
         try text.write(toFile: path, atomically: true, encoding: .utf8)
