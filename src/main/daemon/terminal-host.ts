@@ -16,6 +16,7 @@ import { resolveTerminalHostSessionCwd } from './terminal-host-session-cwd'
 import { TerminalHostTombstones } from './terminal-host-tombstones'
 import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
 import { createOrAttachTerminalSession } from './terminal-host-session-create'
+import { computeSessionScrollbackRows } from './daemon-scrollback-budget'
 import { isShellProcess } from '../../shared/agent-detection'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
@@ -57,7 +58,7 @@ export class TerminalHost {
         if (options.agentSessionGeneration && this.sessions.get(options.sessionId)?.isAlive) {
           throw new Error('agent_session_claim_unavailable')
         }
-        return await createOrAttachTerminalSession(options, {
+        const result = await createOrAttachTerminalSession(options, {
           sessions: this.sessions,
           sessionTeardown: this.sessionTeardown,
           killedTombstones: this.killedTombstones,
@@ -72,8 +73,19 @@ export class TerminalHost {
             this.reapSession(sessionId)
           }
         })
+        this.applyScrollbackBudget()
+        return result
       }
     })
+  }
+
+  // Why: retained rows are O(sessions × depth) and session count is unbounded, so re-split the
+  // daemon's row budget whenever the count changes rather than letting every session hold full depth.
+  private applyScrollbackBudget(): void {
+    const rows = computeSessionScrollbackRows(this.sessions.size)
+    for (const session of this.sessions.values()) {
+      session.setRetainedScrollbackRows(rows)
+    }
   }
 
   write(sessionId: string, data: string): void {
@@ -122,6 +134,7 @@ export class TerminalHost {
     }
     session.dispose()
     this.sessions.delete(sessionId)
+    this.applyScrollbackBudget()
     this.onSessionReaped?.(sessionId)
   }
 
