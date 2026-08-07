@@ -13,6 +13,8 @@ import { getVirtualizedScrollAnchorForOffset } from '@/hooks/virtualized-scroll-
 import { createProgrammaticScrollMarks } from '@/hooks/programmatic-scroll-marks'
 import { joinPath } from '@/lib/path'
 import { detectLanguage } from '@/lib/language-detect'
+import { openFilePreviewToSide } from '@/lib/file-preview'
+import { canOpenDiffSectionPreviewToSide } from './diff-section-preview'
 import { setWithLRU } from '@/lib/scroll-cache'
 import { getCombinedDiffSectionConnectionId } from './combined-diff-section-connection'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
@@ -1284,6 +1286,29 @@ export default function CombinedDiffViewer({
     ]
   )
 
+  // Why: match single-file HTML diffs — preview the on-disk working tree file
+  // beside the combined view when the section is still present on disk.
+  const openSectionPreview = useCallback(
+    (section: DiffSection) => {
+      if (
+        !canOpenDiffSectionPreviewToSide({
+          path: section.path,
+          status: section.status,
+          isCommitSurface: isCommitMode
+        })
+      ) {
+        return
+      }
+      openFilePreviewToSide({
+        language: detectLanguage(section.path),
+        filePath: joinPath(file.filePath, section.path),
+        worktreeId: file.worktreeId,
+        sourceGroupId: activeGroupId ?? null
+      })
+    },
+    [activeGroupId, file.filePath, file.worktreeId, isCommitMode]
+  )
+
   const handleSectionSave = useCallback(
     async (index: number) => {
       const section = sections[index]
@@ -2023,6 +2048,15 @@ export default function CombinedDiffViewer({
                         openSection={openSection}
                         openSectionTitle={
                           isAllMode || isBranchMode || isCommitMode ? 'Open diff' : 'Open in editor'
+                        }
+                        onOpenPreview={
+                          canOpenDiffSectionPreviewToSide({
+                            path: section.path,
+                            status: section.status,
+                            isCommitSurface: isCommitMode
+                          })
+                            ? (previewSection) => openSectionPreview(previewSection)
+                            : undefined
                         }
                         setSectionHeights={setSectionHeights}
                         setSections={setSections}
