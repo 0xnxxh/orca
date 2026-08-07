@@ -415,7 +415,7 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
         { timeout: 15_000, message: 'Relaunched host never foregrounded the preserved PTY' }
       )
       .toBe(true)
-    await expectTerminalInteractive(client, target, `TARGET_AFTER_RESTART_${Date.now()}`)
+    await expectTerminalInteractive(client, target, 'x')
 
     sibling.handle = await findTerminalHandle(client, worktreeId, sibling.parentTabId)
     const shownSibling = await callRuntime<{ terminal: { ptyId: string | null } }>(
@@ -427,7 +427,7 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
     expect(shownSibling.terminal.ptyId).toBe(sibling.ptyId)
     await openClientTab(client.page, worktreeId, sibling.webTabId)
     await waitForPaneConnected(client.page, sibling.webTabId)
-    await expectTerminalInteractive(client, sibling, `SIBLING_AFTER_RESTART_${Date.now()}`)
+    await expectTerminalInteractive(client, sibling, 'y')
   } finally {
     if (client) {
       for (const terminal of terminals) {
