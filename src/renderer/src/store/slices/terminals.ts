@@ -51,6 +51,7 @@ import type { SessionOptionValue } from '../../../../shared/native-chat-session-
 import { resolveLocalWindowsTerminalShellOverrideForTab } from '../../../../shared/local-windows-terminal-runtime'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
+import type { AiVaultSessionTitle } from '../../../../shared/ai-vault-session-title'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
@@ -491,6 +492,17 @@ function uniquePtyIds(ptyIds: readonly (string | null | undefined)[]): string[] 
   return [...new Set(ptyIds.filter((ptyId): ptyId is string => Boolean(ptyId)))]
 }
 
+function collectPersistedTerminalPtyIds(
+  session: WorkspaceSessionState,
+  tab: TerminalTab
+): string[] {
+  return uniquePtyIds([
+    tab.ptyId,
+    session.remoteSessionIdsByTabId?.[tab.id],
+    ...Object.values(session.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {})
+  ])
+}
+
 function resolvePrimaryLayoutPtyId(layout: TerminalLayoutSnapshot): string | null {
   const ptyIdsByLeafId = layout.ptyIdsByLeafId ?? {}
   const activePtyId = layout.activeLeafId ? ptyIdsByLeafId[layout.activeLeafId] : undefined
@@ -683,6 +695,7 @@ export type TerminalSlice = {
   setActiveTab: (tabId: string) => void
   setActiveTabForWorktree: (worktreeId: string, tabId: string) => void
   updateTabTitle: (tabId: string, title: string) => void
+  setAiVaultTabTitle: (tabId: string, aiVaultTitle: AiVaultSessionTitle | null) => void
   setGeneratedTabTitleFromAgentPrompt: (
     paneKey: string,
     prompt: string,
@@ -2058,6 +2071,37 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       }
       return nextState
+    })
+  },
+
+  setAiVaultTabTitle: (tabId, aiVaultTitle) => {
+    set((s) => {
+      const ownerWorktreeId = getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
+      if (!ownerWorktreeId) {
+        return s
+      }
+      const tabs = s.tabsByWorktree[ownerWorktreeId] ?? []
+      const current = tabs.find((tab) => tab.id === tabId)
+      const sameTitle =
+        current?.aiVaultTitle?.agent === aiVaultTitle?.agent &&
+        current?.aiVaultTitle?.sessionId === aiVaultTitle?.sessionId &&
+        current?.aiVaultTitle?.title === aiVaultTitle?.title
+      if (!current || sameTitle) {
+        return s
+      }
+      const ownerTabs = tabs.map((tab) => (tab.id === tabId ? { ...tab, aiVaultTitle } : tab))
+      const unifiedTabs = s.unifiedTabsByWorktree[ownerWorktreeId] ?? []
+      const nextUnifiedTabs = unifiedTabs.map((tab) =>
+        tab.contentType === 'terminal' && tab.entityId === tabId ? { ...tab, aiVaultTitle } : tab
+      )
+      scheduleRuntimeGraphSync()
+      return {
+        tabsByWorktree: { ...s.tabsByWorktree, [ownerWorktreeId]: ownerTabs },
+        unifiedTabsByWorktree: {
+          ...s.unifiedTabsByWorktree,
+          [ownerWorktreeId]: nextUnifiedTabs
+        }
+      }
     })
   },
 
@@ -3910,25 +3954,49 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         Object.entries(session.tabsByWorktree)
           .filter(([worktreeId]) => validWorktreeIds.has(worktreeId))
           .map(([worktreeId, tabs]) => {
+            const canonicalTerminalIds = new Set(
+              (session.unifiedTabs?.[worktreeId] ?? []).flatMap((tab) =>
+                tab.contentType === 'terminal' ? [tab.entityId] : []
+              )
+            )
+            const canonicalPtyIds = new Set(
+              tabs
+                .filter((tab) => canonicalTerminalIds.has(tab.id))
+                .flatMap((tab) => collectPersistedTerminalPtyIds(session, tab))
+            )
             const quickCommandLabelByTerminalId = new Map(
               (session.unifiedTabs?.[worktreeId] ?? [])
                 .filter((tab) => tab.contentType === 'terminal' && tab.quickCommandLabel?.trim())
                 .map((tab) => [tab.entityId, tab.quickCommandLabel!.trim()])
             )
+            const aiVaultTitleByTerminalId = new Map(
+              (session.unifiedTabs?.[worktreeId] ?? [])
+                .filter((tab) => tab.contentType === 'terminal' && tab.aiVaultTitle)
+                .map((tab) => [tab.entityId, tab.aiVaultTitle!])
+            )
             return [
               worktreeId,
               [...tabs]
                 .filter((tab) => {
+                  // Why: canonical mounts win PTY ownership over stale legacy duplicates.
                   // Why: old web-client mirrors could persist host surface ids with "::"; makePaneKey reserves ":" as its separator.
-                  return isValidTerminalTabId(tab.id)
+                  return (
+                    (canonicalTerminalIds.has(tab.id) ||
+                      !collectPersistedTerminalPtyIds(session, tab).some((ptyId) =>
+                        canonicalPtyIds.has(ptyId)
+                      )) &&
+                    isValidTerminalTabId(tab.id)
+                  )
                 })
                 .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt)
                 .map((tab, index) => {
                   const quickCommandLabel =
                     tab.quickCommandLabel?.trim() || quickCommandLabelByTerminalId.get(tab.id)
+                  const aiVaultTitle = tab.aiVaultTitle ?? aiVaultTitleByTerminalId.get(tab.id)
                   return {
                     ...clearTransientTerminalState(tab, index),
                     ...(quickCommandLabel ? { quickCommandLabel } : {}),
+                    ...(aiVaultTitle ? { aiVaultTitle } : {}),
                     sortOrder: index,
                     pendingActivationSpawn: true
                   }
