@@ -15055,6 +15055,7 @@
         "showStates": "Agent states",
         "canvasSummary": "{{shown}} of {{total}} agents shown",
         "agentlessWorkspaces": "Workspaces without agents",
+        "orchestrationLinks": "Orchestration links",
         "workspaceVisibility": "Map content"
       },
       "liveContainmentMap": "Live containment map",
