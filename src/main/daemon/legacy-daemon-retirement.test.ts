@@ -161,16 +161,14 @@ describe('legacy daemon retirement', () => {
     }
   })
 
-  it('shares one budget across inventory and a wedged atomic shutdown', async () => {
+  it('bounds the atomic shutdown by the caller budget and asks only for it', async () => {
     const started = await startServer()
     const serverInternals = started as unknown as {
       routeRequest(clientId: string, request: { type: string }): Promise<unknown>
     }
     const routeRequest = serverInternals.routeRequest.bind(started)
     serverInternals.routeRequest = async (clientId, request) => {
-      if (request.type === 'listSessions') {
-        await new Promise((resolve) => setTimeout(resolve, 120))
-      } else if (request.type === 'shutdownIfIdle') {
+      if (request.type === 'shutdownIfIdle') {
         return new Promise<never>(() => {})
       }
       return routeRequest(clientId, request)
@@ -188,11 +186,14 @@ describe('legacy daemon retirement', () => {
     }
 
     const elapsedMs = Date.now() - startedAt
+    const requestTypes = request.mock.calls.map(([type]) => type)
     const shutdownTimeoutMs = request.mock.calls.find(([type]) => type === 'shutdownIfIdle')?.[2]
     expect(retired).toBe(false)
+    // The daemon proves emptiness itself, so retirement costs exactly one round trip.
+    expect(requestTypes).toEqual(['shutdownIfIdle'])
     expect(shutdownTimeoutMs).toEqual(expect.any(Number))
     expect(shutdownTimeoutMs).toBeGreaterThan(0)
-    expect(shutdownTimeoutMs).toBeLessThan(150)
+    expect(shutdownTimeoutMs).toBeLessThanOrEqual(200)
     expect(elapsedMs).toBeLessThan(300)
   })
 })

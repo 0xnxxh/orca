@@ -2247,6 +2247,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     await this.respawnPromise
   }
 
+  /** Retire a superseded daemon that owns nothing; win32 has no other retirement path. Fail closed:
+   *  anything unproven keeps the daemon alive and routed. Bounded — this runs on the startup path. */
   async retireIfEmpty(budgetMs = 1_000): Promise<boolean> {
     if (this.protocolVersion < CLEAN_DISCONNECT_PROTOCOL_VERSION) {
       return false
@@ -2257,15 +2259,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!this.client.isConnected()) {
         await this.client.ensureConnectedWithin(remaining())
       }
-      const result = await this.client.request<ListSessionsResult>(
-        'listSessions',
-        undefined,
-        remaining()
-      )
-      if (result.sessions.some((session) => session.isAlive)) {
-        return false
-      }
-      // Why: only this response atomically fences creates after the daemon-side empty proof.
+      // Why: the daemon proves emptiness itself — no sessions, no in-flight create, no foreign
+      // transport — and fences creates before answering, so a client-side inventory check would be a
+      // weaker duplicate with a race between the two calls.
       const retirement = await this.client.request<{ retiring: boolean }>(
         'shutdownIfIdle',
         undefined,
