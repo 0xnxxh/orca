@@ -62,7 +62,7 @@ describe('requestLazyChunkRecoveryReload', () => {
     expect(expireGrace).toBeTypeOf('function')
     expireGrace?.()
 
-    await expect(outcome).resolves.toBe('reload-issued-not-landed')
+    await expect(outcome).resolves.toBe('never-landed')
     expect(reload).toHaveBeenCalledTimes(1)
   })
 

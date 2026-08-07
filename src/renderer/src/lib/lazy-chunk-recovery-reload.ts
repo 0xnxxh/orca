@@ -13,14 +13,14 @@ export type LazyChunkRecoveryReloadOutcome =
   /** Something still vetoed beforeunload after the restart latch was armed. */
   | 'unload-vetoed'
   /** The reload was issued, but this document outlived the grace window. */
-  | 'reload-issued-not-landed'
+  | 'never-landed'
   /** The host rejected the reload request before navigation could begin. */
   | 'request-failed'
 
 // Paired-web hosts may veto navigation without emitting the Electron signal.
 const RELOAD_SETTLE_GRACE_MS = 10_000
 
-type RefusedNavigationOutcome = 'unload-vetoed' | 'reload-issued-not-landed'
+type RefusedNavigationOutcome = 'unload-vetoed' | 'never-landed'
 type ScheduleReloadGrace = (onElapsed: () => void) => () => void
 
 type RefusedNavigationWait = {
@@ -51,7 +51,7 @@ function waitForRefusedNavigation(
     }
     onUnloadPrevented = () => settle('unload-vetoed')
     win.addEventListener(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT, onUnloadPrevented)
-    cancelGrace = scheduleGrace(() => settle('reload-issued-not-landed'))
+    cancelGrace = scheduleGrace(() => settle('never-landed'))
   })
   return { outcome, cancel }
 }
