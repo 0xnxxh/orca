@@ -1,13 +1,5 @@
-/**
- * Path-only heuristic for "is this test code?", used to split line totals into a
- * test and a non-test half. Deliberately conservative: a miss understates the
- * test share, a false positive overstates it, and neither is worth reading file
- * contents on every status pass.
- *
- * Runs once per changed file inside the branch-total sum, so both patterns are
- * anchored and match the raw path directly — no lowercasing, splitting or
- * substring allocation per file.
- */
+// Path-only test heuristic for branch line-total buckets. Conservative and
+// anchored on the raw path (no lowercasing/splitting per file).
 
 // Whole path segments only, so `src/latest/x.ts` and `contest/` don't count.
 // The trailing separator is what keeps a *file* named `test.ts` out of here.

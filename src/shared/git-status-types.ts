@@ -59,15 +59,8 @@ export type GitBranchLineTotal = {
   added: number
   removed: number
   mergeBase: string
-  /**
-   * Disjoint subsets of `added`/`removed`, by path heuristic. Generated is
-   * classified first, so a snapshot counts as generated rather than as test.
-   * Whatever neither claims is hand-written source.
-   *
-   * Absent from hosts that predate the split, which reads as "not known" — not
-   * zero. The two fields ship together, but read them independently: a host
-   * could gain one before the other.
-   */
+  // Path-heuristic buckets of added/removed; generated wins on overlap. Optional
+  // for pre-split hosts (absent = unknown, not zero).
   test?: { added: number; removed: number }
   generated?: { added: number; removed: number }
 }
