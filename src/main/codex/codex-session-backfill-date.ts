@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { listCodexSessionJsonlFilesIncrementally } from './codex-session-file-listing'
 import type {
   CodexSessionBackfillDate,
@@ -11,6 +11,20 @@ export function getCodexSessionBackfillDate(date = new Date()): CodexSessionBack
     String(date.getMonth() + 1).padStart(2, '0'),
     String(date.getDate()).padStart(2, '0')
   ]
+}
+
+export function isCodexSessionRolloutPath(sessionsRoot: string, filePath: string): boolean {
+  const pathParts = relative(sessionsRoot, filePath).split(sep)
+  if (pathParts.length !== 4) {
+    return false
+  }
+  const [year, month, day, fileName] = pathParts
+  return (
+    /^\d{4}$/.test(year) &&
+    /^\d{2}$/.test(month) &&
+    /^\d{2}$/.test(day) &&
+    /^rollout-.+\.jsonl$/.test(fileName)
+  )
 }
 
 export async function* listCodexSessionBackfillFilesForDates(

@@ -61,6 +61,7 @@ export function createCodexSessionMigrationScheduler(args: {
       return
     }
     const isScheduledRun = pendingScheduledRunGeneration !== null
+    const activeScheduledRunGeneration = pendingScheduledRunGeneration
     let preparationNeedsFullScan = false
     if (isScheduledRun) {
       pendingScheduledRunGeneration = null
@@ -101,10 +102,15 @@ export function createCodexSessionMigrationScheduler(args: {
     void task.finally(() => {
       if (migrationTask === task) {
         migrationTask = null
-        const shouldRerun = rerunRequested || stoppedBackfill
+        const scheduledRunIncomplete = stoppedBackfill || activeRunStopObserved
+        const shouldRerun = rerunRequested || scheduledRunIncomplete
         rerunRequested = false
         activeRunStopObserved = false
         if (shouldRerun && isScheduledRun) {
+          pendingScheduledRunGeneration = Math.max(
+            activeScheduledRunGeneration!,
+            pendingScheduledRunGeneration ?? activeScheduledRunGeneration!
+          )
           pendingFullScan ||= fullScanRequired
           for (const scanDate of scanDates ?? []) {
             pendingScanDates.set(scanDate.join('-'), scanDate)

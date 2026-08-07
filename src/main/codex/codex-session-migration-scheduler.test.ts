@@ -308,4 +308,50 @@ describe('createCodexSessionMigrationScheduler', () => {
     await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
   })
+
+  it('preserves scheduled identity and target recovery after a stopped pass', async () => {
+    let eligible = true
+    let target = '/old-history'
+    let releaseFirstBackfill: ((result: { stopped: boolean }) => void) | undefined
+    const prepareScheduledRun = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true)
+    const finishScheduledRun = vi.fn()
+    const startBackfill = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ stopped: boolean }>((resolve) => {
+            releaseFirstBackfill = resolve
+          })
+      )
+      .mockResolvedValueOnce({ stopped: false })
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => eligible,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => target,
+      prepareScheduledRun,
+      finishScheduledRun,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(1_000)
+    const firstOptions = startBackfill.mock.calls[0]?.[0]
+    eligible = false
+    expect(firstOptions?.shouldStop()).toBe(true)
+    target = '/new-history'
+    releaseFirstBackfill?.({ stopped: true })
+    await vi.waitFor(() => expect(prepareScheduledRun).toHaveBeenCalledOnce())
+    expect(finishScheduledRun).not.toHaveBeenCalled()
+
+    eligible = true
+    scheduler.requestRun()
+    await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
+    expect(startBackfill).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ignoreCompletionMarker: true, scanDates: undefined }),
+      '/new-history'
+    )
+    await vi.waitFor(() => expect(finishScheduledRun).toHaveBeenCalledOnce())
+  })
 })

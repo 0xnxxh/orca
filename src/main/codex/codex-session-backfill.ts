@@ -1,5 +1,5 @@
 import { link, lstat, mkdir } from 'node:fs/promises'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import {
   getCodexSessionBackfillStateDirPath,
   getOrcaManagedCodexHomePath,
@@ -15,12 +15,16 @@ import {
   copySessionFileWithoutOverwrite,
   isAtomicNoReplaceUnsupportedError
 } from './codex-session-backfill-copy'
-import { listCodexSessionBackfillFilesForDates } from './codex-session-backfill-date'
+import {
+  isCodexSessionRolloutPath,
+  listCodexSessionBackfillFilesForDates
+} from './codex-session-backfill-date'
 import {
   captureCodexSessionBackfillMarkerGeneration,
   hasCompletedCodexSessionBackfillMarker,
   writeCodexSessionBackfillMarker as writeBackfillMarker
 } from './codex-session-backfill-marker'
+import { refreshOwnedCodexSessionCopy } from './codex-session-backfill-owned-copy'
 import type {
   CodexSessionBackfillOptions,
   CodexSessionBackfillPaths,
@@ -101,6 +105,7 @@ async function runCodexSessionBackfillOncePerHost(
   if (
     !summary.stopped &&
     options.shouldStop?.() !== true &&
+    options.scanDates === undefined &&
     summary.failedFiles === 0 &&
     summary.failedDirectories === 0 &&
     summary.failedHealAuditRecords === 0
@@ -159,7 +164,7 @@ export async function backfillManagedCodexSessionsIntoSystemHome(
         break
       }
       summary.scannedFiles += 1
-      if (!isCodexRolloutPath(paths.managedSessionsRoot, managedSessionFilePath)) {
+      if (!isCodexSessionRolloutPath(paths.managedSessionsRoot, managedSessionFilePath)) {
         summary.skippedUnexpectedFiles += 1
         continue
       }
@@ -206,20 +211,6 @@ async function checkManagedSessionsRoot(
   }
 }
 
-function isCodexRolloutPath(sessionsRoot: string, filePath: string): boolean {
-  const pathParts = relative(sessionsRoot, filePath).split(sep)
-  if (pathParts.length !== 4) {
-    return false
-  }
-  const [year, month, day, fileName] = pathParts
-  return (
-    /^\d{4}$/.test(year) &&
-    /^\d{2}$/.test(month) &&
-    /^\d{2}$/.test(day) &&
-    /^rollout-.+\.jsonl$/.test(fileName)
-  )
-}
-
 async function backfillOneManagedSessionFile(
   paths: CodexSessionBackfillPaths,
   managedSessionFilePath: string,
@@ -237,6 +228,17 @@ async function backfillOneManagedSessionFile(
   const systemSessionFilePath = join(paths.systemSessionsRoot, relativePath)
   const existingTargetStat = await readCodexSessionTargetStat(systemSessionFilePath)
   if (existingTargetStat) {
+    if (
+      await refreshOwnedCodexSessionCopy({
+        source: managedSessionFilePath,
+        target: systemSessionFilePath,
+        targetStat: existingTargetStat,
+        summary,
+        auditPass
+      })
+    ) {
+      return
+    }
     await auditPass.recordExisting(
       summary,
       managedSessionFilePath,

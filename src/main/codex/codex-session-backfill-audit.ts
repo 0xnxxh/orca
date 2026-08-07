@@ -11,6 +11,7 @@ export type CodexSessionBackfillAuditWriter = (record: Record<string, unknown>) 
 export type CodexSessionBackfillAuditCoverage = {
   fileEventIds: Set<string>
   diagnosticEventIds: Set<string>
+  ownedCopyEventIds: Map<string, Set<string>>
   hasRunSummary: boolean
 }
 
@@ -66,6 +67,7 @@ export async function readCodexSessionBackfillAuditCoverage(
   const coverage: CodexSessionBackfillAuditCoverage = {
     fileEventIds: new Set<string>(),
     diagnosticEventIds: new Set<string>(),
+    ownedCopyEventIds: new Map<string, Set<string>>(),
     hasRunSummary: false
   }
   const input = createReadStream(auditLogPath, { encoding: 'utf-8' })
@@ -85,6 +87,13 @@ export async function readCodexSessionBackfillAuditCoverage(
           typeof record.fileEventId === 'string'
         ) {
           coverage.fileEventIds.add(record.fileEventId)
+          if (
+            record.action === 'copy' &&
+            typeof record.source === 'string' &&
+            typeof record.target === 'string'
+          ) {
+            addOwnedCopyEventId(coverage, record.source, record.target, record.fileEventId)
+          }
         }
         if (
           typeof record.action === 'string' &&
@@ -106,15 +115,35 @@ export async function readCodexSessionBackfillAuditCoverage(
 }
 
 export function createCodexSessionBackfillFileEventId(targetPath: string, stat: Stats): string {
-  const stableFileIdentity =
-    stat.ino !== 0 || stat.birthtimeMs !== 0
-      ? `${stat.dev}\0${stat.ino}\0${stat.birthtimeMs}`
-      : `${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}`
+  const fileIdentity = [
+    stat.dev,
+    stat.ino,
+    stat.birthtimeMs,
+    stat.size,
+    stat.mtimeMs,
+    stat.ctimeMs
+  ].join('\0')
   return createHash('sha256')
     .update(normalizeRuntimePathForComparison(targetPath))
     .update('\0')
-    .update(stableFileIdentity)
+    .update(fileIdentity)
     .digest('hex')
+}
+
+export function createCodexSessionBackfillCopyOwnershipKey(source: string, target: string): string {
+  return `${normalizeRuntimePathForComparison(source)}\0${normalizeRuntimePathForComparison(target)}`
+}
+
+export function addOwnedCopyEventId(
+  coverage: CodexSessionBackfillAuditCoverage,
+  source: string,
+  target: string,
+  fileEventId: string
+): void {
+  const key = createCodexSessionBackfillCopyOwnershipKey(source, target)
+  const eventIds = coverage.ownedCopyEventIds.get(key) ?? new Set<string>()
+  eventIds.add(fileEventId)
+  coverage.ownedCopyEventIds.set(key, eventIds)
 }
 
 export function createCodexSessionBackfillDiagnosticEventId(args: {

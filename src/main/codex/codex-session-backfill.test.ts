@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  appendFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -25,6 +26,7 @@ const { fsMockState } = vi.hoisted(() => ({
     failLink: false,
     failInstallLink: false,
     failInstallLinkTransiently: false,
+    growSourceDuringCopy: false,
     raceTargetIntoExistence: false,
     failCopy: false,
     failAuditMkdirOnce: false,
@@ -116,7 +118,11 @@ vi.mock('node:fs/promises', async () => {
         error.code = 'EACCES'
         throw error
       }
-      return actual.copyFile(...args)
+      await actual.copyFile(...args)
+      if (fsMockState.growSourceDuringCopy) {
+        fsMockState.growSourceDuringCopy = false
+        await actual.appendFile(args[0], '{"event":"during-copy"}\n', 'utf-8')
+      }
     },
     opendir: (...args: Parameters<typeof actual.opendir>) => {
       if (args[0] === fsMockState.failDirectoryPath) {
@@ -199,6 +205,7 @@ beforeEach(() => {
   fsMockState.failLink = false
   fsMockState.failInstallLink = false
   fsMockState.failInstallLinkTransiently = false
+  fsMockState.growSourceDuringCopy = false
   fsMockState.raceTargetIntoExistence = false
   fsMockState.failCopy = false
   fsMockState.failAuditMkdirOnce = false
@@ -399,6 +406,52 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(readAuditActions()).toEqual(['copy', 'run-summary'])
   })
 
+  it('refreshes an unchanged owned copy after its source grows', async () => {
+    fsMockState.failLink = true
+    const relativePath = join('2026', '05', '26', 'rollout-growing.jsonl')
+    const managedPath = writeManagedSession(relativePath, '{"id":"a"}\n')
+    const paths = resolveCodexSessionBackfillPaths()
+
+    await backfillManagedCodexSessionsIntoSystemHome(paths)
+    appendFileSync(managedPath, '{"event":"later"}\n', 'utf-8')
+    const refreshed = await backfillManagedCodexSessionsIntoSystemHome(paths)
+
+    expect(refreshed).toMatchObject({ copiedFiles: 1, failedFiles: 0 })
+    expect(readFileSync(join(getSystemSessionsRoot(), relativePath), 'utf-8')).toBe(
+      '{"id":"a"}\n{"event":"later"}\n'
+    )
+  })
+
+  it('does not publish a cross-volume snapshot while its source grows', async () => {
+    fsMockState.failLink = true
+    fsMockState.growSourceDuringCopy = true
+    const relativePath = join('2026', '05', '26', 'rollout-active.jsonl')
+    writeManagedSession(relativePath, '{"id":"a"}\n')
+
+    const summary = await backfillManagedCodexSessionsIntoSystemHome(
+      resolveCodexSessionBackfillPaths()
+    )
+
+    expect(summary).toMatchObject({ copiedFiles: 0, failedFiles: 1 })
+    expect(existsSync(join(getSystemSessionsRoot(), relativePath))).toBe(false)
+  })
+
+  it('does not refresh an owned copy after the target changes', async () => {
+    fsMockState.failLink = true
+    const relativePath = join('2026', '05', '26', 'rollout-diverged.jsonl')
+    const managedPath = writeManagedSession(relativePath, '{"id":"a"}\n')
+    const targetPath = join(getSystemSessionsRoot(), relativePath)
+    const paths = resolveCodexSessionBackfillPaths()
+
+    await backfillManagedCodexSessionsIntoSystemHome(paths)
+    writeFileSync(targetPath, 'user-owned continuation\n', 'utf-8')
+    appendFileSync(managedPath, '{"event":"later"}\n', 'utf-8')
+    const repeated = await backfillManagedCodexSessionsIntoSystemHome(paths)
+
+    expect(repeated).toMatchObject({ copiedFiles: 0, skippedExistingFiles: 1 })
+    expect(readFileSync(targetPath, 'utf-8')).toBe('user-owned continuation\n')
+  })
+
   it('fails closed when the target filesystem cannot install without overwrite', async () => {
     fsMockState.failLink = true
     fsMockState.failInstallLink = true
@@ -566,6 +619,46 @@ describe('startCodexSessionBackfillInBackground', () => {
       scanDates: [['2026', '07', '01']]
     })
     expect(scheduled).toMatchObject({ scannedFiles: 1, linkedFiles: 1 })
+  })
+
+  it('does not let a bounded pass certify older unscanned history', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-baseline.jsonl'), 'baseline\n')
+    await startCodexSessionBackfillInBackground()
+
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+    const missedRelativePath = join('2026', '06', '01', 'rollout-missed.jsonl')
+    writeManagedSession(missedRelativePath, 'missed\n')
+    writeManagedSession(join('2026', '08', '05', 'rollout-launch.jsonl'), 'launch\n')
+
+    const bounded = await startCodexSessionBackfillInBackground({
+      ignoreCompletionMarker: true,
+      scanDates: [['2026', '08', '05']]
+    })
+    expect(bounded).toMatchObject({ scannedFiles: 1, linkedFiles: 1 })
+    expect(existsSync(getMarkerPath())).toBe(false)
+
+    const recovered = await startCodexSessionBackfillInBackground()
+    expect(recovered).toMatchObject({ scannedFiles: 3, linkedFiles: 1 })
+    expect(existsSync(join(getSystemSessionsRoot(), missedRelativePath))).toBe(true)
+    expect(existsSync(getMarkerPath())).toBe(true)
+  })
+
+  it('records a new heal event when a linked rollout grows in place', async () => {
+    const relativePath = join('2026', '05', '26', 'rollout-growing.jsonl')
+    const managedPath = writeManagedSession(relativePath, '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+
+    const firstRecord = readBackfillAuditRecords().find((record) => record.action === 'hardlink')
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+    appendFileSync(managedPath, '{"event":"later"}\n', 'utf-8')
+    await startCodexSessionBackfillInBackground()
+
+    const fileRecords = readBackfillAuditRecords().filter((record) =>
+      ['hardlink', 'existing'].includes(record.action)
+    )
+    expect(fileRecords).toHaveLength(2)
+    expect(fileRecords[1]).toMatchObject({ action: 'existing' })
+    expect(fileRecords[1]?.fileEventId).not.toBe(firstRecord?.fileEventId)
   })
 
   it('keeps repeated launch invalidations audit-stable', async () => {

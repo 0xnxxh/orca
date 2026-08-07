@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { copyFile, link, rm, writeFile } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
+import { copyFile, link, lstat, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 const ATOMIC_NO_REPLACE_UNSUPPORTED_CODE = 'ORCA_ATOMIC_NO_REPLACE_UNSUPPORTED'
@@ -13,7 +14,7 @@ export async function copySessionFileWithoutOverwrite(
   // copy cannot strand a truncated session that a later retry would skip.
   await writeFile(temporaryPath, '', { encoding: 'utf-8', flag: 'wx', mode: 0o600 })
   try {
-    await copyFile(sourcePath, temporaryPath)
+    await copyStableSessionFile(sourcePath, temporaryPath)
     try {
       // Why: this same-volume hardlink atomically installs the staged copy
       // without risking a collision overwrite after an EXDEV fallback.
@@ -38,6 +39,49 @@ export async function copySessionFileWithoutOverwrite(
       console.warn('[codex-session-backfill] Failed to remove staged copy:', temporaryPath, error)
     }
   }
+}
+
+export async function replaceOwnedSessionCopy(
+  sourcePath: string,
+  targetPath: string,
+  expectedTargetStat: Stats
+): Promise<void> {
+  const temporaryPath = join(dirname(targetPath), `.orca-backfill-${randomUUID()}.tmp`)
+  await writeFile(temporaryPath, '', { encoding: 'utf-8', flag: 'wx', mode: 0o600 })
+  try {
+    await copyStableSessionFile(sourcePath, temporaryPath)
+    const currentTargetStat = await lstat(targetPath)
+    if (!fileStatsMatch(currentTargetStat, expectedTargetStat)) {
+      const error = new Error(`Owned backfill target changed before refresh: ${targetPath}`)
+      ;(error as NodeJS.ErrnoException).code = 'EEXIST'
+      throw error
+    }
+    await rename(temporaryPath, targetPath)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+  }
+}
+
+async function copyStableSessionFile(sourcePath: string, targetPath: string): Promise<void> {
+  const sourceStatBefore = await lstat(sourcePath)
+  await copyFile(sourcePath, targetPath)
+  const sourceStatAfter = await lstat(sourcePath)
+  if (!fileStatsMatch(sourceStatAfter, sourceStatBefore)) {
+    const error = new Error(`Session changed while it was copied: ${sourcePath}`)
+    ;(error as NodeJS.ErrnoException).code = 'EBUSY'
+    throw error
+  }
+}
+
+function fileStatsMatch(left: Stats, right: Stats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.birthtimeMs === right.birthtimeMs &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
 }
 
 function isExistsError(error: unknown): boolean {
