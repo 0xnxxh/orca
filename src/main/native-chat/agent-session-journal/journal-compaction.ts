@@ -51,6 +51,7 @@ export async function compactJournal(input: {
   tailRows: readonly JournalRow[]
   policy?: JournalCompactionPolicy
   now: number
+  onSnapshotPublished?: (result: JournalCompactionResult) => void
 }): Promise<JournalCompactionResult> {
   const policy = input.policy ?? DEFAULT_JOURNAL_COMPACTION_POLICY
   const retained = retainTail(input.tailRows, policy, input.now)
@@ -82,7 +83,17 @@ export async function compactJournal(input: {
     tail: retained
   }
 
+  const result: JournalCompactionResult = {
+    tailRows: retained,
+    compactedThrough,
+    oldestSequence: retained[0]?.seq ?? compactedThrough + 1,
+    sizeBytes:
+      journalSnapshotByteLength(snapshot) +
+      retained.reduce((total, row) => total + journalRowByteLength(row), 0)
+  }
+
   await writeJournalSnapshotFile(input.journalDir, snapshot)
+  input.onSnapshotPublished?.(result)
   await rewriteJournalLog(input.journalDir, retained)
   // Blobs are pruned last: a crash before this leaks bytes, whereas pruning
   // first would strand a snapshot pointing at a payload that no longer exists.
@@ -92,14 +103,7 @@ export async function compactJournal(input: {
   }
   await pruneJournalBlobs(input.journalDir, retainedDigests)
 
-  return {
-    tailRows: retained,
-    compactedThrough,
-    oldestSequence: retained[0]?.seq ?? compactedThrough + 1,
-    sizeBytes:
-      journalSnapshotByteLength(snapshot) +
-      retained.reduce((total, row) => total + journalRowByteLength(row), 0)
-  }
+  return result
 }
 
 function retainTail(

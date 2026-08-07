@@ -319,8 +319,15 @@ export class AgentSessionJournal {
       epoch: this.mintEpoch(),
       reason,
       fence,
-      now: this.now()
+      now: this.now(),
+      // The snapshot commits the epoch; later log cleanup is recoverable and
+      // must not leave subsequent appends writing the superseded epoch.
+      onSnapshotPublished: (committed) => this.adoptEpoch(committed)
     })
+    this.adoptEpoch(published)
+  }
+
+  private adoptEpoch(published: Awaited<ReturnType<typeof publishNewEpoch>>): void {
     this.state = published.state
     this.tailRows = [published.row]
     this.compactedThrough = 0

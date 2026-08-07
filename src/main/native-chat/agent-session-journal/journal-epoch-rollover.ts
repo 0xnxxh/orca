@@ -7,13 +7,19 @@
 
 import { AGENT_SESSION_JOURNAL_SCHEMA_VERSION } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionProviderHandle } from '../../../shared/agent-session-journal-types'
-import { compactJournal } from './journal-compaction'
+import { compactJournal, type JournalCompactionResult } from './journal-compaction'
 import {
   applyJournalRow,
   createJournalReducerState,
   type JournalReducerState
 } from './journal-reducer'
 import type { AgentJournalEpochReason, JournalRow } from './journal-row-schema'
+
+export type PublishedJournalEpoch = {
+  state: JournalReducerState
+  row: JournalRow
+  sizeBytes: number
+}
 
 export async function publishNewEpoch(input: {
   journalDir: string
@@ -23,7 +29,8 @@ export async function publishNewEpoch(input: {
   reason: AgentJournalEpochReason
   fence: number
   now: number
-}): Promise<{ state: JournalReducerState; row: JournalRow; sizeBytes: number }> {
+  onSnapshotPublished?: (published: PublishedJournalEpoch) => void
+}): Promise<PublishedJournalEpoch> {
   const row: JournalRow = {
     kind: 'epoch',
     reason: input.reason,
@@ -35,14 +42,23 @@ export async function publishNewEpoch(input: {
     ts: input.now
   }
   const state = createJournalReducerState(input.sessionId, input.epoch)
-  const compacted = await compactJournal({
+  let published: PublishedJournalEpoch | null = null
+  const capturePublication = (result: JournalCompactionResult): void => {
+    applyJournalRow(state, row)
+    state.oldestSequence = 1
+    published = { state, row, sizeBytes: result.sizeBytes }
+    input.onSnapshotPublished?.(published)
+  }
+  await compactJournal({
     journalDir: input.journalDir,
     state,
     tailRows: [row],
     policy: { minTailRows: 1, retainTailMs: Number.POSITIVE_INFINITY },
-    now: input.now
+    now: input.now,
+    onSnapshotPublished: capturePublication
   })
-  applyJournalRow(state, row)
-  state.oldestSequence = 1
-  return { state, row, sizeBytes: compacted.sizeBytes }
+  if (!published) {
+    throw new Error('journal epoch snapshot publication did not complete')
+  }
+  return published
 }
