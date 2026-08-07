@@ -64,8 +64,11 @@ describe('humanizeTerminalError', () => {
   })
 
   it('humanizes an IPC-wrapped terminal-host-gone error', () => {
-    const wrapped = "Error invoking remote method 'pty:spawn': Error: terminal_host_gone"
-    expect(humanizeTerminalError(wrapped)).not.toContain('terminal_host_gone')
+    const prefix = "Error invoking remote method 'pty:spawn': Error: ("
+    const humanized = humanizeTerminalError(`${prefix}terminal_host_gone).`)
+    expect(humanized).not.toContain('terminal_host_gone')
+    expect(humanized).toContain(`${prefix}The terminal daemon`)
+    expect(humanized).toMatch(/\)\.$/)
   })
 
   it('humanizes a legacy host raw named-pipe error', () => {
@@ -111,6 +114,9 @@ describe('isExplainedTerminalError', () => {
     expect(isExplainedTerminalError('node-pty: open_slave failed: EMFILE')).toBe(false)
     expect(isExplainedTerminalError('terminal_gone')).toBe(false)
     expect(isExplainedTerminalError('terminal_host_gone_extra')).toBe(false)
+    expect(isExplainedTerminalError('aterminal_host_gonea')).toBe(false)
+    expect(isExplainedTerminalError('0terminal_host_gone0')).toBe(false)
+    expect(isExplainedTerminalError('_terminal_host_gone_')).toBe(false)
     expect(isExplainedTerminalError('open ENOENT \\\\?\\pipe\\orca-terminal-host-v30-dead')).toBe(
       false
     )
