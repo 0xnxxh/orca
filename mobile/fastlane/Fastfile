@@ -221,14 +221,13 @@ platform :ios do
 
     upload_to_testflight(
       api_key: api_key,
-      # Why: fastlane can only assign external TestFlight groups after Apple
-      # finishes processing the uploaded build.
-      skip_waiting_for_build_processing: false,
-      distribute_external: true,
-      groups: TESTFLIGHT_GROUPS,
-      notify_external_testers: true,
-      # Why: fastlane requires release notes when distributing to external
-      # TestFlight testers, even for CI-triggered smoke releases.
+      # Why: waiting for ASC processing has hung for hours (0.0.42 builds 1–2)
+      # with no email and no Ready build in the UI. Exit after upload so CI is
+      # green when the binary is accepted; distribute externally from ASC once
+      # the build is Ready (or a follow-up lane).
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      # Changelog is still useful if someone later distributes this build.
       changelog: testflight_changelog,
     )
   end
