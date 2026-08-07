@@ -202,16 +202,13 @@ describe('registerClipboardHandlers', () => {
     childStdinEndMock.mockClear()
     resolveAuthorizedPathMock.mockReset()
     resolveAuthorizedPathMock.mockImplementation(async (path: string) => path)
-    fsAccessMock.mockReset()
-    fsAccessMock.mockResolvedValue(undefined)
-    fsLstatMock.mockReset()
-    fsLstatMock.mockResolvedValue({
+    fsAccessMock.mockReset().mockResolvedValue(undefined)
+    fsLstatMock.mockReset().mockResolvedValue({
       uid: typeof process.getuid === 'function' ? process.getuid() : 0,
       isDirectory: () => true,
       isSymbolicLink: () => false
     })
-    fsMkdirMock.mockReset()
-    fsMkdirMock.mockResolvedValue(undefined)
+    fsMkdirMock.mockReset().mockResolvedValue(undefined)
     fsOpendirMock.mockReset()
     // Why: handler registration kicks off the expired-staging sweep; an empty temp root keeps it inert.
     fsOpendirMock.mockImplementation(async () => ({
