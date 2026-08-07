@@ -3257,16 +3257,18 @@ export default function MobileTasksScreen() {
           setGithubSourceErrors([])
           setGithubSourceFallbacks([])
         }
-        if (provider === 'github' && githubMode === 'project') {
-          setItems([])
-          return
-        }
         if (provider === 'linear' && !linearConnected) {
           setItems([])
           return
         }
         const currentRepos = reposRef.current.length > 0 ? reposRef.current : await loadRepos()
         if (!isCurrent()) {
+          return
+        }
+        // Why: project mode fetches no work items, but its rows are matched against
+        // the repo list, so it must not return before loadRepos() has run.
+        if (provider === 'github' && githubMode === 'project') {
+          setItems([])
           return
         }
         if (provider === 'github' || provider === 'gitlab') {
