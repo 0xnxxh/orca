@@ -53,6 +53,7 @@ export class AgentSessionStoreTransactionQueue {
     readonly hostId: string,
     readonly readOnly: boolean,
     readonly recoveredFromBackup: boolean,
+    private diskStoreFound: boolean,
     public state: AgentSessionStoreState,
     private diskRevision: string
   ) {
@@ -66,6 +67,10 @@ export class AgentSessionStoreTransactionQueue {
           throw new Error('agent_session_legacy_required')
         }
         await this.refreshExternallyChangedState()
+        if (this.diskRecoveredFromBackup) {
+          // Why: the missing commit may hold a newer fence, so rollback cannot mint another writer.
+          throw new Error('execution_owner_reconciling')
+        }
         const records = new Map(this.state.records)
         const operations = new Map(this.state.operations)
         const retiredClaimKeys = [...this.state.retiredClaimKeys]
@@ -80,6 +85,7 @@ export class AgentSessionStoreTransactionQueue {
           this.state.schemaVersion = AGENT_SESSION_STORE_SCHEMA_VERSION
           this.diskRevision = agentSessionStoreRevision(this.state)
           this.diskRecoveredFromBackup = false
+          this.diskStoreFound = true
           return result
         } catch (error) {
           this.state.records = records
@@ -95,6 +101,10 @@ export class AgentSessionStoreTransactionQueue {
 
   private async refreshExternallyChangedState(): Promise<void> {
     const loaded = await loadAgentSessionStore(this.filePath, this.hostId)
+    if (this.diskStoreFound && !loaded.storeFound) {
+      throw new Error('agent_session_store_corrupt')
+    }
+    this.diskStoreFound ||= loaded.storeFound
     const diskRevision = agentSessionStoreRevision(loaded.state)
     this.diskRecoveredFromBackup = loaded.recoveredFromBackup
     if (diskRevision === this.diskRevision) {

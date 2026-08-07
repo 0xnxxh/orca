@@ -45,19 +45,18 @@ function defaultIsPidPresent(pid: number): boolean {
 
 async function readLinuxProcessStartTimeMs(pid: number): Promise<number | null> {
   try {
-    const [stat, uptime] = await Promise.all([
+    const [stat, systemStat] = await Promise.all([
       readFile(`/proc/${pid}/stat`, 'utf-8'),
-      readFile('/proc/uptime', 'utf-8')
+      readFile('/proc/stat', 'utf-8')
     ])
     // Field 22 is starttime in clock ticks; the comm field can contain spaces, so cut past ") ".
     const fields = stat.slice(stat.lastIndexOf(') ') + 2).split(' ')
     const ticks = Number(fields[19])
-    const uptimeSeconds = Number(uptime.split(' ')[0])
-    if (!Number.isFinite(ticks) || !Number.isFinite(uptimeSeconds)) {
+    const bootTimeSeconds = Number(/^btime\s+(\d+)$/m.exec(systemStat)?.[1])
+    if (!Number.isFinite(ticks) || !Number.isFinite(bootTimeSeconds)) {
       return null
     }
-    const bootTimeMs = Date.now() - uptimeSeconds * 1000
-    return Math.round(bootTimeMs + (ticks / 100) * 1000)
+    return Math.round(bootTimeSeconds * 1000 + (ticks / 100) * 1000)
   } catch {
     return null
   }
@@ -125,6 +124,10 @@ export async function probeAgentSessionProcessIdentity(args: {
     )
     if (observed !== null) {
       if (Math.abs(observed - identity.processStartTimeMs) > PROCESS_START_TIME_TOLERANCE_MS) {
+        if (matchedOn.includes('spawn-token')) {
+          // Why: contradictory evidence cannot prove that a token-authenticated child is dead.
+          return { outcome: 'indeterminate', reason: 'process identity evidence contradicted' }
+        }
         return { outcome: 'identity-mismatch', field: 'process-start-time' }
       }
       matchedOn.push('process-start-time')

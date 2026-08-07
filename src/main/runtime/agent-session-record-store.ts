@@ -80,6 +80,7 @@ export class AgentSessionRecordStore {
         args.hostId,
         loaded.readOnly,
         loaded.recoveredFromBackup,
+        loaded.storeFound,
         loaded.state,
         diskRevision
       )

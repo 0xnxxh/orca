@@ -64,8 +64,8 @@ export function isAgentSessionProviderHandle(value: unknown): value is AgentSess
 /** Stable string identity for one handle. Two handles with the same key name the same writer target. */
 export function agentSessionProviderHandleKey(handle: AgentSessionProviderHandle): string {
   return handle.provider === 'claude'
-    ? `claude:${handle.sessionId}#${handle.leafUuid ?? ''}`
-    : `codex:${handle.threadId}`
+    ? `claude:${JSON.stringify([handle.sessionId, handle.leafUuid])}`
+    : `codex:${JSON.stringify(handle.threadId)}`
 }
 
 /**
@@ -73,7 +73,9 @@ export function agentSessionProviderHandleKey(handle: AgentSessionProviderHandle
  * whatever the provider called it.
  */
 export function agentSessionProviderHandleRoot(handle: AgentSessionProviderHandle): string {
-  return handle.provider === 'claude' ? `claude:${handle.sessionId}` : `codex:${handle.threadId}`
+  return handle.provider === 'claude'
+    ? `claude:${JSON.stringify(handle.sessionId)}`
+    : `codex:${JSON.stringify(handle.threadId)}`
 }
 
 export function agentSessionProviderHandlesEqual(
@@ -103,29 +105,48 @@ export function isAgentSessionProviderHandleLink(
     return false
   }
   const link = value as Partial<AgentSessionProviderHandleLink>
+  const originValid =
+    link.origin === 'created' ||
+    link.origin === 'adopted' ||
+    link.origin === 'resumed' ||
+    link.origin === 'forked'
   return (
     typeof link.linkId === 'string' &&
     LINK_ID_PATTERN.test(link.linkId) &&
     isAgentSessionProviderHandle(link.handle) &&
-    (link.origin === 'created' ||
-      link.origin === 'adopted' ||
-      link.origin === 'resumed' ||
-      link.origin === 'forked') &&
+    originValid &&
     Number.isSafeInteger(link.mintedAtFence) &&
     (link.mintedAtFence as number) >= 0 &&
     Number.isSafeInteger(link.observedAt) &&
-    (link.forkedFromKey === undefined || isHandleField(link.forkedFromKey))
+    (link.origin === 'forked'
+      ? isHandleField(link.forkedFromKey)
+      : link.forkedFromKey === undefined)
   )
 }
 
 export function isAgentSessionProviderHandleChain(
   value: unknown
 ): value is AgentSessionProviderHandleLink[] {
-  return (
-    Array.isArray(value) &&
-    value.length <= MAX_AGENT_SESSION_PROVIDER_HANDLE_LINKS &&
-    value.every((link) => isAgentSessionProviderHandleLink(link))
-  )
+  if (!Array.isArray(value) || value.length > MAX_AGENT_SESSION_PROVIDER_HANDLE_LINKS) {
+    return false
+  }
+  let validated: AgentSessionProviderHandleLink[] = []
+  try {
+    for (const link of value) {
+      if (!isAgentSessionProviderHandleLink(link)) {
+        return false
+      }
+      const next = appendAgentSessionProviderHandleLink(validated, link)
+      // A persisted chain must name every link exactly once; retry elision belongs at append time.
+      if (next.length !== validated.length + 1) {
+        return false
+      }
+      validated = next
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -177,6 +198,10 @@ export function appendAgentSessionProviderHandleLink(
   ) {
     // Why: re-proving the same handle at the same fence is a retry, not a new identity.
     return [...chain]
+  }
+  if (findAgentSessionProviderHandleLink(chain, link.linkId)) {
+    // Why: the lease names its exact proof by link id; reuse would make that reference ambiguous.
+    throw new Error('agent_session_provider_handle_invalid')
   }
   if (chain.length >= MAX_AGENT_SESSION_PROVIDER_HANDLE_LINKS) {
     // Why: dropping older links would erase fork provenance, so refuse and let the caller roll

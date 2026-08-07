@@ -168,6 +168,7 @@ describe('persisted row validation', () => {
     expect(isAgentSessionOperationRow({ ...row, callerKey: '' })).toBe(false)
     expect(isAgentSessionOperationRow({ ...row, expiresAt: 1.5 })).toBe(false)
     expect(isAgentSessionOperationRow({ ...row, outcome: { status: 'succeeded' } })).toBe(false)
+    expect(isAgentSessionOperationRow({ ...row, outcome: null })).toBe(false)
     expect(isAgentSessionOperationRow(null)).toBe(false)
   })
 })

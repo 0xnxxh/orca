@@ -356,9 +356,8 @@ describe('concurrent claims', () => {
     const store = await open()
     await establishOwner(store)
     const before = store.getRecord('session-alpha')
-    // The next commit cannot land: the store directory is no longer a directory.
+    // Losing both committed copies must not reset the live store to empty authority.
     await rm(directory, { recursive: true, force: true })
-    await writeFile(directory, 'not a directory')
     await expect(
       store.setJournalCheckpoint({
         sessionId: 'session-alpha',
@@ -829,7 +828,7 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     expect(reopened.recoveredFromBackup).toBe(true)
     expect(reopened.getRecord('session-alpha')?.lease.runtimeFence).toBe(1)
 
-    await reopened.retireClaimKey('key-2', NOW)
+    await expect(reopened.retireClaimKey('key-2', NOW)).rejects.toThrow()
     const backup = JSON.parse(await readFile(`${agentSessionStorePath(directory)}.bak`, 'utf-8'))
     expect(backup.records['session-alpha'].lease.runtimeFence).toBe(1)
   })

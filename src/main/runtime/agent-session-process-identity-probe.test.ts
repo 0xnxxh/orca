@@ -88,6 +88,20 @@ describe('owner identity probe', () => {
     ).resolves.toEqual({ outcome: 'identity-mismatch', field: 'process-start-time' })
   })
 
+  it('fails closed when an exact token and the reconstructed start time disagree', async () => {
+    await expect(
+      probeAgentSessionProcessIdentity({
+        identity: IDENTITY,
+        deps: deps({
+          readProcessStartTimeMs: async () => START_TIME + PROCESS_START_TIME_TOLERANCE_MS + 1
+        })
+      })
+    ).resolves.toEqual({
+      outcome: 'indeterminate',
+      reason: 'process identity evidence contradicted'
+    })
+  })
+
   it('tolerates start-time jitter inside the tolerance', async () => {
     await expect(
       probeAgentSessionProcessIdentity({

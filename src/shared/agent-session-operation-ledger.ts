@@ -151,7 +151,8 @@ export function isAgentSessionOperationRow(value: unknown): value is AgentSessio
   const row = value as Partial<AgentSessionOperationRow>
   const outcome = row.outcome as AgentSessionOperationOutcome | undefined
   const outcomeValid =
-    outcome !== undefined &&
+    typeof outcome === 'object' &&
+    outcome !== null &&
     ((outcome.status === 'pending' && true) ||
       (outcome.status === 'succeeded' && typeof outcome.sessionId === 'string') ||
       (outcome.status === 'failed' && typeof outcome.code === 'string') ||

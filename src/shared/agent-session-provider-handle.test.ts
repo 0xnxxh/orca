@@ -43,8 +43,8 @@ describe('handle identity', () => {
 
   it('keys a Codex handle by thread id alone', () => {
     const codex: AgentSessionProviderHandle = { provider: 'codex', threadId: 'thread-1' }
-    expect(agentSessionProviderHandleKey(codex)).toBe('codex:thread-1')
-    expect(agentSessionProviderHandleRoot(codex)).toBe('codex:thread-1')
+    expect(agentSessionProviderHandleKey(codex)).toBe('codex:"thread-1"')
+    expect(agentSessionProviderHandleRoot(codex)).toBe('codex:"thread-1"')
     expect(
       agentSessionProviderHandlesEqual(codex, { provider: 'codex', threadId: 'thread-2' })
     ).toBe(false)
@@ -56,6 +56,21 @@ describe('handle identity', () => {
     expect(isAgentSessionProviderHandle({ provider: 'claude', sessionId: '' })).toBe(false)
     expect(isAgentSessionProviderHandle({ provider: 'gemini', sessionId: 'x' })).toBe(false)
     expect(isAgentSessionProviderHandle({ ...CLAUDE, sessionId: ' sess-1 ' })).toBe(false)
+  })
+
+  it('uses collision-free keys when Claude ids contain delimiters', () => {
+    const left: AgentSessionProviderHandle = {
+      provider: 'claude',
+      sessionId: 'a#b',
+      leafUuid: 'c'
+    }
+    const right: AgentSessionProviderHandle = {
+      provider: 'claude',
+      sessionId: 'a',
+      leafUuid: 'b#c'
+    }
+    expect(agentSessionProviderHandleKey(left)).not.toBe(agentSessionProviderHandleKey(right))
+    expect(agentSessionProviderHandlesEqual(left, right)).toBe(false)
   })
 })
 
@@ -153,6 +168,19 @@ describe('chain append', () => {
     ).toHaveLength(2)
   })
 
+  it('rejects reuse of a stable link id for a different proof', () => {
+    expect(() =>
+      appendAgentSessionProviderHandleLink(
+        [link()],
+        link({
+          origin: 'resumed',
+          handle: { ...CLAUDE, leafUuid: 'leaf-2' },
+          mintedAtFence: 2
+        })
+      )
+    ).toThrow('agent_session_provider_handle_invalid')
+  })
+
   it('refuses to grow past the cap rather than dropping fork provenance', () => {
     const chain: AgentSessionProviderHandleLink[] = [link()]
     for (let index = 1; index < MAX_AGENT_SESSION_PROVIDER_HANDLE_LINKS; index += 1) {
@@ -218,12 +246,49 @@ describe('chain lookup and validation', () => {
   it('rejects a persisted chain that is over the cap or holds a malformed link', () => {
     expect(isAgentSessionProviderHandleChain([{ ...link(), mintedAtFence: -1 }])).toBe(false)
     expect(isAgentSessionProviderHandleChain([{ ...link(), linkId: 'not a link id!' }])).toBe(false)
+    expect(isAgentSessionProviderHandleChain([{ ...link(), forkedFromKey: 'claude:seed' }])).toBe(
+      false
+    )
     expect(
       isAgentSessionProviderHandleChain(
         Array.from({ length: MAX_AGENT_SESSION_PROVIDER_HANDLE_LINKS + 1 }, (_value, index) =>
           link({ linkId: `link-${index}` })
         )
       )
+    ).toBe(false)
+  })
+
+  it('rejects persisted chains that bypass append invariants', () => {
+    expect(
+      isAgentSessionProviderHandleChain([
+        link(),
+        link({
+          linkId: 'link-2',
+          origin: 'created',
+          mintedAtFence: 2
+        })
+      ])
+    ).toBe(false)
+    expect(
+      isAgentSessionProviderHandleChain([
+        link(),
+        link({
+          origin: 'resumed',
+          handle: { ...CLAUDE, leafUuid: 'leaf-2' },
+          mintedAtFence: 2
+        })
+      ])
+    ).toBe(false)
+    expect(
+      isAgentSessionProviderHandleChain([
+        link(),
+        link({
+          linkId: 'link-2',
+          origin: 'resumed',
+          handle: { provider: 'claude', sessionId: 'sess-2', leafUuid: 'leaf-2' },
+          mintedAtFence: 2
+        })
+      ])
     ).toBe(false)
   })
 })

@@ -36,6 +36,7 @@ export type AgentSessionStoreState = {
 
 export type LoadedAgentSessionStore = {
   state: AgentSessionStoreState
+  storeFound: boolean
   /** True when the file was written by a newer schema; this host reads but never writes it. */
   readOnly: boolean
   /** True when the primary file was unusable and the previous committed copy was used. */
@@ -184,6 +185,7 @@ export async function loadAgentSessionStore(
     }
     return {
       state: parsed.state,
+      storeFound: true,
       readOnly: parsed.state.schemaVersion > AGENT_SESSION_STORE_SCHEMA_VERSION,
       recoveredFromBackup
     }
@@ -191,7 +193,12 @@ export async function loadAgentSessionStore(
   if (unusableStoreFound) {
     throw new Error('agent_session_store_corrupt')
   }
-  return { state: emptyState(hostId), readOnly: false, recoveredFromBackup: false }
+  return {
+    state: emptyState(hostId),
+    storeFound: false,
+    readOnly: false,
+    recoveredFromBackup: false
+  }
 }
 
 function serializeState(state: AgentSessionStoreState): string {
