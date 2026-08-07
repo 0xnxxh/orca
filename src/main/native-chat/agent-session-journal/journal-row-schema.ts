@@ -90,10 +90,12 @@ export type JournalRow =
   | JournalSubmissionRow
   | JournalDispatchRow
 
+export type JournalRowPosition = { epoch: string; sequence: number }
+
 export type JournalRowParse =
   | { ok: true; row: JournalRow }
   /** Malformed JSON or a shape this build rejects outright. */
-  | { ok: false; unreadable: false }
+  | { ok: false; unreadable: false; position?: JournalRowPosition }
   /** A future schema version. The host must not write or compact this journal. */
   | { ok: false; unreadable: true }
 
@@ -133,15 +135,28 @@ export function parseJournalRowValue(parsed: unknown): JournalRowParse {
     return { ok: false, unreadable: false }
   }
   const record = parsed as Record<string, unknown>
+  const position = journalRowPosition(record)
   const version = typeof record.v === 'number' ? record.v : null
   if (version === null || !Number.isInteger(version) || version < 1) {
-    return { ok: false, unreadable: false }
+    return malformedRow(position)
   }
   if (version > AGENT_SESSION_JOURNAL_SCHEMA_VERSION) {
     return { ok: false, unreadable: true }
   }
   const upcast = upcastRow(record, version)
-  return isJournalRow(upcast) ? { ok: true, row: upcast } : { ok: false, unreadable: false }
+  return isJournalRow(upcast) ? { ok: true, row: upcast } : malformedRow(position)
+}
+
+function journalRowPosition(record: Record<string, unknown>): JournalRowPosition | null {
+  return isNonEmptyString(record.epoch) &&
+    Number.isInteger(record.seq) &&
+    (record.seq as number) >= 1
+    ? { epoch: record.epoch, sequence: record.seq as number }
+    : null
+}
+
+function malformedRow(position: JournalRowPosition | null): JournalRowParse {
+  return position ? { ok: false, unreadable: false, position } : { ok: false, unreadable: false }
 }
 
 /** Read-time upcast chain. Each step raises a row exactly one version. */

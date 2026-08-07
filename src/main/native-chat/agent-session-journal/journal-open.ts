@@ -64,7 +64,10 @@ export async function loadJournal(
   )
   // A hole below the snapshot boundary is unrecoverable too: the snapshot only
   // covers `compactedThrough`, so a tail that starts above it lost rows.
-  const corrupt = union.conflict || Boolean(gap) || oldest > compactedThrough + 1
+  const malformedTail = log.malformedPositions.some(
+    (position) => position.epoch === epoch && position.sequence > compactedThrough
+  )
+  const corrupt = union.conflict || malformedTail || Boolean(gap) || oldest > compactedThrough + 1
 
   for (const row of tailRows) {
     if (row.seq > compactedThrough) {

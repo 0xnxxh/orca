@@ -488,6 +488,22 @@ describe('schema', () => {
     expect(reopened.snapshot().items).toHaveLength(1)
   })
 
+  it('rolls the epoch instead of reusing a malformed row sequence', async () => {
+    const journal = await open()
+    const appended = await journal.appendItem(item(0), body('original'), { fence: 1 })
+    const originalEpoch = journal.epoch
+    const logPath = join(root, JOURNAL_LOG_FILE)
+    const rows = (await readFile(logPath, 'utf-8')).trim().split('\n')
+    const malformed = JSON.parse(rows[1]!) as Record<string, unknown>
+    malformed.body = null
+    rows[1] = JSON.stringify(malformed)
+    await writeFile(logPath, `${rows.join('\n')}\n`, 'utf-8')
+
+    const reopened = await open()
+    expect(reopened.epoch).not.toBe(originalEpoch)
+    expect(reopened.readSince(appended.cursor)).toEqual({ ok: false, reset: 'epoch_changed' })
+  })
+
   it('separates the next append from a malformed non-newline tail', async () => {
     const journal = await open()
     await journal.appendItem(item(0), body('a'), { fence: 1 })

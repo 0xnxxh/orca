@@ -30,6 +30,7 @@ import {
   parseJournalRow,
   parseJournalRowValue,
   serializeJournalRow,
+  type JournalRowPosition,
   type JournalRow
 } from './journal-row-schema'
 
@@ -68,6 +69,8 @@ export type JournalReadResult = {
   unreadable: boolean
   /** Lines that failed to parse for reasons other than schema version. */
   malformed: number
+  /** Sequence-bearing malformed rows cannot be treated as disposable noise. */
+  malformedPositions: JournalRowPosition[]
 }
 
 export type JournalSnapshotReadResult = {
@@ -152,11 +155,12 @@ export async function readJournalLog(journalDir: string): Promise<JournalReadRes
   try {
     raw = await readFile(join(journalDir, JOURNAL_LOG_FILE), 'utf-8')
   } catch {
-    return { rows: [], unreadable: false, malformed: 0 }
+    return { rows: [], unreadable: false, malformed: 0, malformedPositions: [] }
   }
   const rows: JournalRow[] = []
   let unreadable = false
   let malformed = 0
+  const malformedPositions: JournalRowPosition[] = []
   for (const line of raw.split('\n')) {
     if (!line.trim()) {
       continue
@@ -171,8 +175,11 @@ export async function readJournalLog(journalDir: string): Promise<JournalReadRes
       break
     }
     malformed += 1
+    if (parsed.position) {
+      malformedPositions.push(parsed.position)
+    }
   }
-  return { rows, unreadable, malformed }
+  return { rows, unreadable, malformed, malformedPositions }
 }
 
 /**
