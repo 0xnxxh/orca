@@ -15,12 +15,13 @@ import {
 } from './journal-reducer'
 import { pruneJournalBlobs } from './journal-blob-store'
 import {
+  journalSnapshotByteLength,
   rewriteJournalLog,
   writeJournalSnapshotFile,
   type JournalSnapshotFile
 } from './journal-log-file'
 import { AGENT_SESSION_JOURNAL_SCHEMA_VERSION } from '../../../shared/agent-session-journal-types'
-import type { JournalRow } from './journal-row-schema'
+import { journalRowByteLength, type JournalRow } from './journal-row-schema'
 
 export type JournalCompactionPolicy = {
   /** Always keep at least this many rows, however old they are. */
@@ -40,6 +41,7 @@ export type JournalCompactionResult = {
   tailRows: JournalRow[]
   compactedThrough: number
   oldestSequence: number
+  sizeBytes: number
 }
 
 export async function compactJournal(input: {
@@ -58,7 +60,12 @@ export async function compactJournal(input: {
     v: AGENT_SESSION_JOURNAL_SCHEMA_VERSION,
     epoch: input.state.epoch,
     compactedThrough,
+    highestFence: input.state.highestFence,
     items: rendered.items,
+    tombstones: [...input.state.tombstones.entries()].map(([itemId, revision]) => ({
+      itemId,
+      revision
+    })),
     submissions: rendered.submissions,
     receipts: [...input.state.receipts.values()].map((receipt) => ({
       clientMessageId: receipt.clientMessageId,
@@ -83,7 +90,10 @@ export async function compactJournal(input: {
   return {
     tailRows: retained,
     compactedThrough,
-    oldestSequence: retained[0]?.seq ?? compactedThrough + 1
+    oldestSequence: retained[0]?.seq ?? compactedThrough + 1,
+    sizeBytes:
+      journalSnapshotByteLength(snapshot) +
+      retained.reduce((total, row) => total + journalRowByteLength(row), 0)
   }
 }
 

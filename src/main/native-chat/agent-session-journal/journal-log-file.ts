@@ -15,6 +15,7 @@ import type {
   AgentJournalRenderItem,
   AgentJournalSubmission
 } from '../../../shared/agent-session-journal-types'
+import { AGENT_SESSION_JOURNAL_SCHEMA_VERSION } from '../../../shared/agent-session-journal-types'
 import { parseJournalRow, serializeJournalRow, type JournalRow } from './journal-row-schema'
 
 export const JOURNAL_LOG_FILE = 'log.jsonl'
@@ -25,7 +26,9 @@ export type JournalSnapshotFile = {
   epoch: string
   /** Highest sequence folded into `items`; the tail starts after it. */
   compactedThrough: number
+  highestFence: number
   items: AgentJournalRenderItem[]
+  tombstones: { itemId: string; revision: number }[]
   submissions: AgentJournalSubmission[]
   /** Receipts outlive the rows that minted them: a client reconnecting after
    *  compaction must still get the same answer instead of re-sending. */
@@ -52,19 +55,33 @@ export type JournalReadResult = {
   malformed: number
 }
 
+export type JournalSnapshotReadResult = {
+  snapshot: JournalSnapshotFile | null
+  unreadable: boolean
+}
+
 export async function ensureJournalDir(journalDir: string): Promise<void> {
   await mkdir(journalDir, { recursive: true })
 }
 
 export async function readJournalSnapshotFile(
   journalDir: string
-): Promise<JournalSnapshotFile | null> {
+): Promise<JournalSnapshotReadResult> {
   try {
     const raw = await readFile(join(journalDir, JOURNAL_SNAPSHOT_FILE), 'utf-8')
-    const parsed = JSON.parse(raw) as JournalSnapshotFile
-    return typeof parsed?.epoch === 'string' ? parsed : null
+    const parsed = JSON.parse(raw) as Partial<JournalSnapshotFile>
+    if (typeof parsed?.v !== 'number' || !Number.isInteger(parsed.v) || parsed.v < 1) {
+      return { snapshot: null, unreadable: false }
+    }
+    if (parsed.v > AGENT_SESSION_JOURNAL_SCHEMA_VERSION) {
+      return { snapshot: null, unreadable: true }
+    }
+    return {
+      snapshot: typeof parsed?.epoch === 'string' ? (parsed as JournalSnapshotFile) : null,
+      unreadable: false
+    }
   } catch {
-    return null
+    return { snapshot: null, unreadable: false }
   }
 }
 
@@ -74,6 +91,10 @@ export async function writeJournalSnapshotFile(
 ): Promise<void> {
   const target = join(journalDir, JOURNAL_SNAPSHOT_FILE)
   await writeFileDurable(durableWriteTempPath(target), target, JSON.stringify(snapshot))
+}
+
+export function journalSnapshotByteLength(snapshot: JournalSnapshotFile): number {
+  return Buffer.byteLength(JSON.stringify(snapshot), 'utf8')
 }
 
 export async function readJournalLog(journalDir: string): Promise<JournalReadResult> {

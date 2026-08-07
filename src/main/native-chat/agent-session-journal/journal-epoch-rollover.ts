@@ -23,7 +23,7 @@ export async function publishNewEpoch(input: {
   reason: AgentJournalEpochReason
   fence: number
   now: number
-}): Promise<{ state: JournalReducerState; row: JournalRow }> {
+}): Promise<{ state: JournalReducerState; row: JournalRow; sizeBytes: number }> {
   const row: JournalRow = {
     kind: 'epoch',
     reason: input.reason,
@@ -35,7 +35,7 @@ export async function publishNewEpoch(input: {
     ts: input.now
   }
   const state = createJournalReducerState(input.sessionId, input.epoch)
-  await compactJournal({
+  const compacted = await compactJournal({
     journalDir: input.journalDir,
     state,
     tailRows: [row],
@@ -44,5 +44,5 @@ export async function publishNewEpoch(input: {
   })
   applyJournalRow(state, row)
   state.oldestSequence = 1
-  return { state, row }
+  return { state, row, sizeBytes: compacted.sizeBytes }
 }

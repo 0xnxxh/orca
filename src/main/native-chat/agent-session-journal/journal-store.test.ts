@@ -108,6 +108,17 @@ describe('fences', () => {
     await journal.appendItem(item(2), body('c'), { fence: 7 })
     expect(journal.snapshot().items.map((entry) => entry.body)).toEqual([body('a'), body('c')])
   })
+
+  it('rejects rollover and compaction from a stale writer', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('a'), { fence: 7 })
+
+    await expect(journal.rollEpoch('handle_forked', 6)).rejects.toMatchObject({
+      code: 'journal_stale_fence'
+    })
+    await expect(journal.compact(6)).rejects.toMatchObject({ code: 'journal_stale_fence' })
+    expect(journal.snapshot().items.map((entry) => entry.body)).toEqual([body('a')])
+  })
 })
 
 describe('replay', () => {
@@ -147,6 +158,18 @@ describe('replay', () => {
     expect(reopened.snapshot().items).toHaveLength(0)
   })
 
+  it('serializes an append requested during rollover into the new epoch', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('old epoch'), { fence: 1 })
+
+    const rolled = journal.rollEpoch('handle_forked', 2)
+    const appended = journal.appendItem(item(1), body('new epoch'), { fence: 2 })
+    await Promise.all([rolled, appended])
+
+    expect(journal.snapshot().items.map((entry) => entry.body)).toEqual([body('new epoch')])
+    expect((await open()).snapshot()).toEqual(journal.snapshot())
+  })
+
   it('rolls the epoch when the log lost a row', async () => {
     const journal = await open()
     for (let index = 0; index < 4; index += 1) {
@@ -171,7 +194,7 @@ describe('compaction and retention', () => {
     }
     const rendered = journal.snapshot()
     const tip = journal.cursor()
-    await journal.compact()
+    await journal.compact(1)
 
     expect(journal.snapshot()).toEqual(rendered)
     expect(journal.readSince({ epoch: tip.epoch, sequence: 1 })).toEqual({
@@ -193,13 +216,42 @@ describe('compaction and retention', () => {
     }
     const rendered = journal.snapshot()
     const logBefore = await readFile(join(root, JOURNAL_LOG_FILE), 'utf-8')
-    await journal.compact()
+    await journal.compact(1)
     // Simulate the crash: the snapshot landed, the truncation did not.
     await writeFile(join(root, JOURNAL_LOG_FILE), logBefore, 'utf-8')
 
     const reopened = await open()
     expect(reopened.snapshot()).toEqual(rendered)
     expect(reopened.snapshot().items).toHaveLength(5)
+  })
+
+  it('serializes compaction behind an append so the log rewrite cannot discard it', async () => {
+    const journal = await open({ compaction: { minTailRows: 1, retainTailMs: 0 } })
+    await journal.appendItem(item(0), body('before'), { fence: 1 })
+
+    const appended = journal.appendItem(item(1), body('during'), { fence: 1 })
+    await Promise.all([appended, journal.compact(1)])
+
+    const reopened = await open()
+    expect(reopened.snapshot()).toEqual(journal.snapshot())
+    expect(reopened.snapshot().items.map((entry) => entry.body)).toEqual([
+      body('before'),
+      body('during')
+    ])
+  })
+
+  it('preserves tombstones and the highest writer fence across compaction', async () => {
+    const journal = await open({ compaction: { minTailRows: 1, retainTailMs: 0 } })
+    await journal.appendItem(item(0), body('removed'), { fence: 7 })
+    await journal.appendTombstone(item(0), { fence: 7 })
+    await journal.compact(7)
+
+    const reopened = await open()
+    await expect(
+      reopened.appendItem(item(1), body('stale writer'), { fence: 6 })
+    ).rejects.toMatchObject({ code: 'journal_stale_fence' })
+    await reopened.appendItem(item(0), body('late stale revision'), { fence: 7 })
+    expect(reopened.snapshot().items).toHaveLength(0)
   })
 
   it('prunes blobs no live row references and keeps the ones that survive', async () => {
@@ -220,7 +272,7 @@ describe('compaction and retention', () => {
       { kind: 'tool-call', name: 'bash', input: {}, state: 'completed', output: kept },
       { fence: 1 }
     )
-    await journal.compact()
+    await journal.compact(1)
 
     expect(await readJournalBlob(root, kept.digest)).toBe('k'.repeat(64))
     expect(await readJournalBlob(root, dropped.digest)).toBeNull()
@@ -274,6 +326,24 @@ describe('bounds', () => {
     ).rejects.toMatchObject({ code: 'journal_bound_exceeded' })
   })
 
+  it('keeps the size bound across repeated compaction cycles', async () => {
+    const journal = await open({
+      limits: { ...DEFAULT_JOURNAL_PAYLOAD_LIMITS, maxSessionBytes: 6_000 },
+      compaction: { minTailRows: 1, retainTailMs: 0 }
+    })
+    let rejection: unknown
+    for (let index = 0; index < 30; index += 1) {
+      try {
+        await journal.appendItem(item(index), body('x'.repeat(512)), { fence: 1 })
+        await journal.compact(1)
+      } catch (error) {
+        rejection = error
+        break
+      }
+    }
+    expect(rejection).toMatchObject({ code: 'journal_bound_exceeded' })
+  })
+
   it('refuses an append past the per-window rate bound', async () => {
     const journal = await open({
       limits: { ...DEFAULT_JOURNAL_PAYLOAD_LIMITS, maxAppendsPerWindow: 3, appendWindowMs: 60_000 }
@@ -312,13 +382,31 @@ describe('schema', () => {
     await expect(reopened.appendItem(item(1), body('b'), { fence: 1 })).rejects.toMatchObject({
       code: 'journal_read_only'
     })
-    await expect(reopened.compact()).rejects.toMatchObject({ code: 'journal_read_only' })
+    await expect(reopened.compact(1)).rejects.toMatchObject({ code: 'journal_read_only' })
     expect(reopened.readSince({ epoch: reopened.epoch, sequence: 0 })).toEqual({
       ok: false,
       reset: 'schema_unreadable'
     })
     // The unreadable row is still on disk, and nothing was compacted past it.
     expect(await readFile(logPath, 'utf-8')).toContain('"v":99')
+  })
+
+  it('degrades to read-only on a snapshot from a newer build without overwriting it', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('a'), { fence: 1 })
+    await journal.compact(1)
+    const snapshotPath = join(root, JOURNAL_SNAPSHOT_FILE)
+    const snapshot = JSON.parse(await readFile(snapshotPath, 'utf-8')) as Record<string, unknown>
+    const future = JSON.stringify({ ...snapshot, v: 99, futureState: 'keep me' })
+    await writeFile(snapshotPath, future, 'utf-8')
+
+    const reopened = await open()
+    expect(reopened.isReadOnly).toBe(true)
+    await expect(reopened.appendItem(item(1), body('b'), { fence: 1 })).rejects.toMatchObject({
+      code: 'journal_read_only'
+    })
+    await expect(reopened.compact(1)).rejects.toMatchObject({ code: 'journal_read_only' })
+    expect(await readFile(snapshotPath, 'utf-8')).toBe(future)
   })
 
   it('skips a malformed line without giving up the journal', async () => {

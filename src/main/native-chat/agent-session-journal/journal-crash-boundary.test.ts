@@ -215,7 +215,7 @@ describe('crash between provider accept and journal commit', () => {
       providerIdentity: ACCEPTED_IDENTITY,
       fence: 1
     })
-    await journal.compact()
+    await journal.compact(1)
 
     const reopened = await open()
     expect(reopened.receiptFor('cm_1')?.providerItemId).toBe(agentJournalItemKey(ACCEPTED_IDENTITY))

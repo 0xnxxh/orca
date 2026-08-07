@@ -12,7 +12,6 @@ import type {
   AgentJournalItemBody,
   AgentJournalItemIdentity,
   AgentJournalMessageItem,
-  AgentJournalResetReason,
   AgentJournalSnapshot,
   AgentJournalSubmission,
   AgentSessionJournalIdentity
@@ -24,7 +23,7 @@ import { resolveJournalResume, type JournalResume } from './journal-cursor'
 import { publishNewEpoch } from './journal-epoch-rollover'
 import { appendJournalRows, ensureJournalDir } from './journal-log-file'
 import { loadJournal } from './journal-open'
-import { DEFAULT_JOURNAL_PAYLOAD_LIMITS, type JournalPayloadLimits } from './journal-payload-bounds'
+import { DEFAULT_JOURNAL_PAYLOAD_LIMITS } from './journal-payload-bounds'
 import {
   applyJournalRow,
   createJournalReducerState,
@@ -36,6 +35,12 @@ import {
   type AgentJournalEpochReason,
   type JournalRow
 } from './journal-row-schema'
+import type {
+  AgentSessionJournalOptions,
+  JournalAppendResult,
+  JournalReadSince,
+  ResolveDispatchInput
+} from './journal-store-contracts'
 import {
   assertJournalFence,
   assertJournalWritable,
@@ -43,35 +48,12 @@ import {
 } from './journal-write-guards'
 
 export { AgentSessionJournalError } from './journal-write-guards'
-
-export type AgentSessionJournalOptions = {
-  identity: AgentSessionJournalIdentity
-  journalDir: string
-  limits?: JournalPayloadLimits
-  compaction?: JournalCompactionPolicy
-  now?: () => number
-  mintEpoch?: () => string
-}
-
-export type JournalReadSince =
-  | { ok: true; rows: JournalRow[]; cursor: AgentJournalCursor }
-  | { ok: false; reset: AgentJournalResetReason }
-
-export type ResolveDispatchInput = {
-  clientMessageId: string
-  fence: number
-  /** Set when crash reconciliation, not the live dispatch, settled this. */
-  recovered?: true
-} & (
-  | { state: 'accepted'; providerIdentity: AgentJournalItemIdentity }
-  | { state: 'rejected' | 'unknown'; reason?: string | null }
-)
-
-export type JournalAppendResult = {
-  cursor: AgentJournalCursor
-  itemId: string
-  revision: number
-}
+export type {
+  AgentSessionJournalOptions,
+  JournalAppendResult,
+  JournalReadSince,
+  ResolveDispatchInput
+} from './journal-store-contracts'
 
 export async function openAgentSessionJournal(
   options: AgentSessionJournalOptions
@@ -129,22 +111,24 @@ export class AgentSessionJournal {
   }
 
   async open(): Promise<void> {
-    await ensureJournalDir(this.journalDir)
-    const loaded = await loadJournal(this.journalDir, this.identity.sessionId)
-    if (!loaded) {
-      await this.startEpoch('session_created', 0)
-      return
-    }
-    this.state = loaded.state
-    this.tailRows = loaded.tailRows
-    this.compactedThrough = loaded.compactedThrough
-    this.sizeBytes = loaded.sizeBytes
-    this.readOnly = loaded.readOnly
-    if (loaded.corrupt && !loaded.readOnly) {
-      // A reader that observes a gap rolls the epoch rather than rendering a
-      // partial timeline; clients take the snapshot reload they already handle.
-      await this.rollEpoch('corruption', this.state.highestFence)
-    }
+    await this.serializeWrite(async () => {
+      await ensureJournalDir(this.journalDir)
+      const loaded = await loadJournal(this.journalDir, this.identity.sessionId)
+      if (!loaded) {
+        await this.startEpoch('session_created', 0)
+        return
+      }
+      this.state = loaded.state
+      this.tailRows = loaded.tailRows
+      this.compactedThrough = loaded.compactedThrough
+      this.sizeBytes = loaded.sizeBytes
+      this.readOnly = loaded.readOnly
+      if (loaded.corrupt && !loaded.readOnly) {
+        // A reader that observes a gap rolls the epoch rather than rendering a
+        // partial timeline; clients take the snapshot reload they already handle.
+        await this.startEpoch('corruption', this.state.highestFence)
+      }
+    })
   }
 
   cursor(): AgentJournalCursor {
@@ -291,27 +275,34 @@ export class AgentSessionJournal {
     return pending
   }
 
-  async compact(): Promise<void> {
-    assertJournalWritable(this.readOnly, this.identity.sessionId)
-    const result = await compactJournal({
-      journalDir: this.journalDir,
-      state: this.state,
-      tailRows: this.tailRows,
-      policy: this.compaction,
-      now: this.now()
+  async compact(fence: number): Promise<void> {
+    await this.serializeWrite(async () => {
+      assertJournalWritable(this.readOnly, this.identity.sessionId)
+      assertJournalFence(fence, this.state.highestFence)
+      this.state.highestFence = Math.max(this.state.highestFence, fence)
+      const result = await compactJournal({
+        journalDir: this.journalDir,
+        state: this.state,
+        tailRows: this.tailRows,
+        policy: this.compaction,
+        now: this.now()
+      })
+      this.tailRows = result.tailRows
+      this.compactedThrough = result.compactedThrough
+      this.state.oldestSequence = result.oldestSequence
+      this.sizeBytes = result.sizeBytes
     })
-    this.tailRows = result.tailRows
-    this.compactedThrough = result.compactedThrough
-    this.state.oldestSequence = result.oldestSequence
-    this.sizeBytes = this.tailRows.reduce((total, row) => total + journalRowByteLength(row), 0)
   }
 
   /** The escape hatch for corruption, an unreconcilable prefix, a forked handle,
    *  and an unreadable schema. It invalidates every cursor; clients reload. */
   async rollEpoch(reason: AgentJournalEpochReason, fence: number): Promise<AgentJournalCursor> {
-    assertJournalWritable(this.readOnly, this.identity.sessionId)
-    await this.startEpoch(reason, fence)
-    return this.cursor()
+    return this.serializeWrite(async () => {
+      assertJournalWritable(this.readOnly, this.identity.sessionId)
+      assertJournalFence(fence, this.state.highestFence)
+      await this.startEpoch(reason, fence)
+      return this.cursor()
+    })
   }
 
   private async startEpoch(reason: AgentJournalEpochReason, fence: number): Promise<void> {
@@ -327,7 +318,7 @@ export class AgentSessionJournal {
     this.state = published.state
     this.tailRows = [published.row]
     this.compactedThrough = 0
-    this.sizeBytes = journalRowByteLength(published.row)
+    this.sizeBytes = published.sizeBytes
   }
 
   private rowBase(
@@ -350,7 +341,7 @@ export class AgentSessionJournal {
    * callers cannot interleave and mint the same sequence.
    */
   private enqueue(build: (seq: number, ts: number) => JournalRow): Promise<JournalRow> {
-    const run = this.writes.then(async () => {
+    return this.serializeWrite(async () => {
       assertJournalWritable(this.readOnly, this.identity.sessionId)
       const ts = this.now()
       const row = build(this.state.lastSequence + 1, ts)
@@ -362,6 +353,10 @@ export class AgentSessionJournal {
       this.sizeBytes += journalRowByteLength(row)
       return row
     })
+  }
+
+  private serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writes.then(operation)
     this.writes = run.catch(() => undefined)
     return run
   }

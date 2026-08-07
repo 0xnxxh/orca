@@ -9,6 +9,7 @@
 import type { AgentJournalSubmission } from '../../../shared/agent-session-journal-types'
 import { findSequenceGap } from './journal-cursor'
 import {
+  journalSnapshotByteLength,
   readJournalLog,
   readJournalSnapshotFile,
   type JournalSnapshotFile
@@ -38,11 +39,12 @@ export async function loadJournal(
   journalDir: string,
   sessionId: string
 ): Promise<JournalLoad | null> {
-  const snapshot = await readJournalSnapshotFile(journalDir)
+  const snapshotRead = await readJournalSnapshotFile(journalDir)
+  const snapshot = snapshotRead.snapshot
   const log = await readJournalLog(journalDir)
   const epoch = resolveEpoch(snapshot, log.rows)
   if (!epoch) {
-    return log.unreadable ? emptyReadOnlyLoad(sessionId) : null
+    return log.unreadable || snapshotRead.unreadable ? emptyReadOnlyLoad(sessionId) : null
   }
 
   const compactedThrough = snapshot?.epoch === epoch ? snapshot.compactedThrough : 0
@@ -71,9 +73,11 @@ export async function loadJournal(
     state,
     tailRows,
     compactedThrough,
-    readOnly: log.unreadable,
+    readOnly: log.unreadable || snapshotRead.unreadable,
     corrupt,
-    sizeBytes: tailRows.reduce((total, row) => total + journalRowByteLength(row), 0)
+    sizeBytes:
+      (snapshot?.epoch === epoch ? journalSnapshotByteLength(snapshot) : 0) +
+      tailRows.reduce((total, row) => total + journalRowByteLength(row), 0)
   }
 }
 
@@ -115,6 +119,9 @@ function seedState(
   for (const item of snapshot.items) {
     state.items.set(item.itemId, item)
   }
+  for (const tombstone of snapshot.tombstones ?? []) {
+    state.tombstones.set(tombstone.itemId, tombstone.revision)
+  }
   for (const submission of snapshot.submissions) {
     state.submissions.set(submission.clientMessageId, { ...submission } as AgentJournalSubmission)
   }
@@ -131,6 +138,7 @@ function seedState(
   }
   state.lastSequence = snapshot.compactedThrough
   state.oldestSequence = snapshot.compactedThrough + 1
+  state.highestFence = snapshot.highestFence ?? 0
   return state
 }
 
