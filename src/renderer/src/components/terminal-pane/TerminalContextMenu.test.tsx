@@ -152,7 +152,9 @@ describe('TerminalContextMenu', () => {
   })
 
   it('labels commands and add actions by their owning host', () => {
+    const onAddQuickCommand = vi.fn()
     const rendered = renderMenu({
+      onAddQuickCommand,
       quickCommandHosts: [
         {
           hostId: 'local',
@@ -187,5 +189,14 @@ describe('TerminalContextMenu', () => {
     expect(rendered).toContain('Local Mac')
     expect(rendered).toContain('Build Server')
     expect(markup.match(/Add to \{\{value0\}\}…/g)).toHaveLength(2)
+
+    const addItems = items.list.filter(
+      (item) => childrenText(item.children) === 'Add to {{value0}}…'
+    )
+    addItems.forEach((item) => item.onSelect?.())
+    expect(onAddQuickCommand.mock.calls.map(([hostId]) => hostId)).toEqual([
+      'local',
+      'runtime:build'
+    ])
   })
 })

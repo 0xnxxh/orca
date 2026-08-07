@@ -73,7 +73,7 @@ async function mutateLocalCommands(
     const message = error instanceof Error ? error.message : 'Failed to save quick command.'
     toast.error(
       translate(
-        'auto.store.slices.terminalQuickCommandHosts.saveFailed',
+        'auto.store.slices.terminal.quick.command.hosts.5b7d781d67',
         'Failed to save quick command'
       ),
       { description: message }
@@ -127,7 +127,7 @@ async function mutateRemoteCommands(
       }))
       toast.error(
         translate(
-          'auto.store.slices.terminalQuickCommandHosts.saveFailed',
+          'auto.store.slices.terminal.quick.command.hosts.5b7d781d67',
           'Failed to save quick command'
         ),
         { description: message }

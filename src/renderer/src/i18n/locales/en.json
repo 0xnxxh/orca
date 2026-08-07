@@ -371,8 +371,14 @@
             "tryAgain": "Try again"
           }
         },
-        "terminalQuickCommandHosts": {
-          "saveFailed": "Failed to save quick command"
+        "terminal": {
+          "quick": {
+            "command": {
+              "hosts": {
+                "5b7d781d67": "Failed to save quick command"
+              }
+            }
+          }
         }
       }
     },
@@ -2809,7 +2815,7 @@
             "925f49f210": "Expand Pane",
             "df766809e0": "Collapse Pane",
             "cff67afad1": "Copy Context",
-            "addQuickCommandToHost": "Add to {{value0}}…"
+            "15dd899676": "Add to {{value0}}…"
           },
           "TerminalErrorToast": {
             "e4aa243f8c": "Restart daemon",
@@ -3099,8 +3105,7 @@
             "c781f992e4": "destructive",
             "be8f0ff166": "Delete",
             "f3a8c2d1e7": "Search quick commands...",
-            "b4e7f9a2c1": "No commands match",
-            "commandOnHost": "Command on {{value0}}"
+            "b4e7f9a2c1": "No commands match"
           },
           "shell": {
             "icons": {
@@ -3165,6 +3170,10 @@
           },
           "TerminalTabLeadingIcon": {
             "7ab2964bea": "Unread agent completion"
+          },
+          "TabBarQuickCommandAddActions": {
+            "45a2f36d51": "Command",
+            "b856c833ae": "Command on {{value0}}"
           }
         }
       },
@@ -6669,11 +6678,12 @@
           "44923dd982": "destructive",
           "ec1ed99e70": "Delete",
           "d1d0976320": "None",
-          "savedOn": "Saved on",
-          "unsupportedHost": "Update this Orca server to manage its quick commands.",
-          "loadFailed": "Could not load commands from this host.",
-          "retry": "Retry",
-          "loading": "Loading commands…"
+          "89f7e57fcc": "Saved on",
+          "d59bd333c3": "Update this Orca server to manage its quick commands.",
+          "f2bf411640": "Could not load commands from this host.",
+          "7ecfee5b8e": "Retry",
+          "601d6af51f": "Loading commands…",
+          "923ba89646": "Could not refresh commands from this host. Showing the last loaded commands."
         },
         "RecentTabOrderControl": {
           "3b17c81ede": "Tab strip order",

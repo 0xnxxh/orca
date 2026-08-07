@@ -79,6 +79,7 @@ export function useTerminalQuickCommandHosts(worktreeId: string): {
   })
   const loadRemote = useAppStore((state) => state.loadRuntimeTerminalQuickCommands)
   const parsedExecutionHost = parseExecutionHostId(executionHostId)
+  const remoteHostId = parsedExecutionHost?.kind === 'runtime' ? parsedExecutionHost.id : null
   const remoteEnvironmentId =
     parsedExecutionHost?.kind === 'runtime' ? parsedExecutionHost.environmentId : null
   const remoteConnectionGeneration = useAppStore((state) =>
@@ -104,13 +105,13 @@ export function useTerminalQuickCommandHosts(worktreeId: string): {
       }
     ]
     if (
+      !remoteHostId ||
       !remoteEnvironmentId ||
       remoteState?.supported !== true ||
       remoteState.connectionGeneration !== remoteConnectionGeneration
     ) {
       return result
     }
-    const remoteHostId = executionHostId as `runtime:${string}`
     result.push({
       commands: remoteState.commands,
       hostId: remoteHostId,
@@ -118,9 +119,9 @@ export function useTerminalQuickCommandHosts(worktreeId: string): {
     })
     return result
   }, [
-    executionHostId,
     remoteConnectionGeneration,
     remoteEnvironmentId,
+    remoteHostId,
     remoteState,
     runtimeEnvironments,
     settings

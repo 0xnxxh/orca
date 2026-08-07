@@ -46,6 +46,22 @@ export function shouldOpenQuickCommandAddIntent(
   return Boolean(addCommandIntentSignal && consumedAddIntentSignal !== addCommandIntentSignal)
 }
 
+export function getAvailableQuickCommandHostId(
+  selectedHostId: ExecutionHostId,
+  hostOptions: readonly { id: ExecutionHostId }[]
+): ExecutionHostId {
+  return hostOptions.some((host) => host.id === selectedHostId)
+    ? selectedHostId
+    : LOCAL_EXECUTION_HOST_ID
+}
+
+export function shouldShowQuickCommandsRefreshError(
+  commandsAreCurrent: boolean,
+  runtimeCommands: { error: string | null; ready: boolean } | undefined
+): boolean {
+  return commandsAreCurrent && runtimeCommands?.ready === true && Boolean(runtimeCommands.error)
+}
+
 export function QuickCommandsPane({
   settings,
   addCommandIntentSignal
@@ -96,6 +112,12 @@ export function QuickCommandsPane({
   // automatically rather than being silently excluded.
   const [scopeSelection, setScopeSelection] = useState<ReadonlySet<string> | null>(null)
   const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
+
+  const availableHostId = getAvailableQuickCommandHostId(selectedHostId, hostOptions)
+  if (availableHostId !== selectedHostId) {
+    setSelectedHostId(availableHostId)
+    setScopeSelection(null)
+  }
 
   const hostRepos = useMemo(
     () =>
@@ -227,7 +249,9 @@ export function QuickCommandsPane({
       </div>
 
       <div className="space-y-2">
-        <Label>{translate('auto.components.settings.QuickCommandsPane.savedOn', 'Saved on')}</Label>
+        <Label>
+          {translate('auto.components.settings.QuickCommandsPane.89f7e57fcc', 'Saved on')}
+        </Label>
         <Select
           value={selectedHostId}
           onValueChange={(value) => {
@@ -261,7 +285,7 @@ export function QuickCommandsPane({
       {selectedRuntimeCommandsAreCurrent && selectedRuntimeCommands?.supported === false ? (
         <div className="px-3 py-6 text-sm text-muted-foreground">
           {translate(
-            'auto.components.settings.QuickCommandsPane.unsupportedHost',
+            'auto.components.settings.QuickCommandsPane.d59bd333c3',
             'Update this Orca server to manage its quick commands.'
           )}
         </div>
@@ -271,7 +295,7 @@ export function QuickCommandsPane({
         <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-3">
           <span className="text-sm text-muted-foreground">
             {translate(
-              'auto.components.settings.QuickCommandsPane.loadFailed',
+              'auto.components.settings.QuickCommandsPane.f2bf411640',
               'Could not load commands from this host.'
             )}
           </span>
@@ -284,23 +308,49 @@ export function QuickCommandsPane({
               void loadRuntimeCommands(selectedEnvironmentId, { force: true })
             }
           >
-            {translate('auto.components.settings.QuickCommandsPane.retry', 'Retry')}
+            {translate('auto.components.settings.QuickCommandsPane.7ecfee5b8e', 'Retry')}
           </Button>
         </div>
       ) : selectedEnvironmentId &&
         (!selectedRuntimeCommandsAreCurrent ||
           (selectedRuntimeCommands?.loading && !selectedRuntimeCommands.ready)) ? (
         <div className="px-3 py-6 text-sm text-muted-foreground">
-          {translate('auto.components.settings.QuickCommandsPane.loading', 'Loading commands…')}
+          {translate('auto.components.settings.QuickCommandsPane.601d6af51f', 'Loading commands…')}
         </div>
       ) : (
-        <QuickCommandsList
-          commands={commands}
-          visibleCommands={visibleCommands}
-          repoById={repoById}
-          onEdit={(command) => setEditor({ mode: 'edit', command })}
-          onRemove={(command) => void removeCommand(command)}
-        />
+        <>
+          {shouldShowQuickCommandsRefreshError(
+            selectedRuntimeCommandsAreCurrent,
+            selectedRuntimeCommands
+          ) ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-3">
+              <span className="text-sm text-muted-foreground">
+                {translate(
+                  'auto.components.settings.QuickCommandsPane.923ba89646',
+                  'Could not refresh commands from this host. Showing the last loaded commands.'
+                )}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() =>
+                  selectedEnvironmentId &&
+                  void loadRuntimeCommands(selectedEnvironmentId, { force: true })
+                }
+              >
+                {translate('auto.components.settings.QuickCommandsPane.7ecfee5b8e', 'Retry')}
+              </Button>
+            </div>
+          ) : null}
+          <QuickCommandsList
+            commands={commands}
+            visibleCommands={visibleCommands}
+            repoById={repoById}
+            onEdit={(command) => setEditor({ mode: 'edit', command })}
+            onRemove={(command) => void removeCommand(command)}
+          />
+        </>
       )}
 
       {editor !== null ? (

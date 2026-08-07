@@ -20,9 +20,12 @@ export function TabBarQuickCommandAddActions({
         >
           <Play className="size-3.5" />
           {hosts.length === 1
-            ? translate('auto.components.tab.bar.TabBarQuickCommandsButton.a2c7a33831', 'Command')
+            ? translate(
+                'auto.components.tab.bar.TabBarQuickCommandAddActions.45a2f36d51',
+                'Command'
+              )
             : translate(
-                'auto.components.tab.bar.TabBarQuickCommandsButton.commandOnHost',
+                'auto.components.tab.bar.TabBarQuickCommandAddActions.b856c833ae',
                 'Command on {{value0}}',
                 { value0: host.label }
               )}

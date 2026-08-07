@@ -258,7 +258,7 @@ export default function TerminalContextMenu({
                       'Add Quick Command…'
                     )
                   : translate(
-                      'auto.components.terminal.pane.TerminalContextMenu.addQuickCommandToHost',
+                      'auto.components.terminal.pane.TerminalContextMenu.15dd899676',
                       'Add to {{value0}}…',
                       { value0: host.label }
                     )}
