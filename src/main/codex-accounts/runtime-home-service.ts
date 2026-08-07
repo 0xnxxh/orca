@@ -259,17 +259,23 @@ export class CodexRuntimeHomeService {
     return this.getRuntimeHomePath()
   }
 
-  beginHostSystemDefaultSessionMigrationLaunch(codexHomePath: string | null): boolean | null {
+  beginHostSystemDefaultSessionMigrationLaunch(
+    codexHomePath: string | null,
+    options: { reattached?: boolean; launchEnv?: NodeJS.ProcessEnv } = {}
+  ): boolean | null {
     if (
-      !this.hostSystemDefaultSessionMigrationPending ||
       !this.isHostSystemDefaultSessionMigrationEligible() ||
-      !codexHomePath ||
-      normalizeRuntimePathForComparison(codexHomePath) !==
-        normalizeRuntimePathForComparison(this.getRuntimeHomePath())
+      (!codexHomePath && !options.reattached) ||
+      (codexHomePath &&
+        normalizeRuntimePathForComparison(codexHomePath) !==
+          normalizeRuntimePathForComparison(this.getRuntimeHomePath()))
     ) {
       return null
     }
-    return this.pendingHostSystemDefaultSessionMigrationNeedsFullScan
+    // Why: an older pass can clear launch preparation while PTY spawn awaits recovery.
+    return this.invalidateBackfillAfterManagedSystemDefaultLaunch(
+      options.reattached && !codexHomePath ? undefined : options.launchEnv
+    )
   }
 
   isHostSystemDefaultSessionMigrationEligible(): boolean {

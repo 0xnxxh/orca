@@ -101,6 +101,7 @@ async function runCodexSessionBackfillOncePerHost(
     !summary.stopped &&
     options.shouldStop?.() !== true &&
     options.writeCompletionMarker !== false &&
+    options.canWriteCompletionMarker?.() !== false &&
     (options.scanDates === undefined || options.writeBoundedCompletionMarker === true) &&
     summary.failedFiles === 0 &&
     summary.failedDirectories === 0 &&
@@ -313,14 +314,7 @@ function isNotFoundError(error: unknown): boolean {
 
 function isUnsupportedHardlinkError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code
-  return (
-    code === 'EXDEV' ||
-    code === 'EPERM' ||
-    code === 'EACCES' ||
-    code === 'ENOTSUP' ||
-    code === 'EOPNOTSUPP' ||
-    code === 'ENOSYS'
-  )
+  return code === 'EXDEV' || code === 'ENOTSUP' || code === 'EOPNOTSUPP' || code === 'ENOSYS'
 }
 
 function describeError(error: unknown): string {

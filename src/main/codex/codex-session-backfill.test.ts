@@ -25,7 +25,10 @@ const { fsMockState } = vi.hoisted(() => ({
   fsMockState: {
     failLink: false,
     failLinkTransiently: false,
+    failLinkPermission: false,
     raceTargetIntoExistence: false,
+    failMarkerRm: false,
+    failMarkerReplacement: false,
     failAuditMkdirOnce: false,
     failAuditWrites: false,
     failMkdirPath: null as string | null,
@@ -43,6 +46,30 @@ vi.mock('node:fs', async () => {
         return false
       }
       return actual.existsSync(...args)
+    },
+    rmSync: (...args: Parameters<typeof actual.rmSync>) => {
+      if (
+        fsMockState.failMarkerRm &&
+        String(args[0]).includes('codex-session-backfill') &&
+        String(args[0]).endsWith('backfill-complete.json')
+      ) {
+        const error = new Error('EACCES: marker removal failed') as NodeJS.ErrnoException
+        error.code = 'EACCES'
+        throw error
+      }
+      return actual.rmSync(...args)
+    },
+    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+      if (
+        fsMockState.failMarkerReplacement &&
+        String(args[1]).includes('codex-session-backfill') &&
+        String(args[1]).endsWith('backfill-complete.json')
+      ) {
+        const error = new Error('EACCES: marker replacement failed') as NodeJS.ErrnoException
+        error.code = 'EACCES'
+        throw error
+      }
+      return actual.renameSync(...args)
     }
   }
 })
@@ -99,6 +126,11 @@ vi.mock('node:fs/promises', async () => {
       if (fsMockState.failLinkTransiently && String(args[0]).includes('codex-runtime-home')) {
         const error = new Error('EIO: transient hardlink failure') as NodeJS.ErrnoException
         error.code = 'EIO'
+        throw error
+      }
+      if (fsMockState.failLinkPermission && String(args[0]).includes('codex-runtime-home')) {
+        const error = new Error('EACCES: hardlink permission denied') as NodeJS.ErrnoException
+        error.code = 'EACCES'
         throw error
       }
       return actual.link(...args)
@@ -183,7 +215,10 @@ function readAuditActions(): string[] {
 beforeEach(() => {
   fsMockState.failLink = false
   fsMockState.failLinkTransiently = false
+  fsMockState.failLinkPermission = false
   fsMockState.raceTargetIntoExistence = false
+  fsMockState.failMarkerRm = false
+  fsMockState.failMarkerReplacement = false
   fsMockState.failAuditMkdirOnce = false
   fsMockState.failAuditWrites = false
   fsMockState.failMkdirPath = null
@@ -427,6 +462,18 @@ describe('backfillManagedCodexSessionsIntoSystemHome', () => {
     expect(readAuditActions()).toEqual(['failed', 'run-summary'])
   })
 
+  it('keeps hardlink permission failures retryable', async () => {
+    fsMockState.failLinkPermission = true
+    const relativePath = join('2026', '05', '26', 'rollout-a.jsonl')
+    writeManagedSession(relativePath, '{"id":"a"}\n')
+
+    const summary = await startCodexSessionBackfillInBackground()
+
+    expect(summary).toMatchObject({ failedFiles: 1, skippedUnsupportedFilesystemFiles: 0 })
+    expect(existsSync(join(getSystemSessionsRoot(), relativePath))).toBe(false)
+    expect(existsSync(getMarkerPath())).toBe(false)
+  })
+
   it('records per-file failures without aborting the run', async () => {
     fsMockState.failLinkTransiently = true
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
@@ -524,6 +571,17 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(existsSync(getMarkerPath())).toBe(true)
   })
 
+  it('rechecks launch state before publishing completion', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+
+    const summary = await startCodexSessionBackfillInBackground({
+      canWriteCompletionMarker: () => false
+    })
+
+    expect(summary).toMatchObject({ linkedFiles: 1 })
+    expect(existsSync(getMarkerPath())).toBe(false)
+  })
+
   it('keeps an invalidated active pass from recreating the completion marker', async () => {
     writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
     let invalidated = false
@@ -547,6 +605,31 @@ describe('startCodexSessionBackfillInBackground', () => {
     expect(recovered).toMatchObject({ skippedExistingFiles: 1, failedHealAuditRecords: 0 })
     expect(existsSync(getMarkerPath())).toBe(true)
     expect(readFileSync(getAuditLogPath(), 'utf-8')).toBe(racedAudit)
+  })
+
+  it('replaces a stale marker when direct removal fails', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+    fsMockState.failMarkerRm = true
+
+    invalidateCodexSessionBackfillMarker(getMarkerPath())
+
+    expect(JSON.parse(readFileSync(getMarkerPath(), 'utf-8'))).toMatchObject({ version: 0 })
+    const recovered = await startCodexSessionBackfillInBackground()
+    expect(recovered).toMatchObject({ skippedExistingFiles: 1 })
+    expect(JSON.parse(readFileSync(getMarkerPath(), 'utf-8'))).toMatchObject({ version: 3 })
+  })
+
+  it('fails launch preparation when a stale marker cannot be invalidated', async () => {
+    writeManagedSession(join('2026', '05', '26', 'rollout-a.jsonl'), '{"id":"a"}\n')
+    await startCodexSessionBackfillInBackground()
+    fsMockState.failMarkerRm = true
+    fsMockState.failMarkerReplacement = true
+
+    expect(() => invalidateCodexSessionBackfillMarker(getMarkerPath())).toThrow(
+      'Failed to invalidate Codex session backfill marker'
+    )
+    expect(JSON.parse(readFileSync(getMarkerPath(), 'utf-8'))).toMatchObject({ version: 3 })
   })
 
   it('writes a completion marker and skips the walk on later runs', async () => {

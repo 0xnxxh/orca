@@ -76,5 +76,16 @@ export function invalidateCodexSessionBackfillMarker(markerPath: string): void {
     rmSync(markerPath, { force: true })
   } catch (error) {
     console.warn('[codex-session-backfill] Failed to invalidate completion marker:', error)
+    try {
+      writeFileAtomically(
+        markerPath,
+        `${JSON.stringify({ version: 0, invalidatedAt: Date.now() })}\n`
+      )
+    } catch (fallbackError) {
+      throw new AggregateError(
+        [error, fallbackError],
+        'Failed to invalidate Codex session backfill marker'
+      )
+    }
   }
 }

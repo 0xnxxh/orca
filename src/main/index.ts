@@ -390,16 +390,31 @@ let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
 
-function handleCodexPtySpawned(args: { id: string; codexHomePath: string | null }): void {
+function handleCodexHomePtySpawned(args: {
+  id: string
+  codexHomePath: string | null
+  reattached?: boolean
+  launchEnv?: NodeJS.ProcessEnv
+  startedAt?: Date
+  startedSequence?: number
+}): void {
   const fullScanRequired =
-    codexRuntimeHome?.beginHostSystemDefaultSessionMigrationLaunch(args.codexHomePath) ?? null
+    codexRuntimeHome?.beginHostSystemDefaultSessionMigrationLaunch(args.codexHomePath, {
+      reattached: args.reattached,
+      launchEnv: args.launchEnv
+    }) ?? null
   if (fullScanRequired !== null) {
-    codexSessionMigration?.beginLaunch(args.id, fullScanRequired)
+    codexSessionMigration?.beginLaunch(
+      args.id,
+      args.reattached === true || fullScanRequired,
+      args.startedAt,
+      args.startedSequence
+    )
   }
 }
 
-function handlePtyExit(id: string): void {
-  codexSessionMigration?.finishLaunch(id)
+function handlePtyExit(id: string, exitSequence: number): void {
+  codexSessionMigration?.finishLaunch(id, exitSequence)
 }
 // Why: on Windows a CLI launch that lost ELECTRON_RUN_AS_NODE would boot the GUI and exit silently; redirect to node mode before the lock gate below.
 // Both redirects run before the serve-argv rewrite so they still match on the launch argv verbatim.
@@ -1409,7 +1424,7 @@ function openMainWindow(): BrowserWindow {
       },
       // Why: let the PTY layer skip its orphan sweep on the recovery reload that re-fires did-finish-load, so live local sessions survive (#5787).
       isRecoveryReloadInFlight,
-      onCodexPtySpawned: handleCodexPtySpawned,
+      onCodexHomePtySpawned: handleCodexHomePtySpawned,
       onPtyExit: handlePtyExit,
       onBeforeUpdateQuit: () =>
         preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store }),
@@ -2896,7 +2911,7 @@ void app.whenReady().then(async () => {
       store,
       prepareCodexSessionResumeForLaunch,
       {
-        onCodexPtySpawned: handleCodexPtySpawned,
+        onCodexHomePtySpawned: handleCodexHomePtySpawned,
         onPtyExit: handlePtyExit
       }
     )

@@ -32,6 +32,8 @@ export type CodexSessionBackfillOptions = CodexSessionBridgeIncrementalOptions &
   writeCompletionMarker?: boolean
   /** Final launch scans can extend a previously certified full-tree baseline. */
   writeBoundedCompletionMarker?: boolean
+  /** Rechecks launch scheduling state immediately before marker publication. */
+  canWriteCompletionMarker?: () => boolean
 }
 
 export type CodexSessionBackfillDate = readonly [year: string, month: string, day: string]

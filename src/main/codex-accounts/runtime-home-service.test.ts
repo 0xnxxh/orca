@@ -1006,6 +1006,7 @@ describe('CodexRuntimeHomeService', () => {
     const service = new CodexRuntimeHomeService(store as never)
     expect(service.prepareForCodexLaunch()).toBe(getRuntimeCodexHomePath())
     expect(existsSync(markerPath)).toBe(false)
+    service.finishHostSystemDefaultSessionMigrationPass()
     expect(service.beginHostSystemDefaultSessionMigrationLaunch(getRuntimeCodexHomePath())).toBe(
       true
     )
@@ -1020,13 +1021,38 @@ describe('CodexRuntimeHomeService', () => {
       'utf-8'
     )
     service.prepareForCodexLaunch()
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({
+        version: 3,
+        systemSessionsRoot: join(getSystemCodexHomePath(), 'sessions'),
+        summary: { scannedFiles: 1 }
+      })}\n`,
+      'utf-8'
+    )
     expect(service.beginHostSystemDefaultSessionMigrationLaunch(getRuntimeCodexHomePath())).toBe(
       false
     )
+    expect(existsSync(markerPath)).toBe(false)
     service.prepareForCodexLaunch()
     expect(service.beginHostSystemDefaultSessionMigrationLaunch(getRuntimeCodexHomePath())).toBe(
       false
     )
+    expect(service.beginHostSystemDefaultSessionMigrationLaunch(null)).toBeNull()
+    service.finishHostSystemDefaultSessionMigrationPass()
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({
+        version: 3,
+        systemSessionsRoot: join(getSystemCodexHomePath(), 'sessions'),
+        summary: { scannedFiles: 1 }
+      })}\n`,
+      'utf-8'
+    )
+    expect(service.beginHostSystemDefaultSessionMigrationLaunch(null, { reattached: true })).toBe(
+      false
+    )
+    expect(existsSync(markerPath)).toBe(false)
     store.updateSettings({
       codexSessionSourceHome: { host: join(testState.fakeHomeDir, 'moved-history'), wsl: {} }
     })
@@ -1076,7 +1102,9 @@ describe('CodexRuntimeHomeService', () => {
     )
     expect(existsSync(markerPath)).toBe(true)
     expect(
-      service.beginHostSystemDefaultSessionMigrationLaunch(getRuntimeCodexHomePath())
+      service.beginHostSystemDefaultSessionMigrationLaunch(getRuntimeCodexHomePath(), {
+        launchEnv: { CODEX_HOME: perSpawnCustomHome }
+      })
     ).toBeNull()
     if (process.platform !== 'win32') {
       // Why: shell startup CODEX_HOME discovery is a POSIX-shell lane; Windows

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CodexSessionBackfillOptions } from './codex-session-backfill-types'
 import { createCodexSessionMigrationScheduler } from './codex-session-migration-scheduler'
 
 describe('createCodexSessionMigrationScheduler', () => {
@@ -68,7 +69,7 @@ describe('createCodexSessionMigrationScheduler', () => {
   })
 
   it('covers both launch and run dates when a delayed pass crosses midnight', async () => {
-    vi.setSystemTime(new Date(2026, 7, 5, 23, 59, 59, 500))
+    vi.setSystemTime(new Date('2026-08-05T23:59:59.500Z'))
     const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
     const scheduler = createCodexSessionMigrationScheduler({
       isEligible: () => true,
@@ -356,7 +357,7 @@ describe('createCodexSessionMigrationScheduler', () => {
   })
 
   it('finishes a launch generation only after its PTY exits and every date is rescanned', async () => {
-    vi.setSystemTime(new Date(2026, 7, 5, 23, 59, 59))
+    vi.setSystemTime(new Date('2026-08-05T23:59:59Z'))
     const finishScheduledRun = vi.fn()
     const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
     const scheduler = createCodexSessionMigrationScheduler({
@@ -379,7 +380,7 @@ describe('createCodexSessionMigrationScheduler', () => {
     )
     expect(finishScheduledRun).not.toHaveBeenCalled()
 
-    vi.setSystemTime(new Date(2026, 7, 7, 1, 0, 0))
+    vi.setSystemTime(new Date('2026-08-07T01:00:00Z'))
     scheduler.finishLaunch('pty-1')
     await vi.advanceTimersByTimeAsync(1_000)
     await vi.waitFor(() => expect(startBackfill).toHaveBeenCalledTimes(2))
@@ -432,5 +433,109 @@ describe('createCodexSessionMigrationScheduler', () => {
       undefined
     )
     await vi.waitFor(() => expect(finishScheduledRun).toHaveBeenCalledOnce())
+  })
+
+  it('blocks marker publication when a newer launch pass is pending', async () => {
+    let releaseBackfill: ((result: { stopped: boolean }) => void) | undefined
+    const startBackfill = vi.fn(
+      (_options: CodexSessionBackfillOptions) =>
+        new Promise<{ stopped: boolean }>((resolve) => {
+          releaseBackfill = resolve
+        })
+    )
+    const startIndexHeal = vi.fn().mockResolvedValue(null)
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal,
+      initialDelayMs: 1_000
+    })
+
+    scheduler.scheduleRun()
+    await vi.advanceTimersByTimeAsync(1_000)
+    const firstOptions = startBackfill.mock.calls[0]?.[0]
+    expect(firstOptions?.canWriteCompletionMarker?.()).toBe(true)
+
+    scheduler.beginLaunch('pty-2')
+    expect(firstOptions?.canWriteCompletionMarker?.()).toBe(false)
+    scheduler.finishLaunch('pty-2')
+    expect(firstOptions?.canWriteCompletionMarker?.()).toBe(false)
+
+    releaseBackfill?.({ stopped: false })
+    await vi.waitFor(() => expect(startIndexHeal).toHaveBeenCalledOnce())
+  })
+
+  it('turns an exit-before-begin race into a full recovery pass', async () => {
+    const finishScheduledRun = vi.fn()
+    const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      finishScheduledRun,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.finishLaunch('pty-fast-exit', 2)
+    scheduler.beginLaunch('pty-fast-exit', false, new Date(), 1)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({ scanDates: undefined, writeBoundedCompletionMarker: false }),
+      undefined
+    )
+    await vi.waitFor(() => expect(finishScheduledRun).toHaveBeenCalledOnce())
+  })
+
+  it('does not consume an exit from an earlier stable-id incarnation', async () => {
+    const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.finishLaunch('stable-pty', 1)
+    scheduler.beginLaunch('stable-pty', false, new Date(), 2)
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({ writeCompletionMarker: false }),
+      undefined
+    )
+  })
+
+  it('preserves the pre-spawn UTC date when launch setup crosses midnight', async () => {
+    vi.setSystemTime(new Date('2026-08-06T00:00:01Z'))
+    const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    scheduler.beginLaunch('pty-midnight', false, new Date('2026-08-05T23:59:59Z'))
+    scheduler.finishLaunch('pty-midnight')
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(startBackfill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanDates: [
+          ['2026', '08', '05'],
+          ['2026', '08', '06']
+        ]
+      }),
+      undefined
+    )
   })
 })

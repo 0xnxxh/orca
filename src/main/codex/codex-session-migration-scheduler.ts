@@ -9,9 +9,19 @@ type MigrationRun = (
   systemCodexHomePathOverride?: string
 ) => Promise<unknown>
 
+const EARLY_PTY_EXIT_RETENTION_MS = 60_000
+const MAX_EARLY_PTY_EXITS = 256
+
+type EarlyPtyExit = { sequence: number; recordedAt: number }
+
 export type CodexSessionMigrationScheduler = {
-  beginLaunch(leaseId: string, fullScanRequired?: boolean): void
-  finishLaunch(leaseId: string): void
+  beginLaunch(
+    leaseId: string,
+    fullScanRequired?: boolean,
+    startedAt?: Date,
+    startedSequence?: number
+  ): void
+  finishLaunch(leaseId: string, exitSequence?: number): void
   scheduleInitialRun(): void
   scheduleRun(fullScanRequired?: boolean): void
   requestRun(): void
@@ -36,6 +46,7 @@ export function createCodexSessionMigrationScheduler(args: {
   let pendingFullScan = false
   let migrationTask: Promise<void> | null = null
   const activeLaunches = new Map<string, Date>()
+  const earlyPtyExits = new Map<string, EarlyPtyExit>()
   let activeRunStopObserved = false
   let rerunRequested = false
 
@@ -73,7 +84,9 @@ export function createCodexSessionMigrationScheduler(args: {
     }
     const fullScanRequired = pendingFullScan || preparationNeedsFullScan
     const scanDates =
-      !fullScanRequired && pendingScanDates.size > 0 ? [...pendingScanDates.values()] : undefined
+      !fullScanRequired && pendingScanDates.size > 0
+        ? [...pendingScanDates.values()].sort(compareBackfillDates)
+        : undefined
     pendingScanDates.clear()
     pendingFullScan = false
     activeRunStopObserved = false
@@ -94,7 +107,12 @@ export function createCodexSessionMigrationScheduler(args: {
           ignoreCompletionMarker: isScheduledRun,
           writeCompletionMarker: activeLaunches.size === 0,
           writeBoundedCompletionMarker:
-            isScheduledRun && activeLaunches.size === 0 && !fullScanRequired
+            isScheduledRun && activeLaunches.size === 0 && !fullScanRequired,
+          canWriteCompletionMarker: () =>
+            activeLaunches.size === 0 &&
+            scheduledTimer === null &&
+            pendingScheduledRunGeneration === null &&
+            (!isScheduledRun || activeScheduledRunGeneration === scheduledRunGeneration)
         },
         systemCodexHomePathOverride
       )
@@ -151,7 +169,7 @@ export function createCodexSessionMigrationScheduler(args: {
         const currentDate = getCodexSessionBackfillDate()
         scheduledScanDates.set(currentDate.join('-'), currentDate)
       }
-      const scanDates = [...scheduledScanDates.values()]
+      const scanDates = [...scheduledScanDates.values()].sort(compareBackfillDates)
       scheduledScanDates.clear()
       const fullScanRequired = scheduledFullScan
       scheduledFullScan = false
@@ -172,16 +190,23 @@ export function createCodexSessionMigrationScheduler(args: {
   }
 
   return {
-    beginLaunch(leaseId, fullScanRequired = false): void {
+    beginLaunch(leaseId, fullScanRequired = false, startedAt = new Date(), startedSequence): void {
       if (args.isQuitting() || activeLaunches.has(leaseId)) {
         return
       }
-      activeLaunches.set(leaseId, new Date())
+      if (consumeEarlyPtyExit(earlyPtyExits, leaseId, startedSequence)) {
+        scheduleRun(true)
+        return
+      }
+      activeLaunches.set(leaseId, startedAt)
       scheduleRun(fullScanRequired)
     },
-    finishLaunch(leaseId): void {
+    finishLaunch(leaseId, exitSequence): void {
       const startedAt = activeLaunches.get(leaseId)
       if (!startedAt) {
+        if (exitSequence !== undefined) {
+          recordEarlyPtyExit(earlyPtyExits, leaseId, exitSequence)
+        }
         return
       }
       activeLaunches.delete(leaseId)
@@ -208,13 +233,60 @@ function getCodexSessionBackfillDatesBetween(
   finishedAt: Date
 ): CodexSessionBackfillDate[] {
   const dates: CodexSessionBackfillDate[] = []
-  const cursor = new Date(startedAt.getFullYear(), startedAt.getMonth(), startedAt.getDate())
-  const last = new Date(finishedAt.getFullYear(), finishedAt.getMonth(), finishedAt.getDate())
+  const cursor = new Date(
+    Date.UTC(startedAt.getUTCFullYear(), startedAt.getUTCMonth(), startedAt.getUTCDate())
+  )
+  const last = new Date(
+    Date.UTC(finishedAt.getUTCFullYear(), finishedAt.getUTCMonth(), finishedAt.getUTCDate())
+  )
   while (cursor <= last) {
     dates.push(getCodexSessionBackfillDate(cursor))
-    cursor.setDate(cursor.getDate() + 1)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
   }
   return dates
+}
+
+function compareBackfillDates(
+  left: CodexSessionBackfillDate,
+  right: CodexSessionBackfillDate
+): number {
+  return left.join('-').localeCompare(right.join('-'))
+}
+
+function recordEarlyPtyExit(
+  exits: Map<string, EarlyPtyExit>,
+  leaseId: string,
+  sequence: number
+): void {
+  const now = Date.now()
+  for (const [id, exit] of exits) {
+    if (now - exit.recordedAt > EARLY_PTY_EXIT_RETENTION_MS) {
+      exits.delete(id)
+    }
+  }
+  exits.set(leaseId, { sequence, recordedAt: now })
+  while (exits.size > MAX_EARLY_PTY_EXITS) {
+    const oldestLeaseId = exits.keys().next().value
+    if (oldestLeaseId === undefined) {
+      break
+    }
+    exits.delete(oldestLeaseId)
+  }
+}
+
+function consumeEarlyPtyExit(
+  exits: Map<string, EarlyPtyExit>,
+  leaseId: string,
+  startedSequence: number | undefined
+): boolean {
+  const exit = exits.get(leaseId)
+  exits.delete(leaseId)
+  return (
+    exit !== undefined &&
+    startedSequence !== undefined &&
+    exit.sequence > startedSequence &&
+    Date.now() - exit.recordedAt <= EARLY_PTY_EXIT_RETENTION_MS
+  )
 }
 
 function isStoppedMigrationResult(result: unknown): boolean {
