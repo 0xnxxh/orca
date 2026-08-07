@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { installPreviewTerminalKeyHandler } from './preview-terminal-key-handler'
 import { createPreviewGridClaim } from './preview-grid-claim'
+import { createPreviewFitScheduler } from './preview-terminal-fit'
 import type { TerminalPreviewDataPayload } from '../../../../shared/terminal-preview'
 
 const PREVIEW_SCROLLBACK_ROWS = 24
@@ -59,6 +60,9 @@ export function AgentTerminalPreview({
 }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  // Why: the appearance effect rewrites options.fontSize from settings, which
+  // clobbers the fit-scaled font; it re-runs the fit through this ref.
+  const scheduleFitRef = useRef<(() => void) | null>(null)
   const settings = useAppStore((state) => state.settings)
   const systemPrefersDark = useSystemPrefersDark()
   const macOptionAsAlt = useEffectiveMacOptionAsAlt(settings?.terminalMacOptionAsAlt)
@@ -113,36 +117,14 @@ export function AgentTerminalPreview({
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     const pendingLivePayloads: Extract<TerminalPreviewDataPayload, { type: 'data' }>[] = []
 
-    const fitToBox = (): void => {
-      const screen = container.querySelector<HTMLElement>('.xterm-screen')
-      const box = container.parentElement
-      if (!screen || !box || !terminal) {
-        return
-      }
-      const scale = Math.min(1, box.clientWidth / Math.max(1, screen.offsetWidth))
-      container.style.transform = scale < 1 ? `scale(${scale})` : ''
-      // Anchor whichever end keeps the CURSOR row in view when the terminal is
-      // taller than the box: a fresh shell prompts at the TOP of its screen
-      // (blind bottom-anchoring clipped it away), while a busy TUI keeps its
-      // action at the bottom.
-      const cellHeight = screen.offsetHeight / Math.max(1, terminal.rows)
-      const cursorBottom = (terminal.buffer.active.cursorY + 1) * cellHeight * scale
-      const anchorTop = cursorBottom <= box.clientHeight
-      box.style.alignItems = anchorTop ? 'flex-start' : 'flex-end'
-      container.style.transformOrigin = anchorTop ? 'top left' : 'bottom left'
-    }
-    // Re-fit after every parsed write (cursor may move ends); rAF coalesces.
-    let fitScheduled = false
-    const scheduleFit = (): void => {
-      if (fitScheduled) {
-        return
-      }
-      fitScheduled = true
-      requestAnimationFrame(() => {
-        fitScheduled = false
-        fitToBox()
-      })
-    }
+    // Why font-scaling (see createPreviewFitScheduler): CSS-downscaling the
+    // rendered terminal resamples glyph bitmaps into visible smear.
+    const { scheduleFit } = createPreviewFitScheduler({
+      container,
+      getTerminal: () => terminal,
+      getBaseFontSize: () => settingsRef.current?.terminalFontSize ?? 14
+    })
+    scheduleFitRef.current = scheduleFit
 
     const gridClaim = createPreviewGridClaim({
       ptyId,
@@ -408,6 +390,7 @@ export function AgentTerminalPreview({
 
     return () => {
       disposed = true
+      scheduleFitRef.current = null
       if (retryTimer) {
         clearTimeout(retryTimer)
       }
@@ -438,6 +421,8 @@ export function AgentTerminalPreview({
       buildPreviewAppearanceOptions(settings, macOptionAsAlt === 'true')
     )
     syncPreviewTerminalLigatures(terminal, settings)
+    // The assign above restored the settings font size; re-shrink if the box needs it.
+    scheduleFitRef.current?.()
   }, [settings, macOptionAsAlt])
 
   return (

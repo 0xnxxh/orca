@@ -92,7 +92,11 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose: vi.fn() }
     })
 
-    constructor() {
+    // Real xterm exposes the live options bag (fontSize etc.); the fit path reads and writes it.
+    options: Record<string, unknown> = {}
+
+    constructor(options?: Record<string, unknown>) {
+      this.options = options ?? {}
       terminalHarness.instances.push(this)
     }
   }
