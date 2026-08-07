@@ -10,9 +10,12 @@ import { join } from 'node:path'
 import { durableWriteTempPath, writeFileDurable } from '../../durable-file-write'
 
 const BLOB_DIR = 'blobs'
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/
 
-function blobPath(journalDir: string, digest: string): string {
-  return join(journalDir, BLOB_DIR, digest)
+/** A digest arrives back from a row on disk, so it is untrusted by the time it
+ *  reaches the filesystem: anything but a bare sha256 could escape the store. */
+function blobPath(journalDir: string, digest: string): string | null {
+  return DIGEST_PATTERN.test(digest) ? join(journalDir, BLOB_DIR, digest) : null
 }
 
 /** Persist `payload` under its digest. Returns the digest so the caller can
@@ -23,6 +26,9 @@ export async function putJournalBlob(
   payload: string
 ): Promise<string> {
   const target = blobPath(journalDir, digest)
+  if (!target) {
+    throw new Error('refusing to write a journal blob under a name that is not a sha256 digest')
+  }
   // Content addressing makes a rewrite pointless: identical digest, identical bytes.
   if (await pathExists(target)) {
     return digest
@@ -33,8 +39,12 @@ export async function putJournalBlob(
 }
 
 export async function readJournalBlob(journalDir: string, digest: string): Promise<string | null> {
+  const source = blobPath(journalDir, digest)
+  if (!source) {
+    return null
+  }
   try {
-    return await readFile(blobPath(journalDir, digest), 'utf-8')
+    return await readFile(source, 'utf-8')
   } catch {
     return null
   }

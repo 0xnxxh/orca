@@ -225,6 +225,15 @@ describe('compaction and retention', () => {
     expect(await readJournalBlob(root, kept.digest)).toBe('k'.repeat(64))
     expect(await readJournalBlob(root, dropped.digest)).toBeNull()
   })
+
+  it('refuses a blob name that is not a bare digest, on either slash', async () => {
+    const { putJournalBlob } = await import('./journal-blob-store')
+    // A corrupt or crafted row must not steer a read or a write out of the store.
+    for (const name of ['../../escape', '..\\..\\escape', 'nested/name', 'NOTHEX']) {
+      expect(await readJournalBlob(root, name)).toBeNull()
+      await expect(putJournalBlob(root, name, 'payload')).rejects.toThrow('sha256 digest')
+    }
+  })
 })
 
 describe('bounds', () => {
