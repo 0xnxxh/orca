@@ -1910,6 +1910,65 @@ describe('browserManager', () => {
     expect(setUserAgent).not.toHaveBeenCalled()
   })
 
+  // Why: popup child windows get attachGuestPolicies but are never entered into tabIdByWebContentsId,
+  // so a direct lookup of the UA mode misses the native opt-out. That is worse than doing nothing —
+  // native sessions skip setupClientHintsOverride, so the popup would send the raw Electron UA on the
+  // wire while navigator.userAgent claimed Firefox. Google sign-in popups are a first-class surface.
+  it('leaves the UA untouched on auth hosts for a popup owned by a native-UA profile', () => {
+    const ownerGuest = {
+      id: 415,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock,
+      getURL: vi.fn(() => 'https://accounts.google.com/'),
+      getUserAgent: vi.fn(() => guestBaseUserAgent),
+      setUserAgent: vi.fn(),
+      session: { getUserAgent: vi.fn(() => guestBaseUserAgent) }
+    }
+    webContentsFromIdMock.mockReturnValue(ownerGuest)
+    browserManager.attachGuestPolicies(ownerGuest as never)
+    browserManager.registerGuest({
+      browserPageId: 'browser-native-popup-owner',
+      webContentsId: ownerGuest.id,
+      rendererWebContentsId,
+      userAgentMode: 'native'
+    })
+
+    // The popup carries its own listeners so its handler is unambiguous.
+    const popupOn = vi.fn()
+    const popupSetUserAgent = vi.fn()
+    const popupGuest = {
+      id: 416,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'window'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: popupOn,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock,
+      getURL: vi.fn(() => 'https://accounts.google.com/'),
+      getUserAgent: vi.fn(() => guestBaseUserAgent),
+      setUserAgent: popupSetUserAgent,
+      session: { getUserAgent: vi.fn(() => guestBaseUserAgent) }
+    }
+    browserManager.attachGuestPolicies(popupGuest as never, {
+      browserTabId: 'browser-native-popup-owner',
+      rootGuestWebContentsId: ownerGuest.id
+    })
+
+    const popupDidStartNavigation = popupOn.mock.calls.find(
+      ([event]) => event === 'did-start-navigation'
+    )?.[1] as (event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void
+    expect(popupDidStartNavigation).toBeDefined()
+
+    popupDidStartNavigation(null, 'https://accounts.google.com/v3/signin/identifier', false, true)
+    expect(popupSetUserAgent).not.toHaveBeenCalled()
+  })
+
   it('queues permission denials and download requests until the guest registers', () => {
     const rendererSendMock = vi.fn()
     const guest = {
@@ -3119,11 +3178,12 @@ describe('browserManager', () => {
       })
     })
 
-    // Why: setViewportOverride and the navigation path are two independent writers of the same CDP
-    // command. Verified against real Electron 43.1.0: did-start-navigation fires while an awaited
-    // sendCommand is still pending, and getURL() keeps reporting the OUTGOING page until commit —
-    // so a preset resuming mid-navigation resolves the wrong host unless both writers share a chain
-    // and a single URL source.
+    // Why: not an ordering race — debugger.sendCommand dispatches in call order over one channel, so
+    // the later-issued write always wins. The defect is post-await staleness: verified against real
+    // Electron 43.1.0, did-start-navigation fires while an awaited sendCommand is still pending, and
+    // getURL() keeps reporting the OUTGOING page until commit. A preset resuming mid-navigation
+    // therefore resolves the wrong host and wins with the wrong value. Both writers must resolve the
+    // host from the in-flight navigation target instead.
     function lastUserAgentOverride(
       debuggerSendCommand: ReturnType<typeof vi.fn>
     ): Record<string, unknown> | undefined {
@@ -3301,6 +3361,51 @@ describe('browserManager', () => {
       })
       await flushViewportOps()
       expect(lastUserAgentOverride(debuggerSendCommand)).toEqual({
+        userAgent: googleAuthUserAgent()
+      })
+    })
+
+    // Why: a failed clear leaves the CDP override standing on the target. Dropping the tracking entry
+    // first makes it untracked, so the navigation path can never correct it again and the tab carries
+    // a Chrome-shaped navigator.userAgent onto the auth hosts — the exact failure this PR prevents.
+    it('keeps tracking the standing override when the CDP clear fails', async () => {
+      const { guest, debuggerSendCommand } = makeGuest(4254, 'https://example.com/')
+      webContentsFromIdMock.mockReturnValue(guest)
+      browserManager.attachGuestPolicies(guest as never)
+      browserManager.registerGuest({
+        browserPageId: 'tab-failed-clear',
+        webContentsId: guest.id as number,
+        rendererWebContentsId
+      })
+      const didStartNavigation = guestOnMock.mock.calls.find(
+        ([event]) => event === 'did-start-navigation'
+      )?.[1] as (event: unknown, url: string, isInPlace: boolean, isMainFrame: boolean) => void
+
+      await browserManager.setViewportOverride('tab-failed-clear', {
+        width: 1024,
+        height: 768,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await flushViewportOps()
+
+      // The clear fails partway — e.g. DevTools took the debugger, or the guest is tearing down.
+      debuggerSendCommand.mockImplementation((method: string) =>
+        method === 'Emulation.clearDeviceMetricsOverride'
+          ? Promise.reject(new Error('debugger detached'))
+          : Promise.resolve(undefined)
+      )
+      await expect(browserManager.setViewportOverride('tab-failed-clear', null)).resolves.toBe(
+        false
+      )
+      await flushViewportOps()
+
+      // The override is still standing on the target, so navigation must still be able to correct it.
+      debuggerSendCommand.mockImplementation(() => Promise.resolve(undefined))
+      debuggerSendCommand.mockClear()
+      didStartNavigation(null, 'https://accounts.google.com/v3/signin/identifier', false, true)
+      await flushViewportOps()
+      expect(debuggerSendCommand).toHaveBeenCalledWith('Emulation.setUserAgentOverride', {
         userAgent: googleAuthUserAgent()
       })
     })

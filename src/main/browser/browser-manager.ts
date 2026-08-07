@@ -929,7 +929,12 @@ export class BrowserManager {
   // of the whole clean-UA path, so they keep their untouched identity everywhere.
   private applyGoogleAuthUserAgent(guest: Electron.WebContents, url: string): void {
     const browserPageId = this.tabIdByWebContentsId.get(guest.id)
-    const mode = browserPageId ? this.userAgentModeByPageId.get(browserPageId) : undefined
+    // Why: popup child windows get these policies but are never in tabIdByWebContentsId, so a direct
+    // lookup misses the native-UA opt-out and would hand a native profile's popup the Firefox UA.
+    // That is worse than doing nothing: native sessions skip setupClientHintsOverride entirely, so
+    // the popup would send the raw Electron UA on the wire while navigator.userAgent claims Firefox.
+    const ownerTabId = this.resolveBrowserTabIdForGuestWebContentsId(guest.id)
+    const mode = ownerTabId ? this.userAgentModeByPageId.get(ownerTabId) : undefined
     if (mode === 'native') {
       return
     }
@@ -944,8 +949,10 @@ export class BrowserManager {
       // navigation never touches the session UA.
       guest.setUserAgent(guest.session.getUserAgent())
     }
+    // Why: gate on the DIRECT page id, not ownerTabId — a popup has no device-metrics override of
+    // its own, so inheriting the owner tab's preset UA would pair a mobile UA with a desktop viewport.
     if (browserPageId) {
-      this.reapplyViewportUserAgentOverride(guest, browserPageId)
+      this.reapplyViewportUserAgentOverride(guest, browserPageId, url)
     }
   }
 
@@ -963,63 +970,42 @@ export class BrowserManager {
     return this.pendingNavigationUrlByTabId.get(browserTabId) ?? guest.getURL()
   }
 
-  // Why: setViewportOverride and the navigation path both write Emulation.setUserAgentOverride for
-  // the same tab. Sharing one chain makes the last-enqueued write the one that lands; without it the
-  // two interleave and the tab can keep the Firefox UA off the auth hosts, or the Chrome-shaped
-  // preset UA while on them — the exact mismatch this scope exists to remove.
-  private enqueueViewportOp<T>(browserTabId: string, op: () => Promise<T>): Promise<T> {
-    const prev = this.viewportOpsByTabId.get(browserTabId) ?? Promise.resolve()
-    const next = prev.catch(() => {}).then(op)
-    this.viewportOpsByTabId.set(browserTabId, next)
-    // Why: only clear if we're still the tail; a later call may have replaced the entry, and deleting would break serialization.
-    void next
-      .catch(() => {})
-      .then(() => {
-        if (this.viewportOpsByTabId.get(browserTabId) === next) {
-          this.viewportOpsByTabId.delete(browserTabId)
-        }
-      })
-    return next
-  }
-
   // Why: Emulation.setUserAgentOverride is set once and stands across every later navigation,
   // outranking setUserAgent for navigator.userAgent. A viewport preset applied before reaching an
   // auth host would otherwise pin navigator.userAgent to the Chrome-shaped preset UA while the
   // request header says Firefox — the two-layer disagreement this scope exists to remove.
   private reapplyViewportUserAgentOverride(
     guest: Electron.WebContents,
-    browserTabId: string
+    browserTabId: string,
+    url: string
   ): void {
-    // Why: enqueue unconditionally — a setViewportOverride already queued ahead may be about to
-    // install (or clear) the override, so the standing-preset check belongs inside the chain.
-    void this.enqueueViewportOp(browserTabId, () =>
-      this.sendViewportUserAgentOverride(guest, browserTabId)
-    ).catch(() => {})
-  }
-
-  private async sendViewportUserAgentOverride(
-    guest: Electron.WebContents,
-    browserTabId: string
-  ): Promise<void> {
     const mobile = this.viewportUaOverrideMobileByTabId.get(browserTabId)
     if (mobile === undefined) {
       return
     }
-    try {
-      if (guest.isDestroyed() || !guest.debugger.isAttached()) {
-        return
-      }
-      await guest.debugger.sendCommand(
-        'Emulation.setUserAgentOverride',
-        buildViewportUserAgentOverride({
-          url: this.resolveTabNavigationUrl(guest, browserTabId),
-          mobile,
-          baseUserAgent: cleanElectronUserAgent(guest.getUserAgent())
-        })
-      )
-    } catch {
-      // guest may be mid-teardown or the debugger taken over by DevTools
+    // Why: no queue needed — debugger.sendCommand dispatches in call order over one channel, so the
+    // later-issued write wins. What matters is that both writers resolve the SAME host, which they
+    // now do via the navigation target rather than the stale committed URL.
+    void this.sendViewportUserAgentOverride(guest, browserTabId, mobile, url).catch(() => {})
+  }
+
+  private async sendViewportUserAgentOverride(
+    guest: Electron.WebContents,
+    browserTabId: string,
+    mobile: boolean,
+    url?: string
+  ): Promise<void> {
+    if (guest.isDestroyed() || !guest.debugger.isAttached()) {
+      return
     }
+    await guest.debugger.sendCommand(
+      'Emulation.setUserAgentOverride',
+      buildViewportUserAgentOverride({
+        url: url ?? this.resolveTabNavigationUrl(guest, browserTabId),
+        mobile,
+        baseUserAgent: cleanElectronUserAgent(guest.getUserAgent())
+      })
+    )
   }
 
   private createPopupChildWindowWithOriginBar(
@@ -1559,11 +1545,20 @@ export class BrowserManager {
     browserTabId: string,
     override: BrowserViewportOverride | null
   ): Promise<boolean> {
-    // Why: chain per-tab so rapid toggles — and navigations racing them — don't interleave CDP
-    // commands; the last-enqueued write wins.
-    return this.enqueueViewportOp(browserTabId, () =>
-      this.doSetViewportOverrideImpl(browserTabId, override)
-    )
+    // Why: chain per-tab so rapid toggles don't interleave CDP commands and the last-requested override wins.
+    const prev = this.viewportOpsByTabId.get(browserTabId) ?? Promise.resolve()
+    const next = prev
+      .catch(() => {})
+      .then(() => this.doSetViewportOverrideImpl(browserTabId, override))
+    this.viewportOpsByTabId.set(browserTabId, next)
+    try {
+      return await next
+    } finally {
+      // Why: only clear if we're still the tail; a later call may have replaced the entry, and deleting would break serialization.
+      if (this.viewportOpsByTabId.get(browserTabId) === next) {
+        this.viewportOpsByTabId.delete(browserTabId)
+      }
+    }
   }
 
   async setAnnotationViewportBridge(
@@ -1656,14 +1651,13 @@ export class BrowserManager {
         })
         // Why: viewport sizing must not override a profile's explicit native-UA identity.
         if (this.userAgentModeByPageId.get(browserTabId) !== 'native') {
-          // Why: remember the standing override so later navigations can re-issue it; it outranks
-          // setUserAgent and would otherwise pin the auth-host identity to whatever was set here.
-          this.viewportUaOverrideMobileByTabId.set(browserTabId, override.mobile)
           // Why: same sender as the navigation path, so both resolve the tab's host identically.
-          await this.sendViewportUserAgentOverride(guest, browserTabId)
+          await this.sendViewportUserAgentOverride(guest, browserTabId, override.mobile)
+          // Why: only claim a standing override once the CDP write actually landed — recording it
+          // first would leave the map asserting an override that was never installed.
+          this.viewportUaOverrideMobileByTabId.set(browserTabId, override.mobile)
         }
       } else {
-        this.viewportUaOverrideMobileByTabId.delete(browserTabId)
         await dbg.sendCommand('Emulation.clearDeviceMetricsOverride', {})
         await dbg.sendCommand('Emulation.setTouchEmulationEnabled', {
           enabled: false,
@@ -1671,6 +1665,9 @@ export class BrowserManager {
         })
         // Why: passing an empty string restores the session default UA.
         await dbg.sendCommand('Emulation.setUserAgentOverride', { userAgent: '' })
+        // Why: drop tracking only after the clear landed. Deleting first strands a still-standing
+        // CDP UA override with no map entry, so the navigation path can never correct it again.
+        this.viewportUaOverrideMobileByTabId.delete(browserTabId)
       }
       return true
     } catch {
