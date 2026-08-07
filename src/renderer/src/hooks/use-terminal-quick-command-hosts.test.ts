@@ -28,6 +28,7 @@ vi.mock('@/lib/worktree-runtime-owner', () => ({
 import {
   flattenTerminalQuickCommandHosts,
   getTerminalQuickCommandHostOptions,
+  shouldShowTerminalQuickCommandHostOwnership,
   useTerminalQuickCommandHosts,
   type TerminalQuickCommandHost
 } from './use-terminal-quick-command-hosts'
@@ -58,6 +59,13 @@ describe('useTerminalQuickCommandHosts', () => {
   afterEach(() => {
     act(() => root.unmount())
     document.body.replaceChildren()
+  })
+
+  it('shows ownership only when commands can come from multiple hosts', () => {
+    expect(shouldShowTerminalQuickCommandHostOwnership([{ id: 'local' }])).toBe(false)
+    expect(
+      shouldShowTerminalQuickCommandHostOwnership([{ id: 'local' }, { id: 'runtime:build' }])
+    ).toBe(true)
   })
 
   it.each([

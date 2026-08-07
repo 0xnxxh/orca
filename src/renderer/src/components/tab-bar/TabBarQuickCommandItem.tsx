@@ -7,6 +7,7 @@ import type { HostedTerminalQuickCommand } from '@/hooks/use-terminal-quick-comm
 
 type TabBarQuickCommandItemProps = {
   entry: HostedTerminalQuickCommand
+  showHostLabel: boolean
   onRun: () => void
   onEdit: () => void
   onDelete: () => void
@@ -14,6 +15,7 @@ type TabBarQuickCommandItemProps = {
 
 export function TabBarQuickCommandItem({
   entry,
+  showHostLabel,
   onRun,
   onEdit,
   onDelete
@@ -41,7 +43,9 @@ export function TabBarQuickCommandItem({
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">
             {command.label}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{entry.hostLabel}</span>
+          {showHostLabel ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">{entry.hostLabel}</span>
+          ) : null}
         </span>
         <span className="block truncate font-mono text-[11px] text-muted-foreground">
           {isTerminalAgentQuickCommand(command)

@@ -76,6 +76,7 @@ function renderMenu(overrides: Record<string, unknown> = {}): string {
     quickCommandHosts: [
       { hostId: 'local' as const, label: 'Local Linux', repoCommands: [], globalCommands: [] }
     ],
+    quickCommandRepoLabel: 'Orca',
     onQuickCommand: vi.fn(),
     onAddQuickCommand: vi.fn(),
     onToggleExpand: vi.fn(),
@@ -198,5 +199,24 @@ describe('TerminalContextMenu', () => {
       'local',
       'runtime:build'
     ])
+  })
+
+  it('preserves repo and global grouping when only the local host is available', () => {
+    const rendered = renderMenu({
+      quickCommandHosts: [
+        {
+          hostId: 'local',
+          label: 'Local Mac',
+          repoCommands: [{ id: 'repo', label: 'Repo command', command: 'repo', appendEnter: true }],
+          globalCommands: [
+            { id: 'global', label: 'Global command', command: 'global', appendEnter: true }
+          ]
+        }
+      ]
+    })
+
+    expect(rendered).toContain('Orca')
+    expect(rendered).toContain('Global')
+    expect(rendered).not.toContain('Local Mac')
   })
 })

@@ -71,11 +71,8 @@ export function TabBarQuickCommandsMenu({
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const commandListRef = useRef<HTMLDivElement | null>(null)
   const focusFrameRef = useRef<number | null>(null)
-  // Why: closing restores focus to the chevron for accessibility, but that
-  // focus restoration should not immediately reopen its tooltip.
   const suppressMoreCommandsTooltipRef = useRef(false)
-  const totalVisible = repoCommands.length + globalCommands.length
-  const showSearch = totalVisible > 1
+  const showSearch = repoCommands.length + globalCommands.length > 1
   const filteredRepoCommands = useMemo(
     () => searchEntries(repoCommands, query),
     [repoCommands, query]
@@ -367,6 +364,7 @@ export function TabBarQuickCommandsMenu({
                 <TabBarQuickCommandItem
                   key={entry.key}
                   entry={entry}
+                  showHostLabel={addHosts.length > 1}
                   onRun={() => runAndClose(entry)}
                   onEdit={() => {
                     closeMenu()
@@ -385,6 +383,7 @@ export function TabBarQuickCommandsMenu({
                 <TabBarQuickCommandItem
                   key={entry.key}
                   entry={entry}
+                  showHostLabel={addHosts.length > 1}
                   onRun={() => runAndClose(entry)}
                   onEdit={() => {
                     closeMenu()

@@ -163,6 +163,7 @@ import {
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
+import { useRepoById } from '@/store/selectors'
 import { refitAndRefreshAllTerminalPanes } from '@/lib/pane-manager/pane-manager-registry'
 import {
   getTerminalQuickCommandScope,
@@ -791,6 +792,12 @@ function TerminalPane(
 
   const quickCommandRepoId =
     worktreeId === FLOATING_TERMINAL_WORKTREE_ID ? null : getRepoIdFromWorktreeId(worktreeId)
+  const quickCommandRepo = useRepoById(quickCommandRepoId)
+  const quickCommandRepoLabel = quickCommandRepo
+    ? quickCommandRepo.displayName || quickCommandRepo.path
+    : quickCommandRepoId
+      ? 'This Repo'
+      : null
   const { hosts: quickCommandHosts } = useTerminalQuickCommandHosts(worktreeId)
   const visibleQuickCommandHosts = quickCommandHosts.map((host) => {
     const commands = host.commands.filter(isTerminalQuickCommandComplete)
@@ -3029,6 +3036,7 @@ function TerminalPane(
         onToggleNativeChat={handleContextMenuToggleNativeChat}
         onCopyAgentSessionContext={() => void contextMenu.onCopyAgentSessionContext()}
         quickCommandHosts={visibleQuickCommandHosts}
+        quickCommandRepoLabel={quickCommandRepoLabel}
         onQuickCommand={contextMenu.onQuickCommand}
         onAddQuickCommand={(hostId) =>
           quickCommandRepoId

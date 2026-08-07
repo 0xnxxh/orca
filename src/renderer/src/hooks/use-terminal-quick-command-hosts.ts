@@ -38,6 +38,10 @@ export function getHostedTerminalQuickCommandKey(
   return `${hostId}\0${commandId}`
 }
 
+export function shouldShowTerminalQuickCommandHostOwnership(hosts: readonly unknown[]): boolean {
+  return hosts.length > 1
+}
+
 export function flattenTerminalQuickCommandHosts(
   hosts: readonly TerminalQuickCommandHost[]
 ): HostedTerminalQuickCommand[] {

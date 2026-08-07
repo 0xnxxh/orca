@@ -21,7 +21,10 @@ import {
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
-import { getTerminalQuickCommandHostOptions } from '@/hooks/use-terminal-quick-command-hosts'
+import {
+  getTerminalQuickCommandHostOptions,
+  shouldShowTerminalQuickCommandHostOwnership
+} from '@/hooks/use-terminal-quick-command-hosts'
 
 type QuickCommandsPaneProps = {
   settings: GlobalSettings
@@ -248,29 +251,31 @@ export function QuickCommandsPane({
         </Button>
       </div>
 
-      <div className="space-y-2">
-        <Label>
-          {translate('auto.components.settings.QuickCommandsPane.89f7e57fcc', 'Saved on')}
-        </Label>
-        <Select
-          value={selectedHostId}
-          onValueChange={(value) => {
-            setSelectedHostId(value as ExecutionHostId)
-            setScopeSelection(null)
-          }}
-        >
-          <SelectTrigger size="sm" className="w-56">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {hostOptions.map((host) => (
-              <SelectItem key={host.id} value={host.id}>
-                {host.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {shouldShowTerminalQuickCommandHostOwnership(hostOptions) ? (
+        <div className="space-y-2">
+          <Label>
+            {translate('auto.components.settings.QuickCommandsPane.89f7e57fcc', 'Saved on')}
+          </Label>
+          <Select
+            value={selectedHostId}
+            onValueChange={(value) => {
+              setSelectedHostId(value as ExecutionHostId)
+              setScopeSelection(null)
+            }}
+          >
+            <SelectTrigger size="sm" className="w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {hostOptions.map((host) => (
+                <SelectItem key={host.id} value={host.id}>
+                  {host.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
 
       <QuickCommandsScopeFilter
         repos={hostRepos}
