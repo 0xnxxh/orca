@@ -3,12 +3,14 @@
  * lingers for the machine's uptime — five accumulated on one host, the oldest 12 days old. A legacy
  * daemon that owns nothing must retire; one that still owns sessions, or cannot be inventoried, must not.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { DaemonClient } from './client'
 import { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { CLEAN_DISCONNECT_PROTOCOL_VERSION, PROTOCOL_VERSION } from './daemon-protocol-version'
 import { DaemonServer } from './daemon-server'
 import { getDaemonSocketPath } from './daemon-spawner'
 import type { SubprocessHandle } from './session'
@@ -57,10 +59,11 @@ describe('legacy daemon retirement', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  async function startServer(): Promise<DaemonServer> {
+  async function startServer(protocolVersion = PROTOCOL_VERSION): Promise<DaemonServer> {
     const started = new DaemonServer({
       socketPath,
       tokenPath,
+      protocolVersion,
       spawnSubprocess: () => fixtureSubprocess()
     })
     await started.start()
@@ -68,10 +71,11 @@ describe('legacy daemon retirement', () => {
     return started
   }
 
-  function createAdapter(): DaemonPtyAdapter {
+  function createAdapter(protocolVersion = PROTOCOL_VERSION): DaemonPtyAdapter {
     adapter = new DaemonPtyAdapter({
       socketPath,
       tokenPath,
+      protocolVersion,
       profileScope: dir,
       historyPath: join(dir, 'history')
     })
@@ -101,6 +105,30 @@ describe('legacy daemon retirement', () => {
     expect(await owner.listSessions()).toHaveLength(1)
   })
 
+  it('preserves an empty daemon when another client wins the retirement race', async () => {
+    await startServer()
+    owner = new DaemonPtyAdapter({ socketPath, tokenPath, profileScope: dir })
+    await owner.establishLifecycleLease()
+    const candidate = createAdapter()
+
+    const retired = await candidate.retireIfEmpty()
+    await owner.spawn({ sessionId: 'created-after-refusal', cols: 80, rows: 24 })
+
+    expect(retired).toBe(false)
+    expect(await candidate.listSessions()).toHaveLength(1)
+  })
+
+  it('preserves protocols that predate atomic idle retirement', async () => {
+    const protocolVersion = CLEAN_DISCONNECT_PROTOCOL_VERSION - 1
+    await startServer(protocolVersion)
+    const candidate = createAdapter(protocolVersion)
+
+    const retired = await candidate.retireIfEmpty()
+
+    expect(retired).toBe(false)
+    expect(await candidate.listSessions()).toEqual([])
+  })
+
   it('fails closed when the daemon cannot be reached at all', async () => {
     // No server listening: the inventory is unverifiable, so the daemon must be preserved and routed.
     const retired = await createAdapter().retireIfEmpty()
@@ -123,7 +151,7 @@ describe('legacy daemon retirement', () => {
       const retired = await createAdapter().retireIfEmpty(200)
 
       expect(retired).toBe(false)
-      expect(Date.now() - startedAt).toBeLessThan(5_000)
+      expect(Date.now() - startedAt).toBeLessThan(1_000)
     } finally {
       // close() alone waits on live connections, and the adapter's sockets are still open.
       for (const socket of accepted) {
@@ -131,5 +159,40 @@ describe('legacy daemon retirement', () => {
       }
       await new Promise<void>((resolve) => wedged.close(() => resolve()))
     }
+  })
+
+  it('shares one budget across inventory and a wedged atomic shutdown', async () => {
+    const started = await startServer()
+    const serverInternals = started as unknown as {
+      routeRequest(clientId: string, request: { type: string }): Promise<unknown>
+    }
+    const routeRequest = serverInternals.routeRequest.bind(started)
+    serverInternals.routeRequest = async (clientId, request) => {
+      if (request.type === 'listSessions') {
+        await new Promise((resolve) => setTimeout(resolve, 120))
+      } else if (request.type === 'shutdownIfIdle') {
+        return new Promise<never>(() => {})
+      }
+      return routeRequest(clientId, request)
+    }
+    const candidate = createAdapter()
+    const client = (candidate as unknown as { client: DaemonClient }).client
+    const request = vi.spyOn(client, 'request')
+    const startedAt = Date.now()
+
+    let retired: boolean
+    try {
+      retired = await candidate.retireIfEmpty(200)
+    } finally {
+      serverInternals.routeRequest = routeRequest
+    }
+
+    const elapsedMs = Date.now() - startedAt
+    const shutdownTimeoutMs = request.mock.calls.find(([type]) => type === 'shutdownIfIdle')?.[2]
+    expect(retired).toBe(false)
+    expect(shutdownTimeoutMs).toEqual(expect.any(Number))
+    expect(shutdownTimeoutMs).toBeGreaterThan(0)
+    expect(shutdownTimeoutMs).toBeLessThan(150)
+    expect(elapsedMs).toBeLessThan(300)
   })
 })

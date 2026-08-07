@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: covers daemon-init's full restart flow (7-step sequence per docs/daemon-staleness-ux.md §Phase 1 + coalescer); one describe block keeps shared mocks in one place. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { PROTOCOL_VERSION } from './types'
+import { CLEAN_DISCONNECT_PROTOCOL_VERSION, PROTOCOL_VERSION } from './types'
 import { WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
 
 const FAKE_USER_DATA_PATH = '/fake/userData'
@@ -140,7 +140,10 @@ const {
   const disconnectOnlyErrors: Error[] = []
   const routerSubscriptionError: { current: Error | null } = { current: null }
   // Why: legacy adapters retire only when provably empty, so tests opt in rather than defaulting to it.
-  const retireEmptyLegacyDaemons: { current: boolean } = { current: false }
+  const retireEmptyLegacyDaemons: {
+    current: boolean
+    pendingByProtocol: Map<number, Promise<boolean>>
+  } = { current: false, pendingByProtocol: new Map() }
   // Same for DaemonPtyAdapter — tests assert the replacement adapter is fresh but its respawn closure targets the *original* spawner.
   const adapterInstances: MockAdapter[] = []
   // Why: adapters are built inside initDaemonPtyProvider, so tests set this before init to make listSessions report live sessions.
@@ -252,6 +255,7 @@ type MockAdapter = {
   shutdown: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
   disconnectOnly: ReturnType<typeof vi.fn>
+  retireIfEmpty: ReturnType<typeof vi.fn>
   onData: ReturnType<typeof vi.fn>
   onExit: ReturnType<typeof vi.fn>
   // Why: the router calls onData/onExit on each adapter; the stub returns a no-op unsubscribe so router subscription doesn't explode.
@@ -410,7 +414,15 @@ vi.mock('./daemon-pty-adapter', () => ({
         }
       })
       // Default preserves the daemon: retirement is opt-in per test, and fail-closed is the production rule.
-      this.retireIfEmpty = vi.fn(async () => retireEmptyLegacyDaemons.current)
+      this.retireIfEmpty = vi.fn(async () => {
+        if (this.protocolVersion < CLEAN_DISCONNECT_PROTOCOL_VERSION) {
+          return false
+        }
+        return (
+          retireEmptyLegacyDaemons.pendingByProtocol.get(this.protocolVersion) ??
+          retireEmptyLegacyDaemons.current
+        )
+      })
       this.onData = vi.fn(() => {
         if (routerSubscriptionError.current) {
           const error = routerSubscriptionError.current
@@ -440,6 +452,7 @@ async function importFresh() {
   lifecycleLeaseErrors.length = 0
   disconnectOnlyErrors.length = 0
   retireEmptyLegacyDaemons.current = false
+  retireEmptyLegacyDaemons.pendingByProtocol.clear()
   routerSubscriptionError.current = null
   adapterInstances.length = 0
   defaultListSessionsSessions.length = 0
@@ -514,9 +527,9 @@ function mockConnectedAdoptionClientOnce(): void {
   })
 }
 
-function mockOnlyDaemonSocketAlive(socketSuffix: string): void {
+function mockOnlyDaemonSocketAlive(...socketSuffixes: string[]): void {
   netConnectMock.mockImplementation((options?: { path?: string }) => {
-    const live = options?.path?.endsWith(socketSuffix) ?? false
+    const live = socketSuffixes.some((suffix) => options?.path?.endsWith(suffix))
     const handlers: Record<string, (() => void)[]> = { connect: [], error: [] }
     return {
       on(event: string, callback: () => void) {
@@ -1042,6 +1055,54 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     const { DaemonPtyRouter } = await import('./daemon-pty-router')
     expect(mod.getDaemonProvider()).toBeInstanceOf(DaemonPtyRouter)
     expect(adapterInstances.some((instance) => instance.protocolVersion === 9)).toBe(true)
+  })
+
+  it('preserves a pre-clean-disconnect daemon even when it is empty', async () => {
+    const mod = await importFresh()
+    const protocolVersion = CLEAN_DISCONNECT_PROTOCOL_VERSION - 1
+    probeSocketExistsMock.mockImplementation(
+      (path?: string) => path?.endsWith(`daemon-v${protocolVersion}.sock`) ?? false
+    )
+    mockOnlyDaemonSocketAlive(`daemon-v${protocolVersion}.sock`)
+    retireEmptyLegacyDaemons.current = true
+
+    const adapters = await mod.createLegacyDaemonAdapters('/fake/daemon')
+
+    expect(adapters.map((candidate) => candidate.protocolVersion)).toEqual([protocolVersion])
+    expect(adapterInstances[0].retireIfEmpty).toHaveBeenCalledOnce()
+  })
+
+  it('checks supported legacy generations concurrently', async () => {
+    const mod = await importFresh()
+    const protocolVersions = [
+      CLEAN_DISCONNECT_PROTOCOL_VERSION,
+      CLEAN_DISCONNECT_PROTOCOL_VERSION + 1
+    ]
+    probeSocketExistsMock.mockImplementation((path?: string) =>
+      protocolVersions.some((version) => path?.endsWith(`daemon-v${version}.sock`))
+    )
+    mockOnlyDaemonSocketAlive(...protocolVersions.map((version) => `daemon-v${version}.sock`))
+    const releases: ((retired: boolean) => void)[] = []
+    for (const protocolVersion of protocolVersions) {
+      retireEmptyLegacyDaemons.pendingByProtocol.set(
+        protocolVersion,
+        new Promise<boolean>((resolve) => releases.push(resolve))
+      )
+    }
+
+    const discovery = mod.createLegacyDaemonAdapters('/fake/daemon')
+    await vi.waitFor(() => {
+      expect(
+        adapterInstances
+          .filter((candidate) => protocolVersions.includes(candidate.protocolVersion))
+          .map((candidate) => candidate.retireIfEmpty.mock.calls.length)
+      ).toEqual([1, 1])
+    })
+    for (const release of releases) {
+      release(true)
+    }
+
+    await expect(discovery).resolves.toEqual([])
   })
 
   it('restart path with no legacy adapters yields a bare DaemonPtyAdapter (not wrapped in a router)', async () => {
