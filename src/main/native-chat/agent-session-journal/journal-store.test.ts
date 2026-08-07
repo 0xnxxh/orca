@@ -344,6 +344,36 @@ describe('compaction and retention', () => {
     expect(await readJournalBlob(root, dropped.digest)).toBeNull()
   })
 
+  it('keeps blobs referenced by rows that remain replayable after compaction', async () => {
+    const journal = await open({ compaction: { minTailRows: 3, retainTailMs: 0 } })
+    const payload = 'old output'.repeat(16)
+    const bounded = boundPayload(payload, {
+      ...DEFAULT_JOURNAL_PAYLOAD_LIMITS,
+      inlineHeadBytes: 8
+    })
+    const { putJournalBlob } = await import('./journal-blob-store')
+    await putJournalBlob(root, bounded.digest, payload)
+    await journal.appendItem(
+      item(0),
+      { kind: 'tool-call', name: 'bash', input: {}, state: 'completed', output: bounded },
+      { fence: 1 }
+    )
+    await journal.appendItem(item(0), body('replacement'), { fence: 1 })
+    await journal.compact(1)
+
+    const replay = journal.readSince({ epoch: journal.epoch, sequence: 1 })
+    expect(
+      replay.ok &&
+        replay.rows.some(
+          (row) =>
+            row.kind === 'item' &&
+            row.body.kind === 'tool-call' &&
+            row.body.output?.digest === bounded.digest
+        )
+    ).toBe(true)
+    expect(await readJournalBlob(root, bounded.digest)).toBe(payload)
+  })
+
   it('refuses a blob name that is not a bare digest, on either slash', async () => {
     const { putJournalBlob } = await import('./journal-blob-store')
     // A corrupt or crafted row must not steer a read or a write out of the store.

@@ -203,13 +203,27 @@ export function renderJournalState(state: JournalReducerState): AgentJournalSnap
 export function referencedBlobDigests(state: JournalReducerState): Set<string> {
   const digests = new Set<string>()
   for (const item of state.items.values()) {
-    const body = item.body
-    if (body.kind === 'tool-call' && body.output?.truncated) {
-      digests.add(body.output.digest)
-    }
-    if (body.kind === 'diff' && body.patch.truncated) {
-      digests.add(body.patch.digest)
+    addReferencedBlobDigest(digests, item.body)
+  }
+  return digests
+}
+
+/** Digests a reconnecting client can still encounter while replaying retained rows. */
+export function referencedTailBlobDigests(rows: readonly JournalRow[]): Set<string> {
+  const digests = new Set<string>()
+  for (const row of rows) {
+    if (row.kind === 'item') {
+      addReferencedBlobDigest(digests, row.body)
     }
   }
   return digests
+}
+
+function addReferencedBlobDigest(digests: Set<string>, body: AgentJournalRenderItem['body']): void {
+  if (body.kind === 'tool-call' && body.output?.truncated) {
+    digests.add(body.output.digest)
+  }
+  if (body.kind === 'diff' && body.patch.truncated) {
+    digests.add(body.patch.digest)
+  }
 }
