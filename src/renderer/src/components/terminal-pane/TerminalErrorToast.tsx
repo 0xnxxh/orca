@@ -14,8 +14,11 @@ const STALE_DAEMON_CWD_MARKERS = [
 ]
 // Thrown by ipc/pty.ts when a persisted pane owner can't be proven alive or dead (STA-3536).
 const PANE_OWNER_UNVERIFIED_MARKER = 'terminal_pane_owner_unverified'
-const TERMINAL_HOST_GONE_PATTERN = /(?:^|[^a-z0-9_])terminal_host_gone(?:$|[^a-z0-9_])/
-const TERMINAL_HOST_GONE_REPLACE_PATTERN = /(^|[^a-z0-9_])terminal_host_gone(?=$|[^a-z0-9_])/g
+// Why one source: the test and replace forms must match the same token, and a lone /g regex carries
+// lastIndex state across .test() calls. Capture the leading boundary so replacement can restore it.
+const TERMINAL_HOST_GONE_SOURCE = '(^|[^a-z0-9_])terminal_host_gone(?=$|[^a-z0-9_])'
+const TERMINAL_HOST_GONE_PATTERN = new RegExp(TERMINAL_HOST_GONE_SOURCE)
+const TERMINAL_HOST_GONE_REPLACE_PATTERN = new RegExp(TERMINAL_HOST_GONE_SOURCE, 'g')
 const LEGACY_TERMINAL_HOST_GONE_PATTERN =
   /(^|[^a-z])connect (?:ENOENT|ECONNREFUSED) [^\r\n]*orca-terminal-host-v[^\r\n]*/i
 
