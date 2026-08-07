@@ -601,7 +601,7 @@ final class Provider {
         windowIndex: Int?,
         restoreWindow: Bool
     ) throws -> Snapshot {
-        guard accessibilityTrusted() else {
+        guard accessibilityTrustedSettled() else {
             // Why: agents retry failed observations. Only the explicit setup flow
             // should open macOS privacy prompts/settings; runtime calls stay quiet.
             throw ProviderError.coded(
@@ -619,7 +619,7 @@ final class Provider {
             allowRecovery: restoreWindow
         )
         let focusedTitle = stringAttribute(focused, kAXTitleAttribute as String) ?? app.name
-        let canCaptureScreenshot = includeScreenshot && screenCaptureTrusted()
+        let canCaptureScreenshot = includeScreenshot && screenCaptureTrustedSettled()
         guard let capture = WindowCapture.resolve(
             candidates: windowCandidates,
             titleHint: focusedTitle,
@@ -1034,8 +1034,55 @@ private func accessibilityTrusted() -> Bool {
     AXIsProcessTrusted()
 }
 
+private func accessibilityTrustedSettled() -> Bool {
+    // Fresh helper processes can receive transient TCC preflight denials before the real grant settles.
+    PermissionTrustSettling.settle(probe: accessibilityTrusted).settled
+}
+
 private func screenCaptureTrusted() -> Bool {
     CGPreflightScreenCaptureAccess()
+}
+
+private func screenCaptureTrustedSettled() -> Bool {
+    PermissionTrustSettling.settleWithFallback(
+        finalTimeoutMs: 500,
+        probe: screenCaptureTrusted,
+        fallbackProbe: screenCaptureTrustedByCaptureProbe
+    )
+}
+
+private func screenCaptureTrustedByCaptureProbe() -> Bool {
+    guard let infos = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly],
+        kCGNullWindowID
+    ) as? [[String: Any]] else {
+        return false
+    }
+    let windows = infos.compactMap { info -> ScreenCaptureProbeWindow? in
+        guard let layer = info[kCGWindowLayer as String] as? Int,
+              let ownerPid = info[kCGWindowOwnerPID as String] as? NSNumber,
+              let number = info[kCGWindowNumber as String] as? NSNumber
+        else {
+            return nil
+        }
+        return ScreenCaptureProbeWindow(
+            layer: layer,
+            ownerPid: ownerPid.int32Value,
+            windowId: number.uint32Value
+        )
+    }
+    guard let windowId = ScreenCaptureProbeWindowSelection.firstCrossProcessNormalWindow(
+        ownPid: ProcessInfo.processInfo.processIdentifier,
+        windows: windows
+    ) else {
+        return false
+    }
+    return CGWindowListCreateImage(
+        .null,
+        [.optionIncludingWindow],
+        CGWindowID(windowId),
+        [.boundsIgnoreFraming]
+    ) != nil
 }
 
 private func requestScreenCaptureAccess() -> Bool {
@@ -1065,6 +1112,38 @@ private func enableManualAccessibilityIfNeeded(_ appElement: AXUIElement, app: A
 
 private func focusedWindow(appElement: AXUIElement, app: AppDescriptor, visibleWindowCount: Int, allowRecovery: Bool) throws -> AXUIElement {
     let systemWide = AXUIElementCreateSystemWide()
+    if let window = lookupUsableWindow(systemWide: systemWide, appElement: appElement, app: app) {
+        return window
+    }
+    if allowRecovery {
+        recoverWindow(app)
+        if let window = lookupUsableWindow(systemWide: systemWide, appElement: appElement, app: app) {
+            return window
+        }
+    }
+    if visibleWindowCount > 0 {
+        var settledWindow: AXUIElement?
+        let outcome = PermissionTrustSettling.settle {
+            settledWindow = lookupUsableWindow(
+                systemWide: systemWide,
+                appElement: appElement,
+                app: app
+            )
+            return settledWindow != nil
+        }
+        if let window = settledWindow, outcome.settled {
+            return window
+        }
+        throw ProviderError.coded("permission_denied", "app '\(app.name)' has visible windows but no accessibility window (AX reads stayed blocked for \(outcome.waitedMs)ms after retries). macOS Accessibility may need Orca Computer Use toggled off and on again in System Settings.")
+    }
+    throw ProviderError.coded("window_not_found", "app '\(app.name)' has no accessibility window; make sure the app has a visible window, then retry with --restore-window.")
+}
+
+private func lookupUsableWindow(
+    systemWide: AXUIElement,
+    appElement: AXUIElement,
+    app: AppDescriptor
+) -> AXUIElement? {
     if let window = focusedSystemWindow(systemWide: systemWide, app: app) {
         return window
     }
@@ -1072,31 +1151,9 @@ private func focusedWindow(appElement: AXUIElement, app: AppDescriptor, visibleW
         return window
     }
     if let windows = copyArray(appElement, kAXWindowsAttribute as String) {
-        if let window = windows.first(where: usableWindow) {
-            return window
-        }
+        return windows.first(where: usableWindow)
     }
-    if allowRecovery {
-        recoverWindow(app)
-        if let window = focusedSystemWindow(systemWide: systemWide, app: app) {
-            return window
-        }
-        if let window = copyElement(appElement, kAXFocusedWindowAttribute as String), usableWindow(window) {
-            return window
-        }
-        if let windows = copyArray(appElement, kAXWindowsAttribute as String) {
-            if let window = windows.first(where: usableWindow) {
-                return window
-            }
-        }
-    }
-    let permissionHint = visibleWindowCount > 0
-        ? " The app has visible windows, so macOS Accessibility may need Orca Computer Use toggled off and on again in System Settings."
-        : ""
-    if visibleWindowCount > 0 {
-        throw ProviderError.coded("permission_denied", "app '\(app.name)' has visible windows but no accessibility window.\(permissionHint)")
-    }
-    throw ProviderError.coded("window_not_found", "app '\(app.name)' has no accessibility window; make sure the app has a visible window, then retry with --restore-window.")
+    return nil
 }
 
 private func focusedSystemWindow(systemWide: AXUIElement, app: AppDescriptor) -> AXUIElement? {
@@ -3048,9 +3105,9 @@ private enum PermissionKind: CaseIterable {
     var isGranted: Bool {
         switch self {
         case .accessibility:
-            accessibilityTrusted()
+            accessibilityTrustedSettled()
         case .screenshots:
-            screenCaptureTrusted()
+            screenCaptureTrustedSettled()
         }
     }
 
@@ -4039,14 +4096,14 @@ private func runPermissionCheck(initialPermission: PermissionKind? = nil) {
 }
 
 private func printPermissionStatus() {
-    let accessibility = accessibilityTrusted() ? "granted" : "not-granted"
-    let screenshots = screenCaptureTrusted() ? "granted" : "not-granted"
+    let accessibility = accessibilityTrustedSettled() ? "granted" : "not-granted"
+    let screenshots = screenCaptureTrustedSettled() ? "granted" : "not-granted"
     print(#"{"accessibility":"\#(accessibility)","screenshots":"\#(screenshots)"}"#)
 }
 
 private func writePermissionStatus(to path: String) {
-    let accessibility = accessibilityTrusted() ? "granted" : "not-granted"
-    let screenshots = screenCaptureTrusted() ? "granted" : "not-granted"
+    let accessibility = accessibilityTrustedSettled() ? "granted" : "not-granted"
+    let screenshots = screenCaptureTrustedSettled() ? "granted" : "not-granted"
     let text = #"{"accessibility":"\#(accessibility)","screenshots":"\#(screenshots)"}"#
     do {
         try text.write(toFile: path, atomically: true, encoding: .utf8)
