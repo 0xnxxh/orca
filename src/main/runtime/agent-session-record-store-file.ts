@@ -7,6 +7,7 @@
  * indistinguishable from an owner whose identity cannot be verified.
  */
 
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -57,6 +58,14 @@ function emptyState(hostId: string): AgentSessionStoreState {
     retiredClaimKeys: [],
     unreadableRecords: new Map()
   }
+}
+
+export function agentSessionStoreRevision(state: AgentSessionStoreState): string {
+  return createHash('sha256')
+    .update(String(state.schemaVersion))
+    .update('\0')
+    .update(serializeState(state))
+    .digest('hex')
 }
 
 function parseState(raw: string, hostId: string): { state: AgentSessionStoreState } | null {
@@ -162,14 +171,18 @@ function serializeState(state: AgentSessionStoreState): string {
 /** Commit the whole state. The previous file becomes the backup before the new one lands. */
 export async function saveAgentSessionStore(
   filePath: string,
-  state: AgentSessionStoreState
+  state: AgentSessionStoreState,
+  options: { recoveredFromBackup?: boolean } = {}
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true })
   const tmpPath = durableWriteTempPath(filePath)
-  try {
-    await rename(filePath, backupPath(filePath))
-  } catch {
-    // First write, or the primary is already gone; the backup stays as it was.
+  if (!options.recoveredFromBackup) {
+    try {
+      await rm(backupPath(filePath), { force: true })
+      await rename(filePath, backupPath(filePath))
+    } catch {
+      // First write, or the primary is already gone; the backup stays as it was.
+    }
   }
   try {
     await writeFileDurable(tmpPath, filePath, serializeState(state))

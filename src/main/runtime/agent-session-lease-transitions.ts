@@ -122,8 +122,18 @@ export function proveAgentSessionOwner(args: {
 }): AgentSessionRecord {
   const { record } = args
   assertFence(record.lease, args.fence)
-  if (record.lease.ownerProcess === null) {
+  if (
+    record.lease.claimStatus !== 'reserved' ||
+    record.lease.handoffStage !== 'new-owner-proving' ||
+    record.lease.ownerProcess === null
+  ) {
     throw new Error('agent_session_ownership_unknown')
+  }
+  if (args.link.handle.provider !== record.provider) {
+    throw new Error('agent_session_provider_handle_provider_mismatch')
+  }
+  if (args.link.mintedAtFence !== args.fence) {
+    throw new Error('agent_session_provider_handle_stale_fence')
   }
   const providerHandleChain = appendAgentSessionProviderHandleLink(
     record.providerHandleChain,

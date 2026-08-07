@@ -181,6 +181,54 @@ describe('acquisition path', () => {
     ).rejects.toThrow('agent_session_ownership_unknown')
   })
 
+  it('accepts provider proof only for the reserved provider at the current fence', async () => {
+    const store = await open()
+    await store.reserveOwner(reserveRequest())
+    await store.commitProcessIdentity({
+      sessionId: 'session-alpha',
+      fence: 1,
+      process: processIdentity(),
+      now: NOW
+    })
+
+    await expect(
+      store.proveOwner({
+        sessionId: 'session-alpha',
+        fence: 1,
+        link: handleLink({
+          handle: { provider: 'codex', threadId: 'thread-1' }
+        }),
+        now: NOW
+      })
+    ).rejects.toThrow('agent_session_provider_handle_provider_mismatch')
+    await expect(
+      store.proveOwner({
+        sessionId: 'session-alpha',
+        fence: 1,
+        link: handleLink({ mintedAtFence: 2 }),
+        now: NOW
+      })
+    ).rejects.toThrow('agent_session_provider_handle_stale_fence')
+  })
+
+  it('does not let an established owner re-enter the proof transition', async () => {
+    const store = await open()
+    await establishOwner(store)
+
+    await expect(
+      store.proveOwner({
+        sessionId: 'session-alpha',
+        fence: 1,
+        link: handleLink({
+          linkId: 'link-2',
+          origin: 'resumed',
+          observedAt: NOW + 1
+        }),
+        now: NOW + 1
+      })
+    ).rejects.toThrow('agent_session_ownership_unknown')
+  })
+
   it('refuses a create that carries a fence and a re-create that does not', async () => {
     const store = await open()
     await expect(store.reserveOwner(reserveRequest({ expectedFence: 0 }))).rejects.toThrow(
@@ -194,6 +242,22 @@ describe('acquisition path', () => {
 })
 
 describe('concurrent claims', () => {
+  it('lets only one store instance reserve a session from the same disk snapshot', async () => {
+    const [first, second] = await Promise.all([open(), open()])
+    const results = await Promise.allSettled([
+      first.reserveOwner(reserveRequest()),
+      second.reserveOwner(reserveRequest())
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const refused = results.find((result) => result.status === 'rejected')
+    expect((refused as PromiseRejectedResult).reason.message).toBe('agent_session_conflict')
+
+    const persisted = await open()
+    expect(persisted.getRecord('session-alpha')?.lease.runtimeFence).toBe(1)
+    expect(persisted.listOperationRows()).toHaveLength(1)
+  })
+
   it('lets exactly one of two concurrent reservations win and never spawns the loser', async () => {
     const store = await open()
     await establishOwner(store)
@@ -659,6 +723,10 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     const reopened = await open()
     expect(reopened.recoveredFromBackup).toBe(true)
     expect(reopened.getRecord('session-alpha')?.lease.runtimeFence).toBe(1)
+
+    await reopened.retireClaimKey('key-2', NOW)
+    const backup = JSON.parse(await readFile(`${agentSessionStorePath(directory)}.bak`, 'utf-8'))
+    expect(backup.records['session-alpha'].lease.runtimeFence).toBe(1)
   })
 
   it('refuses to write a store written by a newer schema', async () => {
@@ -672,5 +740,19 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     await expect(store.reserveOwner(reserveRequest())).rejects.toThrow(
       'agent_session_legacy_required'
     )
+  })
+
+  it('migrates an older store schema on its next commit', async () => {
+    const filePath = agentSessionStorePath(directory)
+    await writeFile(
+      filePath,
+      JSON.stringify({ schemaVersion: 0, hostId: 'local', records: {}, operations: {} })
+    )
+
+    const store = await open()
+    await store.retireClaimKey('key-1', NOW)
+
+    const persisted = JSON.parse(await readFile(filePath, 'utf-8'))
+    expect(persisted.schemaVersion).toBe(1)
   })
 })

@@ -4,7 +4,7 @@
  * Holds the session records, their single-writer leases, and the client-operation ledger that
  * used to live only in memory — all in one file so a reservation and its operation row commit in
  * the same atomic transaction. Mutations are serialized through a single write queue, so two
- * concurrent compare-and-swaps cannot both observe the same pre-state.
+ * concurrent compare-and-swaps in one or multiple Orca processes cannot both commit one pre-state.
  *
  * Nothing here is wired into the runtime yet; the store is dormant until later parts adopt it.
  */
@@ -43,11 +43,15 @@ import {
   type AgentSessionReserveResult
 } from './agent-session-reservation-admission'
 import {
+  agentSessionStoreRevision,
   agentSessionStorePath,
   loadAgentSessionStore,
-  saveAgentSessionStore,
   type AgentSessionStoreState
 } from './agent-session-record-store-file'
+import {
+  AgentSessionStoreTransactionQueue,
+  markAgentSessionStoreLeasesUnreconciled
+} from './agent-session-store-transaction-queue'
 
 export type {
   AgentSessionReserveRequest,
@@ -60,32 +64,37 @@ export const AGENT_SESSION_LEASE_RENEW_INTERVAL_MS = 10_000
 export const AGENT_SESSION_CLAIM_KEY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 export class AgentSessionRecordStore {
-  private queue: Promise<unknown> = Promise.resolve()
-
-  private constructor(
-    private readonly filePath: string,
-    private state: AgentSessionStoreState,
-    readonly readOnly: boolean,
-    readonly recoveredFromBackup: boolean
-  ) {}
+  private constructor(private readonly transactions: AgentSessionStoreTransactionQueue) {}
 
   static async open(args: { directory: string; hostId: string }): Promise<AgentSessionRecordStore> {
     const filePath = agentSessionStorePath(args.directory)
     const loaded = await loadAgentSessionStore(filePath, args.hostId)
     // Why: every persisted lease is unreconciled until this host adjudicates it, so a restart
     // grants no writer on the strength of what the previous process wrote.
-    for (const [sessionId, record] of loaded.state.records) {
-      loaded.state.records.set(sessionId, {
-        ...record,
-        lease: { ...record.lease, unreconciled: true }
-      })
-    }
+    const diskRevision = agentSessionStoreRevision(loaded.state)
+    markAgentSessionStoreLeasesUnreconciled(loaded.state)
     return new AgentSessionRecordStore(
-      filePath,
-      loaded.state,
-      loaded.readOnly,
-      loaded.recoveredFromBackup
+      new AgentSessionStoreTransactionQueue(
+        filePath,
+        args.hostId,
+        loaded.readOnly,
+        loaded.recoveredFromBackup,
+        loaded.state,
+        diskRevision
+      )
     )
+  }
+
+  private get state(): AgentSessionStoreState {
+    return this.transactions.state
+  }
+
+  get readOnly(): boolean {
+    return this.transactions.readOnly
+  }
+
+  get recoveredFromBackup(): boolean {
+    return this.transactions.recoveredFromBackup
   }
 
   get hostId(): string {
@@ -312,29 +321,8 @@ export class AgentSessionRecordStore {
     })
   }
 
-  /** Serialize every mutation so two compare-and-swaps cannot observe the same pre-state. */
+  /** Serialize every mutation against the latest committed disk state. */
   private async transact<T>(apply: () => T): Promise<T> {
-    const run = this.queue.then(async () => {
-      if (this.readOnly) {
-        // Why: a host that met a newer schema refuses to become this session's writer rather
-        // than rewriting rows it does not understand.
-        throw new Error('agent_session_legacy_required')
-      }
-      const snapshot = new Map(this.state.records)
-      const operations = new Map(this.state.operations)
-      const retiredClaimKeys = [...this.state.retiredClaimKeys]
-      try {
-        const result = apply()
-        await saveAgentSessionStore(this.filePath, this.state)
-        return result
-      } catch (error) {
-        this.state.records = snapshot
-        this.state.operations = operations
-        this.state.retiredClaimKeys = retiredClaimKeys
-        throw error
-      }
-    })
-    this.queue = run.catch(() => {})
-    return run
+    return this.transactions.transact(apply)
   }
 }
