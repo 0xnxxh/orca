@@ -25,9 +25,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // a browser-dispatched `input` event. It is the harder case for the guard: the +149 ms arm below
 // passes with `composed` either way, and only the keydown-in-flight arm depends on it.
 //
-// The first two tests pin CURRENT, DEFECTIVE behaviour. #11504 is unfixed at HEAD (PR #11506 is
-// open and unmerged) and the first test asserts the unwanted period reaches the PTY. A fix must
-// update it. The third test no longer pins a defect; see its own docblock for why it moved.
+// These arms describe what xterm does with an `insertText` that ARRIVES, and they are unchanged by
+// the #11504 fix — deliberately. The fix (src/main/macos-automatic-period-substitution.ts) stops
+// macOS generating the substitution at all, by overriding
+// `NSAutomaticPeriodSubstitutionEnabled` in Orca's own defaults domain. It cannot live here: at
+// this layer an OS-invented `". "` and a period the user typed are the same event, so any renderer
+// guard that swallowed the first would swallow the second. The last test is that constraint.
+// Measured on m4air at .tmp/ime-handoff/swarm-scratch/wave27-11504fix/.
 
 const HANGUL = '아'
 const COMMITTED = '아 '
@@ -138,6 +142,8 @@ describe('#11504 macOS automatic period substitution after a Hangul space commit
     document.body.replaceChildren()
   })
 
+  // Why this still asserts the period arriving: it records what the PLATFORM does when the
+  // substitution is left enabled, which is the behaviour the app-defaults override removes.
   it('sends the reporter delayed period substitution to the PTY as extra input', async () => {
     const { emitted, terminal, textarea } = openTerminal()
     replayRecordedCommit(textarea)
