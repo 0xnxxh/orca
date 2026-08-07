@@ -74,6 +74,22 @@ describe('humanizeTerminalError', () => {
     expect(humanized).not.toContain('orca-terminal-host-v30')
     expect(humanized).toContain('Open a new terminal to continue')
   })
+
+  it('only replaces exact host-gone markers in aggregated errors', () => {
+    const humanized = humanizeTerminalError('terminal_host_gone\nterminal_host_gone_extra')
+    expect(humanized).toContain('Open a new terminal to continue')
+    expect(humanized).toContain('\nterminal_host_gone_extra')
+  })
+
+  it.each(['ENOENT', 'ECONNREFUSED'])(
+    'does not combine a %s connection failure with a host endpoint on another line',
+    (code) => {
+      const aggregated =
+        `connect ${code} \\\\?\\pipe\\unrelated\n` + 'orca-terminal-host-v30-14cb7f94b511'
+      expect(isExplainedTerminalError(aggregated)).toBe(false)
+      expect(humanizeTerminalError(aggregated)).toBe(aggregated)
+    }
+  )
 })
 
 describe('isExplainedTerminalError', () => {

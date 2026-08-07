@@ -14,10 +14,10 @@ const STALE_DAEMON_CWD_MARKERS = [
 ]
 // Thrown by ipc/pty.ts when a persisted pane owner can't be proven alive or dead (STA-3536).
 const PANE_OWNER_UNVERIFIED_MARKER = 'terminal_pane_owner_unverified'
-const TERMINAL_HOST_GONE_MARKER = 'terminal_host_gone'
 const TERMINAL_HOST_GONE_PATTERN = /(?:^|[^a-z0-9_])terminal_host_gone(?:$|[^a-z0-9_])/
-const LEGACY_TERMINAL_HOST_ENDPOINT_MARKER = 'orca-terminal-host-v'
-const LEGACY_TERMINAL_HOST_GONE_PATTERN = /connect (?:ENOENT|ECONNREFUSED) [^\n]*/
+const TERMINAL_HOST_GONE_REPLACE_PATTERN = /(^|[^a-z0-9_])terminal_host_gone(?=$|[^a-z0-9_])/g
+const LEGACY_TERMINAL_HOST_GONE_PATTERN =
+  /(^|[^a-z])connect (?:ENOENT|ECONNREFUSED) [^\r\n]*orca-terminal-host-v[^\r\n]*/i
 
 function isSshError(error: string): boolean {
   return error.startsWith(SSH_PREFIX) || error.includes(SSH_RELAY_LOST_MARKER)
@@ -49,11 +49,12 @@ export function shouldOfferDaemonRestart(error: string): boolean {
 }
 
 export function isExplainedTerminalError(error: string): boolean {
-  return (
-    TERMINAL_HOST_GONE_PATTERN.test(error) ||
-    (error.includes(LEGACY_TERMINAL_HOST_ENDPOINT_MARKER) &&
-      LEGACY_TERMINAL_HOST_GONE_PATTERN.test(error))
-  )
+  return error
+    .split('\n')
+    .some(
+      (line) =>
+        TERMINAL_HOST_GONE_PATTERN.test(line) || LEGACY_TERMINAL_HOST_GONE_PATTERN.test(line)
+    )
 }
 
 /** Swaps raw daemon-boundary codes for copy a user can act on. */
@@ -68,20 +69,25 @@ export function humanizeTerminalError(error: string): string {
       )
     )
   }
-  if (isExplainedTerminalError(humanized)) {
-    const explanation = translate(
-      'auto.components.terminal.pane.TerminalErrorToast.e16012e31e',
-      'The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue.'
-    )
-    humanized = humanized.replaceAll(TERMINAL_HOST_GONE_MARKER, explanation)
-    if (humanized.includes(LEGACY_TERMINAL_HOST_ENDPOINT_MARKER)) {
-      humanized = humanized
-        .split('\n')
-        .map((line) => line.replace(LEGACY_TERMINAL_HOST_GONE_PATTERN, explanation))
-        .join('\n')
-    }
+  if (!isExplainedTerminalError(humanized)) {
+    return humanized
   }
+  const explanation = translate(
+    'auto.components.terminal.pane.TerminalErrorToast.e16012e31e',
+    'The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue.'
+  )
   return humanized
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(TERMINAL_HOST_GONE_REPLACE_PATTERN, (_match, prefix: string) =>
+          prefix.concat(explanation)
+        )
+        .replace(LEGACY_TERMINAL_HOST_GONE_PATTERN, (_match, prefix: string) =>
+          prefix.concat(explanation)
+        )
+    )
+    .join('\n')
 }
 
 export function TerminalErrorToast({
