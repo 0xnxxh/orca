@@ -145,6 +145,22 @@ describe('replay', () => {
     expect(reopened.snapshot()).toEqual(live)
   })
 
+  it('refuses rows whose JSON form would change the live render model', async () => {
+    const journal = await open()
+    for (const input of [undefined, Number.NaN]) {
+      await expect(
+        journal.appendItem(
+          item(0),
+          { kind: 'tool-call', name: 'bash', input, state: 'running' },
+          { fence: 1 }
+        )
+      ).rejects.toMatchObject({ code: 'journal_invalid_row' })
+    }
+
+    await journal.appendItem(item(0), body('persisted'), { fence: 1 })
+    expect((await open()).snapshot()).toEqual(journal.snapshot())
+  })
+
   it('serves a resume from a cursor and refuses one from a stale epoch', async () => {
     const journal = await open()
     await journal.appendItem(item(0), body('a'), { fence: 1 })

@@ -1,10 +1,11 @@
 // Guards an append clears before it becomes durable.
 //
-// All four refuse loudly rather than degrade: a silent drop here is a message
+// These guards refuse loudly rather than degrade: a silent drop here is a message
 // missing from the transcript with nothing to explain it.
 
+import { isDeepStrictEqual } from 'node:util'
 import type { JournalPayloadLimits } from './journal-payload-bounds'
-import { journalRowByteLength, type JournalRow } from './journal-row-schema'
+import { parseJournalRow, serializeJournalRow, type JournalRow } from './journal-row-schema'
 
 export class AgentSessionJournalError extends Error {
   constructor(
@@ -12,6 +13,7 @@ export class AgentSessionJournalError extends Error {
       | 'journal_read_only'
       | 'journal_stale_fence'
       | 'journal_duplicate_submission'
+      | 'journal_invalid_row'
       | 'journal_bound_exceeded'
       | 'journal_rate_exceeded',
     message: string
@@ -19,6 +21,25 @@ export class AgentSessionJournalError extends Error {
     super(message)
     this.name = 'AgentSessionJournalError'
   }
+}
+
+/** Refuse values JSON would drop or coerce, keeping live state identical to replay. */
+export function assertJournalRowPersistable(row: JournalRow): number {
+  let serialized = ''
+  let parsed: ReturnType<typeof parseJournalRow>
+  try {
+    serialized = serializeJournalRow(row)
+    parsed = parseJournalRow(serialized)
+  } catch {
+    parsed = { ok: false, unreadable: false }
+  }
+  if (!parsed.ok || !isDeepStrictEqual(parsed.row, row)) {
+    throw new AgentSessionJournalError(
+      'journal_invalid_row',
+      `journal ${row.kind} row contains a value that cannot be persisted losslessly`
+    )
+  }
+  return Buffer.byteLength(serialized, 'utf8') + 1
 }
 
 export function assertNewSubmission(exists: boolean, clientMessageId: string): void {
@@ -62,8 +83,8 @@ export class JournalAppendBudget {
     private readonly limits: JournalPayloadLimits
   ) {}
 
-  assert(row: JournalRow, ts: number, sizeBytes: number): void {
-    if (sizeBytes + journalRowByteLength(row) > this.limits.maxSessionBytes) {
+  assert(rowSizeBytes: number, ts: number, sizeBytes: number): void {
+    if (sizeBytes + rowSizeBytes > this.limits.maxSessionBytes) {
       throw new AgentSessionJournalError(
         'journal_bound_exceeded',
         `agent-session journal for ${this.sessionId} reached its ${this.limits.maxSessionBytes}-byte bound`

@@ -30,12 +30,7 @@ import {
   renderJournalState,
   type JournalReducerState
 } from './journal-reducer'
-import {
-  type AgentJournalEpochReason,
-  journalRowBase,
-  journalRowByteLength,
-  type JournalRow
-} from './journal-row-schema'
+import { type AgentJournalEpochReason, journalRowBase, type JournalRow } from './journal-row-schema'
 import type {
   AgentSessionJournalOptions,
   JournalAppendResult,
@@ -44,6 +39,7 @@ import type {
 } from './journal-store-contracts'
 import {
   assertJournalFence,
+  assertJournalRowPersistable,
   assertNewSubmission,
   assertJournalWritable,
   JournalAppendBudget
@@ -342,11 +338,12 @@ export class AgentSessionJournal {
       const ts = this.now()
       const row = build(this.state.lastSequence + 1, ts)
       assertJournalFence(row.fence, this.state.highestFence)
-      this.budget.assert(row, ts, this.sizeBytes)
+      const rowSizeBytes = assertJournalRowPersistable(row)
+      this.budget.assert(rowSizeBytes, ts, this.sizeBytes)
       await appendJournalRows(this.journalDir, [row])
       applyJournalRow(this.state, row)
       this.tailRows.push(row)
-      this.sizeBytes += journalRowByteLength(row)
+      this.sizeBytes += rowSizeBytes
       return row
     })
   }
