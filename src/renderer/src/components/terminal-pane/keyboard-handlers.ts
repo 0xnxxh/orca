@@ -284,6 +284,7 @@ export function useTerminalKeyboardShortcuts({
     // location from its own keydown event and clear it on keyup.
     let optionKeyLocation = 0
     const heldImeEnterModifiers = new Set<'shift' | 'ctrl'>()
+    const terminalImeEnterModifierKeydowns = new Set<'shift' | 'ctrl'>()
     const nativeOnlyShortcutTracker = createTerminalNativeOnlyShortcutTracker()
     const deferredNewlineSender = createTerminalImeDeferredNewlineSender()
     const modifiedEnterChordOwner = createTerminalImeModifiedEnterChordOwner()
@@ -337,7 +338,9 @@ export function useTerminalKeyboardShortcuts({
           (!keyboardScope || keyboardEventBelongsToScope(e, keyboardScope)) &&
           !isEditableTarget(e.target)
         ) {
-          heldImeEnterModifiers.add(e.key === 'Shift' ? 'shift' : 'ctrl')
+          const kind = e.key === 'Shift' ? 'shift' : 'ctrl'
+          heldImeEnterModifiers.add(kind)
+          terminalImeEnterModifierKeydowns.add(kind)
         }
       }
     }
@@ -613,7 +616,13 @@ export function useTerminalKeyboardShortcuts({
         if ((e.isComposing || hasPendingImeComposition) && (e.key === 'Enter' || imeProcessEnter)) {
           if (isWindows) {
             const chord = getModifiedEnterChord(e)
-            if (chord && !modifiedEnterChordOwner.claim(chord)) {
+            const claimedChord = chord
+              ? {
+                  ...chord,
+                  terminalModifierKeyDownObserved: terminalImeEnterModifierKeydowns.has(chord.kind)
+                }
+              : null
+            if (claimedChord && !modifiedEnterChordOwner.claim(claimedChord)) {
               return
             }
           }
@@ -825,6 +834,7 @@ export function useTerminalKeyboardShortcuts({
       if (releasedImeEnterModifier) {
         const kind = releasedImeEnterModifier
         heldImeEnterModifiers.delete(kind)
+        terminalImeEnterModifierKeydowns.delete(kind)
         modifiedEnterChordOwner.release({ kind, code: e.code, timeStamp: e.timeStamp })
       }
       if (e.key !== 'Enter') {
@@ -845,7 +855,13 @@ export function useTerminalKeyboardShortcuts({
         if (originatingChord) {
           e.preventDefault()
           e.stopImmediatePropagation()
-          deferredNewlineSender.releaseRedispatchedEnter(e, originatingChord)
+          const modifierStillMatches = getImeEnterModifier(e) === originatingChord.kind
+          deferredNewlineSender.releaseRedispatchedEnter(
+            e,
+            modifierStillMatches || originatingChord.terminalModifierKeyDownObserved
+              ? originatingChord
+              : undefined
+          )
           return
         }
 
@@ -920,6 +936,7 @@ export function useTerminalKeyboardShortcuts({
     const onNativeOnlyBlur = (): void => {
       nativeOnlyShortcutTracker.clear()
       heldImeEnterModifiers.clear()
+      terminalImeEnterModifierKeydowns.clear()
       modifiedEnterChordOwner.clear()
       deferredNewlineSender.clearRedispatchedEnters()
       observedEnterKeydownTimeStamps.clear()

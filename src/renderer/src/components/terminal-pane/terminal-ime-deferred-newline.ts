@@ -65,6 +65,7 @@ export type TerminalImeModifiedEnterKind = 'shift' | 'ctrl'
 
 export type TerminalImeModifiedEnterChord = TerminalImeEnterIdentity & {
   kind: TerminalImeModifiedEnterKind
+  terminalModifierKeyDownObserved?: boolean
 }
 
 export type TerminalImeModifiedEnterChordOwner = {
@@ -88,7 +89,7 @@ export function createTerminalImeModifiedEnterChordOwner(): TerminalImeModifiedE
       return true
     },
     absorb: ({ kind }) => activeChord?.kind === kind,
-    ownsRedispatchedEnter: () => activeChord !== null,
+    ownsRedispatchedEnter: () => activeChord?.terminalModifierKeyDownObserved === true,
     release: ({ kind }) => {
       if (activeChord?.kind === kind) {
         const releasedChord = activeChord

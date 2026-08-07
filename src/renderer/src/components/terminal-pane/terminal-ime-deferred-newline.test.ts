@@ -300,6 +300,13 @@ describe('createTerminalImeModifiedEnterChordOwner', () => {
 
     expect(defer).toHaveBeenCalledTimes(1)
     expect(owner.absorb(chord('shift', 5037.9, 'Enter'))).toBe(true)
+    expect(owner.ownsRedispatchedEnter()).toBe(false)
+  })
+
+  it('owns a modifier-lost redispatch only after a terminal modifier keydown', () => {
+    const owner = createTerminalImeModifiedEnterChordOwner()
+
+    expect(owner.claim({ ...chord('shift', 10), terminalModifierKeyDownObserved: true })).toBe(true)
     expect(owner.ownsRedispatchedEnter()).toBe(true)
   })
 
