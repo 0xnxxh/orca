@@ -99,7 +99,8 @@ async function ensureRemoteClipboardStagingRoot(): Promise<string> {
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
   const rootStats = await lstat(stagingRoot)
   const wrongOwner = typeof process.getuid === 'function' && rootStats.uid !== process.getuid()
-  if (!rootStats.isDirectory() || rootStats.isSymbolicLink() || wrongOwner) {
+  const wrongMode = typeof process.getuid === 'function' && (rootStats.mode & 0o777) !== 0o700
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink() || wrongOwner || wrongMode) {
     throw new Error('Remote clipboard staging root is unsafe')
   }
   return stagingRoot

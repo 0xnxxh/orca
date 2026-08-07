@@ -200,10 +200,10 @@ describe('registerClipboardHandlers', () => {
     handleMock.mockReset()
     spawnMock.mockClear()
     childStdinEndMock.mockClear()
-    resolveAuthorizedPathMock.mockReset()
-    resolveAuthorizedPathMock.mockImplementation(async (path: string) => path)
+    resolveAuthorizedPathMock.mockReset().mockImplementation(async (path: string) => path)
     fsAccessMock.mockReset().mockResolvedValue(undefined)
     fsLstatMock.mockReset().mockResolvedValue({
+      mode: 0o700,
       uid: typeof process.getuid === 'function' ? process.getuid() : 0,
       isDirectory: () => true,
       isSymbolicLink: () => false
@@ -215,12 +215,10 @@ describe('registerClipboardHandlers', () => {
       async *[Symbol.asyncIterator]() {},
       close: vi.fn().mockResolvedValue(undefined)
     }))
-    fsRmMock.mockReset()
-    fsRmMock.mockResolvedValue(undefined)
+    fsRmMock.mockReset().mockResolvedValue(undefined)
     fsWriteFileMock.mockReset()
     fsOpenMock.mockReset()
-    fsStatMock.mockReset()
-    fsStatMock.mockResolvedValue({})
+    fsStatMock.mockReset().mockResolvedValue({})
     clipboardReadTextMock.mockReset()
     clipboardReadBufferMock.mockReset()
     clipboardReadBufferMock.mockReturnValue(Buffer.alloc(0))

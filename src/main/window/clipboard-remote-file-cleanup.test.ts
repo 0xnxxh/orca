@@ -74,6 +74,7 @@ describe('cleanupExpiredRemoteClipboardFiles', () => {
     vi.clearAllMocks()
     accessMock.mockResolvedValue(undefined)
     lstatMock.mockResolvedValue({
+      mode: 0o700,
       uid: typeof process.getuid === 'function' ? process.getuid() : 0,
       isDirectory: () => true,
       isSymbolicLink: () => false
@@ -92,6 +93,7 @@ describe('cleanupExpiredRemoteClipboardFiles', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it('scans only the owned staging root after legacy migration', async () => {
@@ -161,6 +163,7 @@ describe('cleanupExpiredRemoteClipboardFiles', () => {
 
   it('rejects an unsafe staging-root symlink before scanning it', async () => {
     lstatMock.mockResolvedValue({
+      mode: 0o700,
       uid: typeof process.getuid === 'function' ? process.getuid() : 0,
       isDirectory: () => false,
       isSymbolicLink: () => true
@@ -177,7 +180,25 @@ describe('cleanupExpiredRemoteClipboardFiles', () => {
       return
     }
     lstatMock.mockResolvedValue({
+      mode: 0o700,
       uid: process.getuid() + 1,
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    })
+
+    await cleanupExpiredRemoteClipboardFiles(NOW_MS)
+
+    expect(opendirMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a POSIX staging root with insecure permissions', async () => {
+    const processWithUid = Object.assign(Object.create(process) as NodeJS.Process, {
+      getuid: () => 1000
+    })
+    vi.stubGlobal('process', processWithUid)
+    lstatMock.mockResolvedValue({
+      mode: 0o755,
+      uid: 1000,
       isDirectory: () => true,
       isSymbolicLink: () => false
     })
