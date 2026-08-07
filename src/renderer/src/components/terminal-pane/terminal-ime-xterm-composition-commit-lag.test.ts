@@ -129,9 +129,7 @@ describe('STA-3250 — continuous Korean typing, no Enter', () => {
     const snapshots = await typeSyllables(textarea, emitted, HANGUL_PHRASE)
 
     // Reported diagnostic: what onData holds once each syllable has been typed.
-    // eslint-disable-next-line no-console
     console.log('[STA-3250] per-syllable onData:', JSON.stringify(snapshots))
-    // eslint-disable-next-line no-console
     console.log('[STA-3250] final onData:', JSON.stringify(emitted))
 
     // After syllable 2 (글) has been typed, 한 was committed one syllable ago and
@@ -157,7 +155,6 @@ describe('STA-3250 — continuous Korean typing, no Enter', () => {
       await nextEventLoop()
       snapshots.push([...emitted])
     }
-    // eslint-disable-next-line no-console
     console.log('[STA-3250 ascii] per-key onData:', JSON.stringify(snapshots))
     expect(snapshots.map((s) => s.join(''))).toEqual(['a', 'ab', 'abc', 'abcd'])
   })

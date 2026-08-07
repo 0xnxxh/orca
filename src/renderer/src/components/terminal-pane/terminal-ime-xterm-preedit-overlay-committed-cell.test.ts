@@ -273,7 +273,6 @@ describe('Korean preedit overlay against committed terminal content', () => {
     const samples = await typeKorean(rig)
 
     // Reported diagnostic, in the columns the capture recorded.
-    // eslint-disable-next-line no-console
     console.log(
       '[overlap] per-key cursorX/row/overlay:',
       JSON.stringify(

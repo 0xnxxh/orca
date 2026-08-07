@@ -88,7 +88,6 @@ async function runProbe(orcaPage: Page, renderer: 'webgl' | 'dom'): Promise<void
     type: 'issue-12164-evidence',
     description: evidence
   })
-  // eslint-disable-next-line no-console
   console.log(`\n===== ISSUE 12164 EVIDENCE =====\n${evidence}\n===== END =====\n`)
 
   // The grid must not have resized between emit and read, or a wrap artefact
