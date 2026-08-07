@@ -190,7 +190,10 @@ describe('registerMobileHandlers', () => {
 
     await expect(handlers.get('mobile:getPairingQR')?.(null, {})).resolves.toMatchObject({
       available: true,
-      connectionMode: 'automatic'
+      connectionMode: 'automatic',
+      // Why: the offer's loopback fallback points at the scanning phone, not this host — reporting it
+      // would print a direct endpoint under the QR that nothing can dial.
+      endpoint: null
     })
     expect(createMobilePairingOffer).toHaveBeenCalledWith(
       expect.objectContaining({ address: null })

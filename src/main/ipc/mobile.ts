@@ -150,8 +150,9 @@ export function registerMobileHandlers(
       // ZeroTier) where the default LAN IP isn't reachable from the phone.
       const ip = args?.address ?? getDefaultPairingAddress()
       // Why: the local address is optional under Relay — the QR carries the relay invite, so a host
-      // with nothing auto-advertisable (only container bridges, or no interface at all) still pairs,
-      // just without a direct path to race. LAN-only has nothing to fall back on, so it fails closed.
+      // with nothing auto-advertisable (only container bridges, or no interface at all) still pairs.
+      // The offer's endpoint then falls back to loopback, which is the phone's own device: the direct
+      // candidate loses the race by construction. LAN-only has no relay to fall back on, so it fails closed.
       if (!ip && args?.connectionMode === 'local-only') {
         return {
           available: false as const,
@@ -192,7 +193,10 @@ export function registerMobileHandlers(
         qrDataUrl: qr.ok ? qr.qrDataUrl : null,
         ...(!qr.ok ? { qrError: qr.reason } : {}),
         pairingUrl: offer.pairingUrl,
-        endpoint: offer.endpoint,
+        // Why: with nothing advertised the offer's endpoint is the loopback fallback, which points at
+        // whichever device scans the QR — never this host. Report no endpoint so the UI omits it
+        // instead of printing an address the phone can't reach.
+        endpoint: ip ? offer.endpoint : null,
         deviceId: offer.deviceId,
         connectionMode: offer.connectionMode
       }
