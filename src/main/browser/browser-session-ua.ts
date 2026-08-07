@@ -26,7 +26,11 @@ export function cleanElectronUserAgent(ua: string): string {
 // reveal the real version, creating a mismatch that Google's anti-fraud
 // detection flags as CookieMismatch on accounts.google.com. Override Client
 // Hints on outgoing requests to match the source browser's UA.
-export function setupClientHintsOverride(sess: Session, ua: string): void {
+export function setupClientHintsOverride(
+  sess: Session,
+  ua: string,
+  options: { googleAuthOverride?: boolean } = {}
+): void {
   // Why: only Chrome-shaped base UAs carry sec-ch-ua hints to rewrite, but the
   // Google-auth Firefox switch below must install regardless, so keep the hints
   // optional rather than bailing out of the whole handler.
@@ -35,7 +39,7 @@ export function setupClientHintsOverride(sess: Session, ua: string): void {
 
   sess.webRequest.onBeforeSendHeaders({ urls: ['https://*/*'] }, (details, callback) => {
     const headers = details.requestHeaders
-    if (isGoogleAuthUrl(details.url)) {
+    if (options.googleAuthOverride !== false && isGoogleAuthUrl(details.url)) {
       // Why: present a Firefox identity on Google's sign-in hosts so the user logs
       // in inside the app and Google issues self-refreshing bound cookies. Strip
       // sec-ch-ua* because real Firefox sends none.

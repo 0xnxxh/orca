@@ -457,6 +457,27 @@ describe('BrowserSessionRegistry', () => {
       expect(callback.mock.calls[0][0].requestHeaders['sec-ch-ua']).toContain('Google Chrome')
     })
 
+    it('keeps an imported native UA on auth hosts while aligning its Chrome hints', () => {
+      const onBeforeSendHeaders = vi.fn()
+      const mockSess = { webRequest: { onBeforeSendHeaders } } as never
+      const importedUa =
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.6890.3 Safari/537.36'
+      setupClientHintsOverride(mockSess, importedUa, { googleAuthOverride: false })
+
+      const callback = vi.fn()
+      const listener = onBeforeSendHeaders.mock.calls[0][1]
+      listener(
+        {
+          url: 'https://accounts.google.com/v3/signin/identifier',
+          requestHeaders: { 'User-Agent': importedUa, 'sec-ch-ua': 'old' }
+        },
+        callback
+      )
+      const modified = callback.mock.calls[0][0].requestHeaders
+      expect(modified['User-Agent']).toBe(importedUa)
+      expect(modified['sec-ch-ua']).toContain('Google Chrome')
+    })
+
     it('leaves non-Client-Hints headers unchanged', () => {
       const onBeforeSendHeaders = vi.fn()
       const mockSess = { webRequest: { onBeforeSendHeaders } } as never
