@@ -1,14 +1,20 @@
 /**
  * A fork on an SSH host used to keep `upstream === undefined` until someone opened
  * its settings page — so its GitHub Project rows stayed hidden and its fork badge
- * never rendered (#12967). Connect is the first moment the probe can succeed, so
- * the backfill runs there: best-effort, sequential, and never awaited by callers.
+ * never rendered (#12967). Connected is the first published state with a ready
+ * provider, so the backfill runs there: best-effort, bounded, generation-safe,
+ * and never awaited by callers.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Repo } from '../../shared/types'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { OrcaRuntimeService } from './orca-runtime'
 import { getRepoUpstream } from '../github/client'
+import {
+  getSshGitProvider,
+  registerSshGitProvider,
+  unregisterSshGitProvider
+} from '../providers/ssh-git-dispatch'
 
 const getRepoUpstreamMock = vi.hoisted(() => vi.fn())
 
@@ -18,6 +24,7 @@ vi.mock('../github/client', async (importOriginal) => ({
 }))
 
 const UPSTREAM = { owner: 'stablyai', repo: 'orca' }
+const registeredConnectionIds = new Set<string>()
 
 function makeRepo(overrides: Partial<Repo>): Repo {
   return {
@@ -58,6 +65,19 @@ function sshState(targetId: string, status: SshConnectionState['status']): SshCo
   return { targetId, status, error: null, reconnectAttempt: 0 }
 }
 
+function notifyConnected(runtime: OrcaRuntimeService, targetId: string): void {
+  registeredConnectionIds.add(targetId)
+  if (!getSshGitProvider(targetId)) {
+    registerSshGitProvider(targetId, {} as never)
+  }
+  runtime.notifySshStateChanged(targetId, sshState(targetId, 'connected'))
+}
+
+function notifyDisconnected(runtime: OrcaRuntimeService, targetId: string): void {
+  unregisterSshGitProvider(targetId)
+  runtime.notifySshStateChanged(targetId, sshState(targetId, 'disconnected'))
+}
+
 // Why: the backfill is deliberately fire-and-forget, so tests drain the queue
 // rather than awaiting a handle the production caller never has.
 async function drainBackfill(): Promise<void> {
@@ -71,12 +91,19 @@ beforeEach(() => {
   getRepoUpstreamMock.mockResolvedValue(null)
 })
 
+afterEach(() => {
+  for (const connectionId of registeredConnectionIds) {
+    unregisterSshGitProvider(connectionId)
+  }
+  registeredConnectionIds.clear()
+})
+
 describe('fork upstream backfill for SSH repos', () => {
   it('resolves the upstream when the connection comes up', async () => {
     getRepoUpstreamMock.mockResolvedValue(UPSTREAM)
     const { runtime, repos } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
     expect(getRepoUpstream).toHaveBeenCalledWith('/srv/orca', 'ssh-1')
@@ -99,7 +126,7 @@ describe('fork upstream backfill for SSH repos', () => {
       })
     ])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
     expect(repos[0].repoIcon).toMatchObject({ type: 'image', source: 'github' })
@@ -115,63 +142,186 @@ describe('fork upstream backfill for SSH repos', () => {
       makeRepo({ id: 'resolved', path: '/srv/c', connectionId: 'ssh-1', upstream: null })
     ])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
     expect(getRepoUpstream).not.toHaveBeenCalled()
   })
 
-  it('probes each repo once, not once per reconnect', async () => {
-    const { runtime } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
+  it('leaves best-effort null unresolved without retrying every reconnect', async () => {
+    const { runtime, repos, updateRepo } = createRuntime([
+      makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })
+    ])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
     runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
     await drainBackfill()
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'disconnected'))
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyDisconnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
     expect(getRepoUpstream).toHaveBeenCalledTimes(1)
+    expect(repos[0].upstream).toBeUndefined()
+    expect(updateRepo).not.toHaveBeenCalled()
   })
 
   it('retries on the next connect when the probe threw', async () => {
     getRepoUpstreamMock.mockRejectedValueOnce(new Error('ssh channel closed'))
     const { runtime, repos } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
     expect(repos[0].upstream).toBeUndefined()
 
     getRepoUpstreamMock.mockResolvedValue(UPSTREAM)
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyDisconnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
     expect(repos[0].upstream).toEqual(UPSTREAM)
   })
 
-  it('never overlaps probes when several connections come up at once', async () => {
+  it('retries a newer provider generation when reconnect wins the failure race', async () => {
+    let rejectProbe: ((error: Error) => void) | undefined
+    getRepoUpstreamMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectProbe = reject
+          })
+      )
+      .mockResolvedValueOnce(UPSTREAM)
+    const { runtime, repos } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
+
+    notifyConnected(runtime, 'ssh-1')
+    await drainBackfill()
+    notifyDisconnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-1')
+    rejectProbe?.(new Error('old provider disconnected'))
+    await drainBackfill()
+
+    expect(getRepoUpstream).toHaveBeenCalledTimes(2)
+    expect(repos[0].upstream).toEqual(UPSTREAM)
+  })
+
+  it('discards a stale null returned after the provider changed', async () => {
+    let resolveProbe: ((value: null) => void) | undefined
+    getRepoUpstreamMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<null>((resolve) => {
+            resolveProbe = resolve
+          })
+      )
+      .mockResolvedValueOnce(UPSTREAM)
+    const { runtime, repos } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
+
+    notifyConnected(runtime, 'ssh-1')
+    await drainBackfill()
+    notifyDisconnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-1')
+    resolveProbe?.(null)
+    await drainBackfill()
+
+    expect(getRepoUpstream).toHaveBeenCalledTimes(2)
+    expect(repos[0].upstream).toEqual(UPSTREAM)
+  })
+
+  it('lets a healthy host pass a stalled host while bounding concurrent probes', async () => {
     let inFlight = 0
     let maxInFlight = 0
-    getRepoUpstreamMock.mockImplementation(async () => {
+    let releaseA: (() => void) | undefined
+    let releaseB: (() => void) | undefined
+    getRepoUpstreamMock.mockImplementation(async (path) => {
       inFlight += 1
       maxInFlight = Math.max(maxInFlight, inFlight)
-      await Promise.resolve()
-      inFlight -= 1
-      return null
+      try {
+        if (path === '/srv/a') {
+          await new Promise<void>((resolve) => {
+            releaseA = resolve
+          })
+        }
+        if (path === '/srv/b') {
+          await new Promise<void>((resolve) => {
+            releaseB = resolve
+          })
+        }
+        return UPSTREAM
+      } finally {
+        inFlight -= 1
+      }
     })
-    const { runtime } = createRuntime([
+    const { runtime, repos } = createRuntime([
       makeRepo({ id: 'a', path: '/srv/a', connectionId: 'ssh-1' }),
       makeRepo({ id: 'b', path: '/srv/b', connectionId: 'ssh-2' }),
       makeRepo({ id: 'c', path: '/srv/c', connectionId: 'ssh-3' })
     ])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
-    runtime.notifySshStateChanged('ssh-2', sshState('ssh-2', 'connected'))
-    runtime.notifySshStateChanged('ssh-3', sshState('ssh-3', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-2')
+    notifyConnected(runtime, 'ssh-3')
     await drainBackfill()
 
-    expect(getRepoUpstream).toHaveBeenCalledTimes(3)
-    expect(maxInFlight).toBe(1)
+    expect(getRepoUpstream).toHaveBeenCalledTimes(2)
+    expect(getRepoUpstream).not.toHaveBeenCalledWith('/srv/c', 'ssh-3')
+    expect(maxInFlight).toBe(2)
+
+    releaseB?.()
+    await drainBackfill()
+
+    expect(repos[1].upstream).toEqual(UPSTREAM)
+    expect(repos[2].upstream).toEqual(UPSTREAM)
+    expect(repos[0].upstream).toBeUndefined()
+    expect(maxInFlight).toBe(2)
+
+    releaseA?.()
+    await drainBackfill()
+
+    expect(repos[0].upstream).toEqual(UPSTREAM)
+  })
+
+  it('does not persist a stale null when a queued provider disconnects', async () => {
+    let releaseA: (() => void) | undefined
+    let releaseB: (() => void) | undefined
+    getRepoUpstreamMock.mockImplementation((path) => {
+      if (path === '/srv/a') {
+        return new Promise<null>((resolve) => {
+          releaseA = () => resolve(null)
+        })
+      }
+      if (path === '/srv/b') {
+        return new Promise<null>((resolve) => {
+          releaseB = () => resolve(null)
+        })
+      }
+      return Promise.resolve(UPSTREAM)
+    })
+    const { runtime, repos } = createRuntime([
+      makeRepo({ id: 'a', path: '/srv/a', connectionId: 'ssh-1' }),
+      makeRepo({ id: 'b', path: '/srv/b', connectionId: 'ssh-2' }),
+      makeRepo({ id: 'c', path: '/srv/c', connectionId: 'ssh-3' })
+    ])
+
+    notifyConnected(runtime, 'ssh-1')
+    notifyConnected(runtime, 'ssh-2')
+    await drainBackfill()
+    expect(getRepoUpstream).toHaveBeenCalledTimes(2)
+
+    notifyConnected(runtime, 'ssh-3')
+    notifyDisconnected(runtime, 'ssh-3')
+    releaseA?.()
+    await drainBackfill()
+
+    expect(repos[2].upstream).toBeUndefined()
+    expect(getRepoUpstream).not.toHaveBeenCalledWith('/srv/c', 'ssh-3')
+
+    notifyConnected(runtime, 'ssh-3')
+    await drainBackfill()
+
+    expect(repos[2].upstream).toEqual(UPSTREAM)
+
+    releaseB?.()
+    await drainBackfill()
   })
 
   it('returns from the connect notification without waiting on the probe', async () => {
@@ -184,7 +334,7 @@ describe('fork upstream backfill for SSH repos', () => {
     )
     const { runtime, repos } = createRuntime([makeRepo({ id: 'ssh-fork', connectionId: 'ssh-1' })])
 
-    runtime.notifySshStateChanged('ssh-1', sshState('ssh-1', 'connected'))
+    notifyConnected(runtime, 'ssh-1')
 
     expect(getRepoUpstream).not.toHaveBeenCalled()
     await drainBackfill()
