@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Dir } from 'node:fs'
-import { mkdir, opendir, rm, stat } from 'node:fs/promises'
+import { access, lstat, mkdir, opendir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app } from 'electron'
@@ -16,10 +16,14 @@ import {
 type RemoteClipboardFileDeps = Omit<ClipboardFileDeps, 'resolveFilePath'>
 
 const REMOTE_CLIPBOARD_FILE_TTL_MS = 60 * 60 * 1000
-const REMOTE_CLIPBOARD_FILE_PREFIX = 'orca-clipboard-file-'
+const REMOTE_CLIPBOARD_STAGING_ROOT_NAME = 'orca-clipboard-files'
+const REMOTE_CLIPBOARD_LEGACY_PREFIX = 'orca-clipboard-file-'
+const REMOTE_CLIPBOARD_LEGACY_MIGRATION_MARKER = '.legacy-cleanup-complete'
+const REMOTE_CLIPBOARD_LEGACY_MIGRATION_DELAY_MS = 30_000
 const REMOTE_CLIPBOARD_CLEANUP_CONCURRENCY = 8
 const WINDOWS_RESERVED_LOCAL_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 const LOCAL_FILENAME_REPLACEMENT_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+let legacyMigrationScheduled = false
 
 export async function writeRemoteFileToClipboard({
   remotePath,
@@ -39,10 +43,8 @@ export async function writeRemoteFileToClipboard({
     throw new Error('Remote file download is unavailable. Reconnect the SSH target and retry.')
   }
 
-  const tempDir = join(
-    app.getPath('temp'),
-    `${REMOTE_CLIPBOARD_FILE_PREFIX}${Date.now()}-${randomUUID()}`
-  )
+  const stagingRoot = await ensureRemoteClipboardStagingRoot()
+  const tempDir = join(stagingRoot, `${Date.now()}-${randomUUID()}`)
   await mkdir(tempDir, { mode: 0o700 })
   const localPath = join(
     tempDir,
@@ -80,25 +82,93 @@ export async function writeRemoteFileToClipboard({
   }
 }
 
-// Why: the OS temp root is shared with every other program and routinely holds
-// millions of unrelated entries on long-lived machines, so this startup sweep
-// streams it and only ever retains work for entries it actually owns.
 export async function cleanupExpiredRemoteClipboardFiles(nowMs = Date.now()): Promise<void> {
-  const tempRoot = app.getPath('temp')
-  let tempRootDir: Dir
+  let stagingRoot: string
   try {
-    tempRootDir = await opendir(tempRoot)
+    stagingRoot = await ensureRemoteClipboardStagingRoot()
   } catch {
     return
   }
 
+  await sweepRemoteClipboardDirectories(stagingRoot, nowMs, () => true)
+}
+
+async function ensureRemoteClipboardStagingRoot(): Promise<string> {
+  const uidSuffix = typeof process.getuid === 'function' ? `-${process.getuid()}` : ''
+  const stagingRoot = join(app.getPath('temp'), `${REMOTE_CLIPBOARD_STAGING_ROOT_NAME}${uidSuffix}`)
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
+  const rootStats = await lstat(stagingRoot)
+  const wrongOwner = typeof process.getuid === 'function' && rootStats.uid !== process.getuid()
+  if (!rootStats.isDirectory() || rootStats.isSymbolicLink() || wrongOwner) {
+    throw new Error('Remote clipboard staging root is unsafe')
+  }
+  return stagingRoot
+}
+
+export async function migrateLegacyRemoteClipboardFiles(nowMs = Date.now()): Promise<void> {
+  let stagingRoot: string
+  try {
+    stagingRoot = await ensureRemoteClipboardStagingRoot()
+  } catch {
+    return
+  }
+
+  const markerPath = join(stagingRoot, REMOTE_CLIPBOARD_LEGACY_MIGRATION_MARKER)
+  const migrationComplete = await access(markerPath).then(
+    () => true,
+    () => false
+  )
+  if (migrationComplete) {
+    return
+  }
+
+  const result = await sweepRemoteClipboardDirectories(app.getPath('temp'), nowMs, (name) =>
+    name.startsWith(REMOTE_CLIPBOARD_LEGACY_PREFIX)
+  )
+  if (result.complete && !result.hasFreshDirectories) {
+    await writeFile(markerPath, '', { flag: 'wx' }).catch(() => undefined)
+  }
+}
+
+export function scheduleLegacyRemoteClipboardFileMigration(): void {
+  if (legacyMigrationScheduled) {
+    return
+  }
+  legacyMigrationScheduled = true
+  const timer = setTimeout(() => {
+    void migrateLegacyRemoteClipboardFiles()
+  }, REMOTE_CLIPBOARD_LEGACY_MIGRATION_DELAY_MS)
+  if (typeof timer === 'object' && 'unref' in timer) {
+    timer.unref()
+  }
+}
+
+async function sweepRemoteClipboardDirectories(
+  root: string,
+  nowMs: number,
+  ownsEntry: (name: string) => boolean
+): Promise<{ complete: boolean; hasFreshDirectories: boolean }> {
+  let rootDir: Dir
+  try {
+    rootDir = await opendir(root)
+  } catch {
+    return { complete: false, hasFreshDirectories: false }
+  }
+
+  let complete = true
+  let hasFreshDirectories = false
   const pending = new Set<Promise<void>>()
   try {
-    for await (const entry of tempRootDir) {
-      if (!entry.isDirectory() || !entry.name.startsWith(REMOTE_CLIPBOARD_FILE_PREFIX)) {
+    for await (const entry of rootDir) {
+      if (!entry.isDirectory() || !ownsEntry(entry.name)) {
         continue
       }
-      const cleanup = cleanupExpiredRemoteClipboardDirectory(join(tempRoot, entry.name), nowMs)
+      const cleanup = cleanupExpiredRemoteClipboardDirectory(join(root, entry.name), nowMs).then(
+        (result) => {
+          hasFreshDirectories ||= result === 'fresh'
+          complete &&= result !== 'failed'
+        }
+      )
       pending.add(cleanup)
       void cleanup.finally(() => pending.delete(cleanup))
       if (pending.size >= REMOTE_CLIPBOARD_CLEANUP_CONCURRENCY) {
@@ -106,25 +176,28 @@ export async function cleanupExpiredRemoteClipboardFiles(nowMs = Date.now()): Pr
       }
     }
   } catch {
-    // Why: a partial best-effort sweep beats failing startup on a temp-root read error.
+    complete = false
   } finally {
-    // Why: exhausting the iterator already closes the handle; closing again is harmless.
-    await tempRootDir.close().catch(() => undefined)
+    await rootDir.close().catch(() => undefined)
   }
   await Promise.all(pending)
+  return { complete, hasFreshDirectories }
 }
 
 async function cleanupExpiredRemoteClipboardDirectory(
   tempDir: string,
   nowMs: number
-): Promise<void> {
+): Promise<'failed' | 'fresh' | 'removed'> {
   try {
     const tempStats = await stat(tempDir)
-    if (nowMs - tempStats.mtimeMs >= REMOTE_CLIPBOARD_FILE_TTL_MS) {
-      await rm(tempDir, { recursive: true, force: true })
+    if (nowMs - tempStats.mtimeMs < REMOTE_CLIPBOARD_FILE_TTL_MS) {
+      return 'fresh'
     }
+    await rm(tempDir, { recursive: true, force: true })
+    return 'removed'
   } catch {
     // Why: stale staged SSH files should not make startup cleanup noisy.
+    return 'failed'
   }
 }
 
