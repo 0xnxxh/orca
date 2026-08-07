@@ -85,9 +85,8 @@ export type SkillFreshnessInstallation = {
   observedGitTreeSha?: string | null
   /**
    * The same hash over only the files the current bundle lists. Carried beside the
-   * whole-folder hash, not in place of it, so a folder holding an agent CLI's sidecar
-   * can still match the lock without blinding the check to an upstream revision that
-   * added a file. Absent from hosts older than this field.
+   * whole-folder hash, not in place of it. Null when excluded files can alter behavior;
+   * absent from hosts older than this field.
    */
   observedOfficialGitTreeSha?: string | null
   errorCategory: string | null

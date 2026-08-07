@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs'
 import { lstat, open, opendir } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { SkillBundleFileIdentity, SkillKnownSnapshot } from '../../shared/skill-freshness'
+import { isBehaviorInertAgentMetadata } from './skill-agent-metadata-trust'
 import {
   gitBlobSha,
   skillPackageGitTreeSha,
@@ -21,6 +22,7 @@ export type ObservedSkillPackage = {
   observedGitTreeSha: string
   /** Retained so a subset of the observed paths can be re-hashed the same way. */
   treeEntries: SkillGitTreeFileEntry[]
+  behaviorInertSidecarPaths: ReadonlySet<string>
 }
 
 // Why: package identity compares a live user directory against a tree the generator read
@@ -170,6 +172,7 @@ export async function observeSkillPackage(
 ): Promise<ObservedSkillPackage> {
   const files: ObservedSkillFile[] = []
   const treeEntries: SkillGitTreeFileEntry[] = []
+  const behaviorInertSidecarPaths = new Set<string>()
   const caseFoldedPaths = new Map<string, string>()
   let entryCount = 0
   let totalBytes = 0
@@ -243,7 +246,11 @@ export async function observeSkillPackage(
         )
         totalBytes += bytes.length
         const executable = (fileStat.mode & 0o111) !== 0
-        files.push(describeObservedSkillFile(manifestPath, bytes, executable))
+        const described = describeObservedSkillFile(manifestPath, bytes, executable)
+        files.push(described)
+        if (isBehaviorInertAgentMetadata(manifestPath, bytes, executable)) {
+          behaviorInertSidecarPaths.add(manifestPath)
+        }
         treeEntries.push({ path: manifestPath, executable, blobSha: gitBlobSha(bytes) })
       } else {
         throw new Error('skill-package-special-file')
@@ -256,7 +263,8 @@ export async function observeSkillPackage(
     files,
     observedDigest: skillPackageDigest(files),
     observedGitTreeSha: skillPackageGitTreeSha(treeEntries),
-    treeEntries
+    treeEntries,
+    behaviorInertSidecarPaths
   }
 }
 
@@ -264,10 +272,9 @@ export async function observeSkillPackage(
  * The newest revision whose every listed file is present and byte-identical.
  *
  * `officialPaths` is what the CURRENT bundle says this skill owns, and it is what
- * separates a tolerable neighbour from drift. Agent CLIs drop their own metadata
- * beside an official SKILL.md (Codex writes `agents/openai.yaml` and cannot put it
- * anywhere else), and a file no revision claims is not evidence the user edited
- * anything — so extras alone must not mark the package unrecognized.
+ * separates a tolerable neighbour from drift. Codex reads `agents/openai.yaml` beside
+ * SKILL.md; presentation-only fields are harmless, but prompt, policy, dependency,
+ * and unknown fields can alter agent behavior and must not inherit official identity.
  *
  * A file the current bundle DOES list is never an extra, even when the revision
  * being tested predates it: without that guard an older snapshot would happily match
@@ -283,7 +290,9 @@ export function matchingKnownSnapshot(
   for (const snapshot of snapshots.toReversed()) {
     const listed = new Set(snapshot.files.map((file) => file.path))
     const launders = observed.files.some(
-      (file) => !listed.has(file.path) && officialPaths.has(file.path)
+      (file) =>
+        !listed.has(file.path) &&
+        (officialPaths.has(file.path) || !observed.behaviorInertSidecarPaths.has(file.path))
     )
     if (
       !launders &&
@@ -302,16 +311,9 @@ export function matchingKnownSnapshot(
  * The observed folder hashed as if it held only the files the current bundle owns.
  *
  * Compared against the updater lock's `skillFolderHash` ALONGSIDE the whole-folder
- * hash, never instead of it. The two cover different halves and neither subsumes the
- * other: the lock records the source tree, so a folder carrying a sidecar only ever
- * matches scoped, while an upstream revision that ADDS a file puts that file in the
- * lock's own tree and only ever matches whole. Publishing one and dropping the other
- * would trade this bug for #11220 — a clean install reading "may be modified" and its
- * update run reporting failure.
- *
- * Scoped to the CURRENT entry rather than every revision ever shipped: a leftover from
- * an older revision is exactly the stale byte the lock comparison should look past, and
- * unioning historical paths would drag it back in on the accident of its name.
+ * hash, never instead of it. Presentation-only metadata can match scoped; an upstream
+ * revision that adds a file can match whole. Behavior-capable extras disable the scoped
+ * hash so a lock cannot vouch for bytes it never recorded.
  *
  * A folder holding none of them yields the whole-folder hash rather than git's empty-tree
  * sha, which is a real, matchable value: a lock that ever recorded an empty source tree
@@ -320,7 +322,14 @@ export function matchingKnownSnapshot(
 export function officialPathsGitTreeSha(
   observed: ObservedSkillPackage,
   officialPaths: ReadonlySet<string>
-): string {
+): string | null {
+  if (
+    observed.files.some(
+      (file) => !officialPaths.has(file.path) && !observed.behaviorInertSidecarPaths.has(file.path)
+    )
+  ) {
+    return null
+  }
   const scoped = observed.treeEntries.filter((entry) => officialPaths.has(entry.path))
   return scoped.length === 0 || scoped.length === observed.treeEntries.length
     ? observed.observedGitTreeSha

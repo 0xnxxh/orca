@@ -157,13 +157,15 @@ describe('skill package identity', () => {
     const edited = await temporarySkill()
     await writeFile(join(edited, 'SKILL.md'), 'skill\nlocal tweak\n')
     await writeFile(join(edited, '.DS_Store'), Buffer.from([0, 1]))
-    // Extra sidecar next to an untouched SKILL.md must still match — agent CLIs
-    // write agents/openai.yaml (and similar) without editing official bytes.
+    // Presentation-only metadata must still match without hiding behavior changes.
     // Content drift on a listed file remains fail-closed.
     const withPayload = await temporarySkill()
     await writeFile(join(withPayload, 'SKILL.md'), 'skill\n')
     await mkdir(join(withPayload, 'agents'), { recursive: true })
-    await writeFile(join(withPayload, 'agents', 'openai.yaml'), 'display_name: test\n')
+    await writeFile(
+      join(withPayload, 'agents', 'openai.yaml'),
+      'interface:\n  display_name: "test"\n'
+    )
 
     const snapshot = [
       {
@@ -181,7 +183,7 @@ describe('skill package identity', () => {
     ).toBe(1)
   })
 
-  it('does not let an older revision launder drift on a file the current one lists', async () => {
+  it('does not let an older revision launder behavior-capable extras', async () => {
     // Subset matching treats a path the tested revision does not list as a neighbour.
     // Left unguarded, revision 1 (SKILL.md alone) would match a revision-2 folder whose
     // references/x.md had been rewritten — reporting a tampered package as merely
@@ -208,11 +210,7 @@ describe('skill package identity', () => {
     expect(
       matchingKnownSnapshot(observed, snapshots, new Set(['SKILL.md', 'references/x.md']))
     ).toBeNull()
-    // The same folder is a plain sidecar case once the current bundle stops claiming
-    // that path, so the guard must key on what is official — not on file count.
-    expect(matchingKnownSnapshot(observed, snapshots, new Set(['SKILL.md']))?.releaseRevision).toBe(
-      1
-    )
+    expect(matchingKnownSnapshot(observed, snapshots, new Set(['SKILL.md']))).toBeNull()
   })
 
   it('hashes official paths for the lock without hiding an upstream file it added', async () => {
@@ -223,7 +221,10 @@ describe('skill package identity', () => {
     const withSidecar = await temporarySkill()
     await writeFile(join(withSidecar, 'SKILL.md'), 'skill\n')
     await mkdir(join(withSidecar, 'agents'), { recursive: true })
-    await writeFile(join(withSidecar, 'agents', 'openai.yaml'), 'display_name: test\n')
+    await writeFile(
+      join(withSidecar, 'agents', 'openai.yaml'),
+      'interface:\n  display_name: "test"\n'
+    )
     const sidecarObserved = await observeSkillPackage(withSidecar)
     const officialPaths = new Set(['SKILL.md'])
 
@@ -247,11 +248,7 @@ describe('skill package identity', () => {
     expect(upstreamObserved.observedGitTreeSha).toBe(upstreamLock)
   })
 
-  it('scopes the lock hash to the current bundle, not every path ever shipped', async () => {
-    // A file an older revision shipped and the current one dropped is a stale leftover,
-    // not part of what the updater installed. Scoping to the union of all revisions would
-    // drag it back into the hash purely because its name was once official, and the copy
-    // would read "may be modified" over bytes the CLI itself wrote.
+  it('does not scope behavior-capable historical leftovers out of lock identity', async () => {
     const source = await temporarySkill()
     await writeFile(join(source, 'SKILL.md'), 'skill\n')
     const lock = (await observeSkillPackage(source)).observedGitTreeSha
@@ -262,11 +259,11 @@ describe('skill package identity', () => {
     await writeFile(join(withLeftover, 'references', 'legacy.md'), 'dropped after rev 1\n')
     const observed = await observeSkillPackage(withLeftover)
 
-    expect(officialPathsGitTreeSha(observed, new Set(['SKILL.md']))).toBe(lock)
-    // The union of every revision's paths — what scoping must NOT use.
+    expect(officialPathsGitTreeSha(observed, new Set(['SKILL.md']))).toBeNull()
     expect(
       officialPathsGitTreeSha(observed, new Set(['SKILL.md', 'references/legacy.md']))
-    ).not.toBe(lock)
+    ).not.toBeNull()
+    expect(observed.observedGitTreeSha).not.toBe(lock)
   })
 
   it('does not hand the lock an empty tree when no official path is present', async () => {
@@ -274,7 +271,7 @@ describe('skill package identity', () => {
     // ever recorded an empty source tree vouch for any folder holding nothing official.
     const root = await temporarySkill()
     await mkdir(join(root, 'agents'), { recursive: true })
-    await writeFile(join(root, 'agents', 'openai.yaml'), 'display_name: test\n')
+    await writeFile(join(root, 'agents', 'openai.yaml'), 'interface:\n  display_name: "test"\n')
     const observed = await observeSkillPackage(root)
 
     expect(officialPathsGitTreeSha(observed, new Set(['SKILL.md']))).toBe(

@@ -274,11 +274,7 @@ describe('read-only skill freshness inventory', () => {
     expect(inventory.eligibleUpdateNames).toEqual([])
   })
 
-  it('scopes the lock hash to the current bundle, not every path a revision ever shipped', async () => {
-    // A file revision 1 shipped and the current revision dropped is a stale leftover, not
-    // part of what the updater installed. Scoping to the union of all revisions would drag
-    // it back into the hash on the accident of its name, and the copy the CLI just wrote
-    // would read "may be modified".
+  it('does not let the lock vouch for a behavior-capable historical leftover', async () => {
     const test = await fixture()
     const legacy = describeObservedSkillFile(
       'references/legacy.md',
@@ -310,9 +306,9 @@ describe('read-only skill freshness inventory', () => {
 
     expect(inventory.installations[0]).toMatchObject({
       topology: 'canonical-copy',
-      status: 'newer-known'
+      status: 'unrecognized'
     })
-    expect(getSkillFreshnessDisplayStatus(inventory, 'orca-cli')).toBe('up-to-date')
+    expect(getSkillFreshnessDisplayStatus(inventory, 'orca-cli')).toBe('needs-attention')
   })
 
   it('trusts the updater lock for upstream bytes beside an agent CLI sidecar (#12694)', async () => {
@@ -330,7 +326,10 @@ describe('read-only skill freshness inventory', () => {
     const sourceTree = await test.writeSkill(join(test.root, 'source'), upstreamMarkdown)
     await writeSkillLockHash(test.homeDir, await gitTreeShaOf(sourceTree))
     await mkdir(join(canonical, 'agents'), { recursive: true })
-    await writeFile(join(canonical, 'agents', 'openai.yaml'), 'display_name: test\n')
+    await writeFile(
+      join(canonical, 'agents', 'openai.yaml'),
+      'interface:\n  display_name: "test"\n'
+    )
 
     const inventory = await inventorySkillFreshness({
       currentAppVersion: '2.0.0',
@@ -388,7 +387,10 @@ describe('read-only skill freshness inventory', () => {
       test.oldMarkdown
     )
     await mkdir(join(canonical, 'agents'), { recursive: true })
-    await writeFile(join(canonical, 'agents', 'openai.yaml'), 'display_name: test\n')
+    await writeFile(
+      join(canonical, 'agents', 'openai.yaml'),
+      'interface:\n  display_name: "test"\n'
+    )
     // The fixture's synthetic tree sha for revision 2 — the revision on disk is 1.
     await writeSkillLockHash(test.homeDir, (2).toString(16).padStart(40, '0'))
 
@@ -655,11 +657,7 @@ describe('read-only skill freshness inventory', () => {
     expect(inventory.eligibleUpdateNames).toEqual([])
   })
 
-  it('reads a plugin-cache copy with untouched official files as current', async () => {
-    // The deliberate posture change behind #12694: an unlisted neighbour is not evidence
-    // of an edit, so the bytes Orca owns decide alone — here and in every scope, not just
-    // the canonical copy the updater writes. The drifted-SKILL.md case above still fails
-    // closed, which is what keeps "unrecognized" meaningful.
+  it('keeps an unclassified plugin-cache sidecar out of official identity', async () => {
     const test = await fixture()
     await test.writeSkill(join(test.homeDir, '.agents', 'skills'), test.currentMarkdown)
     const withSidecarRoot = join(
@@ -686,7 +684,7 @@ describe('read-only skill freshness inventory', () => {
       expect.arrayContaining([
         expect.objectContaining({
           unresolvedPath: withSidecarRoot,
-          status: 'current'
+          status: 'unrecognized'
         })
       ])
     )
