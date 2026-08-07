@@ -1,0 +1,180 @@
+/**
+ * On-disk layer for the durable agent-session store.
+ *
+ * Every mutation is a whole-file atomic transaction — temp write, fsync, rename — so a SIGKILL
+ * at any point leaves either the previous committed state or the next one, never a torn lease.
+ * That matters because this host restarts its runtime often; a half-written lease would be
+ * indistinguishable from an owner whose identity cannot be verified.
+ */
+
+import { mkdir, readFile, rename, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import {
+  isAgentSessionOperationRow,
+  type AgentSessionOperationRow
+} from '../../shared/agent-session-operation-ledger'
+import { isAgentSessionRecord, type AgentSessionRecord } from '../../shared/agent-session-record'
+import { durableWriteTempPath, writeFileDurable } from '../durable-file-write'
+
+export const AGENT_SESSION_STORE_SCHEMA_VERSION = 1 as const
+
+export const AGENT_SESSION_STORE_FILE_NAME = 'agent-sessions.json'
+
+export type RetiredAgentSessionClaimKey = { keyId: string; retiredAt: number }
+
+export type AgentSessionStoreState = {
+  schemaVersion: number
+  hostId: string
+  records: Map<string, AgentSessionRecord>
+  operations: Map<string, AgentSessionOperationRow>
+  retiredClaimKeys: RetiredAgentSessionClaimKey[]
+  /** Rows this build cannot validate, kept verbatim so a rollback cannot delete another host's work. */
+  unreadableRecords: Map<string, unknown>
+}
+
+export type LoadedAgentSessionStore = {
+  state: AgentSessionStoreState
+  /** True when the file was written by a newer schema; this host reads but never writes it. */
+  readOnly: boolean
+  /** True when the primary file was unusable and the previous committed copy was used. */
+  recoveredFromBackup: boolean
+}
+
+export function agentSessionStorePath(directory: string): string {
+  return join(directory, AGENT_SESSION_STORE_FILE_NAME)
+}
+
+function backupPath(filePath: string): string {
+  return `${filePath}.bak`
+}
+
+function emptyState(hostId: string): AgentSessionStoreState {
+  return {
+    schemaVersion: AGENT_SESSION_STORE_SCHEMA_VERSION,
+    hostId,
+    records: new Map(),
+    operations: new Map(),
+    retiredClaimKeys: [],
+    unreadableRecords: new Map()
+  }
+}
+
+function parseState(raw: string, hostId: string): { state: AgentSessionStoreState } | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null
+  }
+  const file = parsed as {
+    schemaVersion?: unknown
+    hostId?: unknown
+    records?: unknown
+    operations?: unknown
+    retiredClaimKeys?: unknown
+  }
+  if (!Number.isSafeInteger(file.schemaVersion) || typeof file.hostId !== 'string') {
+    return null
+  }
+  const state = emptyState(hostId)
+  state.schemaVersion = file.schemaVersion as number
+  state.hostId = file.hostId
+  if (typeof file.records === 'object' && file.records !== null) {
+    for (const [sessionId, value] of Object.entries(file.records)) {
+      if (isAgentSessionRecord(value) && value.sessionId === sessionId) {
+        state.records.set(sessionId, value)
+      } else {
+        // Why: a record this build cannot read must not silently vanish, and must never be
+        // granted a writer; keep it and refuse ownership for that session id.
+        state.unreadableRecords.set(sessionId, value)
+      }
+    }
+  }
+  if (typeof file.operations === 'object' && file.operations !== null) {
+    for (const [key, value] of Object.entries(file.operations)) {
+      if (isAgentSessionOperationRow(value)) {
+        state.operations.set(key, value)
+      }
+    }
+  }
+  if (Array.isArray(file.retiredClaimKeys)) {
+    for (const entry of file.retiredClaimKeys) {
+      const key = entry as Partial<RetiredAgentSessionClaimKey>
+      if (
+        typeof key?.keyId === 'string' &&
+        typeof key.retiredAt === 'number' &&
+        Number.isSafeInteger(key.retiredAt)
+      ) {
+        state.retiredClaimKeys.push({ keyId: key.keyId, retiredAt: key.retiredAt })
+      }
+    }
+  }
+  return { state }
+}
+
+export async function loadAgentSessionStore(
+  filePath: string,
+  hostId: string
+): Promise<LoadedAgentSessionStore> {
+  for (const [candidate, recoveredFromBackup] of [
+    [filePath, false],
+    [backupPath(filePath), true]
+  ] as const) {
+    let raw: string
+    try {
+      raw = await readFile(candidate, 'utf-8')
+    } catch {
+      continue
+    }
+    const parsed = parseState(raw, hostId)
+    if (!parsed) {
+      continue
+    }
+    return {
+      state: parsed.state,
+      readOnly: parsed.state.schemaVersion > AGENT_SESSION_STORE_SCHEMA_VERSION,
+      recoveredFromBackup
+    }
+  }
+  return { state: emptyState(hostId), readOnly: false, recoveredFromBackup: false }
+}
+
+function serializeState(state: AgentSessionStoreState): string {
+  const records: Record<string, unknown> = {}
+  for (const [sessionId, value] of state.unreadableRecords) {
+    records[sessionId] = value
+  }
+  for (const [sessionId, record] of state.records) {
+    records[sessionId] = record
+  }
+  return JSON.stringify({
+    schemaVersion: AGENT_SESSION_STORE_SCHEMA_VERSION,
+    hostId: state.hostId,
+    records,
+    operations: Object.fromEntries(state.operations),
+    retiredClaimKeys: state.retiredClaimKeys
+  })
+}
+
+/** Commit the whole state. The previous file becomes the backup before the new one lands. */
+export async function saveAgentSessionStore(
+  filePath: string,
+  state: AgentSessionStoreState
+): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true })
+  const tmpPath = durableWriteTempPath(filePath)
+  try {
+    await rename(filePath, backupPath(filePath))
+  } catch {
+    // First write, or the primary is already gone; the backup stays as it was.
+  }
+  try {
+    await writeFileDurable(tmpPath, filePath, serializeState(state))
+  } catch (error) {
+    await rm(tmpPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
