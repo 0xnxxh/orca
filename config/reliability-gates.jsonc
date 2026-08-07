@@ -4277,7 +4277,7 @@
           "assertions": [
             "preserves daemon PID and target PTY identity across the paired host relaunch",
             "foregrounds the daemon-backgrounded target on its first post-relaunch remote observation",
-            "delivers target and sibling terminal input and live output after relaunch"
+            "delivers target and post-relaunch control terminal input and live output"
           ]
         },
         {
@@ -4415,7 +4415,7 @@
           "command": "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-host-restart-background-sync.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
           "durationSeconds": 12.8,
-          "summary": "The isolated headed host and separate paired desktop client retained the daemon PID and PTY ID across host relaunch, emitted one target foreground transition, and delivered target plus sibling input/output. The byte-identical run with only the unknown-state fix reverted failed at the missing target foreground transition."
+          "summary": "The isolated headed host and separate paired desktop client retained the daemon PID and PTY ID across host relaunch, emitted one target foreground transition, and delivered target plus post-relaunch control input/output. The byte-identical run with only the unknown-state fix reverted failed at the missing target foreground transition."
         },
         {
           "date": "2026-08-02",

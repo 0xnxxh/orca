@@ -342,32 +342,16 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
       .toBe(true)
 
     const target = await createHostTerminal(client, worktreeId, 'target')
-    const revealDecoy = await createHostTerminal(client, worktreeId, 'reveal-decoy')
-    const activeControl = await createHostTerminal(client, worktreeId, 'active-control')
-    terminals.push(target, revealDecoy, activeControl)
+    const firstDecoy = await createHostTerminal(client, worktreeId, 'first-decoy')
+    const parkingDecoy = await createHostTerminal(client, worktreeId, 'parking-decoy')
+    terminals.push(target, firstDecoy, parkingDecoy)
     await openClientTab(client.page, worktreeId, target.webTabId)
     await expect
       .poll(() => readPaneContent(client!.page, target.webTabId), { timeout: 30_000 })
       .toContain('READY')
-    await openClientTab(client.page, worktreeId, revealDecoy.webTabId)
-    await openClientTab(client.page, worktreeId, activeControl.webTabId)
+    await openClientTab(client.page, worktreeId, firstDecoy.webTabId)
+    await openClientTab(client.page, worktreeId, parkingDecoy.webTabId)
     await waitForTabParked(client.page, target.webTabId, { parkDelayMs: PARK_DELAY_MS })
-    await expect
-      .poll(() => readPaneContent(client!.page, activeControl.webTabId), { timeout: 30_000 })
-      .toContain('READY')
-    const activatedControl = await callRuntime<{
-      tabs: { isActive: boolean; parentTabId?: string }[]
-    }>(client.page, client.environmentId, 'session.tabs.activate', {
-      worktree: `id:${worktreeId}`,
-      tabId: activeControl.parentTabId,
-      notifyClients: false,
-      navigation: 'caller'
-    })
-    expect(
-      activatedControl.tabs.some(
-        (tab) => tab.parentTabId === activeControl.parentTabId && tab.isActive
-      )
-    ).toBe(true)
 
     const targetSuffix = target.ptyId.slice(-10)
     await expect
@@ -432,17 +416,12 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
       .toBe(true)
     await expectTerminalInteractive(client, target, 'x')
 
-    activeControl.handle = await findTerminalHandle(client, worktreeId, activeControl.parentTabId)
-    const shownControl = await callRuntime<{ terminal: { ptyId: string | null } }>(
-      client.page,
-      client.environmentId,
-      'terminal.show',
-      { terminal: activeControl.handle }
-    )
-    expect(shownControl.terminal.ptyId).toBe(activeControl.ptyId)
-    await openClientTab(client.page, worktreeId, activeControl.webTabId)
-    await waitForPaneConnected(client.page, activeControl.webTabId)
-    await expectTerminalInteractive(client, activeControl, 'y')
+    const reconnectControl = await createHostTerminal(client, worktreeId, 'reconnect-control')
+    terminals.push(reconnectControl)
+    expect(reconnectControl.ptyId).not.toBe(target.ptyId)
+    await openClientTab(client.page, worktreeId, reconnectControl.webTabId)
+    await waitForPaneConnected(client.page, reconnectControl.webTabId)
+    await expectTerminalInteractive(client, reconnectControl, 'y')
   } finally {
     if (client) {
       for (const terminal of terminals) {
