@@ -1,5 +1,9 @@
 /* oxlint-disable max-lines */
 import { HeadlessEmulator } from './headless-emulator'
+import {
+  installDeviceAttributesResponder,
+  STARTUP_DA1_RESPONSE
+} from './startup-device-attributes-responder'
 import { isValidPtySize, normalizePtySize } from './daemon-pty-size'
 import { PostReadyFlushGate } from './post-ready-flush-gate'
 import {
@@ -116,6 +120,7 @@ export class Session {
   private readonly onSessionExit?: (code: number) => void
   private attachedClients: AttachedClient[] = []
   private preReadyStdinQueue: string[] = []
+  private releaseStartupDeviceAttributesResponder: (() => void) | null = null
   private shellReadyScanState: ShellReadyScanState | null = null
   private shellReadyTimer: ReturnType<typeof setTimeout> | null = null
   private killTimer: ReturnType<typeof setTimeout> | null = null
@@ -148,6 +153,8 @@ export class Session {
       wslDistro: opts.wslDistro
       // No onData: the daemon emulator must never reply to query sequences — the renderer's xterm is
       // the authoritative responder and a daemon reply would race ahead and clobber it. See HeadlessEmulator.
+      // The one exception is DA1 while the shell-ready barrier holds (below): the renderer's reply
+      // would be queued behind the marker it is needed to produce, so it cannot be authoritative there.
     })
     // Why: seed recovery must precede listener registration; shells can emit their prompt synchronously once onData subscribes.
     // Why the every() short-circuit is safe: writeSync only fails emulator-wide (disposed / no sync write API), so later
@@ -160,6 +167,14 @@ export class Session {
     if (opts.shellReadySupported) {
       this._shellState = 'pending'
       this.shellReadyScanState = createShellReadyScanState()
+      // Why: `write` queues everything until the ready marker, including the renderer's DA1
+      // reply — and a shell that withholds its first prompt until DA1 is answered (fish) then
+      // never emits the marker that would release it. Answer from the daemon, past the queue.
+      this.releaseStartupDeviceAttributesResponder = installDeviceAttributesResponder({
+        parser: this.emulator.responderParser,
+        response: STARTUP_DA1_RESPONSE,
+        reply: (data) => this.subprocess.write(data)
+      })
       this.shellReadyTimer = setTimeout(() => {
         this.onShellReadyTimeout()
       }, opts.shellReadyTimeoutMs ?? SHELL_READY_TIMEOUT_MS)
@@ -514,6 +529,7 @@ export class Session {
 
     // Why: `wasTerminating` below must be read BEFORE the `_state = 'exited'` flip — it guards the
     // "dispose while kill() in flight" case and the invariant needs the pre-flip `_state`; do NOT move it down.
+    this.releaseStartupDeviceAttributes()
     this.releaseHeldShellReadyBytes()
     this.startupIngress.drainAndClose()
     const wasTerminating = this._isTerminating && this._state !== 'exited'
@@ -704,9 +720,16 @@ export class Session {
     return this.startupIngress.closeQueryAuthority()
   }
 
+  /** Hands DA1 back to the renderer once the barrier is done, however it ended. */
+  private releaseStartupDeviceAttributes(): void {
+    this.releaseStartupDeviceAttributesResponder?.()
+    this.releaseStartupDeviceAttributesResponder = null
+  }
+
   private transitionToReady(postMarkerBytesObserved = false): void {
     this._shellState = 'ready'
     this.shellReadyScanState = null
+    this.releaseStartupDeviceAttributes()
     if (this.shellReadyTimer) {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
@@ -723,6 +746,7 @@ export class Session {
       return
     }
     this._shellState = 'timed_out'
+    this.releaseStartupDeviceAttributes()
     this.releaseHeldShellReadyBytes()
     this.flushPreReadyQueue()
   }

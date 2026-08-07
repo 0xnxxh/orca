@@ -331,6 +331,20 @@ describe('Session', () => {
   })
 
   describe('shell readiness gating', () => {
+    // Why: the renderer's DA1 reply would be queued here, and a shell that withholds its
+    // first prompt until DA1 is answered never emits the marker that would release it.
+    it('answers DA1 past the pre-ready queue while ordinary input still waits', async () => {
+      createSession({ shellReadySupported: true })
+      session.write('queued\n')
+      expect(subprocess.written).toEqual([])
+
+      subprocess.simulateData('\x1b[0c')
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(subprocess.written).toEqual(['\x1b[?1;2c'])
+      expect(session.shellState).toBe('pending')
+    })
+
     // Why: regression guard for "claude claude" double-echo. The marker fires
     // from precmd before readline switches the PTY into raw mode; flushing
     // then lets the kernel re-echo the command under the prompt. Detailed
