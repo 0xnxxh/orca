@@ -177,24 +177,53 @@ describe('isPwshAvailable', () => {
     }
   })
 
-  it('does not let an older async failure overwrite a newer sync success', async () => {
+  it('does not let an older async failure overwrite a newer warmup success', async () => {
     const restorePlatform = setPlatform('win32')
     let finishAsyncProbe!: (error: Error | null) => void
-    execFileMock.mockImplementation((_file, _args, _options, callback) => {
-      finishAsyncProbe = (error) => callback(error, '', '')
+    let finishWarmup!: (error: Error | null) => void
+    execFileMock.mockImplementation((_file, _args, options, callback) => {
+      const finish = (error: Error | null): void => callback(error, '', '')
+      if (options.timeout === 30_000) {
+        finishWarmup = finish
+      } else {
+        finishAsyncProbe = finish
+      }
     })
-    execFileSyncMock.mockReturnValue('PowerShell 7.5.0')
 
     try {
-      const { isPwshAvailable, isPwshAvailableAsync } = await import('./pwsh')
+      const { isPwshAvailable, isPwshAvailableAsync, warmPwshAvailabilityCache } =
+        await import('./pwsh')
       const staleProbe = isPwshAvailableAsync()
-      expect(isPwshAvailable()).toBe(true)
+      const warmup = warmPwshAvailabilityCache()
+      finishWarmup(null)
+      await expect(warmup).resolves.toBe(true)
 
       finishAsyncProbe(new Error('older failure'))
 
       await expect(staleProbe).resolves.toBe(true)
       expect(isPwshAvailable()).toBe(true)
-      expect(execFileSyncMock).toHaveBeenCalledTimes(1)
+      expect(execFileSyncMock).not.toHaveBeenCalled()
+    } finally {
+      restorePlatform()
+    }
+  })
+
+  it('does not duplicate an in-flight async probe for a synchronous caller', async () => {
+    const restorePlatform = setPlatform('win32')
+    let finishAsyncProbe!: (error: Error | null) => void
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      finishAsyncProbe = (error) => callback(error, '', '')
+    })
+
+    try {
+      const { isPwshAvailable, isPwshAvailableAsync } = await import('./pwsh')
+      const probe = isPwshAvailableAsync()
+
+      expect(isPwshAvailable()).toBe(true)
+      expect(execFileSyncMock).not.toHaveBeenCalled()
+
+      finishAsyncProbe(null)
+      await expect(probe).resolves.toBe(true)
     } finally {
       restorePlatform()
     }

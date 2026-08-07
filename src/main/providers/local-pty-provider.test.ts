@@ -1038,6 +1038,32 @@ describe('LocalPtyProvider', () => {
       expect(pwshAvailable).not.toHaveBeenCalled()
     })
 
+    it('awaits PowerShell availability before resolving an automatic Windows shell', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      let resolveAvailability!: (available: boolean) => void
+      const pwshAvailable = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveAvailability = resolve
+          })
+      )
+      provider.configure({
+        getWindowsShell: () => 'powershell.exe',
+        getWindowsPowerShellImplementation: () => 'auto',
+        pwshAvailable
+      })
+
+      const callsBeforeSpawn = spawnMock.mock.calls.length
+      const spawn = provider.spawn({ cols: 80, rows: 24, cwd: 'C:\\Users\\jin\\repo' })
+      await Promise.resolve()
+      expect(spawnMock).toHaveBeenCalledTimes(callsBeforeSpawn)
+
+      resolveAvailability(true)
+      await spawn
+      expect(spawnMock).toHaveBeenCalledTimes(callsBeforeSpawn + 1)
+      expect(spawnMock.mock.calls.at(-1)?.[0]).toBe(PWSH7_ABS)
+    })
+
     it('marks Orca terminal handle for WSL import when buildSpawnEnv opts in', async () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
       const savedCodexHome = process.env.CODEX_HOME

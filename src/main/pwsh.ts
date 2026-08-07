@@ -59,6 +59,12 @@ export function isPwshAvailable(): boolean {
     return pwshAvailableCache.available
   }
 
+  // Why: daemon shell resolution is synchronous but has a spawn fallback chain; an optimistic
+  // cold answer avoids launching a duplicate probe while its startup warmup is still running.
+  if (pwshProbeInFlight || pwshWarmupInFlight) {
+    return pwshAvailableCache?.available ?? true
+  }
+
   if (process.platform !== 'win32') {
     writePwshAvailabilityCache({ available: false, cachedAt: Date.now(), retryable: false })
     return false
