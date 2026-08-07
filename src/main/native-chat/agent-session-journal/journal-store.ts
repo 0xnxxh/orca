@@ -16,7 +16,6 @@ import type {
   AgentJournalSubmission,
   AgentSessionJournalIdentity
 } from '../../../shared/agent-session-journal-types'
-import { AGENT_SESSION_JOURNAL_SCHEMA_VERSION } from '../../../shared/agent-session-journal-types'
 import { agentJournalItemKey } from '../../../shared/agent-session-journal-item-key'
 import { compactJournal, type JournalCompactionPolicy } from './journal-compaction'
 import { resolveJournalResume, type JournalResume } from './journal-cursor'
@@ -27,12 +26,14 @@ import { DEFAULT_JOURNAL_PAYLOAD_LIMITS } from './journal-payload-bounds'
 import {
   applyJournalRow,
   createJournalReducerState,
+  nextJournalItemRevision,
   renderJournalState,
   type JournalReducerState
 } from './journal-reducer'
 import {
-  journalRowByteLength,
   type AgentJournalEpochReason,
+  journalRowBase,
+  journalRowByteLength,
   type JournalRow
 } from './journal-row-schema'
 import type {
@@ -43,6 +44,7 @@ import type {
 } from './journal-store-contracts'
 import {
   assertJournalFence,
+  assertNewSubmission,
   assertJournalWritable,
   JournalAppendBudget
 } from './journal-write-guards'
@@ -189,13 +191,13 @@ export class AgentSessionJournal {
     const itemId = agentJournalItemKey(identity)
     return this.enqueue((seq, ts) => {
       const resolved = this.state.aliases.get(itemId) ?? itemId
-      const revision = (this.state.items.get(resolved)?.revision ?? 0) + 1
+      const revision = nextJournalItemRevision(this.state, resolved)
       return {
         kind: 'item',
         itemId,
         revision,
         body,
-        ...this.rowBase(seq, options.fence, options.observedAt ?? ts),
+        ...journalRowBase(this.state.epoch, seq, options.fence, options.observedAt ?? ts),
         ...(options.recovered ? { recovered: options.recovered } : {})
       }
     }).then((row) => ({
@@ -212,8 +214,13 @@ export class AgentSessionJournal {
     const itemId = agentJournalItemKey(identity)
     return this.enqueue((seq, ts) => {
       const resolved = this.state.aliases.get(itemId) ?? itemId
-      const revision = (this.state.items.get(resolved)?.revision ?? 0) + 1
-      return { kind: 'tombstone', itemId, revision, ...this.rowBase(seq, options.fence, ts) }
+      const revision = nextJournalItemRevision(this.state, resolved)
+      return {
+        kind: 'tombstone',
+        itemId,
+        revision,
+        ...journalRowBase(this.state.epoch, seq, options.fence, ts)
+      }
     }).then((row) => ({ epoch: row.epoch, sequence: row.seq }))
   }
 
@@ -228,14 +235,17 @@ export class AgentSessionJournal {
     body: AgentJournalMessageItem
     fence: number
   }): Promise<AgentJournalCursor> {
-    return this.enqueue((seq, ts) => ({
-      kind: 'submission',
-      clientMessageId: input.clientMessageId,
-      payloadFingerprint: input.payloadFingerprint,
-      providerHandle: this.identity.providerHandle,
-      body: input.body,
-      ...this.rowBase(seq, input.fence, ts)
-    })).then((row) => ({ epoch: row.epoch, sequence: row.seq }))
+    return this.enqueue((seq, ts) => {
+      assertNewSubmission(this.state.submissions.has(input.clientMessageId), input.clientMessageId)
+      return {
+        kind: 'submission',
+        clientMessageId: input.clientMessageId,
+        payloadFingerprint: input.payloadFingerprint,
+        providerHandle: this.identity.providerHandle,
+        body: input.body,
+        ...journalRowBase(this.state.epoch, seq, input.fence, ts)
+      }
+    }).then((row) => ({ epoch: row.epoch, sequence: row.seq }))
   }
 
   /**
@@ -254,7 +264,7 @@ export class AgentSessionJournal {
       state: input.state,
       providerItemId,
       reason: input.state === 'accepted' ? null : (input.reason ?? null),
-      ...this.rowBase(seq, input.fence, ts),
+      ...journalRowBase(this.state.epoch, seq, input.fence, ts),
       ...(input.recovered ? { recovered: input.recovered } : {})
     })).then((row) => ({ epoch: row.epoch, sequence: row.seq }))
   }
@@ -319,20 +329,6 @@ export class AgentSessionJournal {
     this.tailRows = [published.row]
     this.compactedThrough = 0
     this.sizeBytes = published.sizeBytes
-  }
-
-  private rowBase(
-    seq: number,
-    fence: number,
-    ts: number
-  ): { v: number; epoch: string; seq: number; fence: number; ts: number } {
-    return {
-      v: AGENT_SESSION_JOURNAL_SCHEMA_VERSION,
-      epoch: this.state.epoch,
-      seq,
-      fence,
-      ts
-    }
   }
 
   /**

@@ -195,6 +195,33 @@ describe('crash between provider accept and journal commit', () => {
     ).toEqual([])
   })
 
+  it('refuses to append a duplicate client message id after acceptance', async () => {
+    const journal = await open()
+    await journal.appendSubmission({
+      clientMessageId: 'cm_1',
+      payloadFingerprint: digestPayload('once'),
+      body: userMessage('once'),
+      fence: 1
+    })
+    await journal.resolveDispatch({
+      clientMessageId: 'cm_1',
+      state: 'accepted',
+      providerIdentity: ACCEPTED_IDENTITY,
+      fence: 1
+    })
+
+    await expect(
+      journal.appendSubmission({
+        clientMessageId: 'cm_1',
+        payloadFingerprint: digestPayload('twice'),
+        body: userMessage('twice'),
+        fence: 1
+      })
+    ).rejects.toMatchObject({ code: 'journal_duplicate_submission' })
+    expect(journal.submissions()[0]?.dispatchState).toBe('accepted')
+    expect(journal.receiptFor('cm_1')).not.toBeNull()
+  })
+
   it('keeps the receipt after the row that minted it was compacted away', async () => {
     const journal = await openAgentSessionJournal({
       identity: IDENTITY,

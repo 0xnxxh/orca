@@ -61,7 +61,7 @@ export async function loadJournal(
   // covers `compactedThrough`, so a tail that starts above it lost rows.
   const corrupt = Boolean(gap) || oldest > compactedThrough + 1
 
-  for (const row of liveRows) {
+  for (const row of tailRows) {
     if (row.seq > compactedThrough) {
       applyJournalRow(state, row)
     }

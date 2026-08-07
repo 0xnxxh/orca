@@ -11,12 +11,22 @@ export class AgentSessionJournalError extends Error {
     readonly code:
       | 'journal_read_only'
       | 'journal_stale_fence'
+      | 'journal_duplicate_submission'
       | 'journal_bound_exceeded'
       | 'journal_rate_exceeded',
     message: string
   ) {
     super(message)
     this.name = 'AgentSessionJournalError'
+  }
+}
+
+export function assertNewSubmission(exists: boolean, clientMessageId: string): void {
+  if (exists) {
+    throw new AgentSessionJournalError(
+      'journal_duplicate_submission',
+      `submission ${clientMessageId} already exists in this journal epoch`
+    )
   }
 }
 

@@ -13,7 +13,7 @@ import {
   type AgentSessionProviderHandle
 } from '../../../shared/agent-session-journal-types'
 
-type JournalRowBase = {
+export type JournalRowBase = {
   /** Schema version of THIS row. */
   v: number
   epoch: string
@@ -91,6 +91,15 @@ export type JournalRowParse =
   | { ok: false; unreadable: true }
 
 const ROW_KINDS = new Set(['epoch', 'item', 'tombstone', 'submission', 'dispatch'])
+
+export function journalRowBase(
+  epoch: string,
+  seq: number,
+  fence: number,
+  ts: number
+): JournalRowBase {
+  return { v: AGENT_SESSION_JOURNAL_SCHEMA_VERSION, epoch, seq, fence, ts }
+}
 
 export function serializeJournalRow(row: JournalRow): string {
   return JSON.stringify(row)

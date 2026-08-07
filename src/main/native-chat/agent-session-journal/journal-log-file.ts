@@ -8,7 +8,7 @@
 // between publishing the snapshot and truncating the log leaves the log a
 // superset of the tail, and recovery unions the two by sequence — never a hole.
 
-import { appendFile, mkdir, open, readFile } from 'node:fs/promises'
+import { mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { durableWriteTempPath, writeFileDurable } from '../../durable-file-write'
 import type {
@@ -139,9 +139,15 @@ export async function appendJournalRows(
   }
   const path = join(journalDir, JOURNAL_LOG_FILE)
   const payload = `${rows.map(serializeJournalRow).join('\n')}\n`
-  await appendFile(path, payload, 'utf-8')
-  const handle = await open(path, 'r+')
+  const handle = await open(path, 'a+')
   try {
+    const { size } = await handle.stat()
+    const lastByte = Buffer.alloc(1)
+    const needsBoundary = size > 0 && (await handle.read(lastByte, 0, 1, size - 1)).bytesRead === 1
+    await handle.writeFile(
+      `${needsBoundary && lastByte[0] !== 0x0a ? '\n' : ''}${payload}`,
+      'utf-8'
+    )
     await handle.sync()
   } finally {
     await handle.close()

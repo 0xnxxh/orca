@@ -48,6 +48,10 @@ export function createJournalReducerState(sessionId: string, epoch: string): Jou
   }
 }
 
+export function nextJournalItemRevision(state: JournalReducerState, itemId: string): number {
+  return Math.max(state.items.get(itemId)?.revision ?? 0, state.tombstones.get(itemId) ?? 0) + 1
+}
+
 export function applyJournalRow(state: JournalReducerState, row: JournalRow): void {
   state.lastSequence = Math.max(state.lastSequence, row.seq)
   state.highestFence = Math.max(state.highestFence, row.fence)
@@ -122,6 +126,9 @@ function applySubmission(
   state: JournalReducerState,
   row: Extract<JournalRow, { kind: 'submission' }>
 ): void {
+  if (state.submissions.has(row.clientMessageId)) {
+    return
+  }
   state.submissions.set(row.clientMessageId, {
     clientMessageId: row.clientMessageId,
     fence: row.fence,
@@ -161,7 +168,16 @@ function applyDispatch(
   if (row.state !== 'accepted' || !row.providerItemId) {
     return
   }
-  state.aliases.set(row.providerItemId, agentJournalSubmissionKey(row.clientMessageId))
+  const submissionItemId = agentJournalSubmissionKey(row.clientMessageId)
+  const providerItem = state.items.get(row.providerItemId)
+  state.aliases.set(row.providerItemId, submissionItemId)
+  if (providerItem) {
+    upsertItem(state, submissionItemId, providerItem.revision, {
+      ...providerItem,
+      itemId: submissionItemId
+    })
+    state.items.delete(row.providerItemId)
+  }
   state.receipts.set(row.clientMessageId, {
     clientMessageId: row.clientMessageId,
     providerItemId: row.providerItemId,

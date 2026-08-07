@@ -90,6 +90,17 @@ describe('sequences', () => {
     expect(journal.snapshot().items).toHaveLength(1)
     expect(journal.snapshot().items[0]?.revision).toBe(3)
   })
+
+  it('assigns a revision above a tombstone when an item is re-created', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('first'), { fence: 1 })
+    await journal.appendTombstone(item(0), { fence: 1 })
+
+    const recreated = await journal.appendItem(item(0), body('back'), { fence: 1 })
+    expect(recreated.revision).toBe(3)
+    expect(journal.snapshot().items.map((entry) => entry.body)).toEqual([body('back')])
+    expect((await open()).snapshot()).toEqual(journal.snapshot())
+  })
 })
 
 describe('fences', () => {
@@ -168,6 +179,21 @@ describe('replay', () => {
 
     expect(journal.snapshot().items.map((entry) => entry.body)).toEqual([body('new epoch')])
     expect((await open()).snapshot()).toEqual(journal.snapshot())
+  })
+
+  it('does not reuse the epoch sequence when rollover crashes before rewriting the log', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('old epoch'), { fence: 1 })
+    const logBefore = await readFile(join(root, JOURNAL_LOG_FILE), 'utf-8')
+
+    await journal.rollEpoch('handle_forked', 2)
+    await writeFile(join(root, JOURNAL_LOG_FILE), logBefore, 'utf-8')
+
+    const reopened = await open()
+    expect(reopened.cursor()).toEqual({ epoch: journal.epoch, sequence: 1 })
+    const appended = await reopened.appendItem(item(1), body('new epoch'), { fence: 2 })
+    expect(appended.cursor.sequence).toBe(2)
+    expect((await open()).snapshot()).toEqual(reopened.snapshot())
   })
 
   it('rolls the epoch when the log lost a row', async () => {
@@ -250,8 +276,9 @@ describe('compaction and retention', () => {
     await expect(
       reopened.appendItem(item(1), body('stale writer'), { fence: 6 })
     ).rejects.toMatchObject({ code: 'journal_stale_fence' })
-    await reopened.appendItem(item(0), body('late stale revision'), { fence: 7 })
-    expect(reopened.snapshot().items).toHaveLength(0)
+    const recreated = await reopened.appendItem(item(0), body('re-created'), { fence: 7 })
+    expect(recreated.revision).toBe(3)
+    expect(reopened.snapshot().items.map((entry) => entry.body)).toEqual([body('re-created')])
   })
 
   it('prunes blobs no live row references and keeps the ones that survive', async () => {
@@ -418,6 +445,20 @@ describe('schema', () => {
     const reopened = await open()
     expect(reopened.isReadOnly).toBe(false)
     expect(reopened.snapshot().items).toHaveLength(1)
+  })
+
+  it('separates the next append from a malformed non-newline tail', async () => {
+    const journal = await open()
+    await journal.appendItem(item(0), body('a'), { fence: 1 })
+    const logPath = join(root, JOURNAL_LOG_FILE)
+    await writeFile(logPath, `${await readFile(logPath, 'utf-8')}{"v":1`, 'utf-8')
+
+    const reopened = await open()
+    await reopened.appendItem(item(1), body('b'), { fence: 1 })
+
+    const replayed = await open()
+    expect(replayed.snapshot().items.map((entry) => entry.body)).toEqual([body('a'), body('b')])
+    expect(replayed.cursor()).toEqual(reopened.cursor())
   })
 })
 

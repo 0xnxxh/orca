@@ -178,6 +178,49 @@ describe('submission and dispatch state machine', () => {
     expect(items[0]?.revision).toBe(1)
   })
 
+  it('folds an early provider echo into the submission bubble when acceptance follows it', () => {
+    const state = fold([
+      submission,
+      {
+        kind: 'item',
+        itemId: 'codex:thread-1:turn-1:0',
+        revision: 1,
+        body: { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'hi' }] },
+        ...base(2)
+      },
+      {
+        kind: 'dispatch',
+        clientMessageId: 'cm_1',
+        state: 'accepted',
+        providerItemId: 'codex:thread-1:turn-1:0',
+        reason: null,
+        ...base(3)
+      }
+    ])
+    const items = renderJournalState(state).items
+    expect(items).toHaveLength(1)
+    expect(items[0]?.itemId).toBe(agentJournalSubmissionKey('cm_1'))
+    expect(items[0]?.sequence).toBe(1)
+    expect(items[0]?.revision).toBe(1)
+  })
+
+  it('does not let a duplicate submission reopen an accepted dispatch', () => {
+    const state = fold([
+      submission,
+      {
+        kind: 'dispatch',
+        clientMessageId: 'cm_1',
+        state: 'accepted',
+        providerItemId: 'codex:thread-1:turn-1:0',
+        reason: null,
+        ...base(2)
+      },
+      { ...submission, payloadFingerprint: 'different', ...base(3) }
+    ])
+    expect(state.submissions.get('cm_1')?.dispatchState).toBe('accepted')
+    expect(state.receipts.has('cm_1')).toBe(true)
+  })
+
   it('treats rejected as terminal', () => {
     const state = fold([
       submission,
