@@ -161,6 +161,47 @@ describe('useHostRepoList', () => {
     expect(probe.resource.state.repos).toEqual([{ id: 'from-host-b' }])
   })
 
+  // Regression: A -> B -> A reuses the same client object, so a client-key match
+  // alone let a stale request for A overwrite a newer result for A.
+  it('discards a stale response after returning to the original client', async () => {
+    const probe = mountResource()
+    await act(async () => {
+      void probe.resource.ensureLoaded()
+    })
+    probe.rebind('client-b')
+    probe.rebind('client-a')
+    await act(async () => {
+      void probe.resource.ensureLoaded()
+    })
+    await probe.settle(1, [{ id: 'new-a' }])
+    expect(probe.resource.state.repos).toEqual([{ id: 'new-a' }])
+
+    await probe.settle(0, [{ id: 'stale-a' }])
+    expect(probe.resource.state.repos).toEqual([{ id: 'new-a' }])
+  })
+
+  // Regression: a refresh calls reload() and loadTasks() in the same event, and
+  // React has not rendered the `requested` dispatch yet, so ensureLoaded saw
+  // `loaded` and returned the very list the reload was replacing.
+  it('joins an in-flight reload instead of serving the list it will replace', async () => {
+    const probe = mountResource()
+    await act(async () => {
+      void probe.resource.ensureLoaded()
+    })
+    await probe.settle(0, [{ id: 'stale' }])
+
+    let joined: Repo[] = []
+    await act(async () => {
+      void probe.resource.reload()
+      void probe.resource.ensureLoaded().then((repos) => {
+        joined = repos
+      })
+    })
+    expect(probe.callCount).toBe(2)
+    await probe.settle(1, [{ id: 'fresh' }])
+    expect(joined).toEqual([{ id: 'fresh' }])
+  })
+
   it('stays idle with no connection instead of caching an empty answer', async () => {
     const probe = mountResource()
     probe.rebind('client-a', false)

@@ -68,14 +68,16 @@ export function useHostRepoList<Repo>(
         dispatch({ type: 'requested' })
         try {
           const repos = await fetchNow()
-          if (boundKeyRef.current !== requestKey) {
+          // Why: A -> B -> A reuses the same client, so matching the key alone
+          // would let a stale request for A overwrite a newer result for A.
+          if (boundKeyRef.current !== requestKey || requestIdRef.current !== requestId) {
             return []
           }
           reposRef.current = repos
           dispatch({ type: 'resolved', repos })
           return repos
         } catch (err) {
-          if (boundKeyRef.current === requestKey) {
+          if (boundKeyRef.current === requestKey && requestIdRef.current === requestId) {
             dispatch({
               type: 'failed',
               error: err instanceof Error ? err.message : 'Unknown error'
@@ -92,8 +94,12 @@ export function useHostRepoList<Repo>(
       return request
     }
     callbacksRef.current = {
+      // Why: within one event React has not rendered the `requested` dispatch
+      // yet, so the status still reads `loaded`. Join the in-flight request
+      // instead of handing back the list it is about to replace.
       ensureLoaded: () =>
-        needsHostRepoListFetch(stateRef.current) ? reload() : Promise.resolve(reposRef.current),
+        inFlightRef.current ??
+        (needsHostRepoListFetch(stateRef.current) ? reload() : Promise.resolve(reposRef.current)),
       reload
     }
   }

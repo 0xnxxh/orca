@@ -3282,7 +3282,11 @@ export default function MobileTasksScreen() {
           setItems([])
           return
         }
-        const currentRepos = await repoListEnsureLoaded()
+        // Why: Linear issues do not need the repo list, only the composer does, so
+        // start the fetch either way but never make Linear wait on it.
+        const repoListRequest = repoListEnsureLoaded()
+        void repoListRequest.catch(() => {})
+        const currentRepos = provider === 'linear' ? [] : await repoListRequest
         if (!isCurrent()) {
           return
         }
@@ -8713,7 +8717,7 @@ export default function MobileTasksScreen() {
                 refreshGitHubProject()
                 return
               }
-              void loadTasks({ silent: true })
+              refreshTasks()
             }}
           >
             <RefreshCw size={16} color={taskUiReady ? colors.textSecondary : colors.textMuted} />

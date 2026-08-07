@@ -21,12 +21,14 @@ describe('mobile GitHub Project repo list loading', () => {
   // loaded, so hostedRepos stayed empty and every board row was filtered out.
   it('loads the repo list before project mode bails out', () => {
     const body = loadTasksBody()
-    const repoLoad = body.indexOf('await repoListEnsureLoaded()')
+    const repoLoad = body.indexOf('const repoListRequest = repoListEnsureLoaded()')
+    const repoAwait = body.indexOf('await repoListRequest')
     const projectReturn = body.indexOf("provider === 'github' && githubMode === 'project'")
     expect(repoLoad, 'loadTasks must load the repo list').toBeGreaterThan(-1)
     expect(projectReturn, 'project mode must still short-circuit loadTasks').toBeGreaterThan(-1)
+    expect(repoAwait, 'the repo list must be awaited, not just started').toBeGreaterThan(repoLoad)
     expect(projectReturn, 'project mode must bail out after the repo list load').toBeGreaterThan(
-      repoLoad
+      repoAwait
     )
   })
 
