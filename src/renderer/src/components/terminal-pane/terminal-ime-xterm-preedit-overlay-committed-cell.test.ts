@@ -200,10 +200,19 @@ const KOREAN_2SET = [
   { key: 'k', keyCode: 75, commit: '다', preedit: '라' }
 ] as const
 
+/**
+ * The jamo re-clustering the IME actually produced, as a SEPARATE literal from the fixture
+ * that drives the rig. Asserting the observed overlay against `stroke.preedit` would move
+ * both sides together and pass on a corrupted fixture — this is the independent copy.
+ */
+const RECORDED_PREEDIT_PROGRESSION = ['ㄱ', '가', '간', '나', '낟', '다', '달', '라'] as const
+
 const ORDINARY_KEYS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
 
-async function typeKorean(rig: EchoTerminal): Promise<{ committed: string; sample: Sample }[]> {
-  const samples: { committed: string; sample: Sample }[] = []
+async function typeKorean(
+  rig: EchoTerminal
+): Promise<{ committed: string; preedit: string; sample: Sample }[]> {
+  const samples: { committed: string; preedit: string; sample: Sample }[] = []
   let committed = ''
   let composing = false
 
@@ -228,7 +237,7 @@ async function typeKorean(rig: EchoTerminal): Promise<{ committed: string; sampl
     keyEvent(rig.textarea, 'keyup', 'Process', 229, true)
     keyEvent(rig.textarea, 'keyup', stroke.key, stroke.keyCode, true)
     await rig.ready()
-    samples.push({ committed, sample: rig.sample() })
+    samples.push({ committed, preedit: stroke.preedit, sample: rig.sample() })
   }
   return samples
 }
@@ -287,11 +296,19 @@ describe('Korean preedit overlay against committed terminal content', () => {
         preedit: sample.overlayText
       }))
     ).toEqual(
-      samples.map(({ committed, sample }) => ({
+      samples.map(({ committed, preedit }) => ({
         overlayCell: PROMPT.length + committed.length * CELLS_PER_SYLLABLE,
-        preedit: sample.overlayText
+        // The RECORDED jamo, not the sampled one — comparing sample against sample was
+        // tautological and let a corrupted fixture pass.
+        preedit
       }))
     )
+
+    // The recorded jamo re-clustering, against an independent literal. The docblock and the
+    // matrix c2 cell both cite this progression; without this it was cited and unenforced.
+    expect(samples.map(({ sample }) => sample.overlayText)).toEqual([
+      ...RECORDED_PREEDIT_PROGRESSION
+    ])
 
     for (const { committed, sample } of samples) {
       // Every committed syllable is on screen, so nothing is queued to land under the overlay.
