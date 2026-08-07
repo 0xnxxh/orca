@@ -1,3 +1,5 @@
+import type { AgentSessionOperationRow } from '../../shared/agent-session-operation-ledger'
+import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import {
   AGENT_SESSION_STORE_SCHEMA_VERSION,
   agentSessionStoreRevision,
@@ -14,6 +16,32 @@ function markLoadedLeasesUnreconciled(state: AgentSessionStoreState): void {
       lease: { ...record.lease, unreconciled: true }
     })
   }
+}
+
+function mapEntriesMatch<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
+  if (left.size !== right.size) {
+    return false
+  }
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) {
+      return false
+    }
+  }
+  return true
+}
+
+function agentSessionStoreStateChanged(
+  state: AgentSessionStoreState,
+  records: ReadonlyMap<string, AgentSessionRecord>,
+  operations: ReadonlyMap<string, AgentSessionOperationRow>,
+  retiredClaimKeys: AgentSessionStoreState['retiredClaimKeys']
+): boolean {
+  return (
+    !mapEntriesMatch(state.records, records) ||
+    !mapEntriesMatch(state.operations, operations) ||
+    state.retiredClaimKeys.length !== retiredClaimKeys.length ||
+    state.retiredClaimKeys.some((entry, index) => entry !== retiredClaimKeys[index])
+  )
 }
 
 export class AgentSessionStoreTransactionQueue {
@@ -43,6 +71,9 @@ export class AgentSessionStoreTransactionQueue {
         const retiredClaimKeys = [...this.state.retiredClaimKeys]
         try {
           const result = apply()
+          if (!agentSessionStoreStateChanged(this.state, records, operations, retiredClaimKeys)) {
+            return result
+          }
           await saveAgentSessionStore(this.filePath, this.state, {
             recoveredFromBackup: this.diskRecoveredFromBackup
           })

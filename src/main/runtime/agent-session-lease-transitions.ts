@@ -6,6 +6,7 @@
  * observed process identity, and a proved provider handle — in that order, at one fence.
  */
 
+import { isDeepStrictEqual } from 'node:util'
 import {
   adjudicateAgentSessionRestart,
   evaluateAgentSessionAcquisition,
@@ -44,6 +45,13 @@ function assertFence(lease: AgentSessionLease, fence: number): void {
   if (lease.unreconciled) {
     throw new Error('execution_owner_reconciling')
   }
+}
+
+export function agentSessionReconciliationTargetMatches(
+  current: AgentSessionRecord,
+  probed: AgentSessionRecord
+): boolean {
+  return isDeepStrictEqual(current, probed)
 }
 
 /**

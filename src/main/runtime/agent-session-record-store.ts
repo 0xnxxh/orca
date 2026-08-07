@@ -28,6 +28,7 @@ import {
 } from '../../shared/agent-session-record'
 import {
   applyAgentSessionRestartAdjudication,
+  agentSessionReconciliationTargetMatches,
   commitAgentSessionProcessIdentity,
   evictAgentSessionOwner,
   proveAgentSessionOwner,
@@ -247,18 +248,25 @@ export class AgentSessionRecordStore {
     now: number
   }): Promise<Map<string, AgentSessionRecord>> {
     const pending = this.listRecords().filter((record) => record.lease.unreconciled)
-    const probes = new Map<string, AgentSessionOwnerProbe>()
+    const probes = new Map<string, { record: AgentSessionRecord; probe: AgentSessionOwnerProbe }>()
     for (const record of pending) {
-      probes.set(record.sessionId, await args.probe(record))
+      probes.set(record.sessionId, { record, probe: await args.probe(record) })
     }
     return this.transact(() => {
       const reconciled = new Map<string, AgentSessionRecord>()
-      for (const [sessionId, probe] of probes) {
+      for (const [sessionId, probed] of probes) {
         const record = this.state.records.get(sessionId)
-        if (!record?.lease.unreconciled) {
+        if (
+          !record?.lease.unreconciled ||
+          !agentSessionReconciliationTargetMatches(record, probed.record)
+        ) {
           continue
         }
-        const next = applyAgentSessionRestartAdjudication({ record, probe, now: args.now })
+        const next = applyAgentSessionRestartAdjudication({
+          record,
+          probe: probed.probe,
+          now: args.now
+        })
         this.state.records.set(sessionId, next)
         reconciled.set(sessionId, next)
       }

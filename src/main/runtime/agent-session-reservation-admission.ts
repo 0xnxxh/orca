@@ -15,7 +15,7 @@ import {
 import type { AgentSessionOwnerProbe } from '../../shared/agent-session-lease-adjudication'
 import {
   AGENT_SESSION_RECORD_SCHEMA_VERSION,
-  agentSessionScopeKey,
+  agentSessionExecutionLocationsEqual,
   type AgentSessionAccountHome,
   type AgentSessionExecutionLocation,
   type AgentSessionRecord
@@ -111,9 +111,13 @@ export function applyAgentSessionReservation(
     }
     return { record: createAgentSessionRecord(request, reservation), disposition: 'created' }
   }
-  if (agentSessionScopeKey(existing.location) !== agentSessionScopeKey(request.location)) {
-    // Why: one session id may not name two execution locations; native, WSL, and SSH copies of a
-    // workspace are different sessions with different provider handles.
+  if (
+    !agentSessionExecutionLocationsEqual(existing.location, request.location) ||
+    existing.provider !== request.provider ||
+    existing.accountHome.variable !== request.accountHome.variable ||
+    existing.accountHome.path !== request.accountHome.path
+  ) {
+    // Why: location, provider, and account are the session identity; changing one is a fork.
     throw new Error('agent_session_conflict')
   }
   if (request.expectedFence === null) {

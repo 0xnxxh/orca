@@ -239,6 +239,27 @@ describe('acquisition path', () => {
       'agent_session_conflict'
     )
   })
+
+  it.each([
+    [
+      'provider',
+      { provider: 'codex', accountHome: { variable: 'CODEX_HOME', path: '/home/dev/.codex' } }
+    ],
+    ['account', { accountHome: { variable: 'CLAUDE_CONFIG_DIR', path: '/home/dev/.claude-other' } }]
+  ] as const)("refuses to change a session's pinned %s", async (_name, overrides) => {
+    const store = await open()
+    await establishOwner(store)
+    await expect(
+      store.reserveOwner(
+        reserveRequest({
+          ...overrides,
+          expectedFence: 1,
+          probe: { outcome: 'pid-absent' },
+          operation: { callerKey: 'client-1', operationId: operationId(), fingerprint: 'fp-2' }
+        })
+      )
+    ).rejects.toThrow('agent_session_conflict')
+  })
 })
 
 describe('concurrent claims', () => {
@@ -458,6 +479,66 @@ describe('restart reconciliation', () => {
     expect(record?.lease.provenHandleLinkId).toBe('link-1')
   })
 
+  it('never applies a stale restart probe to a replacement owner', async () => {
+    const writer = await open()
+    await establishOwner(writer)
+    const reconciler = await open()
+    let releaseProbe!: (probe: AgentSessionOwnerProbe) => void
+    let markProbeStarted!: () => void
+    const probeStarted = new Promise<void>((resolve) => (markProbeStarted = resolve))
+    const probeResult = new Promise<AgentSessionOwnerProbe>((resolve) => (releaseProbe = resolve))
+    const reconciliation = reconciler.reconcileOnRestart({
+      probe: async () => {
+        markProbeStarted()
+        return probeResult
+      },
+      now: NOW + 1_000
+    })
+
+    await probeStarted
+    await writer.evictProvenDeadOwner({
+      sessionId: 'session-alpha',
+      expectedFence: 1,
+      probe: { outcome: 'pid-absent' },
+      now: NOW + 100
+    })
+    const replacement = await writer.reserveOwner(
+      reserveRequest({
+        expectedFence: 2,
+        probe: UNUSED,
+        spawnToken: 'spawn-b',
+        operation: {
+          callerKey: 'client-1',
+          operationId: operationId(NOW + 200),
+          fingerprint: 'fp-2'
+        },
+        now: NOW + 200
+      })
+    )
+    await writer.commitProcessIdentity({
+      sessionId: 'session-alpha',
+      fence: replacement.record.lease.runtimeFence,
+      process: processIdentity({ pid: 5252, spawnToken: 'spawn-b' }),
+      now: NOW + 300
+    })
+    await writer.proveOwner({
+      sessionId: 'session-alpha',
+      fence: replacement.record.lease.runtimeFence,
+      link: handleLink({ linkId: 'link-2', origin: 'resumed', mintedAtFence: 3 }),
+      now: NOW + 300
+    })
+
+    releaseProbe({ outcome: 'pid-absent' })
+    expect(await reconciliation).toEqual(new Map())
+    const persisted = JSON.parse(await readFile(agentSessionStorePath(directory), 'utf-8'))
+    expect(persisted.records['session-alpha'].lease).toMatchObject({
+      runtimeFence: 3,
+      claimStatus: 'live',
+      ownerProcess: { pid: 5252, spawnToken: 'spawn-b' },
+      unreconciled: false
+    })
+  })
+
   it('keeps the fence monotonic across a restart and never reuses a retired fence', async () => {
     const first = await open()
     await establishOwner(first)
@@ -572,7 +653,8 @@ describe('host and workspace isolation', () => {
   it.each([
     ['WSL', WSL],
     ['SSH', SSH],
-    ['another workspace', FOLDER]
+    ['another workspace', FOLDER],
+    ['another workspace kind', { ...NATIVE, workspaceKind: 'folder' }]
   ] as const)('refuses to move one session id to %s', async (_name, location) => {
     const store = await open()
     await establishOwner(store)
@@ -590,7 +672,7 @@ describe('host and workspace isolation', () => {
 
   it('keeps native, WSL, and SSH sessions in separate scopes', async () => {
     const store = await open()
-    await establishOwner(store, { sessionId: 'session-native' })
+    await establishOwner(store, { sessionId: '__proto__' })
     await establishOwner(store, { sessionId: 'session-wsl', location: WSL, spawnToken: 'spawn-b' })
     await establishOwner(store, { sessionId: 'session-ssh', location: SSH, spawnToken: 'spawn-c' })
     await establishOwner(store, {
@@ -599,11 +681,11 @@ describe('host and workspace isolation', () => {
       spawnToken: 'spawn-d'
     })
 
-    expect(store.listByScope(NATIVE).map((record) => record.sessionId)).toEqual(['session-native'])
+    expect(store.listByScope(NATIVE).map((record) => record.sessionId)).toEqual(['__proto__'])
     expect(store.listByScope(WSL).map((record) => record.sessionId)).toEqual(['session-wsl'])
     expect(store.listByScope(SSH).map((record) => record.sessionId)).toEqual(['session-ssh'])
     expect(store.listByScope(FOLDER).map((record) => record.sessionId)).toEqual(['session-folder'])
-    expect(store.listRecords()).toHaveLength(4)
+    expect((await open()).getRecord('__proto__')).not.toBeNull()
   })
 
   it('preserves the workspace kind so a folder workspace is never read back as a worktree', async () => {
@@ -708,6 +790,26 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     expect(persisted.records['session-alpha'].lease.runtimeFence).toBe('not-a-number')
   })
 
+  it.each([
+    [
+      'invalid checkpoint',
+      (record: AgentSessionRecord) =>
+        Object.assign(record.lease, { journalCheckpoint: { epoch: 'bad', sequence: 1 } })
+    ],
+    [
+      'missing live proof',
+      (record: AgentSessionRecord) => Object.assign(record.lease, { provenHandleLinkId: null })
+    ]
+  ])('quarantines a record with %s', async (_name, corrupt) => {
+    const first = await open()
+    await establishOwner(first)
+    const filePath = agentSessionStorePath(directory)
+    const raw = JSON.parse(await readFile(filePath, 'utf-8'))
+    corrupt(raw.records['session-alpha'])
+    await writeFile(filePath, JSON.stringify(raw))
+    expect((await open()).isSessionUnreadable('session-alpha')).toBe(true)
+  })
+
   it('recovers the previous committed state when the primary file is corrupt', async () => {
     const first = await open()
     await establishOwner(first)
@@ -727,6 +829,19 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
     await reopened.retireClaimKey('key-2', NOW)
     const backup = JSON.parse(await readFile(`${agentSessionStorePath(directory)}.bak`, 'utf-8'))
     expect(backup.records['session-alpha'].lease.runtimeFence).toBe(1)
+  })
+
+  it.each([
+    ['corrupt', ['{ truncated']],
+    ['missing required collections', ['{"schemaVersion":1,"hostId":"local"}']],
+    ['corrupt in both committed copies', ['{ truncated', '{ also truncated']]
+  ])('fails closed when the store is %s', async (_name, copies) => {
+    const filePath = agentSessionStorePath(directory)
+    await writeFile(filePath, copies[0])
+    if (copies[1]) {
+      await writeFile(`${filePath}.bak`, copies[1])
+    }
+    await expect(open()).rejects.toThrow('agent_session_store_corrupt')
   })
 
   it('refuses to write a store written by a newer schema', async () => {

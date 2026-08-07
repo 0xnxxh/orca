@@ -188,6 +188,34 @@ function isAgentSessionAccountHome(value: unknown): value is AgentSessionAccount
   )
 }
 
+function isAgentSessionJournalCheckpoint(value: unknown): value is AgentSessionJournalCheckpoint {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const checkpoint = value as Partial<AgentSessionJournalCheckpoint>
+  return (
+    Number.isSafeInteger(checkpoint.epoch) &&
+    (checkpoint.epoch as number) >= 0 &&
+    Number.isSafeInteger(checkpoint.sequence) &&
+    (checkpoint.sequence as number) >= 0
+  )
+}
+
+function isAgentSessionDeathEvidence(value: unknown): value is AgentSessionDeathEvidence {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const evidence = value as Partial<AgentSessionDeathEvidence>
+  return (
+    (evidence.kind === 'exit-observed' ||
+      evidence.kind === 'pid-absent' ||
+      evidence.kind === 'identity-mismatch') &&
+    isBoundedString(evidence.detail, MAX_ID_LENGTH) &&
+    Number.isSafeInteger(evidence.observedAt) &&
+    (evidence.observedAt as number) >= 0
+  )
+}
+
 function isAgentSessionLease(value: unknown): value is AgentSessionLease {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -212,12 +240,15 @@ function isAgentSessionLease(value: unknown): value is AgentSessionLease {
     Number.isSafeInteger(lease.lastRenewedAt) &&
     (lease.handoffOperationId === null ||
       isBoundedString(lease.handoffOperationId, MAX_ID_LENGTH)) &&
+    (lease.journalCheckpoint === null ||
+      isAgentSessionJournalCheckpoint(lease.journalCheckpoint)) &&
     isBoundedString(lease.claimKeyId, MAX_ID_LENGTH) &&
     (lease.claimStatus === 'reserved' ||
       lease.claimStatus === 'live' ||
       lease.claimStatus === 'conflicted' ||
       lease.claimStatus === 'released') &&
-    typeof lease.unreconciled === 'boolean'
+    typeof lease.unreconciled === 'boolean' &&
+    (lease.deathEvidence === null || isAgentSessionDeathEvidence(lease.deathEvidence))
   )
 }
 
@@ -226,7 +257,7 @@ export function isAgentSessionRecord(value: unknown): value is AgentSessionRecor
     return false
   }
   const record = value as Partial<AgentSessionRecord>
-  return (
+  const shapeValid =
     record.schemaVersion === AGENT_SESSION_RECORD_SCHEMA_VERSION &&
     isAgentSessionId(record.sessionId) &&
     isAgentSessionExecutionLocation(record.location) &&
@@ -237,5 +268,16 @@ export function isAgentSessionRecord(value: unknown): value is AgentSessionRecor
     record.lease.sessionId === record.sessionId &&
     Number.isSafeInteger(record.createdAt) &&
     Number.isSafeInteger(record.updatedAt)
+  if (!shapeValid) {
+    return false
+  }
+  const validated = record as AgentSessionRecord
+  const head = validated.providerHandleChain.at(-1)
+  return (
+    validated.providerHandleChain.every((link) => link.handle.provider === validated.provider) &&
+    (validated.lease.claimStatus !== 'live' ||
+      (validated.lease.ownerProcess !== null &&
+        head?.linkId === validated.lease.provenHandleLinkId &&
+        head.mintedAtFence === validated.lease.runtimeFence))
   )
 }

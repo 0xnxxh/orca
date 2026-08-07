@@ -85,7 +85,24 @@ function parseState(raw: string, hostId: string): { state: AgentSessionStoreStat
     operations?: unknown
     retiredClaimKeys?: unknown
   }
-  if (!Number.isSafeInteger(file.schemaVersion) || typeof file.hostId !== 'string') {
+  if (
+    !Number.isSafeInteger(file.schemaVersion) ||
+    (file.schemaVersion as number) < 0 ||
+    typeof file.hostId !== 'string'
+  ) {
+    return null
+  }
+  if (
+    (file.schemaVersion as number) <= AGENT_SESSION_STORE_SCHEMA_VERSION &&
+    (typeof file.records !== 'object' ||
+      file.records === null ||
+      Array.isArray(file.records) ||
+      typeof file.operations !== 'object' ||
+      file.operations === null ||
+      Array.isArray(file.operations) ||
+      ((file.schemaVersion as number) === AGENT_SESSION_STORE_SCHEMA_VERSION &&
+        !Array.isArray(file.retiredClaimKeys)))
+  ) {
     return null
   }
   const state = emptyState(hostId)
@@ -128,6 +145,7 @@ export async function loadAgentSessionStore(
   filePath: string,
   hostId: string
 ): Promise<LoadedAgentSessionStore> {
+  let unusableStoreFound = false
   for (const [candidate, recoveredFromBackup] of [
     [filePath, false],
     [backupPath(filePath), true]
@@ -135,11 +153,15 @@ export async function loadAgentSessionStore(
     let raw: string
     try {
       raw = await readFile(candidate, 'utf-8')
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        unusableStoreFound = true
+      }
       continue
     }
     const parsed = parseState(raw, hostId)
     if (!parsed) {
+      unusableStoreFound = true
       continue
     }
     return {
@@ -148,11 +170,14 @@ export async function loadAgentSessionStore(
       recoveredFromBackup
     }
   }
+  if (unusableStoreFound) {
+    throw new Error('agent_session_store_corrupt')
+  }
   return { state: emptyState(hostId), readOnly: false, recoveredFromBackup: false }
 }
 
 function serializeState(state: AgentSessionStoreState): string {
-  const records: Record<string, unknown> = {}
+  const records: Record<string, unknown> = Object.create(null)
   for (const [sessionId, value] of state.unreadableRecords) {
     records[sessionId] = value
   }
@@ -180,8 +205,11 @@ export async function saveAgentSessionStore(
     try {
       await rm(backupPath(filePath), { force: true })
       await rename(filePath, backupPath(filePath))
-    } catch {
-      // First write, or the primary is already gone; the backup stays as it was.
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+      // First write, or recovery already found the primary missing.
     }
   }
   try {
