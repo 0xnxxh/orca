@@ -7,7 +7,11 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { clampSidebarResizeWidth, useSidebarResize } from '@/hooks/useSidebarResize'
 import { translate } from '@/i18n/i18n'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import {
+  dashboardCardDisplayState,
+  type DashboardCard,
+  type DashboardRevealAgentArgs
+} from '../../../../shared/dashboard-snapshot'
 import { AgentChatPanel } from './AgentChatPanel'
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 import {
@@ -16,12 +20,8 @@ import {
   AGENT_DASHBOARD_INSPECTOR_VIEWPORT_GAP
 } from './agent-dashboard-inspector-width'
 
-export type AgentRevealArgs = {
-  repoId: string
-  worktreeId: string
-  tabId: string
-  leafId: string | null
-}
+/** Routing payload for focusing an agent's pane in the main window. */
+export type AgentRevealArgs = DashboardRevealAgentArgs
 
 type AgentDashboardInspectorDrawerProps = {
   card: DashboardCard
@@ -88,6 +88,7 @@ export function AgentDashboardInspectorDrawer({
     onReveal({
       repoId: card.repoId,
       worktreeId: card.worktreeId,
+      executionHostId: card.executionHostId,
       tabId: card.tabId,
       leafId: card.leafId
     })
@@ -140,7 +141,8 @@ export function AgentDashboardInspectorDrawer({
               </span>
               <h2 className="text-[12px] leading-normal font-semibold">{card.worktreeName}</h2>
               <span className="text-[11px] text-muted-foreground">
-                {formatAgentTypeLabel(card.agentType)} · {agentStateLabel(card.dotState)}
+                {formatAgentTypeLabel(card.agentType)} ·{' '}
+                {agentStateLabel(dashboardCardDisplayState(card))}
               </span>
               <button
                 type="button"

@@ -47,7 +47,8 @@ const TERMINAL_INPUT: DashboardCardTerminalInput = {
   localWindowsConpty: true,
   osRelease: '10.0.22631',
   windowsShiftEnterEncoding: 'csi-u',
-  kittyKeyboardAdvertised: false
+  kittyKeyboardAdvertised: false,
+  ctrlEnterCsiU: false
 }
 
 function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
