@@ -31166,7 +31166,7 @@ export class OrcaRuntimeService {
     if (!this._orchestrationDb) {
       return
     }
-    const run = this._orchestrationDb.getCurrentRunForPane(`${leaf.tabId}:${leaf.leafId}`)
+    const run = this._orchestrationDb.getCurrentRunForPane?.(`${leaf.tabId}:${leaf.leafId}`)
     if (run) {
       this.deliverPendingMessages(leaf, { mailboxHandle: `run:${run.id}` })
     }
@@ -31832,7 +31832,7 @@ export class OrcaRuntimeService {
     }
   }
 
-  // Why: an Enter armed for a dead session must not fire into a same-id cold restore.
+  // Why: a dead session's Enter or watermark must not affect a same-id cold restore.
   private retirePendingMessageDeliveryForPty(ptyId: string): void {
     const flight = this.messageDeliveryFlightsByPtyId.get(ptyId)
     if (flight?.enterTimer != null) {
@@ -31840,6 +31840,16 @@ export class OrcaRuntimeService {
     }
     this.messageDeliveryFlightsByPtyId.delete(ptyId)
     this.parkedMessageRedeliveriesByPtyId.delete(ptyId)
+    for (const leaf of this.getLeavesForPty(ptyId)) {
+      const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+      if (handle) {
+        this.lastPointedMessageSequenceByHandle.delete(handle)
+      }
+      const run = this._orchestrationDb?.getCurrentRunForPane?.(`${leaf.tabId}:${leaf.leafId}`)
+      if (run) {
+        this.lastPointedMessageSequenceByHandle.delete(`run:${run.id}`)
+      }
+    }
   }
 
   // Why: push-on-idle delivery is event-driven (no polling) because the runtime owns both the message store and terminal status detection.
