@@ -13,6 +13,7 @@ import { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { CLEAN_DISCONNECT_PROTOCOL_VERSION, PROTOCOL_VERSION } from './daemon-protocol-version'
 import { DaemonServer } from './daemon-server'
 import { getDaemonSocketPath } from './daemon-spawner'
+import { TerminalHost } from './terminal-host'
 import type { SubprocessHandle } from './session'
 
 function fixtureSubprocess(): SubprocessHandle {
@@ -195,5 +196,45 @@ describe('legacy daemon retirement', () => {
     expect(shutdownTimeoutMs).toBeGreaterThan(0)
     expect(shutdownTimeoutMs).toBeLessThanOrEqual(200)
     expect(elapsedMs).toBeLessThan(300)
+  })
+
+  it('does not report empty while a session is exited but unreaped', async () => {
+    // Why: the live-session list hides a session that reached 'exited' but whose reap never fired, yet
+    // the host still holds its subprocess handle and any surviving descendants keep a cwd open inside
+    // the worktree — which is what later makes a worktree delete fail with the dir still in use.
+    // Asserted on the host directly: through the protocol, clients.size would refuse first and this
+    // would pass without ever exercising the emptiness proof.
+    const host = new TerminalHost({ spawnSubprocess: () => fixtureSubprocess() })
+    await host.createOrAttach({
+      sessionId: 'exited-not-reaped',
+      cols: 80,
+      rows: 24,
+      streamClient: { onData: vi.fn(), onExit: vi.fn() }
+    })
+    const sessions = (host as unknown as { sessions: Map<string, { _state: string }> }).sessions
+    const session = sessions.get('exited-not-reaped')
+    expect(session).toBeDefined()
+    // Reach 'exited' without firing onExit, i.e. the reap that should have removed it never ran.
+    session!._state = 'exited'
+
+    // The weaker check the daemon used to retire on sees nothing here.
+    expect(host.listSessions()).toHaveLength(0)
+    // The stricter one still sees the handle.
+    expect(host.ownsNothing()).toBe(false)
+
+    await host.dispose()
+  })
+
+  it('reports empty only once every session is gone', async () => {
+    const host = new TerminalHost({ spawnSubprocess: () => fixtureSubprocess() })
+    expect(host.ownsNothing()).toBe(true)
+    await host.createOrAttach({
+      sessionId: 'live',
+      cols: 80,
+      rows: 24,
+      streamClient: { onData: vi.fn(), onExit: vi.fn() }
+    })
+    expect(host.ownsNothing()).toBe(false)
+    await host.dispose()
   })
 })
