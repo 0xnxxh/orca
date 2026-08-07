@@ -32,6 +32,13 @@ export type PtySpawnResult = {
    *  writing the snapshot so ANSI cursor positions land correctly. */
   snapshotCols?: number
   snapshotRows?: number
+  /** Optional split of `snapshot` for alt-screen reattaches: everything before the
+   *  frame, and the frame itself. Present only when the snapshot is an alt-screen
+   *  capture. A reader that ignores these still has the merged `snapshot`, so an
+   *  older client is unaffected; a newer one can drop a frame whose capture width
+   *  no longer matches the pane instead of letting xterm reflow-split it. */
+  snapshotPrefixAnsi?: string
+  snapshotFrameAnsi?: string
   /** Provider sequence at the attach boundary. `reset` starts a new provider
    *  generation; `continued` resumes the existing absolute domain. */
   providerSequence?: {

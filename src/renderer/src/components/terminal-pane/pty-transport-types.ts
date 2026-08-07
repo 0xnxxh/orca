@@ -59,6 +59,11 @@ export type PtyConnectResult = {
   snapshot?: string
   snapshotCols?: number
   snapshotRows?: number
+  /** Optional split of `snapshot` for an alt-screen reattach: everything before
+   *  the frame, and the frame itself. Absent from older hosts, so every reader
+   *  must fall back to the merged `snapshot`. */
+  snapshotPrefixAnsi?: string
+  snapshotFrameAnsi?: string
   isAlternateScreen?: boolean
   sessionExpired?: boolean
   coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }

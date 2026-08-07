@@ -963,6 +963,8 @@ const api = {
       snapshot?: string
       snapshotCols?: number
       snapshotRows?: number
+      snapshotPrefixAnsi?: string
+      snapshotFrameAnsi?: string
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
