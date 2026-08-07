@@ -474,9 +474,12 @@ describe('terminal multiplex RPC', () => {
       .map(decodeTerminalStreamFrame)
       .find((frame) => frame?.opcode === TerminalStreamOpcode.SnapshotStart)
     expect(subscribed.seq).toBe(675)
-    expect(snapshotStart && decodeTerminalStreamJson(snapshotStart.payload)).not.toHaveProperty(
-      'seq'
-    )
+    if (!snapshotStart) {
+      throw new Error('Missing multiplex snapshot start frame')
+    }
+    const snapshotPayload = decodeTerminalStreamJson(snapshotStart.payload)
+    expect(snapshotPayload).toMatchObject({ kind: 'scrollback' })
+    expect(snapshotPayload).not.toHaveProperty('seq')
 
     harness.binaryFrames.splice(0)
     dataListener?.('live', { seq: 4, rawLength: 4 })

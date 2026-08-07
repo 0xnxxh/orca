@@ -342,16 +342,19 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
       .toBe(true)
 
     const target = await createHostTerminal(client, worktreeId, 'target')
-    const sibling = await createHostTerminal(client, worktreeId, 'sibling')
-    const parkingDecoy = await createHostTerminal(client, worktreeId, 'parking-decoy')
-    terminals.push(target, sibling, parkingDecoy)
+    const revealDecoy = await createHostTerminal(client, worktreeId, 'reveal-decoy')
+    const activeControl = await createHostTerminal(client, worktreeId, 'active-control')
+    terminals.push(target, revealDecoy, activeControl)
     await openClientTab(client.page, worktreeId, target.webTabId)
     await expect
       .poll(() => readPaneContent(client!.page, target.webTabId), { timeout: 30_000 })
       .toContain('READY')
-    await openClientTab(client.page, worktreeId, sibling.webTabId)
-    await openClientTab(client.page, worktreeId, parkingDecoy.webTabId)
+    await openClientTab(client.page, worktreeId, revealDecoy.webTabId)
+    await openClientTab(client.page, worktreeId, activeControl.webTabId)
     await waitForTabParked(client.page, target.webTabId, { parkDelayMs: PARK_DELAY_MS })
+    await expect
+      .poll(() => readPaneContent(client!.page, activeControl.webTabId), { timeout: 30_000 })
+      .toContain('READY')
 
     const targetSuffix = target.ptyId.slice(-10)
     await expect
@@ -367,7 +370,7 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
     const alternateHostWorktreeId = await moveHostAwayFromWorktree(first.page, worktreeId)
     await session.close(firstHost)
     firstHost = null
-    const foregroundEventStart = readBacklogEntries().length
+    const foregroundEventStartMs = Date.now()
     const second = await session.launch()
     secondHost = second.app
     await second.page.waitForFunction(
@@ -404,30 +407,29 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
     await expect
       .poll(
         () =>
-          readBacklogEntries()
-            .slice(foregroundEventStart)
-            .some(
-              (entry) =>
-                entry.event === 'setSessionBackground' &&
-                entry.sessionIdSuffix === targetSuffix &&
-                entry.background === false
-            ),
+          readBacklogEntries().some(
+            (entry) =>
+              (entry.atMs ?? 0) >= foregroundEventStartMs &&
+              entry.event === 'setSessionBackground' &&
+              entry.sessionIdSuffix === targetSuffix &&
+              entry.background === false
+          ),
         { timeout: 15_000, message: 'Relaunched host never foregrounded the preserved PTY' }
       )
       .toBe(true)
     await expectTerminalInteractive(client, target, 'x')
 
-    sibling.handle = await findTerminalHandle(client, worktreeId, sibling.parentTabId)
-    const shownSibling = await callRuntime<{ terminal: { ptyId: string | null } }>(
+    activeControl.handle = await findTerminalHandle(client, worktreeId, activeControl.parentTabId)
+    const shownControl = await callRuntime<{ terminal: { ptyId: string | null } }>(
       client.page,
       client.environmentId,
       'terminal.show',
-      { terminal: sibling.handle }
+      { terminal: activeControl.handle }
     )
-    expect(shownSibling.terminal.ptyId).toBe(sibling.ptyId)
-    await openClientTab(client.page, worktreeId, sibling.webTabId)
-    await waitForPaneConnected(client.page, sibling.webTabId)
-    await expectTerminalInteractive(client, sibling, 'y')
+    expect(shownControl.terminal.ptyId).toBe(activeControl.ptyId)
+    await openClientTab(client.page, worktreeId, activeControl.webTabId)
+    await waitForPaneConnected(client.page, activeControl.webTabId)
+    await expectTerminalInteractive(client, activeControl, 'y')
   } finally {
     if (client) {
       for (const terminal of terminals) {
