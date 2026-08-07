@@ -355,6 +355,19 @@ test('foregrounds a preserved daemon PTY after the paired host relaunches', asyn
     await expect
       .poll(() => readPaneContent(client!.page, activeControl.webTabId), { timeout: 30_000 })
       .toContain('READY')
+    const activatedControl = await callRuntime<{
+      tabs: { isActive: boolean; parentTabId?: string }[]
+    }>(client.page, client.environmentId, 'session.tabs.activate', {
+      worktree: `id:${worktreeId}`,
+      tabId: activeControl.parentTabId,
+      notifyClients: false,
+      navigation: 'caller'
+    })
+    expect(
+      activatedControl.tabs.some(
+        (tab) => tab.parentTabId === activeControl.parentTabId && tab.isActive
+      )
+    ).toBe(true)
 
     const targetSuffix = target.ptyId.slice(-10)
     await expect
