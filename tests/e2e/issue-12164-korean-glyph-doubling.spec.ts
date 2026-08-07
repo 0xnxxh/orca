@@ -115,6 +115,12 @@ async function runProbe(orcaPage: Page, renderer: 'webgl' | 'dom'): Promise<void
       item.expectedColumns - 4
     )
   }
-  // The DOM arm is only meaningful if the pane actually left WebGL.
+  // The DOM arm is only meaningful if the pane actually left WebGL. The WebGL arm
+  // needs a GPU that headless CI does not have, and xterm silently falls back to
+  // DOM rather than failing — so skip it there instead of asserting, which would
+  // otherwise report a missing GPU as a Korean rendering defect.
+  if (renderer === 'webgl' && canvas.renderer !== 'webgl') {
+    test.skip(true, `no WebGL renderer available (active: ${canvas.renderer})`)
+  }
   expect(canvas.renderer, 'requested renderer was not the active renderer').toBe(renderer)
 }
