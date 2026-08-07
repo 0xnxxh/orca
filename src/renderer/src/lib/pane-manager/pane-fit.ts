@@ -23,6 +23,8 @@ import {
 } from './terminal-scroll-intent-rebuild'
 import { flushDeferredPaneMetricOptions } from './pane-metric-options-deferral'
 import { canMeasurePaneForFit, getProposedPaneDimensions } from './pane-fit-measurability'
+import { notifyPaneFitSucceeded } from './pane-fit-webgl-attach-signal'
+import { recordPaneFitClientSize } from './pane-fit-client-size'
 
 export {
   canApplyPaneMetricOptions,
@@ -46,25 +48,7 @@ const pendingSafeFitContinuations = new WeakMap<
   Map<string, PendingSafeFitContinuation>
 >()
 
-// Why: measure the element FitAddon fits (the xterm host), not the outer .pane —
-// a title/banner can shrink the inner fittable area while the outer stays put.
-// Round to whole pixels so sub-pixel jitter never reads as a resize.
-export function readFitClientSize(pane: ManagedPane): { width: number; height: number } | null {
-  const element = (pane as ManagedPaneInternal).xtermContainer ?? pane.container
-  const measure = element?.getBoundingClientRect
-  if (typeof measure !== 'function') {
-    return null
-  }
-  const rect = measure.call(element)
-  return { width: Math.round(rect.width), height: Math.round(rect.height) }
-}
-
-function recordPaneFitClientSize(pane: ManagedPane): void {
-  const size = readFitClientSize(pane)
-  if (size && size.width > 0 && size.height > 0) {
-    ;(pane as ManagedPaneInternal).lastFitClientSize = size
-  }
-}
+export { readFitClientSize } from './pane-fit-client-size'
 
 function canPreserveScrollIntentForFit(pane: ManagedPane): boolean {
   // Why: split reparent has its own delayed restore; restoring here can fight that timer.
@@ -201,6 +185,8 @@ export function flushPendingSafeFitContinuations(pane: ManagedPane): void {
 export function safeFit(pane: ManagedPane): boolean {
   const completed = performSafeFit(pane)
   if (completed) {
+    // A completed fit proves measurability — the reattach moment for a DOM-stuck pane.
+    notifyPaneFitSucceeded(pane)
     // Why: baseline for the reveal fit to tell a real resize from a metric wobble.
     recordPaneFitClientSize(pane)
     // Why: replay transactions may be waiting for renderer dimensions; any
