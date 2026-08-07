@@ -4409,13 +4409,22 @@
       ],
       "evidenceRuns": [
         {
-          "date": "2026-08-06",
+          "date": "2026-08-07",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts",
+          "result": "passed",
+          "durationSeconds": 5.84,
+          "summary": "The full PTY IPC file passed 449 tests, including one first-observation foreground sync after handler recreation and deduplication of the repeated presence signal."
+        },
+        {
+          "date": "2026-08-07",
           "runner": "local",
           "platform": "macos",
           "command": "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-host-restart-background-sync.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 12.8,
-          "summary": "The isolated headed host and separate paired desktop client retained the daemon PID and PTY ID across host relaunch, emitted one target foreground transition, and delivered target plus post-relaunch control input/output. The byte-identical run with only the unknown-state fix reverted failed at the missing target foreground transition."
+          "durationSeconds": 12.5,
+          "summary": "With the parking override captured by both host launches, the isolated headed host and separate paired desktop client retained the daemon PID and PTY ID across host relaunch, emitted one target foreground transition, and delivered target plus post-relaunch control input/output. The byte-identical run with only the unknown-state fix reverted failed at the missing target foreground transition."
         },
         {
           "date": "2026-08-02",
@@ -4545,7 +4554,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The six-PTY ordinary-parking oracle was red in two independently observed stages: the parked paired remount first used detached attach and restored only rows 5,963–5,999, then the requested snapshot still lost to the current-screen replay until park reveals explicitly entered the capability-gated reattach coordinator. The candidate is green on headed and headless hosts, while disabling terminal.paired-parking.v1 makes the byte-identical oracle fail at its capability precondition and leaves the separately tested legacy lossy fallback green. The 64-PTY decorative-title control delivered 576 client events after convergence on unmodified main; the candidate delivers zero while preserving all 640 local frames, one current frame to a late client, and bell/idle transitions to both clients. The legacy no-output-pause control failed to request a reveal snapshot and kept hidden bytes on the xterm path; the candidate gates those bytes locally and restores one authoritative snapshot before live output. With stalled-stream recovery disabled, the host cursor advanced but the client remained frozen; enabling it repainted the marker with the same PTY and tab. The sequence-gap unit and headed paired oracle are red on current main and with only the new probe decision reverted: the authoritative host advances while the client stays stale after a successful probe. The candidate replaces the stream, repaints the marker, preserves PTY identity, and resumes I/O. Reverting the active-stream limit to 64 makes the exact 128-stream contract fail at 64; restoring 128 admits every intended stream, rejects 129, and reattaches it after one slot releases."
+        "evidence": "The six-PTY ordinary-parking oracle was red in two independently observed stages: the parked paired remount first used detached attach and restored only rows 5,963–5,999, then the requested snapshot still lost to the current-screen replay until park reveals explicitly entered the capability-gated reattach coordinator. The candidate is green on headed and headless hosts, while disabling terminal.paired-parking.v1 makes the byte-identical oracle fail at its capability precondition and leaves the separately tested legacy lossy fallback green. The 64-PTY decorative-title control delivered 576 client events after convergence on unmodified main; the candidate delivers zero while preserving all 640 local frames, one current frame to a late client, and bell/idle transitions to both clients. The legacy no-output-pause control failed to request a reveal snapshot and kept hidden bytes on the xterm path; the candidate gates those bytes locally and restores one authoritative snapshot before live output. With stalled-stream recovery disabled, the host cursor advanced but the client remained frozen; enabling it repainted the marker with the same PTY and tab. The sequence-gap unit and headed paired oracle are red on current main and with only the new probe decision reverted: the authoritative host advances while the client stays stale after a successful probe. The candidate replaces the stream, repaints the marker, preserves PTY identity, and resumes I/O. Reverting the active-stream limit to 64 makes the exact 128-stream contract fail at 64; restoring 128 admits every intended stream, rejects 129, and reattaches it after one slot releases. The host-relaunch oracle fails when unknown delivery state is coerced to foregrounded or a layout version becomes an output high-water; the candidate foregrounds the preserved daemon PTY once and resumes same-PTY input/output."
       },
       "performanceBudget": {
         "required": true,

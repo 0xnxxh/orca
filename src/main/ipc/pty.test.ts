@@ -15648,6 +15648,7 @@ describe('registerPtyHandlers', () => {
       registerPtyHandlers(mainWindow as never, nextRuntime as never)
 
       nextRuntime.registerRawTerminalViewSubscriber(result.id)
+      // Repeated presence signals must remain deduplicated.
       nextRuntime.onRemoteTerminalViewPresenceChanged?.(result.id)
 
       expect(daemon.setPtyBackgrounded).toHaveBeenCalledOnce()
