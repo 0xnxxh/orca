@@ -1391,55 +1391,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     openTabsLeadSections
   ])
 
-  const selectableItems = useMemo<PaletteItem[]>(() => {
-    const {
-      visibleOpenTabItems,
-      visibleWorktreeItems,
-      visibleProjectTargetItems,
-      visibleMiddleItems,
-      multiPrimaryFirstScreen,
-      multiPrimaryLayout
-    } = paletteSections
-
-    // Why: selection order must mirror render order, including the soft-split interleave.
-    if (multiPrimaryFirstScreen && multiPrimaryLayout) {
-      const leadingRest = multiPrimaryLayout.leadingRest as PaletteItem[]
-      const trailingRest = multiPrimaryLayout.trailingRest as PaletteItem[]
-      if (openTabsLeadSections) {
-        return [
-          ...(multiPrimaryLayout.leadingPreview as PaletteItem[]),
-          ...(multiPrimaryLayout.trailingFloor as PaletteItem[]),
-          ...leadingRest,
-          ...trailingRest,
-          ...visibleProjectTargetItems,
-          ...visibleMiddleItems
-        ]
-      }
-      return [
-        ...(multiPrimaryLayout.leadingPreview as PaletteItem[]),
-        ...(multiPrimaryLayout.trailingFloor as PaletteItem[]),
-        ...leadingRest,
-        ...trailingRest,
-        ...visibleProjectTargetItems,
-        ...visibleMiddleItems
-      ]
-    }
-
-    return openTabsLeadSections
-      ? [
-          ...visibleOpenTabItems,
-          ...visibleWorktreeItems,
-          ...visibleProjectTargetItems,
-          ...visibleMiddleItems
-        ]
-      : [
-          ...visibleWorktreeItems,
-          ...visibleProjectTargetItems,
-          ...visibleMiddleItems,
-          ...visibleOpenTabItems
-        ]
-  }, [openTabsLeadSections, paletteSections])
-
   // Why: badges number the snapshotted recent rows only — ⌘N is meaningless on a typed query.
   const recentTabShortcutIndexById = useMemo(
     () =>
@@ -1609,26 +1560,33 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     // Typed query with both open tabs and worktrees: soft-split so the trailing
     // primary is not buried under ~50 leading rows (see tmp/cmd-j-recommended.html).
     if (multiPrimaryFirstScreen && multiPrimaryLayout) {
-      const { leadingPreview, leadingRest, leadingMoreCount, trailingFloor, trailingRest } =
-        multiPrimaryLayout
+      const leadingHintId = openTabsLeadSections
+        ? '__hint_open_tab_overflow__'
+        : '__hint_worktree_overflow__'
+      const trailingHintId = openTabsLeadSections
+        ? '__hint_worktree_overflow__'
+        : '__hint_open_tab_overflow__'
 
       if (openTabsLeadSections) {
         pushOpenTabsHeader()
-        appendPaletteListEntries(entries, leadingPreview as PaletteItem[])
-        pushOverflowHint('__hint_open_tab_overflow__', leadingMoreCount)
-        pushWorktreesHeader()
-        appendPaletteListEntries(entries, trailingFloor as PaletteItem[])
-        appendPaletteListEntries(entries, leadingRest as PaletteItem[])
-        appendPaletteListEntries(entries, trailingRest as PaletteItem[])
       } else {
         pushWorktreesHeader()
-        appendPaletteListEntries(entries, leadingPreview as PaletteItem[])
-        pushOverflowHint('__hint_worktree_overflow__', leadingMoreCount)
-        pushOpenTabsHeader()
-        appendPaletteListEntries(entries, trailingFloor as PaletteItem[])
-        appendPaletteListEntries(entries, leadingRest as PaletteItem[])
-        appendPaletteListEntries(entries, trailingRest as PaletteItem[])
       }
+      appendPaletteListEntries(entries, multiPrimaryLayout.leadingPreview as PaletteItem[])
+      // Soft more for the leading section (scrollable rest + hard-cap tail).
+      pushOverflowHint(leadingHintId, multiPrimaryLayout.leadingMoreCount)
+      if (openTabsLeadSections) {
+        pushWorktreesHeader()
+      } else {
+        pushOpenTabsHeader()
+      }
+      // Floor first, then remaining leading rows, then trailing rest — same order
+      // as orderMultiPrimaryPaletteItems / keyboard selection.
+      appendPaletteListEntries(entries, multiPrimaryLayout.trailingFloor as PaletteItem[])
+      appendPaletteListEntries(entries, multiPrimaryLayout.leadingRest as PaletteItem[])
+      appendPaletteListEntries(entries, multiPrimaryLayout.trailingRest as PaletteItem[])
+      // Trailing rest is already on screen; only hard-cap overflow needs a hint.
+      pushOverflowHint(trailingHintId, multiPrimaryLayout.trailingHardOverflowCount)
       pushProjectAndMiddleSections()
       if (showCreateAction) {
         entries.push({ id: CREATE_WORKTREE_ITEM_ID, type: 'create-worktree' })
@@ -1651,6 +1609,19 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     }
     return entries
   }, [hasQuery, openTabsLeadSections, paletteSections, showCreateAction, worktreeItems.length])
+
+  // Why derive from listEntries: multi-primary interleave must stay identical for
+  // empty-state counts and keyboard selection — dual-path builders drifted before.
+  const selectableItems = useMemo<PaletteItem[]>(
+    () =>
+      listEntries.filter(
+        (entry): entry is PaletteItem =>
+          entry.type !== 'section-header' &&
+          entry.type !== 'hint' &&
+          entry.type !== 'create-worktree'
+      ),
+    [listEntries]
+  )
 
   const selectionItemIds = useMemo(
     () => getWorktreePaletteSelectionItemIds(listEntries),

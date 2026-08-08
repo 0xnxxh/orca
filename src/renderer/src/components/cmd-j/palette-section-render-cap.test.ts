@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   capPaletteSection,
   layoutMultiPrimaryPaletteSections,
+  orderMultiPrimaryPaletteItems,
   PALETTE_SECTION_RENDER_CAP,
   softSplitPaletteSection,
   TYPED_QUERY_LEADING_PREVIEW,
@@ -86,6 +87,7 @@ describe('layoutMultiPrimaryPaletteSections', () => {
     expect(layout.trailingRest).toEqual([103, 104])
     expect(layout.leadingRest).toEqual([6, 7, 8, 9, 10, 11])
     expect(layout.trailingMoreCount).toBe(2)
+    expect(layout.trailingHardOverflowCount).toBe(0)
   })
 
   it('shows all trailing rows in the floor when the section is small', () => {
@@ -97,5 +99,33 @@ describe('layoutMultiPrimaryPaletteSections', () => {
     expect(layout.trailingFloor).toEqual([200, 201])
     expect(layout.trailingRest).toEqual([])
     expect(layout.trailingMoreCount).toBe(0)
+    expect(layout.trailingHardOverflowCount).toBe(0)
+  })
+
+  it('reports trailing hard-cap overflow without counting scrollable rest', () => {
+    const layout = layoutMultiPrimaryPaletteSections({
+      leadingItems: range(12),
+      trailingItems: range(80).map((n) => n + 1000)
+    })
+
+    expect(layout.trailingFloor).toHaveLength(TYPED_QUERY_TRAILING_FLOOR)
+    expect(layout.trailingRest).toHaveLength(
+      PALETTE_SECTION_RENDER_CAP - TYPED_QUERY_TRAILING_FLOOR
+    )
+    expect(layout.trailingMoreCount).toBe(80 - TYPED_QUERY_TRAILING_FLOOR)
+    expect(layout.trailingHardOverflowCount).toBe(80 - PALETTE_SECTION_RENDER_CAP)
+  })
+})
+
+describe('orderMultiPrimaryPaletteItems', () => {
+  it('interleaves floor before leading rest', () => {
+    const layout = layoutMultiPrimaryPaletteSections({
+      leadingItems: range(8),
+      trailingItems: range(5).map((n) => n + 100)
+    })
+
+    expect(orderMultiPrimaryPaletteItems(layout)).toEqual([
+      0, 1, 2, 3, 4, 5, 100, 101, 102, 6, 7, 103, 104
+    ])
   })
 })

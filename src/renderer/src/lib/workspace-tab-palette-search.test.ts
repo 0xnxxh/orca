@@ -502,4 +502,23 @@ describe('workspace-tab-palette-search', () => {
     })
     expect(entries[0]?.secondarySearchTexts).toEqual([])
   })
+
+  it('still finds terminals via type aliases without showing a secondary', () => {
+    const entries = buildEntries()
+    // Title is agent-named so the hit has to come from the type alias, not the title.
+    const renamed = entries.map((entry, index) =>
+      index === 0 ? { ...entry, title: 'Fix login race', titleSearchText: 'Fix login race' } : entry
+    )
+    const hit = searchWorkspaceTabs(renamed, 'terminal')[0]
+    expect(hit).toMatchObject({
+      contentType: 'terminal',
+      title: 'Fix login race',
+      secondaryText: '',
+      secondaryRange: null,
+      typeAliasMatch: {
+        text: 'terminal tab',
+        range: { start: 0, end: 8 }
+      }
+    })
+  })
 })

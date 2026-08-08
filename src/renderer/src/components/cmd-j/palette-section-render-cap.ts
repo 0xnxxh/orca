@@ -63,6 +63,10 @@ export function softSplitPaletteSection<T>(
  * Leading section gets a soft preview; trailing primary gets an early floor so
  * it is not buried under ~50 leading rows. Remaining rows of both sections
  * follow (still under the hard cap). Projects/middle stay after both primaries.
+ *
+ * `leadingMoreCount` is the mid-list soft hint (rest + hard-cap overflow).
+ * `trailingHardOverflowCount` is only rows past the hard cap — trailing rest is
+ * already rendered, so a soft “more” would double-count scrollable rows.
  */
 export type MultiPrimarySectionLayout<T> = {
   leadingPreview: readonly T[]
@@ -71,6 +75,7 @@ export type MultiPrimarySectionLayout<T> = {
   trailingFloor: readonly T[]
   trailingRest: readonly T[]
   trailingMoreCount: number
+  trailingHardOverflowCount: number
 }
 
 export function layoutMultiPrimaryPaletteSections<T>({
@@ -94,6 +99,21 @@ export function layoutMultiPrimaryPaletteSections<T>({
     leadingMoreCount: leading.moreCount,
     trailingFloor: trailing.preview,
     trailingRest: trailing.rest,
-    trailingMoreCount: trailing.moreCount
+    trailingMoreCount: trailing.moreCount,
+    // Why: floor + rest already cover every rendered trailing row; only the
+    // hard-capped tail needs a “keep typing” hint after the section.
+    trailingHardOverflowCount: Math.max(0, trailing.moreCount - trailing.rest.length)
   }
+}
+
+/** Selection/render order for the two interleaved primary sections. */
+export function orderMultiPrimaryPaletteItems<T>(
+  layout: MultiPrimarySectionLayout<T>
+): readonly T[] {
+  return [
+    ...layout.leadingPreview,
+    ...layout.trailingFloor,
+    ...layout.leadingRest,
+    ...layout.trailingRest
+  ]
 }

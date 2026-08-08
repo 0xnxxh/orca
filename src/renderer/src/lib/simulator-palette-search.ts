@@ -24,6 +24,7 @@ export type SimulatorPaletteSearchResult = {
   secondaryRange: MatchRange | null
   repoRange: MatchRange | null
   worktreeRange: MatchRange | null
+  typeAliasMatch?: { text: string; range: MatchRange } | null
   isCurrentTab: boolean
   isCurrentWorktree: boolean
   score: number
@@ -238,14 +239,15 @@ export function searchSimulatorTabs(
       continue
     }
 
-    let typeAliasMatch: MatchRange | null = null
+    let typeAliasHit: { text: string; range: MatchRange } | null = null
     for (const alias of SIMULATOR_TYPE_SEARCH_ALIASES) {
-      typeAliasMatch = findRange(alias, trimmedQuery)
-      if (typeAliasMatch) {
+      const range = findRange(alias, trimmedQuery)
+      if (range) {
+        typeAliasHit = { text: alias, range }
         break
       }
     }
-    if (typeAliasMatch) {
+    if (typeAliasHit) {
       results.push({
         ...baseResult,
         titleRange: null,
@@ -253,9 +255,10 @@ export function searchSimulatorTabs(
         secondaryRange: null,
         repoRange: null,
         worktreeRange: null,
+        typeAliasMatch: typeAliasHit,
         score: scoreSimulatorTabMatch({
           fieldWeight: 20,
-          matchIndex: typeAliasMatch.start,
+          matchIndex: typeAliasHit.range.start,
           entry
         })
       })

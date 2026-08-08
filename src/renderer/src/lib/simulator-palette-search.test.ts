@@ -109,9 +109,13 @@ describe('simulator-palette-search', () => {
     ]
 
     // Why no secondaryRange: type aliases match without a display secondary.
-    expect(searchSimulatorTabs(entries, 'mobile')).toHaveLength(1)
-    expect(searchSimulatorTabs(entries, 'mobile')[0]?.secondaryText).toBe('')
-    expect(searchSimulatorTabs(entries, 'mobile')[0]?.secondaryRange).toBeNull()
+    const mobileHit = searchSimulatorTabs(entries, 'mobile')[0]
+    expect(mobileHit?.secondaryText).toBe('')
+    expect(mobileHit?.secondaryRange).toBeNull()
+    expect(mobileHit?.typeAliasMatch).toEqual({
+      text: 'mobile emulator tab',
+      range: { start: 0, end: 6 }
+    })
     expect(searchSimulatorTabs(entries, 'simulator')).toHaveLength(1)
     expect(searchSimulatorTabs(entries, 'ios')).toHaveLength(1)
     expect(searchSimulatorTabs(entries, 'emulator')).toHaveLength(1)
