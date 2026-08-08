@@ -2,6 +2,8 @@ import { getAgentCatalog } from '@/lib/agent-catalog'
 import { translate } from '@/i18n/i18n'
 import type { AutomationPrecheck } from '../../../../shared/automations-types'
 import { buildAutomationCronSchedule } from '../../../../shared/automation-schedules'
+import { isTuiAgent } from '../../../../shared/tui-agent-config'
+import type { TuiAgent } from '../../../../shared/tui-agent'
 import type { Worktree } from '../../../../shared/worktree/types'
 import type { AutomationDraft } from './AutomationEditorDialog'
 
@@ -46,6 +48,12 @@ export function buildHermesCronSchedule(draft: AutomationDraft): string {
     minute,
     dayOfWeek: Number(draft.dayOfWeek)
   })
+}
+
+/** Why: a mixed-version host can still hand back a retired id, which is not in
+ *  the union any dialog or save-refine accepts — treat it like a cleared agent. */
+export function resolveDraftAgentId(agentId: unknown, defaultAgent: TuiAgent): TuiAgent {
+  return isTuiAgent(agentId) ? agentId : defaultAgent
 }
 
 export function getAgentLabel(agentId: string | null): string {
