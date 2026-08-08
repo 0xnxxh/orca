@@ -109,6 +109,7 @@ describe('useMobilePairingAddressPreference', () => {
     act(() => result.current.selectAddressAfterRefresh([LAN, BRIDGE]))
     act(() => result.current.selectAddress(BRIDGE.address))
     act(() => result.current.selectAddressAfterRefresh([LAN, BRIDGE]))
+    act(() => result.current.selectAddressAfterRefresh([]))
 
     expect(result.current.selectedAddress).toBe(BRIDGE.address)
     expect(result.current.selectedAddressIsCustom).toBe(false)

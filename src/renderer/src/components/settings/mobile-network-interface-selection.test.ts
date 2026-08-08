@@ -55,6 +55,15 @@ describe('selectRefreshedNetworkAddress', () => {
     expect(selectRefreshedNetworkAddress(LAN.address, [])).toBeUndefined()
   })
 
+  it.each([BRIDGE, DEFAULT_SWITCH])(
+    'keeps the explicitly selected $name adapter when refresh is empty',
+    (networkInterface) => {
+      expect(selectRefreshedNetworkAddress(networkInterface.address, [], false, true)).toBe(
+        networkInterface.address
+      )
+    }
+  )
+
   it('skips a container bridge in favor of a reachable address', () => {
     expect(selectRefreshedNetworkAddress(undefined, [BRIDGE, LAN])).toBe(LAN.address)
   })

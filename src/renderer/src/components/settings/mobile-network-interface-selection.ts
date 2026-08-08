@@ -18,11 +18,11 @@ export function selectRefreshedNetworkAddress(
   currentAddressIsManual: boolean = false,
   currentAddressWasExplicitlySelected: boolean = false
 ): string | undefined {
-  // Why: an empty refresh result usually means discovery is transiently
-  // unavailable, not that the user wants to drop their selection. Keep the
-  // manual address so a recovering discovery doesn't clobber it.
+  // Why: transient discovery failure must not clobber a deliberate user choice.
   if (interfaces.length === 0) {
-    return currentAddressIsManual ? currentAddress : undefined
+    return currentAddressIsManual || currentAddressWasExplicitlySelected
+      ? currentAddress
+      : undefined
   }
   if (currentAddressIsManual) {
     return currentAddress
