@@ -1362,7 +1362,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     const multiPrimaryFirstScreen =
       hasQuery && openTabs.visible.length > 0 && worktrees.visible.length > 0
     const multiPrimaryLayout = multiPrimaryFirstScreen
-      ? layoutMultiPrimaryPaletteSections({
+      ? layoutMultiPrimaryPaletteSections<WorktreePaletteItem | OpenTabPaletteItem>({
           leadingItems: openTabsLeadSections ? openTabItems : worktreeItems,
           trailingItems: openTabsLeadSections ? worktreeItems : openTabItems
         })
