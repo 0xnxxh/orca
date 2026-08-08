@@ -94,18 +94,24 @@ export { FloatingTerminalToggleButton } from './FloatingTerminalToggleButton'
 import {
   anchorFloatingTerminalPanelBounds,
   clampFloatingTerminalBounds,
-  getDefaultFloatingTerminalCommittedBounds,
   getDefaultFloatingTerminalBounds,
+  getDefaultFloatingTerminalCommittedBounds,
   getMaximizedFloatingTerminalBounds,
   persistFloatingTerminalPanelBounds,
   readPersistedFloatingTerminalPanelBounds,
-  resolveFloatingTerminalPanelCommittedBounds,
   resolveFloatingTerminalPanelBounds,
+  resolveFloatingTerminalPanelCommittedBounds,
   shouldReconcileFloatingTerminalPanelBounds,
   type FloatingTerminalPanelBounds,
-  type FloatingTerminalPanelCommittedBounds,
-  type FloatingTerminalPanelBoundsSource
+  type FloatingTerminalPanelBoundsSource,
+  type FloatingTerminalPanelCommittedBounds
 } from './floating-terminal-panel-bounds'
+import {
+  persistFloatingTerminalPanelMaximized,
+  readPersistedFloatingTerminalPanelViewState
+} from './floating-terminal-panel-view-state'
+import { useSettledPanelViewport } from './use-settled-panel-viewport'
+import { shouldRestoreMaximizedPanelBounds } from './floating-terminal-panel-restore-geometry'
 import { translate } from '@/i18n/i18n'
 import { consumeFloatingTerminalOpenMaximizedIntent } from '@/lib/floating-terminal'
 import { selectFloatingTerminalPanelInputs } from './floating-terminal-panel-inputs'
@@ -161,6 +167,17 @@ function readInitialPanelBounds(): FloatingTerminalPanelBoundsState {
   const defaultCommittedBounds = getDefaultFloatingTerminalCommittedBounds()
   const defaultRenderedBounds = getDefaultFloatingTerminalBounds()
   const persistedBounds = readPersistedFloatingTerminalPanelBounds()
+  if (shouldRestoreMaximizedPanelBounds(readPersistedFloatingTerminalPanelViewState())) {
+    // Why maximized wins the RENDERED rect while the committed rect stays the restore
+    // target: the first paint must already be final geometry, or the panes fit at the
+    // smaller size and the later maximize reflows them. Un-maximizing still returns to
+    // the user's own bounds because those remain committed.
+    return {
+      committedBounds: persistedBounds ?? defaultCommittedBounds,
+      renderedBounds: getMaximizedFloatingTerminalBounds(),
+      source: persistedBounds ? 'user' : 'default'
+    }
+  }
   return persistedBounds
     ? {
         committedBounds: persistedBounds,
@@ -267,7 +284,10 @@ export function FloatingTerminalPanel({
     initialBoundsStateRef.current.committedBounds
   )
   const [bounds, setBounds] = useState(initialBoundsStateRef.current.renderedBounds)
-  const [maximized, setMaximized] = useState(false)
+  const [maximized, setMaximized] = useState(
+    () => readPersistedFloatingTerminalPanelViewState()?.maximized === true
+  )
+  const panelViewportSettled = useSettledPanelViewport()
   const [orchestrationDialogOpen, setOrchestrationDialogOpen] = useState(false)
   const [showOrchestrationSetup, setShowOrchestrationSetup] = useState(
     () => !hasOrchestrationSetupMarker() && !isOrchestrationSetupDismissed()
@@ -1126,6 +1146,7 @@ export function FloatingTerminalPanel({
       stagedBoundsRef.current = null
       setBounds(restoredBounds)
       setMaximized(false)
+      persistFloatingTerminalPanelMaximized(false)
       return
     }
     restoreBoundsRef.current = {
@@ -1136,6 +1157,7 @@ export function FloatingTerminalPanel({
     stagedBoundsRef.current = null
     setBounds(getMaximizedFloatingTerminalBounds())
     setMaximized(true)
+    persistFloatingTerminalPanelMaximized(true)
   }, [bounds, maximized])
 
   const maximizePanel = useCallback(() => {
@@ -1153,6 +1175,7 @@ export function FloatingTerminalPanel({
     stagedBoundsRef.current = null
     setBounds(getMaximizedFloatingTerminalBounds())
     setMaximized(true)
+    persistFloatingTerminalPanelMaximized(true)
   }, [bounds, maximized])
 
   useEffect(() => {
@@ -1830,7 +1853,11 @@ export function FloatingTerminalPanel({
             hasVisibleFloatingTabs ? 'floating-workspace-surface' : undefined
           }
         >
-          {cwd
+          {/* Why also gated on a settled viewport: a restored-maximized panel derives its
+              rect from the live viewport, so mounting terminals before the window finishes
+              maximizing fits them to a grid it is about to leave, and the correcting fit
+              reflows the buffer under a live TUI. */}
+          {cwd && panelViewportSettled
             ? tabs
                 .filter((tab) => !parkedTerminalTabIds.has(tab.id))
                 .map((tab) => {

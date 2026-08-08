@@ -75,6 +75,10 @@ import { shouldShowOnboarding } from './components/onboarding/should-show-onboar
 import { MarkdownTemplatePicker } from './components/editor/MarkdownTemplatePicker'
 import { FloatingTerminalToggleButton } from './components/floating-terminal/FloatingTerminalToggleButton'
 import {
+  persistFloatingTerminalPanelOpen,
+  readPersistedFloatingTerminalPanelViewState
+} from './components/floating-terminal/floating-terminal-panel-view-state'
+import {
   TOGGLE_FLOATING_TERMINAL_EVENT,
   requestFloatingTerminalOpenMaximized
 } from '@/lib/floating-terminal'
@@ -445,7 +449,11 @@ function App(): React.JSX.Element {
   const clearUnreadDockBadge = useUnreadDockBadge()
   useRadixBodyPointerEventsRecovery()
   useWebSessionTabsSync()
-  const [floatingTerminalOpen, setFloatingTerminalOpen] = useState(false)
+  // Why restored: leaving the panel closed forces the user to reopen and re-maximize it,
+  // and that size jump reflows a live TUI's buffer (see floating-terminal-panel-view-state).
+  const [floatingTerminalOpen, setFloatingTerminalOpen] = useState(
+    () => readPersistedFloatingTerminalPanelViewState()?.open === true
+  )
   const floatingWorkspaceTourInteractionSnapshotRef = useRef<{
     wasPreviouslyInteracted?: boolean
     persisted?: Promise<void>
@@ -637,6 +645,7 @@ function App(): React.JSX.Element {
         restoreFloatingTerminalReturnFocus()
       }
       setFloatingTerminalOpen(resolvedOpen)
+      persistFloatingTerminalPanelOpen(resolvedOpen)
     },
     [floatingTerminalOpen, rememberFloatingTerminalReturnFocus, restoreFloatingTerminalReturnFocus]
   )
