@@ -2637,6 +2637,15 @@ export default function MobileTasksScreen() {
 
   // Why: task-loading effects use this as a stale-client guard, so the ref
   // must be current before those passive effects can run after commit.
+  const resetGitHubItemsState = useCallback(() => {
+    setGithubRepoSources({})
+    setGithubPages([])
+    setGithubCurrentPage(0)
+    setGithubTotalCount(null)
+    setGithubSourceErrors([])
+    setGithubSourceFallbacks([])
+  }, [])
+
   // Why: Expo reuses this screen for the next host, so an effect reset runs a
   // render too late and the previous host's rows show under the new one. The
   // repo list resets itself; these are the other client-scoped caches.
@@ -2645,6 +2654,7 @@ export default function MobileTasksScreen() {
     setBoundClient(client)
     setItems([])
     setGithubRepoSlugCache({})
+    resetGitHubItemsState()
   }
 
   useLayoutEffect(() => {
@@ -2906,7 +2916,7 @@ export default function MobileTasksScreen() {
         // pair but must not receive the newer task-specific method calls.
         setTasksSupportState({ kind: 'unsupported', client })
         setItems([])
-        setGithubPages([])
+        resetGitHubItemsState()
         setGithubProjectTable(null)
         setShowLinearWorkspacePicker(false)
         setShowLinearTeamPicker(false)
@@ -3274,11 +3284,7 @@ export default function MobileTasksScreen() {
       }
       try {
         if (provider !== 'github' || githubMode !== 'items') {
-          setGithubPages([])
-          setGithubCurrentPage(0)
-          setGithubTotalCount(null)
-          setGithubSourceErrors([])
-          setGithubSourceFallbacks([])
+          resetGitHubItemsState()
         }
         if (provider === 'linear' && !linearConnected) {
           setItems([])
@@ -3309,11 +3315,7 @@ export default function MobileTasksScreen() {
               return
             }
             setItems([])
-            setGithubPages([])
-            setGithubCurrentPage(0)
-            setGithubTotalCount(null)
-            setGithubSourceErrors([])
-            setGithubSourceFallbacks([])
+            resetGitHubItemsState()
             return
           }
           if (provider === 'github') {
@@ -3448,8 +3450,7 @@ export default function MobileTasksScreen() {
           return
         }
         setItems([])
-        setGithubSourceErrors([])
-        setGithubSourceFallbacks([])
+        resetGitHubItemsState()
         setError(err instanceof Error ? err.message : 'Failed to load tasks')
       } finally {
         if (isCurrent()) {
@@ -3470,6 +3471,8 @@ export default function MobileTasksScreen() {
       linearConnected,
       linearFilter,
       linearOrderBy,
+      // resetGitHubItemsState is useCallback([]), so its identity never changes
+      // and listing it here would only cost a line against the max-lines budget.
       repoListEnsureLoaded,
       provider,
       selectedLinearTeamIds,

@@ -8,12 +8,18 @@ import { describe, expect, it } from 'vitest'
  *  these pin the consumption points the original bug lived in. */
 const source = readFileSync(new URL('../../app/h/[hostId]/tasks.tsx', import.meta.url), 'utf8')
 
-function loadTasksBody(): string {
-  const start = source.indexOf('const loadTasks = useCallback(')
-  expect(start, 'loadTasks must exist in the tasks route').toBeGreaterThan(-1)
-  const end = source.indexOf('const connectLinearAccount = useCallback(', start)
-  expect(end, 'loadTasks must be followed by connectLinearAccount').toBeGreaterThan(start)
+/** Why: `slice(start, -1)` silently trims one byte instead of failing, so a
+ *  missing end marker would let every assertion below pass vacuously. */
+function block(startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker)
+  expect(start, `tasks.tsx must contain ${startMarker}`).toBeGreaterThan(-1)
+  const end = source.indexOf(endMarker, start)
+  expect(end, `${startMarker} must be followed by ${endMarker}`).toBeGreaterThan(start)
   return source.slice(start, end)
+}
+
+function loadTasksBody(): string {
+  return block('const loadTasks = useCallback(', 'const connectLinearAccount = useCallback(')
 }
 
 describe('mobile GitHub Project repo list loading', () => {
@@ -55,21 +61,28 @@ describe('mobile GitHub Project readiness and refresh', () => {
   // `every` is vacuously true on an empty list, so readiness must ask the
   // resource whether that list is real yet rather than infer it.
   it('derives slug readiness from the resource status', () => {
-    const start = source.indexOf('const githubProjectRepoSlugReady = useMemo(')
-    expect(start, 'slug readiness memo must exist').toBeGreaterThan(-1)
-    const body = source.slice(start, source.indexOf('  )', start))
+    const body = block('const githubProjectRepoSlugReady = useMemo(', '  )')
     expect(body).toContain('hasSettledHostRepoList(repoList.state)')
     expect(body).toContain('[githubRepoSlugCache, hostedRepos, repoList.state]')
   })
 
-  it('re-reads the host and retries failed slug lookups on refresh', () => {
-    const start = source.indexOf('const refreshTasks = useCallback(')
-    expect(start, 'refresh must be a single shared callback').toBeGreaterThan(-1)
-    expect(source.slice(start, source.indexOf('}, [', start))).toContain('repoListReload()')
+  // Regression: readiness is only useful if the renderer consults it. Without
+  // this the board renders "No project items" before the repo list arrives, and
+  // the memo assertion above stays green.
+  it('gates the empty state on readiness in the renderer', () => {
+    const gate = block(
+      "githubMode === 'project' ? (",
+      '<Text style={styles.emptyText}>No project items</Text>'
+    )
+    expect(gate, 'the empty state must sit behind the readiness spinner').toContain(
+      'githubProjectTable && !githubProjectRepoSlugReady ? ('
+    )
+  })
 
-    const project = source.indexOf('const refreshGitHubProject = useCallback(')
-    expect(project, 'project refresh must be a single shared callback').toBeGreaterThan(-1)
-    const projectBody = source.slice(project, source.indexOf('}, [', project))
+  it('re-reads the host and retries failed slug lookups on refresh', () => {
+    expect(block('const refreshTasks = useCallback(', '}, [')).toContain('repoListReload()')
+
+    const projectBody = block('const refreshGitHubProject = useCallback(', '}, [')
     expect(projectBody).toContain('dropFailedGitHubRepoSlugEntries')
     expect(projectBody).toContain('refreshTasks()')
     expect(projectBody).toContain('loadGitHubProjectTable(')
@@ -90,9 +103,7 @@ describe('mobile GitHub Project readiness and refresh', () => {
   // Regression: Expo reuses this screen for the next host, so an effect-based
   // reset runs a render too late and the previous host's rows show through.
   it('clears the other client-scoped caches during render', () => {
-    const start = source.indexOf('if (boundClient !== client) {')
-    expect(start, 'the client-scoped reset must run during render').toBeGreaterThan(-1)
-    const body = source.slice(start, source.indexOf('\n  }', start))
+    const body = block('if (boundClient !== client) {', '\n  }')
     expect(body).toContain('setItems([])')
     expect(body).toContain('setGithubRepoSlugCache({})')
     expect(body, 'a ref write here would leak from an abandoned render').not.toContain('.current =')
@@ -100,9 +111,7 @@ describe('mobile GitHub Project readiness and refresh', () => {
 
   // ...and the ref half belongs in the commit phase, for the same reason.
   it('resets the selection-hydration ref in the commit phase', () => {
-    const start = source.indexOf('clientRef.current = client')
-    expect(start, 'the client ref effect must exist').toBeGreaterThan(-1)
-    expect(source.slice(start, source.indexOf('}, [client])', start))).toContain(
+    expect(block('clientRef.current = client', '}, [client])')).toContain(
       'repoSelectionHydratedRef.current = false'
     )
   })
