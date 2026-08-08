@@ -431,6 +431,7 @@ import {
   type LinearOrderBy,
   type LinearViewMode
 } from '@/components/task-page-localized-options'
+import { useGitHubTaskSearchCommit } from '@/components/use-github-task-search-commit'
 
 function isGitLabMRFilter(value: GitLabTaskFilter | GitLabIssueFilter): value is GitLabTaskFilter {
   return value === 'opened' || value === 'merged' || value === 'closed' || value === 'all'
@@ -6533,19 +6534,21 @@ export default function TaskPage(): React.JSX.Element {
     ]
   )
 
-  useEffect(() => {
-    if (!taskResumeApplied) {
-      return
-    }
-    const timeout = window.setTimeout(() => {
-      const scoped = scopeGitHubTaskSearch(taskSearchInput, activeGithubTaskKind)
+  const commitTaskSearch = useCallback(
+    (value: string): void => {
+      const scoped = scopeGitHubTaskSearch(value, activeGithubTaskKind)
       if (scoped !== appliedTaskSearch) {
         setTasksFiltering(true)
       }
       setAppliedTaskSearch(scoped)
-    }, TASK_SEARCH_DEBOUNCE_MS)
-    return () => window.clearTimeout(timeout)
-  }, [activeGithubTaskKind, appliedTaskSearch, taskSearchInput, taskResumeApplied])
+    },
+    [activeGithubTaskKind, appliedTaskSearch]
+  )
+  useGitHubTaskSearchCommit({
+    enabled: taskResumeApplied,
+    onCommit: commitTaskSearch,
+    value: taskSearchInput
+  })
 
   useEffect(() => {
     if (!taskResumeApplied) {
