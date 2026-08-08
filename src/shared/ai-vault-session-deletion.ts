@@ -76,6 +76,24 @@ export type AiVaultSessionDeleteRejectionCode =
 
 export type AiVaultSessionLiveness = 'live' | 'not-live' | 'unknown'
 
+// An agent Orca never spawned — an external terminal, a shell inside a WSL
+// distro, a paired runtime driving the same home — appends to the transcript
+// from a process no PTY inventory or status snapshot can see. So "no owning
+// process found" is not evidence of "not live"; only the transcript having
+// stopped changing is. Long enough to span the quiet gap while an agent runs a
+// slow tool call, short enough that a finished session becomes deletable soon.
+export const AI_VAULT_SESSION_QUIESCENCE_MS = 5 * 60_000
+
+// A non-finite or future write time (clock skew, an unparsable timestamp) is
+// never quiescent, so every caller of this fails closed by construction.
+export function isAiVaultSessionQuiescent(
+  lastWriteMs: number,
+  nowMs: number,
+  windowMs: number = AI_VAULT_SESSION_QUIESCENCE_MS
+): boolean {
+  return Number.isFinite(lastWriteMs) && nowMs - lastWriteMs >= windowMs
+}
+
 // One path the executor removes. A `kind` mismatch on disk is a rejection,
 // never a coerced delete. `roots` are what the path's realpath must still
 // resolve inside — a symlinked parent escapes the validator's textual check.

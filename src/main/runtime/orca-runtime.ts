@@ -489,6 +489,7 @@ import {
   readAiVaultSessionIdentity,
   resolveAiVaultSessionLiveness
 } from '../ai-vault/session-liveness'
+import { qualifyAiVaultSessionLiveness } from '../ai-vault/session-transcript-quiescence'
 import type { AiVaultAgent, AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
 import type { AiVaultSessionLiveness } from '../../shared/ai-vault-session-deletion'
 import type {
@@ -4971,7 +4972,7 @@ export class OrcaRuntimeService {
       return 'unknown'
     }
     const deadlineMs = Date.now() + 3_000
-    return await resolveAiVaultSessionLiveness(
+    const liveness = await resolveAiVaultSessionLiveness(
       {
         agent: target.agent,
         sessionId: identity.sessionId
@@ -5023,6 +5024,14 @@ export class OrcaRuntimeService {
         }
       }
     )
+    // The inventory above can only speak for Orca-managed processes, so a
+    // "nothing owns it" answer still has to be corroborated by the transcript.
+    return await qualifyAiVaultSessionLiveness({
+      liveness,
+      filePath: target.filePath,
+      observedBefore: identity.fingerprint,
+      nowMs: Date.now()
+    })
   }
 
   prepareAiVaultSessionResume(

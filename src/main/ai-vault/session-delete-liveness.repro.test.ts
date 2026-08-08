@@ -14,6 +14,10 @@ vi.mock('../wsl-unc-delete', () => ({ tryDeleteWslUncPath: vi.fn().mockResolvedV
 
 import { deleteAiVaultSessionFile } from './session-delete'
 import { resolveAiVaultSessionLiveness } from './session-liveness'
+import {
+  qualifyAiVaultSessionLiveness,
+  readAiVaultTranscriptFingerprint
+} from './session-transcript-quiescence'
 
 type AiVaultSessionLiveness = 'live' | 'not-live' | 'unknown'
 
@@ -34,7 +38,7 @@ async function createTranscript(): Promise<{ filePath: string; root: string }> {
 }
 
 async function attemptDelete(
-  getSessionLiveness: () => Promise<AiVaultSessionLiveness>
+  getSessionLiveness: (filePath: string) => Promise<AiVaultSessionLiveness>
 ): Promise<{ filePath: string; result: AiVaultDeleteSessionResult }> {
   const { filePath, root } = await createTranscript()
   const result = await deleteWithLiveness(
@@ -45,10 +49,39 @@ async function attemptDelete(
       executionHostId: 'local',
       rootOptions: { geminiSessionsDir: root }
     },
-    { getSessionLiveness }
+    { getSessionLiveness: () => getSessionLiveness(filePath) }
   )
   return { filePath, result }
 }
+
+// The production composition: the inventory verdict is only ever accepted after
+// the transcript corroborates it.
+function resolveThenQualify(
+  filePath: string,
+  deps: Parameters<typeof resolveAiVaultSessionLiveness>[1]
+): Promise<AiVaultSessionLiveness> {
+  return readAiVaultTranscriptFingerprint(filePath).then(async (observedBefore) =>
+    qualifyAiVaultSessionLiveness({
+      liveness: await resolveAiVaultSessionLiveness(
+        { agent: 'gemini', sessionId: 'session-live' },
+        deps
+      ),
+      filePath,
+      observedBefore,
+      nowMs: Date.now()
+    })
+  )
+}
+
+// Nothing Orca manages: no PTYs, no statuses — the shape every unmanaged owner
+// presents to the inventory.
+const EMPTY_INVENTORY = {
+  listProcesses: async () => [],
+  getStatusSnapshot: () => [],
+  inspectForegroundProcess: async () => ({ available: true, process: 'zsh' }),
+  getStatusPtyId: () => null,
+  getAgentHint: () => null
+} satisfies Parameters<typeof resolveAiVaultSessionLiveness>[1]
 
 describe('live AI Vault session delete safety invariant', () => {
   afterEach(async () => {
@@ -162,6 +195,82 @@ describe('live AI Vault session delete safety invariant', () => {
       reason: 'session-liveness-unknown'
     })
     expect.soft(existsSync(filePath), 'dismissed live transcript must survive on disk').toBe(true)
+  })
+
+  // The v1.4.177 regression class: the managed-PTY inventory can only ever
+  // describe processes Orca spawned, so every owner below is invisible to it and
+  // the raw inventory verdict is a confident, wrong "not-live".
+  it('survives a local agent launched outside Orca and absent from the PTY inventory', async () => {
+    trashItemMock.mockImplementation((path: string) => rm(path))
+
+    const { filePath, result } = await attemptDelete((path) =>
+      resolveThenQualify(path, EMPTY_INVENTORY)
+    )
+
+    expect.soft(result).toEqual({
+      outcome: 'rejected',
+      agent: 'gemini',
+      reason: 'session-liveness-unknown'
+    })
+    expect.soft(existsSync(filePath), 'unmanaged local transcript must survive on disk').toBe(true)
+    expect(trashItemMock).not.toHaveBeenCalled()
+  })
+
+  it('survives a WSL-distro agent whose hook relay never reported a status', async () => {
+    trashItemMock.mockImplementation((path: string) => rm(path))
+    // A distro shell Orca did not spawn: the relay carries no status for it and
+    // the one managed PTY on the host is an unrelated shell.
+    const { filePath, result } = await attemptDelete((path) =>
+      resolveThenQualify(path, {
+        ...EMPTY_INVENTORY,
+        listProcesses: async () => [
+          { id: 'wsl-shell', terminalHandle: 'term_wsl-shell', cwd: '/workspace', title: 'bash' }
+        ]
+      })
+    )
+
+    expect.soft(result).toEqual({
+      outcome: 'rejected',
+      agent: 'gemini',
+      reason: 'session-liveness-unknown'
+    })
+    expect.soft(existsSync(filePath), 'WSL transcript must survive on disk').toBe(true)
+    expect(trashItemMock).not.toHaveBeenCalled()
+  })
+
+  it('survives when every other agent process is attributed but the target is not', async () => {
+    trashItemMock.mockImplementation((path: string) => rm(path))
+    const otherSession: AgentStatusIpcPayload = {
+      paneKey: 'tab:other',
+      terminalHandle: 'term_other',
+      connectionId: null,
+      receivedAt: 1,
+      stateStartedAt: 1,
+      state: 'working',
+      prompt: 'test',
+      agentType: 'gemini',
+      providerSession: { key: 'session_id', id: 'session-other' }
+    }
+
+    const { filePath, result } = await attemptDelete((path) =>
+      resolveThenQualify(path, {
+        ...EMPTY_INVENTORY,
+        listProcesses: async () => [
+          { id: 'other', terminalHandle: 'term_other', cwd: '/workspace', title: 'gemini' }
+        ],
+        getStatusSnapshot: () => [otherSession],
+        inspectForegroundProcess: async () => ({ available: true, process: 'gemini' }),
+        getStatusPtyId: () => 'other'
+      })
+    )
+
+    expect.soft(result).toEqual({
+      outcome: 'rejected',
+      agent: 'gemini',
+      reason: 'session-liveness-unknown'
+    })
+    expect.soft(existsSync(filePath), 'unattributed transcript must survive on disk').toBe(true)
+    expect(trashItemMock).not.toHaveBeenCalled()
   })
 
   it('fails closed when authoritative liveness is unavailable', async () => {

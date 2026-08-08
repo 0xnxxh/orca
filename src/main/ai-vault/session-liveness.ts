@@ -7,6 +7,7 @@ import type { PtyProcessInfo } from '../providers/pty-process-info'
 import { isWslHookRelayConnectionId } from '../../shared/wsl-hook-relay-contract'
 import { lstat } from 'node:fs/promises'
 import { parseAgentSessionFileCached } from './session-scanner-parse-cache'
+import type { AiVaultTranscriptFingerprint } from './session-transcript-quiescence'
 
 const MAX_LIVENESS_PROCESSES = 512
 const PROCESS_INSPECTION_CONCURRENCY = 8
@@ -28,7 +29,9 @@ export type AiVaultSessionLivenessDependencies = {
 }
 
 export type AiVaultSessionIdentityRead =
-  | { outcome: 'found'; sessionId: string }
+  // The fingerprint is the transcript as it looked when identity was bound, so
+  // a write landing during liveness inspection is detectable afterwards.
+  | { outcome: 'found'; sessionId: string; fingerprint: AiVaultTranscriptFingerprint }
   | { outcome: 'missing' }
   | { outcome: 'unknown' }
 
@@ -57,7 +60,11 @@ export async function readAiVaultSessionIdentity(target: {
       process.platform
     )
     return session?.sessionId && session.sessionId === target.sessionId
-      ? { outcome: 'found', sessionId: session.sessionId }
+      ? {
+          outcome: 'found',
+          sessionId: session.sessionId,
+          fingerprint: { mtimeMs: fileStats.mtimeMs, sizeBytes: fileStats.size }
+        }
       : { outcome: 'unknown' }
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'ENOENT'

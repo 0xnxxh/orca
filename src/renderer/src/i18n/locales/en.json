@@ -11749,7 +11749,8 @@
             "deleteReasonNonLocalHost": "Only sessions on this device can be deleted.",
             "deleteReasonSyntheticPath": "This session can't be deleted from Orca.",
             "deleteReasonUnsupportedAgent": "{{value0}} sessions can't be deleted from Orca.",
-            "deleteReasonSessionLive": "This session is still running — wait for it to finish before deleting."
+            "deleteReasonSessionLive": "This session is still running — wait for it to finish before deleting.",
+            "deleteReasonRecentlyActive": "This session was active moments ago — wait a few minutes before deleting."
           },
           "AiVaultSessionDeleteDialog": {
             "title": "Delete this session?",

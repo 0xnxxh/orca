@@ -1,4 +1,7 @@
-import { isAiVaultDeletableAgent } from '../../../../shared/ai-vault-session-deletion'
+import {
+  isAiVaultDeletableAgent,
+  isAiVaultSessionQuiescent
+} from '../../../../shared/ai-vault-session-deletion'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
 import type { AgentStatusState } from '../../../../shared/agent-status-types'
 import { translate } from '@/i18n/i18n'
@@ -25,8 +28,9 @@ function isSessionLive(liveState: AgentStatusState | null | undefined): boolean 
  * it does: both consult the same shared agent set and host/synthetic predicates.
  */
 export function aiVaultSessionDeleteBlockedReason(
-  session: Pick<AiVaultSession, 'agent' | 'executionHostId' | 'filePath'>,
-  liveState?: AgentStatusState | null
+  session: Pick<AiVaultSession, 'agent' | 'executionHostId' | 'filePath' | 'modifiedAt'>,
+  liveState?: AgentStatusState | null,
+  nowMs: number = Date.now()
 ): string | null {
   if (!canUseLocalAiVaultSessionPathActions(session.executionHostId)) {
     return translate(
@@ -54,6 +58,15 @@ export function aiVaultSessionDeleteBlockedReason(
     return translate(
       'auto.components.right.sidebar.AiVaultSessionRow.deleteReasonSessionLive',
       'This session is still running — wait for it to finish before deleting.'
+    )
+  }
+  // Last resort: an agent Orca never spawned shows no live state at all, so a
+  // still-growing transcript is the only sign it has an owner. Main enforces the
+  // same window, and would reject the delete anyway.
+  if (!isAiVaultSessionQuiescent(Date.parse(session.modifiedAt), nowMs)) {
+    return translate(
+      'auto.components.right.sidebar.AiVaultSessionRow.deleteReasonRecentlyActive',
+      'This session was active moments ago — wait a few minutes before deleting.'
     )
   }
   return null

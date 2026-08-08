@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -66,13 +66,20 @@ describe('resolveAiVaultSessionLiveness', () => {
           filePath
         })
       ).resolves.toEqual({ outcome: 'unknown' })
+      const stats = await lstat(filePath)
+      // The fingerprint pins the transcript as it was when identity was bound,
+      // so a write landing during liveness inspection stays detectable.
       await expect(
         readAiVaultSessionIdentity({
           agent: 'gemini',
           sessionId: 'authoritative-session',
           filePath
         })
-      ).resolves.toEqual({ outcome: 'found', sessionId: 'authoritative-session' })
+      ).resolves.toEqual({
+        outcome: 'found',
+        sessionId: 'authoritative-session',
+        fingerprint: { mtimeMs: stats.mtimeMs, sizeBytes: stats.size }
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AI_VAULT_SESSION_QUIESCENCE_MS } from '../../../../shared/ai-vault-session-deletion'
 import { aiVaultSessionDeleteBlockedReason } from './ai-vault-session-deletability'
 
 // translate() with no loaded catalog returns the English fallback, so these
@@ -6,11 +7,17 @@ import { aiVaultSessionDeleteBlockedReason } from './ai-vault-session-deletabili
 const NON_LOCAL = 'Only sessions on this device can be deleted.'
 const SYNTHETIC = "This session can't be deleted from Orca."
 const LIVE = 'This session is still running — wait for it to finish before deleting.'
+const RECENTLY_ACTIVE = 'This session was active moments ago — wait a few minutes before deleting.'
+
+// Long past the quiescence window against any real clock, so the cases below
+// exercise the gate they name rather than the recency gate.
+const QUIET_SINCE = '2020-01-01T00:00:00.000Z'
 
 const localGeminiSession = {
   agent: 'gemini' as const,
   executionHostId: 'local' as const,
-  filePath: '/home/user/.gemini/sessions/log.jsonl'
+  filePath: '/home/user/.gemini/sessions/log.jsonl',
+  modifiedAt: QUIET_SINCE
 }
 
 describe('aiVaultSessionDeleteBlockedReason', () => {
@@ -23,7 +30,8 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
       aiVaultSessionDeleteBlockedReason({
         agent: 'claude',
         executionHostId: 'local',
-        filePath: '/home/user/.claude/projects/-proj/sess-1.jsonl'
+        filePath: '/home/user/.claude/projects/-proj/sess-1.jsonl',
+        modifiedAt: QUIET_SINCE
       })
     ).toBeNull()
   })
@@ -44,7 +52,12 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
     // deletable, so "wait for it to finish" would mislead.
     expect(
       aiVaultSessionDeleteBlockedReason(
-        { agent: 'codex', executionHostId: 'local', filePath: '/home/user/.codex/x.jsonl' },
+        {
+          agent: 'codex',
+          executionHostId: 'local',
+          filePath: '/home/user/.codex/x.jsonl',
+          modifiedAt: QUIET_SINCE
+        },
         'working'
       )
     ).toBe("Codex sessions can't be deleted from Orca.")
@@ -63,7 +76,8 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
       aiVaultSessionDeleteBlockedReason({
         agent: 'opencode',
         executionHostId: 'local',
-        filePath: '/home/user/.opencode/db.sqlite#sess_123'
+        filePath: '/home/user/.opencode/db.sqlite#sess_123',
+        modifiedAt: QUIET_SINCE
       })
     ).toBe(SYNTHETIC)
   })
@@ -73,7 +87,8 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
       aiVaultSessionDeleteBlockedReason({
         agent: 'opencode',
         executionHostId: 'local',
-        filePath: '/home/user/.opencode/sessions/log.jsonl'
+        filePath: '/home/user/.opencode/sessions/log.jsonl',
+        modifiedAt: QUIET_SINCE
       })
     ).toBe("OpenCode sessions can't be deleted from Orca.")
   })
@@ -83,9 +98,68 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
       aiVaultSessionDeleteBlockedReason({
         agent: 'antigravity',
         executionHostId: 'local',
-        filePath: '/home/user/.antigravity/brain/conv-1/.system_generated/logs/transcript.jsonl'
+        filePath: '/home/user/.antigravity/brain/conv-1/.system_generated/logs/transcript.jsonl',
+        modifiedAt: QUIET_SINCE
       })
     ).toBe("Antigravity sessions can't be deleted from Orca.")
+  })
+
+  // An agent Orca never spawned reports no live state, so the transcript's own
+  // write time is the only evidence it still has an owner. Main applies the same
+  // window, which keeps what the row offers a subset of what main authorizes.
+  describe('recently-active gate', () => {
+    const NOW_MS = Date.parse('2026-08-08T12:00:00.000Z')
+    const modifiedAgo = (ms: number) => new Date(NOW_MS - ms).toISOString()
+
+    it('blocks a session whose transcript was written inside the window', () => {
+      expect(
+        aiVaultSessionDeleteBlockedReason(
+          { ...localGeminiSession, modifiedAt: modifiedAgo(1_000) },
+          null,
+          NOW_MS
+        )
+      ).toBe(RECENTLY_ACTIVE)
+    })
+
+    it('offers Delete once the window has fully elapsed', () => {
+      expect(
+        aiVaultSessionDeleteBlockedReason(
+          { ...localGeminiSession, modifiedAt: modifiedAgo(AI_VAULT_SESSION_QUIESCENCE_MS) },
+          null,
+          NOW_MS
+        )
+      ).toBeNull()
+    })
+
+    it('blocks one millisecond short of the window', () => {
+      expect(
+        aiVaultSessionDeleteBlockedReason(
+          { ...localGeminiSession, modifiedAt: modifiedAgo(AI_VAULT_SESSION_QUIESCENCE_MS - 1) },
+          null,
+          NOW_MS
+        )
+      ).toBe(RECENTLY_ACTIVE)
+    })
+
+    it.each([
+      ['unparsable', 'not a date'],
+      ['empty', ''],
+      ['future-dated (clock skew)', '2026-08-08T12:05:00.000Z']
+    ])('blocks a %s modifiedAt', (_name, modifiedAt) => {
+      expect(
+        aiVaultSessionDeleteBlockedReason({ ...localGeminiSession, modifiedAt }, null, NOW_MS)
+      ).toBe(RECENTLY_ACTIVE)
+    })
+
+    it('keeps the live reason ahead of the recency reason', () => {
+      expect(
+        aiVaultSessionDeleteBlockedReason(
+          { ...localGeminiSession, modifiedAt: modifiedAgo(1_000) },
+          'working',
+          NOW_MS
+        )
+      ).toBe(LIVE)
+    })
   })
 
   it('prioritizes the host gate over the unsupported-agent reason', () => {
@@ -93,7 +167,8 @@ describe('aiVaultSessionDeleteBlockedReason', () => {
       aiVaultSessionDeleteBlockedReason({
         agent: 'claude',
         executionHostId: 'ssh:dev-box',
-        filePath: '/home/user/.claude/sessions/sess-dir/log.jsonl'
+        filePath: '/home/user/.claude/sessions/sess-dir/log.jsonl',
+        modifiedAt: QUIET_SINCE
       })
     ).toBe(NON_LOCAL)
   })

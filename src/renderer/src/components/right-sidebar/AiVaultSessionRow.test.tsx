@@ -20,7 +20,7 @@ const session = {
   codexHome: null,
   createdAt: null,
   updatedAt: null,
-  modifiedAt: 0,
+  modifiedAt: '2020-01-01T00:00:00.000Z',
   messageCount: 2,
   totalTokens: 0,
   previewMessages: [],
