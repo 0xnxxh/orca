@@ -10,12 +10,13 @@ export function normalizeJiraIssueLink(value: unknown): JiraIssueLink | null {
   const key = typeof raw.key === 'string' ? raw.key.trim().toUpperCase() : ''
   const title = typeof raw.title === 'string' ? raw.title.trim() : ''
   const parsedUrl = typeof raw.url === 'string' ? parseJiraIssueUrl(raw.url) : null
-  if (!key || !title || !parsedUrl || parsedUrl.issueKey !== key) {
+  if (!key || !parsedUrl || parsedUrl.issueKey !== key) {
     return null
   }
   return {
     key,
-    title,
+    // Identity is site + key; a blank summary must not throw the whole link away.
+    title: title || key,
     url: `${parsedUrl.origin}${parsedUrl.sitePath}/browse/${parsedUrl.issueKey}`
   }
 }
@@ -55,8 +56,17 @@ export function resolveJiraIssueLink(fields: {
   linkedJiraIssue?: JiraIssueLink | null
   linkedWorkItem?: WorkspaceLinkedItem | null
 }): JiraIssueLink | null {
-  return fields.linkedJiraIssue !== undefined
-    ? normalizeJiraIssueLink(fields.linkedJiraIssue)
+  if (fields.linkedJiraIssue === undefined) {
+    return jiraIssueLinkFromLegacyWorkItem(fields.linkedWorkItem)
+  }
+  const dedicated = normalizeJiraIssueLink(fields.linkedJiraIssue)
+  if (dedicated) {
+    return dedicated
+  }
+  // Explicit null is a real unlink and stays one; a corrupt object is an unreadable
+  // opinion, so it must not permanently mask a legacy Jira link that still parses.
+  return fields.linkedJiraIssue === null
+    ? null
     : jiraIssueLinkFromLegacyWorkItem(fields.linkedWorkItem)
 }
 
@@ -69,13 +79,9 @@ export function isJiraIssueLinkSourceContextMatch(
   }
   const identity = context.providerIdentity
   const issueUrl = parseJiraIssueUrl(issue.url)
-  if (
-    identity?.provider !== 'jira' ||
-    !identity.siteId ||
-    !identity.siteUrl ||
-    !identity.projectKey ||
-    !issueUrl
-  ) {
+  // No siteId gate: identity is origin + site path + project key, and Jira Server
+  // contexts carry no cloud siteId to offer.
+  if (identity?.provider !== 'jira' || !identity.siteUrl || !identity.projectKey || !issueUrl) {
     return false
   }
   const siteUrl = parseJiraIssueUrl(
@@ -97,11 +103,17 @@ export function resolveJiraIssueSourceContext(fields: {
   linkedWorkItem?: WorkspaceLinkedItem | null
   linkedTaskSourceContext?: TaskSourceContext | null
 }): TaskSourceContext | null {
-  if (fields.linkedJiraIssue !== undefined) {
-    const explicitIssue = normalizeJiraIssueLink(fields.linkedJiraIssue)
-    return isJiraIssueLinkSourceContextMatch(explicitIssue, fields.linkedJiraIssueSourceContext)
+  // The context belongs to whichever field actually supplied the issue, so a
+  // corrupt dedicated link falls back to the legacy pair as a unit.
+  const dedicatedIssue =
+    fields.linkedJiraIssue === undefined ? null : normalizeJiraIssueLink(fields.linkedJiraIssue)
+  if (dedicatedIssue) {
+    return isJiraIssueLinkSourceContextMatch(dedicatedIssue, fields.linkedJiraIssueSourceContext)
       ? (fields.linkedJiraIssueSourceContext ?? null)
       : null
+  }
+  if (fields.linkedJiraIssue === null) {
+    return null
   }
   const legacyIssue = jiraIssueLinkFromLegacyWorkItem(fields.linkedWorkItem)
   return isJiraIssueLinkSourceContextMatch(legacyIssue, fields.linkedTaskSourceContext)

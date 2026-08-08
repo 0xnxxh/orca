@@ -3,7 +3,8 @@ import {
   isJiraIssueLinkSourceContextMatch,
   jiraIssueLinkFromLegacyWorkItem,
   normalizeJiraIssueLink,
-  resolveJiraIssueLink
+  resolveJiraIssueLink,
+  resolveJiraIssueSourceContext
 } from './jira-issue-link'
 
 const sourceContext = {
@@ -90,6 +91,46 @@ describe('JiraIssueLink', () => {
       })?.key
     ).toBe('ORCA-456')
     expect(resolveJiraIssueLink({ linkedJiraIssue: null, linkedWorkItem: legacy })).toBeNull()
+  })
+
+  it('falls back to legacy metadata when the dedicated link is unreadable', () => {
+    const legacy = {
+      provider: 'jira' as const,
+      type: 'issue' as const,
+      number: 0,
+      title: 'ORCA-123 Legacy',
+      url: 'https://company.atlassian.net/browse/ORCA-123',
+      jiraIdentifier: 'ORCA-123'
+    }
+    const corrupt = { key: 'ORCA-123', title: 'Corrupt', url: 'not-a-url' } as never
+
+    expect(resolveJiraIssueLink({ linkedJiraIssue: corrupt, linkedWorkItem: legacy })?.key).toBe(
+      'ORCA-123'
+    )
+    expect(
+      resolveJiraIssueSourceContext({
+        linkedJiraIssue: corrupt,
+        linkedJiraIssueSourceContext: null,
+        linkedWorkItem: legacy,
+        linkedTaskSourceContext: sourceContext
+      })
+    ).toEqual(sourceContext)
+    // An unreadable dedicated link with nothing behind it is still no link.
+    expect(resolveJiraIssueLink({ linkedJiraIssue: corrupt })).toBeNull()
+  })
+
+  it('keeps a key-only link usable when the issue has no summary', () => {
+    expect(
+      normalizeJiraIssueLink({
+        key: 'ORCA-123',
+        title: '   ',
+        url: 'https://company.atlassian.net/browse/ORCA-123'
+      })
+    ).toEqual({
+      key: 'ORCA-123',
+      title: 'ORCA-123',
+      url: 'https://company.atlassian.net/browse/ORCA-123'
+    })
   })
 
   it('matches Jira source context by site and project', () => {

@@ -29,7 +29,10 @@ import {
 import { projectWorktreeTabModelReconciliation } from './tabs'
 import { splitWorktreeIdForFilesystem } from '../../../../shared/worktree-id'
 import { areWorkspaceLinkedItemsEqual } from '../../../../shared/workspace-linked-item'
-import { areJiraIssueLinksEqual } from '../../../../shared/jira-issue-link'
+import {
+  areJiraIssueLinksEqual,
+  jiraIssueLinkFromLegacyWorkItem
+} from '../../../../shared/jira-issue-link'
 import { areTaskSourceContextsEqual } from '../../../../shared/task-source-context'
 import {
   remapClosedTerminalTabSnapshotCwds,
@@ -50,6 +53,7 @@ import {
   getActiveRuntimeTarget,
   hasRuntimeRpcErrorCode,
   isRuntimeScopeForbiddenError,
+  runtimeEnvironmentSupportsCapability,
   RuntimeRpcCallError
 } from '../../runtime/runtime-rpc-client'
 import {
@@ -4064,15 +4068,32 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             ...(automationProvenanceRequest ? { automationProvenanceRequest } : {})
           }
           const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
-          if (
-            target.kind === 'environment' &&
-            (linkedJiraIssue !== undefined || linkedJiraIssueSourceContext !== undefined)
-          ) {
-            await assertRuntimeEnvironmentCapability(
+          // Why: the dedicated fields are additive over a legacy work item that names the same
+          // issue, so a host without the capability still records the link through the legacy
+          // pair. Fail only when dropping the dedicated fields would lose the link outright.
+          let includeDedicatedJira =
+            linkedJiraIssue !== undefined || linkedJiraIssueSourceContext !== undefined
+          if (target.kind === 'environment' && includeDedicatedJira) {
+            const supportsDedicatedJira = await runtimeEnvironmentSupportsCapability(
               target.environmentId,
-              WORKTREE_JIRA_ISSUE_LINK_RUNTIME_CAPABILITY,
-              'Update the remote runtime to link Jira'
+              WORKTREE_JIRA_ISSUE_LINK_RUNTIME_CAPABILITY
             )
+            if (!supportsDedicatedJira) {
+              const coveredByLegacy =
+                areJiraIssueLinksEqual(
+                  jiraIssueLinkFromLegacyWorkItem(linkedWorkItem),
+                  linkedJiraIssue ?? null
+                ) &&
+                (linkedJiraIssueSourceContext == null ||
+                  areTaskSourceContextsEqual(
+                    linkedTaskSourceContext ?? null,
+                    linkedJiraIssueSourceContext
+                  ))
+              if (!coveredByLegacy) {
+                throw new Error('Update the remote runtime to link Jira')
+              }
+              includeDedicatedJira = false
+            }
           }
           if (
             target.kind === 'environment' &&
@@ -4126,8 +4147,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                     ...(linkedGiteaPR !== undefined ? { linkedGiteaPR } : {}),
                     ...(linkedWorkItem !== undefined ? { linkedWorkItem } : {}),
                     ...(linkedTaskSourceContext !== undefined ? { linkedTaskSourceContext } : {}),
-                    ...(linkedJiraIssue !== undefined ? { linkedJiraIssue } : {}),
-                    ...(linkedJiraIssueSourceContext !== undefined
+                    ...(includeDedicatedJira && linkedJiraIssue !== undefined
+                      ? { linkedJiraIssue }
+                      : {}),
+                    ...(includeDedicatedJira && linkedJiraIssueSourceContext !== undefined
                       ? { linkedJiraIssueSourceContext }
                       : {}),
                     ...(automationProvenanceRequest ? { automationProvenanceRequest } : {}),

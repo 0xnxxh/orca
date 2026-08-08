@@ -447,7 +447,7 @@ describe('staged background worktree creation', () => {
     expect(store.setSidebarOpen).toHaveBeenCalledWith(true)
   })
 
-  it('writes dedicated Jira context through staged creation and retry', async () => {
+  it('dual-writes legacy and dedicated Jira context through staged creation and retry', async () => {
     const linkedWorkItem = {
       provider: 'jira' as const,
       type: 'issue' as const,
@@ -471,7 +471,10 @@ describe('staged background worktree creation', () => {
       accountLabel: 'dev@company.test'
     }
     const request = makeRequest({ linkedWorkItem, linkedTaskSourceContext })
+    // Dual-write: the legacy pair still ships so old clients and hosts keep reading the link.
     const expectedOptions = {
+      linkedWorkItem,
+      linkedTaskSourceContext,
       linkedJiraIssue: {
         key: 'ORCA-123',
         title: 'Durable Jira link',

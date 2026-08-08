@@ -5920,6 +5920,63 @@ describe('worktree remote runtime mutations', () => {
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
   })
 
+  it('falls back to the legacy Jira payload when the host lacks the dedicated capability', async () => {
+    const oldRuntimeStatus = createCompatibleRuntimeStatusResponse('runtime-old')
+    if (oldRuntimeStatus.ok) {
+      oldRuntimeStatus.result.capabilities = oldRuntimeStatus.result.capabilities?.filter(
+        (capability) => capability !== 'worktree.jira-issue-link.v1'
+      )
+    }
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-create',
+      ok: true,
+      result: {
+        worktree: makeWorktree({
+          id: 'repo1::/path/jira-link',
+          repoId: 'repo1',
+          path: '/path/jira-link'
+        })
+      },
+      _meta: { runtimeId: 'runtime-old' }
+    })
+    runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) =>
+      args.method === 'status.get' ? oldRuntimeStatus : runtimeEnvironmentCall(args)
+    )
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      worktreesByRepo: { repo1: [] }
+    } as Partial<AppState>)
+    const linkedWorkItem = {
+      provider: 'jira' as const,
+      type: 'issue' as const,
+      number: 0,
+      title: 'ORCA-123 Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123',
+      jiraIdentifier: 'ORCA-123'
+    }
+    const createWorktree = store.getState().createWorktree
+    const args: Parameters<typeof createWorktree> = ['repo1', 'jira-link']
+    args[25] = {
+      linkedWorkItem,
+      linkedJiraIssue: {
+        key: 'ORCA-123',
+        title: 'Link Jira',
+        url: 'https://company.atlassian.net/browse/ORCA-123'
+      }
+    }
+
+    await createWorktree(...args)
+
+    const params = runtimeEnvironmentCall.mock.calls
+      .map(
+        (call) => call[0] as RuntimeEnvironmentCallRequest & { params?: Record<string, unknown> }
+      )
+      .find((call) => call.method === 'worktree.create')?.params
+    expect(params).toMatchObject({ linkedWorkItem })
+    expect(params).not.toHaveProperty('linkedJiraIssue')
+  })
+
   it('passes startup commands through remote runtime worktree creation', async () => {
     const store = createTestStore()
     const wt = makeWorktree({

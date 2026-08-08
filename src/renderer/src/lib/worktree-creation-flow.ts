@@ -107,8 +107,9 @@ async function executeWorktreeCreation(
   let result: CreateWorktreeResult
   try {
     const backendStartup = resolveBackendDraftStartup(preparedRequest)
+    // Dual-write while the legacy shape is still supported: old clients and hosts read Jira
+    // only from linkedWorkItem, and dropping it here would blank their card for new links.
     const linkedJiraIssue = jiraIssueLinkFromLegacyWorkItem(preparedRequest.linkedWorkItem)
-    const usesDedicatedJiraLink = linkedJiraIssue !== null
     result = await useAppStore
       .getState()
       .createWorktree(
@@ -138,10 +139,10 @@ async function executeWorktreeCreation(
         preparedRequest.linkedGiteaPR,
         preparedRequest.compareBaseRef,
         {
-          ...(!usesDedicatedJiraLink && preparedRequest.linkedWorkItem !== undefined
+          ...(preparedRequest.linkedWorkItem !== undefined
             ? { linkedWorkItem: preparedRequest.linkedWorkItem }
             : {}),
-          ...(!usesDedicatedJiraLink && preparedRequest.linkedTaskSourceContext !== undefined
+          ...(preparedRequest.linkedTaskSourceContext !== undefined
             ? { linkedTaskSourceContext: preparedRequest.linkedTaskSourceContext }
             : {}),
           ...(linkedJiraIssue ? { linkedJiraIssue } : {}),

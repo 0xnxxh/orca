@@ -41,6 +41,7 @@ import { SshConnectionStore } from './ssh/ssh-connection-store'
 import { setSourceControlActionDefault } from '../shared/source-control-ai-actions'
 import { LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { closeTerminalTabInWorkspaceSession } from '../shared/workspace-session-terminal-tab-close'
+import { resolveJiraIssueLink, resolveJiraIssueSourceContext } from '../shared/jira-issue-link'
 
 // Shared mutable state so the electron mock can reference a per-test directory
 const testState = { dir: '' }
@@ -4930,6 +4931,147 @@ describe('Store', () => {
     ).toBeNull()
   })
 
+  it('leaves dedicated Jira fields absent on load so legacy Jira metadata keeps its fallback', async () => {
+    const linkedWorkItem = {
+      provider: 'jira',
+      type: 'issue',
+      number: 0,
+      title: 'ORCA-123 Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123',
+      jiraIdentifier: 'ORCA-123'
+    }
+    const linkedTaskSourceContext = {
+      kind: 'task-source',
+      provider: 'jira',
+      projectId: 'project-1',
+      hostId: 'runtime:env-1',
+      providerIdentity: {
+        provider: 'jira',
+        siteId: 'site-1',
+        siteUrl: 'https://company.atlassian.net',
+        projectKey: 'ORCA'
+      }
+    }
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: { 'wt-legacy-jira': { linkedWorkItem, linkedTaskSourceContext } }
+    })
+    const store = await createStore()
+    const meta = store.getWorktreeMeta('wt-legacy-jira')
+
+    expect(meta).toBeDefined()
+    expect(meta).not.toHaveProperty('linkedJiraIssue')
+    expect(meta).not.toHaveProperty('linkedJiraIssueSourceContext')
+    expect(resolveJiraIssueLink(meta!)).toEqual({
+      key: 'ORCA-123',
+      title: 'Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123'
+    })
+    expect(resolveJiraIssueSourceContext(meta!)).toMatchObject(linkedTaskSourceContext)
+  })
+
+  it('drops an unreadable dedicated Jira link on load instead of masking legacy metadata', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {
+        'wt-corrupt-jira': {
+          linkedJiraIssue: { key: 'ORCA-123', title: 'Corrupt', url: 'not-a-url' },
+          linkedWorkItem: {
+            provider: 'jira',
+            type: 'issue',
+            number: 0,
+            title: 'ORCA-123 Link Jira',
+            url: 'https://company.atlassian.net/browse/ORCA-123',
+            jiraIdentifier: 'ORCA-123'
+          }
+        }
+      }
+    })
+    const store = await createStore()
+    const meta = store.getWorktreeMeta('wt-corrupt-jira')
+
+    expect(meta).not.toHaveProperty('linkedJiraIssue')
+    expect(resolveJiraIssueLink(meta!)?.key).toBe('ORCA-123')
+  })
+
+  it('promotes legacy Jira into the dedicated pair before a review item displaces it', async () => {
+    const linkedWorkItem = {
+      provider: 'jira',
+      type: 'issue',
+      number: 0,
+      title: 'ORCA-123 Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123',
+      jiraIdentifier: 'ORCA-123'
+    }
+    const linkedTaskSourceContext = {
+      kind: 'task-source',
+      provider: 'jira',
+      projectId: 'project-1',
+      hostId: 'runtime:env-1',
+      providerIdentity: {
+        provider: 'jira',
+        siteId: 'site-1',
+        siteUrl: 'https://company.atlassian.net',
+        projectKey: 'ORCA'
+      }
+    }
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: { 'wt-coexist': { linkedWorkItem, linkedTaskSourceContext } }
+    })
+    const store = await createStore()
+
+    store.setWorktreeMeta('wt-coexist', {
+      linkedWorkItem: {
+        provider: 'gitlab',
+        type: 'mr',
+        number: 42,
+        title: 'Review',
+        url: 'https://gitlab.example.com/group/repo/-/merge_requests/42'
+      },
+      linkedTaskSourceContext: null
+    })
+    const meta = store.getWorktreeMeta('wt-coexist')
+
+    expect(meta?.linkedWorkItem).toMatchObject({ provider: 'gitlab', number: 42 })
+    expect(meta?.linkedJiraIssue).toEqual({
+      key: 'ORCA-123',
+      title: 'Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123'
+    })
+    expect(meta?.linkedJiraIssueSourceContext).toMatchObject(linkedTaskSourceContext)
+  })
+
+  it('clears the legacy Jira copy when the dedicated link is explicitly unlinked', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {
+        'wt-unlink': {
+          linkedWorkItem: {
+            provider: 'jira',
+            type: 'issue',
+            number: 0,
+            title: 'ORCA-123 Link Jira',
+            url: 'https://company.atlassian.net/browse/ORCA-123',
+            jiraIdentifier: 'ORCA-123'
+          }
+        }
+      }
+    })
+    const store = await createStore()
+
+    store.setWorktreeMeta('wt-unlink', { linkedJiraIssue: null })
+    const meta = store.getWorktreeMeta('wt-unlink')
+
+    expect(meta?.linkedJiraIssue).toBeNull()
+    expect(meta?.linkedWorkItem).toBeNull()
+    expect(resolveJiraIssueLink(meta!)).toBeNull()
+  })
+
   it('persists dedicated Jira metadata without rewriting review or unsupported linked items', async () => {
     const reviewItem = {
       provider: 'gitlab',
@@ -4993,9 +5135,14 @@ describe('Store', () => {
       linkedJiraIssueSourceContext: sourceContext
     })
 
+    // Known providers keep their load-time hygiene pass; only the opaque row is left verbatim.
     expect(store.getWorktreeMeta('review')).toMatchObject({
-      linkedWorkItem: reviewItem,
-      linkedTaskSourceContext: reviewContext,
+      linkedWorkItem: { ...reviewItem, title: 'Preserve review bytes' },
+      linkedTaskSourceContext: expect.objectContaining({
+        provider: 'gitlab',
+        projectId: 'project-1',
+        accountLabel: 'review@example.com'
+      }),
       linkedJiraIssue: issue,
       linkedJiraIssueSourceContext: sourceContext
     })

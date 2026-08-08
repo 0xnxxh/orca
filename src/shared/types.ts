@@ -338,6 +338,9 @@ export type FolderWorkspace = {
   connectionId?: string | null
   /** Renderer-owned host stamp for host-qualified folder catalogs. */
   executionHostId?: ExecutionHostId | null
+  /** Project-group folders stay on the legacy single-slot model on purpose: they hold one linked
+   *  task and have no review-item slot for a Jira issue to coexist with, so the dedicated
+   *  `linkedJiraIssue` pair earns nothing here. `folderWorkspaceToWorktree` projects it on read. */
   linkedTask: WorkspaceLinkedItem | null
   linkedTaskSourceContext?: TaskSourceContext | null
   comment: string

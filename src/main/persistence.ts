@@ -95,6 +95,7 @@ import { isWorkspaceLinkedItemSourceContextMatch } from '../shared/workspace-lin
 import {
   areJiraIssueLinksEqual,
   isJiraIssueLinkSourceContextMatch,
+  jiraIssueLinkFromLegacyWorkItem,
   normalizeJiraIssueLink
 } from '../shared/jira-issue-link'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
@@ -456,7 +457,7 @@ function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
       changed = true
       continue
     }
-    if (isLegacyJiraLinkedWorkItem(meta.linkedWorkItem)) {
+    if (isNormalizableWorkspaceLinkedItem(meta.linkedWorkItem)) {
       const linkedWorkItem = normalizeWorkspaceLinkedItem(meta.linkedWorkItem)
       const sourceContext = normalizeStoredTaskSourceContext(meta.linkedTaskSourceContext)
       const linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
@@ -474,6 +475,13 @@ function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
         changed = true
       }
     }
+    // An unreadable dedicated link is dropped, not stored as null: resolveJiraIssueLink reads
+    // null as an unlink, so persisting it would permanently mask a still-valid legacy Jira row.
+    if (meta.linkedJiraIssue != null && normalizeJiraIssueLink(meta.linkedJiraIssue) === null) {
+      delete meta.linkedJiraIssue
+      delete meta.linkedJiraIssueSourceContext
+      changed = true
+    }
     const linkedJiraIssue = normalizeJiraIssueLink(meta.linkedJiraIssue)
     const jiraSourceContext = normalizeStoredTaskSourceContext(meta.linkedJiraIssueSourceContext)
     const linkedJiraIssueSourceContext = isJiraIssueLinkSourceContextMatch(
@@ -482,6 +490,8 @@ function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
     )
       ? jiraSourceContext
       : null
+    // Both equality checks treat undefined and null as equal, so absent fields stay absent — required
+    // because resolveJiraIssueLink reads a defined linkedJiraIssue (even null) as an opt out of the legacy fallback.
     if (!areJiraIssueLinksEqual(meta.linkedJiraIssue, linkedJiraIssue)) {
       meta.linkedJiraIssue = linkedJiraIssue
       changed = true
@@ -499,6 +509,20 @@ function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
 function isLegacyJiraLinkedWorkItem(value: unknown): boolean {
   return Boolean(
     value && typeof value === 'object' && (value as { provider?: unknown }).provider === 'jira'
+  )
+}
+
+const KNOWN_WORKSPACE_LINKED_ITEM_PROVIDERS = new Set(['github', 'gitlab', 'linear', 'jira'])
+
+// Why: normalizeWorkspaceLinkedItem returns null for providers it does not know, so running it
+// over an intentionally opaque item would delete it. Known providers still get their hygiene pass.
+function isNormalizableWorkspaceLinkedItem(value: unknown): boolean {
+  return (
+    value == null ||
+    (typeof value === 'object' &&
+      KNOWN_WORKSPACE_LINKED_ITEM_PROVIDERS.has(
+        (value as { provider?: unknown }).provider as string
+      ))
   )
 }
 
@@ -5449,9 +5473,30 @@ export class Store {
   setWorktreeMeta(worktreeId: string, meta: Partial<WorktreeMeta>): WorktreeMeta {
     const existing = this.state.worktreeMeta[worktreeId] || getDefaultWorktreeMeta()
     const updated = { ...existing, ...meta }
+    // Why: rows written before the dedicated model hold Jira only in linkedWorkItem, and the
+    // point of the split is that a review item can coexist with it. Materialise the dedicated
+    // pair before the non-Jira item lands, or this write drops the only copy of the Jira link.
+    if (
+      'linkedWorkItem' in meta &&
+      !('linkedJiraIssue' in meta) &&
+      existing.linkedJiraIssue === undefined &&
+      meta.linkedWorkItem != null &&
+      meta.linkedWorkItem.provider !== 'jira'
+    ) {
+      const promoted = jiraIssueLinkFromLegacyWorkItem(existing.linkedWorkItem)
+      if (promoted) {
+        updated.linkedJiraIssue = promoted
+        updated.linkedJiraIssueSourceContext = isJiraIssueLinkSourceContextMatch(
+          promoted,
+          existing.linkedTaskSourceContext
+        )
+          ? (existing.linkedTaskSourceContext ?? null)
+          : null
+      }
+    }
     if (
       ('linkedWorkItem' in meta || 'linkedTaskSourceContext' in meta) &&
-      (isLegacyJiraLinkedWorkItem(updated.linkedWorkItem) || updated.linkedWorkItem == null)
+      isNormalizableWorkspaceLinkedItem(updated.linkedWorkItem)
     ) {
       updated.linkedWorkItem = normalizeWorkspaceLinkedItem(updated.linkedWorkItem)
       const linkedTaskSourceContext = normalizeStoredTaskSourceContext(
@@ -5465,14 +5510,28 @@ export class Store {
         : null
     }
     if ('linkedJiraIssue' in meta || 'linkedJiraIssueSourceContext' in meta) {
-      updated.linkedJiraIssue = normalizeJiraIssueLink(updated.linkedJiraIssue)
+      // Only materialise the dedicated key when the caller set it: writing null on a
+      // context-only update reads back as an unlink and would mask legacy Jira.
+      if ('linkedJiraIssue' in meta) {
+        updated.linkedJiraIssue = normalizeJiraIssueLink(updated.linkedJiraIssue)
+      }
+      const dedicatedIssue = normalizeJiraIssueLink(updated.linkedJiraIssue)
       const sourceContext = normalizeStoredTaskSourceContext(updated.linkedJiraIssueSourceContext)
       updated.linkedJiraIssueSourceContext = isJiraIssueLinkSourceContextMatch(
-        updated.linkedJiraIssue,
+        dedicatedIssue,
         sourceContext
       )
         ? sourceContext
         : null
+      // An explicit unlink has to clear the legacy copy too, or dual-read resurrects the issue.
+      if (
+        'linkedJiraIssue' in meta &&
+        updated.linkedJiraIssue === null &&
+        isLegacyJiraLinkedWorkItem(updated.linkedWorkItem)
+      ) {
+        updated.linkedWorkItem = null
+        updated.linkedTaskSourceContext = null
+      }
     }
     if (!updated.instanceId) {
       updated.instanceId = randomUUID()

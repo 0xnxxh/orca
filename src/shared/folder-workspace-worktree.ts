@@ -23,6 +23,7 @@ export function folderWorkspaceToWorktree(folderWorkspace: FolderWorkspace): Wor
     linkedGiteaPR: null,
     linkedWorkItem: linkedTask,
     linkedTaskSourceContext: folderWorkspace.linkedTaskSourceContext ?? null,
+    // Read-only projection: FolderWorkspace stores Jira in linkedTask alone (see its type).
     linkedJiraIssue: resolveJiraIssueLink({ linkedWorkItem: linkedTask }),
     linkedJiraIssueSourceContext: resolveJiraIssueSourceContext({
       linkedWorkItem: linkedTask,
