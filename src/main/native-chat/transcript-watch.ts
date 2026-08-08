@@ -106,7 +106,7 @@ function subscribeViaResolvePoll(
           // not-yet-created file, so don't spend an extra probe per tick.
           hostReadableExactPath = exactPath
         } else if (Date.now() - lastWslTranslateAt >= FALLBACK_RESOLVE_POLL_MS) {
-          // Why: translating sync-stats the UNC twin per distro over the 9P
+          // Why: translating probes the UNC twin per distro over the 9P
           // share, and the guest file usually appears well after the hook does,
           // so retry on the slow cadence rather than every fast tick. The raw
           // guest path is never installed on Windows — it would resolve against

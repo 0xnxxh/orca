@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { parseWslUncPath, toWindowsWslPath } from '../../shared/wsl-paths'
 import { WSL_CODEX_RUNTIME_HOME_SEGMENTS } from '../pty/codex-home-wsl-env'
@@ -30,9 +30,21 @@ export function needsWslHostTranslation(
 
 export type HostReadableTranscriptPathDeps = {
   platform?: NodeJS.Platform
-  pathExists?: (path: string) => boolean
+  pathExists?: (path: string) => Promise<boolean>
   /** Each installed WSL distro's `$HOME` as a Windows UNC path. */
   listWslHomeDirs?: () => Promise<string[]>
+}
+
+// Why: candidates are `\\wsl.localhost` UNC paths served over 9P. A sync probe
+// against a stopped or unreachable distro would stall the Electron main thread
+// instead of falling through to the next candidate, so keep this off the loop.
+async function pathExistsAsync(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 // Why: resolveSessionFilePath runs on a 500ms–5s poll loop. listWslDistrosAsync
@@ -100,19 +112,21 @@ export async function toHostReadableTranscriptPath(
   if (!path) {
     return null
   }
-  const pathExists = deps.pathExists ?? existsSync
+  const pathExists = deps.pathExists ?? pathExistsAsync
   const platform = deps.platform ?? process.platform
   // Why: classify BEFORE probing — Win32 resolves a bare `/home/…` against the
   // current drive (`C:\home\…`), so a probe first could bind chat to a local
   // look-alike file instead of the real WSL transcript.
   if (!needsWslHostTranslation(path, platform)) {
-    return pathExists(path) ? path : null
+    return (await pathExists(path)) ? path : null
   }
 
   const homeDirs = await wslHomeDirs(deps.listWslHomeDirs ?? defaultListWslHomeDirs)
+  // Sequential on purpose: the ranked order picks the owning distro, and probing
+  // every distro at once would fan out 9P calls to ones the user left stopped.
   for (const distro of rankDistrosForGuestPath(homeDirs, path)) {
     const uncPath = toWindowsWslPath(path, distro)
-    if (pathExists(uncPath)) {
+    if (await pathExists(uncPath)) {
       return uncPath
     }
   }

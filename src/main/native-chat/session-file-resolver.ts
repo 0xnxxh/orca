@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AgentType } from '../../shared/native-chat-types'
@@ -163,9 +162,9 @@ async function findCodexRolloutInDirs(
   sessionsDirs: string[]
 ): Promise<string | null> {
   for (const sessionsDir of sessionsDirs) {
-    if (!existsSync(sessionsDir)) {
-      continue
-    }
+    // Why: no existence pre-check — walkSessionFiles already yields [] for a
+    // missing/unreadable root, and a sync probe would block the main thread on a
+    // `\\wsl.localhost` root whose distro is stopped.
     const files = await walkSessionFiles(sessionsDir, 'codex', [], {
       extensions: new Set(['.jsonl']),
       filePredicate: (path) => {
