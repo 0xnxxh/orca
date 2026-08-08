@@ -14,12 +14,6 @@ missing_entry() {
   done
   return 0
 }
-inspect() {
-  inspected=$(stat -c '%d:%i:%F' -- "$1" 2>/dev/null) && return 0
-  missing_entry "$2" && exit 0
-  reject inspection
-}
-
 expected_kind=$1
 root_count=$2
 shift 2
@@ -29,10 +23,16 @@ while [ "$root_count" -gt 0 ]; do
   component=$1
   shift
   root_count=$((root_count - 1))
-  inspect "$component" "$component"
+  inspected=$(stat -Lc '%d:%i:%F' -- "/proc/self/cwd/$component" 2>/dev/null) || {
+    missing_entry "$component" && exit 0
+    reject inspection
+  }
   entry_kind=$(printf '%s' "$inspected" | cut -d: -f3-)
-  case "$entry_kind" in directory|'symbolic link') ;; *) reject inspection ;; esac
-  cd -P -- "$component" || reject inspection
+  [ "$entry_kind" = directory ] || reject inspection
+  expected_id=$(printf '%s' "$inspected" | cut -d: -f1-2)
+  cd -P -- "/proc/self/cwd/$component" || reject inspection
+  actual_id=$(stat -Lc '%d:%i' -- . 2>/dev/null) || reject inspection
+  [ "$actual_id" = "$expected_id" ] || reject race
 done
 
 root_physical=$(pwd -P) || reject inspection
