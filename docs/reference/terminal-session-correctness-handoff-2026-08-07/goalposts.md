@@ -3,7 +3,7 @@
 This file answers one question: **what exact evidence is required before an
 agent may write “proven”?**
 
-The current status is **0/8 proven goalposts** and **1/13 proven
+The current status is **0/8 proven goalposts** and **2/13 proven
 journeys**. Status may change only from evidence produced on the same rebased,
 converged release candidate. Historical snapshot tests and independently useful
 narrow PRs may be cited as partial evidence but cannot promote a row.
@@ -62,6 +62,50 @@ isolation-by-construction, and saying otherwise would be a false claim.
 `isSupersededPtyId` fence costs roughly 14ns per call, but it was measured on
 lifted predicates in plain Node, not through real Electron IPC — that part is an
 inference, not a measurement.
+
+### Journey 2 — Daemon and physical WSL (proven 2026-08-08)
+
+Oracle: `tests/e2e/daemon-restart-session-liveness.spec.ts`, 3 tests, plus
+`tests/e2e/helpers/daemon-shell-process-identity.ts`. The PTY leader is a real
+login shell that reports `$$` back through the production write path
+(`DaemonPtyRouter.write` -> daemon socket -> PTY), and that pid is resolved to a
+kernel start time, so a look-alike respawn cannot pass as a survivor.
+
+It replaced a spec that never crossed the daemon boundary and whose successor
+generation owned nothing, which made "the live successor is neither killed nor
+replaced" vacuous.
+
+| Environment                                  | Result   | Discrimination watched                              |
+| -------------------------------------------- | -------- | --------------------------------------------------- |
+| macOS 26.3.1 arm64                           | 3 passed | 2 mutations, each reddening one clause              |
+| Ubuntu 24.04 x86_64 native                   | 3 passed | same 2 mutations, same single-clause reds           |
+| WSL2 Ubuntu 26.04 on a physical Windows host | 3 passed | reverting three-valued `hasPty` reddens test 1 only |
+
+Clause-selective on all three. The spec runs `mode: 'serial'`, so a red test 1
+reports 2 and 3 as "did not run" rather than passing — selectivity was therefore
+established by re-running 2 and 3 _alone under the same mutation_ and watching
+them stay green, not by assuming it.
+
+Mutation A (`hasPty` reverted to `activeSessionIds.has(id)`) reddens only the
+unknown-not-dead clause. Mutation B (widening the sole-provider fallback in
+`daemon-session-owner-resolution.ts`) reddens only the stale-generation clause.
+The lead independently reproduced Mutation A on macOS.
+
+Also confirmed on the WSL host, independently of the spec: an Orca WSL-mode
+terminal now starts and returns real output. It could not start before — the
+distro had no provisioned default Unix user, so every interactive `wsl.exe`
+launch blocked on first-run provisioning.
+
+Limits, stated rather than implied:
+
+- The WSL run used `ELECTRON_RUN_AS_NODE=1`, which is what this oracle needs
+  (real daemon processes and real PTYs, no renderer). It does **not** show that
+  Electron's GUI starts under WSL; no display server was started and that
+  remains an open question for any journey needing a window.
+- WSL evidence is against `d74f5ed0eae` and on Node 22 rather than the required 24. The other two platforms ran the same oracle on Node 24.
+- `src/main/providers` is red on that distro for an unrelated reason: bash
+  5.3.9 emits 7 OSC 133 markers where `local-pty-shell-ready.test.ts` hardcodes 4. Outside this journey's surface, but it means "the unit suites are green on
+  WSL" would be false.
 
 ### Journey 1 — Local macOS, Linux, and Windows (proven 2026-08-08)
 
