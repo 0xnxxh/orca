@@ -360,6 +360,7 @@ import {
   resolveVisibleTaskProvider
 } from '../../../shared/task-providers'
 import { translate } from '@/i18n/i18n'
+import { isLatinShortcutKey } from '@/lib/ime-latin-shortcut-key'
 import {
   getGitHubModeButtons,
   getGitHubTaskKindPresets,
@@ -6719,7 +6720,7 @@ export default function TaskPage(): React.JSX.Element {
     const onKeyDown = (event: KeyboardEvent): void => {
       const isMac = navigator.userAgent.includes('Mac')
       const modifierPressed = isMac ? event.metaKey : event.ctrlKey
-      if (!modifierPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f') {
+      if (!modifierPressed || event.altKey || event.shiftKey || !isLatinShortcutKey(event, 'f')) {
         return
       }
 

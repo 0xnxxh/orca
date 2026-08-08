@@ -1,4 +1,5 @@
 import { isMarkedImeOwnedShortcutEvent } from '@/lib/ime-composition-keyboard-event'
+import { isLatinShortcutKey } from '@/lib/ime-latin-shortcut-key'
 
 /** Platform-correct binding for the native-chat view toggle.
  *
@@ -34,5 +35,5 @@ export function matchesNativeChatToggleShortcut(
   if (!primary) {
     return false
   }
-  return e.key.toLowerCase() === 'j'
+  return isLatinShortcutKey(e, 'j')
 }

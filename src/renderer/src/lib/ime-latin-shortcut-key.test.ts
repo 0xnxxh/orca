@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { isLatinShortcutKey } from './terminal-ime-latin-shortcut-key'
+import { isLatinShortcutKey } from './ime-latin-shortcut-key'
 
 /** Physical Cmd+C as reported under each input source. `code` is stable; `key` is not. */
 const CMD_C_BY_INPUT_SOURCE = [

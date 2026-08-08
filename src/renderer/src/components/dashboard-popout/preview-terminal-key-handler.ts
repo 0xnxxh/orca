@@ -11,7 +11,7 @@ import {
 } from './preview-terminal-shortcuts'
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
 import { shouldBypassXtermForMacNativeText } from '@/components/terminal-pane/xterm-bypass-policy'
-import { isLatinShortcutKey } from '../terminal-pane/terminal-ime-latin-shortcut-key'
+import { isLatinShortcutKey } from '@/lib/ime-latin-shortcut-key'
 
 /**
  * Installs the preview terminal's ONE custom key handler (xterm allows a single

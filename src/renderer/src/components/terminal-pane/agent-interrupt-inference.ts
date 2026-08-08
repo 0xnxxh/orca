@@ -9,7 +9,7 @@ import {
 } from '../../../../shared/agent-interrupt-intent'
 import { isAskUserQuestionTool } from '../../../../shared/agent-question-answered-intent'
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
-import { isLatinShortcutKey } from './terminal-ime-latin-shortcut-key'
+import { isLatinShortcutKey } from '@/lib/ime-latin-shortcut-key'
 
 export type AgentInterruptInference = {
   observeInputIntent(
