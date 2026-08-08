@@ -1683,6 +1683,33 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       adapter2.dispose()
     })
 
+    it('keeps legacy attach behavior when no output sequence is available', async () => {
+      const ensureConnected = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnected')
+        .mockResolvedValue()
+      const request = vi
+        .spyOn(DaemonClient.prototype, 'request')
+        .mockImplementation(async (type: string) =>
+          type === 'getSize'
+            ? ({ size: { cols: 100, rows: 30 } } as never)
+            : ({
+                isNew: false,
+                snapshot: null,
+                pid: 4321,
+                shellState: 'unsupported',
+                incarnationId: 'legacy-attach-incarnation'
+              } as never)
+        )
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 30 })
+      try {
+        await expect(legacy.attach('legacy-session')).resolves.toBeUndefined()
+      } finally {
+        legacy.dispose()
+        request.mockRestore()
+        ensureConnected.mockRestore()
+      }
+    })
+
     it('refuses to create when the session is absent (attach-only)', async () => {
       const adapter2 = new DaemonPtyAdapter({ socketPath, tokenPath })
 
