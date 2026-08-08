@@ -10083,6 +10083,84 @@
         "tests/ is outside every tsconfig include, so the harness is linted and executed but not typechecked."
       ],
       "demotionRule": "Demote if the baseline checkout cannot be materialized in CI, if a pairing has to be skipped to keep the lane green, or if the journey stops asserting the full step list and frame sequence."
+    },
+    {
+      "id": "codex.state-db-backfill-recovery-bounds",
+      "title": "Codex state DB backfill recovery has bounded process and timer use",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "codex-runtime",
+      "layer": "main-process-supervisor",
+      "surfaces": [
+        "Codex state DB backfill recovery",
+        "managed Codex home startup",
+        "Codex PTY and rate-limit recovery triggers"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "wsl", "paired-runtime-host"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "wsl"],
+      "coverageNotes": "A deterministic injected claimant and clock cover exits before and after the former ten-second classification boundary, exact spawn/poll/backoff counts, transient exit and spawn-error recovery, owner-lock reacquisition, WSL routing, and cleanup. Live Windows, WSL, and paired-runtime-host process evidence remains uncollected.",
+      "motivatingLinks": ["https://github.com/stablyai/orca/releases/tag/v1.4.177-rc.0"],
+      "invariant": "One authoritative Codex state DB backfill supervisor spawns at most five claimants regardless of process lifetime, retains at most one child and one timer, rejects later automatic restarts after claimant exhaustion, and bounds pre-claim coordinator failures to five triggers while transient claimant and owner-lock failures can recover within those budgets.",
+      "oracle": "Use an injected process and clock to exit every claimant at 10,001ms without waiting. Permanent failure must give up after five spawns and exits with exactly 15 poll timers and four backoffs, no live child or pending timer, and no safety-fuse abort; repeated triggers must reuse the exhausted result with zero new lock or runner calls. Separately fail twice at 10,001ms and complete on the third claimant, recover from a first-spawn error on attempt two, reacquire after a transient owner-lock failure, and cap permanent lock-root failures at five attempts across six triggers.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/codex/codex-state-db-backfill-recovery.test.ts"
+      ],
+      "testFiles": ["src/main/codex/codex-state-db-backfill-recovery.test.ts"],
+      "assertionRefs": [
+        {
+          "file": "src/main/codex/codex-state-db-backfill-recovery.test.ts",
+          "assertions": [
+            "does not restart an exhausted supervisor when later triggers arrive",
+            "releases a completed supervisor entry",
+            "releases a failed owner-lock attempt for later arbitration",
+            "bounds permanent coordinator failures across later triggers",
+            "bounds permanent claimant exits just beyond the fast-failure window",
+            "recovers after claimant exits just beyond the old fast-failure window",
+            "recovers after a transient process spawn error",
+            "routes a WSL managed home through its distro and Linux CODEX_HOME",
+            "does not interfere with a live supervisor from another Orca instance"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-07",
+          "runner": "local",
+          "platform": "macos",
+          "result": "passed",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/codex/codex-state-db-backfill-recovery.test.ts",
+          "durationSeconds": 0.4,
+          "summary": "Twelve deterministic recovery and owner-lock tests passed, including exact permanent and transient 10,001ms exit accounting, spawn-error recovery, trigger-level exhaustion memoization, bounded coordinator failure, successful owner-lock reacquisition, and zero retained children or timers."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 2,
+        "scope": "deterministic main-process supervisor and owner-lock contract"
+      },
+      "flakeHistory": {
+        "status": "not-started",
+        "evidence": "New fake-clock gate; no arbitrary sleeps or elapsed wall-time oracle."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The byte-identical production source at release commit 9e948fbdf462ede3c0160c719474100fc5cbefb7 and origin/main spawned six claimants and reached the harness fuse with 18 polls and six backoffs. The candidate gives up after five claimants with 15 polls and four backoffs; removing the total-spawn cap restores the exact red result."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The supervisor retains at most one claimant and one awaited timer. A permanent process lifetime is bounded to five subprocesses, 15 status polls, and four backoffs; later triggers reuse one settled promise and spawn nothing. Pre-claim coordinator failures perform at most five status/lock attempts. The fix adds no polling, listener, provider call, scan, wire field, or hot-path work."
+      },
+      "promotionCriteria": [
+        "Collect 100 consecutive focused CI passes or 14 days of soak history.",
+        "Collect live Windows/WSL and paired-runtime-host recovery evidence.",
+        "Keep exact spawn, exit, timer, backoff, cleanup, and transient-recovery assertions green."
+      ],
+      "knownGaps": [
+        "Live child-process behavior is represented by an injected EventEmitter claimant.",
+        "Physical Windows, WSL, SSH, and paired-runtime-host journeys were not run."
+      ],
+      "demotionRule": "Demote if any exit duration can evade the spawn budget, concurrent children or timers appear, cleanup retains resources, or a transient failure cannot recover within the budget."
     }
   ]
 }
