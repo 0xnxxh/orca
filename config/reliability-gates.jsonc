@@ -11,6 +11,92 @@
   },
   "gates": [
     {
+      "id": "ai-vault.live-session-delete-authority",
+      "title": "AI Vault deletion fails closed against owning-runtime session liveness",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "ai-vault-runtime",
+      "layer": "main-process-filesystem-mutation",
+      "surfaces": [
+        "AI Vault transcript deletion",
+        "local and WSL agent sessions",
+        "paired-client-owned host sessions"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "wsl", "ssh", "paired-runtime"],
+      "coveredPlatforms": ["macos", "linux", "windows"],
+      "coveredProviders": ["local", "wsl", "ssh", "paired-runtime"],
+      "coverageNotes": "Platform-independent contracts cover local and WSL authority, paired-owned sessions absent from renderer state, SSH exclusion, unavailable and ambiguous inventory, bounded inspection concurrency, oversized inventories, returned rejection, and real temporary-file survival. Live headed/headless paired-runtime, physical Windows/WSL, and Docker SSH journeys remain uncollected.",
+      "motivatingLinks": ["https://github.com/stablyai/orca/releases/tag/v1.4.177-rc.0"],
+      "invariant": "Main may delete a local AI transcript only after the owning runtime freshly proves that no live local or WSL PTY owns the same agent provider-session identity; live and unknown liveness preserve the transcript regardless of renderer freshness.",
+      "oracle": "Open confirmation against a stale empty renderer snapshot, transition the authoritative session to live before main authorization, and separately model a paired owner absent from that snapshot. In both cases require a session-live rejection and the real temporary transcript to remain. Make process inventory unavailable or ambiguous and require session-liveness-unknown with the file preserved; prove known other sessions permit deletion and inspection concurrency stays at or below eight.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ai-vault/session-delete-liveness.repro.test.ts src/main/ai-vault/session-liveness.test.ts --reporter=dot"
+      ],
+      "testFiles": [
+        "src/main/ai-vault/session-delete-liveness.repro.test.ts",
+        "src/main/ai-vault/session-liveness.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/ai-vault/session-delete-liveness.repro.test.ts",
+          "assertions": [
+            "confirmation TOCTOU returns session-live and preserves the real transcript",
+            "paired ownership missing from the renderer snapshot returns session-live and preserves the real transcript",
+            "unknown authoritative liveness fails closed and preserves the real transcript"
+          ]
+        },
+        {
+          "file": "src/main/ai-vault/session-liveness.test.ts",
+          "assertions": [
+            "local, WSL, paired-runtime, and SSH host partitions resolve without local fallback",
+            "renderer session identity must match the identity parsed from the validated transcript",
+            "hook identity is captured after the controlled process-inventory barrier",
+            "missing identity, unavailable inventory, unattributed ownership, and oversized inventory remain unknown",
+            "foreground inspection concurrency never exceeds eight and stops scheduling at the shared deadline"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-07",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ai-vault/session-delete-liveness.repro.test.ts src/main/ai-vault/session-liveness.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 1,
+          "summary": "Fifteen deterministic deletion, identity-binding, inventory-ordering, ownership, unknown-state, filesystem-survival, host-partition, deadline, and bounded-concurrency assertions passed."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 2,
+        "scope": "focused main-process liveness and temporary-filesystem contracts"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "One local deterministic run is recorded; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The byte-identical two-scenario oracle failed on v1.4.177-rc.0 (9e948fbdf4) and latest main (7a867f12aa): both returned deleted and both real transcripts were removed. The candidate passed all 15 assertions, including hook identity captured after a controlled process-inventory barrier; temporarily disabling only the liveness decision made all three deletion-safety tests red again, returning deleted and removing both live transcripts. Restoring the gate returned the same command to green."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Deletion parses only the validated target through the incremental parse cache, performs one local-provider process listing, makes no SSH or paired-runtime request, caps inventory at 512 PTYs, bounds foreground inspections to eight concurrent calls under one shared three-second fail-closed deadline, and adds no polling or background work."
+      },
+      "promotionCriteria": [
+        "Collect CI soak history for the deterministic gate.",
+        "Collect headed and headless paired-runtime deletion-refusal evidence.",
+        "Collect physical Windows/WSL and Docker SSH host-partition evidence."
+      ],
+      "knownGaps": [
+        "No live headed/headless paired-runtime journey was run.",
+        "No physical Windows/WSL or Docker SSH journey was run.",
+        "The authorization check cannot make an external provider process start atomic with filesystem trashing; it closes the reported renderer-confirmation window at the main mutation boundary."
+      ],
+      "demotionRule": "Keep experimental or demote if live or unknown ownership can reach trashing, remote ownership falls back locally, process inspection becomes unbounded, or the deterministic filesystem oracle flakes without a product or harness defect."
+    },
+    {
       "id": "editor.restored-sibling-owner-reparent",
       "title": "Restored sibling tabs migrate filesystem authority before becoming editable",
       "maturity": "experimental",
