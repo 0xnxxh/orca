@@ -13,6 +13,7 @@ export function createPreviewFitScheduler(args: {
   getBaseFontSize: () => number
 }): { scheduleFit: () => void } {
   const { container, getTerminal, getBaseFontSize } = args
+  let lastFitContext: { boxWidth: number; cols: number; baseFontSize: number } | null = null
 
   const fitToBox = (): void => {
     const terminal = getTerminal()
@@ -22,12 +23,20 @@ export function createPreviewFitScheduler(args: {
       return
     }
     const baseFontSize = getBaseFontSize()
+    const currentFontSize = terminal.options.fontSize ?? baseFontSize
+    const allowFontGrowth =
+      !lastFitContext ||
+      box.clientWidth > lastFitContext.boxWidth ||
+      terminal.cols !== lastFitContext.cols ||
+      baseFontSize !== lastFitContext.baseFontSize
     const plan = planPreviewFitScale({
       boxWidth: box.clientWidth,
       screenWidth: Math.max(1, screen.offsetWidth),
-      currentFontSize: terminal.options.fontSize ?? baseFontSize,
-      baseFontSize
+      currentFontSize,
+      baseFontSize,
+      maxFontSize: allowFontGrowth ? baseFontSize : currentFontSize
     })
+    lastFitContext = { boxWidth: box.clientWidth, cols: terminal.cols, baseFontSize }
     if (plan.fontSize !== terminal.options.fontSize) {
       terminal.options.fontSize = plan.fontSize
       // Re-measure next frame: the renderer applies the new metrics async.

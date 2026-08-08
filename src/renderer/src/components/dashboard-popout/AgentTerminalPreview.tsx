@@ -129,7 +129,8 @@ export function AgentTerminalPreview({
     const gridClaim = createPreviewGridClaim({
       ptyId,
       container,
-      getTerminal: () => terminal
+      getTerminal: () => terminal,
+      getBaseFontSize: () => settingsRef.current?.terminalFontSize ?? 14
     })
     // Box growth/shrink (window resize) changes the reachable grid.
     const boxResizeObserver =

@@ -39,6 +39,55 @@ describe('planPreviewFitScale', () => {
     expect(plan.residualScale).toBeLessThan(1)
   })
 
+  it('rounds down when the nearest step would exceed the residual blur budget', () => {
+    const plan = planPreviewFitScale({
+      boxWidth: 518,
+      screenWidth: 1000,
+      currentFontSize: 14,
+      baseFontSize: 14
+    })
+    // ideal 7.252; rounding to 7.5 would require scale(0.967), so use 7px natively.
+    expect(plan.fontSize).toBe(7)
+    expect(plan.residualScale).toBe(1)
+  })
+
+  it('converges instead of alternating across rounded xterm measurements', () => {
+    let fontSize = 14
+    const plannedSizes: number[] = []
+    // These are the observed 84-column widths that previously produced the
+    // unbounded 14 -> 6 -> 6.5 -> 6 cycle in a 315px box.
+    const measuredWidths = new Map([
+      [14, 706],
+      [6, 302],
+      [6.5, 328]
+    ])
+    for (let step = 0; step < 5; step += 1) {
+      const plan = planPreviewFitScale({
+        boxWidth: 315,
+        screenWidth: measuredWidths.get(fontSize)!,
+        currentFontSize: fontSize,
+        baseFontSize: 14,
+        maxFontSize: step === 0 ? 14 : fontSize
+      })
+      fontSize = plan.fontSize
+      plannedSizes.push(fontSize)
+    }
+
+    expect(plannedSizes).toEqual([6, 6, 6, 6, 6])
+  })
+
+  it('holds a same-layout font when residual scaling alone suggests the adjacent step', () => {
+    const plan = planPreviewFitScale({
+      boxWidth: 372,
+      screenWidth: 354,
+      currentFontSize: 7,
+      baseFontSize: 14,
+      maxFontSize: 7
+    })
+    expect(plan.fontSize).toBe(7)
+    expect(plan.residualScale).toBe(1)
+  })
+
   it('never scales the font above the settings base when the box grows back', () => {
     const plan = planPreviewFitScale({
       boxWidth: 2000,
@@ -48,6 +97,26 @@ describe('planPreviewFitScale', () => {
     })
     expect(plan.fontSize).toBe(14)
     expect(plan.residualScale).toBe(1)
+  })
+
+  it('restores the base font after the preview grid claim succeeds', () => {
+    const fallback = planPreviewFitScale({
+      boxWidth: 800,
+      screenWidth: 1600,
+      currentFontSize: 14,
+      baseFontSize: 14
+    })
+    expect(fallback.fontSize).toBe(7)
+
+    // The accepted claim halves the grid, so its 7px rendering is now 400px wide.
+    const claimed = planPreviewFitScale({
+      boxWidth: 800,
+      screenWidth: 400,
+      currentFontSize: fallback.fontSize,
+      baseFontSize: 14
+    })
+    expect(claimed.fontSize).toBe(14)
+    expect(claimed.residualScale).toBe(1)
   })
 
   it('holds steady within tolerance so measure-apply loops cannot oscillate', () => {

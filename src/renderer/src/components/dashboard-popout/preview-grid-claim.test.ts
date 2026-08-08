@@ -30,7 +30,8 @@ describe('createPreviewGridClaim', () => {
     const claim = createPreviewGridClaim({
       ptyId: 'pty-1',
       container,
-      getTerminal: () => ({ cols: 80, rows: 24 }) as never
+      getTerminal: () => ({ cols: 80, rows: 24, options: { fontSize: 14 } }) as never,
+      getBaseFontSize: () => 14
     })
 
     claim.schedule()
@@ -63,7 +64,8 @@ describe('createPreviewGridClaim', () => {
     const claim = createPreviewGridClaim({
       ptyId: 'pty-1',
       container,
-      getTerminal: () => ({ cols: 80, rows: 24 }) as never
+      getTerminal: () => ({ cols: 80, rows: 24, options: { fontSize: 14 } }) as never,
+      getBaseFontSize: () => 14
     })
 
     claim.schedule()
@@ -76,6 +78,35 @@ describe('createPreviewGridClaim', () => {
     expect(fit).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(200)
     expect(fit).toHaveBeenCalledTimes(1)
+    expect(fit).toHaveBeenCalledWith('pty-1', 100, 30)
+    claim.dispose()
+  })
+
+  it('claims from base metrics after fallback fitting shrinks the preview font', async () => {
+    vi.useFakeTimers()
+    const fit = vi.fn(async (_ptyId: string, cols: number, rows: number) => ({ cols, rows }))
+    Object.assign(window, { api: { terminalPreview: { fit } } })
+    const box = document.createElement('div')
+    const container = document.createElement('div')
+    const screen = document.createElement('div')
+    screen.className = 'xterm-screen'
+    box.appendChild(container)
+    container.appendChild(screen)
+    dimension(box, 'clientWidth', 800)
+    dimension(box, 'clientHeight', 480)
+    // The 200x24 source grid was 1600x384 at 14px, then fitted to 800x192 at 7px.
+    dimension(screen, 'offsetWidth', 800)
+    dimension(screen, 'offsetHeight', 192)
+    const claim = createPreviewGridClaim({
+      ptyId: 'pty-1',
+      container,
+      getTerminal: () => ({ cols: 200, rows: 24, options: { fontSize: 7 } }) as never,
+      getBaseFontSize: () => 14
+    })
+
+    claim.schedule()
+    await vi.advanceTimersByTimeAsync(200)
+
     expect(fit).toHaveBeenCalledWith('pty-1', 100, 30)
     claim.dispose()
   })

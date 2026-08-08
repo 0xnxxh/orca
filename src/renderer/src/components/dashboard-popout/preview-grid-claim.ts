@@ -24,6 +24,7 @@ export function createPreviewGridClaim(args: {
   ptyId: string
   container: HTMLElement
   getTerminal: () => Terminal | null
+  getBaseFontSize: () => number
 }): { schedule: () => void; dispose: () => void } {
   let lastRequestedFit: string | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -40,8 +41,12 @@ export function createPreviewGridClaim(args: {
       return
     }
     // offsetWidth/Height are layout dims, unaffected by the scale transform.
-    const cellWidth = screen.offsetWidth / Math.max(1, terminal.cols)
-    const cellHeight = screen.offsetHeight / Math.max(1, terminal.rows)
+    // Font fitting must not make a later claim ask for the oversized source
+    // grid again; normalize the rendered cells back to settings font metrics.
+    const currentFontSize = terminal.options.fontSize ?? args.getBaseFontSize()
+    const fontScale = args.getBaseFontSize() / currentFontSize
+    const cellWidth = (screen.offsetWidth / Math.max(1, terminal.cols)) * fontScale
+    const cellHeight = (screen.offsetHeight / Math.max(1, terminal.rows)) * fontScale
     if (
       !Number.isFinite(cellWidth) ||
       !Number.isFinite(cellHeight) ||

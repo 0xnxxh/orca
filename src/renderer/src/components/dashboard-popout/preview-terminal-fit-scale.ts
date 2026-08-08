@@ -28,8 +28,10 @@ export function planPreviewFitScale(args: {
   currentFontSize: number
   /** The settings-configured font size the preview must never exceed. */
   baseFontSize: number
+  /** Same-layout remeasurement caps growth to prevent adjacent-step cycles. */
+  maxFontSize?: number
 }): PreviewFitScalePlan {
-  const { boxWidth, screenWidth, currentFontSize, baseFontSize } = args
+  const { boxWidth, screenWidth, currentFontSize, baseFontSize, maxFontSize = baseFontSize } = args
   if (boxWidth <= 0 || screenWidth <= 0 || currentFontSize <= 0 || baseFontSize <= 0) {
     return { fontSize: currentFontSize > 0 ? currentFontSize : baseFontSize, residualScale: 1 }
   }
@@ -37,7 +39,20 @@ export function planPreviewFitScale(args: {
   // within the tolerance and the residual transform absorbs rounding.
   const naturalWidthAtBase = (screenWidth / currentFontSize) * baseFontSize
   const idealFontSize = baseFontSize * (boxWidth / naturalWidthAtBase)
-  const fontSize = Math.round(clamp(idealFontSize, MIN_PREVIEW_FONT_PX, baseFontSize) * 2) / 2
+  const clampedFontSize = clamp(
+    idealFontSize,
+    MIN_PREVIEW_FONT_PX,
+    Math.min(baseFontSize, maxFontSize)
+  )
+  const nearestFontSize = Math.round(clampedFontSize * 2) / 2
+  const nearestPredictedWidth = (screenWidth / currentFontSize) * nearestFontSize
+  const nearestResidualScale = Math.min(1, boxWidth / nearestPredictedWidth)
+  // Prefer the next smaller native step when nearest rounding would leave a
+  // visible transform; below the readability floor, the fallback is accepted.
+  const fontSize =
+    clampedFontSize > MIN_PREVIEW_FONT_PX && nearestResidualScale < 1 - FONT_FIT_TOLERANCE
+      ? Math.floor(clampedFontSize * 2) / 2
+      : nearestFontSize
   const withinTolerance =
     Math.abs(fontSize - currentFontSize) / currentFontSize <= FONT_FIT_TOLERANCE
   const effectiveFontSize = withinTolerance ? currentFontSize : fontSize
