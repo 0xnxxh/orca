@@ -92,6 +92,11 @@ import {
   normalizeWorkspaceLinkedItem
 } from '../shared/workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../shared/workspace-linked-item-source-context'
+import {
+  areJiraIssueLinksEqual,
+  isJiraIssueLinkSourceContextMatch,
+  normalizeJiraIssueLink
+} from '../shared/jira-issue-link'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
@@ -451,24 +456,50 @@ function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
       changed = true
       continue
     }
-    const linkedWorkItem = normalizeWorkspaceLinkedItem(meta.linkedWorkItem)
-    const sourceContext = normalizeStoredTaskSourceContext(meta.linkedTaskSourceContext)
-    const linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
-      linkedWorkItem,
-      sourceContext
+    if (isLegacyJiraLinkedWorkItem(meta.linkedWorkItem)) {
+      const linkedWorkItem = normalizeWorkspaceLinkedItem(meta.linkedWorkItem)
+      const sourceContext = normalizeStoredTaskSourceContext(meta.linkedTaskSourceContext)
+      const linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
+        linkedWorkItem,
+        sourceContext
+      )
+        ? sourceContext
+        : null
+      if (!areWorkspaceLinkedItemsEqual(meta.linkedWorkItem, linkedWorkItem)) {
+        meta.linkedWorkItem = linkedWorkItem
+        changed = true
+      }
+      if (!areTaskSourceContextsEqual(meta.linkedTaskSourceContext, linkedTaskSourceContext)) {
+        meta.linkedTaskSourceContext = linkedTaskSourceContext
+        changed = true
+      }
+    }
+    const linkedJiraIssue = normalizeJiraIssueLink(meta.linkedJiraIssue)
+    const jiraSourceContext = normalizeStoredTaskSourceContext(meta.linkedJiraIssueSourceContext)
+    const linkedJiraIssueSourceContext = isJiraIssueLinkSourceContextMatch(
+      linkedJiraIssue,
+      jiraSourceContext
     )
-      ? sourceContext
+      ? jiraSourceContext
       : null
-    if (!areWorkspaceLinkedItemsEqual(meta.linkedWorkItem, linkedWorkItem)) {
-      meta.linkedWorkItem = linkedWorkItem
+    if (!areJiraIssueLinksEqual(meta.linkedJiraIssue, linkedJiraIssue)) {
+      meta.linkedJiraIssue = linkedJiraIssue
       changed = true
     }
-    if (!areTaskSourceContextsEqual(meta.linkedTaskSourceContext, linkedTaskSourceContext)) {
-      meta.linkedTaskSourceContext = linkedTaskSourceContext
+    if (
+      !areTaskSourceContextsEqual(meta.linkedJiraIssueSourceContext, linkedJiraIssueSourceContext)
+    ) {
+      meta.linkedJiraIssueSourceContext = linkedJiraIssueSourceContext
       changed = true
     }
   }
   return changed
+}
+
+function isLegacyJiraLinkedWorkItem(value: unknown): boolean {
+  return Boolean(
+    value && typeof value === 'object' && (value as { provider?: unknown }).provider === 'jira'
+  )
 }
 
 function readGithubCacheSnapshot(dataFile: string): PersistedState['githubCache'] | null {
@@ -5418,16 +5449,31 @@ export class Store {
   setWorktreeMeta(worktreeId: string, meta: Partial<WorktreeMeta>): WorktreeMeta {
     const existing = this.state.worktreeMeta[worktreeId] || getDefaultWorktreeMeta()
     const updated = { ...existing, ...meta }
-    updated.linkedWorkItem = normalizeWorkspaceLinkedItem(updated.linkedWorkItem)
-    const linkedTaskSourceContext = normalizeStoredTaskSourceContext(
-      updated.linkedTaskSourceContext
-    )
-    updated.linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
-      updated.linkedWorkItem,
-      linkedTaskSourceContext
-    )
-      ? linkedTaskSourceContext
-      : null
+    if (
+      ('linkedWorkItem' in meta || 'linkedTaskSourceContext' in meta) &&
+      (isLegacyJiraLinkedWorkItem(updated.linkedWorkItem) || updated.linkedWorkItem == null)
+    ) {
+      updated.linkedWorkItem = normalizeWorkspaceLinkedItem(updated.linkedWorkItem)
+      const linkedTaskSourceContext = normalizeStoredTaskSourceContext(
+        updated.linkedTaskSourceContext
+      )
+      updated.linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
+        updated.linkedWorkItem,
+        linkedTaskSourceContext
+      )
+        ? linkedTaskSourceContext
+        : null
+    }
+    if ('linkedJiraIssue' in meta || 'linkedJiraIssueSourceContext' in meta) {
+      updated.linkedJiraIssue = normalizeJiraIssueLink(updated.linkedJiraIssue)
+      const sourceContext = normalizeStoredTaskSourceContext(updated.linkedJiraIssueSourceContext)
+      updated.linkedJiraIssueSourceContext = isJiraIssueLinkSourceContextMatch(
+        updated.linkedJiraIssue,
+        sourceContext
+      )
+        ? sourceContext
+        : null
+    }
     if (!updated.instanceId) {
       updated.instanceId = randomUUID()
     }

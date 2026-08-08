@@ -29,6 +29,7 @@ import {
 import { projectWorktreeTabModelReconciliation } from './tabs'
 import { splitWorktreeIdForFilesystem } from '../../../../shared/worktree-id'
 import { areWorkspaceLinkedItemsEqual } from '../../../../shared/workspace-linked-item'
+import { areJiraIssueLinksEqual } from '../../../../shared/jira-issue-link'
 import { areTaskSourceContextsEqual } from '../../../../shared/task-source-context'
 import {
   remapClosedTerminalTabSnapshotCwds,
@@ -53,6 +54,7 @@ import {
 } from '../../runtime/runtime-rpc-client'
 import {
   TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
+  WORKTREE_JIRA_ISSUE_LINK_RUNTIME_CAPABILITY,
   WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY
 } from '../../../../shared/protocol-version'
 import { toRuntimeWorktreeSelector } from '../../runtime/runtime-worktree-selector'
@@ -383,6 +385,11 @@ function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): b
       areTaskSourceContextsEqual(
         worktree.linkedTaskSourceContext,
         candidate.linkedTaskSourceContext
+      ) &&
+      areJiraIssueLinksEqual(worktree.linkedJiraIssue, candidate.linkedJiraIssue) &&
+      areTaskSourceContextsEqual(
+        worktree.linkedJiraIssueSourceContext,
+        candidate.linkedJiraIssueSourceContext
       ) &&
       worktree.isArchived === candidate.isArchived &&
       worktree.isUnread === candidate.isUnread &&
@@ -1771,6 +1778,16 @@ async function persistWorktreeMeta(
       target.environmentId,
       WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY,
       'Update the remote runtime to change this workspace’s linked issue'
+    )
+  }
+  if (
+    target.kind === 'environment' &&
+    ('linkedJiraIssue' in updates || 'linkedJiraIssueSourceContext' in updates)
+  ) {
+    await assertRuntimeEnvironmentCapability(
+      target.environmentId,
+      WORKTREE_JIRA_ISSUE_LINK_RUNTIME_CAPABILITY,
+      'Update the remote runtime to change this workspace’s linked Jira issue'
     )
   }
   // task-source-context.v1 is a sound proxy for the Linear keys: #5322 added them
@@ -3989,6 +4006,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const automationProvenanceRequest = options?.automationProvenanceRequest
     const linkedWorkItem = options?.linkedWorkItem
     const linkedTaskSourceContext = options?.linkedTaskSourceContext
+    const linkedJiraIssue = options?.linkedJiraIssue
+    const linkedJiraIssueSourceContext = options?.linkedJiraIssueSourceContext
     try {
       for (let attempt = 0; attempt < CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS; attempt += 1) {
         const candidateName = getClientWorktreeCreateCandidate(name, attempt)
@@ -4038,11 +4057,23 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             ...(linkedGiteaPR !== undefined ? { linkedGiteaPR } : {}),
             ...(linkedWorkItem !== undefined ? { linkedWorkItem } : {}),
             ...(linkedTaskSourceContext !== undefined ? { linkedTaskSourceContext } : {}),
+            ...(linkedJiraIssue !== undefined ? { linkedJiraIssue } : {}),
+            ...(linkedJiraIssueSourceContext !== undefined ? { linkedJiraIssueSourceContext } : {}),
             ...(startup ? { startup } : {}),
             ...(creationId ? { creationId } : {}),
             ...(automationProvenanceRequest ? { automationProvenanceRequest } : {})
           }
           const target = getActiveRuntimeTarget(settingsForRepoOwner(get(), repoId))
+          if (
+            target.kind === 'environment' &&
+            (linkedJiraIssue !== undefined || linkedJiraIssueSourceContext !== undefined)
+          ) {
+            await assertRuntimeEnvironmentCapability(
+              target.environmentId,
+              WORKTREE_JIRA_ISSUE_LINK_RUNTIME_CAPABILITY,
+              'Update the remote runtime to link Jira'
+            )
+          }
           if (
             target.kind === 'environment' &&
             (linkedWorkItem?.provider === 'jira' || linkedTaskSourceContext?.provider === 'jira')
@@ -4095,6 +4126,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                     ...(linkedGiteaPR !== undefined ? { linkedGiteaPR } : {}),
                     ...(linkedWorkItem !== undefined ? { linkedWorkItem } : {}),
                     ...(linkedTaskSourceContext !== undefined ? { linkedTaskSourceContext } : {}),
+                    ...(linkedJiraIssue !== undefined ? { linkedJiraIssue } : {}),
+                    ...(linkedJiraIssueSourceContext !== undefined
+                      ? { linkedJiraIssueSourceContext }
+                      : {}),
                     ...(automationProvenanceRequest ? { automationProvenanceRequest } : {}),
                     ...(startup
                       ? {

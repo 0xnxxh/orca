@@ -447,7 +447,7 @@ describe('staged background worktree creation', () => {
     expect(store.setSidebarOpen).toHaveBeenCalledWith(true)
   })
 
-  it('preserves linked Jira context through staged creation and retry', async () => {
+  it('writes dedicated Jira context through staged creation and retry', async () => {
     const linkedWorkItem = {
       provider: 'jira' as const,
       type: 'issue' as const,
@@ -471,7 +471,14 @@ describe('staged background worktree creation', () => {
       accountLabel: 'dev@company.test'
     }
     const request = makeRequest({ linkedWorkItem, linkedTaskSourceContext })
-    const expectedOptions = { linkedWorkItem, linkedTaskSourceContext }
+    const expectedOptions = {
+      linkedJiraIssue: {
+        key: 'ORCA-123',
+        title: 'Durable Jira link',
+        url: 'https://company.atlassian.net/browse/ORCA-123'
+      },
+      linkedJiraIssueSourceContext: linkedTaskSourceContext
+    }
 
     expect(continueBackgroundWorktreeCreation('creation-1', request)).toBe(true)
     await vi.waitFor(() => expect(store.createWorktree).toHaveBeenCalledTimes(1))

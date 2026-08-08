@@ -4930,6 +4930,83 @@ describe('Store', () => {
     ).toBeNull()
   })
 
+  it('persists dedicated Jira metadata without rewriting review or unsupported linked items', async () => {
+    const reviewItem = {
+      provider: 'gitlab',
+      type: 'mr',
+      number: 42,
+      title: '  Preserve review bytes  ',
+      url: 'https://gitlab.example.com/group/repo/-/merge_requests/42?diff=1'
+    }
+    const reviewContext = {
+      kind: 'task-source',
+      provider: 'gitlab',
+      projectId: ' project-1 ',
+      hostId: 'runtime:env-1',
+      accountLabel: ' review@example.com '
+    }
+    const unsupportedItem = {
+      provider: 'custom-review-provider',
+      type: 'change',
+      opaque: { keep: ['every', 'byte'] }
+    }
+    const unsupportedContext = {
+      provider: 'custom-review-provider',
+      opaque: ' context '
+    }
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {
+        review: { linkedWorkItem: reviewItem, linkedTaskSourceContext: reviewContext },
+        unsupported: {
+          linkedWorkItem: unsupportedItem,
+          linkedTaskSourceContext: unsupportedContext
+        }
+      }
+    })
+    const store = await createStore()
+    const issue = {
+      key: 'ORCA-123',
+      title: 'Link Jira',
+      url: 'https://company.atlassian.net/browse/ORCA-123'
+    }
+    const sourceContext = {
+      kind: 'task-source' as const,
+      provider: 'jira' as const,
+      projectId: 'project-1',
+      hostId: 'runtime:env-1' as const,
+      providerIdentity: {
+        provider: 'jira' as const,
+        siteId: 'site-1',
+        siteUrl: 'https://company.atlassian.net',
+        projectKey: 'ORCA'
+      }
+    }
+
+    store.setWorktreeMeta('review', {
+      linkedJiraIssue: issue,
+      linkedJiraIssueSourceContext: sourceContext
+    })
+    store.setWorktreeMeta('unsupported', {
+      linkedJiraIssue: issue,
+      linkedJiraIssueSourceContext: sourceContext
+    })
+
+    expect(store.getWorktreeMeta('review')).toMatchObject({
+      linkedWorkItem: reviewItem,
+      linkedTaskSourceContext: reviewContext,
+      linkedJiraIssue: issue,
+      linkedJiraIssueSourceContext: sourceContext
+    })
+    expect(store.getWorktreeMeta('unsupported')).toMatchObject({
+      linkedWorkItem: unsupportedItem,
+      linkedTaskSourceContext: unsupportedContext,
+      linkedJiraIssue: issue,
+      linkedJiraIssueSourceContext: sourceContext
+    })
+  })
+
   it('discards malformed persisted task-source metadata without aborting store load', async () => {
     writeDataFile({
       schemaVersion: 1,

@@ -367,6 +367,12 @@ export type WorkspaceLinkedItem = {
   repoId?: string
 }
 
+export type JiraIssueLink = {
+  key: string
+  title: string
+  url: string
+}
+
 export type FolderWorkspaceLinkedTask = WorkspaceLinkedItem
 
 export type NestedRepoScanOptions = {
@@ -516,6 +522,8 @@ export type Worktree = {
   linkedGiteaPR?: number | null
   linkedWorkItem?: WorkspaceLinkedItem | null
   linkedTaskSourceContext?: TaskSourceContext | null
+  linkedJiraIssue?: JiraIssueLink | null
+  linkedJiraIssueSourceContext?: TaskSourceContext | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -641,6 +649,8 @@ export type WorktreeMeta = {
   linkedGiteaPR?: number | null
   linkedWorkItem?: WorkspaceLinkedItem | null
   linkedTaskSourceContext?: TaskSourceContext | null
+  linkedJiraIssue?: JiraIssueLink | null
+  linkedJiraIssueSourceContext?: TaskSourceContext | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -2265,6 +2275,8 @@ export type CreateWorktreeArgs = {
   linkedGiteaPR?: number | null
   linkedWorkItem?: WorkspaceLinkedItem | null
   linkedTaskSourceContext?: TaskSourceContext | null
+  linkedJiraIssue?: JiraIssueLink | null
+  linkedJiraIssueSourceContext?: TaskSourceContext | null
   pushTarget?: GitPushTarget
   workspaceStatus?: WorkspaceStatus
   manualOrder?: number

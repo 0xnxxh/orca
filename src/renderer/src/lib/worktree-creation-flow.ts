@@ -26,6 +26,7 @@ import {
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { seedAgentTabStateAfterWorktreeCreate } from '@/lib/worktree-creation-agent-seeds'
 import { resolveBackendDraftStartup } from '@/lib/worktree-draft-startup-view-mode'
+import { jiraIssueLinkFromLegacyWorkItem } from '../../../shared/jira-issue-link'
 import {
   buildWorktreeCreationStartupOpt,
   getInitialWorktreeCreationPhase,
@@ -106,6 +107,8 @@ async function executeWorktreeCreation(
   let result: CreateWorktreeResult
   try {
     const backendStartup = resolveBackendDraftStartup(preparedRequest)
+    const linkedJiraIssue = jiraIssueLinkFromLegacyWorkItem(preparedRequest.linkedWorkItem)
+    const usesDedicatedJiraLink = linkedJiraIssue !== null
     result = await useAppStore
       .getState()
       .createWorktree(
@@ -135,11 +138,15 @@ async function executeWorktreeCreation(
         preparedRequest.linkedGiteaPR,
         preparedRequest.compareBaseRef,
         {
-          ...(preparedRequest.linkedWorkItem !== undefined
+          ...(!usesDedicatedJiraLink && preparedRequest.linkedWorkItem !== undefined
             ? { linkedWorkItem: preparedRequest.linkedWorkItem }
             : {}),
-          ...(preparedRequest.linkedTaskSourceContext !== undefined
+          ...(!usesDedicatedJiraLink && preparedRequest.linkedTaskSourceContext !== undefined
             ? { linkedTaskSourceContext: preparedRequest.linkedTaskSourceContext }
+            : {}),
+          ...(linkedJiraIssue ? { linkedJiraIssue } : {}),
+          ...(linkedJiraIssue && preparedRequest.linkedTaskSourceContext
+            ? { linkedJiraIssueSourceContext: preparedRequest.linkedTaskSourceContext }
             : {})
         }
       )
