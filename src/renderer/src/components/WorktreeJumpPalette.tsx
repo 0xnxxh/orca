@@ -268,6 +268,8 @@ const EMPTY_QUERY_RECENT_TAB_CAP = 6
 const EMPTY_QUERY_ROW_BUDGET = 10
 const EMPTY_QUERY_WORKTREE_CAP = 5
 const EMPTY_RECENT_TAB_ORDER: readonly string[] = []
+// Why: the interleaved layout emits a section header twice; the second copy needs a distinct entry id.
+const CONTINUED_SECTION_HEADER_ID_SUFFIX = '__continued'
 
 function isCurrentOpenTabItem(item: OpenTabPaletteItem): boolean {
   return item.type === 'browser-page' ? item.result.isCurrentPage : item.result.isCurrentTab
@@ -1494,12 +1496,13 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       hasQuery && visibleProjectTargetItems.length > 0 && populatedSectionCount > 1
     const showMiddleHeader = hasQuery && visibleMiddleItems.length > 0 && populatedSectionCount > 1
 
-    const pushOpenTabsHeader = (): void => {
+    // idSuffix: the interleaved layout re-emits a header for the section's remainder, which needs its own key.
+    const pushOpenTabsHeader = (idSuffix = ''): void => {
       if (!showOpenTabsHeader) {
         return
       }
       entries.push({
-        id: '__header_open_tabs__',
+        id: `__header_open_tabs__${idSuffix}`,
         type: 'section-header',
         label: hasQuery
           ? translate('auto.components.WorktreeJumpPalette.50a1d11d5b', 'Open Tabs')
@@ -1510,12 +1513,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       })
     }
 
-    const pushWorktreesHeader = (): void => {
+    const pushWorktreesHeader = (idSuffix = ''): void => {
       if (!showWorktreeHeader) {
         return
       }
       entries.push({
-        id: '__header_worktrees__',
+        id: `__header_worktrees__${idSuffix}`,
         type: 'section-header',
         label: hasQuery
           ? translate('auto.components.WorktreeJumpPalette.worktreesHeader', 'Worktrees')
@@ -1600,24 +1603,42 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
         ? '__hint_worktree_overflow__'
         : '__hint_open_tab_overflow__'
 
-      if (openTabsLeadSections) {
-        pushOpenTabsHeader()
-      } else {
-        pushWorktreesHeader()
+      const pushLeadingHeader = (idSuffix = ''): void => {
+        if (openTabsLeadSections) {
+          pushOpenTabsHeader(idSuffix)
+        } else {
+          pushWorktreesHeader(idSuffix)
+        }
       }
+      const pushTrailingHeader = (idSuffix = ''): void => {
+        if (openTabsLeadSections) {
+          pushWorktreesHeader(idSuffix)
+        } else {
+          pushOpenTabsHeader(idSuffix)
+        }
+      }
+
+      pushLeadingHeader()
       appendPaletteListEntries(entries, multiPrimaryLayout.leadingPreview as PaletteItem[])
-      // Soft more for the leading section (scrollable rest + hard-cap tail).
+      // Soft more for the leading section (rows resuming below + hard-cap tail).
       pushOverflowHint(leadingHintId, multiPrimaryLayout.leadingMoreCount)
-      if (openTabsLeadSections) {
-        pushWorktreesHeader()
-      } else {
-        pushOpenTabsHeader()
-      }
+      pushTrailingHeader()
       // Floor first, then remaining leading rows, then trailing rest — same order
-      // as orderMultiPrimaryPaletteItems / keyboard selection.
+      // as orderMultiPrimaryPaletteItems / keyboard selection. Each remainder
+      // re-emits its own header so no row sits under the other section's label.
       appendPaletteListEntries(entries, multiPrimaryLayout.trailingFloor as PaletteItem[])
-      appendPaletteListEntries(entries, multiPrimaryLayout.leadingRest as PaletteItem[])
-      appendPaletteListEntries(entries, multiPrimaryLayout.trailingRest as PaletteItem[])
+      const hasLeadingRest = multiPrimaryLayout.leadingRest.length > 0
+      if (hasLeadingRest) {
+        pushLeadingHeader(CONTINUED_SECTION_HEADER_ID_SUFFIX)
+        appendPaletteListEntries(entries, multiPrimaryLayout.leadingRest as PaletteItem[])
+      }
+      if (multiPrimaryLayout.trailingRest.length > 0) {
+        // Only re-label when the leading remainder split the trailing section.
+        if (hasLeadingRest) {
+          pushTrailingHeader(CONTINUED_SECTION_HEADER_ID_SUFFIX)
+        }
+        appendPaletteListEntries(entries, multiPrimaryLayout.trailingRest as PaletteItem[])
+      }
       // Trailing rest is already on screen; only hard-cap overflow needs a hint.
       pushOverflowHint(trailingHintId, multiPrimaryLayout.trailingHardOverflowCount)
       pushProjectAndMiddleSections()

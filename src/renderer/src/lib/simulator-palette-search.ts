@@ -1,5 +1,6 @@
 import type { Tab, TabGroup, Worktree } from '../../../shared/types'
 import { isClipboardTextByteLengthOverLimit } from '../../../shared/clipboard-text'
+import { selectPaletteTypeAliasMatch } from './palette-type-alias-match'
 import { resolveWorktreeDisplayName } from './worktree-default-display-name'
 import type { MatchRange } from './worktree-palette-search'
 
@@ -239,14 +240,7 @@ export function searchSimulatorTabs(
       continue
     }
 
-    let typeAliasHit: { text: string; range: MatchRange } | null = null
-    for (const alias of SIMULATOR_TYPE_SEARCH_ALIASES) {
-      const range = findRange(alias, trimmedQuery)
-      if (range) {
-        typeAliasHit = { text: alias, range }
-        break
-      }
-    }
+    const typeAliasHit = selectPaletteTypeAliasMatch(SIMULATOR_TYPE_SEARCH_ALIASES, trimmedQuery)
     if (typeAliasHit) {
       results.push({
         ...baseResult,
