@@ -16,8 +16,8 @@ const mocks = vi.hoisted(() => ({
   },
   exemptTabIds: new Set<string>(),
   exemptSelectCalls: 0,
-  /** Toggled to churn the park verdict the way the crash cluster does. */
-  watcherCoverage: true
+  recordBreadcrumb: vi.fn(),
+  watcherEntriesByTabId: new Map<string, object>()
 }))
 
 vi.mock('../../store', () => ({
@@ -41,23 +41,34 @@ vi.mock('./terminal-eviction-exempt-tabs', () => ({
 }))
 
 vi.mock('./terminal-parked-tab-watchers', () => ({
-  canWatcherCoverParkedTerminalTab: () => mocks.watcherCoverage,
+  activatePreparedParkedTerminalTabWatchers: vi.fn(),
   disposeParkedTerminalWatchersForWorktree: vi.fn(),
-  syncParkedTerminalTabWatchers: vi.fn()
+  getParkedTerminalWatcherEntry: (tabId: string) => mocks.watcherEntriesByTabId.get(tabId),
+  isParkedTerminalTabPreparationCurrent: () => true,
+  selectParkedTerminalPaneCandidateKey: () => '',
+  syncParkedTerminalTabWatchers: (args: { desiredParkedTabIds: ReadonlySet<string> }) => {
+    for (const tabId of Array.from(mocks.watcherEntriesByTabId.keys())) {
+      if (!args.desiredParkedTabIds.has(tabId)) {
+        mocks.watcherEntriesByTabId.delete(tabId)
+      }
+    }
+    for (const tabId of args.desiredParkedTabIds) {
+      if (!mocks.watcherEntriesByTabId.has(tabId)) {
+        mocks.watcherEntriesByTabId.set(tabId, {})
+      }
+    }
+    return new Set(args.desiredParkedTabIds)
+  }
 }))
 
 vi.mock('@/lib/crash-breadcrumb-recorder', () => ({
-  recordRendererCrashBreadcrumb: vi.fn()
+  recordRendererCrashBreadcrumb: (...args: unknown[]) => mocks.recordBreadcrumb(...args)
 }))
 
 import {
   TERMINAL_TAB_COLD_PARK_DELAY_MS,
   TERMINAL_TAB_HOT_RETAIN_MS
 } from './terminal-hidden-view-parking'
-import {
-  TERMINAL_TAB_PARK_FLIP_BURST_LIMIT,
-  TERMINAL_TAB_PARK_FLIP_WINDOW_MS
-} from './terminal-park-verdict-flip-telemetry'
 import { useTerminalTabColdParking } from './use-terminal-tab-cold-parking'
 
 const WORKTREE_ID = 'wt-1'
@@ -89,10 +100,11 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     vi.useRealTimers()
     mocks.exemptTabIds = new Set()
     mocks.exemptSelectCalls = 0
-    mocks.watcherCoverage = true
     mocks.storeState.terminalLayoutsByTabId = {}
     mocks.storeState.sleepingAgentSessionsByPaneKey = {}
     mocks.storeState.runtimeStatusByEnvironmentId = new Map()
+    mocks.watcherEntriesByTabId.clear()
+    mocks.recordBreadcrumb.mockClear()
   })
 
   it('parks paired-runtime tabs only when their exact host advertises restore', () => {
@@ -122,39 +134,15 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     }
   })
 
-  // Why: the flip-damping pin removes the tab from the parked set, and every
-  // hysteresis deadline of a long-hidden tab is already past — so the pin
-  // deadline is the only wakeup that can ever re-park it. Without scheduling
-  // it, damping silently becomes a permanent unpark: the pane (~4-5MB) stays
-  // mounted for the life of the window, which is the renderer-OOM cluster.
-  it('re-parks a damped tab once the pin expires with no other store change', () => {
-    const { result, rerender } = renderHook(
-      (args: ReturnType<typeof hookArgs>) => useTerminalTabColdParking(args),
-      { initialProps: hookArgs(false) }
-    )
-    act(() => {
-      vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1)
-    })
-    expect(result.current).toEqual(new Set(['tab-2']))
+  it('records the final prepared handoff verdict instead of policy intent', () => {
+    const args = { ...hookArgs(false), coldParkTerminalPanes: true }
+    const { result } = renderHook(() => useTerminalTabColdParking(args))
 
-    // Churn the coverage veto at render cadence — no clock advance, so every
-    // flip lands inside the burst window and damping engages.
-    for (let flip = 0; flip <= TERMINAL_TAB_PARK_FLIP_BURST_LIMIT + 1; flip += 1) {
-      mocks.watcherCoverage = flip % 2 === 1
-      act(() => {
-        rerender(hookArgs(false))
-      })
-    }
-    mocks.watcherCoverage = true
-    act(() => {
-      rerender(hookArgs(false))
-    })
-    expect(result.current.size).toBe(0)
-
-    act(() => {
-      vi.advanceTimersByTime(TERMINAL_TAB_PARK_FLIP_WINDOW_MS)
-    })
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current).toEqual(new Set(['tab-1', 'tab-2']))
+    expect(mocks.recordBreadcrumb.mock.calls).toEqual([
+      ['terminal_park_verdict_churn', { tabId: 'tab-1', trigger: 'flip', parked: true }],
+      ['terminal_park_verdict_churn', { tabId: 'tab-2', trigger: 'flip', parked: true }]
+    ])
   })
 
   // Why: the worktree layer preserves hiddenSince through a background-measure

@@ -122,10 +122,12 @@ describe('LocalPtyProvider', () => {
     resize: ReturnType<typeof vi.fn>
     pause: ReturnType<typeof vi.fn>
     resume: ReturnType<typeof vi.fn>
+    clear: ReturnType<typeof vi.fn>
     kill: ReturnType<typeof vi.fn>
     process: string
     pid: number
   }
+  let dataCb: ((data: string) => void) | undefined
   let exitCb: ((info: { exitCode: number }) => void) | undefined
   let origShell: string | undefined
   let origPowerlevelWizardDisable: string | undefined
@@ -167,9 +169,13 @@ describe('LocalPtyProvider', () => {
     readWindowsConptyProcessIdsMock.mockReset()
     readWindowsConptyProcessIdsMock.mockResolvedValue(null)
 
+    dataCb = undefined
     exitCb = undefined
     mockProc = {
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onData: vi.fn((cb: (data: string) => void) => {
+        dataCb = cb
+        return { dispose: vi.fn() }
+      }),
       onExit: vi.fn((cb: (info: { exitCode: number }) => void) => {
         exitCb = cb
         return {
@@ -184,6 +190,7 @@ describe('LocalPtyProvider', () => {
       resize: vi.fn(),
       pause: vi.fn(),
       resume: vi.fn(),
+      clear: vi.fn(),
       kill: vi.fn(() => {
         exitCb?.({ exitCode: -1 })
       }),
@@ -252,7 +259,8 @@ describe('LocalPtyProvider', () => {
       expect(second).toEqual({
         id: 'serve-session-1',
         pid: 12345,
-        isReattach: true
+        isReattach: true,
+        incarnationId: first.incarnationId
       })
       expect(mockProc.resize).toHaveBeenCalledWith(120, 40)
       expect(spawnMock).not.toHaveBeenCalled()
@@ -498,6 +506,59 @@ describe('LocalPtyProvider', () => {
       expect(onSpawned).toHaveBeenCalledWith(id, incarnationId)
     })
 
+    it('keeps fallback admission legacy while fencing physical incarnation operations', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true)
+
+      try {
+        expect(provider.supportsExactPtyOperations(id)).toBe(false)
+        expect(provider.getPtyMutationMode(id)).toBe('legacy')
+        expect(provider.writeExact(id, 'stale-incarnation', 'stale')).toBe(false)
+        expect(provider.resizeExact(id, 'stale-incarnation', 120, 40)).toBe(false)
+        await expect(provider.killExact(id, 'stale-incarnation', {})).resolves.toBe(false)
+        expect(provider.sendSignalExact(id, 'stale-incarnation', 'SIGTERM')).toBe(false)
+        expect(provider.clearBufferExact(id, 'stale-incarnation')).toBe(false)
+        expect(provider.writeExact(id, incarnationId!, 'current')).toBe(true)
+        expect(provider.resizeExact(id, incarnationId!, 120, 40)).toBe(true)
+        expect(provider.sendSignalExact(id, incarnationId!, 'SIGTERM')).toBe(true)
+        expect(provider.clearBufferExact(id, incarnationId!)).toBe(true)
+        expect(mockProc.write).toHaveBeenCalledWith('current')
+        expect(mockProc.resize).toHaveBeenCalledWith(120, 40)
+        expect(killSpy).toHaveBeenCalledWith(mockProc.pid, 'SIGTERM')
+        expect(mockProc.clear).toHaveBeenCalledOnce()
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+
+    it('rejects stale native callbacks after a session id is reused', async () => {
+      const onData = vi.fn()
+      const onExit = vi.fn()
+      provider.configure({ onData, onExit })
+      await provider.spawn({ cols: 80, rows: 24, sessionId: 'reused-session' })
+      const staleData = dataCb!
+      const staleExit = exitCb!
+
+      _resetLocalPtyProviderStateForTest()
+      const replacement = {
+        ...mockProc,
+        onData: vi.fn(),
+        onExit: vi.fn(),
+        write: vi.fn(),
+        resize: vi.fn(),
+        kill: vi.fn()
+      }
+      spawnMock.mockReturnValueOnce(replacement)
+      await provider.spawn({ cols: 80, rows: 24, sessionId: 'reused-session' })
+
+      staleData('stale-output')
+      staleExit({ exitCode: 0 })
+
+      expect(onData).not.toHaveBeenCalled()
+      expect(onExit).not.toHaveBeenCalled()
+      expect(provider.getPtyProcess('reused-session')).toBe(replacement)
+    })
+
     it('reports physical commit before post-spawn publication can fail', async () => {
       spawnMock.mockClear()
       const committed = vi.fn()
@@ -630,7 +691,11 @@ describe('LocalPtyProvider', () => {
       const onData = vi.fn()
       provider.configure({ onData })
       try {
-        await provider.spawn({ cols: 80, rows: 24, command: 'printf ready' })
+        const { incarnationId } = await provider.spawn({
+          cols: 80,
+          rows: 24,
+          command: 'printf ready'
+        })
         const dataCallback = mockProc.onData.mock.calls[0]?.[0] as (data: string) => void
 
         dataCallback('\x1b]777;orca-shell-ready')
@@ -642,7 +707,10 @@ describe('LocalPtyProvider', () => {
         expect(onData).toHaveBeenCalledWith(
           expect.any(String),
           '\x1b]777;orca-shell-ready',
-          expect.any(Number)
+          expect.any(Number),
+          undefined,
+          undefined,
+          incarnationId
         )
         expect(mockProc.write).not.toHaveBeenCalled()
 
@@ -658,7 +726,11 @@ describe('LocalPtyProvider', () => {
       const onData = vi.fn()
       provider.configure({ onData })
 
-      await provider.spawn({ cols: 80, rows: 24, command: 'printf ready' })
+      const { incarnationId } = await provider.spawn({
+        cols: 80,
+        rows: 24,
+        command: 'printf ready'
+      })
       const dataCallback = mockProc.onData.mock.calls[0]?.[0] as (data: string) => void
 
       dataCallback('\x1b]777;orca-shell-ready')
@@ -669,7 +741,10 @@ describe('LocalPtyProvider', () => {
       expect(onData).toHaveBeenCalledWith(
         expect.any(String),
         '\x1b]777;orca-shell-ready',
-        expect.any(Number)
+        expect.any(Number),
+        undefined,
+        undefined,
+        incarnationId
       )
     })
 
@@ -1318,9 +1393,90 @@ describe('LocalPtyProvider', () => {
         provider.resumeProducer(id)
       }).not.toThrow()
     })
+
+    it('holds an exact incarnation paused until the last idempotent lease release', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      expect(provider.supportsExactHeldProducerPause(id, incarnationId!)).toBe(true)
+
+      await expect(
+        provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      await expect(
+        provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      await expect(
+        provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      expect(mockProc.pause).toHaveBeenCalledTimes(1)
+
+      await expect(
+        provider.releaseExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      expect(mockProc.resume).not.toHaveBeenCalled()
+      await expect(
+        provider.releaseExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      await expect(
+        provider.releaseExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      expect(mockProc.resume).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects stale exact pause leases without touching the replacement process', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+
+      expect(provider.supportsExactHeldProducerPause(id, 'stale-incarnation')).toBe(false)
+      await expect(
+        provider.acquireExactHeldProducerPause(id, 'stale-incarnation', 'lease')
+      ).resolves.toBe(false)
+      await expect(
+        provider.releaseExactHeldProducerPause(id, 'stale-incarnation', 'lease')
+      ).resolves.toBe(false)
+      expect(provider.supportsExactHeldProducerPause(id, incarnationId!)).toBe(true)
+      expect(mockProc.pause).not.toHaveBeenCalled()
+      expect(mockProc.resume).not.toHaveBeenCalled()
+    })
+
+    it('does not let a legacy resume release an exact held pause', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      await provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+
+      provider.pauseProducer(id)
+      provider.resumeProducer(id)
+      expect(mockProc.resume).not.toHaveBeenCalled()
+
+      await provider.releaseExactHeldProducerPause(id, incarnationId!, 'lease')
+      expect(mockProc.resume).toHaveBeenCalledTimes(1)
+    })
+
+    it('fails a held-pause acquisition that node-pty did not acknowledge', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      mockProc.pause.mockImplementation(() => {
+        throw new Error('read EIO')
+      })
+
+      await expect(
+        provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+      ).resolves.toBe(false)
+      mockProc.pause.mockImplementation(() => undefined)
+      await expect(
+        provider.releaseExactHeldProducerPause(id, incarnationId!, 'lease')
+      ).resolves.toBe(true)
+      expect(mockProc.resume).not.toHaveBeenCalled()
+    })
   })
 
   describe('shutdown', () => {
+    it('releases exact held-pause bookkeeping before terminating the PTY', async () => {
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      await provider.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+
+      await provider.shutdown(id, { immediate: true })
+
+      expect(mockProc.resume).toHaveBeenCalledTimes(1)
+      expect(provider.supportsExactHeldProducerPause(id, incarnationId!)).toBe(false)
+    })
+
     it('kills the PTY process', async () => {
       // Why: capture the spy reference before shutdown triggers onExit →
       // POSIX kill neutralization. After neutralization, mockProc.kill is
@@ -1835,13 +1991,13 @@ describe('LocalPtyProvider', () => {
     it('notifies data listeners when PTY produces output', async () => {
       const dataHandler = vi.fn()
       provider.onData(dataHandler)
-      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
 
       // Simulate node-pty data event
       const onDataCb = mockProc.onData.mock.calls[0][0]
       onDataCb('hello world')
 
-      expect(dataHandler).toHaveBeenCalledWith({ id, data: 'hello world' })
+      expect(dataHandler).toHaveBeenCalledWith({ id, data: 'hello world', incarnationId })
     })
 
     it('classifies startup queries before runtime and public data listeners', async () => {
@@ -1850,7 +2006,7 @@ describe('LocalPtyProvider', () => {
       const dataHandler = vi.fn()
       provider.configure({ onData: runtimeData })
       provider.onData(dataHandler)
-      const { id } = await provider.spawn({
+      const { id, incarnationId } = await provider.spawn({
         cols: 80,
         rows: 24,
         startupIngress: {
@@ -1868,20 +2024,28 @@ describe('LocalPtyProvider', () => {
 
       expect(mockProc.write).toHaveBeenCalledWith('\x1b]10;rgb:2e2e/3434/3434\x1b\\')
       expect(runtimeData.mock.calls.map((call) => call.slice(1))).toEqual([
-        ['', expect.any(Number), query.length, true],
-        ['', expect.any(Number), echo.length, true],
-        ['prompt', expect.any(Number)]
+        ['', expect.any(Number), query.length, true, incarnationId],
+        ['', expect.any(Number), echo.length, true, incarnationId],
+        ['prompt', expect.any(Number), undefined, undefined, incarnationId]
       ])
       expect(dataHandler.mock.calls.map(([payload]) => payload)).toEqual([
-        { id, data: '', sequenceChars: query.length, seq: query.length, transformed: true },
         {
           id,
           data: '',
+          incarnationId,
+          sequenceChars: query.length,
+          seq: query.length,
+          transformed: true
+        },
+        {
+          id,
+          data: '',
+          incarnationId,
           sequenceChars: echo.length,
           seq: query.length + echo.length,
           transformed: true
         },
-        { id, data: 'prompt' }
+        { id, data: 'prompt', incarnationId }
       ])
     })
 
@@ -1889,7 +2053,7 @@ describe('LocalPtyProvider', () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
       const dataHandler = vi.fn()
       provider.onData(dataHandler)
-      const { id } = await provider.spawn({
+      const { id, incarnationId } = await provider.spawn({
         cols: 80,
         rows: 24,
         shellOverride: 'powershell.exe'
@@ -1902,6 +2066,7 @@ describe('LocalPtyProvider', () => {
       expect(dataHandler).toHaveBeenCalledWith({
         id,
         data: '',
+        incarnationId,
         sequenceChars: query.length,
         seq: query.length,
         transformed: true

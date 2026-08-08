@@ -11,6 +11,11 @@ import {
   FRAME_DECODER_MAX_TURN_MS,
   FRAME_DECODER_MAX_RETAINED_BYTES
 } from './relay-frame-decoder'
+import type {
+  RelayDaemonCompatibilityGrant,
+  RelayDaemonCompatibilityOffer
+} from '../shared/relay-daemon-compatibility'
+import type { SshTerminalAuthorityEndpointIdentity } from '../shared/ssh-terminal-authority-marker'
 
 export {
   FrameDecoder,
@@ -38,9 +43,25 @@ export const MessageType = {
 // to refuse mismatched-version --connect bridges that would otherwise drive a
 // stale daemon.
 export type HandshakeMessage =
-  | { type: 'orca-relay-handshake'; version: string; endpointCredential?: string }
-  | { type: 'orca-relay-handshake-ok'; version: string }
-  | { type: 'orca-relay-handshake-mismatch'; expected: string; got: string }
+  | {
+      type: 'orca-relay-handshake'
+      version: string
+      endpointCredential?: string
+      compatibility?: RelayDaemonCompatibilityOffer
+      authorityExpectation?: SshTerminalAuthorityEndpointIdentity
+    }
+  | {
+      type: 'orca-relay-handshake-ok'
+      version: string
+      compatibility?: RelayDaemonCompatibilityGrant
+      authorityIdentity?: SshTerminalAuthorityEndpointIdentity
+    }
+  | {
+      type: 'orca-relay-handshake-mismatch'
+      expected: string
+      got: string
+      reason?: 'build' | 'protocol' | 'authority'
+    }
 
 export function encodeHandshakeFrame(msg: HandshakeMessage): Buffer {
   const payload = Buffer.from(JSON.stringify(msg), 'utf-8')

@@ -125,6 +125,15 @@ describe('pre-handler PTY buffer', () => {
     expect(hasPreHandlerPtyExit(EXIT_PTY_ID)).toBe(false)
   })
 
+  it('preserves exit incarnation identity through buffering', () => {
+    const onExit = vi.fn()
+
+    bufferPreHandlerPtyExit(EXIT_PTY_ID, 7, 'incarnation-a')
+    drainPreHandlerPtyExit(EXIT_PTY_ID, onExit)
+
+    expect(onExit).toHaveBeenCalledExactlyOnceWith(7, 'incarnation-a')
+  })
+
   it('discards delayed data and exit until an explicit reconnect', () => {
     discardPreHandlerPtyState(EXIT_PTY_ID)
     bufferPreHandlerPtyData(EXIT_PTY_ID, 'late data')

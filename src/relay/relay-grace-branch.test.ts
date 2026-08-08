@@ -3,6 +3,7 @@ import {
   applyRelayGraceTimeConfiguration,
   decideRelayGrace,
   decideRelayGraceReconfigure,
+  mayDisposeRelayPtysForShutdown,
   type RelayGraceBranch,
   type RelayGraceDecisionInput,
   type RelayGraceReconfigureInput
@@ -13,6 +14,7 @@ const IDLE_RELAY_GRACE_MS = 15 * 60_000
 
 function decide(overrides: Partial<RelayGraceDecisionInput> = {}) {
   return decideRelayGrace({
+    terminalSessionAuthorityAdmitted: false,
     configuredGraceMs: 0,
     relayIdle: false,
     detached: false,
@@ -33,6 +35,7 @@ describe('decideRelayGrace', () => {
       expect(decide({ configuredGraceMs: 86_400_000, relayIdle: true, activePtyCount: 0 })).toEqual(
         {
           branch: 'configured',
+          armShutdown: true,
           timeoutMs: 86_400_000
         }
       )
@@ -44,6 +47,7 @@ describe('decideRelayGrace', () => {
       // instead of living forever. Pinned so the revived path stays a decision, not an accident.
       expect(decide({ configuredGraceMs: 0, relayIdle: true, activePtyCount: 0 })).toEqual({
         branch: 'idle-no-ptys',
+        armShutdown: true,
         timeoutMs: IDLE_RELAY_GRACE_MS
       })
     })
@@ -53,6 +57,7 @@ describe('decideRelayGrace', () => {
       // it would kill the shell that creation is about to produce (#6955).
       expect(decide({ configuredGraceMs: 0, relayIdle: false })).toEqual({
         branch: 'configured',
+        armShutdown: true,
         timeoutMs: 0
       })
     })
@@ -68,7 +73,11 @@ describe('decideRelayGrace', () => {
           relayIdle: true,
           activePtyCount: 0
         })
-      ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
+      ).toEqual({
+        branch: 'shutdown-deferred',
+        armShutdown: true,
+        timeoutMs: IDLE_RELAY_GRACE_MS
+      })
     })
 
     it('prefers startup-empty-detached over the idle cap', () => {
@@ -79,7 +88,11 @@ describe('decideRelayGrace', () => {
           relayIdle: true,
           activePtyCount: 0
         })
-      ).toEqual({ branch: 'startup-empty-detached', timeoutMs: EMPTY_DETACHED_STARTUP_GRACE_MS })
+      ).toEqual({
+        branch: 'startup-empty-detached',
+        armShutdown: true,
+        timeoutMs: EMPTY_DETACHED_STARTUP_GRACE_MS
+      })
     })
 
     it('bounds a configured grace on the startup-empty-detached branch', () => {
@@ -90,7 +103,7 @@ describe('decideRelayGrace', () => {
           hasAcceptedSocketClient: false,
           activePtyCount: 0
         })
-      ).toEqual({ branch: 'startup-empty-detached', timeoutMs: 5_000 })
+      ).toEqual({ branch: 'startup-empty-detached', armShutdown: true, timeoutMs: 5_000 })
     })
 
     it('does not treat a detached relay that already accepted a client as startup-empty', () => {
@@ -101,8 +114,25 @@ describe('decideRelayGrace', () => {
           relayIdle: true,
           activePtyCount: 0
         })
-      ).toEqual({ branch: 'idle-no-ptys', timeoutMs: IDLE_RELAY_GRACE_MS })
+      ).toEqual({
+        branch: 'idle-no-ptys',
+        armShutdown: true,
+        timeoutMs: IDLE_RELAY_GRACE_MS
+      })
     })
+  })
+
+  it.each([
+    { activePtyCount: 1, relayIdle: false, hasAcceptedSocketClient: true },
+    { activePtyCount: 0, relayIdle: true, hasAcceptedSocketClient: false }
+  ])('removes time-based shutdown after terminal authority admission', (state) => {
+    expect(
+      decide({
+        ...state,
+        terminalSessionAuthorityAdmitted: true,
+        configuredGraceMs: 1
+      })
+    ).toEqual({ branch: 'terminal-authority-retained', armShutdown: false })
   })
 })
 
@@ -133,7 +163,11 @@ describe('decideRelayGraceReconfigure', () => {
         configuredGraceMs: 0,
         retryDeferredShutdown: rearmed.rearm && rearmed.retryDeferredShutdown
       })
-    ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
+    ).toEqual({
+      branch: 'shutdown-deferred',
+      armShutdown: true,
+      timeoutMs: IDLE_RELAY_GRACE_MS
+    })
   })
 
   it('ignores a re-assertion of the same grace', () => {
@@ -148,6 +182,10 @@ describe('decideRelayGraceReconfigure', () => {
 
   it('does not re-arm once shutdown is in flight', () => {
     expect(reconfigure({ shutdownInFlight: true })).toEqual({ rearm: false })
+  })
+
+  it('cannot re-arm a retained authority through grace reconfiguration', () => {
+    expect(reconfigure({ currentBranch: 'terminal-authority-retained' })).toEqual({ rearm: false })
   })
 })
 
@@ -170,6 +208,7 @@ function relayGraceHost(
   const startGrace = vi.fn(
     (_reason: string, options?: { retryDeferredShutdown?: boolean }): void => {
       graceBranch = decide({
+        terminalSessionAuthorityAdmitted: false,
         configuredGraceMs,
         relayIdle: overrides.relayIdle ?? true,
         activePtyCount: overrides.activePtyCount ?? 0,
@@ -250,5 +289,13 @@ describe('applyRelayGraceTimeConfiguration', () => {
       expect(host.configuredGraceMs()).toBe(10_000)
       expect(host.startGrace).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('relay PTY disposal authority', () => {
+  it('rejects every timer-originated authority shutdown but preserves administrative shutdown', () => {
+    expect(mayDisposeRelayPtysForShutdown(true, 'grace-expired')).toBe(false)
+    expect(mayDisposeRelayPtysForShutdown(true, 'administrative')).toBe(true)
+    expect(mayDisposeRelayPtysForShutdown(false, 'grace-expired')).toBe(true)
   })
 })

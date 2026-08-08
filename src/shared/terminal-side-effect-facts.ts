@@ -6,6 +6,7 @@
  */
 
 import type { ParsedAgentStatusPayload } from './agent-status-types'
+import type { PtyIncarnationId } from './pty-incarnation'
 import type { TerminalGitHubPRLink } from './terminal-github-pr-link-detector'
 
 /** Why tagged: stale-clear facts come from main's unthrottled 3s timer, not
@@ -41,6 +42,8 @@ export type TerminalSideEffectFact =
 
 export type TerminalSideEffectBatch = {
   ptyId: string
+  /** Exact emitting PTY generation. Absent only for legacy producers. */
+  ptyIncarnationId?: PtyIncarnationId
   /** PTY output byte sequence at emission. Replay batches carry the sequence
    *  their title state was current at, so the handler can drop a replay title
    *  older than the last live title fact it applied. */

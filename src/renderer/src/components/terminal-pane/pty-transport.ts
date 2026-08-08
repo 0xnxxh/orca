@@ -31,8 +31,25 @@ import {
   isPreHandlerPtyStateDiscarded
 } from './pty-pre-handler-buffer'
 import { createPtyInputWriteQueue } from './pty-input-write-queue'
+import { killPtyWithMutationIdentity } from './pty-mutation-operation'
+import { createPtyMutationAccessController } from './pty-mutation-access-controller'
+import {
+  samePtyMutationBindingTarget,
+  type PtyMutationBindingTarget
+} from './pty-mutation-binding-target'
+import { normalizePtyMutationAccess } from './pty-mutation-access-claim'
+import {
+  claimPtyRendererHandlers,
+  releasePtyRendererHandlerClaim,
+  type PtyRendererHandlerClaim
+} from './pty-renderer-handler-claim'
 import type { PtyDataMeta } from './pty-dispatcher'
-import type { IpcPtyTransportOptions, PtyConnectResult, PtyTransport } from './pty-transport-types'
+import type {
+  IpcPtyTransportOptions,
+  PtyConnectResult,
+  PtyTransport,
+  PtyTransportInputTarget
+} from './pty-transport-types'
 import { createBellDetector } from '../../../../shared/terminal-bell-detector'
 import {
   hasTerminalDisplayContent,
@@ -64,7 +81,8 @@ export type {
   LocalPtySessionMetadata,
   PtyBufferSnapshot,
   PtyConnectResult,
-  PtyTransport
+  PtyTransport,
+  PtyTransportInputTarget
 } from './pty-transport-types'
 export { extractLastOscTitle } from '../../../../shared/agent-detection'
 
@@ -539,6 +557,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     worktreeId,
     tabId,
     leafId,
+    paneGeneration,
     shellOverride,
     projectRuntime,
     terminalColorQueryReplies,
@@ -555,12 +574,50 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   let connected = false
   let destroyed = false
   let ptyId: string | null = null
+  let connectionAttemptGeneration = 0
+  let pendingIdentityExits: {
+    id: string
+    code: number
+    incarnationId?: string
+    handler: (code: number, incarnationId?: string) => void
+  }[] = []
+  const inputTargetOwner = Object.freeze({})
+  let storedCallbacks: Parameters<PtyTransport['connect']>[0]['callbacks'] = {}
+  const mutationAccess = createPtyMutationAccessController({
+    tabId,
+    leafId,
+    paneGeneration,
+    onUnavailable: () => storedCallbacks.onWriteUnavailable?.(),
+    onAccessAvailable: (id) => {
+      deliverPendingIdentityExits(id)
+      if (connected && ptyId === id) {
+        storedCallbacks.onMutationAccessAvailable?.()
+      }
+    }
+  })
   // Why: replayed eager-buffer data (often from a prior app session) must not fire fresh bells, unread marks, or notifications on reconnect.
   let suppressAttentionEvents = false
-  const inputWriteQueue = createPtyInputWriteQueue({
-    isWritable: (id) => connected && ptyId === id,
-    write: (id, data) => window.api.pty.write(id, data)
+  const inputWriteQueue = createPtyInputWriteQueue<PtyMutationBindingTarget>({
+    isWritable: (target) =>
+      connected && ptyId === target.id && mutationAccess.isCurrentTarget(target),
+    write: (target, data) => mutationAccess.writeTarget(target, data),
+    sameTarget: samePtyMutationBindingTarget
   })
+  const captureInputTarget = (): PtyTransportInputTarget | null => {
+    const binding = ptyId ? mutationAccess.captureTarget(ptyId) : null
+    return connected && binding ? { owner: inputTargetOwner, binding } : null
+  }
+  const inputBindingForTarget = (
+    target: PtyTransportInputTarget
+  ): PtyMutationBindingTarget | null => {
+    if (target.owner !== inputTargetOwner) {
+      return null
+    }
+    const binding = target.binding as PtyMutationBindingTarget
+    return connected && ptyId === binding.id && mutationAccess.isCurrentTarget(binding)
+      ? binding
+      : null
+  }
   const outputProcessor = createPtyOutputProcessor({
     onTitleChange,
     onBell,
@@ -573,8 +630,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     onAgentExited,
     onAgentStatus
   })
-  let storedCallbacks: Parameters<PtyTransport['connect']>[0]['callbacks'] = {}
-
   // Why: a new pane can attach to the same ptyId before the old instance's detach() runs; track owned handlers so unregister never deletes the live one.
   const ownedDataAndReplayHandlers = new Map<
     string,
@@ -582,9 +637,34 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       data: (data: string, meta?: PtyDataMeta) => void
       replay: (data: string) => void
       writeUnavailable: () => void
+      claim?: PtyRendererHandlerClaim
     }
   >()
-  const ownedExitHandlers = new Map<string, (code: number) => void>()
+  const ownedExitHandlers = new Map<string, (code: number, incarnationId?: string) => void>()
+  const pendingRendererBindingCancellations = new Map<string, Set<() => void>>()
+
+  function trackPendingRendererBinding(id: string, cancel: () => void): void {
+    const pending = pendingRendererBindingCancellations.get(id) ?? new Set()
+    pending.add(cancel)
+    pendingRendererBindingCancellations.set(id, pending)
+  }
+
+  function untrackPendingRendererBinding(id: string, cancel: () => void): void {
+    const pending = pendingRendererBindingCancellations.get(id)
+    pending?.delete(cancel)
+    if (pending?.size === 0) {
+      pendingRendererBindingCancellations.delete(id)
+    }
+  }
+
+  function cancelPendingRendererBindings(id?: string): void {
+    const pending = id
+      ? [...(pendingRendererBindingCancellations.get(id) ?? [])]
+      : [...pendingRendererBindingCancellations.values()].flatMap((entries) => [...entries])
+    for (const cancel of pending) {
+      cancel()
+    }
+  }
 
   function unregisterPtyHandlers(id: string): void {
     unregisterPtyDataAndStatusHandlers(id)
@@ -593,6 +673,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       ptyExitHandlers.delete(id)
     }
     ownedExitHandlers.delete(id)
+    pendingIdentityExits = pendingIdentityExits.filter((exit) => exit.id !== id)
     if (ptyTeardownHandlers.get(id) === clearAccumulatedState) {
       ptyTeardownHandlers.delete(id)
     }
@@ -614,10 +695,11 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         ptyWriteUnavailableHandlers.delete(id)
       }
     }
+    releasePtyRendererHandlerClaim(id, owned?.claim)
     ownedDataAndReplayHandlers.delete(id)
   }
 
-  function registerPtyDataHandler(id: string): void {
+  function registerPtyDataHandler(id: string, rendererClaim?: PtyRendererHandlerClaim): boolean {
     // Why: route relay replay data through onReplayData so the replay guard stops xterm auto-replies from leaking into the shell.
     const replayHandler = (data: string): void => {
       if (ptyId !== id) {
@@ -629,7 +711,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         storedCallbacks.onData?.(data)
       }
     }
-    ptyReplayHandlers.set(id, replayHandler)
     const dataHandler = (data: string, meta?: PtyDataMeta): void => {
       if (ptyId !== id) {
         return
@@ -643,6 +724,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         meta
       )
     }
+    if (!claimPtyRendererHandlers(id, rendererClaim)) {
+      return false
+    }
+    ptyReplayHandlers.set(id, replayHandler)
     ptyDataHandlers.set(id, dataHandler)
     // Guard like the data/replay handlers: a transport that rebinds to a new id without
     // detaching leaves this entry behind, and a fan-out for the stale id would otherwise
@@ -656,12 +741,14 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     ownedDataAndReplayHandlers.set(id, {
       data: dataHandler,
       replay: replayHandler,
-      writeUnavailable
+      writeUnavailable,
+      ...(rendererClaim ? { claim: rendererClaim } : {})
     })
     if (!isPtyDataHandlerShutdownPending(id)) {
       drainPreHandlerPtyData(id, dataHandler)
       drainRolledBackPtyShutdownData(id)
     }
+    return true
   }
 
   function clearAccumulatedState(): void {
@@ -678,7 +765,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     return new Promise((resolve) => setTimeout(resolve, 0))
   }
 
-  async function writeAcceptedPtyInput(id: string, data: string): Promise<boolean> {
+  async function writeAcceptedPtyInput(
+    target: PtyMutationBindingTarget,
+    data: string
+  ): Promise<boolean> {
     try {
       const tooLarge = isTerminalInputTooLargeWithDeferredMeasurement(data)
       if (typeof tooLarge === 'boolean' ? tooLarge : await tooLarge) {
@@ -687,10 +777,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       const chunks = iterateTerminalInputChunks(data)
       let chunk = chunks.next()
       while (!chunk.done) {
-        if (!connected || ptyId !== id) {
+        if (!connected || ptyId !== target.id || !mutationAccess.isCurrentTarget(target)) {
           return false
         }
-        const accepted = await window.api.pty.writeAccepted(id, chunk.value)
+        const accepted = await mutationAccess.writeAcceptedTarget(target, chunk.value)
         if (!accepted) {
           return false
         }
@@ -705,17 +795,66 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     }
   }
 
+  function deliverPendingIdentityExits(id: string): void {
+    const pending = pendingIdentityExits.filter((exit) => exit.id === id)
+    pendingIdentityExits = pendingIdentityExits.filter((exit) => exit.id !== id)
+    for (const exit of pending) {
+      if (
+        ptyId !== id ||
+        ownedExitHandlers.get(id) !== exit.handler ||
+        ptyExitHandlers.get(id) !== exit.handler
+      ) {
+        continue
+      }
+      exit.handler(exit.code, exit.incarnationId)
+      if (ptyId !== id) {
+        return
+      }
+    }
+  }
+
   function registerPtyExitHandler(id: string): boolean {
     const hadBufferedExit = hasPreHandlerPtyExit(id)
-    const exitHandler = (code: number): void => {
+    let exitDelivered = false
+    let expectedIncarnationId = mutationAccess.currentIdentity(id)?.incarnationId
+    let acceptsLegacyExit = mutationAccess.isLegacyBinding(id)
+    const exitHandler = (code: number, incarnationId?: string): void => {
       if (ptyId !== null && ptyId !== id) {
         // Why: a preserved sleep/reconnect session can report its old exit after this transport already rebound to a replacement PTY.
         unregisterPtyHandlers(id)
         return
       }
+      if (!expectedIncarnationId && !acceptsLegacyExit) {
+        expectedIncarnationId = mutationAccess.currentIdentity(id)?.incarnationId
+        acceptsLegacyExit = mutationAccess.isLegacyBinding(id)
+      }
+      if (expectedIncarnationId) {
+        if (!incarnationId || incarnationId !== expectedIncarnationId) {
+          if (ownedExitHandlers.get(id) === exitHandler && ptyId === id) {
+            ptyExitHandlers.set(id, exitHandler)
+          }
+          return
+        }
+      } else if (!acceptsLegacyExit) {
+        if (pendingIdentityExits.length < 8) {
+          pendingIdentityExits.push({
+            id,
+            code,
+            ...(incarnationId ? { incarnationId } : {}),
+            handler: exitHandler
+          })
+        }
+        if (ownedExitHandlers.get(id) === exitHandler && ptyId === id) {
+          ptyExitHandlers.set(id, exitHandler)
+        }
+        return
+      }
+      exitDelivered = true
+      cancelPendingRendererBindings(id)
       clearAccumulatedState()
       connected = false
       ptyId = null
+      mutationAccess.release()
       unregisterPtyHandlers(id)
       storedCallbacks.onExit?.(code)
       storedCallbacks.onDisconnect?.()
@@ -735,11 +874,12 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       // Why: a cleanup failure must not turn an already-delivered pre-attach exit into a connect rejection and fallback spawn.
       console.error('[pty] buffered pre-attach exit cleanup failed', error)
     }
-    return hadBufferedExit
+    return hadBufferedExit && exitDelivered
   }
 
   return {
     async connect(options) {
+      const attemptGeneration = (connectionAttemptGeneration += 1)
       storedCallbacks = options.callbacks
       ensurePtyDispatcher()
 
@@ -747,14 +887,25 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         return
       }
 
-      if (options.sessionId && hasPreHandlerPtyExit(options.sessionId)) {
+      if (
+        paneGeneration === undefined &&
+        options.sessionId &&
+        hasPreHandlerPtyExit(options.sessionId)
+      ) {
         if (options.admitPtyId && !options.admitPtyId(options.sessionId)) {
           return { id: options.sessionId } satisfies PtyConnectResult
         }
         // Why: deliver the exited parked session's buffered final frame/exit before spawn, so the dead incarnation can't orphan a fresh shell reusing its id.
         ptyId = options.sessionId
         connected = true
-        registerPtyDataHandler(options.sessionId)
+        mutationAccess.bind(options.sessionId, { mode: 'legacy' })
+        if (!registerPtyDataHandler(options.sessionId)) {
+          connected = false
+          ptyId = null
+          mutationAccess.release()
+          storedCallbacks = {}
+          return { id: options.sessionId } satisfies PtyConnectResult
+        }
         registerPtyExitHandler(options.sessionId)
         return { id: options.sessionId, exitedBeforeAttach: true } satisfies PtyConnectResult
       }
@@ -769,10 +920,13 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         clearConsumedPreHandlerPtyExit(admittedSessionId)
       }
 
+      let cancelPendingRendererBinding: (() => void) | null = null
       try {
         // Why: cwd fallback is only for fresh local spawns — reattach keeps the session's cwd and SSH transports resolve cwd on the remote host.
         const shouldSendLocalCwdFallback =
           cwdFallback === 'worktree' && !connectionId && !admittedSessionId
+        const mutationClaimant =
+          paneGeneration !== undefined ? mutationAccess.prepareBinding() : undefined
         const result = await window.api.pty.spawn({
           cols: options.cols ?? 80,
           rows: options.rows ?? 24,
@@ -807,29 +961,102 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           worktreeId,
           ...(tabId ? { tabId } : {}),
           ...(leafId ? { leafId } : {}),
+          ...(paneGeneration !== undefined ? { tabGeneration: paneGeneration } : {}),
+          ...(mutationClaimant ? { mutationClaimant } : {}),
           ...(shellOverride ? { shellOverride } : {}),
           ...(projectRuntime ? { projectRuntime } : {}),
           ...(terminalColorQueryReplies ? { terminalColorQueryReplies } : {}),
           ...(telemetry ? { telemetry } : {})
         })
         const spawnResult = result as PtyConnectResult & { isReattach?: boolean }
+        const rendererBindingAccess = normalizePtyMutationAccess(
+          spawnResult.mutationAccess,
+          paneGeneration,
+          mutationClaimant
+        )
+        const rendererHandlerClaim =
+          paneGeneration !== undefined && mutationClaimant
+            ? {
+                paneGeneration,
+                claimant: mutationClaimant,
+                ...(rendererBindingAccess.mode === 'exact' ? { access: rendererBindingAccess } : {})
+              }
+            : undefined
+        let rendererBindingPending = Boolean(admittedSessionId && rendererHandlerClaim)
+        const cancelRendererBinding = (): void => {
+          if (!rendererBindingPending || !rendererHandlerClaim) {
+            return
+          }
+          rendererBindingPending = false
+          cancelPendingRendererBinding = null
+          untrackPendingRendererBinding(spawnResult.id, cancelRendererBinding)
+          window.api.pty.cancelRendererBinding?.({
+            id: spawnResult.id,
+            paneGeneration: rendererHandlerClaim.paneGeneration,
+            claimant: rendererHandlerClaim.claimant,
+            ...(rendererHandlerClaim.access ? { access: rendererHandlerClaim.access } : {})
+          })
+        }
+        const settleRendererBinding = (): void => {
+          if (!rendererBindingPending || !rendererHandlerClaim) {
+            return
+          }
+          rendererBindingPending = false
+          cancelPendingRendererBinding = null
+          untrackPendingRendererBinding(spawnResult.id, cancelRendererBinding)
+          if (rendererHandlerClaim.access) {
+            window.api.pty.rendererBindingReady?.({
+              id: spawnResult.id,
+              access: rendererHandlerClaim.access
+            })
+          } else {
+            window.api.pty.cancelRendererBinding?.({
+              id: spawnResult.id,
+              paneGeneration: rendererHandlerClaim.paneGeneration,
+              claimant: rendererHandlerClaim.claimant
+            })
+          }
+        }
+        cancelPendingRendererBinding = cancelRendererBinding
+        if (rendererBindingPending) {
+          trackPendingRendererBinding(spawnResult.id, cancelRendererBinding)
+        }
+        // Why: an older SSH attach may resolve last; clean only its result before it can clear the successor's shared binding.
+        if (destroyed || attemptGeneration !== connectionAttemptGeneration) {
+          cancelRendererBinding()
+          if (!spawnResult.isReattach && !spawnResult.coldRestore && spawnResult.id !== ptyId) {
+            await killPtyWithMutationIdentity(
+              spawnResult.id,
+              false,
+              rendererBindingAccess.mode === 'exact' ? rendererBindingAccess.identity : undefined
+            ).catch(() => {})
+          }
+          return undefined
+        }
+        mutationAccess.bind(spawnResult.id, spawnResult.mutationAccess, mutationClaimant)
         const resultLaunchAgent = isTuiAgent(spawnResult.launchAgent)
           ? spawnResult.launchAgent
           : undefined
         const retireFreshSpawn = async (): Promise<void> => {
-          if (!spawnResult.isReattach && !spawnResult.coldRestore) {
-            await window.api.pty.kill(spawnResult.id)
+          try {
+            if (!spawnResult.isReattach && !spawnResult.coldRestore) {
+              await mutationAccess.kill(spawnResult.id)
+            }
+          } finally {
+            mutationAccess.release()
           }
         }
 
         // Why: on destroy mid-connect, kill only a fresh spawn — killing a reattached session (owned by the tab lifecycle) loses a live shell.
         if (destroyed) {
+          cancelRendererBinding()
           await retireFreshSpawn()
           return
         }
 
         if (options.admitPtyId && !options.admitPtyId(spawnResult.id)) {
           // Why: a rejected session-expired fallback has no owner to retire its newly created process.
+          cancelRendererBinding()
           await retireFreshSpawn()
           return spawnResult
         }
@@ -845,13 +1072,34 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           onPtySpawn?.(spawnResult.id)
         }
 
-        registerPtyDataHandler(spawnResult.id)
+        if (!registerPtyDataHandler(spawnResult.id, rendererHandlerClaim)) {
+          cancelRendererBinding()
+          connected = false
+          ptyId = null
+          mutationAccess.release()
+          return spawnResult
+        }
         const exitedBeforeAttach = registerPtyExitHandler(spawnResult.id)
         if (exitedBeforeAttach) {
+          cancelRendererBinding()
           return { id: spawnResult.id, exitedBeforeAttach: true } satisfies PtyConnectResult
         }
         if (!connected || ptyId !== spawnResult.id) {
+          cancelRendererBinding()
           return undefined
+        }
+
+        const rendererBindingSettlement =
+          rendererBindingPending && rendererHandlerClaim?.access
+            ? Object.freeze({
+                id: spawnResult.id,
+                paneGeneration: rendererHandlerClaim.paneGeneration,
+                ready: settleRendererBinding,
+                cancel: cancelRendererBinding
+              })
+            : undefined
+        if (!rendererBindingSettlement) {
+          settleRendererBinding()
         }
 
         storedCallbacks.onConnect?.()
@@ -872,6 +1120,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             coldRestore: spawnResult.coldRestore,
             replay: spawnResult.replay,
             pendingEscapeTailAnsi: spawnResult.pendingEscapeTailAnsi,
+            ...(rendererBindingSettlement ? { rendererBindingSettlement } : {}),
             // Why: the cold-restore path re-runs the launch command, so it needs the
             // same "main declined the resume" signal the fresh-spawn path gets.
             ...(spawnResult.agentResumeUnavailable ? { agentResumeUnavailable: true as const } : {})
@@ -890,11 +1139,21 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             ...(spawnResult.startupCwdFallback
               ? { startupCwdFallback: spawnResult.startupCwdFallback }
               : {}),
-            ...(spawnResult.agentResumeUnavailable ? { agentResumeUnavailable: true as const } : {})
+            ...(spawnResult.agentResumeUnavailable
+              ? { agentResumeUnavailable: true as const }
+              : {}),
+            ...(rendererBindingSettlement ? { rendererBindingSettlement } : {})
           } satisfies PtyConnectResult
+        }
+        if (rendererBindingSettlement) {
+          return { id: spawnResult.id, rendererBindingSettlement } satisfies PtyConnectResult
         }
         return spawnResult.id
       } catch (err) {
+        cancelPendingRendererBinding?.()
+        if (destroyed || attemptGeneration !== connectionAttemptGeneration) {
+          return undefined
+        }
         const msg = extractIpcErrorMessage(err, err instanceof Error ? err.message : String(err))
         if (
           connectionId &&
@@ -927,6 +1186,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     },
 
     attach(options) {
+      connectionAttemptGeneration += 1
       storedCallbacks = options.callbacks
       ensurePtyDispatcher()
 
@@ -935,10 +1195,23 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
 
       const id = options.existingPtyId
+      const mutationClaimant =
+        paneGeneration !== undefined ? mutationAccess.prepareBinding() : undefined
       ptyId = id
       connected = true
       // Why: skip onPtySpawn — it would reset lastActivityAt and destroy the recency sort order reconnectPersistedTerminals preserved.
-      registerPtyDataHandler(id)
+      const rendererHandlerClaim =
+        paneGeneration !== undefined && mutationClaimant
+          ? { paneGeneration, claimant: mutationClaimant }
+          : undefined
+      if (!registerPtyDataHandler(id, rendererHandlerClaim)) {
+        connected = false
+        ptyId = null
+        mutationAccess.release()
+        storedCallbacks = {}
+        return
+      }
+      mutationAccess.bind(id, undefined, mutationClaimant)
       registerPtyExitHandler(id)
       if (!connected || ptyId !== id) {
         return
@@ -980,7 +1253,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
 
       if (options.cols && options.rows) {
-        window.api.pty.resize(id, options.cols, options.rows)
+        mutationAccess.resize(id, options.cols, options.rows)
       }
 
       storedCallbacks.onConnect?.()
@@ -988,11 +1261,16 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     },
 
     disconnect() {
+      connectionAttemptGeneration += 1
+      cancelPendingRendererBindings()
       clearAccumulatedState()
       inputWriteQueue.clear()
       if (ptyId) {
         const id = ptyId
-        window.api.pty.kill(id)
+        void mutationAccess
+          .kill(id)
+          .catch(() => {})
+          .finally(() => mutationAccess.release())
         connected = false
         ptyId = null
         unregisterPtyHandlers(id)
@@ -1001,9 +1279,11 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     },
 
     detach(options) {
+      connectionAttemptGeneration += 1
       // Why first: the successor transport owns the PTY after detach, and nothing below may
       // throw its way past the census drop — a stranded gauge outlives the transport.
       outputProcessor.disposePendingSideEffectGauge()
+      cancelPendingRendererBindings()
       clearAccumulatedState()
       inputWriteQueue.clear()
       if (ptyId) {
@@ -1016,37 +1296,62 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
       connected = false
       ptyId = null
+      mutationAccess.release()
       storedCallbacks = {}
     },
 
     sendInput(data: string): boolean {
-      if (!connected || !ptyId) {
+      const target = ptyId ? mutationAccess.captureTarget(ptyId) : null
+      if (!connected || !target) {
         return false
       }
-      return inputWriteQueue.enqueue(ptyId, data)
+      return inputWriteQueue.enqueue(target, data)
+    },
+
+    captureInputTarget,
+
+    isInputTargetCurrent(target): boolean {
+      return inputBindingForTarget(target) !== null
+    },
+
+    sendInputToTarget(target, data): boolean {
+      const binding = inputBindingForTarget(target)
+      return binding ? inputWriteQueue.enqueue(binding, data) : false
     },
 
     // Why: kept distinct from sendInput so the remote transport can override with flush-then-send (#7329); local queue drains same-turn.
     sendInputImmediate(data: string): boolean {
-      if (!connected || !ptyId) {
+      const target = ptyId ? mutationAccess.captureTarget(ptyId) : null
+      if (!connected || !target) {
         return false
       }
-      return inputWriteQueue.enqueue(ptyId, data)
+      return inputWriteQueue.enqueue(target, data)
     },
 
     ...(connectionId
       ? {}
       : {
           async sendInputAccepted(data: string): Promise<boolean> {
-            if (!connected || !ptyId) {
+            const target = ptyId ? mutationAccess.captureTarget(ptyId) : null
+            if (!connected || !target) {
               return false
             }
-            const id = ptyId
             await inputWriteQueue.waitForDrain()
-            if (!connected || ptyId !== id) {
+            if (!connected || ptyId !== target.id || !mutationAccess.isCurrentTarget(target)) {
               return false
             }
-            return writeAcceptedPtyInput(id, data)
+            return writeAcceptedPtyInput(target, data)
+          },
+          async sendInputAcceptedToTarget(
+            target: PtyTransportInputTarget,
+            data: string
+          ): Promise<boolean> {
+            const binding = inputBindingForTarget(target)
+            if (!binding) {
+              return false
+            }
+            await inputWriteQueue.waitForDrain()
+            return inputBindingForTarget(target) ? writeAcceptedPtyInput(binding, data) : false
           }
         }),
 
@@ -1054,21 +1359,30 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       if (!connected || !ptyId) {
         return false
       }
-      window.api.pty.claimViewport(ptyId, cols, rows)
-      return true
+      return mutationAccess.claimViewport(ptyId, cols, rows)
     },
 
     resize(cols: number, rows: number, meta): boolean {
       if (!connected || !ptyId) {
         return false
       }
-      if (meta?.claim) {
-        window.api.pty.resize(ptyId, cols, rows)
-        window.api.pty.claimViewport(ptyId, cols, rows)
-      } else {
-        window.api.pty.resize(ptyId, cols, rows)
+      return meta?.claim
+        ? mutationAccess.resize(ptyId, cols, rows, true)
+        : mutationAccess.resize(ptyId, cols, rows)
+    },
+
+    signal(signal: string): boolean {
+      if (!connected || !ptyId) {
+        return false
       }
-      return true
+      return mutationAccess.signal(ptyId, signal)
+    },
+
+    clearBuffer(): boolean {
+      if (!connected || !ptyId) {
+        return false
+      }
+      return mutationAccess.clearBuffer(ptyId)
     },
 
     isConnected() {
@@ -1077,6 +1391,14 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
 
     getPtyId() {
       return ptyId
+    },
+
+    getMutationIdentity() {
+      return ptyId ? (mutationAccess.currentIdentity(ptyId) ?? null) : null
+    },
+
+    hasMutationAccess() {
+      return ptyId !== null && mutationAccess.hasAccess(ptyId)
     },
 
     getConnectionId() {

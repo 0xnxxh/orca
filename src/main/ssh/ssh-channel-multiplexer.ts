@@ -291,9 +291,9 @@ export class SshChannelMultiplexer {
   /**
    * Send a JSON-RPC notification (no response expected).
    */
-  notify(method: string, params?: Record<string, unknown>): void {
+  notify(method: string, params?: Record<string, unknown>): boolean {
     if (this.disposed) {
-      return
+      return false
     }
 
     const msg: JsonRpcNotification = {
@@ -302,7 +302,7 @@ export class SshChannelMultiplexer {
       ...(params !== undefined ? { params } : {})
     }
 
-    this.sendMessage(msg)
+    return this.sendMessage(msg)
   }
 
   notifyWithSettlement(
@@ -409,11 +409,11 @@ export class SshChannelMultiplexer {
   private sendMessage(
     msg: JsonRpcMessage,
     onSettled?: (result: MultiplexerWriteSettlement) => void
-  ): void {
+  ): boolean {
     const seq = this.nextOutgoingSeq++
     const frame = encodeJsonRpcFrame(msg, seq, this.highestReceivedSeq)
     this.trackOutgoingTimestamp(seq, false)
-    this.writer.enqueue(frame, messageLane(msg), onSettled)
+    return this.writer.enqueue(frame, messageLane(msg), onSettled)
   }
 
   private sendKeepAlive(): void {

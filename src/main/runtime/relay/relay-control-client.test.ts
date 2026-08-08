@@ -115,7 +115,8 @@ describe('RelayControlClient', () => {
       identity: { userId: 'user-1', profileId: 'profile-1', organizationId: 'org-1' },
       keypair: {
         ...keypair,
-        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       appVersion: '1.2.3',
       onConnectionOpen: vi.fn(),
@@ -145,7 +146,8 @@ describe('RelayControlClient', () => {
       identity: { userId: 'user-1', profileId: 'profile-1', organizationId: 'org-1' },
       keypair: {
         ...keypair,
-        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       appVersion: '1.2.3',
       onConnectionOpen: vi.fn(),
@@ -177,7 +179,8 @@ describe('RelayControlClient', () => {
     const keypair: E2EEKeypair = {
       publicKey: hostKeys.publicKey,
       secretKey: hostKeys.secretKey,
-      publicKeyB64: Buffer.from(hostKeys.publicKey).toString('base64')
+      publicKeyB64: Buffer.from(hostKeys.publicKey).toString('base64'),
+      installationId: 'fixture-installation-0001'
     }
     const relayHostId = createHash('sha256')
       .update(hostKeys.publicKey)
@@ -415,7 +418,8 @@ function scriptedControl(options: { closeWithAck?: boolean; issuedAtOffsetMs?: n
   const keypair: E2EEKeypair = {
     publicKey: hostKeys.publicKey,
     secretKey: hostKeys.secretKey,
-    publicKeyB64: Buffer.from(hostKeys.publicKey).toString('base64')
+    publicKeyB64: Buffer.from(hostKeys.publicKey).toString('base64'),
+    installationId: 'fixture-installation-0001'
   }
   const origin = 'http://relay.test'
   const relayHostId = createHash('sha256')

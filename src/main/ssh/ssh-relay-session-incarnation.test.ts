@@ -10,10 +10,14 @@ const { acceptOutputExitMock, muxRequestMock } = vi.hoisted(() => ({
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
 vi.mock('./ssh-pty-consumer-session', () => ({
   openSshPtyConsumerSession: vi.fn(async (_mux, options) => ({
-    clientInstanceId: options.clientInstanceId,
-    clientGeneration: 1,
-    ownerGeneration: 1,
-    ownerLease: 'test-owner-lease'
+    state: {
+      mode: 'negotiated' as const,
+      clientInstanceId: options.clientInstanceId,
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'test-owner-lease'
+    },
+    resumed: options.resume !== undefined
   }))
 }))
 vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
@@ -67,6 +71,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),

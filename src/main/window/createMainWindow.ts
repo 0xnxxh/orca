@@ -58,6 +58,7 @@ import { closeDashboardPopout } from './dashboard-popout-window'
 import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
 import { isMacosTahoeOrNewer } from './macos-tahoe-release'
 import { registerPluginPanelNavigationGuard } from '../plugins/plugin-panel-navigation-guard'
+import { registerMainWindowClosedCleanup } from './main-window-lifecycle'
 
 // Why: show/restore/resume can overlap before the size nudge resets; never capture the temporary width as the next baseline.
 const activeRepaintJiggles = new WeakSet<BrowserWindow>()
@@ -150,7 +151,7 @@ function installMacosVisibilityRepaint(window: BrowserWindow): void {
       window.webContents.invalidate()
     }
   })
-  window.on('closed', () => {
+  registerMainWindowClosedCleanup(window, () => {
     clearDelayedRepaint()
     ipcMain.removeListener('ui:window-revealed', onRendererRevealed)
   })
@@ -1118,7 +1119,7 @@ export function createMainWindow(
 
   ipcMain.on(confirmCloseChannel, onConfirmClose)
   ipcMain.on(closeRequestReceivedChannel, onCloseRequestReceived)
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     // Why: the dashboard pop-out is a companion of the main window — close it
     // alongside so it never orphans as a lone window after the app window is
     // gone (e.g. on macOS where the app stays alive after the window closes).

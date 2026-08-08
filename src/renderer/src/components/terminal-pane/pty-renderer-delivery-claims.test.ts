@@ -40,6 +40,19 @@ describe('renderer PTY delivery claims', () => {
     expect(setHiddenRendererPty).toHaveBeenCalledTimes(2)
   })
 
+  it('does not retain a hidden claim when the first publication throws', () => {
+    setHiddenRendererPty.mockImplementationOnce(() => {
+      throw new Error('hidden publication failed')
+    })
+
+    expect(() => acquireHiddenRendererPtyDeliveryClaim(PTY_ID)).toThrow('hidden publication failed')
+    const release = acquireHiddenRendererPtyDeliveryClaim(PTY_ID)
+    expect(setHiddenRendererPty).toHaveBeenLastCalledWith(PTY_ID, true)
+
+    release()
+    expect(setHiddenRendererPty).toHaveBeenLastCalledWith(PTY_ID, false)
+  })
+
   it('does not let a retiring visible pane hide its replacement', () => {
     const oldPane = {}
     const newPane = {}

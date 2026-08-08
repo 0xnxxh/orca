@@ -1,10 +1,7 @@
 // Wire-level handshake helpers for the Orca relay.
 
-import { dirname, join } from 'node:path'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import type { Socket } from 'node:net'
 import {
-  RELAY_VERSION,
   MessageType,
   FrameDecoder,
   encodeHandshakeFrame,
@@ -12,46 +9,32 @@ import {
   type DecodedFrame
 } from './protocol'
 import { relayLogLine } from './relay-diagnostic-log'
+import {
+  CURRENT_RELAY_DAEMON_COMPATIBILITY,
+  negotiateRelayDaemonCompatibility,
+  relayDaemonGrantSatisfiesOffer,
+  type RelayDaemonCompatibilityOffer
+} from '../shared/relay-daemon-compatibility'
+import {
+  parseTerminalAuthorityEndpointIdentity,
+  sameTerminalAuthorityEndpointIdentity,
+  type SshTerminalAuthorityEndpointIdentity
+} from '../shared/ssh-terminal-authority-marker'
 
 // Why: clients treat this exit code as non-retryable; other non-zero exits are transient.
 export const EXIT_CODE_VERSION_MISMATCH = 42
 
-// Why: read .version beside the resolved script path, not the arbitrary launch cwd.
-export function readLaunchVersion(): string {
-  try {
-    const entry = process.argv[1]
-    let dir: string
-    if (entry) {
-      let resolved = entry
-      try {
-        resolved = realpathSync(entry)
-      } catch {
-        /* fall back to the unresolved path */
-      }
-      dir = dirname(resolved)
-    } else {
-      dir = process.cwd()
-    }
-    const versionFile = join(dir, '.version')
-    if (existsSync(versionFile)) {
-      const v = readFileSync(versionFile, 'utf-8').trim()
-      if (v) {
-        return v
-      }
-    }
-  } catch {
-    /* fall through */
-  }
-  return RELAY_VERSION
-}
-
 // ── Daemon side ─────────────────────────────────────────────────────
+
+export type DaemonHandshakeClientRole = 'relay' | 'terminal-authority'
 
 export type DaemonHandshakeCallbacks = {
   // leftover: bytes buffered after the handshake frame; caller must feed the dispatcher before attaching the data listener or they're lost.
-  onAccepted: (sock: Socket, leftover: Buffer) => void
+  onAccepted: (sock: Socket, leftover: Buffer, clientRole: DaemonHandshakeClientRole) => void
   launchVersion: string
   endpointCredential?: string
+  compatibility?: RelayDaemonCompatibilityOffer
+  authorityIdentity?: SshTerminalAuthorityEndpointIdentity
 }
 
 // Why: read one handshake frame before attaching the dispatcher; version mismatch closes the socket so the bridge exits 42.
@@ -62,17 +45,19 @@ export function setupDaemonHandshake(sock: Socket, cb: DaemonHandshakeCallbacks)
       if (handshakeResolved) {
         return
       }
-      const accepted = handleDaemonHandshakeFrame(
+      const clientRole = handleDaemonHandshakeFrame(
         sock,
         frame,
         cb.launchVersion,
-        cb.endpointCredential
+        cb.endpointCredential,
+        cb.authorityIdentity ? (cb.compatibility ?? CURRENT_RELAY_DAEMON_COMPATIBILITY) : undefined,
+        cb.authorityIdentity
       )
-      if (accepted) {
+      if (clientRole) {
         handshakeResolved = true
         const leftover = decoder.drain()
         detachHandshakeListener(sock)
-        cb.onAccepted(sock, leftover)
+        cb.onAccepted(sock, leftover, clientRole)
       }
     },
     (err) => {
@@ -101,14 +86,16 @@ function handleDaemonHandshakeFrame(
   sock: Socket,
   frame: DecodedFrame,
   launchVersion: string,
-  endpointCredential?: string
-): boolean {
+  endpointCredential: string | undefined,
+  authorityCompatibility: RelayDaemonCompatibilityOffer | undefined,
+  serverAuthorityIdentity: SshTerminalAuthorityEndpointIdentity | undefined
+): DaemonHandshakeClientRole | null {
   if (frame.type !== MessageType.Handshake) {
     process.stderr.write(
       `[relay] Protocol violation pre-handshake: type=${frame.type}; closing socket\n`
     )
     sock.destroy()
-    return false
+    return null
   }
   let msg: ReturnType<typeof parseHandshakeMessage>
   try {
@@ -116,30 +103,39 @@ function handleDaemonHandshakeFrame(
   } catch (err) {
     relayLogLine(`[relay] Could not parse handshake: ${(err as Error).message}; closing socket`)
     sock.destroy()
-    return false
+    return null
   }
   if (msg.type !== 'orca-relay-handshake') {
     relayLogLine(`[relay] Unexpected handshake type from client: ${msg.type}; closing socket`)
     sock.destroy()
-    return false
+    return null
   }
-  if (msg.version !== launchVersion) {
+  const authorityEndpoint = serverAuthorityIdentity !== undefined
+  const compatibility = authorityCompatibility
+    ? negotiateRelayDaemonCompatibility(authorityCompatibility, msg.compatibility)
+    : null
+  const versionMatches = msg.version === launchVersion
+  if (
+    (!versionMatches && !compatibility) ||
+    (authorityEndpoint && (!endpointCredential || !compatibility))
+  ) {
     relayLogLine(
-      `[relay] Handshake mismatch: own=${launchVersion}, client=${msg.version}; closing socket`
+      `[relay] Handshake mismatch: own=${launchVersion}, client=${msg.version}, compatible=${Boolean(compatibility)}; closing socket`
     )
     try {
       sock.write(
         encodeHandshakeFrame({
           type: 'orca-relay-handshake-mismatch',
           expected: launchVersion,
-          got: msg.version
+          got: msg.version,
+          reason: versionMatches ? 'protocol' : 'build'
         })
       )
     } catch {
       /* best-effort — close+exit-42 still wins */
     }
     sock.end()
-    return false
+    return null
   }
   if (
     endpointCredential !== undefined &&
@@ -147,11 +143,47 @@ function handleDaemonHandshakeFrame(
   ) {
     relayLogLine('[relay] Endpoint credential mismatch; closing socket')
     sock.destroy()
-    return false
+    return null
   }
-  process.stderr.write(`[relay] Handshake OK from version=${msg.version}\n`)
-  sock.write(encodeHandshakeFrame({ type: 'orca-relay-handshake-ok', version: launchVersion }))
-  return true
+  const authorityExpectation =
+    msg.authorityExpectation === undefined
+      ? null
+      : parseTerminalAuthorityEndpointIdentity(msg.authorityExpectation)
+  const authorityMatches = serverAuthorityIdentity
+    ? Boolean(
+        authorityExpectation &&
+        sameTerminalAuthorityEndpointIdentity(serverAuthorityIdentity, authorityExpectation)
+      )
+    : msg.authorityExpectation === undefined
+  if (!authorityMatches) {
+    relayLogLine('[relay] Terminal authority endpoint identity mismatch; closing socket')
+    try {
+      sock.write(
+        encodeHandshakeFrame({
+          type: 'orca-relay-handshake-mismatch',
+          expected: launchVersion,
+          got: msg.version,
+          reason: 'authority'
+        })
+      )
+    } catch {
+      /* best-effort */
+    }
+    sock.end()
+    return null
+  }
+  process.stderr.write(
+    `[relay] Handshake OK from version=${msg.version}, protocol=${compatibility ? `${compatibility.major}.${compatibility.minor}` : 'legacy-exact'}\n`
+  )
+  sock.write(
+    encodeHandshakeFrame({
+      type: 'orca-relay-handshake-ok',
+      version: launchVersion,
+      ...(compatibility ? { compatibility } : {}),
+      ...(serverAuthorityIdentity ? { authorityIdentity: serverAuthorityIdentity } : {})
+    })
+  )
+  return authorityEndpoint ? 'terminal-authority' : 'relay'
 }
 
 // ── --connect side ──────────────────────────────────────────────────
@@ -166,7 +198,8 @@ export function runConnectHandshake(
   sock: Socket,
   myVersion: string,
   cb: ConnectHandshakeCallbacks,
-  endpointCredential?: string
+  endpointCredential?: string,
+  authorityExpectation?: SshTerminalAuthorityEndpointIdentity
 ): void {
   let handshakeDone = false
 
@@ -193,6 +226,40 @@ export function runConnectHandshake(
         process.exit(1)
       }
       if (msg.type === 'orca-relay-handshake-ok') {
+        const compatibleAuthority = Boolean(
+          authorityExpectation &&
+          msg.compatibility !== undefined &&
+          relayDaemonGrantSatisfiesOffer(msg.compatibility, CURRENT_RELAY_DAEMON_COMPATIBILITY)
+        )
+        if (
+          (authorityExpectation && msg.compatibility === undefined) ||
+          (msg.compatibility !== undefined &&
+            !relayDaemonGrantSatisfiesOffer(msg.compatibility, CURRENT_RELAY_DAEMON_COMPATIBILITY))
+        ) {
+          process.stderr.write('[relay-connect] Daemon returned an incompatible protocol grant\n')
+          sock.destroy()
+          process.exit(1)
+        }
+        if (msg.version !== myVersion && !compatibleAuthority) {
+          process.stderr.write('[relay-connect] Daemon accepted a different build\n')
+          sock.destroy()
+          process.exit(1)
+        }
+        const authorityIdentity =
+          msg.authorityIdentity === undefined
+            ? null
+            : parseTerminalAuthorityEndpointIdentity(msg.authorityIdentity)
+        const authorityMatches = authorityExpectation
+          ? Boolean(
+              authorityIdentity &&
+              sameTerminalAuthorityEndpointIdentity(authorityExpectation, authorityIdentity)
+            )
+          : msg.authorityIdentity === undefined
+        if (!authorityMatches) {
+          process.stderr.write('[relay-connect] Daemon returned a different authority identity\n')
+          sock.destroy()
+          process.exit(1)
+        }
         process.stderr.write(`[relay-connect] Handshake OK at version=${msg.version}\n`)
         handshakeDone = true
         const leftover = decoder.drain()
@@ -232,7 +299,9 @@ export function runConnectHandshake(
     encodeHandshakeFrame({
       type: 'orca-relay-handshake',
       version: myVersion,
-      ...(endpointCredential ? { endpointCredential } : {})
+      ...(endpointCredential ? { endpointCredential } : {}),
+      compatibility: CURRENT_RELAY_DAEMON_COMPATIBILITY,
+      ...(authorityExpectation ? { authorityExpectation } : {})
     })
   )
 }

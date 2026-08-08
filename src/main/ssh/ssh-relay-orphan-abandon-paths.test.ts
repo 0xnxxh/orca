@@ -4,12 +4,18 @@ import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixt
 
 const { muxRequestMock, openConsumerSessionMock } = vi.hoisted(() => ({
   muxRequestMock: vi.fn(),
-  openConsumerSessionMock: vi.fn(async (_mux: unknown, options: { clientInstanceId: string }) => ({
-    clientInstanceId: options.clientInstanceId,
-    clientGeneration: 1,
-    ownerGeneration: 1,
-    ownerLease: 'test-owner-lease'
-  }))
+  openConsumerSessionMock: vi.fn(
+    async (_mux: unknown, options: { clientInstanceId: string; resume?: unknown }) => ({
+      state: {
+        mode: 'negotiated' as const,
+        clientInstanceId: options.clientInstanceId,
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'test-owner-lease'
+      },
+      resumed: options.resume !== undefined
+    })
+  )
 }))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
@@ -69,6 +75,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn(),

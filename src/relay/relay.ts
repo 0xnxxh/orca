@@ -9,7 +9,8 @@
 // reconnects via `relay.js --connect`, bridging the new SSH channel's stdio to the existing relay's socket.
 
 import { createServer, createConnection, type Socket, type Server } from 'node:net'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { dirname, join } from 'node:path'
 import {
   unlinkSync,
   existsSync,
@@ -28,8 +29,13 @@ import {
   type DecodedFrame,
   type JsonRpcResponse
 } from './protocol'
-import { readLaunchVersion, runConnectHandshake, setupDaemonHandshake } from './relay-handshake'
-import { RelayDispatcher } from './dispatcher'
+import {
+  runConnectHandshake,
+  setupDaemonHandshake,
+  type DaemonHandshakeClientRole
+} from './relay-handshake'
+import { readLaunchVersion } from './relay-launch-version'
+import { RelayDispatcher, type RelayClientSessionIdentity } from './dispatcher'
 import { RelayContext, expandTilde } from './context'
 import { PtyHandler } from './pty-handler'
 import { FsHandler } from './fs-handler'
@@ -48,10 +54,7 @@ import {
   AGENT_HOOK_REQUEST_REPLAY_METHOD
 } from '../shared/agent-hook-relay'
 import { publishAgentHookEnvelope } from './agent-hook-envelope-publication'
-import {
-  DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
-  SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD
-} from '../shared/ssh-types'
+import { SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD } from '../shared/ssh-types'
 import { assertPluginSourceUnderByteCap } from './plugin-source-limit'
 import { resolveOpenCodeSourceConfigDir, resolvePiSourceAgentDir } from './plugin-overlay-env'
 import {
@@ -63,7 +66,9 @@ import { pickRemoteCliEnv } from './remote-cli-env'
 import {
   applyRelayGraceTimeConfiguration,
   decideRelayGrace,
-  type RelayGraceBranch
+  mayDisposeRelayPtysForShutdown,
+  type RelayGraceBranch,
+  type RelayShutdownCause
 } from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
 import { remoteCliRequestTimeoutMs } from './remote-cli-timeout'
@@ -73,9 +78,44 @@ import { registerRelayPluginHostCallHandlers } from './plugin-host-call-handler'
 import { DispatcherClientWriter } from './dispatcher-client-writer'
 import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
 import { RelayPtySourcePublication } from './relay-pty-source-publication'
+import { claimTerminalAuthorityOwnership } from './terminal-authority-owner-marker'
+import { parseRelayStartupOptions } from './relay-startup-options'
+import {
+  terminalAuthorityEndpointIdentity,
+  type SshTerminalAuthorityEndpointIdentity,
+  type SshTerminalAuthorityMarker
+} from '../shared/ssh-terminal-authority-marker'
+import { connectTerminalAuthorityGateway } from './terminal-authority-gateway-connection'
+import { TerminalAuthorityGateway } from './terminal-authority-gateway'
+import { TerminalAuthorityControlClient } from './terminal-authority-control-client'
+import {
+  TERMINAL_AUTHORITY_ACQUIRE_WORKTREE_REMOVAL_METHOD,
+  TERMINAL_AUTHORITY_CONFIGURE_GRACE_TIME_METHOD,
+  TERMINAL_AUTHORITY_RELEASE_WORKTREE_REMOVAL_METHOD,
+  assertAuthenticatedTerminalAuthorityControl,
+  parseRelayGraceTimeSeconds,
+  parseTerminalAuthorityWorktreeRemovalParams
+} from './terminal-authority-control-protocol'
+import { configureAcknowledgedRelayGraceTime } from './relay-grace-time-coordinator'
+import { TerminalSessionAuthorityRegistry } from '../main/session-authority/terminal-session-authority-registry'
+import { TerminalSessionAuthorityPtyLifecycle } from '../main/session-authority/terminal-session-authority-pty-lifecycle'
+import { TerminalAuthorityTopologyPublisher } from './terminal-authority-topology-publisher'
+import { RemoteCliLauncherInstaller } from './remote-cli-launcher-installer'
+import { releaseRelayLaunchFence, type RelayLaunchFence } from './relay-launch-fence'
+import { LegacyPhysicalWorkerRegistry } from './legacy-physical-worker-registry'
+import { preserveLegacyPhysicalWorkerAuthorityRoutes } from './legacy-physical-worker-authority-preservation'
+import { legacyPhysicalWorkerRelayState } from './legacy-physical-worker-relay-state'
+import { LegacyPhysicalWorkerAuthorityHost } from './legacy-physical-worker-authority-host'
+import { LegacyPhysicalWorkerAuthorityRouter } from './legacy-physical-worker-authority-router'
+import { LegacyPhysicalWorkerDownstream } from './legacy-physical-worker-downstream'
+import { FileLegacyPtyProxyCursorRepository } from './legacy-pty-proxy-cursor-repository'
+import { LegacyRelayPostMigrationGc } from './legacy-relay-post-migration-gc'
+import { registerLegacyPhysicalWorkerControlSurface } from './legacy-physical-worker-control-surface'
+import type { TerminalLegacyGcProtection } from '../shared/terminal-legacy-cutover'
+import { mergeLegacyPhysicalWorkerGcProtection } from './legacy-physical-worker-gc-protection'
+import { RegistryTerminalAuthorityExactPtyAccessResolver } from './terminal-authority-exact-pty-access'
+import { terminalAuthorityRegistryOwnerTokenIsGone } from './terminal-authority-registry-owner-token'
 
-const DEFAULT_GRACE_MS = DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
-const SOCK_NAME = 'relay.sock'
 const CONNECT_TIMEOUT_MS = 5_000
 const STALE_SOCKET_PROBE_TIMEOUT_MS = 500
 const EMPTY_DETACHED_STARTUP_GRACE_MS = parseNonNegativeIntEnv(
@@ -121,67 +161,6 @@ function isWindowsNamedPipePath(sockPath: string): boolean {
   return process.platform === 'win32' && /^\\\\[.?]\\pipe\\/i.test(sockPath)
 }
 
-function parseArgs(argv: string[]): {
-  graceTimeMs: number
-  connectMode: boolean
-  detached: boolean
-  cliMode: boolean
-  sockPath: string
-  endpointDir?: string
-  logFile?: string
-  credentialFile?: string
-} {
-  let graceTimeMs = DEFAULT_GRACE_MS
-  let connectMode = false
-  let detached = false
-  let cliMode = false
-  let sockPath = ''
-  let endpointDir: string | undefined
-  let logFile: string | undefined
-  let credentialFile: string | undefined
-  for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === '--grace-time' && argv[i + 1]) {
-      const parsed = Number.parseInt(argv[i + 1], 10)
-      // Why: flag is seconds (internally ms); 0 keeps the relay alive until explicitly terminated for synced workspaces.
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        graceTimeMs = parsed * 1000
-      }
-      i++
-    } else if (argv[i] === '--connect') {
-      connectMode = true
-    } else if (argv[i] === '--orca-cli') {
-      cliMode = true
-    } else if (argv[i] === '--detached') {
-      detached = true
-    } else if (argv[i] === '--sock-path' && argv[i + 1]) {
-      sockPath = argv[i + 1]
-      i++
-    } else if (argv[i] === '--endpoint-dir' && argv[i + 1]) {
-      endpointDir = argv[i + 1]
-      i++
-    } else if (argv[i] === '--log-file' && argv[i + 1]) {
-      logFile = argv[i + 1]
-      i++
-    } else if (argv[i] === '--credential-file' && argv[i + 1]) {
-      credentialFile = argv[i + 1]
-      i++
-    }
-  }
-  if (!sockPath) {
-    sockPath = join(process.cwd(), SOCK_NAME)
-  }
-  return {
-    graceTimeMs,
-    connectMode,
-    detached,
-    cliMode,
-    sockPath,
-    endpointDir,
-    logFile,
-    credentialFile
-  }
-}
-
 function readEndpointCredential(credentialFile: string | undefined): string | undefined {
   if (!credentialFile) {
     return undefined
@@ -199,7 +178,12 @@ function readEndpointCredential(credentialFile: string | undefined): string | un
 // ── Connect mode ─────────────────────────────────────────────────────
 // Why: --connect bridges a new SSH channel's stdin/stdout to the existing relay's socket so the client keeps talking to the process that owns the live PTYs.
 
-function runConnectMode(sockPath: string, endpointCredential?: string): void {
+function runConnectMode(
+  sockPath: string,
+  endpointCredential?: string,
+  authorityExpectation?: SshTerminalAuthorityEndpointIdentity,
+  launchFence?: RelayLaunchFence
+): void {
   const myVersion = readLaunchVersion()
   const sock = createConnection({ path: sockPath })
   const stdoutWriter = new DispatcherClientWriter(
@@ -235,6 +219,16 @@ function runConnectMode(sockPath: string, endpointCredential?: string): void {
       myVersion,
       {
         onAccepted: (leftover: Buffer) => {
+          try {
+            releaseRelayLaunchFence(process.cwd(), launchFence)
+          } catch (error) {
+            process.stderr.write(
+              `[relay-connect] Launch fence release failed: ${error instanceof Error ? error.message : String(error)}\n`
+            )
+            sock.destroy()
+            process.exit(1)
+            return
+          }
           stdoutWriter.enqueue('control', () => Buffer.from(RELAY_SENTINEL), RELAY_SENTINEL.length)
           if (leftover.length > 0) {
             stdoutWriter.enqueue('control', () => leftover, leftover.length)
@@ -275,7 +269,8 @@ function runConnectMode(sockPath: string, endpointCredential?: string): void {
           })
         }
       },
-      endpointCredential
+      endpointCredential,
+      authorityExpectation
     )
   })
 
@@ -507,12 +502,18 @@ async function main(): Promise<void> {
     sockPath,
     endpointDir,
     logFile,
-    credentialFile
-  } = parseArgs(process.argv)
+    credentialFile,
+    terminalAuthority,
+    controlAdapter,
+    authorityOwner,
+    authorityConnectExpectation,
+    authorityGateway,
+    launchFence
+  } = parseRelayStartupOptions(process.argv)
   const endpointCredential = readEndpointCredential(credentialFile)
 
   if (connectMode) {
-    runConnectMode(sockPath, endpointCredential)
+    runConnectMode(sockPath, endpointCredential, authorityConnectExpectation, launchFence)
     return
   }
   if (cliMode) {
@@ -523,6 +524,30 @@ async function main(): Promise<void> {
       endpointCredential
     )
     return
+  }
+
+  let mayRemoveStaleSocket = authorityOwner === undefined
+  let terminalAuthorityMarker: SshTerminalAuthorityMarker | undefined
+  let terminalAuthorityReplacedMarker: SshTerminalAuthorityMarker | undefined
+  if (terminalAuthority && authorityOwner) {
+    if (!detached || !credentialFile) {
+      throw new Error('Terminal authority ownership requires detached mode and a credential')
+    }
+    const claim = await claimTerminalAuthorityOwnership({
+      ...authorityOwner,
+      ownerBuildId: readLaunchVersion(),
+      ownerRelayDir: process.cwd(),
+      socketPath: sockPath,
+      credentialFile
+    })
+    if (claim.status !== 'claimed') {
+      relayLogLine(`[relay] Terminal authority owner claim refused: ${claim.status}`)
+      process.exitCode = 43
+      return
+    }
+    terminalAuthorityMarker = claim.marker
+    terminalAuthorityReplacedMarker = claim.replacedMarker
+    mayRemoveStaleSocket = claim.mayRemoveStaleSocket
   }
 
   // Why: only the long-lived detached daemon accumulates relay.log; route it through a size-capped rotator so it can't grow forever.
@@ -636,6 +661,64 @@ async function main(): Promise<void> {
     { pauseReads: () => process.stdin.pause(), resumeReads: () => process.stdin.resume() }
   )
   const launchVersion = readLaunchVersion()
+  let terminalAuthorityGateway: TerminalAuthorityGateway | null = null
+  let terminalAuthorityControl: TerminalAuthorityControlClient | null = null
+  let terminalSessionAuthorityRegistry: TerminalSessionAuthorityRegistry | null = null
+  let terminalAuthorityTopologyPublisher: TerminalAuthorityTopologyPublisher | null = null
+  let terminalSessionAuthorityLifecycle: TerminalSessionAuthorityPtyLifecycle | undefined
+  let legacyPhysicalWorkerRegistry: LegacyPhysicalWorkerRegistry | null = null
+  let legacyPhysicalWorkerHost: LegacyPhysicalWorkerAuthorityHost | null = null
+  let legacyPhysicalWorkerStateDirectory: string | null = null
+  const terminateForTerminalAuthorityFailure = (error: Error): never => {
+    relayLogLine(`[relay] Terminal session authority failed: ${error.message}\n${error.stack}`)
+    cleanupOwnedSocket()
+    process.exit(1)
+  }
+  if (terminalAuthorityMarker && authorityOwner) {
+    const registryOwnerToken = terminalAuthorityMarker.registryWriterOwnerToken
+    if (!registryOwnerToken) {
+      throw new Error('Terminal authority registry owner proof is missing')
+    }
+    const takeoverOwnerToken = terminalAuthorityReplacedMarker?.registryWriterOwnerToken
+    terminalSessionAuthorityRegistry = await TerminalSessionAuthorityRegistry.open({
+      directory: join(authorityOwner.stateDir, 'session-authority'),
+      authorityHostId: terminalAuthorityMarker.authorityHostId,
+      ownerToken: registryOwnerToken,
+      ...(takeoverOwnerToken ? { takeoverOwnerToken } : {}),
+      writerClaimIsGone: terminalAuthorityRegistryOwnerTokenIsGone,
+      ownerIncarnationId: terminalAuthorityMarker.ownerInstanceId,
+      writerActorId: terminalAuthorityMarker.ownerInstanceId
+    })
+    terminalAuthorityTopologyPublisher = new TerminalAuthorityTopologyPublisher(
+      dispatcher,
+      terminalSessionAuthorityRegistry,
+      terminateForTerminalAuthorityFailure
+    )
+    legacyPhysicalWorkerRegistry = new LegacyPhysicalWorkerRegistry()
+    preserveLegacyPhysicalWorkerAuthorityRoutes(
+      legacyPhysicalWorkerRegistry,
+      terminalSessionAuthorityRegistry.legacy.projection().workers
+    )
+    legacyPhysicalWorkerHost = new LegacyPhysicalWorkerAuthorityHost(
+      legacyPhysicalWorkerRegistry,
+      terminalSessionAuthorityRegistry.legacy
+    )
+    legacyPhysicalWorkerStateDirectory = join(authorityOwner.stateDir, 'legacy-physical-workers')
+    const restoredWorkers = await legacyPhysicalWorkerHost.restoreAuthorityWorkers()
+    for (const worker of restoredWorkers) {
+      if (worker.status === 'unreachable') {
+        relayLogLine(
+          `[relay] Legacy physical worker ${worker.routeId} is unreachable: ${worker.reason ?? 'unknown'}`
+        )
+      }
+    }
+    terminalSessionAuthorityLifecycle = new TerminalSessionAuthorityPtyLifecycle(
+      terminalSessionAuthorityRegistry,
+      terminalAuthorityMarker.ownerInstanceId
+    )
+    await terminalSessionAuthorityLifecycle.start()
+  }
+  const terminalSessionAuthorityAdmitted = terminalSessionAuthorityLifecycle !== undefined
 
   const context = new RelayContext()
 
@@ -664,13 +747,114 @@ async function main(): Promise<void> {
     return { resolvedPath: expandTilde(inputPath) }
   })
 
-  const ptyHandler = new PtyHandler(dispatcher, graceTimeMs)
+  const ptyHandler = new PtyHandler(dispatcher, graceTimeMs, {
+    controlAdapter,
+    ...(terminalSessionAuthorityLifecycle
+      ? {
+          terminalSessionAuthority: terminalSessionAuthorityLifecycle,
+          terminalAuthorityExactPtyAccessResolver:
+            new RegistryTerminalAuthorityExactPtyAccessResolver(
+              terminalSessionAuthorityRegistry!,
+              terminalAuthorityMarker!.ownerInstanceId
+            ),
+          onTerminalSessionAuthorityFailure: terminateForTerminalAuthorityFailure
+        }
+      : {})
+  })
+  const removeTerminalSessionAuthorityHostEffectApplier = terminalSessionAuthorityLifecycle
+    ? terminalSessionAuthorityLifecycle.installHostEffectApplier({
+        ensureBindingRetired: (access, reason) =>
+          ptyHandler.ensureTerminalSessionAuthorityBindingRetired(access, reason)
+      })
+    : (): void => {}
   const ptyConsumerSessionAdapter = new SshPtyConsumerSessionAdapter(
     dispatcher,
     launchVersion,
-    (id, paused) => ptyHandler.setConsumerDeliveryPaused(id, paused),
-    (id) => ptyHandler.handleSourceCreditAvailable(id)
+    (id, paused, identity, heldPause) => {
+      if (heldPause) {
+        return ptyHandler.setConsumerHeldProducerPause(
+          id,
+          heldPause.incarnationId,
+          heldPause.token,
+          paused
+        )
+      }
+      ptyHandler.setConsumerDeliveryPaused(id, paused, identity)
+      return true
+    },
+    (id, identity) => ptyHandler.handleSourceCreditAvailable(id, identity),
+    {
+      ...(terminalAuthority ? { ownerScope: 'principal-client-instance' as const } : {}),
+      terminalAuthorityExactOperations: terminalSessionAuthorityLifecycle !== undefined,
+      ...(terminalSessionAuthorityLifecycle
+        ? {
+            terminalAuthorityOutcomeDelivery: false,
+            terminalAuthorityPolicyConsumers: terminalSessionAuthorityLifecycle,
+            terminalAuthorityConsumerProofHostId: terminalAuthorityMarker!.authorityHostId
+          }
+        : {})
+    }
   )
+  ptyHandler.setTerminalAuthorityPolicyConsumerForClient((clientId) =>
+    ptyConsumerSessionAdapter.terminalAuthorityPolicyConsumer(clientId)
+  )
+  if (
+    legacyPhysicalWorkerRegistry &&
+    legacyPhysicalWorkerHost &&
+    legacyPhysicalWorkerStateDirectory &&
+    authorityOwner &&
+    terminalAuthorityMarker
+  ) {
+    const physicalWorkerHost = legacyPhysicalWorkerHost
+    const physicalWorkerStateDirectory = legacyPhysicalWorkerStateDirectory
+    const authorityStateDirectory = authorityOwner.stateDir
+    const cursorRepository = await FileLegacyPtyProxyCursorRepository.open(
+      join(physicalWorkerStateDirectory, 'proxy-cursors.json')
+    )
+    const physicalWorkerRouter = new LegacyPhysicalWorkerAuthorityRouter({
+      registry: legacyPhysicalWorkerRegistry,
+      downstream: new LegacyPhysicalWorkerDownstream(dispatcher, ptyConsumerSessionAdapter),
+      cursors: cursorRepository,
+      ...(terminalSessionAuthorityLifecycle
+        ? {
+            recordExit: async (request, code) => {
+              await terminalSessionAuthorityLifecycle.recordImportedExit(
+                {
+                  worktreeId: request.worktreeId,
+                  pane: request.pane,
+                  binding: request.binding
+                },
+                code
+              )
+            }
+          }
+        : {}),
+      onWorkerFault: terminateForTerminalAuthorityFailure
+    })
+    ptyHandler.setLegacyPhysicalWorkerPtyRouter(physicalWorkerRouter)
+    const completeLegacyGcProtection = (): TerminalLegacyGcProtection =>
+      mergeLegacyPhysicalWorkerGcProtection([
+        physicalWorkerHost.gcProtection(),
+        Object.freeze({
+          relayDirectories: Object.freeze([]),
+          evidencePaths: Object.freeze([authorityStateDirectory])
+        })
+      ])
+    const physicalWorkerGc = await LegacyRelayPostMigrationGc.open({
+      directory: join(physicalWorkerStateDirectory, 'post-migration-gc'),
+      catalogRevision: () => physicalWorkerHost.catalogRevision(),
+      protection: completeLegacyGcProtection,
+      eligible: () => physicalWorkerHost.gcEligible(),
+      allowedRoots: [dirname(terminalAuthorityMarker.ownerRelayDir)]
+    })
+    registerLegacyPhysicalWorkerControlSurface({
+      dispatcher,
+      host: physicalWorkerHost,
+      gc: physicalWorkerGc,
+      hasActiveClient: (clientId) => ptyConsumerSessionAdapter.hasActiveClient(clientId),
+      protection: completeLegacyGcProtection
+    })
+  }
   const ptySourcePublication = new RelayPtySourcePublication(
     dispatcher,
     ptyConsumerSessionAdapter,
@@ -680,8 +864,46 @@ async function main(): Promise<void> {
   const fsHandler = new FsHandler(dispatcher, context)
   const watchRegistry = fsHandler.getWatchRegistry()
   ptyHandler.setWorktreeRemovalCoordinator(watchRegistry)
-  watchRegistry.setWorktreePtyTeardown((rootPath) => ptyHandler.shutdownForWorktreePath(rootPath))
+  watchRegistry.worktreeRemovalFence.setBeforeRemove((rootPath) =>
+    ptyHandler.shutdownForWorktreePath(rootPath)
+  )
   const gitHandler = new GitHandler(dispatcher, context, watchRegistry)
+
+  if (terminalAuthority) {
+    dispatcher.onRequest(
+      TERMINAL_AUTHORITY_CONFIGURE_GRACE_TIME_METHOD,
+      async (params, requestContext) => {
+        assertAuthenticatedTerminalAuthorityControl(requestContext)
+        const graceTimeSeconds = parseRelayGraceTimeSeconds(params)
+        return applyLocalRelayGraceTime(graceTimeSeconds)
+      }
+    )
+    dispatcher.onRequest(
+      TERMINAL_AUTHORITY_ACQUIRE_WORKTREE_REMOVAL_METHOD,
+      async (params, requestContext) => {
+        assertAuthenticatedTerminalAuthorityControl(requestContext)
+        const { leaseToken, rootPath } = parseTerminalAuthorityWorktreeRemovalParams(params)
+        await watchRegistry.worktreeRemovalFence.acquireConnectionLease(
+          rootPath,
+          leaseToken,
+          requestContext.clientId
+        )
+        return { leaseToken }
+      }
+    )
+    dispatcher.onRequest(
+      TERMINAL_AUTHORITY_RELEASE_WORKTREE_REMOVAL_METHOD,
+      async (params, requestContext) => {
+        assertAuthenticatedTerminalAuthorityControl(requestContext)
+        const { leaseToken } = parseTerminalAuthorityWorktreeRemovalParams(params)
+        watchRegistry.worktreeRemovalFence.releaseConnectionLease(
+          requestContext.clientId,
+          leaseToken
+        )
+        return { leaseToken }
+      }
+    )
+  }
 
   const _preflightHandler = new PreflightHandler(dispatcher)
   const _externalAutomationsHandler = new ExternalAutomationsHandler(dispatcher)
@@ -693,6 +915,9 @@ async function main(): Promise<void> {
 
   const _agentExecHandler = new AgentExecHandler(dispatcher)
   void _agentExecHandler
+
+  const _remoteCliLauncherInstaller = new RemoteCliLauncherInstaller(dispatcher)
+  void _remoteCliLauncherInstaller
 
   const _workspaceSessionHandler = new WorkspaceSessionHandler(dispatcher)
   void _workspaceSessionHandler
@@ -721,8 +946,8 @@ async function main(): Promise<void> {
     })
   })
 
-  function configureRelayGraceTime(params: Record<string, unknown>): { graceTimeMs: number } {
-    return applyRelayGraceTimeConfiguration(params.graceTimeSeconds, {
+  function applyLocalRelayGraceTime(graceTimeSeconds: unknown): { graceTimeMs: number } {
+    return applyRelayGraceTimeConfiguration(graceTimeSeconds, {
       readConfiguredGraceMs: () => ptyHandler.configuredGraceTimeMs,
       writeConfiguredGraceMs: (graceMs) => ptyHandler.setGraceTimeMs(graceMs),
       isGraceTimerArmed: () => graceDeadlineAt !== null && graceReason !== null,
@@ -733,11 +958,27 @@ async function main(): Promise<void> {
   }
 
   dispatcher.onNotification(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, (params) => {
-    configureRelayGraceTime(params)
+    // Split mode requires the request/response form so both processes acknowledge the same value.
+    if (!controlAdapter) {
+      applyLocalRelayGraceTime(params.graceTimeSeconds)
+    }
   })
-  dispatcher.onRequest(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, async (params) =>
-    configureRelayGraceTime(params)
-  )
+  dispatcher.onRequest(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, async (params) => {
+    return await configureAcknowledgedRelayGraceTime({
+      params,
+      configureControl: applyLocalRelayGraceTime,
+      ...(controlAdapter
+        ? {
+            configureAuthority: async (graceTimeSeconds: number) => {
+              if (!terminalAuthorityControl) {
+                throw new Error('Terminal authority gateway is unavailable')
+              }
+              return await terminalAuthorityControl.configureGraceTime(graceTimeSeconds)
+            }
+          }
+        : {})
+    })
+  })
 
   // ── Agent-hook server ─────────────────────────────────────────────
   // Why: loopback HTTP receiver so remote-PTY agent CLIs post hook events locally, forwarded to Orca as agent.hook notifications. See docs/design/agent-status-over-ssh.md §2-§5.
@@ -874,6 +1115,29 @@ async function main(): Promise<void> {
   // Why: only the idle branch is a "nothing left to preserve" bet, so only it may be revoked when a
   // PTY appears mid-window; the other branches keep their armed deadline.
   let graceBranch: RelayGraceBranch | null = null
+  if (controlAdapter) {
+    if (!authorityGateway) {
+      throw new Error('Control adapter requires an exact terminal authority gateway binding')
+    }
+    const connection = await connectTerminalAuthorityGateway(authorityGateway, launchVersion)
+    terminalAuthorityGateway = new TerminalAuthorityGateway(
+      dispatcher,
+      connection.mux,
+      (error) => {
+        relayLogLine(`[relay] Terminal authority gateway failed: ${error.message}`)
+        cleanupOwnedSocket()
+        process.exit(1)
+      },
+      connection.compatibility.capabilities
+    )
+    terminalAuthorityControl = new TerminalAuthorityControlClient(connection.mux)
+    watchRegistry.worktreeRemovalFence.setPeerAcquire((rootPath) => {
+      if (!terminalAuthorityControl) {
+        return Promise.reject(new Error('Terminal authority gateway is unavailable'))
+      }
+      return terminalAuthorityControl.acquireWorktreeRemoval(rootPath)
+    })
+  }
 
   dispatcher.onRequest('relay.status', async () => ({
     pid: process.pid,
@@ -882,7 +1146,10 @@ async function main(): Promise<void> {
     stdoutAlive,
     memory: process.memoryUsage(),
     ptys: {
-      active: ptyHandler.activePtyCount
+      active: ptyHandler.activePtyCount,
+      ...(legacyPhysicalWorkerRegistry
+        ? { legacyPhysicalWorkers: legacyPhysicalWorkerRegistry.lifecycleCounts() }
+        : {})
     },
     ptySourceCredit: {
       enabled: true,
@@ -913,7 +1180,11 @@ async function main(): Promise<void> {
     ptyHandler.cancelGraceTimer()
   }
 
-  function attachAcceptedSocket(sock: Socket, leftover: Buffer): void {
+  function attachAcceptedSocket(
+    sock: Socket,
+    leftover: Buffer,
+    clientRole: DaemonHandshakeClientRole
+  ): void {
     // Why: remove the initial stdin data listener once a socket client is accepted, so stale SSH-channel bytes can't interleave.
     process.stdin.pause()
     process.stdin.removeAllListeners('data')
@@ -936,6 +1207,22 @@ async function main(): Promise<void> {
     sock.on('drain', flushSockDrainWaiters)
     sock.on('close', flushSockDrainWaiters)
     sock.on('error', flushSockDrainWaiters)
+    const sessionIdentity: RelayClientSessionIdentity =
+      clientRole === 'terminal-authority' && terminalAuthorityMarker
+        ? {
+            principal: `terminal-authority:${terminalAuthorityMarker.authorityHostId}:${terminalAuthorityMarker.ownerInstanceId}:${terminalAuthorityMarker.revision}`,
+            authenticated: true,
+            allowSessionOwner: true,
+            authenticationKind: 'endpoint-credential'
+          }
+        : {
+            principal: endpointCredential
+              ? `relay-endpoint:v1:${createHash('sha256').update(endpointCredential).digest('base64url')}`
+              : `relay-unproved:${launchVersion}`,
+            authenticated: endpointCredential !== undefined,
+            allowSessionOwner: endpointCredential !== undefined,
+            authenticationKind: endpointCredential ? 'endpoint-credential' : 'unproved'
+          }
     const clientId = dispatcher.attachClient(
       (data, onSettled) => {
         if (!sock.destroyed) {
@@ -960,12 +1247,7 @@ async function main(): Promise<void> {
           return () => sockDrainWaiters.delete(cb)
         }
       },
-      {
-        principal: `relay-endpoint:${launchVersion}`,
-        authenticated: endpointCredential !== undefined,
-        allowSessionOwner: endpointCredential !== undefined,
-        authenticationKind: endpointCredential ? 'endpoint-credential' : 'unproved'
-      },
+      sessionIdentity,
       {
         pauseReads: () => sock.pause(),
         resumeReads: () => sock.resume()
@@ -990,6 +1272,9 @@ async function main(): Promise<void> {
       setupDaemonHandshake(sock, {
         launchVersion,
         endpointCredential,
+        ...(terminalAuthorityMarker
+          ? { authorityIdentity: terminalAuthorityEndpointIdentity(terminalAuthorityMarker) }
+          : {}),
         onAccepted: attachAcceptedSocket
       })
 
@@ -1093,6 +1378,10 @@ async function main(): Promise<void> {
           failInitial(err)
           return
         }
+        if (!mayRemoveStaleSocket) {
+          failInitial(err)
+          return
+        }
         if (isWindowsNamedPipePath(sockPath)) {
           failInitial(err)
           return
@@ -1154,6 +1443,7 @@ async function main(): Promise<void> {
   } catch {
     process.exit(1)
   }
+  releaseRelayLaunchFence(process.cwd(), launchFence)
 
   // ── stdin/stdout transport (initial connection) ─────────────────────
 
@@ -1168,22 +1458,33 @@ async function main(): Promise<void> {
     // Why: the live configured value, not the launch-time argv closure — the host can raise the grace
     // after launch via relay.configureGraceTime, and a zero-only gate reading a stale zero would be
     // zero-at-launch-only, i.e. correct only by coincidence.
+    const { protectedPtyCount, idle } = legacyPhysicalWorkerRelayState({
+      localActivePtyCount: ptyHandler.activePtyCount,
+      pendingPtyCreationCount: ptyHandler.pendingPtyCreationCount,
+      lifecycle: legacyPhysicalWorkerRegistry
+    })
     const decision = decideRelayGrace({
+      terminalSessionAuthorityAdmitted,
       configuredGraceMs: ptyHandler.configuredGraceTimeMs,
-      relayIdle: isRelayIdle(),
+      relayIdle: idle,
       detached,
       hasAcceptedSocketClient,
-      activePtyCount: ptyHandler.activePtyCount,
+      activePtyCount: protectedPtyCount,
       retryDeferredShutdown: options?.retryDeferredShutdown === true,
       emptyDetachedStartupGraceMs: EMPTY_DETACHED_STARTUP_GRACE_MS,
       idleRelayGraceMs: IDLE_RELAY_GRACE_MS
     })
+    if (!decision.armShutdown) {
+      cancelGrace(`terminal authority retained after ${reason}`)
+      relayLogLine(`[relay] Grace not armed (${reason}): terminal authority owns PTY lifecycle`)
+      return
+    }
     graceBranch = decision.branch
     const timeoutMs = decision.timeoutMs
     graceDeadlineAt = timeoutMs === 0 ? null : Date.now() + timeoutMs
     graceReason = reason
     relayLogLine(
-      `[relay] Grace started (${reason}): timeoutMs=${timeoutMs}, branch=${graceBranch}, ptys=${ptyHandler.activePtyCount}, clients=${socketClients.size}`
+      `[relay] Grace started (${reason}): timeoutMs=${timeoutMs}, branch=${graceBranch}, ptys=${protectedPtyCount}, clients=${socketClients.size}`
     )
     ptyHandler.startGraceTimer(() => {
       // Why: last line of defense for the idle cap — a PTY that appeared without announcing itself
@@ -1194,13 +1495,17 @@ async function main(): Promise<void> {
         return
       }
       relayLogLine(`[relay] Grace expired (${reason}); shutting down`)
-      shutdown()
+      shutdown('grace-expired')
     }, timeoutMs)
   }
 
   // Why: a creation admitted but not yet pooled already owns a shell, so it counts as non-idle.
   function isRelayIdle(): boolean {
-    return ptyHandler.activePtyCount === 0 && ptyHandler.pendingPtyCreationCount === 0
+    return legacyPhysicalWorkerRelayState({
+      localActivePtyCount: ptyHandler.activePtyCount,
+      pendingPtyCreationCount: ptyHandler.pendingPtyCreationCount,
+      lifecycle: legacyPhysicalWorkerRegistry
+    }).idle
   }
 
   if (detached) {
@@ -1233,10 +1538,23 @@ async function main(): Promise<void> {
   }
 
   let shutdownInFlight = false
-  function shutdown(): void {
+  let deferredShutdownCause: RelayShutdownCause | null = null
+  function shutdown(cause: RelayShutdownCause): void {
+    if (!mayDisposeRelayPtysForShutdown(terminalSessionAuthorityAdmitted, cause)) {
+      cancelGrace('terminal authority rejected grace shutdown')
+      relayLogLine('[relay] Grace expiry cannot terminate terminal-authority PTYs')
+      return
+    }
     if (shutdownInFlight) {
       return
     }
+    const legacyLifecycleHoldCount = legacyPhysicalWorkerRegistry?.lifecycleHoldCount ?? 0
+    if (legacyLifecycleHoldCount > 0) {
+      deferredShutdownCause = cause
+      relayLogLine(`[relay] Shutdown deferred: legacyPhysicalWorkers=${legacyLifecycleHoldCount}`)
+      return
+    }
+    deferredShutdownCause = null
     shutdownInFlight = true
     relayLogLine(
       `[relay] Shutdown: ptys=${ptyHandler.activePtyCount}, clients=${socketClients.size}, ownsSocket=${ownsSocketPath}`
@@ -1246,9 +1564,22 @@ async function main(): Promise<void> {
     graceBranch = null
     void ptyHandler
       .dispose()
-      .then(() => {
+      .then(async () => {
+        stopLegacyPhysicalWorkerWatch()
+        removeTerminalSessionAuthorityHostEffectApplier()
+        legacyPhysicalWorkerHost?.dispose()
+        legacyPhysicalWorkerRegistry?.dispose()
+        terminalAuthorityTopologyPublisher?.dispose()
+        try {
+          await terminalSessionAuthorityRegistry?.close()
+        } catch (error) {
+          terminateForTerminalAuthorityFailure(
+            error instanceof Error ? error : new Error(String(error))
+          )
+        }
         stopPoolWatch()
         stopPoolActiveWatch()
+        terminalAuthorityGateway?.dispose()
         dispatcher.dispose()
         fsHandler.dispose()
         gitHandler.dispose()
@@ -1270,7 +1601,7 @@ async function main(): Promise<void> {
         )
         // Why: shutdown() already cleared graceReason, so without re-arming a client-less relay
         // whose kill was refused would stay resident forever with nothing left to retry it.
-        if (socketClients.size === 0) {
+        if (!terminalSessionAuthorityAdmitted && socketClients.size === 0) {
           startGrace('shutdown deferred', { retryDeferredShutdown: true })
         }
       })
@@ -1297,8 +1628,20 @@ async function main(): Promise<void> {
     }
   })
 
-  process.on('SIGTERM', shutdown)
-  process.on('SIGINT', shutdown)
+  const stopLegacyPhysicalWorkerWatch =
+    legacyPhysicalWorkerRegistry?.onLifecycleChanged(() => {
+      const cause = deferredShutdownCause
+      if (cause && legacyPhysicalWorkerRegistry?.lifecycleHoldCount === 0) {
+        shutdown(cause)
+        return
+      }
+      if (graceReason !== null && !shutdownInFlight) {
+        startGrace('legacy physical worker lifecycle changed')
+      }
+    }) ?? (() => {})
+
+  process.on('SIGTERM', () => shutdown('administrative'))
+  process.on('SIGINT', () => shutdown('administrative'))
   // Why: default SIGHUP exits immediately, killing PTYs before grace; ignore it so the relay survives SSH disconnect.
   process.on('SIGHUP', () => {
     relayLogLine('[relay] Received SIGHUP (SSH session dropped), ignoring')

@@ -57,6 +57,13 @@ function getCachedRemoteWorkspaceSnapshot(targetId: string): RemoteWorkspaceSnap
   return snapshot
 }
 
+/** Latest observed remote session for a target; legacy migration reads it as evidence only. */
+export function getRemoteWorkspaceSnapshotForTarget(
+  targetId: string
+): RemoteWorkspaceSnapshot | undefined {
+  return getCachedRemoteWorkspaceSnapshot(targetId)
+}
+
 export function _resetRemoteWorkspaceCachesForTests(): void {
   latestSnapshotByTargetId.clear()
   remoteWorkspacePatchTailByTargetId.clear()
@@ -84,7 +91,7 @@ export function _rememberRemoteWorkspaceSnapshotForTests(
 export function _getRemoteWorkspaceSnapshotForTests(
   targetId: string
 ): RemoteWorkspaceSnapshot | undefined {
-  return getCachedRemoteWorkspaceSnapshot(targetId)
+  return getRemoteWorkspaceSnapshotForTarget(targetId)
 }
 
 function emptyRemoteSession(): RemoteWorkspaceSession {

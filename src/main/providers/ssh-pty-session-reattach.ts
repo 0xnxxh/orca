@@ -18,6 +18,11 @@ import {
   type PtySourceReceivingActivation
 } from '../../shared/pty-source-receiving-activation'
 import type { SshPtyReceivingActivationLease } from './ssh-pty-notification-routing'
+import { buildSshTerminalAuthorityAttachRequest } from './ssh-terminal-authority-attach-request'
+import {
+  parseTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
 
 export type SshPtyAttachResult = {
   replay?: string
@@ -25,6 +30,7 @@ export type SshPtyAttachResult = {
   sourceRecovery?: PtySourceRecoveryResult
   sourceActivation?: PtySourceReceivingActivation
   sourceActivationLease?: SshPtyReceivingActivationLease
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
 }
 
 type SshPtyReattachResult = PtySpawnResult & {
@@ -44,6 +50,7 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     incarnationId?: unknown
     sourceRecovery?: unknown
     sourceActivation?: unknown
+    terminalSessionAuthorityAccess?: unknown
   }
   if (result.replay !== undefined && typeof result.replay !== 'string') {
     throw new Error('Invalid SSH PTY attach replay')
@@ -54,6 +61,16 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
   }
   const sourceRecovery = parseSourceRecoveryResult(result.sourceRecovery)
   const sourceActivation = parsePtySourceReceivingActivation(result.sourceActivation)
+  const authorityAccess =
+    result.terminalSessionAuthorityAccess === undefined
+      ? null
+      : parseTerminalSessionAuthorityPtyAccess(result.terminalSessionAuthorityAccess)
+  if (
+    result.terminalSessionAuthorityAccess !== undefined &&
+    (!authorityAccess || authorityAccess.binding.ptyIncarnationId !== result.incarnationId)
+  ) {
+    throw new Error('Invalid SSH terminal authority attach identity')
+  }
   const activation =
     sourceActivation ?? (sourceRecovery?.status === 'pending' ? sourceRecovery : undefined)
   if (
@@ -68,7 +85,8 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     ...(typeof result.replay === 'string' ? { replay: result.replay } : {}),
     ...(isPtyIncarnationId(result.incarnationId) ? { incarnationId: result.incarnationId } : {}),
     ...(sourceRecovery ? { sourceRecovery } : {}),
-    ...(activation ? { sourceActivation: activation } : {})
+    ...(activation ? { sourceActivation: activation } : {}),
+    ...(authorityAccess ? { terminalSessionAuthorityAccess: authorityAccess } : {})
   }
 }
 
@@ -96,6 +114,12 @@ export async function requestSshPtyAttach(args: {
       beforeResolve: (value) => installFromResult(parseSshPtyAttachResult(value))
     })
     const result = parseSshPtyAttachResult(rawResult)
+    if (
+      result.terminalSessionAuthorityAccess &&
+      result.terminalSessionAuthorityAccess.binding.physicalPtyId !== args.relayPtyId
+    ) {
+      throw new Error('Invalid SSH terminal authority attach route')
+    }
     installFromResult(result)
     args.rememberPtyIncarnation?.(args.relayPtyId, result.incarnationId)
     if (args.commitSourceActivation) {
@@ -188,6 +212,17 @@ export async function reattachSshPtySession(args: {
     // Why: expected pane identity prevents a reused relay id from attaching the wrong shell.
     const expectedPaneKey = args.options.paneKey ?? args.options.env?.ORCA_PANE_KEY
     const expectedTabId = args.options.tabId ?? args.options.env?.ORCA_TAB_ID
+    const expected = {
+      ...(expectedPaneKey ? { paneKey: expectedPaneKey } : {}),
+      ...(expectedTabId ? { tabId: expectedTabId } : {}),
+      ...(args.options.worktreeId ? { worktreeId: args.options.worktreeId } : {}),
+      ...(args.options.paneGeneration !== undefined
+        ? { paneGeneration: args.options.paneGeneration }
+        : {}),
+      ...(args.options.expectedIncarnationId
+        ? { ptyIncarnationId: args.options.expectedIncarnationId }
+        : {})
+    }
     const attachResult = await requestSshPtyAttach({
       mux: args.mux,
       relayPtyId: relaySessionId,
@@ -197,7 +232,8 @@ export async function reattachSshPtySession(args: {
         rows: args.options.rows,
         suppressReplayNotification: true,
         ...(expectedPaneKey ? { expectedPaneKey } : {}),
-        ...(expectedTabId ? { expectedTabId } : {})
+        ...(expectedTabId ? { expectedTabId } : {}),
+        ...buildSshTerminalAuthorityAttachRequest(expected)
       },
       installSourceActivation: args.installSourceActivation,
       rememberPtyIncarnation: args.rememberPtyIncarnation
@@ -212,6 +248,9 @@ export async function reattachSshPtySession(args: {
       ...(attachResult.incarnationId ? { incarnationId: attachResult.incarnationId } : {}),
       ...(attachResult.sourceRecovery ? { sourceRecovery: attachResult.sourceRecovery } : {}),
       ...(attachResult.sourceActivation ? { sourceActivation: attachResult.sourceActivation } : {}),
+      ...(attachResult.terminalSessionAuthorityAccess
+        ? { terminalSessionAuthorityAccess: attachResult.terminalSessionAuthorityAccess }
+        : {}),
       ...(attachResult.sourceActivationLease
         ? { sourceActivationLease: attachResult.sourceActivationLease }
         : {})

@@ -9,6 +9,7 @@ import type { DeviceEntry } from '../runtime/device-registry'
 import { NETWORK_EXPOSURE_FAILED_GUIDANCE } from '../runtime/network-exposure-guidance'
 import { resolveAdvertisedPairingHostname } from '../runtime/pairing-endpoint'
 import type { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
+import type { E2EEIdentityResetStatus } from '../runtime/e2ee-identity-reset'
 import type { RelayBrokerStatus } from '../runtime/relay/relay-session-broker'
 import { encodeMobilePairingQr, type MobilePairingQrResult } from '../runtime/mobile-pairing-qr'
 import {
@@ -296,6 +297,16 @@ export function registerMobileHandlers(
       return { revoked: false }
     }
     return { revoked: rpcServer.revokeRuntimeAccess(args.deviceId) }
+  })
+
+  ipcMain.handle(
+    'mobile:getIdentityResetStatus',
+    (): E2EEIdentityResetStatus => rpcServer.getIdentityResetStatus()
+  )
+
+  ipcMain.handle('mobile:resetIdentity', async () => {
+    const result = await rpcServer.resetE2EEIdentity()
+    return { phase: result.phase, transactionId: result.transactionId }
   })
 
   ipcMain.handle('mobile:isWebSocketReady', () => {

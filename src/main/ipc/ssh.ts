@@ -30,8 +30,9 @@ import { isRuntimeOwnedSshTargetId } from '../../shared/execution-host'
 import { isAuthError } from '../ssh/ssh-connection-utils'
 import { createCancelledConnectAttemptError } from '../ssh/ssh-connect-attempt-cancellation'
 import { forceStopRelayForTarget } from '../ssh/ssh-relay-reset'
-import { isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
-import { toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
+import { toAppSshPtyId } from '../providers/ssh-pty-id'
+import { terminateListedSshTerminalSessions } from '../ssh/ssh-terminal-session-termination'
+import { prepareSshTerminalAuthorityExitWait } from '../ssh/ssh-terminal-authority-exit-wait'
 import { registerSshBrowseHandler } from './ssh-browse'
 import {
   getConnectionIdsForWorktree,
@@ -58,6 +59,7 @@ import {
   resetSshProviderAuthorities,
   rotateSshProviderAuthority
 } from '../ssh/ssh-provider-authority'
+import { getTerminalAuthorityConsumerProofKeypair } from '../session-authority/terminal-authority-consumer-proof-keypair'
 
 let sshStore: SshConnectionStore | null = null
 let connectionManager: SshConnectionManager | null = null
@@ -126,6 +128,13 @@ export async function disconnectRegisteredSshTarget(targetId: string): Promise<v
   await runTargetLifecycle(targetId, () =>
     teardownSshTargetTransport(targetId, (session) => session.detachAndPersist())
   )
+}
+
+/** Closes every live SSH transport after authenticated authority retirement commits. */
+export async function disconnectAllSshTargetsForIdentityReset(): Promise<void> {
+  const targetIds = [...activeSessions.keys()]
+  await Promise.all(targetIds.map((targetId) => disconnectRegisteredSshTarget(targetId)))
+  await connectionManager?.disconnectAll()
 }
 
 export async function removeRegisteredSshTarget(targetId: string): Promise<void> {
@@ -619,7 +628,13 @@ function registerPowerMonitorReconnect(): void {
   powerMonitorUnsubscribe?.()
   const onSuspend = (): void => {
     for (const session of activeSessions.values()) {
-      session.prepareForHostSleep()
+      void session.prepareForHostSleep().catch((error: unknown) => {
+        console.warn(
+          `[ssh] Failed to extend relay grace before suspend: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      })
     }
   }
   const onResume = (): void => {
@@ -1183,7 +1198,9 @@ export function registerSshHandlers(
       persistedStore!,
       portForwardManager!,
       currentRuntime,
-      broadcastDetectedPortsFromCurrentWindow
+      broadcastDetectedPortsFromCurrentWindow,
+      undefined,
+      getTerminalAuthorityConsumerProofKeypair()
     )
     configureRelaySessionCallbacks(session)
     activeSessions.set(targetId, session)
@@ -1280,59 +1297,40 @@ export function registerSshHandlers(
     await runTargetLifecycle(args.targetId, async () => {
       const provider = getSshPtyProvider(args.targetId)
       const leases = persistedStore!.getSshRemotePtyLeases(args.targetId)
-      const ptyIdsByRelayId = new Map<string, string>()
+      const trackedPtyIds = getPtyIdsForConnection(args.targetId)
       // Why: only leases the app still believes it owns may force a reconnect; 'expired' ones are
       // swept opportunistically because they can name a host that is gone for good (issue #2626).
-      const ownedRelayIds = new Set<string>()
-      const trackPtyId = (ptyId: string, owned: boolean): void => {
-        const relayPtyId = toRelaySshPtyId(args.targetId, ptyId)
-        if (!ptyIdsByRelayId.has(relayPtyId)) {
-          ptyIdsByRelayId.set(relayPtyId, toAppSshPtyId(args.targetId, ptyId))
-        }
-        if (owned) {
-          ownedRelayIds.add(relayPtyId)
-        }
-      }
-      for (const ptyId of getPtyIdsForConnection(args.targetId)) {
-        trackPtyId(ptyId, true)
-      }
-      for (const lease of leases) {
-        if (lease.state === 'terminated') {
-          continue
-        }
-        // Why: 'expired' records that reattach gave up, never that the remote shell died — those are
-        // precisely the orphans, so the user's terminate action has to be able to reach them.
-        trackPtyId(lease.ptyId, lease.state !== 'expired')
-      }
-      const ptyIds = Array.from(ptyIdsByRelayId, ([relayPtyId, appPtyId]) => ({
-        relayPtyId,
-        appPtyId
-      }))
-
-      if (ownedRelayIds.size > 0 && !provider) {
+      const hasOwnedPtys =
+        trackedPtyIds.length > 0 ||
+        leases.some((lease) => lease.state !== 'expired' && lease.state !== 'terminated')
+      if (hasOwnedPtys && !provider) {
         throw new Error(
           `${SSH_TERMINATE_RECONNECT_REQUIRED}: SSH relay is not connected; reconnect before terminating remote sessions.`
         )
       }
-      const shutdownResults = provider
-        ? await Promise.allSettled(
-            ptyIds.map(({ appPtyId }) =>
-              provider.shutdown(appPtyId, { immediate: true, keepHistory: false })
-            )
-          )
+      const terminations = provider
+        ? await terminateListedSshTerminalSessions({
+            targetId: args.targetId,
+            provider,
+            trackedPtyIds,
+            leases,
+            prepareAuthorityExitWait: (target) =>
+              prepareSshTerminalAuthorityExitWait(persistedStore!, target)
+          })
         : []
       const shutdownFailures: string[] = []
-      for (const [index, result] of shutdownResults.entries()) {
-        const { appPtyId, relayPtyId } = ptyIds[index]
-        if (result.status !== 'fulfilled' && !isSshPtyNotFoundError(result.reason)) {
-          shutdownFailures.push(
-            `${relayPtyId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`
-          )
+      for (const termination of terminations) {
+        if (termination.status !== 'terminated') {
+          const detail =
+            termination.status === 'acceptedPending'
+              ? 'terminal exit outcome is still pending'
+              : (termination.error?.message ?? termination.status)
+          shutdownFailures.push(`${termination.relayPtyId}: ${detail}`)
           continue
         }
-        clearProviderPtyState(appPtyId)
-        deletePtyOwnership(appPtyId)
-        persistedStore!.markSshRemotePtyLease(args.targetId, relayPtyId, 'terminated')
+        clearProviderPtyState(termination.appPtyId)
+        deletePtyOwnership(termination.appPtyId)
+        persistedStore!.markSshRemotePtyLease(args.targetId, termination.relayPtyId, 'terminated')
       }
       if (shutdownFailures.length > 0) {
         // Why: a failed relay shutdown can leave the remote process alive in the grace window; keep the lease/session so the user can retry.

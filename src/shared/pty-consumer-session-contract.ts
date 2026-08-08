@@ -1,3 +1,5 @@
+import type { TerminalAuthorityPolicyConsumerIdentity } from './terminal-session-authority-consumer-transport'
+
 export const PTY_CONSUMER_SESSION_PROTOCOL_VERSION = 1
 export const PTY_CONSUMER_OWNER_GRACE_MS = 30_000
 export const PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR = -32041
@@ -16,6 +18,7 @@ export const PTY_CONSUMER_OWNER_HELD_SELF_ERROR = -32046
 // Why: a disconnected incumbent keeps at most this much of its remaining grace once a different
 // owner-capable client asks, so admission converges inside one bounded retry instead of the full grace.
 export const PTY_CONSUMER_OWNER_HELD_GRACE_FLOOR_MS = 250
+export const PTY_CONSUMER_SCOPED_OWNER_LIMIT = 256
 
 // Why the grace floor needs this: shortening a grace is only safe against an owner the relay has
 // evidence is gone, and that evidence exists only where the transport ended on the peer's side. A
@@ -37,6 +40,28 @@ export type PtyConsumerSessionHello = {
       versions: number[]
       requestedWindowSu: number
     }
+    exactOperations?: {
+      versions: number[]
+    }
+    heldProducerPause?: {
+      versions: number[]
+    }
+    terminalAuthorityExactOperations?: {
+      versions: number[]
+    }
+    terminalAuthorityOutcomeDelivery?: {
+      versions: number[]
+    }
+    terminalAuthorityNamespaceOutcomes?: {
+      versions: number[]
+      consumer: TerminalAuthorityPolicyConsumerIdentity
+      expectedConsumerIncarnationId: string | null
+    }
+    terminalAuthorityConsumerProof?: {
+      versions: number[]
+      retirementVersions?: number[]
+    }
+    terminalAuthorityTopology?: TerminalAuthorityTopologyCapabilityOffer
   }
 }
 
@@ -55,6 +80,28 @@ export type PtyConsumerSessionGrant = {
       version: 1
       windowSu: number
     }
+    exactOperations?: {
+      version: 1
+    }
+    heldProducerPause?: {
+      version: 1
+    }
+    terminalAuthorityExactOperations?: {
+      version: 1
+    }
+    terminalAuthorityOutcomeDelivery?: {
+      version: 1
+    }
+    terminalAuthorityNamespaceOutcomes?: {
+      version: 1
+      consumer: TerminalAuthorityPolicyConsumerIdentity
+    }
+    terminalAuthorityConsumerProof?: {
+      version: 1
+      authorityHostId: string
+      retirementVersion?: 1
+    }
+    terminalAuthorityTopology?: TerminalAuthorityTopologyCapabilityGrant
   }
 }
 
@@ -85,7 +132,32 @@ export type PtyConsumerSessionOptions = {
     versions: readonly number[]
     maxWindowSu: number
   }
+  exactOperations?: {
+    versions: readonly number[]
+  }
+  heldProducerPause?: {
+    versions: readonly number[]
+  }
+  terminalAuthorityExactOperations?: {
+    versions: readonly number[]
+  }
+  terminalAuthorityOutcomeDelivery?: {
+    versions: readonly number[]
+  }
+  terminalAuthorityNamespaceOutcomes?: {
+    versions: readonly number[]
+  }
+  terminalAuthorityConsumerProof?: {
+    versions: readonly number[]
+    retirementVersions?: readonly number[]
+    authorityHostId: string
+  }
   ownerGraceMs?: number
+  ownerScope?: 'global' | 'principal-client-instance'
   now?: () => number
   createLease?: () => string
 }
+import type {
+  TerminalAuthorityTopologyCapabilityGrant,
+  TerminalAuthorityTopologyCapabilityOffer
+} from './terminal-authority-topology-stream-contract'

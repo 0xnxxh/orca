@@ -1,8 +1,15 @@
 /* oxlint-disable max-lines -- Why: history .catch() safety wiring spread across spawn/event-routing is tightly coupled to the adapter↔history lifecycle. */
 import { basename } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { DaemonClient } from './client'
+import { DaemonTerminalAuthorityAppHostTransport } from './daemon-terminal-authority-app-host-transport'
+import type { TerminalAuthorityConsumerProofKeypair } from '../session-authority/terminal-session-authority-consumer-proof'
+import type {
+  TerminalAuthorityAppAdmissionLocator,
+  TerminalAuthorityAppNamespaceAdmission
+} from '../session-authority/terminal-authority-app-outcome-host-contract'
 import {
   getMacDaemonSystemResolverHealth,
   parseDaemonPidFile,
@@ -40,7 +47,10 @@ import {
   GET_SIZE_PROTOCOL_VERSION,
   HISTORY_SEED_TRANSFER_PROTOCOL_VERSION,
   SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION,
-  STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION
+  STABLE_PANE_ATTACH_ONLY_DAEMON_PROTOCOL_VERSION,
+  supportsExactHeldProducerPause as protocolSupportsExactHeldProducerPause,
+  supportsExactPtyOperations as protocolSupportsExactPtyOperations,
+  supportsPtyStreamBinding
 } from './daemon-protocol-version'
 import {
   isAgentSessionClaimedSpawnResult,
@@ -52,6 +62,7 @@ import { cloneAgentSessionOwnerBinding } from '../../shared/claimed-agent-pty-ow
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
+  PtyHeldProducerPauseToken,
   PtyProviderBufferSnapshot,
   PtyProcessInfo,
   PtySpawnOptions,
@@ -63,11 +74,12 @@ import { resolveWslSessionContext } from './wsl-session-context'
 import { normalizeWslColdRestoreCwd } from './wsl-cold-restore-cwd'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
 import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-delivery'
-import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import { isPtyIncarnationId, type PtyIncarnationId } from '../../shared/pty-incarnation'
 import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { ColdRestorePayloadCache, type ColdRestorePayload } from './cold-restore-payload-cache'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
+import { isPtyHeldProducerPauseToken } from '../providers/pty-provider-contract'
 import {
   iterateTerminalHistorySeedChunks,
   measureTerminalHistorySeed,
@@ -84,11 +96,20 @@ import {
 } from './daemon-audit-classifier'
 import type { DaemonEvidenceSource, ExactDaemonIncarnation } from './daemon-incarnation-evidence'
 import { createDaemonAuditEligibilityTracker } from './daemon-audit-eligibility-event'
+import { DaemonPtyStreamBindingState } from './daemon-pty-stream-binding-state'
+import {
+  parseTerminalSessionAuthorityPtyAccess,
+  sameTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
+import { TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION } from '../../shared/terminal-session-authority-wire'
 
 type PendingDaemonSpawnOperation = {
   exitsBySessionId: Map<string, { incarnationId?: string }[]>
   ignoredExitIncarnationIds: Set<string>
   ignoreNextExit: boolean
+  terminalSessionAuthorityOperationId?: string
+  terminalSessionAuthorityMode?: 'legacy' | 'authority'
 }
 
 type HistoryRecoveryContext = {
@@ -124,6 +145,7 @@ export type DaemonPtyAdapterOptions = {
   pidPath?: string
   profileScope?: string
   protocolVersion?: number
+  terminalSessionAuthorityConsumerProofKeypair?: TerminalAuthorityConsumerProofKeypair
   /** Directory for disk-based terminal history; when set, raw PTY output is written to disk for cold restore on daemon crash. */
   historyPath?: string
   /** Forks a fresh daemon after endpoint death or a confirmed resolver-health replacement. */
@@ -167,6 +189,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private pidPath: string | null
   private pidRecord: ParsedDaemonPid | null
   private client: DaemonClient
+  private terminalSessionAuthorityConsumerProofKeypair: TerminalAuthorityConsumerProofKeypair | null
+  private terminalAuthorityAppAdmission:
+    | (TerminalAuthorityAppNamespaceAdmission & Readonly<{ dispose(): void }>)
+    | null = null
   private auditContext: DaemonAuditContext
   private lastAuthenticatedIdentity: DaemonEndpointIdentity | null = null
   private exactDaemonIncarnation: ExactDaemonIncarnation | null = null
@@ -187,6 +213,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private dataListeners: ((payload: {
     id: string
     data: string
+    incarnationId?: PtyIncarnationId
     sequenceChars?: number
     transformed?: boolean
     seq?: number
@@ -215,6 +242,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // A replacement daemon has none of the old PTYs; only createOrAttach can make their bindings writable again.
   private sessionsAwaitingDaemonRecovery = new Set<string>()
   private sessionIncarnations = new Map<string, string>()
+  private terminalSessionAuthorityAccessById = new Map<string, TerminalSessionAuthorityPtyAccess>()
+  private mutationRouteTokens = new Map<
+    string,
+    Readonly<{ incarnationId: string | undefined; token: object }>
+  >()
+  private readonly streamBindings = new DaemonPtyStreamBindingState()
   private pendingSpawnOperationsBySessionId = new Map<string, Set<PendingDaemonSpawnOperation>>()
   private pendingClaimSpawnOperations = new Set<PendingDaemonSpawnOperation>()
   private historySpawnLocks = new Map<string, Promise<void>>()
@@ -223,7 +256,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private sessionsNeedingFullCheckpoint = new Set<string>()
   private checkpointTimer: ReturnType<typeof setTimeout> | null = null
   private checkpointInFlight: Promise<void> | null = null
-  private keepHistoryShutdowns = new Set<Promise<void>>()
+  private keepHistoryShutdowns = new Set<Promise<boolean>>()
   private disconnectOnlyPromise: Promise<void> | null = null
   // Why: checkpoint persistence needs the getSnapshot RPC (v4+); legacy daemons reject it, spamming logs every 5s.
   private supportsCheckpoints: boolean
@@ -247,6 +280,62 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return this.protocolVersion >= GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION
   }
 
+  private supportsIncarnationExactPtyOperations(id: string): boolean {
+    if (!protocolSupportsExactPtyOperations(this.protocolVersion)) {
+      return false
+    }
+    const incarnationId = this.sessionIncarnations.get(id)
+    if (!incarnationId || !this.activeSessionIds.has(id)) {
+      return false
+    }
+    return (
+      !supportsPtyStreamBinding(this.protocolVersion) ||
+      this.streamBindings.admittedIncarnationId(id) === incarnationId
+    )
+  }
+
+  private supportsKnownIncarnationExactPtyOperations(id: string): boolean {
+    return (
+      protocolSupportsExactPtyOperations(this.protocolVersion) &&
+      this.activeSessionIds.has(id) &&
+      this.sessionIncarnations.has(id)
+    )
+  }
+
+  supportsExactPtyOperations(id: string): boolean {
+    if (
+      !this.client.supportsTerminalSessionAuthority() ||
+      !this.supportsIncarnationExactPtyOperations(id)
+    ) {
+      return false
+    }
+    const incarnationId = this.sessionIncarnations.get(id)
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (
+      !incarnationId ||
+      !authorityAccess ||
+      authorityAccess.binding.physicalPtyId !== id ||
+      authorityAccess.binding.ptyIncarnationId !== incarnationId
+    ) {
+      return false
+    }
+    return true
+  }
+  getPtyMutationMode(id: string): 'legacy' | 'exact' | 'unavailable' {
+    if (!this.client.supportsTerminalSessionAuthority()) {
+      return this.terminalSessionAuthorityAccessById.has(id) ? 'unavailable' : 'legacy'
+    }
+    return this.supportsExactPtyOperations(id) ? 'exact' : 'unavailable'
+  }
+
+  supportsExactHeldProducerPause(id: string, incarnationId: string): boolean {
+    return (
+      protocolSupportsExactHeldProducerPause(this.protocolVersion) &&
+      this.sessionIncarnations.get(id) === incarnationId &&
+      this.supportsIncarnationExactPtyOperations(id)
+    )
+  }
+
   canProvideAuthoritativeBufferSnapshot(_id: string): boolean {
     return this.supportsAuthoritativeBufferSnapshots
   }
@@ -259,6 +348,239 @@ export class DaemonPtyAdapter implements IPtyProvider {
       this.supportsAuthoritativeBufferSnapshots &&
       supportsMode2031UnsubscribeFact(this.protocolVersion)
     )
+  }
+
+  private async requestCreateOrAttach(
+    payload: Record<string, unknown>
+  ): Promise<CreateOrAttachResult> {
+    if (!supportsPtyStreamBinding(this.protocolVersion)) {
+      return await this.client.request<CreateOrAttachResult>('createOrAttach', payload)
+    }
+    const streamBindingNonce = randomUUID()
+    this.streamBindings.begin(streamBindingNonce)
+    try {
+      const result = await this.client.request<CreateOrAttachResult>('createOrAttach', {
+        ...payload,
+        streamBindingNonce
+      })
+      const requestedSessionId = payload.sessionId
+      const sessionId =
+        result.agentSessionEnsure?.owner.ptyId ??
+        (typeof requestedSessionId === 'string' ? requestedSessionId : '')
+      if (
+        !this.streamBindings.acceptResponse(
+          streamBindingNonce,
+          sessionId,
+          result.incarnationId,
+          result.streamBindingNonce
+        )
+      ) {
+        throw new Error('daemon_stream_binding_response_mismatch')
+      }
+      return result
+    } catch (error) {
+      this.streamBindings.cancel(streamBindingNonce)
+      throw error
+    }
+  }
+
+  private rememberCreateResultIncarnation(id: string, incarnationId: string | undefined): void {
+    this.rememberMutationRoute(id, incarnationId)
+    if (incarnationId && !supportsPtyStreamBinding(this.protocolVersion)) {
+      this.sessionIncarnations.set(id, incarnationId)
+    }
+  }
+
+  private rememberCreateResultAuthority(
+    id: string,
+    result: CreateOrAttachResult,
+    required: boolean
+  ): TerminalSessionAuthorityPtyAccess | null {
+    const authorityAccess =
+      result.terminalSessionAuthorityAccess === undefined
+        ? null
+        : parseTerminalSessionAuthorityPtyAccess(result.terminalSessionAuthorityAccess)
+    if (
+      !authorityAccess ||
+      authorityAccess.binding.physicalPtyId !== id ||
+      authorityAccess.binding.ptyIncarnationId !== result.incarnationId
+    ) {
+      if (required || result.terminalSessionAuthorityAccess !== undefined) {
+        throw new Error('daemon_terminal_session_authority_access_invalid')
+      }
+      this.terminalSessionAuthorityAccessById.delete(id)
+      return null
+    }
+    this.terminalSessionAuthorityAccessById.set(id, authorityAccess)
+    return authorityAccess
+  }
+
+  private async retireCreateResult(
+    id: string,
+    result: CreateOrAttachResult,
+    opts: { authorityRequired: boolean; immediate?: boolean }
+  ): Promise<void> {
+    const authorityAccess =
+      result.terminalSessionAuthorityAccess === undefined
+        ? null
+        : parseTerminalSessionAuthorityPtyAccess(result.terminalSessionAuthorityAccess)
+    if (
+      result.terminalSessionAuthorityAccess !== undefined &&
+      (!this.client.supportsTerminalSessionAuthority() ||
+        !authorityAccess ||
+        authorityAccess.binding.physicalPtyId !== id ||
+        authorityAccess.binding.ptyIncarnationId !== result.incarnationId)
+    ) {
+      throw new Error('daemon_terminal_session_authority_access_invalid')
+    }
+    if (opts.authorityRequired && !authorityAccess) {
+      throw new Error('daemon_terminal_session_authority_access_missing')
+    }
+    let accepted = true
+    if (authorityAccess) {
+      const response = await this.client.request<{ accepted: boolean }>('killAuthorityExact', {
+        sessionId: id,
+        authorityAccess,
+        immediate: opts.immediate === true
+      })
+      accepted = response.accepted === true
+    } else if (protocolSupportsExactPtyOperations(this.protocolVersion)) {
+      if (!isPtyIncarnationId(result.incarnationId)) {
+        throw new Error('daemon_exact_pty_identity_missing')
+      }
+      const response = await this.client.request<{ accepted: boolean }>('killExact', {
+        sessionId: id,
+        incarnationId: result.incarnationId,
+        immediate: opts.immediate === true
+      })
+      accepted = response.accepted === true
+    } else {
+      await this.client.request('kill', {
+        sessionId: id,
+        immediate: opts.immediate === true
+      })
+    }
+    if (!accepted) {
+      throw new Error('daemon_spawn_result_exact_kill_rejected')
+    }
+  }
+
+  private rememberListedSession(session: SessionInfo): {
+    mutationRouteToken: object
+    terminalSessionAuthorityAccess: TerminalSessionAuthorityPtyAccess | null
+  } {
+    const { sessionId, incarnationId } = session
+    if (incarnationId !== undefined && !isPtyIncarnationId(incarnationId)) {
+      throw new Error('invalid_pty_process_list')
+    }
+    const authorityAccess =
+      session.terminalSessionAuthorityAccess === undefined
+        ? null
+        : parseTerminalSessionAuthorityPtyAccess(session.terminalSessionAuthorityAccess)
+    if (
+      session.terminalSessionAuthorityAccess !== undefined &&
+      (!this.client.supportsTerminalSessionAuthority() ||
+        !authorityAccess ||
+        authorityAccess.binding.physicalPtyId !== sessionId ||
+        authorityAccess.binding.ptyIncarnationId !== incarnationId)
+    ) {
+      throw new Error('daemon_terminal_session_authority_access_invalid')
+    }
+    const rememberedAccess = this.terminalSessionAuthorityAccessById.get(sessionId)
+    if (!authorityAccess && rememberedAccess?.binding.ptyIncarnationId === incarnationId) {
+      throw new Error('daemon_terminal_session_authority_access_missing')
+    }
+    if (incarnationId) {
+      this.sessionIncarnations.set(sessionId, incarnationId)
+    } else {
+      this.sessionIncarnations.delete(sessionId)
+    }
+    if (authorityAccess) {
+      this.terminalSessionAuthorityAccessById.set(sessionId, authorityAccess)
+    } else {
+      this.terminalSessionAuthorityAccessById.delete(sessionId)
+    }
+    this.activeSessionIds.add(sessionId)
+    return {
+      mutationRouteToken: this.rememberMutationRoute(sessionId, incarnationId),
+      terminalSessionAuthorityAccess: authorityAccess
+    }
+  }
+
+  private async retireListedSession(
+    session: SessionInfo,
+    authorityAccess: TerminalSessionAuthorityPtyAccess | null
+  ): Promise<void> {
+    let accepted = true
+    if (authorityAccess) {
+      const result = await this.client.request<{ accepted: boolean }>('killAuthorityExact', {
+        sessionId: session.sessionId,
+        authorityAccess
+      })
+      accepted = result.accepted === true
+    } else if (protocolSupportsExactPtyOperations(this.protocolVersion)) {
+      if (!isPtyIncarnationId(session.incarnationId)) {
+        throw new Error('daemon_exact_pty_identity_missing')
+      }
+      const result = await this.client.request<{ accepted: boolean }>('killExact', {
+        sessionId: session.sessionId,
+        incarnationId: session.incarnationId
+      })
+      accepted = result.accepted === true
+    } else {
+      await this.client.request('kill', { sessionId: session.sessionId })
+    }
+    if (!accepted) {
+      throw new Error('daemon_reconcile_orphan_exact_kill_rejected')
+    }
+    this.activeSessionIds.delete(session.sessionId)
+    this.streamBindings.forget(session.sessionId, session.incarnationId)
+    this.sessionIncarnations.delete(session.sessionId)
+    this.terminalSessionAuthorityAccessById.delete(session.sessionId)
+    this.mutationRouteTokens.delete(session.sessionId)
+  }
+
+  private terminalSessionAuthorityAccessMatches(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    const parsed = parseTerminalSessionAuthorityPtyAccess(authorityAccess)
+    return Boolean(
+      parsed &&
+      this.client.supportsTerminalSessionAuthority() &&
+      this.activeSessionIds.has(id) &&
+      parsed.binding.physicalPtyId === id &&
+      parsed.binding.ptyIncarnationId === this.sessionIncarnations.get(id) &&
+      sameTerminalSessionAuthorityPtyAccess(
+        this.terminalSessionAuthorityAccessById.get(id) ?? null,
+        parsed
+      )
+    )
+  }
+
+  bindTerminalSessionAuthorityAccess(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    return this.terminalSessionAuthorityAccessMatches(id, authorityAccess)
+  }
+
+  getTerminalSessionAuthorityAccess(id: string): TerminalSessionAuthorityPtyAccess | null {
+    return this.terminalSessionAuthorityAccessById.get(id) ?? null
+  }
+
+  private rememberMutationRoute(id: string, incarnationId: string | undefined): object {
+    const existing = this.mutationRouteTokens.get(id)
+    if (incarnationId !== undefined && existing?.incarnationId === incarnationId) {
+      return existing.token
+    }
+    const token = Object.freeze({})
+    this.mutationRouteTokens.set(id, Object.freeze({ incarnationId, token }))
+    return token
+  }
+
+  getPtyMutationRouteToken(id: string): object | null {
+    return this.mutationRouteTokens.get(id)?.token ?? null
   }
 
   constructor(opts: DaemonPtyAdapterOptions) {
@@ -275,10 +597,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
       endpointKind: process.platform === 'win32' ? 'windows-named-pipe' : 'unix-socket',
       profileScope: opts.profileScope ?? ''
     }
+    this.terminalSessionAuthorityConsumerProofKeypair =
+      opts.terminalSessionAuthorityConsumerProofKeypair ?? null
     this.client = new DaemonClient({
       socketPath: opts.socketPath,
       tokenPath: opts.tokenPath,
-      protocolVersion: opts.protocolVersion
+      protocolVersion: opts.protocolVersion,
+      ...(this.terminalSessionAuthorityConsumerProofKeypair
+        ? {
+            terminalSessionAuthorityConsumerProofReady: () => true
+          }
+        : {})
     })
     this.historyManager = opts.historyPath ? new HistoryManager(opts.historyPath) : null
     this.historyReader = opts.historyPath ? new HistoryReader(opts.historyPath) : null
@@ -290,6 +619,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
       this.protocolVersion >= SNAPSHOT_SERIALIZER_FIDELITY_DAEMON_PROTOCOL_VERSION
     this.supportsStartupIngress = supportsPtyStartupIngress(this.protocolVersion)
     this.client.onDisconnected(() => {
+      this.streamBindings.clear()
+      this.mutationRouteTokens.clear()
       if (!this.respawnAdoptionClosed) {
         // Why re-arm here: the latch is otherwise only cleared when every awaiting
         // session rebinds, and background sessions (no mounted pane, so nothing ever
@@ -310,6 +641,33 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   getHistoryManager(): HistoryManager | null {
     return this.historyManager
+  }
+
+  async terminalAuthorityAppHostTransport(): Promise<DaemonTerminalAuthorityAppHostTransport | null> {
+    await this.client.ensureConnected()
+    const authorityHostId = this.client.terminalSessionAuthorityConsumerProofHostId()
+    return authorityHostId && this.terminalSessionAuthorityConsumerProofKeypair
+      ? new DaemonTerminalAuthorityAppHostTransport({
+          client: this.client,
+          authenticatedAuthorityHostId: authorityHostId,
+          keypair: this.terminalSessionAuthorityConsumerProofKeypair
+        })
+      : null
+  }
+
+  installTerminalAuthorityAppAdmission(
+    admission: TerminalAuthorityAppNamespaceAdmission & Readonly<{ dispose(): void }>
+  ): void {
+    this.terminalAuthorityAppAdmission?.dispose()
+    this.terminalAuthorityAppAdmission = admission
+  }
+
+  setTerminalAuthorityConsumerProofKeypair(
+    keypair: TerminalAuthorityConsumerProofKeypair | null
+  ): void {
+    this.terminalAuthorityAppAdmission?.dispose()
+    this.terminalAuthorityAppAdmission = null
+    this.terminalSessionAuthorityConsumerProofKeypair = keypair
   }
 
   getLastAuthenticatedDaemonIdentity(): DaemonEndpointIdentity | null {
@@ -457,6 +815,38 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     await this.ensureConnected()
+    const expectedAuthorityAccess =
+      opts.terminalSessionAuthorityAccess ??
+      this.terminalSessionAuthorityAccessById.get(requestedSessionId)
+    const authorityCapability = this.client.supportsTerminalSessionAuthority()
+    const authorityIntent =
+      expectedAuthorityAccess !== undefined ||
+      opts.paneKey !== undefined ||
+      opts.paneGeneration !== undefined
+    operation.terminalSessionAuthorityMode ??=
+      authorityCapability && authorityIntent ? 'authority' : 'legacy'
+    const authorityRequired = operation.terminalSessionAuthorityMode === 'authority'
+    if ((expectedAuthorityAccess !== undefined || authorityRequired) && !authorityCapability) {
+      throw new Error('daemon_terminal_session_authority_unavailable')
+    }
+    if (authorityRequired && operation.terminalSessionAuthorityOperationId === undefined) {
+      operation.terminalSessionAuthorityOperationId = randomUUID()
+    }
+    const authorityAdmission = authorityRequired ? this.terminalAuthorityAppAdmission : null
+    if (authorityRequired && !authorityAdmission) {
+      throw new Error('daemon_terminal_session_authority_app_consumer_unavailable')
+    }
+    const authorityAdmissionLocator: TerminalAuthorityAppAdmissionLocator | null =
+      !authorityRequired
+        ? null
+        : expectedAuthorityAccess
+          ? { namespace: expectedAuthorityAccess.namespace }
+          : opts.worktreeId
+            ? { worktreeId: opts.worktreeId }
+            : null
+    if (authorityRequired && !authorityAdmissionLocator) {
+      throw new Error('terminal_session_authority_workspace_required')
+    }
     // Why before createOrAttach: a preserved daemon may still think this session is backgrounded — from
     // a v19 that thins without a recoverable seq, or (#9993) from a pre-v29 that a previous desktop
     // handed 2031 scan authority to and can never retract it. Clear it before any bytes are attached.
@@ -507,7 +897,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (opts.signal?.aborted) {
         throw new Error('client_disconnected')
       }
-      return this.client.request<CreateOrAttachResult>('createOrAttach', {
+      return this.requestCreateOrAttach({
         sessionId,
         cols: effectiveCols,
         rows: effectiveRows,
@@ -533,6 +923,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
           : {}),
         ...(!attachOnly && opts.agentSessionEnsure
           ? { agentSessionEnsure: opts.agentSessionEnsure }
+          : {}),
+        ...(authorityRequired && expectedAuthorityAccess
+          ? { terminalSessionAuthorityAccess: expectedAuthorityAccess }
+          : {}),
+        ...(authorityRequired && !expectedAuthorityAccess
+          ? {
+              terminalSessionAuthorityVersion: TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION,
+              terminalSessionAuthorityOperationId: operation.terminalSessionAuthorityOperationId,
+              worktreeId: opts.worktreeId,
+              paneKey: opts.paneKey,
+              paneGeneration: opts.paneGeneration
+            }
           : {})
       })
     }
@@ -594,6 +996,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
         ? { ...result, historySeeded: false }
         : result
     }
+    const createOrAttachWithAuthority = (historySeedSegments: readonly string[] | null) =>
+      authorityAdmission && authorityAdmissionLocator
+        ? authorityAdmission.withSourceAdmission(
+            authorityAdmissionLocator,
+            async ({ assertCurrent }) => {
+              assertCurrent()
+              return await createOrAttach(historySeedSegments)
+            }
+          )
+        : createOrAttach(historySeedSegments)
 
     let historySeedSegments = restoreInfo ? getRecoveredHistorySeedSegments(restoreInfo) : null
     const adoptSpawnResultSession = async (spawnResult: CreateOrAttachResult): Promise<void> => {
@@ -604,7 +1016,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
       ) {
         // Why: a claim-incapable owner may already have spawned before returning
         // a malformed response; retire only this requested session before failing closed.
-        await this.client.request('kill', { sessionId: requestedSessionId }).catch(() => {})
+        await this.retireCreateResult(requestedSessionId, spawnResult, {
+          authorityRequired
+        }).catch(() => {})
         throw new Error('agent_session_claim_unavailable')
       }
       sessionId = spawnResult.agentSessionEnsure?.owner.ptyId ?? requestedSessionId
@@ -620,10 +1034,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
       restoreInfo = null
       historySeedSegments = null
     }
-    let result = await createOrAttach(historySeedSegments)
+    let result = await createOrAttachWithAuthority(historySeedSegments)
     if (emulateLegacyAttachOnly && result.isNew) {
       operation.ignoreNextExit = true
-      await this.client.request('kill', { sessionId: requestedSessionId, immediate: true })
+      await this.retireCreateResult(requestedSessionId, result, {
+        authorityRequired,
+        immediate: true
+      })
       throw new SessionNotFoundError(requestedSessionId)
     }
     await adoptSpawnResultSession(result)
@@ -634,13 +1051,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (exitedResult) {
       return exitedResult
     }
-    if (result.incarnationId) {
-      this.sessionIncarnations.set(sessionId, result.incarnationId)
-    }
+    this.rememberCreateResultIncarnation(sessionId, result.incarnationId)
+    let terminalSessionAuthorityAccess = this.rememberCreateResultAuthority(
+      sessionId,
+      result,
+      authorityRequired
+    )
     const claimResult = (): Pick<PtySpawnResult, 'agentSessionEnsure'> | Record<string, never> =>
       result.agentSessionEnsure ? { agentSessionEnsure: result.agentSessionEnsure } : {}
     const incarnationResult = (): Pick<PtySpawnResult, 'incarnationId'> | Record<string, never> =>
       result.incarnationId ? { incarnationId: result.incarnationId } : {}
+    const authorityResult = ():
+      | Pick<PtySpawnResult, 'terminalSessionAuthorityAccess'>
+      | Record<string, never> =>
+      terminalSessionAuthorityAccess ? { terminalSessionAuthorityAccess } : {}
     let providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
     // Why: explicit null from a current daemon overrides the caller's WSL preference; undefined keeps compatibility with older daemons.
     wslDistro = providerWslDistro ?? undefined
@@ -675,6 +1099,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return {
         id: sessionId,
         ...incarnationResult(),
+        ...authorityResult(),
         pid,
         ...claimResult(),
         ...launchIdentity(),
@@ -696,19 +1121,25 @@ export class DaemonPtyAdapter implements IPtyProvider {
           operation.ignoredExitIncarnationIds.add(result.incarnationId)
         }
         operation.ignoreNextExit = true
-        await this.client.request('kill', { sessionId, immediate: true })
+        await this.retireCreateResult(sessionId, result, {
+          authorityRequired,
+          immediate: true
+        })
         effectiveCwd = restoreInfo.cwd
         effectiveCols = restoreInfo.cols
         effectiveRows = restoreInfo.rows
-        result = await createOrAttach(historySeedSegments)
+        result = await createOrAttachWithAuthority(historySeedSegments)
         await adoptSpawnResultSession(result)
         const exitedRetryResult = this.resultForExitBeforeSpawnReply(sessionId, result, operation)
         if (exitedRetryResult) {
           return exitedRetryResult
         }
-        if (result.incarnationId) {
-          this.sessionIncarnations.set(sessionId, result.incarnationId)
-        }
+        this.rememberCreateResultIncarnation(sessionId, result.incarnationId)
+        terminalSessionAuthorityAccess = this.rememberCreateResultAuthority(
+          sessionId,
+          result,
+          authorityRequired
+        )
         providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
         wslDistro = providerWslDistro ?? undefined
         if (wslDistro) {
@@ -767,6 +1198,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return {
           id: sessionId,
           ...incarnationResult(),
+          ...authorityResult(),
           pid,
           ...claimResult(),
           ...launchIdentity(),
@@ -779,6 +1211,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return {
         id: sessionId,
         ...incarnationResult(),
+        ...authorityResult(),
         pid,
         ...claimResult(),
         ...launchIdentity(),
@@ -820,6 +1253,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return {
         id: sessionId,
         ...incarnationResult(),
+        ...authorityResult(),
         pid,
         ...claimResult(),
         ...launchIdentity(),
@@ -839,6 +1273,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return {
       id: sessionId,
       ...incarnationResult(),
+      ...authorityResult(),
       pid,
       ...claimResult(),
       ...launchIdentity(),
@@ -904,24 +1339,37 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (!size) {
       throw new SessionNotFoundError(id)
     }
-    const result = await this.client.request<CreateOrAttachResult>('createOrAttach', {
+    const result = await this.requestCreateOrAttach({
       sessionId: id,
       cols: size.cols,
       rows: size.rows,
-      attachOnly: true
+      attachOnly: true,
+      ...(this.terminalSessionAuthorityAccessById.get(id)
+        ? {
+            terminalSessionAuthorityAccess: this.terminalSessionAuthorityAccessById.get(id)
+          }
+        : {})
     })
     if (result.isNew) {
       // Why: a pre-v31 daemon ignores attachOnly; retire its accidental spawn
       // instead of publishing a fresh shell as an attach.
-      await this.client.request('kill', { sessionId: id, immediate: true }).catch((error) => {
-        // Why surface, not swallow: a failed retire leaves an untracked orphan shell.
+      const authorityRequired = this.terminalSessionAuthorityAccessById.has(id)
+      await this.retireCreateResult(id, result, {
+        authorityRequired,
+        immediate: true
+      }).catch((error) => {
         console.warn('[daemon] attach-only retire of accidental legacy spawn failed', {
           sessionId: id,
           error
         })
+        if (authorityRequired || result.terminalSessionAuthorityAccess !== undefined) {
+          throw error
+        }
       })
       throw new SessionNotFoundError(id)
     }
+    this.rememberCreateResultIncarnation(id, result.incarnationId)
+    this.rememberCreateResultAuthority(id, result, this.terminalSessionAuthorityAccessById.has(id))
     this.clearSessionAwaitingDaemonRecovery(id)
   }
 
@@ -991,9 +1439,213 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
+  writeExact(id: string, incarnationId: string, data: string): boolean {
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (authorityAccess) {
+      return authorityAccess.binding.ptyIncarnationId === incarnationId
+        ? this.writeAuthorityExact(id, authorityAccess, data)
+        : false
+    }
+    if (
+      !this.supportsIncarnationExactPtyOperations(id) ||
+      this.sessionIncarnations.get(id) !== incarnationId
+    ) {
+      return false
+    }
+    const delivered = this.client.notify('writeExact', { sessionId: id, incarnationId, data })
+    if (delivered) {
+      this.markSessionDirty(id)
+    }
+    return delivered
+  }
+
+  writeAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    data: string
+  ): boolean {
+    if (!this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    const delivered = this.client.notify('writeAuthorityExact', {
+      sessionId: id,
+      authorityAccess,
+      data
+    })
+    if (delivered) {
+      this.markSessionDirty(id)
+    }
+    return delivered
+  }
+
   resize(id: string, cols: number, rows: number): void {
     this.markSessionDirty(id)
     this.client.notify('resize', { sessionId: id, cols, rows })
+  }
+
+  resizeExact(id: string, incarnationId: string, cols: number, rows: number): boolean {
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (authorityAccess) {
+      return authorityAccess.binding.ptyIncarnationId === incarnationId
+        ? this.resizeAuthorityExact(id, authorityAccess, cols, rows)
+        : false
+    }
+    if (
+      !this.supportsIncarnationExactPtyOperations(id) ||
+      this.sessionIncarnations.get(id) !== incarnationId
+    ) {
+      return false
+    }
+    const delivered = this.client.notify('resizeExact', {
+      sessionId: id,
+      incarnationId,
+      cols,
+      rows
+    })
+    if (delivered) {
+      this.markSessionDirty(id)
+    }
+    return delivered
+  }
+
+  resizeAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    cols: number,
+    rows: number
+  ): boolean {
+    if (!this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    const delivered = this.client.notify('resizeAuthorityExact', {
+      sessionId: id,
+      authorityAccess,
+      cols,
+      rows
+    })
+    if (delivered) {
+      this.markSessionDirty(id)
+    }
+    return delivered
+  }
+
+  async killExact(
+    id: string,
+    incarnationId: string,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ): Promise<boolean> {
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (authorityAccess) {
+      return authorityAccess.binding.ptyIncarnationId === incarnationId
+        ? await this.killAuthorityExact(id, authorityAccess, opts)
+        : false
+    }
+    if (
+      !this.supportsKnownIncarnationExactPtyOperations(id) ||
+      this.sessionIncarnations.get(id) !== incarnationId
+    ) {
+      return false
+    }
+    return await this.withHistorySpawnLock(id, () =>
+      this.shutdownWithHistoryLock(id, opts, incarnationId)
+    )
+  }
+
+  async killAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ): Promise<boolean> {
+    if (!this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    return await this.withHistorySpawnLock(id, () =>
+      this.shutdownWithHistoryLock(
+        id,
+        opts,
+        authorityAccess.binding.ptyIncarnationId,
+        authorityAccess
+      )
+    )
+  }
+
+  async sendSignalExact(id: string, incarnationId: string, signal: string): Promise<boolean> {
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (authorityAccess) {
+      return authorityAccess.binding.ptyIncarnationId === incarnationId
+        ? await this.sendSignalAuthorityExact(id, authorityAccess, signal)
+        : false
+    }
+    if (
+      !this.supportsIncarnationExactPtyOperations(id) ||
+      this.sessionIncarnations.get(id) !== incarnationId
+    ) {
+      return false
+    }
+    const result = await this.client.request<{ accepted: boolean }>('signalExact', {
+      sessionId: id,
+      incarnationId,
+      signal
+    })
+    return result.accepted === true
+  }
+
+  async sendSignalAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    signal: string
+  ): Promise<boolean> {
+    if (!this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    const result = await this.client.request<{ accepted: boolean }>('signalAuthorityExact', {
+      sessionId: id,
+      authorityAccess,
+      signal
+    })
+    return result.accepted === true
+  }
+
+  async clearBufferExact(id: string, incarnationId: string): Promise<boolean> {
+    const authorityAccess = this.terminalSessionAuthorityAccessById.get(id)
+    if (authorityAccess) {
+      return authorityAccess.binding.ptyIncarnationId === incarnationId
+        ? await this.clearBufferAuthorityExact(id, authorityAccess)
+        : false
+    }
+    if (
+      !this.supportsIncarnationExactPtyOperations(id) ||
+      this.sessionIncarnations.get(id) !== incarnationId
+    ) {
+      return false
+    }
+    const result = await this.client.request<{ accepted: boolean }>('clearBufferExact', {
+      sessionId: id,
+      incarnationId
+    })
+    if (result.accepted === true) {
+      this.markSessionDirty(id)
+      return true
+    }
+    return false
+  }
+
+  async clearBufferAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): Promise<boolean> {
+    if (!this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    const result = await this.client.request<{ accepted: boolean }>('clearBufferAuthorityExact', {
+      sessionId: id,
+      authorityAccess
+    })
+    if (result.accepted === true) {
+      this.markSessionDirty(id)
+      return true
+    }
+    return false
   }
 
   pauseProducer(id: string): void {
@@ -1011,6 +1663,50 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     this.pausedProducerSessionIds.delete(id)
     this.client.notify('resumePty', { sessionId: id })
+  }
+
+  async acquireExactHeldProducerPause(
+    id: string,
+    incarnationId: string,
+    token: PtyHeldProducerPauseToken
+  ): Promise<boolean> {
+    return await this.requestExactHeldProducerPause('pausePty', id, incarnationId, token)
+  }
+
+  async releaseExactHeldProducerPause(
+    id: string,
+    incarnationId: string,
+    token: PtyHeldProducerPauseToken
+  ): Promise<boolean> {
+    return await this.requestExactHeldProducerPause('resumePty', id, incarnationId, token)
+  }
+
+  private async requestExactHeldProducerPause(
+    type: 'pausePty' | 'resumePty',
+    id: string,
+    incarnationId: string,
+    token: PtyHeldProducerPauseToken
+  ): Promise<boolean> {
+    if (
+      !isPtyHeldProducerPauseToken(token) ||
+      !this.supportsExactHeldProducerPause(id, incarnationId)
+    ) {
+      return false
+    }
+    try {
+      const response = await this.client.request<{ accepted: boolean }>(type, {
+        sessionId: id,
+        incarnationId,
+        heldPauseToken: token
+      })
+      return response.accepted === true
+    } catch {
+      // Why: closing the lease-owning connection makes an unacknowledged acquire fail closed remotely.
+      this.client.disconnect()
+      this.streamBindings.clear()
+      this.mutationRouteTokens.clear()
+      return false
+    }
   }
 
   // Why fire-and-forget (like pausePty): just a delivery hint for the daemon's keep-tail stream thinning.
@@ -1055,13 +1751,25 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async shutdownWithHistoryLock(
     id: string,
-    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
-  ): Promise<void> {
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number },
+    exactIncarnationId?: string,
+    authorityAccess?: TerminalSessionAuthorityPtyAccess
+  ): Promise<boolean> {
     // Why: shutdown can be the first lazy-client operation after restart; connect
     // before killing so a healthy daemon session is not orphaned (#7742). Connect
     // and kill share the caller's one absolute deadline, so a wedged handshake
     // cannot burn the whole teardown budget before the kill even starts.
     await this.ensureConnected(opts.deadlineMs)
+    if (authorityAccess && !this.terminalSessionAuthorityAccessMatches(id, authorityAccess)) {
+      return false
+    }
+    if (
+      !authorityAccess &&
+      exactIncarnationId !== undefined &&
+      this.sessionIncarnations.get(id) !== exactIncarnationId
+    ) {
+      return false
+    }
     // Why: sleep/exact-stop kills the live PTY before the periodic checkpoint may run.
     // Force a final snapshot so wake can restore the pane users left.
     if (opts.keepHistory) {
@@ -1097,12 +1805,47 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.historyManager?.suspendSession(id)
       }
     }
-    await this.client.request(
-      'kill',
-      { sessionId: id, immediate: opts.immediate ?? false },
-      remainingRequestTimeoutMs(opts.deadlineMs)
-    )
+    let accepted = true
+    if (authorityAccess) {
+      const result = await this.client.request<{ accepted: boolean }>(
+        'killAuthorityExact',
+        {
+          sessionId: id,
+          authorityAccess,
+          immediate: opts.immediate ?? false
+        },
+        remainingRequestTimeoutMs(opts.deadlineMs)
+      )
+      accepted = result.accepted === true
+    } else if (exactIncarnationId === undefined) {
+      await this.client.request(
+        'kill',
+        { sessionId: id, immediate: opts.immediate ?? false },
+        remainingRequestTimeoutMs(opts.deadlineMs)
+      )
+    } else {
+      const result = await this.client.request<{ accepted: boolean }>(
+        'killExact',
+        {
+          sessionId: id,
+          incarnationId: exactIncarnationId,
+          immediate: opts.immediate ?? false
+        },
+        remainingRequestTimeoutMs(opts.deadlineMs)
+      )
+      accepted = result.accepted === true
+    }
+    if (!accepted) {
+      if (opts.keepHistory) {
+        this.coldRestoreCache.delete(id)
+        this.sleepRestoreSessionIds.delete(id)
+        this.historyManager?.reopenSession(id)
+      }
+      return false
+    }
     this.activeSessionIds.delete(id)
+    this.terminalSessionAuthorityAccessById.delete(id)
+    this.mutationRouteTokens.delete(id)
     this.clearSessionAwaitingDaemonRecovery(id)
     this.dirtySessionVersions.delete(id)
     if (!opts.keepHistory) {
@@ -1133,6 +1876,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
       }
     }
+    return true
   }
 
   ackColdRestore(sessionId: string): void {
@@ -1335,14 +2079,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!session.isAlive) {
         continue
       }
+      const listedIdentity = this.rememberListedSession(session)
       // Why: an unminted session id (worktreeId === null) can't be tied to a live worktree, so it's treated as an orphan.
       const { worktreeId } = parsePtySessionId(session.sessionId)
 
       if (worktreeId === null || !validWorktreeIds.has(worktreeId)) {
         try {
-          await this.client.request('kill', { sessionId: session.sessionId })
-        } catch {
-          /* already dead */
+          await this.retireListedSession(session, listedIdentity.terminalSessionAuthorityAccess)
+        } catch (error) {
+          if (!(error instanceof SessionNotFoundError)) {
+            throw error
+          }
+          this.activeSessionIds.delete(session.sessionId)
+          this.streamBindings.forget(session.sessionId, session.incarnationId)
+          this.sessionIncarnations.delete(session.sessionId)
+          this.terminalSessionAuthorityAccessById.delete(session.sessionId)
+          this.mutationRouteTokens.delete(session.sessionId)
         }
         killed.push(session.sessionId)
       } else {
@@ -1425,11 +2177,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
           continue
         }
         aliveSessionIds.add(session.sessionId)
+        const listedIdentity = this.rememberListedSession(session)
         const { worktreeId } = parsePtySessionId(session.sessionId)
         processes.push(
           admission.admit({
             id: session.sessionId,
+            mutationRouteToken: listedIdentity.mutationRouteToken,
             ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+            ...(listedIdentity.terminalSessionAuthorityAccess
+              ? {
+                  terminalSessionAuthorityAccess: listedIdentity.terminalSessionAuthorityAccess
+                }
+              : {}),
             // Why: OSC 7 may not arrive before cleanup; spawn cwd is authoritative until the daemon reports a live cwd.
             cwd: session.cwd ?? this.initialCwds.get(session.sessionId) ?? '',
             title: 'shell',
@@ -1446,6 +2205,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
       for (const id of preRequestActiveIds) {
         if (!aliveSessionIds.has(id)) {
           this.activeSessionIds.delete(id)
+          this.streamBindings.forget(id, this.sessionIncarnations.get(id))
+          this.sessionIncarnations.delete(id)
+          this.terminalSessionAuthorityAccessById.delete(id)
+          this.mutationRouteTokens.delete(id)
         }
       }
       this.publishAuditObservation(
@@ -1498,10 +2261,30 @@ export class DaemonPtyAdapter implements IPtyProvider {
     const result = await this.client.request<ListSessionsResult>('listSessions', undefined)
     return result.sessions
       .filter((s) => s.isAlive)
-      .map((session) => ({
-        ...session,
-        ...this.validatedAgentSessionOwners(session.agentSessionOwners)
-      }))
+      .map((session) => {
+        const listedIdentity = this.rememberListedSession(session)
+        return {
+          sessionId: session.sessionId,
+          ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+          mutationRouteToken: listedIdentity.mutationRouteToken,
+          ...(listedIdentity.terminalSessionAuthorityAccess
+            ? {
+                terminalSessionAuthorityAccess: listedIdentity.terminalSessionAuthorityAccess
+              }
+            : {}),
+          state: session.state,
+          shellState: session.shellState,
+          isAlive: true,
+          ...(session.terminalHandle ? { terminalHandle: session.terminalHandle } : {}),
+          ...(session.wslDistro !== undefined ? { wslDistro: session.wslDistro } : {}),
+          pid: session.pid,
+          cwd: session.cwd,
+          cols: session.cols,
+          rows: session.rows,
+          createdAt: session.createdAt,
+          ...this.validatedAgentSessionOwners(session.agentSessionOwners)
+        }
+      })
   }
 
   getActiveSessionIds(): string[] {
@@ -1513,6 +2296,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   fanoutSyntheticExits(code: number): void {
     const ids = [...this.activeSessionIds]
     this.activeSessionIds.clear()
+    this.mutationRouteTokens.clear()
+    this.terminalSessionAuthorityAccessById.clear()
+    this.streamBindings.clear()
     this.sessionsAwaitingDaemonRecovery.clear()
     this.writeRecoveryAttempted = false
     this.dirtySessionVersions.clear()
@@ -1560,6 +2346,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     callback: (payload: {
       id: string
       data: string
+      incarnationId?: PtyIncarnationId
       sequenceChars?: number
       transformed?: boolean
       seq?: number
@@ -1618,7 +2405,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   dispose(): void {
+    this.terminalAuthorityAppAdmission?.dispose()
+    this.terminalAuthorityAppAdmission = null
     this.respawnAdoptionClosed = true
+    this.streamBindings.clear()
     this.sessionsAwaitingDaemonRecovery.clear()
     this.writeRecoveryAttempted = false
     this.releasePendingRespawnAdoptionLease()
@@ -1656,6 +2446,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // but still write a final checkpoint so a daemon crash while Orca is closed has recovery data.
   async disconnectOnly(): Promise<void> {
     if (!this.disconnectOnlyPromise) {
+      this.terminalAuthorityAppAdmission?.dispose()
+      this.terminalAuthorityAppAdmission = null
       this.respawnAdoptionClosed = true
       this.sessionsAwaitingDaemonRecovery.clear()
       this.writeRecoveryAttempted = false
@@ -1665,7 +2457,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     await this.disconnectOnlyPromise
   }
 
-  private async finishDisconnectOnly(keepHistoryShutdowns: Promise<void>[]): Promise<void> {
+  private async finishDisconnectOnly(keepHistoryShutdowns: Promise<boolean>[]): Promise<void> {
     // Why: sleep shutdowns still detect recovery and kill after checkpointing; disconnecting first rejects those admitted operations.
     await Promise.allSettled(keepHistoryShutdowns)
     this.respawnAdoptionClosed = true
@@ -2298,6 +3090,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return
       }
 
+      if (event.event === 'sessionSource') {
+        const source = this.streamBindings.acceptMarker(event.sessionId, event.payload)
+        if (source) {
+          this.sessionIncarnations.set(event.sessionId, source.incarnationId)
+          this.rememberMutationRoute(event.sessionId, source.incarnationId)
+        }
+        return
+      }
+      const streamBindingRequired = supportsPtyStreamBinding(this.protocolVersion)
+      const streamIncarnationId = streamBindingRequired
+        ? this.streamBindings.admittedIncarnationId(event.sessionId)
+        : undefined
+      if (streamBindingRequired && !streamIncarnationId) {
+        return
+      }
+
       if (event.event === 'data') {
         this.markSessionDirty(event.sessionId)
         // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
@@ -2305,6 +3113,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           listener({
             id: event.sessionId,
             data: event.payload.data,
+            ...(streamIncarnationId ? { incarnationId: streamIncarnationId } : {}),
             ...((event.payload.rawLength ?? event.payload.sequenceChars) === undefined
               ? {}
               : { sequenceChars: event.payload.rawLength ?? event.payload.sequenceChars }),
@@ -2352,6 +3161,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
           fact: event.payload
         })
       } else if (event.event === 'exit') {
+        if (
+          supportsPtyStreamBinding(this.protocolVersion) &&
+          !this.streamBindings.admitsExit(event.sessionId, event.payload.incarnationId)
+        ) {
+          return
+        }
         const pendingOperations = new Set([
           ...(this.pendingSpawnOperationsBySessionId.get(event.sessionId) ?? []),
           ...this.pendingClaimSpawnOperations
@@ -2397,7 +3212,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
         this.initialCwds.delete(event.sessionId)
         this.wslDistrosBySessionId.delete(event.sessionId)
+        this.streamBindings.forget(event.sessionId, event.payload.incarnationId)
         this.sessionIncarnations.delete(event.sessionId)
+        this.terminalSessionAuthorityAccessById.delete(event.sessionId)
+        this.mutationRouteTokens.delete(event.sessionId)
         // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
         for (const listener of [...this.exitListeners]) {
           listener({

@@ -24,6 +24,7 @@ export type StreamQueueEntry = {
   seq?: number
   transformed?: boolean
   control?: DaemonEvent
+  settle?: (error: Error | null) => void
 }
 
 export type PendingStreamDataBatch = {

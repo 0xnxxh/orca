@@ -66,6 +66,25 @@ describe('sendCapturedTerminalInput', () => {
     expect(transport.sendInput).not.toHaveBeenCalled()
   })
 
+  it('does not fall through to a same-ID successor after an exact target is superseded', () => {
+    const transport = createTransport('same-id')
+    const target = { owner: {}, binding: {} }
+    transport.sendInputToTarget = vi.fn(() => false)
+
+    expect(
+      sendCapturedTerminalInput({
+        targetPaneMounted: true,
+        currentTransport: transport,
+        capturedTransport: transport,
+        capturedPtyId: 'same-id',
+        capturedInputTarget: target,
+        data: '\r'
+      })
+    ).toBe(false)
+    expect(transport.sendInputToTarget).toHaveBeenCalledWith(target, '\r')
+    expect(transport.sendInput).not.toHaveBeenCalled()
+  })
+
   it('does not deliver after pane disposal', () => {
     const transport = createTransport('pty-original')
 

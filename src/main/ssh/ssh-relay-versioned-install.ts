@@ -24,21 +24,20 @@ import {
   moveRemoteTreeCommand,
   probeFileExistsCommand,
   probeRelayInstalledCommand,
-  relayLivenessProbeCommand,
   removeRemoteTreeCommand,
   writeRemoteEmptyFileCommand
 } from './ssh-remote-commands'
 import {
   getRemoteHostPlatform,
-  isWindowsRemoteHost,
   joinRemotePath,
   remoteBasename,
   type RemoteHostPlatform,
   type RemotePathFlavor
 } from './ssh-remote-platform'
-import { windowsRelayPipePathsForSocketName } from './ssh-relay-endpoints'
 import { isUnconfirmedSshCommandTermination } from './ssh-relay-exec-command'
 import { isSshSessionLimitError } from './ssh-session-limit-error'
+import { protectedRelayDirectoryNames } from './ssh-relay-gc-protection'
+import { hasLiveRelaySocket } from './ssh-relay-live-socket'
 
 // Single source of truth for GC and the version-dir parser; matches both the new and legacy relay-dir layouts.
 const RELAY_VERSION_DIR_REGEX = /^relay-(v?\d+\.\d+\.\d+(\+[0-9a-f]+)?)$/
@@ -183,10 +182,13 @@ export async function gcOldRelayVersions(
   options?: {
     windowsNodePath?: string
     windowsSockNames?: string[]
+    protectedRelayDir?: string
+    protectedRelayDirs?: readonly string[]
   }
 ): Promise<void> {
   const baseDir = joinRemotePath(host, remoteHome, RELAY_REMOTE_DIR)
   const currentDirName = remoteBasename(currentDirAbsPath, host)
+  const protectedDirNames = protectedRelayDirectoryNames(options ?? {}, host)
   let listing: string
   try {
     listing = await execHostCommand(conn, host, listRelayBaseDirsCommand(host, baseDir))
@@ -204,6 +206,9 @@ export async function gcOldRelayVersions(
   const candidates = entries
     .filter((name) => RELAY_VERSION_DIR_REGEX.test(name))
     .filter((name) => name !== currentDirName)
+    .filter(
+      (name) => !protectedDirNames.has(host.pathFlavor === 'windows' ? name.toLowerCase() : name)
+    )
 
   if (candidates.length === 0) {
     return
@@ -315,48 +320,14 @@ async function isCandidateSafeToRemove(
       host,
       probeFileExistsCommand(host, completePath)
     ).catch(() => 'PARTIAL')
+    // Crashed-install partial; leave for the next deploy to recover.
     if (completeProbe.trim() !== 'COMPLETE') {
-      // Crashed-install partial; leave for the next deploy to recover.
       return false
     }
   }
 
-  const sockAlive = await hasLiveRelaySocket(conn, dir, host, options)
-  if (sockAlive) {
+  if (await hasLiveRelaySocket(conn, dir, host, options)) {
     return false
   }
   return true
-}
-
-async function hasLiveRelaySocket(
-  conn: SshConnection,
-  dir: string,
-  host: RemoteHostPlatform = DEFAULT_REMOTE_HOST,
-  options?: {
-    windowsNodePath?: string
-    windowsSockNames?: string[]
-  }
-): Promise<boolean> {
-  try {
-    // Why: `test -S` only — a connect-and-close probe would race with a daemon about to idle.
-    const windowsOptions =
-      isWindowsRemoteHost(host) && options?.windowsNodePath
-        ? {
-            nodePath: options.windowsNodePath,
-            pipePaths: (options.windowsSockNames ?? []).flatMap((sockName) =>
-              windowsRelayPipePathsForSocketName(host, dir, sockName)
-            )
-          }
-        : undefined
-    const out = await execHostCommand(
-      conn,
-      host,
-      relayLivenessProbeCommand(host, dir, windowsOptions)
-    )
-    const state = out.trim()
-    return state !== 'DEAD' && state !== 'WAITING'
-  } catch {
-    // Why: an inconclusive liveness probe must never authorize deletion.
-    return true
-  }
 }

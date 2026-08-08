@@ -1,6 +1,7 @@
 import { shellEscape } from './ssh-connection-utils'
 import { powerShellCommand, powerShellLiteral } from './ssh-remote-powershell'
 import { isWindowsRemoteHost, type RemoteHostPlatform } from './ssh-remote-platform'
+import { relayInstallLockOwnerFileName } from '../../shared/relay-launch-fence-owner'
 
 export function acquireInstallLockParentCommand(
   host: RemoteHostPlatform,
@@ -14,9 +15,19 @@ export function acquireInstallLockParentCommand(
   )
 }
 
-export function tryCreateInstallLockCommand(host: RemoteHostPlatform, lockDir: string): string {
+export function tryCreateInstallLockCommand(
+  host: RemoteHostPlatform,
+  lockDir: string,
+  ownerToken?: string,
+  ownerFileName = ownerToken ? relayInstallLockOwnerFileName(ownerToken) : undefined
+): string {
   if (!isWindowsRemoteHost(host)) {
-    return `mkdir ${shellEscape(lockDir)} 2>&1 && echo OK || echo BUSY`
+    return ownerToken && ownerFileName
+      ? posixCreateOwnedLockCommand(lockDir, ownerToken, ownerFileName)
+      : `mkdir ${shellEscape(lockDir)} 2>&1 && echo OK || echo BUSY`
+  }
+  if (ownerToken && ownerFileName) {
+    return windowsCreateOwnedLockCommand(lockDir, ownerToken, ownerFileName)
   }
   // Why: old Orca clients recognize only a directory at `.install-lock`, while
   // concurrent New-Item calls can both report success in PowerShell 5.1. Keep
@@ -65,15 +76,22 @@ export function lockAgeSecondsCommand(host: RemoteHostPlatform, lockDir: string)
 export function tryStealInstallLockCommand(
   host: RemoteHostPlatform,
   lockDir: string,
-  staleAfterSeconds: number
+  staleAfterSeconds: number,
+  ownerToken?: string,
+  ownerFileName = ownerToken ? relayInstallLockOwnerFileName(ownerToken) : undefined
 ): string {
   if (!isWindowsRemoteHost(host)) {
-    return posixStealInstallLockCommand(lockDir, staleAfterSeconds)
+    return posixStealInstallLockCommand(lockDir, staleAfterSeconds, ownerToken, ownerFileName)
   }
-  return windowsStealInstallLockCommand(lockDir, staleAfterSeconds)
+  return windowsStealInstallLockCommand(lockDir, staleAfterSeconds, ownerToken, ownerFileName)
 }
 
-function posixStealInstallLockCommand(lockDir: string, staleAfterSeconds: number): string {
+function posixStealInstallLockCommand(
+  lockDir: string,
+  staleAfterSeconds: number,
+  ownerToken?: string,
+  ownerFileName?: string
+): string {
   const escapedLockDir = shellEscape(lockDir)
   const escapedStealLockPrefix = shellEscape(`${lockDir}.steal`)
   return [
@@ -96,13 +114,18 @@ function posixStealInstallLockCommand(lockDir: string, staleAfterSeconds: number
     `${posixLockIdentityAssignment(lockDir, 'current_key')} && current_mtime=\${current_key%%:*} && current_now=$(date +%s) && current_age=$((current_now - current_mtime)) || current_age=0;`,
     `if [ "$current_key" = "$lock_key" ] && [ "\${current_age:-0}" -gt ${staleAfterSeconds} ] 2>/dev/null; then`,
     `lock_tombstone=${escapedLockDir}.tombstone.$$.$(date +%s);`,
-    `if [ ! -e "$lock_tombstone" ] && mv ${escapedLockDir} "$lock_tombstone" 2>/dev/null; then mkdir ${escapedLockDir} 2>&1 && echo OK || echo BUSY; else echo BUSY; fi;`,
+    `if [ ! -e "$lock_tombstone" ] && mv ${escapedLockDir} "$lock_tombstone" 2>/dev/null; then ${ownerToken && ownerFileName ? posixCreateOwnedLockCommand(lockDir, ownerToken, ownerFileName) : `mkdir ${escapedLockDir} 2>&1 && echo OK || echo BUSY`}; else echo BUSY; fi;`,
     'else echo BUSY; fi;',
     'else echo BUSY; fi; fi'
   ].join(' ')
 }
 
-function windowsStealInstallLockCommand(lockDir: string, staleAfterSeconds: number): string {
+function windowsStealInstallLockCommand(
+  lockDir: string,
+  staleAfterSeconds: number,
+  ownerToken?: string,
+  ownerFileName?: string
+): string {
   return powerShellCommand(
     [
       `$lock = ${powerShellLiteral(lockDir)}`,
@@ -144,7 +167,7 @@ function windowsStealInstallLockCommand(lockDir: string, staleAfterSeconds: numb
       '$lockTombstone = "$lock.tombstone.$PID.$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"',
       'Move-Item -LiteralPath $lock -Destination $lockTombstone -ErrorAction Stop',
       '$successorStream = $null',
-      "try { $null = New-Item -ItemType Directory -Path $lock -ErrorAction Stop; $successorOwner = Join-Path $lock '.owner'; $successorStream = [System.IO.File]::Open($successorOwner, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); 'OK' } catch { 'BUSY' } finally { if ($null -ne $successorStream) { $successorStream.Dispose() } }",
+      windowsSuccessorLockScript(ownerToken, ownerFileName),
       "} else { 'BUSY' }",
       '}',
       "} catch { 'BUSY' } finally {",
@@ -159,6 +182,53 @@ function windowsStealInstallLockCommand(lockDir: string, staleAfterSeconds: numb
       "} catch { 'BUSY' }"
     ].join('; ')
   )
+}
+
+function posixCreateOwnedLockCommand(
+  lockDir: string,
+  ownerToken: string,
+  ownerFileName: string
+): string {
+  const escapedLockDir = shellEscape(lockDir)
+  const ownerPath = `${lockDir}/${ownerFileName}`
+  return [
+    `if mkdir ${escapedLockDir} 2>/dev/null; then`,
+    `if (umask 077 && printf %s ${shellEscape(ownerToken)} > ${shellEscape(ownerPath)}); then echo OK;`,
+    `else rmdir ${escapedLockDir} 2>/dev/null || true; echo BUSY; fi;`,
+    'else echo BUSY; fi'
+  ].join(' ')
+}
+
+function windowsCreateOwnedLockCommand(
+  lockDir: string,
+  ownerToken: string,
+  ownerFileName: string
+): string {
+  return powerShellCommand(
+    [
+      `$lock = ${powerShellLiteral(lockDir)}`,
+      '$stream = $null',
+      '$ownsLock = $false',
+      'try {',
+      "if (Test-Path -LiteralPath $lock) { 'BUSY' } else {",
+      '$null = New-Item -ItemType Directory -Path $lock -ErrorAction Stop',
+      "$owner = Join-Path $lock '.owner'",
+      '$stream = [System.IO.File]::Open($owner, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)',
+      '$ownsLock = $true',
+      `Set-Content -LiteralPath (Join-Path $lock ${powerShellLiteral(ownerFileName)}) -Value ${powerShellLiteral(ownerToken)} -NoNewline -ErrorAction Stop`,
+      "'OK'",
+      '}',
+      "} catch { if ($ownsLock) { Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue }; 'BUSY' } finally { if ($null -ne $stream) { $stream.Dispose() } }"
+    ].join('; ')
+  )
+}
+
+function windowsSuccessorLockScript(ownerToken?: string, ownerFileName?: string): string {
+  const ownerWrite =
+    ownerToken && ownerFileName
+      ? `Set-Content -LiteralPath (Join-Path $lock ${powerShellLiteral(ownerFileName)}) -Value ${powerShellLiteral(ownerToken)} -NoNewline -ErrorAction Stop; `
+      : ''
+  return `try { $null = New-Item -ItemType Directory -Path $lock -ErrorAction Stop; $successorOwner = Join-Path $lock '.owner'; $successorStream = [System.IO.File]::Open($successorOwner, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None); ${ownerWrite}'OK' } catch { 'BUSY' } finally { if ($null -ne $successorStream) { $successorStream.Dispose() } }`
 }
 
 function posixLockAgeSecondsAssignment(lockDir: string): string {

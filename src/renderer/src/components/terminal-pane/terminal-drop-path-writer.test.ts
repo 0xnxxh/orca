@@ -258,4 +258,44 @@ describe('terminal drop path writer', () => {
     })
     expect(sendInputAccepted).toHaveBeenCalledTimes(1)
   })
+
+  it('does not write a later path to a same-ID successor binding', async () => {
+    const sendInput = vi.fn(() => true)
+    const inputTarget = { owner: {}, binding: {} }
+    let targetCurrent = true
+    const { manager, pane } = createManager()
+    const transport = Object.assign(createTransport(sendInput), {
+      isInputTargetCurrent: vi.fn(() => targetCurrent),
+      sendInputAcceptedToTarget: vi.fn(async () => {
+        targetCurrent = false
+        return true
+      })
+    })
+
+    const result = await writeTerminalDropPathsToCapturedTarget({
+      dropTarget: {
+        paneId: pane.id,
+        leafId: pane.leafId,
+        ptyId: 'pty-1',
+        transport,
+        inputTarget
+      } as never,
+      manager: manager as never,
+      paneTransports: new Map([[pane.id, transport]]) as never,
+      paths: ['/repo/a.ts', '/repo/b.ts'],
+      targetShell: 'posix'
+    })
+
+    expect(result).toEqual({
+      sentAnyPath: true,
+      targetCurrent: false,
+      pathsWritten: 1,
+      failureReason: 'target-stale'
+    })
+    expect(transport.sendInputAcceptedToTarget).toHaveBeenCalledExactlyOnceWith(
+      inputTarget,
+      '/repo/a.ts '
+    )
+    expect(sendInput).not.toHaveBeenCalled()
+  })
 })

@@ -1,4 +1,5 @@
 import { useAppStore, type AppState } from '@/store'
+import { killPtyAtCurrentIncarnation } from '@/lib/pty-administrative-mutations'
 import {
   closeTerminalTab,
   type PrecomputedTerminalCloseState
@@ -131,7 +132,7 @@ function createDefaultDependencies(): KillAllTerminalSurfaceDependencies {
     killDaemonSessions: () => window.api.pty.management.killAll(),
     notifyInventoryInvalidated: notifyDaemonSessionInventoryInvalidated,
     closeSurface: closeTerminalTab,
-    killPty: (ptyId) => window.api.pty.kill(ptyId),
+    killPty: killPtyAtCurrentIncarnation,
     now: () => globalThis.performance?.now() ?? Date.now(),
     yieldToRenderer: () =>
       new Promise((resolve) => {

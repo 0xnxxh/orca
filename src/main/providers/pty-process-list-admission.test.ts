@@ -22,6 +22,45 @@ describe('PtyProcessListAdmission', () => {
     ).toEqual({ id: 'pty-1', cwd: '/repo', title: 'shell' })
   })
 
+  it('requires the provider-resolved physical authority identity', () => {
+    const authorityAccess = {
+      namespace: { authorityHostId: 'host-1', namespaceId: 'namespace-1' },
+      pane: { paneKey: 'pane-1', paneGenerationId: 'renderer:1' },
+      binding: {
+        ownerIncarnationId: 'owner-1',
+        physicalPtyId: 'pty-1',
+        ptyIncarnationId: 'incarnation-1'
+      }
+    }
+    const mutationRouteToken = Object.freeze({})
+    const remote = {
+      id: 'ssh-connection@@pty-1',
+      cwd: '/repo',
+      title: 'shell',
+      incarnationId: 'incarnation-1',
+      mutationRouteToken,
+      terminalSessionAuthorityAccess: authorityAccess
+    }
+
+    expect(new PtyProcessListAdmission().admit(remote, 'pty-1')).toEqual(remote)
+    expect(() =>
+      new PtyProcessListAdmission().admit(
+        {
+          ...remote,
+          terminalSessionAuthorityAccess: {
+            ...authorityAccess,
+            binding: { ...authorityAccess.binding, physicalPtyId: 'pty-other' }
+          }
+        },
+        'pty-1'
+      )
+    ).toThrow('invalid_pty_process_list')
+    expect(() => new PtyProcessListAdmission().admit(remote, 'pty-other')).toThrow(
+      'invalid_pty_process_list'
+    )
+    expect(() => new PtyProcessListAdmission().admit(remote)).toThrow('invalid_pty_process_list')
+  })
+
   it('rejects aggregate entry and byte amplification', () => {
     const entryAdmission = new PtyProcessListAdmission()
     for (let index = 0; index < MAX_AGGREGATED_PTY_PROCESS_LIST_ENTRIES; index += 1) {

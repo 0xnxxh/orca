@@ -11,31 +11,7 @@ vi.mock('../memory/pty-registry', () => ({
 import { killAllProcessesForWorktree, WORKTREE_PROCESS_SWEEP_TIMEOUT_MS } from './worktree-teardown'
 import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 import { DaemonPtyAdapter } from '../daemon/daemon-pty-adapter'
-
-function createProviderStub(listProcesses: () => Promise<PtyProcessInfo[]>): IPtyProvider {
-  return {
-    spawn: vi.fn(),
-    attach: vi.fn(),
-    write: vi.fn(),
-    resize: vi.fn(),
-    shutdown: vi.fn().mockResolvedValue(undefined),
-    sendSignal: vi.fn(),
-    getCwd: vi.fn(),
-    getInitialCwd: vi.fn(),
-    clearBuffer: vi.fn(),
-    acknowledgeDataEvent: vi.fn(),
-    hasChildProcesses: vi.fn(),
-    getForegroundProcess: vi.fn(),
-    serialize: vi.fn(),
-    revive: vi.fn(),
-    listProcesses: vi.fn(listProcesses),
-    getDefaultShell: vi.fn(),
-    getProfiles: vi.fn(),
-    onData: vi.fn().mockReturnValue(() => {}),
-    onReplay: vi.fn().mockReturnValue(() => {}),
-    onExit: vi.fn().mockReturnValue(() => {})
-  } as unknown as IPtyProvider
-}
+import { createWorktreeTeardownProviderStub as createProviderStub } from './__tests__/worktree-teardown-provider'
 
 describe('killAllProcessesForWorktree', () => {
   beforeEach(() => {
@@ -58,13 +34,14 @@ describe('killAllProcessesForWorktree', () => {
 
     expect(result.runtimeStopped).toBe(0)
     expect(result.providerStopped).toBe(1)
-    expect(result.registryStopped).toBe(1)
+    expect(result.registryStopped).toBe(0)
 
     expect(localProvider.shutdown).toHaveBeenCalledWith(
       'w1@@abcd1234',
       expect.objectContaining({ immediate: true })
     )
-    expect(localProvider.shutdown).toHaveBeenCalledWith(
+    // Inventory omission is not an exit outcome, so the registry row remains retryable.
+    expect(localProvider.shutdown).not.toHaveBeenCalledWith(
       'w1-registry-1',
       expect.objectContaining({ immediate: true })
     )
@@ -77,7 +54,7 @@ describe('killAllProcessesForWorktree', () => {
       expect.objectContaining({ immediate: true })
     )
     expect(onPtyStopped).toHaveBeenCalledWith('w1@@abcd1234')
-    expect(onPtyStopped).toHaveBeenCalledWith('w1-registry-1')
+    expect(onPtyStopped).not.toHaveBeenCalledWith('w1-registry-1')
     expect(onPtyStopped).not.toHaveBeenCalledWith('w2@@efef5678')
     expect(onPtyStopped).not.toHaveBeenCalledWith('w2-registry-2')
   })
@@ -85,8 +62,8 @@ describe('killAllProcessesForWorktree', () => {
   it('skips the daemon prefix sweep safely when the provider uses numeric ids', async () => {
     // LocalPtyProvider shape: numeric ids that cannot match `${worktreeId}@@`.
     const localProvider = createProviderStub(async () => [
-      { id: '1', cwd: '/tmp/w1', title: 'shell' },
-      { id: '2', cwd: '/tmp/w2', title: 'shell' }
+      { id: '1', cwd: '/tmp/w1', title: 'shell', worktreeId: 'w1' },
+      { id: '2', cwd: '/tmp/w2', title: 'shell', worktreeId: 'w2' }
     ])
     listRegisteredPtysMock.mockReturnValue([
       { ptyId: '1', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 200 }
@@ -489,6 +466,7 @@ describe('killAllProcessesForWorktree', () => {
       'w1@@same',
       expect.objectContaining({ immediate: true })
     )
+    expect(localProvider.listProcesses).toHaveBeenCalledOnce()
     expect(result.providerStopped + result.registryStopped).toBe(1)
   })
 
@@ -509,19 +487,25 @@ describe('killAllProcessesForWorktree', () => {
     const runtime = {
       stopTerminalsForWorktree
     } as unknown as Parameters<typeof killAllProcessesForWorktree>[1]['runtime']
-    const localProvider = createProviderStub(async () => [])
+    const localProvider = createProviderStub(async () => [
+      { id: 'w1@@same', cwd: '/tmp/w1', title: 'shell' }
+    ])
     listRegisteredPtysMock.mockReturnValue([
       { ptyId: 'w1@@same', worktreeId: 'w1', sessionId: null, paneKey: null, pid: 100 }
     ])
 
-    const result = await killAllProcessesForWorktree('w1', { runtime, localProvider })
+    const result = await killAllProcessesForWorktree('w1', {
+      runtime,
+      localProvider,
+      includeProviderInventory: false
+    })
 
     expect(result.runtimeStopped).toBe(0)
     expect(result.registryStopped).toBe(1)
     expect(localProvider.shutdown).toHaveBeenCalledTimes(1)
   })
 
-  it('accepts a failed Windows stop when a fresh inventory proves the PTY exited', async () => {
+  it('does not treat a fresh Windows inventory miss as physical exit proof', async () => {
     const worktreeId = 'repo-1::C:/Users/User/orca/workspaces/repo/feature'
     const ptyId = `${worktreeId}@@windows-pty`
     const stopTerminalsForWorktree = vi.fn(
@@ -558,13 +542,10 @@ describe('killAllProcessesForWorktree', () => {
       killAllProcessesForWorktree(worktreeId, {
         runtime,
         localProvider,
+        includeProviderInventory: false,
         requirePhysicalStop: true
       })
-    ).resolves.toEqual({
-      runtimeStopped: 0,
-      providerStopped: 0,
-      registryStopped: 0
-    })
+    ).rejects.toThrow(/could not verify these exited/)
     expect(localProvider.listProcesses).toHaveBeenCalledTimes(2)
   })
 
@@ -693,10 +674,17 @@ describe('killAllProcessesForWorktree', () => {
         ): Promise<unknown> => {
           if (type === 'listSessions') {
             return Promise.resolve({
-              sessions: [{ sessionId, isAlive: true, cwd: '/tmp/w1' }]
+              sessions: [
+                {
+                  sessionId,
+                  incarnationId: 'incarnation-1',
+                  isAlive: true,
+                  cwd: '/tmp/w1'
+                }
+              ]
             })
           }
-          if (type === 'kill') {
+          if (type === 'killExact') {
             killRequests += 1
             // The daemon never replies; the request only rejects when its own
             // timeout elapses, exactly like the real client.
@@ -711,8 +699,25 @@ describe('killAllProcessesForWorktree', () => {
         }
       }
 
-      const adapter = new DaemonPtyAdapter({ socketPath: '/tmp/sock', tokenPath: '/tmp/tok' })
+      const adapter = new DaemonPtyAdapter({
+        socketPath: '/tmp/sock',
+        tokenPath: '/tmp/tok',
+        protocolVersion: 33
+      })
+      vi.spyOn(adapter, 'supportsExactPtyOperations').mockReturnValue(true)
       ;(adapter as unknown as { client: typeof fakeClient }).client = fakeClient
+      ;(
+        adapter as unknown as {
+          activeSessionIds: Set<string>
+          sessionIncarnations: Map<string, string>
+        }
+      ).activeSessionIds.add(sessionId)
+      ;(
+        adapter as unknown as {
+          activeSessionIds: Set<string>
+          sessionIncarnations: Map<string, string>
+        }
+      ).sessionIncarnations.set(sessionId, 'incarnation-1')
 
       listRegisteredPtysMock.mockReturnValue([])
 
@@ -820,12 +825,9 @@ describe('killAllProcessesForWorktree', () => {
       await expect(teardown).resolves.toEqual({
         runtimeStopped: 0,
         providerStopped: 0,
-        registryStopped: 1
+        registryStopped: 0
       })
-      expect(localProvider.shutdown).toHaveBeenCalledWith(
-        'registry-1',
-        expect.objectContaining({ immediate: true })
-      )
+      expect(localProvider.shutdown).not.toHaveBeenCalled()
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
@@ -860,7 +862,9 @@ describe('killAllProcessesForWorktree', () => {
     vi.useFakeTimers()
     try {
       let resolveShutdown: () => void = () => {}
-      const localProvider = createProviderStub(async () => [])
+      const localProvider = createProviderStub(async () => [
+        { id: 'registry-1', cwd: '/tmp/w1', title: 'shell' }
+      ])
       ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         () =>
           new Promise<void>((resolve) => {
@@ -874,6 +878,7 @@ describe('killAllProcessesForWorktree', () => {
       const teardown = killAllProcessesForWorktree('w1', {
         localProvider,
         onPtyStopped,
+        includeProviderInventory: false,
         timeoutMs: 25
       })
 

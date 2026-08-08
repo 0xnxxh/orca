@@ -2,15 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { IPtyProvider } from '../providers/types'
 import type { Repo } from '../../shared/types'
 import type { OrcaRuntimeService } from './orca-runtime'
+import { createWorktreeTeardownProviderStub } from './__tests__/worktree-teardown-provider'
 import { stopMissingWorktreeTerminals } from './missing-worktree-terminal-reconciliation'
 
-function createProvider(sessionIds: string[]): IPtyProvider {
-  return {
-    listProcesses: vi.fn(async () =>
-      sessionIds.map((id) => ({ id, cwd: '/workspace', title: 'shell' }))
-    ),
-    shutdown: vi.fn(async () => {})
-  } as unknown as IPtyProvider
+function createProvider(sessionIds: string[]) {
+  return createWorktreeTeardownProviderStub(async () =>
+    sessionIds.map((id) => ({ id, cwd: '/workspace', title: 'shell' }))
+  )
 }
 
 function createRuntime(): OrcaRuntimeService {
@@ -49,12 +47,14 @@ describe('stopMissingWorktreeTerminals', () => {
     )
 
     expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
-    expect(provider.shutdown).toHaveBeenCalledWith(
+    expect(provider.killExact).toHaveBeenCalledWith(
       `${deletedId}@@deleted-session`,
+      `incarnation:${deletedId}@@deleted-session`,
       expect.objectContaining({ immediate: true })
     )
-    expect(provider.shutdown).not.toHaveBeenCalledWith(
+    expect(provider.killExact).not.toHaveBeenCalledWith(
       `${survivingId}@@surviving-session`,
+      `incarnation:${survivingId}@@surviving-session`,
       expect.anything()
     )
   })
@@ -81,8 +81,9 @@ describe('stopMissingWorktreeTerminals', () => {
         resolvedConnectionId: 'ssh-1'
       })
     )
-    expect(sshProvider.shutdown).toHaveBeenCalledWith(
+    expect(sshProvider.killExact).toHaveBeenCalledWith(
       `${deletedId}@@ssh-session`,
+      `incarnation:${deletedId}@@ssh-session`,
       expect.objectContaining({ immediate: true })
     )
     expect(localProvider.listProcesses).not.toHaveBeenCalled()
@@ -128,25 +129,42 @@ describe('stopMissingWorktreeTerminals', () => {
 
     expect(result.stoppedWorktreeIds).toHaveLength(ids.length)
     expect(provider.listProcesses).toHaveBeenCalledTimes(1)
-    expect(provider.shutdown).toHaveBeenCalledTimes(ids.length)
+    expect(provider.killExact).toHaveBeenCalledTimes(ids.length)
   })
 
-  // Why: real providers put listProcesses/shutdown on the prototype and use `this`;
+  // Why: real providers put listProcesses/exact kills on the prototype and use `this`;
   // batching them behind a wrapper must not break that binding.
   it('keeps provider method binding intact while batching', async () => {
     class PrototypeProvider {
       listCalls = 0
-      shutdownCalls: string[] = []
-      private readonly sessions: { id: string; cwd: string; title: string }[]
+      killCalls: string[] = []
+      private readonly mutationRouteToken = Object.freeze({})
+      private readonly sessions: {
+        id: string
+        incarnationId: string
+        mutationRouteToken: object
+        cwd: string
+        title: string
+      }[]
       constructor(sessionIds: string[]) {
-        this.sessions = sessionIds.map((id) => ({ id, cwd: '/workspace', title: 'shell' }))
+        this.sessions = sessionIds.map((id) => ({
+          id,
+          incarnationId: `incarnation:${id}`,
+          mutationRouteToken: this.mutationRouteToken,
+          cwd: '/workspace',
+          title: 'shell'
+        }))
       }
-      async listProcesses(): Promise<{ id: string; cwd: string; title: string }[]> {
+      async listProcesses(): Promise<typeof this.sessions> {
         this.listCalls += 1
         return this.sessions
       }
-      async shutdown(sessionId: string): Promise<void> {
-        this.shutdownCalls.push(sessionId)
+      getPtyMutationRouteToken(): object {
+        return this.mutationRouteToken
+      }
+      async killExact(sessionId: string, incarnationId: string): Promise<boolean> {
+        this.killCalls.push(`${sessionId}:${incarnationId}`)
+        return true
       }
     }
     const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b', 'repo-1::/workspace/c']
@@ -165,7 +183,10 @@ describe('stopMissingWorktreeTerminals', () => {
 
     expect(result.stoppedWorktreeIds).toHaveLength(ids.length)
     expect(provider.listCalls).toBe(1)
-    expect(provider.shutdownCalls).toHaveLength(ids.length)
+    expect(provider.killCalls).toEqual(
+      expect.arrayContaining(ids.map((id) => `${id}@@session:incarnation:${id}@@session`))
+    )
+    expect(provider.killCalls).toHaveLength(ids.length)
   })
 
   // Why: the batching must not leak past the calls it was built for. If the proxy
@@ -174,20 +195,38 @@ describe('stopMissingWorktreeTerminals', () => {
   it('does not serve the shared snapshot to provider-internal listProcesses', async () => {
     class SelfListingProvider {
       listCalls = 0
-      constructor(private readonly sessions: { id: string; cwd: string; title: string }[]) {}
-      async listProcesses(): Promise<{ id: string; cwd: string; title: string }[]> {
+      private readonly mutationRouteToken = Object.freeze({})
+      private readonly sessions: {
+        id: string
+        incarnationId: string
+        mutationRouteToken: object
+        cwd: string
+        title: string
+      }[]
+      constructor(sessionIds: string[]) {
+        this.sessions = sessionIds.map((id) => ({
+          id,
+          incarnationId: `incarnation:${id}`,
+          mutationRouteToken: this.mutationRouteToken,
+          cwd: '/workspace',
+          title: 'shell'
+        }))
+      }
+      async listProcesses(): Promise<typeof this.sessions> {
         this.listCalls += 1
         return this.sessions
       }
-      async shutdown(): Promise<void> {
-        // A provider that re-reads live state as part of stopping.
+      getPtyMutationRouteToken(): object {
+        return this.mutationRouteToken
+      }
+      async killExact(): Promise<boolean> {
+        // A provider that re-reads live state as part of exact stopping.
         await this.listProcesses()
+        return true
       }
     }
     const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b']
-    const provider = new SelfListingProvider(
-      ids.map((id) => ({ id: `${id}@@session`, cwd: '/workspace', title: 'shell' }))
-    )
+    const provider = new SelfListingProvider(ids.map((id) => `${id}@@session`))
 
     await stopMissingWorktreeTerminals({ ...localRepo, connectionId: 'ssh-1' }, ids, [], {
       runtime: createRuntime(),
@@ -195,7 +234,7 @@ describe('stopMissingWorktreeTerminals', () => {
       getSshProvider: () => provider as unknown as IPtyProvider
     })
 
-    // One shared sweep scan, plus each shutdown's own live re-read.
+    // One shared sweep scan, plus each exact kill's own live re-read.
     expect(provider.listCalls).toBe(1 + ids.length)
   })
 
@@ -203,11 +242,27 @@ describe('stopMissingWorktreeTerminals', () => {
   // teardown for every remaining worktree in the sweep.
   it('does not reuse a failed process scan', async () => {
     const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b']
+    const sessionId = `${ids[1]}@@session`
+    const incarnationId = `incarnation:${sessionId}`
+    const mutationRouteToken = Object.freeze({})
     const listProcesses = vi
       .fn()
       .mockRejectedValueOnce(new Error('relay dropped'))
-      .mockResolvedValue([{ id: `${ids[1]}@@session`, cwd: '/workspace', title: 'shell' }])
-    const provider = { listProcesses, shutdown: vi.fn(async () => {}) } as unknown as IPtyProvider
+      .mockResolvedValue([
+        {
+          id: sessionId,
+          incarnationId,
+          mutationRouteToken,
+          cwd: '/workspace',
+          title: 'shell'
+        }
+      ])
+    const killExact = vi.fn(async () => true)
+    const provider = {
+      listProcesses,
+      killExact,
+      getPtyMutationRouteToken: vi.fn(() => mutationRouteToken)
+    } as unknown as IPtyProvider
 
     await stopMissingWorktreeTerminals({ ...localRepo, connectionId: 'ssh-1' }, ids, [], {
       runtime: createRuntime(),
@@ -216,8 +271,9 @@ describe('stopMissingWorktreeTerminals', () => {
     })
 
     expect(listProcesses.mock.calls.length).toBeGreaterThan(1)
-    expect(provider.shutdown).toHaveBeenCalledWith(
-      `${ids[1]}@@session`,
+    expect(killExact).toHaveBeenCalledWith(
+      sessionId,
+      incarnationId,
       expect.objectContaining({ immediate: true })
     )
   })

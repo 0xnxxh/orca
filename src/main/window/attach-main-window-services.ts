@@ -66,6 +66,7 @@ import {
   setWorktreeBaseDirectoryWatcherSyncContext
 } from '../ipc/worktree-base-directory-watcher'
 import { logStartupMilestone } from '../startup/startup-diagnostics'
+import { registerMainWindowClosedCleanup } from './main-window-lifecycle'
 
 const UPDATER_SETUP_FALLBACK_MS = 15_000
 
@@ -216,7 +217,7 @@ export function attachMainWindowServices(
     }
   )
 
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     // Why: clear main-owned guest registrations on close so stale tab→webContents ids don't leak across relaunch/hot-reload.
     browserManager.unregisterAll()
   })
@@ -266,7 +267,7 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
     }
   })
   // Why: macOS can stay windowless; drop stale closures without letting an old close clear newer handlers.
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     if (activeTccPromptHandlerToken !== handlerToken) {
       return
     }
@@ -299,7 +300,7 @@ function registerAppReloadHandler(
     onBeforeRendererReload?.({ webContentsId: mainWebContents.id, ignoreCache: false })
     mainWebContents.reload()
   })
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     if (activeAppReloadHandlerToken !== handlerToken) {
       return
     }
@@ -491,7 +492,7 @@ function registerRuntimeWindowLifecycle(
   mainWindow.webContents.on('did-start-loading', () => {
     runtime.markRendererReloading(mainWindow.id)
   })
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     runtime.markGraphUnavailable(mainWindow.id)
     if (activeRuntimeNotifierToken === notifierToken) {
       // Why: the notifier closes over the window; clear it in the no-window gap so the runtime can't retain destroyed graphs.
@@ -521,7 +522,7 @@ function registerFileDropRelay(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send('terminal:file-drop', args)
   }
   ipcMain.on(channel, relayFileDrop)
-  mainWindow.on('closed', () => {
+  registerMainWindowClosedCleanup(mainWindow, () => {
     // Why: macOS keeps the process alive after window close; drop the closure so the destroyed window isn't retained.
     ipcMain.removeListener(channel, relayFileDrop)
   })

@@ -178,4 +178,16 @@ describe('managed hook owner identity', () => {
       'linux:pid:[4026533001]:current-boot-id:4242'
     )
   })
+
+  it('parses the Windows machine identity without accepting unrelated registry output', async () => {
+    const identity = await import('./managed-hook-owner-identity')
+    expect(
+      identity.parseWindowsMachineGuid(`
+HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography
+    MachineGuid    REG_SZ    00000000-0000-4000-8000-000000000001
+`)
+    ).toBe('00000000-0000-4000-8000-000000000001')
+    expect(identity.parseWindowsMachineGuid('MachineGuid REG_SZ')).toBeNull()
+    expect(identity.parseWindowsMachineGuid('OtherValue REG_SZ machine-a')).toBeNull()
+  })
 })

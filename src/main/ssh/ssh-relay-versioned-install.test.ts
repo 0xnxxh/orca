@@ -466,6 +466,7 @@ describe('relay GC claim', () => {
 
     expect(relayGcClaimPath('/relay/version')).toBe('/relay/version.gc-claim')
     expect(mockExec.mock.calls[0]?.[1]).toContain("mkdir '/relay/version.gc-claim'")
+    expect(mockExec.mock.calls[0]?.[1]).toContain('.gc-owner-gc-')
   })
 
   it('recovers and removes a stale sibling claim before retrying deploy', async () => {
@@ -506,12 +507,15 @@ describe('relay GC claim', () => {
     )
 
     const ownerScript = decodePowerShellCommand(mockExec.mock.calls[1]?.[1] ?? '')
+    const acquireScript = decodePowerShellCommand(mockExec.mock.calls[0]?.[1] ?? '')
     const releaseScript = decodePowerShellCommand(mockExec.mock.calls[2]?.[1] ?? '')
+    expect(acquireScript).toContain('.gc-owner-gc-')
     expect(ownerScript).toContain('Set-Content -LiteralPath')
     expect(ownerScript).toContain('.gc-claim/.gc-owner')
     expect(releaseScript).toContain('Get-Content -LiteralPath')
     expect(releaseScript).toContain('-cne')
     expect(releaseScript).toContain('Remove-Item -LiteralPath')
+    expect(releaseScript).toContain('.gc-owner-gc-')
     expect(releaseScript).toContain("'RELEASED'")
     expect(releaseScript).toContain("'LOST'")
     expect(releaseScript).toContain("'UNKNOWN'")

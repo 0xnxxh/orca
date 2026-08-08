@@ -6,7 +6,7 @@ import {
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR
 } from '../../shared/pty-consumer-session'
 import { SshRelaySession } from './ssh-relay-session'
-import { createMockDeps } from './ssh-relay-session-test-fixtures'
+import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 import { getSshPtyConsumerRecovery } from './ssh-pty-consumer-recovery'
 
 const { muxRequestMock, openConsumerSessionMock } = vi.hoisted(() => ({
@@ -77,6 +77,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
 }))
 
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),
@@ -117,9 +118,9 @@ describe('SshRelaySession consumer recovery durability', () => {
       resumed: false
     }))
     vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
-      platform: 'linux-x64',
-      serverBuildId: 'test-relay-build'
+      ...mockDeploySuccess(),
+      serverBuildId: 'control-relay-build',
+      terminalAuthorityOwnerBuildId: 'test-relay-build'
     })
   })
 

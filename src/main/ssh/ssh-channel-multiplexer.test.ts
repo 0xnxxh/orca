@@ -211,7 +211,7 @@ describe('SshChannelMultiplexer', () => {
 
   describe('notifications', () => {
     it('sends notifications without expecting a response', () => {
-      mux.notify('pty.data', { id: 'pty-1', data: 'hello' })
+      expect(mux.notify('pty.data', { id: 'pty-1', data: 'hello' })).toBe(true)
 
       expect(transport.written.length).toBe(1)
       const payload = JSON.parse(
@@ -221,6 +221,13 @@ describe('SshChannelMultiplexer', () => {
       )
       expect(payload.method).toBe('pty.data')
       expect(payload.id).toBeUndefined()
+    })
+
+    it('reports when a disposed channel cannot admit a notification', () => {
+      mux.dispose()
+
+      expect(mux.notify('pty.data', { id: 'pty-1', data: 'blocked' })).toBe(false)
+      expect(transport.written).toHaveLength(0)
     })
 
     it('dispatches incoming notifications to handler', () => {

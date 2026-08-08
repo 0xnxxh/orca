@@ -2,6 +2,7 @@ import { isAgentSessionOwnerBinding } from '../../shared/agent-session-host-auth
 import { MAX_CLAIMED_AGENT_PTY_OWNER_ENTRIES } from '../../shared/claimed-agent-pty-owner'
 import { cloneAgentSessionOwnerBinding } from '../../shared/claimed-agent-pty-owner-snapshot'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
+import { parseTerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 import type { PtyProcessInfo } from './types'
 
 export const MAX_AGGREGATED_PTY_PROCESS_LIST_ENTRIES = 4096
@@ -42,10 +43,12 @@ export class PtyProcessListAdmission {
 
   constructor(private readonly capacityError = 'pty_process_list_capacity') {}
 
-  admit(value: PtyProcessInfo): PtyProcessInfo {
+  admit(value: PtyProcessInfo, resolvedAuthorityPhysicalPtyId?: string | null): PtyProcessInfo {
     if (typeof value !== 'object' || value === null) {
       throw new Error('invalid_pty_process_list')
     }
+    const authorityPhysicalPtyId =
+      resolvedAuthorityPhysicalPtyId === undefined ? value.id : resolvedAuthorityPhysicalPtyId
     const idBytes = retainedStringBytes(value.id)
     const cwdBytes = retainedStringBytes(value.cwd)
     const titleBytes = retainedStringBytes(value.title)
@@ -53,6 +56,13 @@ export class PtyProcessListAdmission {
     const terminalHandleBytes = retainedOptionalStringBytes(value.terminalHandle)
     const wslDistroBytes =
       value.wslDistro === null ? 0 : retainedOptionalStringBytes(value.wslDistro)
+    const authorityAccess =
+      value.terminalSessionAuthorityAccess === undefined
+        ? null
+        : parseTerminalSessionAuthorityPtyAccess(value.terminalSessionAuthorityAccess)
+    const authorityAccessBytes = authorityAccess
+      ? Buffer.byteLength(JSON.stringify(authorityAccess), 'utf8')
+      : 0
     if (
       idBytes === null ||
       cwdBytes === null ||
@@ -60,7 +70,13 @@ export class PtyProcessListAdmission {
       worktreeIdBytes === null ||
       terminalHandleBytes === null ||
       wslDistroBytes === null ||
+      (value.mutationRouteToken !== undefined &&
+        (typeof value.mutationRouteToken !== 'object' || value.mutationRouteToken === null)) ||
       (value.incarnationId !== undefined && !isPtyIncarnationId(value.incarnationId)) ||
+      (value.terminalSessionAuthorityAccess !== undefined && authorityAccess === null) ||
+      (authorityAccess !== null &&
+        (authorityAccess.binding.physicalPtyId !== authorityPhysicalPtyId ||
+          authorityAccess.binding.ptyIncarnationId !== value.incarnationId)) ||
       (value.agentSessionOwners !== undefined && !Array.isArray(value.agentSessionOwners))
     ) {
       throw new Error('invalid_pty_process_list')
@@ -91,6 +107,7 @@ export class PtyProcessListAdmission {
       worktreeIdBytes +
       terminalHandleBytes +
       wslDistroBytes +
+      authorityAccessBytes +
       ownerBytes
     if (
       nextEntries > MAX_AGGREGATED_PTY_PROCESS_LIST_ENTRIES ||
@@ -108,6 +125,10 @@ export class PtyProcessListAdmission {
       cwd: value.cwd,
       title: value.title,
       ...(value.incarnationId !== undefined ? { incarnationId: value.incarnationId } : {}),
+      ...(value.mutationRouteToken !== undefined
+        ? { mutationRouteToken: value.mutationRouteToken }
+        : {}),
+      ...(authorityAccess ? { terminalSessionAuthorityAccess: authorityAccess } : {}),
       ...(value.worktreeId !== undefined ? { worktreeId: value.worktreeId } : {}),
       ...(value.terminalHandle !== undefined ? { terminalHandle: value.terminalHandle } : {}),
       ...(value.wslDistro !== undefined ? { wslDistro: value.wslDistro } : {}),

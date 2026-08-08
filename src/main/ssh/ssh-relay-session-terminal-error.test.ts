@@ -17,10 +17,14 @@ vi.mock('./ssh-relay-deploy', () => ({
 
 vi.mock('./ssh-pty-consumer-session', () => ({
   openSshPtyConsumerSession: vi.fn(async (_mux, options) => ({
-    clientInstanceId: options.clientInstanceId,
-    clientGeneration: 1,
-    ownerGeneration: 1,
-    ownerLease: 'test-owner-lease'
+    state: {
+      mode: 'negotiated' as const,
+      clientInstanceId: options.clientInstanceId,
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'test-owner-lease'
+    },
+    resumed: options.resume !== undefined
   }))
 }))
 
@@ -65,6 +69,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
 }))
 
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue({
@@ -128,6 +133,10 @@ function mockDeploySuccess(): void {
   }
   vi.mocked(deployAndLaunchRelay).mockResolvedValue({
     transport: mockTransport,
+    authorityHostId: 'test-authority-host',
+    terminalAuthorityOwnerBuildId: 'test-authority-build',
+    priorRelayStatus: { kind: 'none' as const },
+    terminalAuthorityOwnerRelayDir: '/test/authority-relay',
     platform: 'linux-x64'
   })
 }

@@ -10,22 +10,23 @@ import {
 export const TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS = 4096
 
 type PendingPtyInputWrite = {
-  id: string
+  target: unknown
   text: string
   tooLarge: boolean | Promise<boolean>
   chunks?: Iterator<string>
   nextChunk?: string
 }
 
-export type PtyInputWriteQueue = {
-  enqueue: (id: string, data: string) => boolean
+export type PtyInputWriteQueue<Target = unknown> = {
+  enqueue: (target: Target, data: string) => boolean
   waitForDrain: () => Promise<void>
   clear: () => void
 }
 
-export type PtyInputWriteQueueDeps = {
-  isWritable: (id: string) => boolean
-  write: (id: string, data: string) => void
+export type PtyInputWriteQueueDeps<Target> = {
+  isWritable: (target: Target) => boolean
+  write: (target: Target, data: string) => void
+  sameTarget?: (left: Target, right: Target) => boolean
   yieldBetweenWrites?: () => Promise<void>
 }
 
@@ -33,8 +34,11 @@ function isCoalescibleText(text: string): boolean {
   return text.length <= TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS
 }
 
-export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInputWriteQueue {
+export function createPtyInputWriteQueue<Target>(
+  deps: PtyInputWriteQueueDeps<Target>
+): PtyInputWriteQueue<Target> {
   const yieldBetweenWrites = deps.yieldBetweenWrites ?? yieldToEventLoop
+  const sameTarget = deps.sameTarget ?? Object.is
   let pending: PendingPtyInputWrite[] = []
   let drainPromise: Promise<void> | null = null
 
@@ -45,7 +49,8 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
         pending.shift()
         continue
       }
-      if (!deps.isWritable(next.id)) {
+      const target = next.target as Target
+      if (!deps.isWritable(target)) {
         pending.shift()
         continue
       }
@@ -55,7 +60,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
           pending.shift()
           continue
         }
-        if (!deps.isWritable(next.id)) {
+        if (!deps.isWritable(target)) {
           pending.shift()
           continue
         }
@@ -74,7 +79,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
           const peek = pending[0]
           if (
             !peek ||
-            peek.id !== next.id ||
+            !sameTarget(peek.target as Target, target) ||
             peek.tooLarge !== false ||
             peek.chunks !== undefined ||
             !isCoalescibleText(peek.text) ||
@@ -85,7 +90,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
           payload += peek.text
           pending.shift()
         }
-        deps.write(next.id, payload)
+        deps.write(target, payload)
         if (pending.length > 0) {
           await yieldBetweenWrites()
         }
@@ -99,7 +104,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
         pending.shift()
         continue
       }
-      deps.write(next.id, chunk.value)
+      deps.write(target, chunk.value)
       const following = next.chunks.next()
       if (following.done) {
         pending.shift()
@@ -125,13 +130,13 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
   }
 
   return {
-    enqueue(id: string, data: string): boolean {
+    enqueue(target: Target, data: string): boolean {
       try {
         const tooLarge = isTerminalInputTooLargeWithDeferredMeasurement(data)
         if (tooLarge === true) {
           return false
         }
-        pending.push({ id, text: data, tooLarge })
+        pending.push({ target, text: data, tooLarge })
         scheduleDrain()
         return true
       } catch {

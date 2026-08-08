@@ -11,6 +11,9 @@ import {
   capturedPanesByTabId,
   parkedWatchersByTabId,
   pruneParkedTerminalWatchers,
+  readMountedTerminalPaneCandidates,
+  registerMountedTerminalPaneCandidateReader,
+  retireParkedTerminalTab,
   terminalWatcherLiveWorkspaceIds
 } from './terminal-parked-watcher-registry'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
@@ -89,5 +92,19 @@ describe('terminal parked watcher registry removal', () => {
     expect(parkedWatchersByTabId.has(FLOATING_TAB_ID)).toBe(true)
     expect(capturedPanesByTabId.has(FLOATING_TAB_ID)).toBe(true)
     expect(floatingDispose).not.toHaveBeenCalled()
+  })
+
+  it('drops a mounted candidate reader when its tab retires', () => {
+    const unregister = registerMountedTerminalPaneCandidateReader(
+      TAB_ID,
+      'removed-worktree',
+      () => []
+    )
+    expect(readMountedTerminalPaneCandidates(TAB_ID, 'removed-worktree')).toEqual([])
+
+    retireParkedTerminalTab(TAB_ID)
+
+    expect(readMountedTerminalPaneCandidates(TAB_ID, 'removed-worktree')).toBeNull()
+    unregister()
   })
 })

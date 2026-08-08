@@ -106,12 +106,22 @@ describe('startParkedTerminalByteWatcher', () => {
     vi.advanceTimersByTime(0)
   }
 
+  function emitAndFlushSideEffects(data: string): void {
+    emit(data)
+    flushSideEffects()
+  }
+
   async function startWatcher(
-    overrides: Partial<ParkedTerminalByteWatcherOptions> = {}
-  ): Promise<{ dispose: () => void; sendInput: ReturnType<typeof vi.fn> }> {
+    overrides: Partial<ParkedTerminalByteWatcherOptions> = {},
+    activate = true
+  ): Promise<{
+    activateParked: () => boolean
+    dispose: () => void
+    sendInput: ReturnType<typeof vi.fn>
+  }> {
     const { startParkedTerminalByteWatcher } = await import('./parked-terminal-byte-watcher')
     const sendInput = vi.fn()
-    const dispose = startParkedTerminalByteWatcher({
+    const watcher = startParkedTerminalByteWatcher({
       ptyId: PTY_ID,
       tabId: TAB_ID,
       worktreeId: WORKTREE_ID,
@@ -120,7 +130,10 @@ describe('startParkedTerminalByteWatcher', () => {
       sendInput,
       ...overrides
     })
-    return { dispose, sendInput }
+    if (activate) {
+      watcher.activateParked()
+    }
+    return { ...watcher, sendInput }
   }
 
   beforeEach(() => {
@@ -161,8 +174,7 @@ describe('startParkedTerminalByteWatcher', () => {
   it('forwards every OSC title in order to the pane and tab title store actions', async () => {
     const { dispose } = await startWatcher()
 
-    emit(`${WORKING_TITLE_OSC}${IDLE_TITLE_OSC}`)
-    flushSideEffects()
+    emitAndFlushSideEffects(`${WORKING_TITLE_OSC}${IDLE_TITLE_OSC}`)
 
     expect(mockStoreState.setRuntimePaneTitle.mock.calls).toEqual([
       [TAB_ID, PANE_ID, '⠋ Build feature'],
@@ -175,33 +187,10 @@ describe('startParkedTerminalByteWatcher', () => {
     dispose()
   })
 
-  it('drops the bare cursor-agent native title before it reaches the store', async () => {
-    const { dispose } = await startWatcher()
-
-    emit('\x1b]0;Cursor Agent\x07')
-    flushSideEffects()
-
-    expect(mockStoreState.setRuntimePaneTitle).not.toHaveBeenCalled()
-    expect(mockStoreState.updateTabTitle).not.toHaveBeenCalled()
-    dispose()
-  })
-
-  it('does not drive the tab title when drivesTabTitle is false', async () => {
-    const { dispose } = await startWatcher({ drivesTabTitle: false })
-
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
-
-    expect(mockStoreState.setRuntimePaneTitle).toHaveBeenCalledWith(TAB_ID, PANE_ID, IDLE_TITLE)
-    expect(mockStoreState.updateTabTitle).not.toHaveBeenCalled()
-    dispose()
-  })
-
   it('marks unread on BEL and schedules the delayed terminal-bell OS notification', async () => {
     const { dispose } = await startWatcher()
 
-    emit('build finished\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('build finished\x07')
 
     expect(mockStoreState.markWorktreeUnread).toHaveBeenCalledWith(WORKTREE_ID)
     expect(mockStoreState.markTerminalTabUnread).toHaveBeenCalledWith(TAB_ID)
@@ -225,8 +214,7 @@ describe('startParkedTerminalByteWatcher', () => {
     }
     const { dispose } = await startWatcher()
 
-    emit('\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('\x07')
 
     expect(mockStoreState.markTerminalPaneUnread).toHaveBeenCalledWith(PANE_KEY)
     dispose()
@@ -236,8 +224,7 @@ describe('startParkedTerminalByteWatcher', () => {
     const { dispose } = await startWatcher()
 
     emit('\x1b]0;par')
-    emit('tial title\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('tial title\x07')
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
 
     expect(mockStoreState.markWorktreeUnread).not.toHaveBeenCalled()
@@ -249,12 +236,10 @@ describe('startParkedTerminalByteWatcher', () => {
   it('fires the prompt-cache timer and agent-task-complete on working→idle', async () => {
     const { dispose } = await startWatcher()
 
-    emit(WORKING_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(WORKING_TITLE_OSC)
     expect(mockStoreState.setCacheTimerStartedAt).toHaveBeenLastCalledWith(PANE_KEY, null)
 
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     expect(mockStoreState.setCacheTimerStartedAt).toHaveBeenLastCalledWith(
       PANE_KEY,
       expect.any(Number)
@@ -281,8 +266,7 @@ describe('startParkedTerminalByteWatcher', () => {
     const { dispose } = await startWatcher()
 
     emit(WORKING_TITLE_OSC)
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS)
 
     expect(dispatchTerminalNotification).toHaveBeenCalledWith(WORKTREE_ID, {
@@ -303,8 +287,7 @@ describe('startParkedTerminalByteWatcher', () => {
     const { dispose } = await startWatcher()
 
     emit(WORKING_TITLE_OSC)
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
 
     expect(dispatchTerminalNotification).not.toHaveBeenCalled()
@@ -318,10 +301,8 @@ describe('startParkedTerminalByteWatcher', () => {
   it('lets a same-burst completion supersede the pending bell OS notification', async () => {
     const { dispose } = await startWatcher()
 
-    emit(WORKING_TITLE_OSC)
-    flushSideEffects()
-    emit(`${IDLE_TITLE_OSC}\x07`)
-    flushSideEffects()
+    emitAndFlushSideEffects(WORKING_TITLE_OSC)
+    emitAndFlushSideEffects(`${IDLE_TITLE_OSC}\x07`)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 8)
 
     // The bell still marks unread immediately; only the OS notification yields.
@@ -338,10 +319,8 @@ describe('startParkedTerminalByteWatcher', () => {
     const { dispose } = await startWatcher()
 
     emit(WORKING_TITLE_OSC)
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
-    emit(WORKING_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
+    emitAndFlushSideEffects(WORKING_TITLE_OSC)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
 
     expect(dispatchTerminalNotification).not.toHaveBeenCalled()
@@ -457,8 +436,7 @@ describe('startParkedTerminalByteWatcher', () => {
     // must be seeded or this working→idle transition can never fire.
     const { dispose } = await startWatcher({ initialTitle: '⠋ Build feature' })
 
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS)
 
     expect(dispatchTerminalNotification).toHaveBeenCalledTimes(1)
@@ -473,8 +451,7 @@ describe('startParkedTerminalByteWatcher', () => {
   it('does not fire completion for an idle title without a seed or observed transition', async () => {
     const { dispose } = await startWatcher()
 
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
 
     expect(dispatchTerminalNotification).not.toHaveBeenCalled()
@@ -484,8 +461,7 @@ describe('startParkedTerminalByteWatcher', () => {
   it('clears the watcher-written runtime title slot on dispose', async () => {
     const { dispose } = await startWatcher()
 
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
     expect(mockStoreState.setRuntimePaneTitle).toHaveBeenCalledWith(TAB_ID, PANE_ID, IDLE_TITLE)
 
     dispose()
@@ -495,8 +471,7 @@ describe('startParkedTerminalByteWatcher', () => {
   it('leaves the runtime title slot alone on dispose when it never wrote one', async () => {
     const { dispose } = await startWatcher()
 
-    emit('plain output with no titles\r\n')
-    flushSideEffects()
+    emitAndFlushSideEffects('plain output with no titles\r\n')
 
     dispose()
     expect(mockStoreState.clearRuntimePaneTitle).not.toHaveBeenCalled()
@@ -506,8 +481,7 @@ describe('startParkedTerminalByteWatcher', () => {
     const { dispose } = await startWatcher()
 
     emit(WORKING_TITLE_OSC)
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
 
     // Equivalent to shutdownWorktreeTerminals → disposeParkedTerminalWatchersForPtyIds.
     dispose()
@@ -515,8 +489,7 @@ describe('startParkedTerminalByteWatcher', () => {
     expect(dispatchTerminalNotification).not.toHaveBeenCalled()
 
     // The teardown flush that main emits after pty.kill must be a no-op.
-    emit('final teardown flush\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('final teardown flush\x07')
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
     expect(mockStoreState.markWorktreeUnread).not.toHaveBeenCalled()
     expect(mockStoreState.markTerminalTabUnread).not.toHaveBeenCalled()
@@ -526,16 +499,14 @@ describe('startParkedTerminalByteWatcher', () => {
   it('dispose unregisters the sidecar and cancels the pending bell notification', async () => {
     const { dispose } = await startWatcher()
 
-    emit('\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('\x07')
     expect(mockStoreState.markWorktreeUnread).toHaveBeenCalledTimes(1)
 
     dispose()
     vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
     expect(dispatchTerminalNotification).not.toHaveBeenCalled()
 
-    emit('\x07')
-    flushSideEffects()
+    emitAndFlushSideEffects('\x07')
     expect(mockStoreState.markWorktreeUnread).toHaveBeenCalledTimes(1)
 
     // Idempotent: a second dispose must not throw or clobber another watcher.
@@ -559,8 +530,7 @@ describe('startParkedTerminalByteWatcher', () => {
     await startWatcher({ paneId: 1 })
     const second = await startWatcher({ paneId: 2 })
 
-    emit(IDLE_TITLE_OSC)
-    flushSideEffects()
+    emitAndFlushSideEffects(IDLE_TITLE_OSC)
 
     expect(mockStoreState.setRuntimePaneTitle).toHaveBeenCalledTimes(1)
     expect(mockStoreState.setRuntimePaneTitle).toHaveBeenCalledWith(TAB_ID, 2, IDLE_TITLE)
@@ -684,14 +654,60 @@ describe('startParkedTerminalByteWatcher', () => {
       enableMainAuthority()
       const { dispose } = await startWatcher()
 
-      emit('build finished\x07')
-      flushSideEffects()
+      emitAndFlushSideEffects('build finished\x07')
       vi.advanceTimersByTime(NOTIFICATION_GRACE_MS * 4)
 
       expect(mockStoreState.markWorktreeUnread).not.toHaveBeenCalled()
       expect(mockStoreState.markTerminalTabUnread).not.toHaveBeenCalled()
       expect(dispatchTerminalNotification).not.toHaveBeenCalled()
       dispose()
+    })
+
+    it('releases policy state when fact-consumer preparation throws', async () => {
+      enableMainAuthority()
+      ;(window as unknown as { api: { pty: { onSideEffect: () => never } } }).api.pty.onSideEffect =
+        vi.fn(() => {
+          throw new Error('fact consumer failed')
+        })
+
+      await expect(startWatcher({}, false)).rejects.toThrow('fact consumer failed')
+      expect(commandStatusPolicy.dispose).toHaveBeenCalledOnce()
+    })
+
+    it('rolls back the prepared fact consumer when hidden-claim publication fails', async () => {
+      enableMainAuthority()
+      const setHiddenRendererPty = vi.fn(() => {
+        throw new Error('hidden claim failed')
+      })
+      ;(
+        window as unknown as { api: { pty: Record<string, unknown> } }
+      ).api.pty.setHiddenRendererPty = setHiddenRendererPty
+      const { activateParked } = await startWatcher({}, false)
+
+      expect(activateParked()).toBe(false)
+      await dispatchFacts([{ kind: 'bell' }])
+      expect(mockStoreState.markWorktreeUnread).not.toHaveBeenCalled()
+      expect(commandStatusPolicy.dispose).toHaveBeenCalledOnce()
+    })
+
+    it('rolls back the prepared fact consumer when the parked responder fails', async () => {
+      enableMainAuthority()
+      mockStoreState.settings = {
+        ...mockStoreState.settings,
+        terminalHiddenDeliveryGate: false
+      }
+      const setPtyDeliveryInterest = vi.fn(() => {
+        throw new Error('responder interest failed')
+      })
+      ;(
+        window as unknown as { api: { pty: Record<string, unknown> } }
+      ).api.pty.setPtyDeliveryInterest = setPtyDeliveryInterest
+      const { activateParked } = await startWatcher({}, false)
+
+      expect(activateParked()).toBe(false)
+      await dispatchFacts([{ kind: 'bell' }])
+      expect(mockStoreState.markWorktreeUnread).not.toHaveBeenCalled()
+      expect(commandStatusPolicy.dispose).toHaveBeenCalledOnce()
     })
 
     it('routes command lifecycle facts into the parked command policy', async () => {
@@ -885,22 +901,6 @@ describe('startParkedTerminalByteWatcher', () => {
       dispose()
     })
 
-    it('marks the PTY hidden for delivery on start and clears it on dispose', async () => {
-      enableMainAuthority()
-      const setHiddenRendererPty = vi.fn()
-      ;(
-        window as unknown as { api: { pty: Record<string, unknown> } }
-      ).api.pty.setHiddenRendererPty = setHiddenRendererPty
-      const { dispose } = await startWatcher()
-
-      expect(setHiddenRendererPty).toHaveBeenCalledWith(PTY_ID, true)
-
-      dispose()
-      // Why: the unhide must land before reveal re-registers pane handlers —
-      // the watcher registry disposes watchers before the remount effect runs.
-      expect(setHiddenRendererPty).toHaveBeenLastCalledWith(PTY_ID, false)
-    })
-
     it('keeps the byte 2031 responder and no hidden bit when the gate kill switch is off', async () => {
       enableMainAuthority()
       mockStoreState.settings = {
@@ -975,8 +975,7 @@ describe('startParkedTerminalByteWatcher', () => {
       {
         const { dispose } = await startWatcher()
         for (const chunk of fixtureChunks) {
-          emit(chunk)
-          flushSideEffects()
+          emitAndFlushSideEffects(chunk)
         }
         vi.advanceTimersByTime(NOTIFICATION_GRACE_MS)
         dispose()

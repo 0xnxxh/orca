@@ -127,7 +127,8 @@ describe('RelaySessionBroker lifecycle ownership', () => {
       identity: { userId: 'user-1', profileId: 'profile-1', organizationId: 'org-1' },
       keypair: {
         ...keypair,
-        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       appVersion: '1.0.0',
       mobileSocketWiring: { attachTransport: vi.fn(() => detachTransport) } as never,
@@ -476,7 +477,8 @@ function brokerOptions(
     identity: { userId: 'user-1', profileId: 'profile-1', organizationId: 'org-1' },
     keypair: {
       ...keypair,
-      publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+      publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+      installationId: 'fixture-installation-0001'
     },
     appVersion: '1.0.0',
     mobileSocketWiring: { attachTransport: vi.fn(() => () => {}) } as never,

@@ -139,6 +139,184 @@ describe('openSshPtyConsumerSession', () => {
     ).rejects.toThrow('unoffered')
   })
 
+  it('negotiates exact operations inside the existing openClient round trip', async () => {
+    const { mux, request } = muxReturning(
+      legacyOwnerGrant({ capabilities: { exactOperations: { version: 1 } } })
+    )
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        exactOperations: true
+      })
+    ).resolves.toMatchObject({
+      state: { mode: 'negotiated', exactOperations: { version: 1 } }
+    })
+    expect(request).toHaveBeenCalledOnce()
+    expect(request.mock.calls[0][1]).toMatchObject({
+      capabilities: { exactOperations: { versions: [1] } }
+    })
+  })
+
+  it('offers optional terminal topology without requiring an old gateway to grant it', async () => {
+    const { mux, request } = muxReturning(legacyOwnerGrant())
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityTopology: true
+      })
+    ).resolves.not.toHaveProperty('state.terminalAuthorityTopology')
+    expect(request.mock.calls[0][1]).toMatchObject({
+      capabilities: { terminalAuthorityTopology: { versions: [1] } }
+    })
+  })
+
+  it('offers optional authority proof without sending proof RPCs to an older relay', async () => {
+    const { mux, request } = muxReturning(legacyOwnerGrant())
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityConsumerProof: true
+      })
+    ).resolves.not.toHaveProperty('state.terminalAuthorityConsumerProof')
+    expect(request.mock.calls[0][1]).toMatchObject({
+      capabilities: { terminalAuthorityConsumerProof: { versions: [1] } }
+    })
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('accepts only an offered authority proof grant with an authenticated host id', async () => {
+    const proofGrant = legacyOwnerGrant({
+      capabilities: {
+        terminalAuthorityConsumerProof: {
+          version: 1,
+          authorityHostId: 'authority-host:ssh-test'
+        }
+      }
+    })
+    const { mux } = muxReturning(proofGrant)
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityConsumerProof: true
+      })
+    ).resolves.toMatchObject({
+      state: {
+        terminalAuthorityConsumerProof: {
+          version: 1,
+          authorityHostId: 'authority-host:ssh-test'
+        }
+      }
+    })
+
+    const { mux: unoffered } = muxReturning(proofGrant)
+    await expect(
+      openSshPtyConsumerSession(unoffered, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a'
+      })
+    ).rejects.toThrow('unoffered terminal authority consumer proof')
+  })
+
+  it('requires the exact proof grant for an authenticated authority endpoint', async () => {
+    const { mux: omitted } = muxReturning(legacyOwnerGrant())
+    await expect(
+      openSshPtyConsumerSession(omitted, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityConsumerProof: true,
+        requiredTerminalAuthorityConsumerProofHostId: 'authority-host:ssh-test'
+      })
+    ).rejects.toThrow('mandatory terminal authority consumer proof')
+
+    const { mux: wrongHost } = muxReturning(
+      legacyOwnerGrant({
+        capabilities: {
+          terminalAuthorityConsumerProof: {
+            version: 1,
+            authorityHostId: 'authority-host:other'
+          }
+        }
+      })
+    )
+    await expect(
+      openSshPtyConsumerSession(wrongHost, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityConsumerProof: true,
+        requiredTerminalAuthorityConsumerProofHostId: 'authority-host:ssh-test'
+      })
+    ).rejects.toThrow('another host')
+  })
+
+  it('accepts only an offered terminal topology grant', async () => {
+    const topologyGrant = legacyOwnerGrant({
+      capabilities: { terminalAuthorityTopology: { version: 1 } }
+    })
+    const { mux } = muxReturning(topologyGrant)
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        terminalAuthorityTopology: true
+      })
+    ).resolves.toMatchObject({
+      state: { terminalAuthorityTopology: { version: 1 } }
+    })
+
+    const { mux: unoffered } = muxReturning(topologyGrant)
+    await expect(
+      openSshPtyConsumerSession(unoffered, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a'
+      })
+    ).rejects.toThrow('invalid or unoffered terminal topology')
+  })
+
+  it('does not silently downgrade when a current relay omits the requested exact grant', async () => {
+    const { mux } = muxReturning(legacyOwnerGrant())
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        exactOperations: true
+      })
+    ).rejects.toThrow('did not grant the offered PTY exact-operation capability')
+  })
+
+  it('rejects an invalid or unoffered exact-operation grant', async () => {
+    const { mux } = muxReturning(
+      legacyOwnerGrant({ capabilities: { exactOperations: { version: 2 } } })
+    )
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        exactOperations: true
+      })
+    ).rejects.toThrow('did not grant the offered')
+
+    const { mux: unofferedMux } = muxReturning(
+      legacyOwnerGrant({ capabilities: { exactOperations: { version: 1 } } })
+    )
+    await expect(
+      openSshPtyConsumerSession(unofferedMux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a'
+      })
+    ).rejects.toThrow('invalid or unoffered')
+  })
+
   it('uses explicit token-free fallback only for same-build method-not-found', async () => {
     const error = Object.assign(new Error('Method not found: pty.openClient'), { code: -32601 })
     const request = vi.fn().mockRejectedValue(error)
@@ -149,7 +327,8 @@ describe('openSshPtyConsumerSession', () => {
         clientInstanceId: 'client-a',
         expectedServerBuildId: 'build-a',
         allowSameBuildLegacyFallback: true,
-        outputFlowControl: { requestedWindowSu: 64 }
+        outputFlowControl: { requestedWindowSu: 64 },
+        exactOperations: true
       })
     ).resolves.toEqual({
       state: {
@@ -159,6 +338,16 @@ describe('openSshPtyConsumerSession', () => {
       },
       resumed: false
     })
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        allowSameBuildLegacyFallback: true,
+        terminalAuthorityConsumerProof: true,
+        requiredTerminalAuthorityConsumerProofHostId: 'authority-host:ssh-test'
+      })
+    ).rejects.toBe(error)
   })
 
   it.each([

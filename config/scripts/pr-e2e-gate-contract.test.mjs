@@ -72,6 +72,17 @@ describe('PR E2E gate contract', () => {
     expect(changedRun.run).toContain('pnpm run test:e2e "${TEST_FILES[@]}" --workers=1')
   })
 
+  it('runs terminal authority Docker coverage for full and targeted E2E', () => {
+    const authorityJob = e2eWorkflow.jobs['ssh-docker-terminal-authority']
+    expect(authorityJob.if).toBe(
+      "inputs.test_files == '' || contains(inputs.test_files, 'tests/e2e/ssh-docker-terminal-authority.spec.ts') || contains(inputs.test_files, 'tests/e2e/ssh-docker-terminal-authority-restart.spec.ts')"
+    )
+    const authorityRun = authorityJob.steps.find(
+      (step) => step.name === 'Run Docker SSH terminal authority E2E'
+    )
+    expect(authorityRun.run).toContain('pnpm run test:e2e:ssh-docker-terminal-authority')
+  })
+
   it('keeps dedicated E2E workflows out of pull request CI', () => {
     const dedicatedWorkflows = [
       'golden-e2e-experiment.yml',

@@ -61,6 +61,55 @@ describe('SshPtyConsumerSessionAdapter', () => {
     vi.useRealTimers()
   })
 
+  it('grants exact operations only when the client offers them', async () => {
+    const writes: Buffer[] = []
+    dispatcher = new RelayDispatcher(
+      (data, onSettled) => {
+        writes.push(Buffer.from(data))
+        onSettled({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    new SshPtyConsumerSessionAdapter(dispatcher, 'build-a')
+
+    dispatcher.feed(openFrame(1, { capabilities: { exactOperations: { versions: [1] } } }))
+    await flushRequests()
+
+    expect(responseResult(writes[0])).toMatchObject({
+      capabilities: { exactOperations: { version: 1 } }
+    })
+  })
+
+  it('does not admit authority exact operations without its namespace consumer', async () => {
+    const writes: Buffer[] = []
+    dispatcher = new RelayDispatcher(
+      (data, onSettled) => {
+        writes.push(Buffer.from(data))
+        onSettled({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a', undefined, undefined, {
+      terminalAuthorityExactOperations: true
+    })
+
+    dispatcher.feed(
+      openFrame(1, {
+        capabilities: { terminalAuthorityExactOperations: { versions: [1] } }
+      })
+    )
+    await flushRequests()
+
+    expect(responseResult(writes[0])).toMatchObject({
+      capabilities: { terminalAuthorityExactOperations: { version: 1 } }
+    })
+    expect(adapter.terminalAuthorityExactOperations(1)).toBe(false)
+  })
+
   it('does not activate owner authority until the grant write settles', async () => {
     const firstWrites: Buffer[] = []
     const firstSettlements: ((result: { ok: true } | { ok: false; error: Error }) => void)[] = []

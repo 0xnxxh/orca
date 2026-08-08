@@ -24,11 +24,11 @@ function sendVisibility(ptyId: string, visible: boolean): void {
  * Main sees only the first-acquire/last-release transitions for each PTY.
  */
 export function acquireHiddenRendererPtyDeliveryClaim(ptyId: string): () => void {
-  const nextCount = (hiddenClaimCounts.get(ptyId) ?? 0) + 1
-  hiddenClaimCounts.set(ptyId, nextCount)
-  if (nextCount === 1) {
+  const currentCount = hiddenClaimCounts.get(ptyId) ?? 0
+  if (currentCount === 0) {
     sendHiddenState(ptyId, true)
   }
+  hiddenClaimCounts.set(ptyId, currentCount + 1)
 
   let released = false
   return () => {

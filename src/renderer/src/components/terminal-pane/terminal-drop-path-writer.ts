@@ -68,7 +68,7 @@ export async function writeTerminalDropPathsToCapturedTarget({
       ? `${wrapTerminalBracketedPasteText(path)}${needsSeparatorAfterImage ? ' ' : ''}`
       : `${shellEscapePath(path, targetShell)} `
     const writeResult = await runTerminalPasteOperationWithTimeout(
-      () => writeTerminalPastePtyInput(liveTransport, payload),
+      () => writeTerminalPastePtyInput(liveTransport, payload, dropTarget.inputTarget),
       operationTimeoutMs
     )
     if (writeResult.timedOut) {

@@ -34,7 +34,13 @@ describe('SshPtyProvider process listings and events', () => {
     mux.request.mockResolvedValue(processes)
 
     await expect(provider.listProcesses()).resolves.toEqual([
-      { id: scopedPty1, cwd: '/home', title: 'zsh', worktreeId: 'repo::/home' }
+      {
+        id: scopedPty1,
+        cwd: '/home',
+        title: 'zsh',
+        worktreeId: 'repo::/home',
+        mutationRouteToken: expect.any(Object)
+      }
     ])
     expect(mux.request).toHaveBeenLastCalledWith('pty.listProcesses', undefined, undefined)
 

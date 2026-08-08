@@ -3,9 +3,9 @@
 // empty-file symptom as issue #1158, from a different cause. The .bak ring recovers it at up to an
 // hour's loss; fsync stops it from happening.
 
-import { closeSync, fsyncSync, openSync, renameSync, writeFileSync } from 'node:fs'
 import { open, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+export { writeFileDurableSync } from '../shared/durable-file-write'
 
 /**
  * fsync a directory so a rename within it is durable. Best-effort by design: Windows cannot open a
@@ -21,24 +21,6 @@ async function syncDirectory(directory: string): Promise<void> {
     // Expected on Windows and on filesystems without directory fsync.
   } finally {
     await handle?.close().catch(() => {})
-  }
-}
-
-function syncDirectorySync(directory: string): void {
-  let fd: number | null = null
-  try {
-    fd = openSync(directory, 'r')
-    fsyncSync(fd)
-  } catch {
-    // Same platform caveats as syncDirectory.
-  } finally {
-    if (fd !== null) {
-      try {
-        closeSync(fd)
-      } catch {
-        // Nothing actionable; the fsync already happened or the open failed.
-      }
-    }
   }
 }
 
@@ -134,17 +116,4 @@ export async function removeStaleDurableWriteTempFiles(
   } catch {
     // Directory missing or unreadable — nothing to sweep.
   }
-}
-
-/** Synchronous counterpart for quit and crash paths that cannot await. */
-export function writeFileDurableSync(tmpPath: string, finalPath: string, payload: string): void {
-  writeFileSync(tmpPath, payload, 'utf-8')
-  const fd = openSync(tmpPath, 'r+')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(tmpPath, finalPath)
-  syncDirectorySync(dirname(finalPath))
 }

@@ -385,6 +385,43 @@ describe('launchAgentBackgroundSession', () => {
     )
   })
 
+  it('keeps delayed SSH startup delivery bound to the spawned incarnation', async () => {
+    vi.useFakeTimers()
+    const administrativeWrite = vi.fn()
+    const ptyId = toAppSshPtyId('ssh-a', 'pty-1')
+    const access = {
+      mode: 'exact' as const,
+      evidence: { incarnationId: 'incarnation-1', paneGeneration: 0 }
+    }
+    state.repos = [{ id: 'repo-1', connectionId: 'ssh-a', path: '/repo' }]
+    state.sshConnectionStates = new Map([['ssh-a', { status: 'connected' }]])
+    mockSpawn.mockResolvedValue({ id: ptyId, administrativeMutationAccess: access })
+    ;(
+      window.api.pty as typeof window.api.pty & { administrativeWrite: typeof administrativeWrite }
+    ).administrativeWrite = administrativeWrite
+    try {
+      const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+      await launchAgentBackgroundSession({
+        agent: 'codex',
+        worktreeId: 'wt-1',
+        prompt: 'run the automation'
+      })
+
+      const dataSidecar = mockSubscribeToPtyData.mock.calls[0]?.[1] as (data: string) => void
+      dataSidecar('\x1b]777;orca-shell-ready\x07remote$ ')
+      await vi.advanceTimersByTimeAsync(50)
+
+      expect(administrativeWrite).toHaveBeenCalledWith(
+        ptyId,
+        expect.stringContaining('codex'),
+        access
+      )
+      expect(mockWrite).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('skips the duplicate OSC store write under main side-effect authority', async () => {
     // Why: main already routes OSC 9999 through the hook server to the store
     // (agentStatus:set); a second write here would race the authoritative

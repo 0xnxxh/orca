@@ -2,6 +2,7 @@ import type { TuiAgent } from '../../shared/types'
 import type { ShellReadyState, TerminalSnapshot } from './types'
 import type { AgentSessionClaimedSpawnResult } from '../../shared/agent-session-host-authority'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 
 export type DaemonCreateOrAttachResult = {
   isNew: boolean
@@ -14,6 +15,8 @@ export type DaemonCreateOrAttachResult = {
   wslDistro?: string | null
   agentSessionEnsure?: AgentSessionClaimedSpawnResult
   incarnationId?: PtyIncarnationId
+  streamBindingNonce?: string
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
 }
 
 export function getDaemonSessionResultMetadata(session: {

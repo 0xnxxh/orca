@@ -95,6 +95,23 @@ describe('TerminalSshReconnectOverlay', () => {
     expect(connect).toHaveBeenCalledWith({ targetId: 'ssh-target-1' })
   })
 
+  it('can participate in an externally positioned recovery stack', () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    installSshConnect(connect)
+    const { container } = render(
+      <TerminalSshReconnectOverlay
+        targetId="ssh-target-1"
+        targetLabel="devbox"
+        status="disconnected"
+        rootClassName="relative inset-x-auto bottom-auto z-auto w-full"
+      />
+    )
+
+    const banner = container.querySelector('[data-terminal-ssh-reconnect-banner="disconnected"]')
+    expect(banner).toHaveClass('relative', 'inset-x-auto', 'bottom-auto', 'z-auto', 'w-full')
+    expect(banner).not.toHaveClass('absolute', 'inset-x-3', 'bottom-3', 'z-40')
+  })
+
   it('shows an in-flight state while the SSH target is reconnecting', () => {
     const connect = vi.fn().mockResolvedValue(undefined)
     installSshConnect(connect)

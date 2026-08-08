@@ -1,22 +1,27 @@
 import type { Session } from './session'
-import {
-  SessionNotFoundError,
-  type SessionInfo,
-  type TakePendingOutputResult,
-  type TerminalSnapshot
-} from './types'
+import type { SessionInfo, TakePendingOutputResult, TerminalSnapshot } from './types'
 import type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
 import type { TerminalHostOptions } from './terminal-host-options'
-import { shutdownTerminalHostSessions } from './terminal-host-session-shutdown'
 import { TerminalSessionTeardown } from './terminal-session-teardown'
 import { ClaimedAgentPtyOwnerRegistry } from '../../shared/claimed-agent-pty-owner'
-import { createOrAttachClaimedAgentSession } from './terminal-host-agent-session-claim'
+import {
+  createOrAttachClaimedAgentSession,
+  type InternalCreateOrAttachOptions
+} from './terminal-host-agent-session-claim'
 import { TerminalHostAgentSessionGenerations } from './terminal-host-agent-session-generations'
-import { resolveTerminalHostSessionCwd } from './terminal-host-session-cwd'
 import { TerminalHostTombstones } from './terminal-host-tombstones'
-import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
-import { createOrAttachTerminalSession } from './terminal-host-session-create'
-import { isShellProcess } from '../../shared/agent-detection'
+import {
+  createOrAttachTerminalSession,
+  type TerminalHostSessionCreationHooks
+} from './terminal-host-session-create'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
+import type { TerminalSessionAuthoritySemanticFact } from '../../shared/terminal-session-authority-mutation'
+import type { TerminalAuthorityBindingRetiredEffect } from '../session-authority/terminal-session-authority-host-effect-applier'
+import { TerminalHostAuthoritySessions } from './terminal-host-authority-sessions'
+import { TerminalHostPtyMutations } from './terminal-host-pty-mutations'
+import { TerminalHostSessionQueries } from './terminal-host-session-queries'
+import { disposeTerminalHostSessions } from './terminal-host-disposal'
+import type { TerminalAuthorityPolicyConsumerConnection } from '../session-authority/terminal-session-authority-policy-consumers'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
 export type { TerminalHostOptions } from './terminal-host-options'
@@ -35,6 +40,9 @@ export class TerminalHost {
   private disposePromise: Promise<void> | null = null
   private readonly agentSessionOwners = new ClaimedAgentPtyOwnerRegistry()
   private readonly agentSessionGenerations = new TerminalHostAgentSessionGenerations()
+  private readonly authoritySessions: TerminalHostAuthoritySessions
+  private readonly mutations: TerminalHostPtyMutations
+  private readonly queries: TerminalHostSessionQueries
 
   constructor(opts: TerminalHostOptions) {
     this.spawnSubprocess = opts.spawnSubprocess
@@ -42,76 +50,182 @@ export class TerminalHost {
     this.onFinalCheckpoint = opts.onFinalCheckpoint
     this.maxTombstones = opts.maxTombstones ?? DEFAULT_MAX_TOMBSTONES
     this.killedTombstones = new TerminalHostTombstones(this.maxTombstones)
+    this.authoritySessions = new TerminalHostAuthoritySessions(
+      opts.terminalSessionAuthority,
+      opts.onTerminalSessionAuthorityFailure,
+      {
+        sessions: this.sessions,
+        createPhysical: (options, hooks) => this.createOrAttachPhysicalSession(options, hooks),
+        releaseExited: (sessionId, generation) => this.releaseExitedSession(sessionId, generation),
+        fenceCreation: () => {
+          this.creationFenced = true
+        }
+      }
+    )
+    this.mutations = new TerminalHostPtyMutations(
+      this.sessions,
+      this.sessionTeardown,
+      this.killedTombstones,
+      this.authoritySessions
+    )
+    this.queries = new TerminalHostSessionQueries(
+      this.sessions,
+      this.agentSessionOwners,
+      this.authoritySessions,
+      this.killedTombstones,
+      (sessionId) => this.mutations.alive(sessionId)
+    )
   }
 
   async createOrAttach(opts: CreateOrAttachOptions): Promise<CreateOrAttachResult> {
-    return await createOrAttachClaimedAgentSession({
-      options: opts,
-      owners: this.agentSessionOwners,
-      isLive: (owner) =>
-        this.agentSessionGenerations.isCurrent(
-          owner,
-          Boolean(this.sessions.get(owner.ptyId)?.isAlive)
-        ),
-      createOrAttach: async (options) => {
-        if (options.agentSessionGeneration && this.sessions.get(options.sessionId)?.isAlive) {
-          throw new Error('agent_session_claim_unavailable')
-        }
-        return await createOrAttachTerminalSession(options, {
-          sessions: this.sessions,
-          sessionTeardown: this.sessionTeardown,
-          killedTombstones: this.killedTombstones,
-          spawnSubprocess: this.spawnSubprocess,
-          creationFenced: this.creationFenced,
-          onDeadSessionRemoved: (sessionId) => this.agentSessionGenerations.forget(sessionId),
-          onSessionCreated: (sessionId, generation, isAlive) =>
-            this.agentSessionGenerations.remember(sessionId, generation, isAlive),
-          onSessionExit: (sessionId, generation) => {
-            this.agentSessionOwners.release(sessionId, generation)
-            this.agentSessionGenerations.forget(sessionId, generation)
-            this.reapSession(sessionId)
-          }
-        })
-      }
+    return await this.authoritySessions.enqueue(opts.sessionId, async () =>
+      createOrAttachClaimedAgentSession({
+        options: opts,
+        owners: this.agentSessionOwners,
+        isLive: (owner) =>
+          this.agentSessionGenerations.isCurrent(
+            owner,
+            Boolean(this.sessions.get(owner.ptyId)?.isAlive)
+          ),
+        createOrAttach: (options) => this.authoritySessions.createOrAttach(options)
+      })
+    )
+  }
+
+  private async createOrAttachPhysicalSession(
+    options: InternalCreateOrAttachOptions,
+    creationHooks?: TerminalHostSessionCreationHooks
+  ): Promise<CreateOrAttachResult> {
+    if (options.agentSessionGeneration && this.sessions.get(options.sessionId)?.isAlive) {
+      throw new Error('agent_session_claim_unavailable')
+    }
+    return await createOrAttachTerminalSession(options, {
+      sessions: this.sessions,
+      sessionTeardown: this.sessionTeardown,
+      killedTombstones: this.killedTombstones,
+      spawnSubprocess: this.spawnSubprocess,
+      creationFenced: this.creationFenced,
+      onDeadSessionRemoved: (sessionId) => this.agentSessionGenerations.forget(sessionId),
+      onSessionCreated: (sessionId, generation, isAlive) =>
+        this.agentSessionGenerations.remember(sessionId, generation, isAlive),
+      onSessionExit: (sessionId, generation, code) =>
+        this.authoritySessions.handleExit(sessionId, generation, code),
+      ...(creationHooks ? { creationHooks } : {})
     })
   }
 
+  private releaseExitedSession(sessionId: string, generation: string | undefined): void {
+    this.agentSessionOwners.release(sessionId, generation)
+    this.agentSessionGenerations.forget(sessionId, generation)
+    this.reapSession(sessionId)
+  }
+
+  async recordSemanticOutcomeExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    fact: TerminalSessionAuthoritySemanticFact
+  ): Promise<boolean> {
+    return await this.authoritySessions.recordSemanticOutcomeExact(sessionId, access, fact)
+  }
+
   write(sessionId: string, data: string): void {
-    this.getAliveSession(sessionId).write(data)
+    this.mutations.write(sessionId, data)
+  }
+
+  writeExact(sessionId: string, incarnationId: string, data: string): boolean {
+    return this.mutations.writeExact(sessionId, incarnationId, data)
+  }
+
+  writeAuthorityExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    data: string
+  ): boolean {
+    return this.mutations.writeAuthorityExact(sessionId, access, data)
   }
 
   closeStartupQueryAuthority(sessionId: string): number {
-    return this.getAliveSession(sessionId).closeStartupQueryAuthority()
+    return this.mutations.alive(sessionId).closeStartupQueryAuthority()
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
-    this.getAliveSession(sessionId).resize(cols, rows)
+    this.mutations.resize(sessionId, cols, rows)
+  }
+
+  resizeExact(sessionId: string, incarnationId: string, cols: number, rows: number): boolean {
+    return this.mutations.resizeExact(sessionId, incarnationId, cols, rows)
+  }
+
+  resizeAuthorityExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    cols: number,
+    rows: number
+  ): boolean {
+    return this.mutations.resizeAuthorityExact(sessionId, access, cols, rows)
   }
 
   // Why null-not-throw (unlike write/resize): pause/resume are best-effort hints against a session that may have exited.
   pauseProducer(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return
-    }
-    session.pauseProducer()
+    this.mutations.pauseProducer(sessionId)
   }
 
   resumeProducer(sessionId: string): void {
-    this.sessions.get(sessionId)?.resumeProducer()
+    this.mutations.resumeProducer(sessionId)
+  }
+
+  supportsExactHeldProducerPause(sessionId: string, incarnationId: string): boolean {
+    return this.mutations.supportsExactHeldProducerPause(sessionId, incarnationId)
+  }
+
+  acquireExactHeldProducerPause(
+    sessionId: string,
+    incarnationId: string,
+    ownerId: string,
+    token: string
+  ): boolean {
+    return this.mutations.acquireExactHeldProducerPause(sessionId, incarnationId, ownerId, token)
+  }
+
+  releaseExactHeldProducerPause(
+    sessionId: string,
+    incarnationId: string,
+    ownerId: string,
+    token: string
+  ): boolean {
+    return this.mutations.releaseExactHeldProducerPause(sessionId, incarnationId, ownerId, token)
+  }
+
+  releaseExactHeldProducerPauses(sessionId: string, incarnationId: string, ownerId: string): void {
+    this.mutations.releaseExactHeldProducerPauses(sessionId, incarnationId, ownerId)
   }
 
   kill(sessionId: string, opts: { immediate?: boolean } = {}): Promise<void> {
-    const pending = this.sessionTeardown.get(sessionId)
-    if (pending) {
-      return Promise.resolve(
-        opts.immediate ? this.sessionTeardown.requestImmediate(sessionId) : pending
-      )
-    }
-    const session = this.getAliveSession(sessionId)
-    const killed = this.sessionTeardown.killSession(sessionId, session, opts.immediate === true)
-    this.killedTombstones.record(sessionId)
-    return Promise.resolve(killed)
+    return this.mutations.kill(sessionId, opts)
+  }
+
+  async killExact(
+    sessionId: string,
+    incarnationId: string,
+    opts: { immediate?: boolean } = {}
+  ): Promise<boolean> {
+    return await this.mutations.killExact(sessionId, incarnationId, opts)
+  }
+
+  async killAuthorityExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    policyConsumer: TerminalAuthorityPolicyConsumerConnection,
+    opts: { immediate?: boolean } = {}
+  ): Promise<boolean> {
+    return await this.mutations.killAuthorityExact(sessionId, access, policyConsumer, opts)
+  }
+
+  ensureAuthorityBindingRetired(
+    access: TerminalSessionAuthorityPtyAccess,
+    reason: TerminalAuthorityBindingRetiredEffect['reason']
+  ): Promise<void> {
+    return this.mutations.ensureAuthorityBindingRetired(access, reason)
   }
 
   // Why: dispose a dead session's emulator so exited terminals don't pin ~5000 rows of scrollback for the daemon's life.
@@ -126,75 +240,73 @@ export class TerminalHost {
   }
 
   signal(sessionId: string, sig: string): void {
-    this.getAliveSession(sessionId).signal(sig)
+    this.mutations.signal(sessionId, sig)
+  }
+
+  signalExact(sessionId: string, incarnationId: string, sig: string): boolean {
+    return this.mutations.signalExact(sessionId, incarnationId, sig)
+  }
+
+  signalAuthorityExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    sig: string
+  ): boolean {
+    return this.mutations.signalAuthorityExact(sessionId, access, sig)
   }
 
   detach(sessionId: string, token: symbol): void {
-    const session = this.sessions.get(sessionId)
-    session?.detachClient(token)
+    this.queries.detach(sessionId, token)
   }
 
   async getCwd(sessionId: string): Promise<string | null> {
-    return await resolveTerminalHostSessionCwd(this.getAliveSession(sessionId))
+    return await this.queries.getCwd(sessionId)
   }
 
   // Why: null-not-throw — fetched for the tab-bar icon, so a vanished pane should quietly yield "no agent".
   getForegroundProcess(sessionId: string): string | null {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return null
-    }
-    return session.getForegroundProcess()
+    return this.queries.getForegroundProcess(sessionId)
   }
 
   inspectProcess(sessionId: string): {
     foregroundProcess: string | null
     hasChildProcesses: boolean
   } {
-    const foregroundProcess = this.getAliveSession(sessionId).getForegroundProcess()
-    return {
-      foregroundProcess,
-      hasChildProcesses: foregroundProcess !== null && !isShellProcess(foregroundProcess)
-    }
+    return this.queries.inspectProcess(sessionId)
   }
 
   async confirmForegroundProcess(sessionId: string): Promise<string | null> {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return null
-    }
-    return session.confirmForegroundProcess()
+    return await this.queries.confirmForegroundProcess(sessionId)
   }
 
   clearScrollback(sessionId: string): void {
-    this.getAliveSession(sessionId).clearScrollback()
+    this.mutations.clearScrollback(sessionId)
+  }
+
+  clearScrollbackExact(sessionId: string, incarnationId: string): boolean {
+    return this.mutations.clearScrollbackExact(sessionId, incarnationId)
+  }
+
+  clearScrollbackAuthorityExact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    return this.mutations.clearScrollbackAuthorityExact(sessionId, access)
   }
 
   // Why: null-not-throw (unlike getAliveSession) — checkpoint is best-effort against a session that may have just exited.
   getSnapshot(sessionId: string, opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return null
-    }
-    return session.getSnapshot(opts)
+    return this.queries.getSnapshot(sessionId, opts)
   }
 
   // Why: scan-authority handoff seed (null-not-throw like getSnapshot) — emulator's dangling incomplete escape at the stream position.
   getPartialEscapeTailAnsi(sessionId: string): string {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return ''
-    }
-    return session.getPartialEscapeTailAnsi()
+    return this.queries.getPartialEscapeTailAnsi(sessionId)
   }
 
   // Why: renderer diffs this against xterm to detect a dropped/coerced daemon-side resize; null-not-throw like getSnapshot.
   getAppliedSize(sessionId: string): { cols: number; rows: number } | null {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return null
-    }
-    return session.getAppliedSize()
+    return this.queries.getAppliedSize(sessionId)
   }
 
   // Why: null-not-throw like getSnapshot — incremental checkpoints are best-effort against a just-exited session.
@@ -203,19 +315,15 @@ export class TerminalHost {
     includeSnapshot: boolean,
     opts: { teardownSnapshot?: boolean } = {}
   ): TakePendingOutputResult | null {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      return null
-    }
-    return session.takePendingOutput(includeSnapshot, opts)
+    return this.queries.takePendingOutput(sessionId, includeSnapshot, opts)
   }
 
   isKilled(sessionId: string): boolean {
-    return this.killedTombstones.has(sessionId)
+    return this.queries.isKilled(sessionId)
   }
 
   listSessions(): SessionInfo[] {
-    return listLiveTerminalHostSessions(this.sessions, this.agentSessionOwners)
+    return this.queries.listSessions()
   }
 
   dispose(): Promise<void> {
@@ -235,15 +343,11 @@ export class TerminalHost {
   }
 
   private async disposeSessions(): Promise<void> {
-    await shutdownTerminalHostSessions(this.sessions, this.onFinalCheckpoint)
-    this.killedTombstones.clear()
-  }
-
-  private getAliveSession(sessionId: string): Session {
-    const session = this.sessions.get(sessionId)
-    if (!session || !session.isAlive) {
-      throw new SessionNotFoundError(sessionId)
-    }
-    return session
+    await disposeTerminalHostSessions({
+      sessions: this.sessions,
+      authoritySessions: this.authoritySessions,
+      killedTombstones: this.killedTombstones,
+      onFinalCheckpoint: this.onFinalCheckpoint
+    })
   }
 }

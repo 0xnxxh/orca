@@ -21,6 +21,7 @@ import { getEagerPtyBufferHandle } from './pty-dispatcher'
 import type { AgentType } from '../../../../shared/agent-status-types'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { toAppSshPtyId } from '../../../../shared/ssh-pty-id'
+import type { PtyMutationIdentity } from '../../../../shared/pty-mutation-identity'
 import type { SshConnectionState } from '../../../../shared/ssh-types'
 import type { TerminalLayoutSnapshot, TuiAgent } from '../../../../shared/types'
 import { YOLO_TUI_AGENT_ARGS } from '../../../../shared/tui-agent-permissions'
@@ -309,6 +310,7 @@ type ConnectCallbacks = {
   onReplayData?: (data: string, meta?: { clearBeforeReplay?: boolean }) => void
   onError?: (msg: string) => void
   onWriteUnavailable?: () => void
+  onMutationAccessAvailable?: () => void
   onOutputPauseChanged?: (paused: boolean, supported: boolean) => void
 }
 
@@ -324,10 +326,13 @@ type MockTransport = {
   sendInput: ReturnType<typeof vi.fn>
   sendInputImmediate: ReturnType<typeof vi.fn>
   sendInputAccepted?: ReturnType<typeof vi.fn>
+  signal?: ReturnType<typeof vi.fn>
   claimViewport: ReturnType<typeof vi.fn>
   setOutputPaused?: ReturnType<typeof vi.fn>
   resize: ReturnType<typeof vi.fn>
   getPtyId: ReturnType<typeof vi.fn>
+  getMutationIdentity?: ReturnType<typeof vi.fn>
+  hasMutationAccess?: ReturnType<typeof vi.fn>
   getConnectionId: ReturnType<typeof vi.fn>
   serializeBuffer?: ReturnType<typeof vi.fn>
 }
@@ -462,6 +467,13 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
       ptyId = null
     }),
     sendInput: vi.fn(() => true),
+    signal: vi.fn((signal: string) => {
+      if (!ptyId) {
+        return false
+      }
+      window.api.pty.signal(ptyId, signal)
+      return true
+    }),
     claimViewport: vi.fn(() => true),
     resize: vi.fn(() => true),
     getPtyId: vi.fn(() => ptyId),
@@ -11269,6 +11281,78 @@ describe('connectPanePty', () => {
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'tab-pty')
   })
 
+  it('releases exact renderer delivery only after reattach bytes parse into xterm', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { deliverTerminalDataWithDeferredCredit } =
+      await import('@/lib/pane-manager/terminal-delivery-credit')
+    const transport = createMockTransport('tab-pty')
+    const markRendererReady = vi.fn()
+    const cancelRendererBinding = vi.fn()
+    const acknowledgePostReconnectFrame = vi.fn()
+    transport.connect.mockImplementation(
+      async ({ sessionId, callbacks }: { sessionId?: string; callbacks?: ConnectCallbacks }) => {
+        if (!sessionId) {
+          return null
+        }
+        return {
+          id: sessionId,
+          snapshot: 'AUTHORITY_BEFORE_RECONNECT',
+          rendererBindingSettlement: {
+            id: sessionId,
+            paneGeneration: 7,
+            ready: () => {
+              markRendererReady()
+              deliverTerminalDataWithDeferredCredit(acknowledgePostReconnectFrame, () => {
+                callbacks?.onData?.('AUTHORITY_AFTER_RECONNECT')
+              })
+            },
+            cancel: cancelRendererBinding
+          }
+        }
+      }
+    )
+    transportFactoryQueue.push(transport)
+    const pane = createPane(1)
+    const { writes, parseCallbacks } = captureCallbackTerminalWrites(pane)
+    const deps = createDeps({
+      paneGeneration: 7,
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+    })
+
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(markRendererReady).not.toHaveBeenCalled()
+    expect(writes).toContain('AUTHORITY_BEFORE_RECONNECT')
+    expect(writes).not.toContain('AUTHORITY_AFTER_RECONNECT')
+    expect(acknowledgePostReconnectFrame).not.toHaveBeenCalled()
+
+    for (let step = 0; step < 40 && markRendererReady.mock.calls.length === 0; step += 1) {
+      parseCallbacks.shift()?.()
+      await flushAsyncTicks(2)
+    }
+    await flushAsyncTicks(8)
+
+    const beforeIndex = writes.indexOf('AUTHORITY_BEFORE_RECONNECT')
+    const resetIndex = writes.indexOf(POST_REPLAY_REATTACH_RESET)
+    const afterIndex = writes.indexOf('AUTHORITY_AFTER_RECONNECT')
+    expect(markRendererReady).toHaveBeenCalledOnce()
+    expect(cancelRendererBinding).not.toHaveBeenCalled()
+    expect(resetIndex).toBeGreaterThan(beforeIndex)
+    expect(afterIndex).toBeGreaterThan(resetIndex)
+    expect(writes.filter((data) => data === 'AUTHORITY_AFTER_RECONNECT')).toHaveLength(1)
+    expect(acknowledgePostReconnectFrame).not.toHaveBeenCalled()
+
+    while (parseCallbacks.length > 0) {
+      parseCallbacks.shift()?.()
+      await flushAsyncTicks(2)
+    }
+    await flushAsyncTicks(8)
+
+    expect(acknowledgePostReconnectFrame).toHaveBeenCalledOnce()
+  })
+
   it('re-enforces follow intent after deferred reattach live output parses', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const { markTerminalFollowOutput } = await import('@/lib/pane-manager/terminal-scroll-intent')
@@ -18913,6 +18997,67 @@ describe('connectPanePty', () => {
           paneKey: makePaneKey('tab-1', LEAF_1)
         })
       )
+    })
+
+    it('upgrades an attached fact consumer when exact mutation access resolves', async () => {
+      enableMainAuthority()
+      const ptyId = 'pty-fact-attached'
+      vi.mocked(getEagerPtyBufferHandle).mockImplementation((candidatePtyId: string) =>
+        candidatePtyId === ptyId ? { flush: () => '', dispose: () => {} } : undefined
+      )
+      const { connectPanePty } = await import('./pty-connection')
+      const handler = await import('./terminal-side-effect-facts-handler')
+      const transport = createMockTransport(ptyId)
+      let mutationIdentity: PtyMutationIdentity | null = null
+      const mutationAccessCallback: { current: (() => void) | null } = { current: null }
+      transport.getMutationIdentity = vi.fn(() => mutationIdentity)
+      transport.hasMutationAccess = vi.fn(() => mutationIdentity !== null)
+      transport.attach.mockImplementation(({ callbacks }: { callbacks: ConnectCallbacks }) => {
+        mutationAccessCallback.current = callbacks.onMutationAccessAvailable ?? null
+      })
+      transportFactoryQueue.push(transport)
+      mockStoreState = {
+        ...mockStoreState,
+        tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId }] },
+        ptyIdsByTabId: { 'tab-1': [ptyId] },
+        terminalLayoutsByTabId: {
+          'tab-1': {
+            root: { type: 'leaf', leafId: LEAF_1 },
+            activeLeafId: LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [LEAF_1]: ptyId }
+          }
+        }
+      } as StoreState
+      const deps = createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: ptyId }
+      })
+
+      connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks()
+      handler._dispatchTerminalSideEffectBatchForTest({
+        ptyId,
+        ptyIncarnationId: 'incarnation-attached',
+        seq: 1,
+        facts: [{ kind: 'title', normalizedTitle: 'before proof', rawTitle: 'before proof' }]
+      })
+      expect(deps.setRuntimePaneTitle).not.toHaveBeenCalled()
+
+      mutationIdentity = {
+        incarnationId: 'incarnation-attached',
+        paneGeneration: 0,
+        mutationLeaseId: 'lease-attached'
+      }
+      mutationAccessCallback.current?.()
+      handler._dispatchTerminalSideEffectBatchForTest({
+        ptyId,
+        ptyIncarnationId: 'incarnation-attached',
+        seq: 2,
+        facts: [{ kind: 'title', normalizedTitle: 'after proof', rawTitle: 'after proof' }]
+      })
+
+      expect(deps.setRuntimePaneTitle).toHaveBeenCalledWith('tab-1', 1, 'after proof')
     })
 
     it('stops consuming facts after the pane binding is disposed', async () => {

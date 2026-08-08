@@ -47,6 +47,7 @@ function createAdapter(
   const exitListeners: ((payload: { id: string; code: number; incarnationId?: string }) => void)[] =
     []
   const identityChangeListeners: (() => void)[] = []
+  const mutationRouteToken = Object.freeze({ label })
   return {
     protocolVersion,
     supportsGitCredentialGuardHost: () =>
@@ -67,12 +68,19 @@ function createAdapter(
     listProcesses: vi.fn(async () =>
       sessions.map((id) => ({
         id,
+        mutationRouteToken,
         cwd: '',
         title: label
       }))
     ),
+    getPtyMutationRouteToken: vi.fn((id: string) =>
+      sessions.includes(id) ? mutationRouteToken : null
+    ),
     hasPty: vi.fn((id: string) => sessions.includes(id)),
     probePtyLiveness: vi.fn(async (id: string) => sessions.includes(id)),
+    supportsExactHeldProducerPause: vi.fn((id: string) => sessions.includes(id)),
+    acquireExactHeldProducerPause: vi.fn(async (id: string) => sessions.includes(id)),
+    releaseExactHeldProducerPause: vi.fn(async (id: string) => sessions.includes(id)),
     write: vi.fn((id: string, data: string) => {
       writes.push({ id, data })
     }),
@@ -681,6 +689,66 @@ describe('DaemonPtyRouter', () => {
     const router = new DaemonPtyRouter({ current, legacy: [legacy] })
 
     await expect(router.listProcesses()).rejects.toThrow('legacy unavailable')
+  })
+
+  it('stamps inventory with the uniquely selected adapter route token', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    const [listed] = await router.listProcesses()
+
+    expect(listed?.mutationRouteToken).toBe(legacy.getPtyMutationRouteToken('legacy-session'))
+    expect(router.getPtyMutationRouteToken('legacy-session')).toBe(listed?.mutationRouteToken)
+  })
+
+  it('routes exact held-pause admission and leases to the discovered owner', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+
+    expect(router.supportsExactHeldProducerPause('legacy-session', 'incarnation')).toBe(true)
+    await expect(
+      router.acquireExactHeldProducerPause('legacy-session', 'incarnation', 'lease')
+    ).resolves.toBe(true)
+    await expect(
+      router.releaseExactHeldProducerPause('legacy-session', 'incarnation', 'lease')
+    ).resolves.toBe(true)
+    expect(legacy.acquireExactHeldProducerPause).toHaveBeenCalledWith(
+      'legacy-session',
+      'incarnation',
+      'lease'
+    )
+    expect(current.acquireExactHeldProducerPause).not.toHaveBeenCalled()
+  })
+
+  it('invalidates a listed token when ownership moves between daemon adapters', async () => {
+    const currentSessions: string[] = []
+    const legacySessions = ['moving-session']
+    const current = createAdapter('current', currentSessions)
+    const legacy = createAdapter('legacy', legacySessions)
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const [before] = await router.listProcesses()
+
+    legacySessions.length = 0
+    currentSessions.push('moving-session')
+    const [after] = await router.listProcesses()
+
+    expect(before?.mutationRouteToken).not.toBe(after?.mutationRouteToken)
+    expect(router.getPtyMutationRouteToken('moving-session')).toBe(after?.mutationRouteToken)
+  })
+
+  it('withholds route tokens for colliding daemon inventories', async () => {
+    const current = createAdapter('current', ['collision'])
+    const legacy = createAdapter('legacy', ['collision'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    const listed = await router.listProcesses()
+
+    expect(listed).toHaveLength(2)
+    expect(listed.every((entry) => entry.mutationRouteToken === undefined)).toBe(true)
+    expect(router.getPtyMutationRouteToken('collision')).toBeNull()
   })
 
   it('keeps a legacy adapter that exits after construction in fail-closed aggregates', async () => {

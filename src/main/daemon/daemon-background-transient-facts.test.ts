@@ -18,6 +18,18 @@ describe('BackgroundTransientFactRelay', () => {
     expect(emitted).toEqual([{ sessionId: 's1', fact: { kind: 'bell' } }])
   })
 
+  it('routes one scan through its captured exact emitter', () => {
+    const { relay, emitted } = createRelay()
+    const exact: DaemonTransientFact[] = []
+    relay.setSessionBackground('s1', true)
+
+    relay.onSessionData('s1', 'first\x07', (fact) => exact.push(fact))
+    relay.onSessionData('s1', 'second\x07')
+
+    expect(exact).toEqual([{ kind: 'bell' }])
+    expect(emitted).toEqual([{ sessionId: 's1', fact: { kind: 'bell' } }])
+  })
+
   it('keeps OSC escape state across chunks — a title terminator BEL is not a bell', () => {
     const { relay, emitted } = createRelay()
     relay.setSessionBackground('s1', true)

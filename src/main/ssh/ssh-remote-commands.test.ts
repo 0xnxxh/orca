@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -10,7 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   lockAgeSecondsCommand,
   tryCreateInstallLockCommand,
@@ -206,25 +207,40 @@ describe('ssh remote command builders', () => {
     )
   })
 
-  it('bounds real POSIX GC output with more than the exec-cap stage population', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'orca-relay-gc-scale-'))
-    try {
-      for (let index = 0; index < 15_197; index += 1) {
-        mkdirSync(join(root, `relay-0.1.0+abc.upload-${String(index).padStart(12, '0')}`))
-      }
-      mkdirSync(join(root, 'relay-0.1.0+aaa'))
-      mkdirSync(join(root, 'relay-0.1.0+bbb'))
+  describe('POSIX GC scale boundary', () => {
+    let posixGcScaleRoot: string | undefined
 
-      const output = await runShellCommand(listRelayBaseDirsCommand(posix, root))
+    beforeAll(() => {
+      posixGcScaleRoot = mkdtempSync(join(tmpdir(), 'orca-relay-gc-scale-'))
+      for (let index = 0; index < 15_197; index += 1) {
+        mkdirSync(
+          join(posixGcScaleRoot, `relay-0.1.0+abc.upload-${String(index).padStart(12, '0')}`)
+        )
+      }
+      mkdirSync(join(posixGcScaleRoot, 'relay-0.1.0+aaa'))
+      mkdirSync(join(posixGcScaleRoot, 'relay-0.1.0+bbb'))
+    }, 60_000)
+
+    afterAll(() => {
+      if (posixGcScaleRoot) {
+        rmSync(posixGcScaleRoot, { recursive: true, force: true })
+        posixGcScaleRoot = undefined
+      }
+    }, 60_000)
+
+    it('bounds real POSIX GC output with more than the exec-cap stage population', async () => {
+      if (!posixGcScaleRoot) {
+        throw new Error('POSIX GC scale fixture was not initialized')
+      }
+
+      const output = await runShellCommand(listRelayBaseDirsCommand(posix, posixGcScaleRoot))
       const entries = output.trim().split('\n')
 
       expect(entries).toEqual(['relay-0.1.0+aaa', 'relay-0.1.0+bbb'])
       expect(Buffer.byteLength(output)).toBeLessThan(1_024)
       expect(entries.length).toBeLessThanOrEqual(MAX_RELAY_GC_LISTING_ENTRIES)
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  }, 30_000)
+    }, 30_000)
+  })
 
   it('fails closed when real POSIX GC enumeration fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'orca-relay-gc-failure-'))
@@ -269,6 +285,23 @@ describe('ssh remote command builders', () => {
     expect(script).toContain('$stream = $null; try {')
     expect(script).toContain("} catch { 'BUSY' }")
     expect(script).not.toContain('}; catch')
+  })
+
+  it('publishes token-specific install owners on POSIX and Windows', () => {
+    const token = 'install-owner-token-0001'
+    const posixCommand = tryCreateInstallLockCommand(
+      posix,
+      '/home/me/.orca-remote/relay/.install-lock',
+      token
+    )
+    const windowsScript = decodePowerShellCommand(
+      tryCreateInstallLockCommand(windows, 'C:/Users/me/.orca-remote/relay/.install-lock', token)
+    )
+
+    expect(posixCommand).toContain(`.install-owner-${token}`)
+    expect(posixCommand).toContain(`printf %s '${token}'`)
+    expect(windowsScript).toContain(`.install-owner-${token}`)
+    expect(windowsScript).toContain("Join-Path $lock '.owner'")
   })
 
   it('computes install-lock age on the remote host clock', () => {
@@ -432,6 +465,39 @@ describe('ssh remote command builders', () => {
       }
     },
     15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'publishes token-specific ownership during POSIX create and stale recovery',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'orca-install-lock-owned-'))
+      const token = 'install-owner-token-0001'
+      try {
+        const lockDir = join(root, '.install-lock')
+        expect(
+          execFileSync('/bin/sh', ['-c', tryCreateInstallLockCommand(posix, lockDir, token)], {
+            encoding: 'utf8'
+          }).trim()
+        ).toBe('OK')
+        expect(readFileSync(join(lockDir, `.install-owner-${token}`), 'utf8')).toBe(token)
+
+        const staleDate = new Date(Date.now() - 60 * 60_000)
+        utimesSync(lockDir, staleDate, staleDate)
+        const replacementToken = 'install-owner-token-0002'
+        expect(
+          execFileSync(
+            '/bin/sh',
+            ['-c', tryStealInstallLockCommand(posix, lockDir, 20 * 60, replacementToken)],
+            { encoding: 'utf8' }
+          ).trim()
+        ).toBe('OK')
+        expect(readFileSync(join(lockDir, `.install-owner-${replacementToken}`), 'utf8')).toBe(
+          replacementToken
+        )
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
   )
 
   it.runIf(process.platform !== 'win32')(

@@ -19,6 +19,7 @@ import { hasRegisteredRuntimeTerminalTab } from '@/runtime/sync-runtime-graph'
 import { CODEX_ACCOUNT_RESTART_STARTUP } from '@/lib/codex-session-restart'
 import { isForeignMachineCodexPtyId } from '@/lib/codex-pane-selection-lane'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
+import { killPtyAtCurrentIncarnation } from '@/lib/pty-administrative-mutations'
 import {
   getCachedWindowsTerminalCapabilities,
   hasCachedWindowsTerminalCapabilities
@@ -322,7 +323,7 @@ function rebindCodexPaneLayoutLeaf(tabId: string, leafId: string, newPtyId: stri
 
 function reapUnboundCodexPty(ptyId: string, reason: string): void {
   try {
-    void window.api.pty.kill(ptyId).catch((err) => {
+    void killPtyAtCurrentIncarnation(ptyId).catch((err) => {
       console.warn(`[codex-restart] failed to reap ${reason}:`, err)
     })
   } catch (err) {

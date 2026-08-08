@@ -1,6 +1,7 @@
 // Why: regression coverage for the install-probe contract — the "node-pty is not available" bug shipped because every guard layer was silent.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeSshTerminalAuthorityProcess } from './ssh-terminal-authority-process-fixture'
 import type * as RelayInstallMarkerModule from './ssh-relay-install-marker'
 
 vi.mock('electron', () => ({
@@ -64,6 +65,24 @@ vi.mock('./ssh-relay-gc-claim', () => ({
   releaseRelayGcClaimWithRetry: vi.fn().mockResolvedValue('released'),
   tryAcquireRelayGcClaim: vi.fn().mockResolvedValue('launch-token'),
   waitForRelayGcClaimRelease: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('./ssh-terminal-authority-discovery', () => ({
+  sshTerminalAuthorityBootstrapReadCommand: vi.fn().mockReturnValue('echo $HOME'),
+  parseSshTerminalAuthorityBootstrapRead: vi.fn((output: string) => ({
+    rawRemoteHome: output,
+    discovery: { status: 'absent' }
+  }))
+}))
+
+vi.mock('./ssh-terminal-authority-process', () => ({
+  establishSshTerminalAuthority: vi.fn(async (options: { relayDir: string }) =>
+    makeSshTerminalAuthorityProcess({
+      remoteHome: '/home/u',
+      ownerBuildId: '0.1.0+testhash',
+      ownerRelayDir: options.relayDir
+    })
+  )
 }))
 
 vi.mock('./ssh-connection-utils', () => ({
@@ -311,7 +330,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     expect(warnMessages.some((m) => m.includes('[ssh-relay][NPTY-MISSING]'))).toBe(true)
 
     expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
   })
 
   it('rebuilds unloadable native deps and recovers before first relay launch', async () => {
@@ -476,9 +495,9 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     expect(chmodPrebuildsIdx).toBeGreaterThan(npmIdx)
     expect(probeIdx).toBeGreaterThan(chmodPrebuildsIdx)
 
-    // Hold the install lock through launch, then release it exactly once.
+    // Launch-fence ownership releases the install lock after daemon liveness is visible.
     expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
   })
 
   it('matches the sentinel even with bashrc/MOTD noise prefixed to probe stdout', async () => {
@@ -515,7 +534,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
     expect(warnMessages.some((m) => m.includes('[ssh-relay][NPTY-MISSING]'))).toBe(true)
     expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
   })
 
   it('keeps Windows node-pty probe failures non-fatal by checking LASTEXITCODE', async () => {
@@ -574,7 +593,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
     expect(warnMessages.some((m) => m.includes('[ssh-relay][NPTY-MISSING]'))).toBe(true)
     expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
   })
 
   it('includes the platform tuple in NPTY-MISSING and native install failure logs', async () => {
@@ -690,7 +709,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     await deployAndLaunchRelay(conn)
 
     expect(vi.mocked(finalizeInstall)).not.toHaveBeenCalled()
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
     const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
     expect(warnMessages.some((m) => m.includes('launching degraded'))).toBe(true)
   })
@@ -902,7 +921,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     expect(vi.mocked(acquireInstallLock)).not.toHaveBeenCalled()
     expect(vi.mocked(tryAcquireRelayRepairLock)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(finalizeInstall)).not.toHaveBeenCalled()
-    expect(vi.mocked(abandonInstall)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(abandonInstall)).not.toHaveBeenCalled()
     const execCalls = vi.mocked(execCommand).mock.calls.map(([, c]) => c)
     expect(execCalls.some((c) => c.includes('npm install'))).toBe(false)
   })

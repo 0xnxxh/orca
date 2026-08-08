@@ -3,6 +3,10 @@ import type { RuntimeTerminalSend } from '../../../shared/runtime-types'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { isTerminalInputTooLargeWithDeferredMeasurement } from '../../../shared/terminal-input'
 import { useAppStore } from '../store'
+import {
+  writeImmediateCurrentPty,
+  writeImmediateCurrentPtyAccepted
+} from '../lib/pty-administrative-mutations'
 import { RuntimeRpcCallError, callRuntimeRpc, getActiveRuntimeTarget } from './runtime-rpc-client'
 import {
   getRemoteRuntimePtyEnvironmentId,
@@ -157,7 +161,7 @@ function sendRuntimePtyInputWithinLimit(
     : getActiveRuntimeTarget(settings)
   const terminal = getRemoteRuntimeTerminalHandle(ptyId)
   if (target.kind !== 'environment' || !terminal) {
-    window.api.pty.write(ptyId, data)
+    writeImmediateCurrentPty(ptyId, data)
     recordRuntimeTerminalInputForPtyId(ptyId)
     return true
   }
@@ -195,9 +199,9 @@ export async function sendRuntimePtyInputVerified(
     : getActiveRuntimeTarget(settings)
   const terminal = getRemoteRuntimeTerminalHandle(ptyId)
   if (target.kind !== 'environment' || !terminal) {
-    const accepted = await window.api.pty.writeAccepted(ptyId, data)
+    const accepted = await writeImmediateCurrentPtyAccepted(ptyId, data)
     if (!accepted) {
-      window.api.pty.write(ptyId, data)
+      writeImmediateCurrentPty(ptyId, data)
       // Why: SSH/local fallback writes are fire-and-forget. Callers use this
       // boolean to continue UX flow, while hook telemetry confirms real turns.
       recordRuntimeTerminalInputForPtyId(ptyId)

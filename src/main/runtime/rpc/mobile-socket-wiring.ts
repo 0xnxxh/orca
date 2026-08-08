@@ -53,6 +53,7 @@ type MobileSocketWiringOptions = {
   onBinary: (socket: AuthenticatedMobileSocket, bytes: Uint8Array<ArrayBufferLike>) => void
   onClose: (socket: AuthenticatedMobileSocket | null, hasOtherConnections: boolean) => void
   onReady?: (socket: AuthenticatedMobileSocket) => void
+  isAdmissionAllowed?: () => boolean
   // Why: stale keys and missing registry entries both fail before RPC can explain the re-pair action.
   onUnpairedDeviceAuthFailure?: (metadata: MobileSocketTransportMetadata) => void
 }
@@ -66,12 +67,13 @@ function toAuthenticatedDevice(device: DeviceEntry): E2EEAuthenticatedDevice {
 }
 
 export class MobileSocketWiring {
-  private readonly deviceRegistry: DeviceRegistry
-  private readonly e2eeKeypair: E2EEKeypair
+  private deviceRegistry: DeviceRegistry
+  private e2eeKeypair: E2EEKeypair
   private readonly onText: MobileSocketWiringOptions['onText']
   private readonly onBinary: MobileSocketWiringOptions['onBinary']
   private readonly onClose: MobileSocketWiringOptions['onClose']
   private readonly onReady: MobileSocketWiringOptions['onReady']
+  private readonly isAdmissionAllowed: MobileSocketWiringOptions['isAdmissionAllowed']
   private readonly onUnpairedDeviceAuthFailure: MobileSocketWiringOptions['onUnpairedDeviceAuthFailure']
   private readonly channels = new Map<WebSocket, E2EEChannel>()
   private readonly connectionIds = new Map<WebSocket, string>()
@@ -86,6 +88,7 @@ export class MobileSocketWiring {
     this.onBinary = options.onBinary
     this.onClose = options.onClose
     this.onReady = options.onReady
+    this.isAdmissionAllowed = options.isAdmissionAllowed
     this.onUnpairedDeviceAuthFailure = options.onUnpairedDeviceAuthFailure
   }
 
@@ -130,6 +133,31 @@ export class MobileSocketWiring {
     return terminated
   }
 
+  listAuthenticatedSockets(): readonly AuthenticatedMobileSocket[] {
+    return [...this.authenticatedSockets.values()]
+  }
+
+  terminateAllConnections(): number {
+    const tokens = new Set(
+      [...this.authenticatedSockets.values()].map((socket) => socket.device.deviceToken)
+    )
+    let terminated = 0
+    for (const token of tokens) {
+      terminated += this.terminateDeviceConnections(token)
+    }
+    for (const ws of this.channels.keys()) {
+      if (!this.authenticatedSockets.has(ws)) {
+        ws.close()
+      }
+    }
+    return terminated
+  }
+
+  replaceIdentity(deviceRegistry: DeviceRegistry, e2eeKeypair: E2EEKeypair): void {
+    this.deviceRegistry = deviceRegistry
+    this.e2eeKeypair = e2eeKeypair
+  }
+
   private handleRawMessage(
     transport: MobileSocketTransport,
     ws: WebSocket,
@@ -149,6 +177,9 @@ export class MobileSocketWiring {
         requireV2: metadata.transport === 'relay',
         outboundMemoryBudget: this.outboundMemoryBudget,
         resolveAuthenticatedDevice: (token) => {
+          if (this.isAdmissionAllowed && !this.isAdmissionAllowed()) {
+            return null
+          }
           const device = this.deviceRegistry.validateToken(token)
           if (!device) {
             return null

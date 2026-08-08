@@ -15,11 +15,11 @@ function sendPtyDeliveryInterest(ptyId: string, interested: boolean): void {
 /** Acquire a delivery-interest hold for a PTY. Returns a release fn that is
  *  safe to call more than once (only the first call decrements). */
 export function acquirePtyDeliveryInterest(ptyId: string): () => void {
-  const next = (ptyDeliveryInterestRefCounts.get(ptyId) ?? 0) + 1
-  ptyDeliveryInterestRefCounts.set(ptyId, next)
-  if (next === 1) {
+  const current = ptyDeliveryInterestRefCounts.get(ptyId) ?? 0
+  if (current === 0) {
     sendPtyDeliveryInterest(ptyId, true)
   }
+  ptyDeliveryInterestRefCounts.set(ptyId, current + 1)
   let released = false
   return () => {
     if (released) {

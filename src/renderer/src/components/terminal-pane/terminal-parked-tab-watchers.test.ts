@@ -11,14 +11,16 @@ const SECOND_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 
 type StartedWatcher = {
   options: ParkedTerminalByteWatcherOptions
+  activateParked: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
 }
 
 const startedWatchers: StartedWatcher[] = []
 const startParkedTerminalByteWatcher = vi.fn((options: ParkedTerminalByteWatcherOptions) => {
+  const activateParked = vi.fn(() => true)
   const dispose = vi.fn()
-  startedWatchers.push({ options, dispose })
-  return dispose
+  startedWatchers.push({ options, activateParked, dispose })
+  return { activateParked, dispose }
 })
 
 vi.mock('./parked-terminal-byte-watcher', () => ({
@@ -112,18 +114,38 @@ import {
   disposeParkedTerminalWatchersForWorktree,
   getParkedTerminalWatcherTabIds,
   pruneParkedTerminalWatchers,
+  registerMountedTerminalPaneCandidateReader,
   shouldDeferParkedPtyExitTabClose,
+  activatePreparedParkedTerminalTabWatchers,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
 
 const ptyWrite = vi.fn()
 const originalWindow = (globalThis as { window?: unknown }).window
+const mountedReaderDisposersByTabId = new Map<string, () => void>()
+
+function detachMountedReader(tabId = TAB_ID): void {
+  mountedReaderDisposersByTabId.get(tabId)?.()
+  mountedReaderDisposersByTabId.delete(tabId)
+}
 
 function capturePanes(
-  panes: { ptyId: string | null; paneId: number; leafId: string; drivesTabTitle: boolean }[],
+  panes: {
+    ptyId: string | null
+    paneId: number
+    leafId: string
+    drivesTabTitle: boolean
+  }[],
   args?: { tabId?: string; worktreeId?: string }
 ): void {
-  captureParkedTerminalPaneCandidates(args?.tabId ?? TAB_ID, args?.worktreeId ?? WORKTREE_ID, panes)
+  const tabId = args?.tabId ?? TAB_ID
+  const worktreeId = args?.worktreeId ?? WORKTREE_ID
+  captureParkedTerminalPaneCandidates(tabId, worktreeId, panes)
+  mountedReaderDisposersByTabId.get(tabId)?.()
+  mountedReaderDisposersByTabId.set(
+    tabId,
+    registerMountedTerminalPaneCandidateReader(tabId, worktreeId, () => panes)
+  )
 }
 
 function syncParked(args?: {
@@ -132,14 +154,22 @@ function syncParked(args?: {
   parkedTabIds?: Iterable<string>
   restoreTitleOnStartTabIds?: Iterable<string>
 }): void {
+  const worktreeId = args?.worktreeId ?? WORKTREE_ID
+  const tabs = args?.tabs ?? [{ id: TAB_ID, ptyId: PTY_ID }]
+  const parkedTabIds = new Set(args?.parkedTabIds ?? [TAB_ID])
   syncParkedTerminalTabWatchers({
-    worktreeId: args?.worktreeId ?? WORKTREE_ID,
-    tabs: args?.tabs ?? [{ id: TAB_ID, ptyId: PTY_ID }],
-    parkedTabIds: new Set(args?.parkedTabIds ?? [TAB_ID]),
+    worktreeId,
+    tabs,
+    parkedTabIds,
     ...(args?.restoreTitleOnStartTabIds
       ? { restoreTitleOnStartTabIds: new Set(args.restoreTitleOnStartTabIds) }
       : {})
   })
+  activatePreparedParkedTerminalTabWatchers({ worktreeId, tabs, parkedTabIds })
+  for (const tabId of parkedTabIds) {
+    mountedReaderDisposersByTabId.get(tabId)?.()
+    mountedReaderDisposersByTabId.delete(tabId)
+  }
 }
 
 describe('terminal-parked-tab-watchers', () => {
@@ -168,6 +198,10 @@ describe('terminal-parked-tab-watchers', () => {
     // public prune path so each test starts from an empty parked state.
     pruneParkedTerminalWatchers(new Set())
     startedWatchers.length = 0
+    for (const dispose of mountedReaderDisposersByTabId.values()) {
+      dispose()
+    }
+    mountedReaderDisposersByTabId.clear()
     exitSubscriptions.length = 0
     vi.clearAllMocks()
     clearTerminalProviderSnapshotCapabilities()
@@ -214,15 +248,15 @@ describe('terminal-parked-tab-watchers', () => {
     expect(ptyWrite).toHaveBeenCalledWith(PTY_ID, '\x1b[?2031;1$y')
   })
 
-  it('skips legacy non-UUID leaf ids instead of throwing in makePaneKey', () => {
+  it('keeps the whole tab mounted when any split leaf identity is invalid', () => {
     capturePanes([
       { ptyId: PTY_ID, paneId: 1, leafId: 'legacy-leaf-1', drivesTabTitle: true },
       { ptyId: SECOND_PTY_ID, paneId: 2, leafId: SECOND_LEAF_ID, drivesTabTitle: false }
     ])
     syncParked()
 
-    expect(startParkedTerminalByteWatcher).toHaveBeenCalledTimes(1)
-    expect(startedWatchers[0].options).toMatchObject({ ptyId: SECOND_PTY_ID })
+    expect(startParkedTerminalByteWatcher).not.toHaveBeenCalled()
+    expect(getParkedTerminalWatcherTabIds()).toEqual([])
   })
 
   it('never starts watchers for remote-runtime PTYs', () => {
@@ -232,9 +266,7 @@ describe('terminal-parked-tab-watchers', () => {
     syncParked({ tabs: [{ id: TAB_ID, ptyId: null }] })
 
     expect(startParkedTerminalByteWatcher).not.toHaveBeenCalled()
-    // Why: the tab is still tracked as parked so debug introspection
-    // (window.__terminalParkingDebug) reflects every parked tab.
-    expect(getParkedTerminalWatcherTabIds()).toEqual([TAB_ID])
+    expect(getParkedTerminalWatcherTabIds()).toEqual([])
   })
 
   it('starts a fact watcher for snapshot-capable paired PTYs', () => {
@@ -446,17 +478,21 @@ describe('terminal-parked-tab-watchers', () => {
     expect(startParkedTerminalByteWatcher).toHaveBeenCalledTimes(2)
   })
 
-  it('restarts watchers from store layout when the tab PTY was re-minted', () => {
+  it('restarts watchers from store layout when the tab PTY was re-minted', async () => {
     capturePanes([{ ptyId: PTY_ID, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
     syncParked()
 
     const remintedPtyId = `${WORKTREE_ID}@@session-after-wake`
+    await synchronizeTerminalProviderSnapshotCapabilities([remintedPtyId], async (ids) =>
+      ids.map((id) => ({ id, authoritative: true }))
+    )
     mockStoreState.terminalLayoutsByTabId[TAB_ID] = {
       root: { type: 'leaf', leafId: LEAF_ID },
       activeLeafId: LEAF_ID,
       expandedLeafId: null,
       ptyIdsByLeafId: { [LEAF_ID]: remintedPtyId }
     }
+    capturePanes([{ ptyId: remintedPtyId, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
     syncParked({ tabs: [{ id: TAB_ID, ptyId: remintedPtyId }] })
 
     expect(startedWatchers[0].dispose).toHaveBeenCalledTimes(1)
@@ -802,6 +838,7 @@ describe('terminal-parked-tab-watchers', () => {
 
     it('accepts layout-derived candidates when the capture is stale', () => {
       capturePanes([{ ptyId: 'old-pty', paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
+      detachMountedReader()
       mockStoreState.terminalLayoutsByTabId[TAB_ID] = {
         root: { type: 'leaf', leafId: LEAF_ID },
         activeLeafId: LEAF_ID,

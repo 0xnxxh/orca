@@ -272,7 +272,11 @@ import {
   setCommandCodeDoneSettleExecutor
 } from './command-code-done-settle'
 import { canCommandCodeOutputOwnPane } from './command-code-output-ownership'
-import { isTerminalTabParked } from './terminal-parked-watcher-registry'
+import {
+  beginParkedTerminalWatcherReplacement,
+  isTerminalTabParked,
+  type ParkedTerminalWatcherReplacement
+} from './terminal-parked-watcher-registry'
 import {
   getExecutionHostIdForWorktree,
   getSettingsForWorktreeRuntimeOwner
@@ -321,7 +325,12 @@ import {
 } from './agent-task-complete-policy'
 import {
   isMainTerminalSideEffectAuthorityForPty,
+  prepareTerminalSideEffectFactConsumer,
   registerTerminalSideEffectFactConsumer
+} from './terminal-side-effect-facts-handler'
+import type {
+  PreparedTerminalSideEffectFactConsumer,
+  TerminalSideEffectFactConsumerCallbacks
 } from './terminal-side-effect-facts-handler'
 import { isRendererHiddenPtyDeliveryGateEnabled } from './terminal-hidden-delivery-gate'
 import {
@@ -2316,6 +2325,33 @@ export function connectPanePty(
   // restoreTitleOnRegister replaces the eager-replay title restore: main's
   // title-only snapshot carries the no-attention-replay rule.
   let unregisterSideEffectFactConsumer: (() => void) | null = null
+  let preparedRevealFactConsumer: PreparedTerminalSideEffectFactConsumer | null = null
+  let parkedWatcherReplacement: ParkedTerminalWatcherReplacement | null = null
+  let parkedWatcherReplacementPtyId: string | null = null
+  let completeParkedWatcherReplacement = (_ptyId: string): boolean => false
+  const sideEffectFactCallbacks = (
+    remoteOutputPaused = false
+  ): TerminalSideEffectFactConsumerCallbacks => ({
+    onTitleChange,
+    onBell,
+    onAgentBecameIdle,
+    onAgentBecameWorking,
+    onAgentExited,
+    onCommandFinished: handleCommandFinished,
+    onPrLink: (link) =>
+      useAppStore.getState().observeTerminalGitHubPullRequestLink(deps.worktreeId, link),
+    onCommandCodeWorking: seedCommandCodeOutputWorkingStatus,
+    onCommandCodeDone: scheduleCommandCodeOutputDoneStatus,
+    ...(shouldOwnAgentStatusInRenderer
+      ? { onAgentStatus: (payload) => handleRendererOwnedAgentStatus(payload) }
+      : {}),
+    ...(hiddenDeliveryGateActive || remoteOutputPaused
+      ? {
+          onMode2031Subscribe: handleHiddenMode2031SubscribeFact,
+          onMode2031Unsubscribe: handleHiddenMode2031UnsubscribeFact
+        }
+      : {})
+  })
   const registerSideEffectFactConsumerForPty = (
     ptyId: string,
     remoteOutputPaused = false
@@ -2323,35 +2359,15 @@ export function connectPanePty(
     if ((!mainSideEffectAuthority && !remoteOutputPaused) || disposed) {
       return
     }
+    if (preparedRevealFactConsumer && parkedWatcherReplacementPtyId === ptyId) {
+      return
+    }
     unregisterSideEffectFactConsumer?.()
+    const mutationIncarnationId = transport.getMutationIdentity?.()?.incarnationId
     unregisterSideEffectFactConsumer = registerTerminalSideEffectFactConsumer({
       ptyId,
-      callbacks: {
-        onTitleChange,
-        onBell,
-        onAgentBecameIdle,
-        onAgentBecameWorking,
-        onAgentExited,
-        onCommandFinished: handleCommandFinished,
-        onPrLink: (link) =>
-          useAppStore.getState().observeTerminalGitHubPullRequestLink(deps.worktreeId, link),
-        // Why: the Command Code settle policy stays here — the done settle
-        // timer must consult the live store row (which hook events and
-        // renderer seeds also write), so main only emits scrape facts.
-        onCommandCodeWorking: seedCommandCodeOutputWorkingStatus,
-        onCommandCodeDone: scheduleCommandCodeOutputDoneStatus,
-        ...(shouldOwnAgentStatusInRenderer
-          ? { onAgentStatus: (payload) => handleRendererOwnedAgentStatus(payload) }
-          : {}),
-        // Why: gated hidden panes never see the subscribe bytes; the fact
-        // replaces the byte scan (and the old post-latch subscribe drop).
-        ...(hiddenDeliveryGateActive || remoteOutputPaused
-          ? {
-              onMode2031Subscribe: handleHiddenMode2031SubscribeFact,
-              onMode2031Unsubscribe: handleHiddenMode2031UnsubscribeFact
-            }
-          : {})
-      },
+      ...(mutationIncarnationId ? { incarnationId: mutationIncarnationId } : {}),
+      callbacks: sideEffectFactCallbacks(remoteOutputPaused),
       restoreTitleOnRegister: true
     })
   }
@@ -2957,6 +2973,7 @@ export function connectPanePty(
     // guard knows this binding is newer than any pre-bind snapshot.
     activePanePtyBindingBoundAt = performance.now()
     registerSideEffectFactConsumerForPty(ptyId)
+    completeParkedWatcherReplacement(ptyId)
     syncHiddenRendererPtyDelivery()
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
     notifyCodexPaneBoundForStaleSweep(ptyId)
@@ -3778,6 +3795,7 @@ export function connectPanePty(
     // and the main-side guard short-circuits.
     tabId: deps.tabId,
     leafId: pane.leafId,
+    paneGeneration: deps.paneGeneration,
     activate: deps.isActiveRef.current && deps.isVisibleRef.current,
     ...(shellOverride ? { shellOverride } : {}),
     ...(projectRuntime ? { projectRuntime } : {}),
@@ -3834,6 +3852,58 @@ export function connectPanePty(
       : runtimeEnvironmentId
         ? createRemoteRuntimePtyTransport(runtimeEnvironmentId, transportOptions)
         : createIpcPtyTransport(transportOptions)
+  const parkedRevealPtyId = mountFollowsTerminalPark
+    ? (restoredPtyIdForTransport ?? tab?.ptyId ?? null)
+    : null
+  if (parkedRevealPtyId) {
+    parkedWatcherReplacement = beginParkedTerminalWatcherReplacement(deps.tabId, parkedRevealPtyId)
+    if (parkedWatcherReplacement) {
+      parkedWatcherReplacementPtyId = parkedRevealPtyId
+      if (mainSideEffectAuthority) {
+        preparedRevealFactConsumer = prepareTerminalSideEffectFactConsumer({
+          ptyId: parkedRevealPtyId,
+          callbacks: sideEffectFactCallbacks(),
+          restoreTitleOnRegister: true
+        })
+      }
+    }
+  }
+  completeParkedWatcherReplacement = (boundPtyId): boolean => {
+    const replacement = parkedWatcherReplacement
+    const replacedPtyId = parkedWatcherReplacementPtyId
+    if (!replacement || !replacedPtyId) {
+      return false
+    }
+    const replacesSamePty = boundPtyId === replacedPtyId
+    if (
+      replacesSamePty &&
+      !isRemoteRuntimePtyId(boundPtyId) &&
+      transport.hasMutationAccess?.() !== true
+    ) {
+      return false
+    }
+    const prepared = preparedRevealFactConsumer
+    const mutationIncarnationId = transport.getMutationIdentity?.()?.incarnationId
+    const committed = replacement.commit(() => {
+      if (!replacesSamePty || !prepared) {
+        return true
+      }
+      return prepared.activate(mutationIncarnationId)
+    })
+    if (!committed) {
+      return false
+    }
+    if (replacesSamePty && prepared) {
+      unregisterSideEffectFactConsumer = prepared.unregister
+    } else {
+      prepared?.cancel()
+    }
+    preparedRevealFactConsumer = null
+    parkedWatcherReplacement = null
+    parkedWatcherReplacementPtyId = null
+    mountFollowsTerminalPark = false
+    return replacesSamePty && prepared !== null
+  }
   const canSendDesktopQueryReply = (): boolean => {
     const ptyId = transport.getPtyId()
     return !ptyId || !isPtyLocked(ptyId)
@@ -4684,7 +4754,8 @@ export function connectPanePty(
           clearHiddenOutputRestoreState()
           discardTerminalOutput(pane.terminal)
           clearTerminalScrollbackAndFollowOutput(pane.terminal)
-        }
+        },
+        transport.getMutationIdentity?.()
       )
       const unregisterTitleSource = registerPtyTitleSource(ptyId, (handler) =>
         pane.terminal.onTitleChange(handler)
@@ -5240,6 +5311,7 @@ export function connectPanePty(
       const trackedPromise: Promise<string | null> = Promise.resolve(spawnedRaw)
         .then(async (spawnedPtyId) => {
           if (outputCallbacks.generation !== transportStreamGeneration) {
+            cancelRendererBindingSettlement(spawnedPtyId)
             finishReattachLiveDataDeferral(false, outputCallbacks.generation)
             const gen = await preSignalPromise
             if (typeof gen === 'number') {
@@ -5254,6 +5326,7 @@ export function connectPanePty(
                 ? spawnedPtyId
                 : transport.getPtyId()
           if (resolvedPtyId && !claimCapturedDirectSshRetryPty(resolvedPtyId)) {
+            cancelRendererBindingSettlement(spawnedPtyId)
             finishReattachLiveDataDeferral(false, outputCallbacks.generation)
             return null
           }
@@ -5829,6 +5902,17 @@ export function connectPanePty(
           onWriteUnavailable: (): void => {
             if (isCurrent()) {
               requestRecoveryForUndeliverableInput(true)
+            }
+          },
+          onMutationAccessAvailable: (): void => {
+            if (isCurrent()) {
+              const ptyId = transport.getPtyId()
+              if (ptyId) {
+                const installedPreparedConsumer = completeParkedWatcherReplacement(ptyId)
+                if (!installedPreparedConsumer) {
+                  registerSideEffectFactConsumerForPty(ptyId)
+                }
+              }
             }
           },
           onRecoveryStateChange: (state: PtyTransportRecoveryState): void => {
@@ -7347,7 +7431,7 @@ export function connectPanePty(
                     transport.resize(pane.terminal.cols, pane.terminal.rows)
                     if (!isRemoteRuntimePtyId(currentPtyId)) {
                       // Why: redundant SIGWINCH makes alt-screen TUIs rebuild their scroll viewport to the top on tab return.
-                      window.api.pty.signal(currentPtyId, 'SIGWINCH')
+                      transport.signal?.('SIGWINCH')
                     }
                   }
                 },
@@ -8043,7 +8127,7 @@ export function connectPanePty(
         .catch(() => {})
     }
 
-    const handleReattachResult = async (
+    const applyReattachResult = async (
       result: PtyConnectResult | string | void,
       staleSessionId?: string | null,
       coldRestoreStartup?: ColdRestoreAgentResumeStartup | null,
@@ -8154,6 +8238,7 @@ export function connectPanePty(
       setPanePtyFitBinding(ptyId)
       reportPanePtyVisibility(ptyId, deps.isVisibleRef.current)
       registerSideEffectFactConsumerForPty(ptyId)
+      completeParkedWatcherReplacement(ptyId)
       syncHiddenRendererPtyDelivery()
       deps.syncPanePtyLayoutBinding(pane.id, ptyId)
       notifyCodexPaneBoundForStaleSweep(ptyId)
@@ -8170,26 +8255,36 @@ export function connectPanePty(
 
       // Why (C1 SSH parking): main's headless model holds ~5k rows for SSH ptys
       // while the relay replay is a 100KiB raw-byte tail; prefer the model on
-      // reveal. Only a non-empty 'headless'-sourced snapshot qualifies — the
-      // renderer-serializer fallback has no mounted xterm after a park. The
-      // paint happens inline in the snapshot-branch style: applyMainBufferSnapshot
-      // would nest structuralReplayCoordinator.run inside the reattach task and
-      // deadlock on the coordinator's tail chain.
+      // reveal. A reconnect can also arrive after the connection-level reattach
+      // already drained the relay replay into main, leaving this pane with no
+      // payload of its own, so use the same model fallback for a replay-less
+      // SSH reattach. Only a non-empty 'headless'-sourced snapshot qualifies —
+      // the renderer-serializer fallback has no mounted xterm after a park.
+      // The paint happens inline in the snapshot-branch style:
+      // applyMainBufferSnapshot would nest structuralReplayCoordinator.run
+      // inside the reattach task and deadlock on the coordinator's tail chain.
       // Memoized: the prefetch and the payload task share one probe result, so a
       // null prefetch can never buy a second timeout before the relay paint.
       const fetchSshMainModelReattachSnapshot = getSshMainModelSnapshotProbe(ptyId)
       // Why consume-once: only the first reattach of a reveal remount may pay
       // the probe; a later in-place reconnect on this same mount must not buy a
       // second timeout before the relay paint.
-      const revealFollowsTerminalPark =
-        mountFollowsTerminalPark &&
-        (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
+      const needsSshReattachModelSnapshot =
+        connectResult?.isReattach === true &&
+        !connectResult.snapshot &&
+        !connectResult.replay &&
+        !connectResult.coldRestore &&
+        parseAppSshPtyId(ptyId) !== null
+      const shouldUseSshModelSnapshot =
+        (mountFollowsTerminalPark &&
+          (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))) ||
+        needsSshReattachModelSnapshot
       mountFollowsTerminalPark = false
       // Why: ordinary parking destroys xterm. Rebuild from the authoritative
       // host snapshot before releasing queued live bytes; null falls back to
       // the subscribe screen without keeping the old xterm mounted.
       let prefetchedParkModelSnapshot: PtyBufferSnapshot | null = null
-      if (revealFollowsTerminalPark && (!hasStructuralReplay || isRemoteRuntimePtyId(ptyId))) {
+      if (shouldUseSshModelSnapshot && (!hasStructuralReplay || isRemoteRuntimePtyId(ptyId))) {
         if (parseAppSshPtyId(ptyId)) {
           prefetchedParkModelSnapshot = await fetchSshMainModelReattachSnapshot()
         } else {
@@ -8258,7 +8353,7 @@ export function connectPanePty(
           // model still holds, but an in-place reattach (network reconnect, wake,
           // reload) already has that replay in hand, so probing would only delay its
           // paint by the timeout. Memoized, so this is never a second probe.
-          const modelSnapshot = revealFollowsTerminalPark
+          const modelSnapshot = shouldUseSshModelSnapshot
             ? (prefetchedParkModelSnapshot ??
               (isRemoteRuntimePtyId(ptyId) ? null : await fetchSshMainModelReattachSnapshot()))
             : null
@@ -8430,7 +8525,7 @@ export function connectPanePty(
               }
               // Why: POSIX only sends SIGWINCH on an actual dimension change; signal explicitly so restored TUIs repaint at the correct cursor after replay.
               if (!isRemoteRuntimePtyId(reattachPtyId)) {
-                window.api.pty.signal(reattachPtyId, 'SIGWINCH')
+                transport.signal?.('SIGWINCH')
               }
             },
             { shouldContinue: isCurrentReattachPayload, retryIfUnmeasurable: true }
@@ -8449,7 +8544,7 @@ export function connectPanePty(
             ptySizeReassertion.request({ fit: false })
           }
         } else if (isCurrentReattachPayload() && !isRemoteRuntimePtyId(reattachPtyId)) {
-          window.api.pty.signal(reattachPtyId, 'SIGWINCH')
+          transport.signal?.('SIGWINCH')
         }
       }
       if (hasStructuralReplay || prefetchedParkModelSnapshot) {
@@ -8468,6 +8563,40 @@ export function connectPanePty(
 
       scheduleRuntimeGraphSync()
       return true
+    }
+
+    const cancelRendererBindingSettlement = (result: PtyConnectResult | string | void): void => {
+      if (result && typeof result === 'object' && 'id' in result) {
+        result.rendererBindingSettlement?.cancel()
+      }
+    }
+
+    const handleReattachResult = async (
+      result: PtyConnectResult | string | void,
+      staleSessionId?: string | null,
+      coldRestoreStartup?: ColdRestoreAgentResumeStartup | null,
+      attemptGeneration = transportStreamGeneration
+    ): Promise<boolean> => {
+      const rendererBindingSettlement =
+        result && typeof result === 'object' && 'id' in result
+          ? result.rendererBindingSettlement
+          : undefined
+      let accepted = false
+      try {
+        accepted = await applyReattachResult(
+          result,
+          staleSessionId,
+          coldRestoreStartup,
+          attemptGeneration
+        )
+        return accepted
+      } finally {
+        if (accepted) {
+          rendererBindingSettlement?.ready()
+        } else {
+          rendererBindingSettlement?.cancel()
+        }
+      }
     }
 
     const attachRetainedLegacyPty = (ptyId: string): boolean => {
@@ -8701,6 +8830,7 @@ export function connectPanePty(
             const trackedReattachPromise = Promise.resolve(reattachPromise)
               .then(async (result) => {
                 if (outputCallbacks.generation !== transportStreamGeneration) {
+                  cancelRendererBindingSettlement(result)
                   finishReattachLiveDataDeferral(false, outputCallbacks.generation)
                   const gen = await preSignalPromise
                   if (typeof gen === 'number') {
@@ -8947,6 +9077,7 @@ export function connectPanePty(
       const trackedReattachPromise = Promise.resolve(reattachPromise)
         .then(async (result) => {
           if (outputCallbacks.generation !== transportStreamGeneration) {
+            cancelRendererBindingSettlement(result)
             finishReattachLiveDataDeferral(false, outputCallbacks.generation)
             const gen = await preSignalPromise
             if (typeof gen === 'number') {
@@ -9382,6 +9513,11 @@ export function connectPanePty(
       unregisterDocumentVisibilityRecovery?.()
       unregisterDocumentVisibilityRecovery = null
       releaseRendererPtyVisibilityClaim(transport)
+      parkedWatcherReplacement?.abort()
+      parkedWatcherReplacement = null
+      parkedWatcherReplacementPtyId = null
+      preparedRevealFactConsumer?.cancel()
+      preparedRevealFactConsumer = null
       // Why: the pane's fact consumer must be gone before a parked-tab watcher takes over this PTY's facts in the same effect flush.
       dropSideEffectFactConsumer()
       clearPanePtyFitBinding()

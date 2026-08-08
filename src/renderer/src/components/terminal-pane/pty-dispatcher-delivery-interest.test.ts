@@ -69,6 +69,20 @@ describe('pty dispatcher delivery interest', () => {
     expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-1', false)
   })
 
+  it('does not retain interest when the first publication throws', async () => {
+    const { subscribeToPtyData } = await import('./pty-data-sidecar-subscriptions')
+    setPtyDeliveryInterest.mockImplementationOnce(() => {
+      throw new Error('interest publication failed')
+    })
+
+    expect(() => subscribeToPtyData('pty-1', vi.fn())).toThrow('interest publication failed')
+    const unsubscribe = subscribeToPtyData('pty-1', vi.fn())
+    expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-1', true)
+
+    unsubscribe()
+    expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-1', false)
+  })
+
   it('does not let an eager pre-mount buffer defeat hidden delivery gating', async () => {
     const { registerEagerPtyBuffer } = await import('./pty-dispatcher')
 

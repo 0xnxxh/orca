@@ -18,6 +18,15 @@ import { TerminalSessionOwnerUnverifiedError } from '../daemon/daemon-errors'
 
 const isWindowsHost = process.platform === 'win32'
 const posixOnlyIt = isWindowsHost ? it.skip : it
+const SSH_TERMINAL_AUTHORITY_ACCESS = {
+  namespace: { authorityHostId: 'authority-host-1', namespaceId: 'namespace-1' },
+  pane: { paneKey: 'tab:tab-1/leaf:leaf-1', paneGenerationId: 'generation-1' },
+  binding: {
+    ownerIncarnationId: 'owner-1',
+    physicalPtyId: 'relay-pty',
+    ptyIncarnationId: 'incarnation-1'
+  }
+} as const
 // Why: bare shells no longer mkdir ~/.omp; OMP status lives under userData (#10196).
 const expectedOmpStatusExtension = posix.join(
   '/tmp/orca-user-data',
@@ -43,6 +52,7 @@ const {
   mkdirSyncMock,
   readFileSyncMock,
   writeFileSyncMock,
+  renameSyncMock,
   chmodSyncMock,
   getPathMock,
   loginPreflightExecFileMock,
@@ -65,7 +75,8 @@ const {
   clearMigrationUnsupportedPtysForPaneKeyMock,
   clearPaneKeyAliasesForPtyMock,
   recordCodexPaneAccountMock,
-  forgetCodexPaneAccountMock
+  forgetCodexPaneAccountMock,
+  prepareSshTerminalAuthorityExitWaitMock
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
   onMock: vi.fn(),
@@ -77,6 +88,7 @@ const {
   mkdirSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
+  renameSyncMock: vi.fn(),
   chmodSyncMock: vi.fn(),
   getPathMock: vi.fn(),
   loginPreflightExecFileMock: vi.fn(),
@@ -99,7 +111,8 @@ const {
   clearMigrationUnsupportedPtysForPaneKeyMock: vi.fn(),
   clearPaneKeyAliasesForPtyMock: vi.fn(),
   recordCodexPaneAccountMock: vi.fn(),
-  forgetCodexPaneAccountMock: vi.fn()
+  forgetCodexPaneAccountMock: vi.fn(),
+  prepareSshTerminalAuthorityExitWaitMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -131,6 +144,7 @@ vi.mock('fs', () => ({
   mkdirSync: mkdirSyncMock,
   readFileSync: readFileSyncMock,
   writeFileSync: writeFileSyncMock,
+  renameSync: renameSyncMock,
   chmodSync: chmodSyncMock,
   constants: {
     X_OK: 1
@@ -209,10 +223,15 @@ vi.mock('../codex/codex-pane-account-registry', () => ({
   recordCodexPaneAccount: recordCodexPaneAccountMock,
   forgetCodexPaneAccount: forgetCodexPaneAccountMock
 }))
+
+vi.mock('../ssh/ssh-terminal-authority-exit-wait', () => ({
+  prepareSshTerminalAuthorityExitWait: prepareSshTerminalAuthorityExitWaitMock
+}))
 import {
   LocalPtyProvider,
   _resetLocalPtyProviderStateForTest
 } from '../providers/local-pty-provider'
+import { SshPtyProvider } from '../providers/ssh-pty-provider'
 import { makePaneKey } from '../../shared/stable-pane-id'
 import { SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV } from '../../shared/setup-agent-sequencing'
 import {
@@ -234,6 +253,9 @@ import {
   getLocalPtyProvider,
   isCurrentPtyExit,
   restorePtyIncarnation,
+  publishTerminalSideEffectBatchToRenderer,
+  _resetPtyPendingCloseStateForTests,
+  waitForSshPtyPendingCloseReplay,
   type PrepareCodexSessionResume
 } from './pty'
 import { resetMacosLoginShellPreflightForTests } from '../providers/macos-tcc-login-shell'
@@ -256,8 +278,13 @@ import { __resetShellStartupEnvCache } from '../pty/shell-startup-env'
 import {
   acceptSshPtyOutputData,
   acceptSshPtyOutputExit,
-  closeSshPtyOutputGeneration
+  closeSshPtyOutputGeneration,
+  installSshPtySourceAckPublisher
 } from './ssh-pty-output-intake-registry'
+import {
+  PTY_RENDERER_BINDING_SIDE_EFFECT_BACKPRESSURE_BATCHES,
+  PTY_RENDERER_BINDING_SIDE_EFFECT_MAX_BATCHES
+} from './pty-renderer-binding-fence'
 
 // Why: Windows resolves a bare PowerShell name to an absolute exe before ConPTY, else CreateProcessW fails with error 5 (PR #6537 / #5161).
 const RESOLVED_WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -360,6 +387,7 @@ describe('registerPtyHandlers', () => {
     mkdirSyncMock.mockReset()
     readFileSyncMock.mockReset()
     writeFileSyncMock.mockReset()
+    renameSyncMock.mockReset()
     chmodSyncMock.mockReset()
     getPathMock.mockReset()
     loginPreflightExecFileMock.mockReset()
@@ -383,6 +411,12 @@ describe('registerPtyHandlers', () => {
     clearPaneKeyAliasesForPtyMock.mockReset()
     recordCodexPaneAccountMock.mockReset()
     forgetCodexPaneAccountMock.mockReset()
+    prepareSshTerminalAuthorityExitWaitMock.mockReset()
+    prepareSshTerminalAuthorityExitWaitMock.mockImplementation(() => ({
+      completion: Promise.resolve(true),
+      cancelUnsent: vi.fn(),
+      dispose: vi.fn()
+    }))
     mainWindow.webContents.on.mockReset()
     mainWindow.webContents.send.mockReset()
     mainWindow.webContents.removeListener.mockReset()
@@ -474,6 +508,7 @@ describe('registerPtyHandlers', () => {
 
   afterEach(() => {
     _resetLocalPtyProviderStateForTest()
+    _resetPtyPendingCloseStateForTests()
     _resetWslCachesForTests()
     vi.useRealTimers()
     // Why: sshProviders is module-level state; a leftover id leaks into later tests (pty:listSessions sweeps every provider).
@@ -735,6 +770,20 @@ describe('registerPtyHandlers', () => {
     }
   }
 
+  function createExactRendererBindingProvider(spawn: ReturnType<typeof vi.fn>) {
+    return {
+      ...createAgentClaimProvider({ spawn }),
+      getPtyMutationMode: vi.fn(() => 'exact' as const),
+      writeExact: vi.fn(() => true),
+      resizeExact: vi.fn(() => true),
+      sendSignalExact: vi.fn(async () => true),
+      clearBufferExact: vi.fn(async () => true),
+      killExact: vi.fn(async () => true),
+      pauseProducer: vi.fn(),
+      resumeProducer: vi.fn()
+    }
+  }
+
   const recoveredAgentClaim = {
     digestVersion: 1 as const,
     keyId: 'claim-key',
@@ -751,16 +800,18 @@ describe('registerPtyHandlers', () => {
 
   function registerAgentClaimController(): {
     spawn: (args: Record<string, unknown>) => Promise<unknown>
-    write: (ptyId: string, data: string) => boolean
-    resize: (ptyId: string, cols: number, rows: number) => boolean
+    captureMutationTarget: (ptyId: string) => unknown
+    write: (ptyId: string, data: string, target?: unknown) => boolean
+    resize: (ptyId: string, cols: number, rows: number, target?: unknown) => boolean
     probePtyLiveness: (ptyId: string) => Promise<boolean | null>
     attach: (ptyId: string) => Promise<boolean>
   } {
     let controller:
       | {
           spawn: (args: Record<string, unknown>) => Promise<unknown>
-          write: (ptyId: string, data: string) => boolean
-          resize: (ptyId: string, cols: number, rows: number) => boolean
+          captureMutationTarget: (ptyId: string) => unknown
+          write: (ptyId: string, data: string, target?: unknown) => boolean
+          resize: (ptyId: string, cols: number, rows: number, target?: unknown) => boolean
           probePtyLiveness: (ptyId: string) => Promise<boolean | null>
           attach: (ptyId: string) => Promise<boolean>
         }
@@ -789,18 +840,21 @@ describe('registerPtyHandlers', () => {
     registerSshPtyProvider(connectionId, sshProvider as never)
     setPtyOwnership(ptyId, connectionId)
     const controller = registerAgentClaimController()
+    const connectedTarget = controller.captureMutationTarget(ptyId)
 
     unregisterSshPtyProvider(connectionId)
     clearPtyOwnershipForConnection(connectionId)
 
-    expect(controller.write(ptyId, 'input')).toBe(false)
-    expect(controller.resize(ptyId, 100, 40)).toBe(false)
+    expect(controller.write(ptyId, 'input', connectedTarget)).toBe(false)
+    expect(controller.resize(ptyId, 100, 40, connectedTarget)).toBe(false)
     expect(localProvider.write).not.toHaveBeenCalled()
     expect(localProvider.resize).not.toHaveBeenCalled()
 
     registerSshPtyProvider(connectionId, sshProvider as never)
-    expect(controller.write(ptyId, 'reconnected')).toBe(true)
-    expect(controller.resize(ptyId, 120, 50)).toBe(true)
+    setPtyOwnership(ptyId, connectionId)
+    const reconnectedTarget = controller.captureMutationTarget(ptyId)
+    expect(controller.write(ptyId, 'reconnected', reconnectedTarget)).toBe(true)
+    expect(controller.resize(ptyId, 120, 50, reconnectedTarget)).toBe(true)
     expect(sshProvider.write).toHaveBeenCalledWith(ptyId, 'reconnected')
     expect(sshProvider.resize).toHaveBeenCalledWith(ptyId, 120, 50)
 
@@ -4988,6 +5042,15 @@ describe('registerPtyHandlers', () => {
       })
 
       it('does NOT inject host-local env on SSH spawns (connectionId set)', async () => {
+        const terminalSessionAuthorityAccess = {
+          namespace: { authorityHostId: 'host-1', namespaceId: 'namespace-1' },
+          pane: { paneKey: 'pane-1', paneGenerationId: 'renderer:1' },
+          binding: {
+            ownerIncarnationId: 'owner-1',
+            physicalPtyId: 'ssh-pty',
+            ptyIncarnationId: 'incarnation-1'
+          }
+        }
         const sshSpawn = vi.fn(
           async (_opts: {
             env: Record<string, string>
@@ -4995,7 +5058,8 @@ describe('registerPtyHandlers', () => {
             paneKey?: string
             tabId?: string
           }) => ({
-            id: 'ssh-pty'
+            id: 'ssh-pty',
+            terminalSessionAuthorityAccess
           })
         )
         const store = {
@@ -5082,6 +5146,7 @@ describe('registerPtyHandlers', () => {
             worktreeId: 'wt-1',
             tabId: 'tab-1',
             leafId,
+            terminalSessionAuthorityAccess,
             state: 'attached'
           })
         )
@@ -5165,6 +5230,185 @@ describe('registerPtyHandlers', () => {
         ).rejects.toThrow('SSH_SESSION_EXPIRED: remote-pty')
 
         expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'remote-pty', 'expired')
+      })
+
+      it('threads current incarnation and pane generation into a direct SSH reattach', async () => {
+        const connectionId = 'ssh-1'
+        const scopedPtyId = `ssh:${connectionId}@@remote-pty`
+        const leafId = '12121212-1212-4212-8212-121212121212'
+        const paneKey = makePaneKey('tab-authority', leafId)
+        const sshSpawn = vi.fn(async () => ({
+          id: scopedPtyId,
+          incarnationId: 'incarnation-current',
+          isReattach: true
+        }))
+        registerSshPtyProvider(connectionId, {
+          spawn: sshSpawn,
+          write: vi.fn(),
+          resize: vi.fn(),
+          shutdown: vi.fn(),
+          sendSignal: vi.fn(),
+          getCwd: vi.fn(),
+          getInitialCwd: vi.fn(),
+          clearBuffer: vi.fn(),
+          acknowledgeDataEvent: vi.fn(),
+          hasChildProcesses: vi.fn(),
+          getForegroundProcess: vi.fn(),
+          serialize: vi.fn(),
+          revive: vi.fn(),
+          onData: vi.fn(() => () => {}),
+          onReplay: vi.fn(() => () => {}),
+          onExit: vi.fn(() => () => {}),
+          listProcesses: vi.fn(async () => []),
+          attach: vi.fn(),
+          getDefaultShell: vi.fn(),
+          getProfiles: vi.fn()
+        } as never)
+        restorePtyIncarnation(scopedPtyId, 'incarnation-current')
+        handlers.clear()
+        registerPtyHandlers(mainWindow as never)
+
+        try {
+          await handlers.get('pty:spawn')!(null, {
+            cols: 80,
+            rows: 24,
+            cwd: '/tmp',
+            env: {
+              ORCA_PANE_KEY: paneKey,
+              ORCA_TAB_ID: 'tab-authority',
+              ORCA_WORKTREE_ID: 'wt-authority'
+            },
+            connectionId,
+            worktreeId: 'wt-authority',
+            tabId: 'tab-authority',
+            leafId,
+            tabGeneration: 12,
+            sessionId: scopedPtyId
+          })
+
+          expect(sshSpawn).toHaveBeenCalledWith(
+            expect.objectContaining({
+              sessionId: scopedPtyId,
+              paneKey,
+              worktreeId: 'wt-authority',
+              paneGeneration: 12,
+              expectedIncarnationId: 'incarnation-current',
+              expectedIncarnationIsAuthoritative: true
+            })
+          )
+        } finally {
+          clearProviderPtyState(scopedPtyId)
+          unregisterSshPtyProvider(connectionId)
+        }
+      })
+
+      it('keeps the durable SSH authority generation across a renderer remount', async () => {
+        const connectionId = 'ssh-1'
+        const scopedPtyId = `ssh:${connectionId}@@remote-pty`
+        const worktreeId = 'wt-authority'
+        const tabId = 'tab-authority'
+        const leafId = '23232323-2323-4232-8232-232323232323'
+        const paneKey = makePaneKey(tabId, leafId)
+        const sshSpawn = vi.fn(async () => ({
+          id: scopedPtyId,
+          incarnationId: 'incarnation-current',
+          isReattach: true
+        }))
+        registerSshPtyProvider(connectionId, {
+          spawn: sshSpawn,
+          write: vi.fn(),
+          resize: vi.fn(),
+          shutdown: vi.fn(),
+          sendSignal: vi.fn(),
+          getCwd: vi.fn(),
+          getInitialCwd: vi.fn(),
+          clearBuffer: vi.fn(),
+          acknowledgeDataEvent: vi.fn(),
+          hasChildProcesses: vi.fn(),
+          getForegroundProcess: vi.fn(),
+          serialize: vi.fn(),
+          revive: vi.fn(),
+          onData: vi.fn(() => () => {}),
+          onReplay: vi.fn(() => () => {}),
+          onExit: vi.fn(() => () => {}),
+          listProcesses: vi.fn(async () => []),
+          attach: vi.fn(),
+          getDefaultShell: vi.fn(),
+          getProfiles: vi.fn()
+        } as never)
+        const store = {
+          getWorkspaceSession: vi.fn(() => ({
+            tabsByWorktree: {
+              [worktreeId]: [{ id: tabId, worktreeId, ptyId: scopedPtyId }]
+            },
+            terminalLayoutsByTabId: {
+              [tabId]: { ptyIdsByLeafId: { [leafId]: scopedPtyId } }
+            },
+            terminalPtyIncarnationsByPaneKey: {
+              [paneKey]: 'incarnation-current'
+            }
+          })),
+          getSshRemotePtyLeases: vi.fn(() => [
+            {
+              targetId: connectionId,
+              ptyId: 'remote-pty',
+              incarnationId: 'incarnation-current',
+              worktreeId,
+              tabId,
+              leafId,
+              paneGeneration: 4,
+              state: 'detached'
+            }
+          ]),
+          persistPtyBinding: vi.fn(() => true),
+          upsertSshRemotePtyLease: vi.fn()
+        }
+        restorePtyIncarnation(scopedPtyId, 'incarnation-current')
+        handlers.clear()
+        registerPtyHandlers(
+          mainWindow as never,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          store as never
+        )
+
+        try {
+          await handlers.get('pty:spawn')!(null, {
+            cols: 80,
+            rows: 24,
+            cwd: '/tmp',
+            env: {},
+            connectionId,
+            worktreeId,
+            tabId,
+            leafId,
+            tabGeneration: 5,
+            sessionId: scopedPtyId
+          })
+
+          expect(sshSpawn).toHaveBeenCalledWith(
+            expect.objectContaining({
+              attachOnly: true,
+              sessionId: scopedPtyId,
+              paneKey,
+              worktreeId,
+              paneGeneration: 4,
+              expectedIncarnationId: 'incarnation-current'
+            })
+          )
+          expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+            expect.objectContaining({
+              ptyId: 'remote-pty',
+              paneGeneration: 4,
+              incarnationId: 'incarnation-current'
+            })
+          )
+        } finally {
+          clearProviderPtyState(scopedPtyId)
+          unregisterSshPtyProvider(connectionId)
+        }
       })
 
       it('marks a scoped SSH session expired using the raw relay lease id', async () => {
@@ -5922,7 +6166,7 @@ describe('registerPtyHandlers', () => {
         expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
       })
 
-      it('runtime controller kill tombstones app-scoped SSH ids when ownership and provider are absent', async () => {
+      it('runtime controller kill durably defers an exact SSH close while its provider is absent', async () => {
         const localShutdown = vi.fn()
         setLocalPtyProvider({
           spawn: vi.fn(),
@@ -5946,7 +6190,19 @@ describe('registerPtyHandlers', () => {
           getDefaultShell: vi.fn(),
           getProfiles: vi.fn()
         } as never)
-        const store = { markSshRemotePtyLease: vi.fn() }
+        const requestSshRemotePtyClose = vi.fn(() => 'recorded')
+        const store = {
+          getSshRemotePtyLeases: vi.fn(() => [
+            {
+              targetId: 'ssh-1',
+              ptyId: 'relay-pty',
+              incarnationId: 'incarnation-1',
+              terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+              state: 'detached'
+            }
+          ]),
+          requestSshRemotePtyClose
+        }
         const runtime = {
           setPtyController: vi.fn(),
           onPtyExit: vi.fn()
@@ -5967,13 +6223,30 @@ describe('registerPtyHandlers', () => {
         expect(controller.kill('ssh:ssh-1@@relay-pty')).toBe(true)
 
         expect(localShutdown).not.toHaveBeenCalled()
-        expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
-        expect(runtime.onPtyExit).toHaveBeenCalledWith('ssh:ssh-1@@relay-pty', -1, undefined)
+        expect(requestSshRemotePtyClose).toHaveBeenCalledWith(
+          'ssh-1',
+          'relay-pty',
+          expect.objectContaining({ incarnationId: 'incarnation-1', keepHistory: false })
+        )
+        expect(runtime.onPtyExit).not.toHaveBeenCalled()
       })
 
-      it('marks a detached SSH lease terminated when runtime controller kill has no provider', async () => {
+      it('retains a detached SSH lease while runtime controller kill awaits reconnect replay', async () => {
+        const requestSshRemotePtyClose = vi.fn(() => 'recorded')
         const store = {
-          markSshRemotePtyLease: vi.fn()
+          getSshRemotePtyLeases: vi.fn(() => [
+            {
+              targetId: 'ssh-1',
+              ptyId: 'remote-pty',
+              incarnationId: 'incarnation-1',
+              terminalSessionAuthorityAccess: {
+                ...SSH_TERMINAL_AUTHORITY_ACCESS,
+                binding: { ...SSH_TERMINAL_AUTHORITY_ACCESS.binding, physicalPtyId: 'remote-pty' }
+              },
+              state: 'detached'
+            }
+          ]),
+          requestSshRemotePtyClose
         }
         const runtime = {
           setPtyController: vi.fn(),
@@ -5995,12 +6268,12 @@ describe('registerPtyHandlers', () => {
 
         expect(controller.kill('remote-pty')).toBe(true)
 
-        expect(store.markSshRemotePtyLease).toHaveBeenCalledWith(
+        expect(requestSshRemotePtyClose).toHaveBeenCalledWith(
           'ssh-1',
           'remote-pty',
-          'terminated'
+          expect.objectContaining({ incarnationId: 'incarnation-1', keepHistory: false })
         )
-        expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', -1, undefined)
+        expect(runtime.onPtyExit).not.toHaveBeenCalled()
       })
 
       it('preserves an SSH lease when runtime controller kill shutdown fails transiently', async () => {
@@ -6061,7 +6334,7 @@ describe('registerPtyHandlers', () => {
           'remote-pty',
           'terminated'
         )
-        expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', -1, undefined)
+        expect(runtime.onPtyExit).not.toHaveBeenCalled()
       })
 
       it('strips ORCA_PANE_KEY/TAB_ID/WORKTREE_ID from SSH spawn env when remote agent hooks are disabled', async () => {
@@ -6539,12 +6812,12 @@ describe('registerPtyHandlers', () => {
       kill: (ptyId: string) => boolean
     }
 
+    const daemon = installObservableDaemonTestProvider()
     expect(controller.kill('daemon-session')).toBe(true)
     await Promise.resolve()
     expect(awaitLocalPtyProviderStartup).toHaveBeenCalledTimes(1)
     expect(fallbackShutdown).not.toHaveBeenCalled()
 
-    const daemon = installObservableDaemonTestProvider()
     barrier.resolve()
     await vi.waitFor(() => expect(daemon.shutdown).toHaveBeenCalledTimes(1))
     await vi.waitFor(() => expect(runtime.onPtyExit).toHaveBeenCalledTimes(1))
@@ -6573,12 +6846,12 @@ describe('registerPtyHandlers', () => {
       stopAndWait: (ptyId: string) => Promise<boolean>
     }
 
+    const daemon = installObservableDaemonTestProvider()
     const pendingStop = controller.stopAndWait('daemon-session')
     await Promise.resolve()
     expect(awaitLocalPtyProviderStartup).toHaveBeenCalledTimes(1)
     expect(fallbackShutdown).not.toHaveBeenCalled()
 
-    const daemon = installObservableDaemonTestProvider()
     barrier.resolve()
     await expect(pendingStop).resolves.toBe(true)
 
@@ -6638,6 +6911,9 @@ describe('registerPtyHandlers', () => {
         'daemon output',
         expect.any(Number),
         'daemon output'.length,
+        undefined,
+        undefined,
+        undefined,
         undefined
       )
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
@@ -6666,6 +6942,7 @@ describe('registerPtyHandlers', () => {
       onPtyExit: vi.fn(),
       onPtyData: vi.fn(() => 12),
       createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-small'),
+      preAllocateHandleForPty: vi.fn(() => 'terminal-handle-small'),
       registerPreAllocatedHandleForPty: vi.fn()
     }
     try {
@@ -6846,6 +7123,141 @@ describe('registerPtyHandlers', () => {
     })
   })
 
+  it('admits SSH authority sessions through their relay physical PTY identity', async () => {
+    const terminalSessionAuthorityAccess = {
+      namespace: { authorityHostId: 'host-1', namespaceId: 'namespace-1' },
+      pane: { paneKey: 'pane-1', paneGenerationId: 'renderer:1' },
+      binding: {
+        ownerIncarnationId: 'owner-1',
+        physicalPtyId: 'pty-1',
+        ptyIncarnationId: 'incarnation-1'
+      }
+    }
+    const mux = {
+      request: vi.fn(async (method: string) =>
+        method === 'pty.listProcesses'
+          ? [
+              {
+                id: 'pty-1',
+                cwd: '/remote',
+                title: 'ssh-shell',
+                incarnationId: 'incarnation-1',
+                terminalSessionAuthorityAccess
+              }
+            ]
+          : undefined
+      ),
+      notify: vi.fn(),
+      onNotification: vi.fn(() => vi.fn()),
+      dispose: vi.fn(),
+      isDisposed: vi.fn(() => false)
+    }
+    const provider = new SshPtyProvider('ssh-1', mux as never)
+    expect(
+      provider.resolveTerminalSessionAuthorityPhysicalPtyId('ssh:other-connection@@pty-1')
+    ).toBeNull()
+    const resolvePhysicalPtyId = vi.spyOn(provider, 'resolveTerminalSessionAuthorityPhysicalPtyId')
+    registerPtyHandlers(mainWindow as never)
+    registerSshPtyProvider('ssh-1', provider)
+
+    try {
+      const sessions = (await handlers.get('pty:listSessions')!(null, undefined)) as {
+        id: string
+      }[]
+
+      expect(sessions).toContainEqual(expect.objectContaining({ id: 'ssh:ssh-1@@pty-1' }))
+      expect(resolvePhysicalPtyId).toHaveBeenCalledWith('ssh:ssh-1@@pty-1')
+    } finally {
+      unregisterSshPtyProvider('ssh-1')
+      provider.dispose()
+    }
+  })
+
+  it('drops a pending SSH inventory from a replaced provider', async () => {
+    let resolveOldList!: (rows: { id: string; cwd: string; title: string }[]) => void
+    const oldList = new Promise<{ id: string; cwd: string; title: string }[]>((resolve) => {
+      resolveOldList = resolve
+    })
+    const oldProvider = {
+      ...createAgentClaimProvider({}),
+      listProcesses: vi.fn(() => oldList)
+    }
+    const replacement = createAgentClaimProvider({})
+    registerPtyHandlers(mainWindow as never)
+    registerSshPtyProvider('ssh-1', oldProvider as never)
+    const inventory = handlers.get('pty:listSessions')!(null, undefined)
+    await vi.waitFor(() => expect(oldProvider.listProcesses).toHaveBeenCalledTimes(1))
+
+    registerSshPtyProvider('ssh-1', replacement as never)
+    resolveOldList([{ id: 'ssh:ssh-1@@pty-old', cwd: '/old', title: 'old' }])
+
+    await expect(inventory).resolves.not.toContainEqual(
+      expect.objectContaining({ id: 'ssh:ssh-1@@pty-old' })
+    )
+    expect(replacement.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('rejects listed legacy mutation access after its SSH provider is replaced', async () => {
+    const id = 'ssh:ssh-1@@pty-1'
+    const oldProvider = createAgentClaimProvider({
+      sessions: [{ id, cwd: '/old', title: 'old' }]
+    })
+    const replacement = createAgentClaimProvider({})
+    registerPtyHandlers(mainWindow as never)
+    registerSshPtyProvider('ssh-1', oldProvider as never)
+    const sessions = (await handlers.get('pty:listSessions')!(null, undefined)) as {
+      id: string
+      administrativeMutationAccess: { mode: string; providerRouteId?: string }
+    }[]
+    const access = sessions.find((session) => session.id === id)?.administrativeMutationAccess
+    expect(access).toEqual({ mode: 'legacy', providerRouteId: expect.any(String) })
+
+    registerSshPtyProvider('ssh-1', replacement as never)
+
+    await expect(
+      handlers.get('pty:kill')!(null, { id, administrativeAccess: access })
+    ).rejects.toThrow('pty_mutation_identity_rejected')
+    expect(replacement.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('drops a pending local inventory after the local provider is swapped', async () => {
+    let resolveOldList!: (rows: { id: string; cwd: string; title: string }[]) => void
+    const oldList = new Promise<{ id: string; cwd: string; title: string }[]>((resolve) => {
+      resolveOldList = resolve
+    })
+    const oldProvider = {
+      ...createAgentClaimProvider({}),
+      listProcesses: vi.fn(() => oldList)
+    }
+    const replacement = createAgentClaimProvider({})
+    setLocalPtyProvider(oldProvider as never)
+    registerPtyHandlers(mainWindow as never)
+    const inventory = handlers.get('pty:listSessions')!(null, undefined)
+    expect(oldProvider.listProcesses).toHaveBeenCalledTimes(1)
+
+    setLocalPtyProvider(replacement as never)
+    resolveOldList([{ id: 'pty-old', cwd: '/old', title: 'old' }])
+
+    await expect(inventory).resolves.not.toContainEqual(expect.objectContaining({ id: 'pty-old' }))
+    expect(replacement.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate process IDs before publishing list ownership', async () => {
+    setLocalPtyProvider(
+      createAgentClaimProvider({
+        sessions: [
+          { id: 'duplicate-pty', cwd: '/first', title: 'first' },
+          { id: 'duplicate-pty', cwd: '/second', title: 'second' }
+        ]
+      }) as never
+    )
+    registerPtyHandlers(mainWindow as never)
+
+    await expect(handlers.get('pty:listSessions')!(null, undefined)).rejects.toThrow(
+      'pty_process_list_duplicate'
+    )
+  })
+
   it('starts local and SSH session inventories concurrently', async () => {
     let resolveLocal!: (sessions: { id: string; cwd: string; title: string }[]) => void
     const localSessions = new Promise<{ id: string; cwd: string; title: string }[]>((resolve) => {
@@ -6882,7 +7294,7 @@ describe('registerPtyHandlers', () => {
 
     const pendingInventory = handlers.get('pty:listSessions')!(null, undefined)
 
-    expect(sshListProcesses).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(sshListProcesses).toHaveBeenCalledTimes(1))
     resolveLocal([])
     resolveSsh([])
     await pendingInventory
@@ -7348,7 +7760,7 @@ describe('registerPtyHandlers', () => {
     expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
   })
 
-  it('tombstones app-scoped SSH PTY ids instead of falling back local when ownership and provider are absent', async () => {
+  it('persists an exact app-scoped SSH close instead of falling back local while disconnected', async () => {
     const localShutdown = vi.fn()
     setLocalPtyProvider({
       spawn: vi.fn(),
@@ -7372,7 +7784,19 @@ describe('registerPtyHandlers', () => {
       getDefaultShell: vi.fn(),
       getProfiles: vi.fn()
     } as never)
-    const store = { markSshRemotePtyLease: vi.fn() }
+    const requestSshRemotePtyClose = vi.fn(() => 'recorded')
+    const store = {
+      getSshRemotePtyLeases: vi.fn(() => [
+        {
+          targetId: 'ssh-1',
+          ptyId: 'relay-pty',
+          incarnationId: 'incarnation-1',
+          terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+          state: 'detached'
+        }
+      ]),
+      requestSshRemotePtyClose
+    }
     registerPtyHandlers(
       mainWindow as never,
       undefined,
@@ -7385,17 +7809,241 @@ describe('registerPtyHandlers', () => {
     await handlers.get('pty:kill')!(null, { id: 'ssh:ssh-1@@relay-pty' })
 
     expect(localShutdown).not.toHaveBeenCalled()
-    expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'relay-pty', 'terminated')
+    expect(requestSshRemotePtyClose).toHaveBeenCalledWith(
+      'ssh-1',
+      'relay-pty',
+      expect.objectContaining({
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: false
+      })
+    )
   })
 
-  it('ignores fire-and-forget IPC for detached SSH PTYs without a provider', async () => {
+  it('rejects a disconnected SSH close without a persisted full authority binding', async () => {
+    const requestSshRemotePtyClose = vi.fn()
     const store = {
-      upsertSshRemotePtyLease: vi.fn(),
-      persistPtyBinding: vi.fn(),
+      getSshRemotePtyLeases: vi.fn(() => [
+        {
+          targetId: 'ssh-1',
+          ptyId: 'relay-pty',
+          incarnationId: 'incarnation-1',
+          state: 'detached'
+        }
+      ]),
+      requestSshRemotePtyClose
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+
+    await expect(handlers.get('pty:kill')!(null, { id: 'ssh:ssh-1@@relay-pty' })).rejects.toThrow(
+      'ssh_pty_pending_close_authority_unavailable'
+    )
+    expect(requestSshRemotePtyClose).not.toHaveBeenCalled()
+  })
+
+  it('replays a durable disconnected close exactly once before SSH publication', async () => {
+    const lease = {
+      targetId: 'ssh-1',
+      ptyId: 'relay-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached',
+      pendingClose: {
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: true,
+        requestedAt: 1
+      }
+    }
+    const store = {
+      getSshRemotePtyLeases: vi.fn(() => [lease]),
+      markSshRemotePtyLease: vi.fn()
+    }
+    const runtime = { setPtyController: vi.fn(), onPtyExit: vi.fn() }
+    const mutationRouteToken = Object.freeze({})
+    const killAuthorityExact = vi.fn(async () => {
+      lease.state = 'terminated'
+      delete (lease as { pendingClose?: unknown }).pendingClose
+      return true
+    })
+    const listProcesses = vi.fn(async () => [
+      {
+        id: 'ssh:ssh-1@@relay-pty',
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+        mutationRouteToken,
+        cwd: '/workspace',
+        title: 'shell'
+      }
+    ])
+    const provider = {
+      listProcesses,
+      getPtyMutationMode: vi.fn(() => 'exact'),
+      getPtyMutationRouteToken: vi.fn(() => mutationRouteToken),
+      killAuthorityExact
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    registerSshPtyProvider('ssh-1', provider as never)
+
+    await waitForSshPtyPendingCloseReplay('ssh-1', provider as never)
+
+    expect(killAuthorityExact).toHaveBeenCalledOnce()
+    expect(killAuthorityExact).toHaveBeenCalledWith(
+      'ssh:ssh-1@@relay-pty',
+      SSH_TERMINAL_AUTHORITY_ACCESS,
+      { immediate: true, keepHistory: true }
+    )
+    expect(runtime.onPtyExit).toHaveBeenCalledWith('ssh:ssh-1@@relay-pty', -1, 'incarnation-1')
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:exit', {
+      id: 'ssh:ssh-1@@relay-pty',
+      code: -1,
+      incarnationId: 'incarnation-1'
+    })
+  })
+
+  it('does not kill or settle a same-id SSH successor without a durable old-binding exit', async () => {
+    const lease = {
+      targetId: 'ssh-1',
+      ptyId: 'relay-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached',
+      pendingClose: {
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: false,
+        requestedAt: 1
+      }
+    }
+    const store = {
+      getSshRemotePtyLeases: vi.fn(() => [lease]),
       markSshRemotePtyLease: vi.fn()
     }
     const provider = {
-      spawn: vi.fn(async () => ({ id: 'remote-pty' })),
+      listProcesses: vi.fn(async () => [
+        {
+          id: 'ssh:ssh-1@@relay-pty',
+          incarnationId: 'incarnation-2',
+          terminalSessionAuthorityAccess: {
+            ...SSH_TERMINAL_AUTHORITY_ACCESS,
+            pane: {
+              ...SSH_TERMINAL_AUTHORITY_ACCESS.pane,
+              paneGenerationId: 'generation-2'
+            },
+            binding: {
+              ...SSH_TERMINAL_AUTHORITY_ACCESS.binding,
+              ptyIncarnationId: 'incarnation-2'
+            }
+          },
+          cwd: '/workspace',
+          title: 'successor'
+        }
+      ]),
+      getPtyMutationMode: vi.fn(() => 'exact'),
+      killAuthorityExact: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    registerSshPtyProvider('ssh-1', provider as never)
+
+    await expect(waitForSshPtyPendingCloseReplay('ssh-1', provider as never)).rejects.toThrow(
+      'ssh_pty_pending_close_replay_rejected'
+    )
+
+    expect(provider.killAuthorityExact).not.toHaveBeenCalled()
+  })
+
+  it('blocks SSH spawn and list publication when pending-close replay is unknown', async () => {
+    const lease = {
+      targetId: 'ssh-1',
+      ptyId: 'relay-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached',
+      pendingClose: {
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: false,
+        requestedAt: 1
+      }
+    }
+    const store = { getSshRemotePtyLeases: vi.fn(() => [lease]) }
+    const provider = {
+      listProcesses: vi.fn(async () => {
+        throw new Error('transport down')
+      }),
+      spawn: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    registerSshPtyProvider('ssh-1', provider as never)
+
+    await expect(
+      handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        connectionId: 'ssh-1'
+      })
+    ).rejects.toThrow('ssh_pty_pending_close_replay_unknown')
+    await expect(handlers.get('pty:listSessions')!(null, undefined)).rejects.toThrow(
+      'ssh_pty_pending_close_replay_unknown'
+    )
+    expect(provider.spawn).not.toHaveBeenCalled()
+  })
+
+  it('ignores fire-and-forget IPC for detached SSH PTYs without a provider', async () => {
+    const terminalSessionAuthorityAccess = {
+      ...SSH_TERMINAL_AUTHORITY_ACCESS,
+      binding: { ...SSH_TERMINAL_AUTHORITY_ACCESS.binding, physicalPtyId: 'remote-pty' }
+    }
+    const requestSshRemotePtyClose = vi.fn(() => 'recorded')
+    const store = {
+      upsertSshRemotePtyLease: vi.fn(),
+      persistPtyBinding: vi.fn(),
+      markSshRemotePtyLease: vi.fn(),
+      getSshRemotePtyLeases: vi.fn(() => [
+        {
+          targetId: 'ssh-1',
+          ptyId: 'remote-pty',
+          incarnationId: 'incarnation-1',
+          terminalSessionAuthorityAccess,
+          state: 'detached'
+        }
+      ]),
+      requestSshRemotePtyClose
+    }
+    const provider = {
+      spawn: vi.fn(async () => ({
+        id: 'remote-pty',
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess
+      })),
       write: vi.fn(),
       resize: vi.fn(),
       shutdown: vi.fn(),
@@ -7452,7 +8100,842 @@ describe('registerPtyHandlers', () => {
     ).not.toThrow()
 
     await expect(handlers.get('pty:kill')!(null, { id: 'remote-pty' })).resolves.toBeUndefined()
-    expect(store.markSshRemotePtyLease).toHaveBeenCalledWith('ssh-1', 'remote-pty', 'terminated')
+    expect(requestSshRemotePtyClose).toHaveBeenCalledWith(
+      'ssh-1',
+      'remote-pty',
+      expect.objectContaining({
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess,
+        keepHistory: false
+      })
+    )
+    expect(store.markSshRemotePtyLease).not.toHaveBeenCalled()
+  })
+
+  it('fences every renderer mutation when a pane generation or reused PTY incarnation is stale', async () => {
+    const writeExact = vi.fn((_id: string, _incarnationId: string, _data: string) => true)
+    const resizeExact = vi.fn(
+      (_id: string, _incarnationId: string, _cols: number, _rows: number) => true
+    )
+    const sendSignalExact = vi.fn(
+      async (_id: string, _incarnationId: string, _signal: string) => true
+    )
+    const clearBufferExact = vi.fn(async (_id: string, _incarnationId: string) => true)
+    const killExact = vi.fn(
+      async (
+        _id: string,
+        _incarnationId: string,
+        _opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+      ) => true
+    )
+    let authorityIncarnationId = 'incarnation-1'
+    const authorityAccess = () => ({
+      namespace: { authorityHostId: 'authority-host-1', namespaceId: 'namespace-1' },
+      pane: { paneKey: 'tab:tab-1/leaf:leaf-1', paneGenerationId: 'generation-1' },
+      binding: {
+        ownerIncarnationId: 'owner-1',
+        physicalPtyId: 'reused-pty',
+        ptyIncarnationId: authorityIncarnationId
+      }
+    })
+    const writeAuthorityExact = vi.fn(
+      (id: string, access: ReturnType<typeof authorityAccess>, data: string) =>
+        access.binding.ptyIncarnationId === authorityIncarnationId &&
+        writeExact(id, access.binding.ptyIncarnationId, data)
+    )
+    const resizeAuthorityExact = vi.fn(
+      (id: string, access: ReturnType<typeof authorityAccess>, cols: number, rows: number) =>
+        access.binding.ptyIncarnationId === authorityIncarnationId &&
+        resizeExact(id, access.binding.ptyIncarnationId, cols, rows)
+    )
+    const sendSignalAuthorityExact = vi.fn(
+      (id: string, access: ReturnType<typeof authorityAccess>, signal: string) =>
+        access.binding.ptyIncarnationId === authorityIncarnationId &&
+        sendSignalExact(id, access.binding.ptyIncarnationId, signal)
+    )
+    const clearBufferAuthorityExact = vi.fn(
+      (id: string, access: ReturnType<typeof authorityAccess>) =>
+        access.binding.ptyIncarnationId === authorityIncarnationId &&
+        clearBufferExact(id, access.binding.ptyIncarnationId)
+    )
+    const killAuthorityExact = vi.fn(
+      async (
+        id: string,
+        access: ReturnType<typeof authorityAccess>,
+        opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+      ) =>
+        access.binding.ptyIncarnationId === authorityIncarnationId &&
+        (await killExact(id, access.binding.ptyIncarnationId, opts))
+    )
+    const provider = {
+      spawn: vi.fn(async () => ({ id: 'reused-pty', incarnationId: 'incarnation-1' })),
+      getPtyMutationMode: vi.fn(() => 'exact'),
+      writeExact,
+      resizeExact,
+      sendSignalExact,
+      clearBufferExact,
+      killExact,
+      writeAuthorityExact,
+      resizeAuthorityExact,
+      sendSignalAuthorityExact,
+      clearBufferAuthorityExact,
+      killAuthorityExact,
+      getTerminalSessionAuthorityAccess: vi.fn(() => authorityAccess()),
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(async () => undefined),
+      clearBuffer: vi.fn(async () => undefined),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      acknowledgeDataEvent: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(async () => []),
+      attach: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    }
+    setLocalPtyProvider(provider as never)
+    registerPtyHandlers(mainWindow as never)
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const firstClaimant = { rendererEpochId: 'renderer-epoch-1', sequence: 1 }
+    const spawned = (await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      env: {},
+      tabId: 'terminal-tab-1',
+      leafId,
+      tabGeneration: 7,
+      mutationClaimant: firstClaimant
+    })) as {
+      id: string
+      mutationAccess: {
+        mode: 'exact'
+        identity: {
+          incarnationId: string
+          paneGeneration: number
+          mutationLeaseId: string
+        }
+        claimant: { rendererEpochId: string; sequence: number }
+      }
+      administrativeMutationAccess: {
+        mode: 'exact'
+        evidence: { incarnationId: string; paneGeneration: number }
+      }
+    }
+    const listener = (channel: string): ((event: unknown, args: unknown) => void) => {
+      const registration = onMock.mock.calls.find((call: unknown[]) => call[0] === channel)
+      if (!registration) {
+        throw new Error(`missing ${channel} listener`)
+      }
+      return registration[1] as (event: unknown, args: unknown) => void
+    }
+    const successorClaimant = { rendererEpochId: 'renderer-epoch-1', sequence: 2 }
+    const successorAccess = (await handlers.get('pty:claimMutationAccess')!(mainWindowIpcEvent, {
+      id: spawned.id,
+      tabId: 'terminal-tab-2',
+      leafId: '22222222-2222-4222-8222-222222222222',
+      paneGeneration: 7,
+      claimant: successorClaimant
+    })) as typeof spawned.mutationAccess
+    expect(successorAccess.mode).toBe('exact')
+    expect(successorAccess.identity.mutationLeaseId).not.toBe(
+      spawned.mutationAccess.identity.mutationLeaseId
+    )
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'detached-pane-stale',
+      mutationIdentity: spawned.mutationAccess.identity
+    })
+    await expect(
+      handlers.get('pty:kill')!(mainWindowIpcEvent, {
+        id: spawned.id,
+        mutationIdentity: spawned.mutationAccess.identity
+      })
+    ).rejects.toThrow('pty_mutation_identity_rejected')
+    expect(writeExact).not.toHaveBeenCalled()
+    expect(killExact).not.toHaveBeenCalled()
+    expect(
+      handlers.get('pty:claimMutationAccess')!(mainWindowIpcEvent, {
+        id: spawned.id,
+        tabId: 'terminal-tab-1',
+        leafId,
+        paneGeneration: 7,
+        claimant: firstClaimant
+      })
+    ).toEqual({ mode: 'unavailable' })
+    const staleGeneration = { incarnationId: 'incarnation-1', paneGeneration: 6 }
+
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'stale-generation',
+      mutationIdentity: staleGeneration
+    })
+    listener('pty:resize')(mainWindowIpcEvent, {
+      id: spawned.id,
+      cols: 120,
+      rows: 40,
+      mutationIdentity: staleGeneration
+    })
+    await expect(
+      handlers.get('pty:kill')!(mainWindowIpcEvent, {
+        id: spawned.id,
+        mutationIdentity: staleGeneration
+      })
+    ).rejects.toThrow('pty_mutation_identity_rejected')
+    expect(writeExact).not.toHaveBeenCalled()
+    expect(resizeExact).not.toHaveBeenCalled()
+    expect(killExact).not.toHaveBeenCalled()
+
+    restorePtyIncarnation(spawned.id, 'incarnation-2')
+    authorityIncarnationId = 'incarnation-2'
+    const staleIncarnation = successorAccess.identity
+    expect(spawned.administrativeMutationAccess).toEqual({
+      mode: 'exact',
+      evidence: { incarnationId: 'incarnation-1', paneGeneration: 7 },
+      providerRouteId: expect.any(String)
+    })
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'stale-administrative-write',
+      administrativeAccess: spawned.administrativeMutationAccess
+    })
+    await expect(
+      handlers.get('pty:kill')!(mainWindowIpcEvent, {
+        id: spawned.id,
+        administrativeAccess: spawned.administrativeMutationAccess
+      })
+    ).rejects.toThrow('pty_mutation_identity_rejected')
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'stale-incarnation',
+      mutationIdentity: staleIncarnation
+    })
+    listener('pty:resize')(mainWindowIpcEvent, {
+      id: spawned.id,
+      cols: 100,
+      rows: 30,
+      mutationIdentity: staleIncarnation
+    })
+    listener('pty:signal')(mainWindowIpcEvent, {
+      id: spawned.id,
+      signal: 'SIGWINCH',
+      mutationIdentity: staleIncarnation
+    })
+    listener('pty:clearBuffer')(mainWindowIpcEvent, {
+      id: spawned.id,
+      mutationIdentity: staleIncarnation
+    })
+    await expect(
+      handlers.get('pty:kill')!(mainWindowIpcEvent, {
+        id: spawned.id,
+        mutationIdentity: staleIncarnation
+      })
+    ).rejects.toThrow('pty_mutation_identity_rejected')
+    await Promise.resolve()
+    expect(writeExact).not.toHaveBeenCalled()
+    expect(resizeExact).not.toHaveBeenCalled()
+    expect(sendSignalExact).not.toHaveBeenCalled()
+    expect(clearBufferExact).not.toHaveBeenCalled()
+    expect(killExact).not.toHaveBeenCalled()
+
+    const refreshedAccess = handlers.get('pty:claimMutationAccess')!(mainWindowIpcEvent, {
+      id: spawned.id,
+      tabId: 'terminal-tab-2',
+      leafId: '22222222-2222-4222-8222-222222222222',
+      paneGeneration: 7,
+      claimant: successorClaimant
+    }) as typeof successorAccess
+    expect(refreshedAccess.identity.mutationLeaseId).not.toBe(
+      successorAccess.identity.mutationLeaseId
+    )
+    const current = refreshedAccess.identity
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'current',
+      mutationIdentity: current
+    })
+    listener('pty:resize')(mainWindowIpcEvent, {
+      id: spawned.id,
+      cols: 90,
+      rows: 28,
+      mutationIdentity: current
+    })
+    listener('pty:signal')(mainWindowIpcEvent, {
+      id: spawned.id,
+      signal: 'SIGWINCH',
+      mutationIdentity: current
+    })
+    listener('pty:clearBuffer')(mainWindowIpcEvent, {
+      id: spawned.id,
+      mutationIdentity: current
+    })
+    listener('pty:write')(mainWindowIpcEvent, {
+      id: spawned.id,
+      data: 'administrative-current',
+      administrativeCurrent: true
+    })
+    await handlers.get('pty:kill')!(mainWindowIpcEvent, {
+      id: spawned.id,
+      administrativeCurrent: true
+    })
+    expect(writeExact).toHaveBeenCalledWith(spawned.id, 'incarnation-2', 'current')
+    expect(writeExact).toHaveBeenCalledWith(spawned.id, 'incarnation-2', 'administrative-current')
+    expect(resizeExact).toHaveBeenCalledWith(spawned.id, 'incarnation-2', 90, 28)
+    expect(sendSignalExact).toHaveBeenCalledWith(spawned.id, 'incarnation-2', 'SIGWINCH')
+    expect(clearBufferExact).toHaveBeenCalledWith(spawned.id, 'incarnation-2')
+    expect(killExact).toHaveBeenCalledWith(
+      spawned.id,
+      'incarnation-2',
+      expect.objectContaining({ immediate: true })
+    )
+  })
+
+  it('holds recovered data and exit for the newest overlapping reconnect binding', async () => {
+    let resolveSpawn!: (value: { id: string; incarnationId: string; isReattach: boolean }) => void
+    const acknowledgeDataEvent = vi.fn()
+    const provider = {
+      spawn: vi.fn(
+        () =>
+          new Promise<{
+            id: string
+            incarnationId: string
+            isReattach: boolean
+          }>((resolve) => {
+            resolveSpawn = resolve
+          })
+      ),
+      getPtyMutationMode: vi.fn(() => 'exact'),
+      writeExact: vi.fn(() => true),
+      resizeExact: vi.fn(() => true),
+      sendSignalExact: vi.fn(async () => true),
+      clearBufferExact: vi.fn(async () => true),
+      killExact: vi.fn(async () => true),
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(async () => undefined),
+      clearBuffer: vi.fn(async () => undefined),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      acknowledgeDataEvent,
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(async () => []),
+      attach: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    }
+    let modelSequence = 0
+    const runtime = {
+      setPtyController: vi.fn(),
+      setRemoteTerminalSourceRangeConsumerHooks: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'binding-fence-handle'),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      getDriver: vi.fn(() => ({ kind: 'host' })),
+      onPtySpawned: vi.fn(),
+      getPtyOutputSequence: vi.fn(() => modelSequence),
+      acceptPtyDataBounded: vi.fn((_id: string, _data: string, _at: number, rawLength: number) => {
+        modelSequence += rawLength
+        return { sequence: modelSequence, completion: Promise.resolve() }
+      }),
+      onPtyExit: vi.fn()
+    }
+    const publishSourceAck = vi.fn()
+    const sourceGeneration = 712_345
+    const removeSourceAckPublisher = installSshPtySourceAckPublisher(
+      sourceGeneration,
+      (batch, onSettled) => {
+        publishSourceAck(batch)
+        onSettled({ ok: true })
+      }
+    )
+    setLocalPtyProvider(provider as never)
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    mainWindow.webContents.send.mockClear()
+    const leafId = '33333333-3333-4333-8333-333333333333'
+    const spawn = handlers.get('pty:spawn')!
+    const baseArgs = {
+      cols: 80,
+      rows: 24,
+      env: {},
+      worktreeId: 'worktree-binding-fence',
+      tabId: 'terminal-tab-binding-fence',
+      leafId,
+      tabGeneration: 12,
+      sessionId: 'reattach-binding-fence'
+    }
+    const staleClaimant = { rendererEpochId: 'renderer-binding-fence', sequence: 1 }
+    const staleSpawn = spawn(mainWindowIpcEvent, {
+      ...baseArgs,
+      mutationClaimant: staleClaimant
+    }) as Promise<{ mutationAccess?: unknown }>
+    await vi.waitFor(() => expect(provider.spawn).toHaveBeenCalledOnce())
+    const currentClaimant = { rendererEpochId: 'renderer-binding-fence', sequence: 2 }
+    const currentSpawn = spawn(mainWindowIpcEvent, {
+      ...baseArgs,
+      mutationClaimant: currentClaimant
+    }) as Promise<{
+      mutationAccess: {
+        mode: 'exact'
+        identity: {
+          incarnationId: string
+          paneGeneration: number
+          mutationLeaseId: string
+        }
+        claimant: { rendererEpochId: string; sequence: number }
+      }
+    }>
+
+    const recoveredData = 'RECOVERED_EXACTLY_ONCE'
+    const currentIncarnationId = '44444444-4444-4444-8444-444444444444'
+    await acceptSshPtyOutputData({
+      id: baseArgs.sessionId,
+      data: recoveredData,
+      providerGeneration: sourceGeneration,
+      ptyIncarnation: currentIncarnationId,
+      rawLength: recoveredData.length,
+      transformed: false,
+      source: {
+        relayPtyId: baseArgs.sessionId,
+        spanId: 'binding-fence-source:0:22',
+        clientGeneration: 7,
+        ownerGeneration: 8,
+        deliveryToken: 'binding-fence-source',
+        sourceStartSu: 0,
+        sourceEndSu: recoveredData.length
+      }
+    })
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', expect.anything())
+    expect(acknowledgeDataEvent).not.toHaveBeenCalled()
+    expect(getPtyRendererDeliveryDebugSnapshot()).toEqual(
+      expect.objectContaining({
+        pendingChars: recoveredData.length,
+        rendererInFlightChars: 0
+      })
+    )
+    publishTerminalSideEffectBatchToRenderer({
+      ptyId: baseArgs.sessionId,
+      ptyIncarnationId: '55555555-5555-4555-8555-555555555555',
+      seq: 1,
+      facts: [{ kind: 'bell' }]
+    })
+    const currentSideEffect = {
+      ptyId: baseArgs.sessionId,
+      ptyIncarnationId: currentIncarnationId,
+      seq: 2,
+      facts: [{ kind: 'title' as const, normalizedTitle: 'ready', rawTitle: 'ready' }]
+    }
+    publishTerminalSideEffectBatchToRenderer(currentSideEffect)
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      'pty:sideEffect',
+      expect.anything()
+    )
+
+    resolveSpawn({
+      id: baseArgs.sessionId,
+      incarnationId: currentIncarnationId,
+      isReattach: true
+    })
+    const [staleResult, currentResult] = await Promise.all([staleSpawn, currentSpawn])
+    expect(staleResult.mutationAccess).not.toEqual(currentResult.mutationAccess)
+    expect(currentResult.mutationAccess.claimant).toEqual(currentClaimant)
+    const exit = acceptSshPtyOutputExit({
+      id: baseArgs.sessionId,
+      code: 0,
+      providerGeneration: sourceGeneration,
+      ptyIncarnation: currentIncarnationId
+    })
+    await Promise.resolve()
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', expect.anything())
+    expect(getPtyRendererDeliveryDebugSnapshot()).toEqual(
+      expect.objectContaining({
+        pendingChars: recoveredData.length,
+        rendererInFlightChars: 0
+      })
+    )
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:exit', expect.anything())
+
+    const listener = (channel: string): ((event: unknown, args: unknown) => void) => {
+      const registration = onMock.mock.calls.find((call: unknown[]) => call[0] === channel)
+      if (!registration) {
+        throw new Error(`missing ${channel} listener`)
+      }
+      return registration[1] as (event: unknown, args: unknown) => void
+    }
+    const staleAccess = {
+      ...currentResult.mutationAccess,
+      identity: {
+        ...currentResult.mutationAccess.identity,
+        mutationLeaseId: 'stale-renderer-binding-lease'
+      },
+      claimant: staleClaimant
+    }
+    listener('pty:rendererBindingReady')(mainWindowIpcEvent, {
+      id: baseArgs.sessionId,
+      access: staleAccess
+    })
+    listener('pty:cancelRendererBinding')(mainWindowIpcEvent, {
+      id: baseArgs.sessionId,
+      paneGeneration: baseArgs.tabGeneration,
+      claimant: staleClaimant
+    })
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', expect.anything())
+
+    listener('pty:rendererBindingReady')(mainWindowIpcEvent, {
+      id: baseArgs.sessionId,
+      access: currentResult.mutationAccess
+    })
+    await Promise.resolve()
+    let orderedDelivery = mainWindow.webContents.send.mock.calls.filter(
+      ([channel]) =>
+        channel === 'pty:sideEffect' || channel === 'pty:data' || channel === 'pty:exit'
+    )
+    expect(orderedDelivery.map(([channel]) => channel)).toEqual(['pty:sideEffect', 'pty:data'])
+    expect(orderedDelivery[0]?.[1]).toEqual(currentSideEffect)
+    expect(orderedDelivery[1]?.[1]).toEqual(
+      expect.objectContaining({ id: baseArgs.sessionId, data: recoveredData })
+    )
+    expect(publishSourceAck).not.toHaveBeenCalled()
+
+    getPtyAckDataListener()(null, {
+      id: baseArgs.sessionId,
+      processedChars: recoveredData.length
+    })
+    await exit
+    await vi.waitFor(() => expect(publishSourceAck).toHaveBeenCalledOnce())
+    orderedDelivery = mainWindow.webContents.send.mock.calls.filter(
+      ([channel]) =>
+        channel === 'pty:sideEffect' || channel === 'pty:data' || channel === 'pty:exit'
+    )
+    expect(orderedDelivery.map(([channel]) => channel)).toEqual([
+      'pty:sideEffect',
+      'pty:data',
+      'pty:exit'
+    ])
+    expect(acknowledgeDataEvent).toHaveBeenCalledWith(baseArgs.sessionId, recoveredData.length)
+    removeSourceAckPublisher()
+    closeSshPtyOutputGeneration(sourceGeneration, 'test-complete')
+  })
+
+  it('replays only predecessor facts when a renderer binding is cancelled before finalize', async () => {
+    const id = 'renderer-binding-pre-finalize-cancel'
+    const predecessorIncarnation = '11111111-1111-4111-8111-111111111111'
+    const successorIncarnation = '22222222-2222-4222-8222-222222222222'
+    let resolveSuccessor!: (value: { id: string; incarnationId: string }) => void
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id, incarnationId: predecessorIncarnation })
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ id: string; incarnationId: string }>((resolve) => {
+            resolveSuccessor = resolve
+          })
+      )
+    const provider = createExactRendererBindingProvider(spawn)
+    setLocalPtyProvider(provider as never)
+    registerPtyHandlers(mainWindow as never)
+    await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id
+    })
+    mainWindow.webContents.send.mockClear()
+    const claimant = { rendererEpochId: 'renderer-pre-finalize', sequence: 1 }
+    const pending = handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 2,
+      mutationClaimant: claimant
+    }) as Promise<unknown>
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
+
+    const predecessorBatch = {
+      ptyId: id,
+      ptyIncarnationId: predecessorIncarnation,
+      seq: 1,
+      facts: [{ kind: 'bell' as const }]
+    }
+    publishTerminalSideEffectBatchToRenderer(predecessorBatch)
+    publishTerminalSideEffectBatchToRenderer({
+      ptyId: id,
+      ptyIncarnationId: successorIncarnation,
+      seq: 2,
+      facts: [{ kind: 'bell' }]
+    })
+    const cancelRegistration = onMock.mock.calls.find(
+      (call: unknown[]) => call[0] === 'pty:cancelRendererBinding'
+    )
+    if (!cancelRegistration) {
+      throw new Error('missing pty:cancelRendererBinding listener')
+    }
+    ;(cancelRegistration[1] as (event: unknown, value: unknown) => void)(mainWindowIpcEvent, {
+      id,
+      paneGeneration: 2,
+      claimant
+    })
+
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:sideEffect', predecessorBatch)
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      'pty:sideEffect',
+      expect.objectContaining({ ptyIncarnationId: successorIncarnation })
+    )
+    resolveSuccessor({ id, incarnationId: successorIncarnation })
+    await pending
+  })
+
+  it('classifies facts unresolved when an exact finalized binding is cancelled', async () => {
+    const id = 'renderer-binding-exact-cancel'
+    const incarnationId = '33333333-3333-4333-8333-333333333333'
+    const retainedBatch = {
+      ptyId: id,
+      ptyIncarnationId: incarnationId,
+      seq: 1,
+      facts: [{ kind: 'bell' as const }]
+    }
+    const spawn = vi.fn(async () => {
+      publishTerminalSideEffectBatchToRenderer(retainedBatch)
+      return { id, incarnationId }
+    })
+    setLocalPtyProvider(createExactRendererBindingProvider(spawn) as never)
+    registerPtyHandlers(mainWindow as never)
+    mainWindow.webContents.send.mockClear()
+    const result = (await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 3,
+      mutationClaimant: { rendererEpochId: 'renderer-exact-cancel', sequence: 1 }
+    })) as { mutationAccess: unknown }
+    const cancelRegistration = onMock.mock.calls.find(
+      (call: unknown[]) => call[0] === 'pty:cancelRendererBinding'
+    )
+    if (!cancelRegistration) {
+      throw new Error('missing pty:cancelRendererBinding listener')
+    }
+    ;(cancelRegistration[1] as (event: unknown, value: unknown) => void)(mainWindowIpcEvent, {
+      id,
+      access: result.mutationAccess
+    })
+
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:sideEffect', retainedBatch)
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      'pty:modelRestoreNeeded',
+      expect.objectContaining({ id, reason: 'pending-cap' })
+    )
+  })
+
+  it('holds the exact producer through replay and releases only after delivery', async () => {
+    const id = 'renderer-binding-held-pause'
+    const incarnationId = '77777777-7777-4777-8777-777777777777'
+    const replayedBatch = {
+      ptyId: id,
+      ptyIncarnationId: incarnationId,
+      seq: 1,
+      facts: [{ kind: 'bell' as const }]
+    }
+    const spawn = vi.fn(async () => {
+      if (spawn.mock.calls.length === 2) {
+        publishTerminalSideEffectBatchToRenderer(replayedBatch)
+      }
+      return { id, incarnationId, isReattach: true }
+    })
+    const provider = {
+      ...createExactRendererBindingProvider(spawn),
+      supportsExactHeldProducerPause: vi.fn(
+        (_id: string, expectedIncarnationId: string) => expectedIncarnationId === incarnationId
+      ),
+      acquireExactHeldProducerPause: vi.fn(async () => true),
+      releaseExactHeldProducerPause: vi.fn(async () => true)
+    }
+    setLocalPtyProvider(provider as never)
+    registerPtyHandlers(mainWindow as never)
+    await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id
+    })
+    mainWindow.webContents.send.mockClear()
+
+    const result = (await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 7,
+      mutationClaimant: { rendererEpochId: 'renderer-held-pause', sequence: 1 }
+    })) as { mutationAccess: unknown }
+
+    expect(provider.acquireExactHeldProducerPause).toHaveBeenCalledOnce()
+    expect(provider.releaseExactHeldProducerPause).not.toHaveBeenCalled()
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:sideEffect', replayedBatch)
+
+    const readyRegistration = onMock.mock.calls.find(
+      (call: unknown[]) => call[0] === 'pty:rendererBindingReady'
+    )
+    if (!readyRegistration) {
+      throw new Error('missing pty:rendererBindingReady listener')
+    }
+    ;(readyRegistration[1] as (event: unknown, value: unknown) => void)(mainWindowIpcEvent, {
+      id,
+      access: result.mutationAccess
+    })
+    await vi.waitFor(() => expect(provider.releaseExactHeldProducerPause).toHaveBeenCalledOnce())
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:sideEffect', replayedBatch)
+    expect(
+      mainWindow.webContents.send.mock.invocationCallOrder.find(
+        (_, index) => mainWindow.webContents.send.mock.calls[index]?.[0] === 'pty:sideEffect'
+      )
+    ).toBeLessThan(provider.releaseExactHeldProducerPause.mock.invocationCallOrder[0]!)
+  })
+
+  it('bounds fenced facts, pauses before overflow, and resumes with an explicit restore marker', async () => {
+    const id = 'renderer-binding-side-effect-overflow'
+    const incarnationId = '44444444-4444-4444-8444-444444444444'
+    let resolveSpawn!: (value: { id: string; incarnationId: string }) => void
+    const spawn = vi.fn(
+      () =>
+        new Promise<{ id: string; incarnationId: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    const provider = createExactRendererBindingProvider(spawn)
+    setLocalPtyProvider(provider as never)
+    registerPtyHandlers(mainWindow as never)
+    mainWindow.webContents.send.mockClear()
+    const pending = handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 4,
+      mutationClaimant: { rendererEpochId: 'renderer-overflow', sequence: 1 }
+    }) as Promise<{ mutationAccess: unknown }>
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+
+    for (let seq = 0; seq <= PTY_RENDERER_BINDING_SIDE_EFFECT_MAX_BATCHES; seq += 1) {
+      publishTerminalSideEffectBatchToRenderer({
+        ptyId: id,
+        ptyIncarnationId: incarnationId,
+        seq,
+        facts: [{ kind: 'bell' }]
+      })
+    }
+    expect(provider.pauseProducer).toHaveBeenCalledOnce()
+    expect(provider.pauseProducer).toHaveBeenCalledWith(id)
+    expect(PTY_RENDERER_BINDING_SIDE_EFFECT_BACKPRESSURE_BATCHES).toBeLessThan(
+      PTY_RENDERER_BINDING_SIDE_EFFECT_MAX_BATCHES
+    )
+
+    resolveSpawn({ id, incarnationId })
+    const result = await pending
+    const readyRegistration = onMock.mock.calls.find(
+      (call: unknown[]) => call[0] === 'pty:rendererBindingReady'
+    )
+    if (!readyRegistration) {
+      throw new Error('missing pty:rendererBindingReady listener')
+    }
+    ;(readyRegistration[1] as (event: unknown, value: unknown) => void)(mainWindowIpcEvent, {
+      id,
+      access: result.mutationAccess
+    })
+
+    expect(
+      mainWindow.webContents.send.mock.calls.filter(([channel]) => channel === 'pty:sideEffect')
+    ).toHaveLength(PTY_RENDERER_BINDING_SIDE_EFFECT_MAX_BATCHES)
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      'pty:modelRestoreNeeded',
+      expect.objectContaining({ id, reason: 'pending-cap' })
+    )
+    expect(provider.resumeProducer).toHaveBeenCalledOnce()
+    expect(provider.resumeProducer).toHaveBeenCalledWith(id)
+  })
+
+  it('abandons retained facts on renderer reset and accepts a fresh remount binding', async () => {
+    const id = 'renderer-binding-remount'
+    const incarnationId = '55555555-5555-4555-8555-555555555555'
+    let resolveFirst!: (value: { id: string; incarnationId: string }) => void
+    const remountBatch = {
+      ptyId: id,
+      ptyIncarnationId: incarnationId,
+      seq: 2,
+      facts: [{ kind: 'bell' as const }]
+    }
+    const spawn = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ id: string; incarnationId: string }>((resolve) => {
+            resolveFirst = resolve
+          })
+      )
+      .mockImplementationOnce(async () => {
+        publishTerminalSideEffectBatchToRenderer(remountBatch)
+        return { id, incarnationId }
+      })
+    setLocalPtyProvider(createExactRendererBindingProvider(spawn) as never)
+    registerPtyHandlers(mainWindow as never)
+    const first = handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 5,
+      mutationClaimant: { rendererEpochId: 'renderer-before-reset', sequence: 1 }
+    }) as Promise<unknown>
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    publishTerminalSideEffectBatchToRenderer({ ...remountBatch, seq: 1 })
+    const navigationRegistration = mainWindow.webContents.on.mock.calls.find(
+      ([channel]) => channel === 'did-start-navigation'
+    )
+    if (!navigationRegistration) {
+      throw new Error('missing did-start-navigation listener')
+    }
+    ;(
+      navigationRegistration[1] as (details: {
+        isMainFrame: boolean
+        isSameDocument: boolean
+      }) => void
+    )({ isMainFrame: true, isSameDocument: false })
+    resolveFirst({ id, incarnationId })
+    await first
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      'pty:sideEffect',
+      expect.objectContaining({ ptyId: id })
+    )
+
+    registerPtyHandlers(mainWindow as never)
+    mainWindow.webContents.send.mockClear()
+    const remount = (await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      sessionId: id,
+      tabGeneration: 5,
+      mutationClaimant: { rendererEpochId: 'renderer-after-reset', sequence: 1 }
+    })) as { mutationAccess: unknown }
+    const readyRegistration = onMock.mock.calls
+      .toReversed()
+      .find((call: unknown[]) => call[0] === 'pty:rendererBindingReady')
+    if (!readyRegistration) {
+      throw new Error('missing pty:rendererBindingReady listener')
+    }
+    ;(readyRegistration[1] as (event: unknown, value: unknown) => void)(mainWindowIpcEvent, {
+      id,
+      access: remount.mutationAccess
+    })
+
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:sideEffect', remountBatch)
   })
 
   it('returns idle process inspection results for detached SSH PTYs without a provider', async () => {
@@ -7720,6 +9203,7 @@ describe('registerPtyHandlers', () => {
 
     it('lets trusted host activity reclaim remote viewport ownership', () => {
       const claimRemoteDesktopHost = vi.fn().mockResolvedValue(true)
+      setupProviderWithAppliedSize({ applied: { cols: 80, rows: 24 } })
       const runtime = {
         setPtyController: vi.fn(),
         claimRemoteDesktopHost
@@ -7734,7 +9218,12 @@ describe('registerPtyHandlers', () => {
 
       claimListener?.(mainWindowIpcEvent, { id: 'pty-1', cols: 125, rows: 48 })
 
-      expect(claimRemoteDesktopHost).toHaveBeenCalledWith('pty-1', 125, 48)
+      expect(claimRemoteDesktopHost).toHaveBeenCalledWith(
+        'pty-1',
+        125,
+        48,
+        expect.objectContaining({ id: 'pty-1', access: { mode: 'legacy' } })
+      )
     })
 
     it('does not forward host input when viewport reclaim fails', async () => {
@@ -8718,7 +10207,10 @@ describe('registerPtyHandlers', () => {
     await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledTimes(1))
     resolveSpawn({ id: 'pty-renderer' })
     const [rendererResult, runtimeResult] = await Promise.all([rendererSpawn, runtimeSpawn])
-    expect(rendererResult).toEqual({ id: 'pty-renderer' })
+    expect(rendererResult).toEqual({
+      id: 'pty-renderer',
+      administrativeMutationAccess: { mode: 'legacy', providerRouteId: expect.any(String) }
+    })
     expect(runtimeResult).toEqual({
       id: 'pty-renderer',
       stablePaneOwner: {
@@ -9091,6 +10583,7 @@ describe('registerPtyHandlers', () => {
       worktreeId,
       tabId,
       leafId,
+      tabGeneration: 9,
       env: {
         ORCA_PANE_KEY: paneKey,
         ORCA_TAB_ID: tabId,
@@ -9112,6 +10605,10 @@ describe('registerPtyHandlers', () => {
         sessionId: 'pty-persisted-owner',
         expectedIncarnationId: 'inc-stale-owner',
         expectedIncarnationIsAuthoritative: false,
+        paneKey,
+        worktreeId,
+        paneGeneration: 9,
+        tabId,
         command: undefined
       })
     )
@@ -10396,8 +11893,23 @@ describe('registerPtyHandlers', () => {
         persistHostSessionBinding?: boolean
       }): Promise<{ id: string; isReattach?: boolean }>
     }
+    const scopedPtyId = 'ssh:ssh-reattach-ok@@relay-pty'
+    const terminalSessionAuthorityAccess = {
+      namespace: { authorityHostId: 'host-1', namespaceId: 'namespace-1' },
+      pane: { paneKey: 'pane-1', paneGenerationId: 'renderer:1' },
+      binding: {
+        ownerIncarnationId: 'owner-1',
+        physicalPtyId: 'relay-pty',
+        ptyIncarnationId: 'incarnation-runtime-current'
+      }
+    }
+    const remoteSpawn = vi.fn(async () => ({
+      id: scopedPtyId,
+      isReattach: true,
+      terminalSessionAuthorityAccess
+    }))
     registerSshPtyProvider('ssh-reattach-ok', {
-      spawn: vi.fn(async () => ({ id: 'ssh:ssh-reattach-ok@@relay-pty', isReattach: true })),
+      spawn: remoteSpawn,
       write: vi.fn(),
       resize: vi.fn(),
       shutdown: vi.fn(),
@@ -10438,6 +11950,7 @@ describe('registerPtyHandlers', () => {
     }
 
     try {
+      restorePtyIncarnation(scopedPtyId, 'incarnation-runtime-current')
       registerPtyHandlers(
         mainWindow as never,
         runtime as never,
@@ -10455,9 +11968,17 @@ describe('registerPtyHandlers', () => {
         worktreeId: 'wt-remote',
         tabId: 'tab-remote',
         leafId,
-        sessionId: 'ssh:ssh-reattach-ok@@relay-pty',
+        sessionId: scopedPtyId,
         persistHostSessionBinding: true
       })
+
+      expect(remoteSpawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: scopedPtyId,
+          expectedIncarnationId: 'incarnation-runtime-current',
+          expectedIncarnationIsAuthoritative: true
+        })
+      )
 
       expect(store.persistPtyBinding).toHaveBeenCalledWith(
         {
@@ -10472,11 +11993,13 @@ describe('registerPtyHandlers', () => {
         expect.objectContaining({
           targetId: 'ssh-reattach-ok',
           ptyId: 'relay-pty',
+          terminalSessionAuthorityAccess,
           state: 'attached',
           lastAttachedAt: expect.any(Number)
         })
       )
     } finally {
+      clearProviderPtyState(scopedPtyId)
       unregisterSshPtyProvider('ssh-reattach-ok')
     }
   })
@@ -13995,6 +15518,15 @@ describe('registerPtyHandlers', () => {
         pendingPtyCount: 1,
         pendingChars: 0
       })
+      expect(runtime.acceptPtyDataBounded).toHaveBeenLastCalledWith(
+        'source-credit-pty',
+        sourceChunk,
+        expect.any(Number),
+        sourceChunk.length,
+        false,
+        [expect.objectContaining({ ptyIncarnation: 'source-incarnation' })],
+        'source-incarnation'
+      )
       expect(provider.pauseProducer).not.toHaveBeenCalledWith('source-credit-pty')
       expect(provider.resumeProducer).not.toHaveBeenCalledWith('source-credit-pty')
 
@@ -14130,8 +15662,7 @@ describe('registerPtyHandlers', () => {
       {
         id,
         code: 0,
-        providerGeneration: 51,
-        ptyIncarnation: 'incarnation-51'
+        incarnationId: 'incarnation-51'
       }
     ])
   })
@@ -15643,6 +17174,9 @@ describe('registerPtyHandlers', () => {
           'hidden output',
           expect.any(Number),
           'hidden output'.length,
+          undefined,
+          undefined,
+          undefined,
           undefined
         )
         expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
@@ -16278,6 +17812,9 @@ describe('registerPtyHandlers', () => {
           'pre-spawn prompt\x1b[c',
           expect.any(Number),
           'pre-spawn prompt\x1b[c'.length,
+          undefined,
+          undefined,
+          undefined,
           undefined
         )
         expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
@@ -16532,17 +18069,29 @@ describe('registerPtyHandlers', () => {
       process.env.SHELL = '/opt/homebrew/bin/bash'
 
       registerPtyHandlers(mainWindow as never)
-      const result = await handlers.get('pty:spawn')!(null, {
+      const result = (await handlers.get('pty:spawn')!(null, {
         cols: 80,
         rows: 24,
         cwd: '/tmp',
         worktreeId: 'repo-1::/tmp'
-      })
+      })) as {
+        id: string
+        pid: number
+        incarnationId: string
+        administrativeMutationAccess: {
+          mode: 'legacy'
+          providerRouteId: string
+        }
+      }
 
       expect(result).toEqual({
         id: expect.any(String),
         pid: 12345,
-        incarnationId: expect.any(String)
+        incarnationId: expect.any(String),
+        administrativeMutationAccess: {
+          mode: 'legacy',
+          providerRouteId: expect.any(String)
+        }
       })
       expect(spawnMock).toHaveBeenCalledTimes(1)
       expect(spawnMock).toHaveBeenCalledWith(

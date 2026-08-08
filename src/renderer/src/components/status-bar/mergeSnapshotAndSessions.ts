@@ -148,6 +148,13 @@ export function mergeSnapshotAndSessions(
   const ownershipBySessionId = new Map(
     daemonSessions.map((session) => [session.id, session.agentOwnership])
   )
+  const mutationAccessBySessionId = new Map(
+    daemonSessions.flatMap((session) =>
+      session.administrativeMutationAccess
+        ? [[session.id, session.administrativeMutationAccess] as const]
+        : []
+    )
+  )
 
   function isRepoRemote(repoId: string): boolean {
     // Why: missing entry === we don't know about this repo (typically the
@@ -209,6 +216,7 @@ export function mergeSnapshotAndSessions(
           label: resolveSnapshotSessionLabel(s, wt.worktreeId, ctx),
           bound: ctx.workspaceSessionReady && boundPtyIds.has(s.sessionId),
           agentOwnership: ownershipBySessionId.get(s.sessionId) ?? 'unknown',
+          administrativeMutationAccess: mutationAccessBySessionId.get(s.sessionId),
           tabId,
           cpu: s.cpu,
           memory: s.memory,
@@ -297,6 +305,7 @@ export function mergeSnapshotAndSessions(
       label: resolveDaemonSessionLabel(session, worktreeId, tabId, ctx),
       bound: ctx.workspaceSessionReady && boundPtyIds.has(session.id),
       agentOwnership: session.agentOwnership,
+      administrativeMutationAccess: session.administrativeMutationAccess,
       tabId,
       cpu: null,
       memory: null,

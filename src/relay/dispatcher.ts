@@ -40,8 +40,14 @@ export type RequestContext = {
   isStale: () => boolean
   signal?: AbortSignal
   sessionIdentity?: RelayClientSessionIdentity
-  onResponseSettled?: (handler: (result: SinkWriteSettlement) => void) => void
+  onResponsePrepared?: (handler: () => void) => void
+  onResponseSettled?: (handler: (result: ResponseSettlement) => void) => void
 }
+
+export type ResponseSettlement =
+  | Readonly<{ ok: true }>
+  | Readonly<{ ok: false; error: Error; responseDelivered?: false }>
+  | Readonly<{ ok: false; error: Error; responseDelivered: true }>
 
 export type RelayClientSessionIdentity = {
   principal: string
@@ -605,6 +611,36 @@ export class RelayDispatcher {
     // chunks) would otherwise log "Dropped" for a frame it goes on to deliver in full.
     options?: { logDrop?: boolean }
   ): boolean {
+    return this.publishProducerNotificationForClient(clientId, method, params, {
+      logDrop: options?.logDrop !== false,
+      enforcePtyAdmission: true,
+      onSettled: () => {}
+    })
+  }
+
+  // Why: authority validates delivery identity; the control adapter's dormant local session cannot.
+  publishTerminalAuthorityData(
+    clientId: number,
+    params: Record<string, unknown>,
+    onSettled: (result: SinkWriteSettlement) => void = () => {}
+  ): boolean {
+    return this.publishProducerNotificationForClient(clientId, 'pty.data', params, {
+      logDrop: false,
+      enforcePtyAdmission: false,
+      onSettled
+    })
+  }
+
+  private publishProducerNotificationForClient(
+    clientId: number,
+    method: string,
+    params: Record<string, unknown> | undefined,
+    options: {
+      logDrop: boolean
+      enforcePtyAdmission: boolean
+      onSettled: (result: SinkWriteSettlement) => void
+    }
+  ): boolean {
     if (this.disposed) {
       return false
     }
@@ -617,15 +653,28 @@ export class RelayDispatcher {
       method,
       ...(params !== undefined ? { params } : {})
     }
-    if (method === 'pty.data' && !this.admitsPtyDataPublication(client.id, params ?? {})) {
+    if (
+      options.enforcePtyAdmission &&
+      method === 'pty.data' &&
+      !this.admitsPtyDataPublication(client.id, params ?? {})
+    ) {
       return false
     }
     const frameBytes = this.estimateFrameBytes(msg)
-    if (this.publishToClient(client, msg, 'ordinary', undefined, frameBytes)) {
+    if (
+      this.publishToClient(
+        client,
+        msg,
+        'ordinary',
+        options.onSettled,
+        frameBytes,
+        options.enforcePtyAdmission
+      )
+    ) {
       return true
     }
     // Why: same diagnostics as notify() — a producer that drops here must not do so silently.
-    if (options?.logDrop !== false) {
+    if (options.logDrop) {
       this.logDroppedProducerNotification(client, method, frameBytes)
     }
     return false
@@ -944,9 +993,21 @@ export class RelayDispatcher {
       client.id,
       req.id
     )
-    const responseSettledHandlers = new Set<(result: SinkWriteSettlement) => void>()
+    const responsePreparedHandlers = new Set<() => void>()
+    const responseSettledHandlers = new Set<(result: ResponseSettlement) => void>()
+    let responsePrepared = false
     let responseSettled = false
-    const settleResponse = (result: SinkWriteSettlement): void => {
+    const prepareResponse = (): void => {
+      if (responsePrepared) {
+        return
+      }
+      responsePrepared = true
+      for (const callback of responsePreparedHandlers) {
+        callback()
+      }
+      responsePreparedHandlers.clear()
+    }
+    const settleResponse = (result: ResponseSettlement): void => {
       if (responseSettled) {
         return
       }
@@ -969,6 +1030,12 @@ export class RelayDispatcher {
         client.generation !== gen || !this.clients.has(client.id) || abortController.signal.aborted,
       signal: abortController.signal,
       sessionIdentity: client.sessionIdentity,
+      onResponsePrepared: (handler) => {
+        if (responsePrepared) {
+          throw new Error('Response preparation callback registered after preparation')
+        }
+        responsePreparedHandlers.add(handler)
+      },
       onResponseSettled: (handler) => {
         if (responseSettled) {
           throw new Error('Response settlement callback registered after settlement')
@@ -982,6 +1049,7 @@ export class RelayDispatcher {
         settleResponse({ ok: false, error: new Error('Relay request became stale') })
         return
       }
+      prepareResponse()
       const accepted = this.sendResponse(client, req.id, result, undefined, (settlement) => {
         settleResponse(
           context.isStale()
@@ -1002,7 +1070,8 @@ export class RelayDispatcher {
       const accepted = this.sendResponse(client, req.id, undefined, { code, message }, (result) => {
         settleResponse({
           ok: false,
-          error: result.ok ? new Error(message) : result.error
+          error: result.ok ? new Error(message) : result.error,
+          ...(result.ok ? { responseDelivered: true } : {})
         })
       })
       if (!accepted) {
@@ -1025,6 +1094,9 @@ export class RelayDispatcher {
         clientId: client.id,
         isStale: () => client.generation !== gen || !this.clients.has(client.id),
         sessionIdentity: client.sessionIdentity,
+        onResponsePrepared: () => {
+          throw new Error('Notifications do not have response preparation fences')
+        },
         onResponseSettled: () => {
           throw new Error('Notifications do not have response publication fences')
         }
@@ -1081,7 +1153,8 @@ export class RelayDispatcher {
     onSettled: (result: SinkWriteSettlement) => void = () => {},
     // Why: publish paths already sized the frame; avoid a redundant encode.
     estimatedBytes?: number,
-    controlOverflow: 'close-client' | 'reject' = 'close-client'
+    controlOverflow: 'close-client' | 'reject' = 'close-client',
+    enforcePtyAdmission = true
   ): boolean {
     if (this.disposed || client.closed) {
       return false
@@ -1092,7 +1165,7 @@ export class RelayDispatcher {
       return encodeJsonRpcFrame(msg, seq, client.highestReceivedSeq)
     }
     const isStillAdmitted =
-      'method' in msg && msg.method === 'pty.data'
+      enforcePtyAdmission && 'method' in msg && msg.method === 'pty.data'
         ? () => this.admitsPtyDataPublication(client.id, msg.params ?? {})
         : undefined
     return client.writer.enqueue(
@@ -1211,7 +1284,8 @@ export class RelayDispatcher {
     lane: 'interactive' | 'ordinary' | 'fixed-bulk' | 'bulk',
     onSettled: (result: SinkWriteSettlement) => void = () => {},
     // Why: broadcast callers size the frame once for every client; avoid a redundant encode.
-    estimatedBytes?: number
+    estimatedBytes?: number,
+    enforcePtyAdmission = true
   ): boolean {
     const bytes = estimatedBytes ?? this.estimateFrameBytes(msg)
     const fixedBlocked =
@@ -1224,7 +1298,15 @@ export class RelayDispatcher {
     if (!leases) {
       return false
     }
-    return this.enqueueLeasedFrame(client, msg, lane, leases[0], bytes, onSettled)
+    return this.enqueueLeasedFrame(
+      client,
+      msg,
+      lane,
+      leases[0],
+      bytes,
+      onSettled,
+      enforcePtyAdmission
+    )
   }
 
   private publishBulkWhenAvailable(client: RelayClient, msg: JsonRpcNotification): Promise<void> {
@@ -1274,7 +1356,8 @@ export class RelayDispatcher {
     lane: 'interactive' | 'ordinary' | 'fixed-bulk' | 'bulk',
     lease: LegacyPublicationLease,
     estimatedBytes: number,
-    onSettled: (result: SinkWriteSettlement) => void = () => {}
+    onSettled: (result: SinkWriteSettlement) => void = () => {},
+    enforcePtyAdmission = true
   ): boolean {
     const accepted = this.enqueueFrame(
       client,
@@ -1285,7 +1368,9 @@ export class RelayDispatcher {
         onSettled(result)
         this.notifyLegacyCapacityIfLow()
       },
-      estimatedBytes
+      estimatedBytes,
+      'close-client',
+      enforcePtyAdmission
     )
     if (!accepted) {
       lease.release()

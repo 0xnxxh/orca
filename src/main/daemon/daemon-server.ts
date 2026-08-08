@@ -1,11 +1,11 @@
 /* eslint-disable max-lines -- Why: one class owns the daemon socket protocol, routing, stream fanout, and session lifecycle. */
 import { createServer, type Server, type Socket } from 'node:net'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { writeFileSync, chmodSync, unlinkSync } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 import { encodeNdjson, createNdjsonParser } from './ndjson'
-import { TerminalHost } from './terminal-host'
+import { TerminalHost, type TerminalHostOptions } from './terminal-host'
 import { DaemonStreamDataBatcher } from './daemon-stream-data-batcher'
 import {
   BackgroundTransientFactRelay,
@@ -37,13 +37,78 @@ import {
   SessionNotFoundError,
   TerminalAttachCanceledError,
   type HelloMessage,
-  type DaemonRequest
+  type DaemonRequest,
+  type DaemonTransientFact
 } from './types'
+import {
+  supportsExactHeldProducerPause,
+  supportsPtyStreamBinding,
+  supportsTerminalSessionAuthority
+} from './daemon-protocol-version'
+import { isPtyStreamBindingNonce } from '../../shared/pty-stream-binding-protocol'
+import { isPtyIncarnationId } from '../../shared/pty-incarnation'
+import { isPtyHeldProducerPauseToken } from '../providers/pty-provider-contract'
 import {
   isAgentSessionExecutionClaim,
   isAgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
 import { TerminalHistorySeedTransferRegistry } from './terminal-history-seed-transfer-registry'
+import {
+  parseTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
+import type { TerminalSessionAuthorityPtyOwner } from '../session-authority/terminal-session-authority-pty-owner'
+import type {
+  TerminalAuthorityPolicyConsumerConnection,
+  TerminalAuthorityPolicyConsumerResolver,
+  TerminalAuthorityPolicyConsumerSource
+} from '../session-authority/terminal-session-authority-policy-consumers'
+import type {
+  TerminalAuthorityAuthenticatedNamespacePreparation,
+  TerminalAuthorityAuthenticatedNamespaceSession
+} from '../session-authority/terminal-session-authority-authenticated-consumers'
+import type { TerminalAuthorityAuthenticatedConsumerTransport } from '../session-authority/terminal-session-authority-consumer-admission'
+import { joinTerminalAuthorityRollbackFailure } from '../session-authority/terminal-session-authority-consumer-rollback-failure'
+import { TerminalSessionAuthorityBoundaryAcceptances } from '../session-authority/terminal-session-authority-boundary-acceptance'
+import {
+  parseTerminalAuthorityNamespaceBoundaryAcceptance,
+  parseTerminalAuthorityNamespaceOutcomeAck,
+  sameTerminalAuthorityPolicyConsumer,
+  type TerminalAuthorityNamespaceOutcomeBoundary,
+  type TerminalAuthorityNamespaceOutcomePublication,
+  type TerminalAuthorityPolicyConsumerIdentity
+} from '../../shared/terminal-session-authority-consumer-transport'
+import {
+  parseDaemonHelloCapabilities,
+  sameDaemonHelloCapabilities,
+  TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY,
+  type DaemonHelloCapabilities,
+  type DaemonTerminalAuthorityConsumerProofGrant
+} from './daemon-hello-protocol'
+import {
+  TERMINAL_AUTHORITY_CONSUMER_PROOF_CAPABILITY,
+  TERMINAL_AUTHORITY_CONSUMER_PROOF_VERSION,
+  parseTerminalAuthorityNamespaceAdmissionCancellation,
+  parseTerminalAuthorityNamespaceAdmissionProof
+} from '../../shared/terminal-session-authority-consumer-proof'
+import {
+  TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION,
+  parseTerminalAuthorityConsumerRetirementProof,
+  parseTerminalAuthorityConsumerRetirementStart
+} from '../../shared/terminal-session-authority-consumer-retirement'
+import {
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_CHALLENGE_REQUEST,
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_CANCEL_REQUEST,
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_GRANT_REQUEST,
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_CHALLENGE_REQUEST,
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_REQUEST,
+  DAEMON_TERMINAL_AUTHORITY_CONSUMER_RESOLVE_NAMESPACE_REQUEST
+} from './daemon-terminal-authority-consumer-requests'
+import { terminalAuthorityHostAppConsumerId } from '../session-authority/terminal-session-authority-consumer-proof'
+
+export type TerminalSessionAuthorityCapabilityReadiness = Readonly<{
+  hostEffectConsumerInstalled(): boolean
+}>
 
 export type DaemonServerOptions = {
   socketPath: string
@@ -84,6 +149,26 @@ export type DaemonServerOptions = {
     command?: string
     shellOverride?: string
   }) => SubprocessHandle
+  terminalSessionAuthority?: TerminalHostOptions['terminalSessionAuthority']
+  terminalSessionAuthorityCapabilityReadiness?: TerminalSessionAuthorityCapabilityReadiness
+  onTerminalSessionAuthorityFailure?: TerminalHostOptions['onTerminalSessionAuthorityFailure']
+}
+
+function isDaemonConsumerProofGrant(
+  capability: DaemonHelloCapabilities['terminalAuthorityConsumerProof']
+): capability is DaemonTerminalAuthorityConsumerProofGrant {
+  return Boolean(capability && 'version' in capability)
+}
+
+function authorityNamespaceKey(namespace: TerminalSessionAuthorityPtyAccess['namespace']): string {
+  return JSON.stringify([namespace.authorityHostId, namespace.namespaceId])
+}
+
+function sameAuthorityNamespace(
+  left: TerminalSessionAuthorityPtyAccess['namespace'],
+  right: TerminalSessionAuthorityPtyAccess['namespace']
+): boolean {
+  return left.authorityHostId === right.authorityHostId && left.namespaceId === right.namespaceId
 }
 
 type ConnectedClient = {
@@ -91,6 +176,25 @@ type ConnectedClient = {
   controlSocket: Socket
   streamSocket: Socket | null
   authenticatedPairEstablished: boolean
+  capabilities?: DaemonHelloCapabilities
+  authorityConsumerTransport?: TerminalAuthorityAuthenticatedConsumerTransport
+  authorityNamespaceSessions?: Map<string, AuthenticatedAuthorityNamespaceSession>
+  authorityPendingPreparations?: Set<AuthenticatedAuthorityNamespacePreparation>
+}
+
+type AuthenticatedAuthorityNamespaceSession = Readonly<{
+  session: TerminalAuthorityAuthenticatedNamespaceSession
+  acceptances: TerminalSessionAuthorityBoundaryAcceptances
+}>
+
+type AuthenticatedAuthorityNamespacePreparation = {
+  active: boolean
+  preparation: TerminalAuthorityAuthenticatedNamespacePreparation | null
+  acceptances: TerminalSessionAuthorityBoundaryAcceptances
+  requestId: string
+  namespace: TerminalSessionAuthorityPtyAccess['namespace']
+  connectionGrantId: string
+  consumer: TerminalAuthorityPolicyConsumerIdentity
 }
 
 type PendingPtySpawnPreparation = {
@@ -102,6 +206,61 @@ type PendingPtySpawnPreparation = {
 
 type PendingShutdownReply = {
   start: () => void
+}
+
+type HeldProducerPauseLease = {
+  sessionId: string
+  incarnationId: string
+  token: string
+}
+
+type HeldProducerPausePayload =
+  | { mode: 'legacy' }
+  | { mode: 'invalid' }
+  | ({ mode: 'exact' } & HeldProducerPauseLease)
+
+function parseHeldProducerPausePayload(payload: {
+  sessionId: string
+  incarnationId?: string
+  heldPauseToken?: string
+}): HeldProducerPausePayload {
+  if (payload.incarnationId === undefined && payload.heldPauseToken === undefined) {
+    return { mode: 'legacy' }
+  }
+  if (
+    !isPtyIncarnationId(payload.incarnationId) ||
+    !isPtyHeldProducerPauseToken(payload.heldPauseToken)
+  ) {
+    return { mode: 'invalid' }
+  }
+  return {
+    mode: 'exact',
+    sessionId: payload.sessionId,
+    incarnationId: payload.incarnationId,
+    token: payload.heldPauseToken
+  }
+}
+
+function heldProducerPauseLeaseKey(lease: HeldProducerPauseLease): string {
+  return JSON.stringify([lease.sessionId, lease.incarnationId, lease.token])
+}
+
+function hasTerminalSessionAuthorityCreateMetadata(payload: {
+  terminalSessionAuthorityVersion?: unknown
+  terminalSessionAuthorityOperationId?: unknown
+  terminalSessionAuthorityAccess?: unknown
+  worktreeId?: unknown
+  paneKey?: unknown
+  paneGeneration?: unknown
+}): boolean {
+  return (
+    payload.terminalSessionAuthorityVersion !== undefined ||
+    payload.terminalSessionAuthorityOperationId !== undefined ||
+    payload.terminalSessionAuthorityAccess !== undefined ||
+    payload.worktreeId !== undefined ||
+    payload.paneKey !== undefined ||
+    payload.paneGeneration !== undefined
+  )
 }
 
 export class DaemonServer {
@@ -161,23 +320,26 @@ export class DaemonServer {
       }
     }
   )
-  // Facts ride the stream queue as control entries so they hold byte order (else a fact could arrive after the reveal snapshot).
   private transientFactRelay = new BackgroundTransientFactRelay((sessionId, fact) => {
-    const clientId = this.streamClientIdBySessionId.get(sessionId)
-    if (clientId) {
-      this.streamDataBatcher.enqueueControlEvent(clientId, sessionId, {
-        type: 'event',
-        event: 'transientFact',
-        sessionId,
-        payload: fact
-      })
-    }
+    this.enqueueLegacyTransientFact(sessionId, fact)
   })
   private streamClientIdBySessionId = new Map<string, string>()
   private lastInputAtBySessionId = new Map<string, number>()
   private pendingPtySpawnPreparations = new Map<string, Set<PendingPtySpawnPreparation>>()
+  private pendingAuthoritySemanticOutcomes = new Set<Promise<boolean>>()
+  private heldProducerPauseLeasesByClient = new Map<string, Map<string, HeldProducerPauseLease>>()
   private historySeedTransfers = new TerminalHistorySeedTransferRegistry()
   private stopStreamBacklogProbe: () => void = () => {}
+  private readonly terminalSessionAuthorityEnabled: boolean
+  private readonly terminalSessionAuthorityPtyOwner: TerminalSessionAuthorityPtyOwner | null
+  private readonly terminalSessionAuthorityHostId: string | null
+  private readonly removeTerminalSessionAuthorityHostEffectApplier: () => void
+  private readonly terminalSessionAuthorityCapabilityReadiness:
+    | TerminalSessionAuthorityCapabilityReadiness
+    | undefined
+  private readonly onTerminalSessionAuthorityFailure:
+    | NonNullable<DaemonServerOptions['onTerminalSessionAuthorityFailure']>
+    | undefined
 
   // Why: bypass batching within this window so keystroke echo/redraws skip the daemon's fixed batch delay.
   private static readonly INTERACTIVE_OUTPUT_WINDOW_MS = 100
@@ -214,11 +376,30 @@ export class DaemonServer {
       now: () => Date.now()
     }
     this.token = randomUUID()
+    this.terminalSessionAuthorityEnabled = opts.terminalSessionAuthority !== undefined
+    this.terminalSessionAuthorityPtyOwner = opts.terminalSessionAuthority?.ptyOwner ?? null
+    this.terminalSessionAuthorityHostId = opts.terminalSessionAuthority?.authorityHostId ?? null
+    this.terminalSessionAuthorityCapabilityReadiness =
+      opts.terminalSessionAuthorityCapabilityReadiness
+    this.onTerminalSessionAuthorityFailure = opts.onTerminalSessionAuthorityFailure
     this.onAuthenticatedClientPair = opts.onAuthenticatedClientPair ?? (() => {})
     this.host = new TerminalHost({
       spawnSubprocess: opts.spawnSubprocess,
-      ...(opts.onPtySessionExit ? { onSessionReaped: opts.onPtySessionExit } : {})
+      ...(opts.onPtySessionExit ? { onSessionReaped: opts.onPtySessionExit } : {}),
+      ...(opts.terminalSessionAuthority
+        ? { terminalSessionAuthority: opts.terminalSessionAuthority }
+        : {}),
+      ...(opts.onTerminalSessionAuthorityFailure
+        ? { onTerminalSessionAuthorityFailure: opts.onTerminalSessionAuthorityFailure }
+        : {})
     })
+    const installHostEffectApplier = this.terminalSessionAuthorityPtyOwner?.installHostEffectApplier
+    this.removeTerminalSessionAuthorityHostEffectApplier = installHostEffectApplier
+      ? installHostEffectApplier.call(this.terminalSessionAuthorityPtyOwner, {
+          ensureBindingRetired: (access, reason) =>
+            this.host.ensureAuthorityBindingRetired(access, reason)
+        })
+      : () => {}
     this.ptySpawnHealthCheck = opts.ptySpawnHealthCheck ?? checkPtySpawnHealth
     this.preparePtySpawn = opts.preparePtySpawn ?? (() => Promise.resolve())
     this.stopStreamBacklogProbe = startDaemonStreamBacklogProbe(() => ({
@@ -404,6 +585,8 @@ export class DaemonServer {
     this.stopStreamBacklogProbe()
     this.transientFactRelay.dispose()
     this.cancelAllPendingPtySpawnPreparations()
+    await Promise.allSettled(this.pendingAuthoritySemanticOutcomes)
+    let hostDisposeError: unknown
     try {
       await this.host.dispose()
     } catch (err) {
@@ -411,12 +594,17 @@ export class DaemonServer {
       this.log.log('shutdown-dispose-failed', {
         error: err instanceof Error ? err.message : String(err)
       })
+      hostDisposeError = err
     }
+    this.removeTerminalSessionAuthorityHostEffectApplier()
     this.streamDataBatcher.clear()
     this.historySeedTransfers.dispose()
     this.pendingShutdownReplies.clear()
+    this.heldProducerPauseLeasesByClient.clear()
+    this.pendingAuthoritySemanticOutcomes.clear()
 
     for (const [, client] of this.clients) {
+      this.releaseAuthenticatedPolicyTransport(client)
       client.controlSocket.destroy()
       client.streamSocket?.destroy()
     }
@@ -425,6 +613,9 @@ export class DaemonServer {
       socket.destroy()
     }
     this.transportSockets.clear()
+    if (hostDisposeError && this.terminalSessionAuthorityEnabled) {
+      throw hostDisposeError
+    }
   }
 
   private beginServerClose(): Promise<void> {
@@ -550,7 +741,14 @@ export class DaemonServer {
     // Why: keep UTF-8 sequences intact across socket chunks before NDJSON parsing.
     const decoder = new StringDecoder('utf8')
     const parser = createNdjsonParser(
-      (msg) => this.handleFirstMessage(socket, msg, parser),
+      (msg) => {
+        void this.handleFirstMessage(socket, msg, parser).catch((error) => {
+          this.log.log('client-hello-rejected', {
+            reason: error instanceof Error ? error.message : String(error)
+          })
+          socket.destroy()
+        })
+      },
       () => {
         socket.destroy()
       }
@@ -559,11 +757,11 @@ export class DaemonServer {
     socket.on('data', (chunk) => parser.feed(decoder.write(chunk)))
   }
 
-  private handleFirstMessage(
+  private async handleFirstMessage(
     socket: Socket,
     msg: unknown,
     _parser: ReturnType<typeof createNdjsonParser>
-  ): void {
+  ): Promise<void> {
     const hello = msg as HelloMessage
     if (hello.type !== 'hello') {
       this.log.log('client-hello-rejected', { reason: 'expected-hello' })
@@ -598,36 +796,53 @@ export class DaemonServer {
       return
     }
 
+    const capabilities = this.negotiateHelloCapabilities(hello.capabilities)
+    const existingControl = hello.role === 'stream' ? this.clients.get(hello.clientId) : undefined
+    const capabilitiesMatchControl =
+      existingControl === undefined ||
+      sameDaemonHelloCapabilities(existingControl.capabilities ?? {}, capabilities)
+
     this.log.log('client-hello-accepted', {
       role: hello.role,
       clientId: hello.clientId
     })
-    socket.write(
-      encodeNdjson({
-        type: 'hello',
-        ok: true,
-        ...(this.launchNonce && this.startedAtMs
-          ? {
-              daemonIdentity: {
-                pid: process.pid,
-                startedAtMs: this.startedAtMs,
-                launchNonce: this.launchNonce,
-                ...(this.entryPath ? { entryPath: this.entryPath } : {}),
-                ...(this.appVersion ? { appVersion: this.appVersion } : {}),
-                ...(this.spawnerExecPath ? { spawnerExecPath: this.spawnerExecPath } : {})
-              }
+    const response = encodeNdjson({
+      type: 'hello',
+      ok: true,
+      ...(capabilities.terminalSessionAuthority !== undefined ||
+      capabilities.terminalAuthorityConsumerProof !== undefined
+        ? { capabilities }
+        : {}),
+      ...(this.launchNonce && this.startedAtMs
+        ? {
+            daemonIdentity: {
+              pid: process.pid,
+              startedAtMs: this.startedAtMs,
+              launchNonce: this.launchNonce,
+              ...(this.entryPath ? { entryPath: this.entryPath } : {}),
+              ...(this.appVersion ? { appVersion: this.appVersion } : {}),
+              ...(this.spawnerExecPath ? { spawnerExecPath: this.spawnerExecPath } : {})
             }
-          : {})
-      })
-    )
+          }
+        : {})
+    })
 
+    if (hello.role === 'stream' && (!existingControl || !capabilitiesMatchControl)) {
+      socket.end(response)
+      return
+    }
     if (hello.role === 'control') {
+      socket.write(response)
       const previous = this.clients.get(hello.clientId)
+      if (previous) {
+        this.releaseHeldProducerPausesForClient(hello.clientId)
+      }
       const client: ConnectedClient = {
         clientId: hello.clientId,
         controlSocket: socket,
         streamSocket: null,
-        authenticatedPairEstablished: false
+        authenticatedPairEstablished: false,
+        capabilities
       }
       this.clients.set(hello.clientId, client)
       this.setupControlSocket(socket, hello.clientId)
@@ -636,6 +851,7 @@ export class DaemonServer {
         this.cancelPendingPtySpawnPreparationsForClient(hello.clientId)
         this.historySeedTransfers.clearOwner(hello.clientId)
         this.recordFullyAuthenticatedDisconnect(previous.authenticatedPairEstablished)
+        this.releaseAuthenticatedPolicyTransport(previous)
         // Why: tear down the old sockets after installing the new owner so a stale close can't delete the replacement.
         previous.streamSocket?.destroy()
         previous.controlSocket.destroy()
@@ -649,6 +865,10 @@ export class DaemonServer {
       }
       this.setupStreamSocket(socket, client)
       client.authenticatedPairEstablished = true
+      if (isDaemonConsumerProofGrant(client.capabilities?.terminalAuthorityConsumerProof)) {
+        this.installAuthenticatedPolicyTransport(client)
+      }
+      socket.write(response)
       // Why: one-shot health probes authenticate only a control socket; they are not fresh app activity.
       this.onAuthenticatedClientPair()
       // A complete app connection (unlike a probe) re-owns the endpoint and cancels pending retirement.
@@ -656,6 +876,225 @@ export class DaemonServer {
       this.retirementRequested = false
       this.cancelInitialAdoptionTimer()
     }
+  }
+
+  private negotiateHelloCapabilities(requested: unknown): DaemonHelloCapabilities {
+    const parsed = parseDaemonHelloCapabilities(requested)
+    if (
+      parsed.terminalSessionAuthority !== TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY ||
+      !this.terminalSessionAuthorityAdmissionReady()
+    ) {
+      return {}
+    }
+    const proof = parsed.terminalAuthorityConsumerProof
+    if (proof) {
+      if (
+        'versions' in proof &&
+        proof.versions.includes(TERMINAL_AUTHORITY_CONSUMER_PROOF_VERSION) &&
+        this.terminalSessionAuthorityHostId
+      ) {
+        return {
+          terminalSessionAuthority: TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY,
+          terminalAuthorityConsumerProof: {
+            version: TERMINAL_AUTHORITY_CONSUMER_PROOF_VERSION,
+            authorityHostId: this.terminalSessionAuthorityHostId,
+            ...(proof.retirementVersions?.includes(TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION)
+              ? { retirementVersion: TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION }
+              : {})
+          }
+        }
+      }
+      return {}
+    }
+    // Why a proofless peer negotiates nothing: it would otherwise name its own consumer identity, and
+    // a client-chosen label must never reach a durable authority claim. It stays on the legacy path.
+    return {}
+  }
+
+  private terminalSessionAuthorityAdmissionReady(): boolean {
+    if (
+      !supportsTerminalSessionAuthority(this.protocolVersion) ||
+      !this.terminalSessionAuthorityEnabled ||
+      !this.terminalSessionAuthorityCapabilityReadiness
+    ) {
+      return false
+    }
+    try {
+      return this.terminalSessionAuthorityCapabilityReadiness.hostEffectConsumerInstalled()
+    } catch {
+      return false
+    }
+  }
+
+  private assertAuthorityPolicyAdmission(
+    client: ConnectedClient | undefined,
+    value: unknown
+  ): TerminalAuthorityPolicyConsumerConnection {
+    const access = parseTerminalSessionAuthorityPtyAccess(value)
+    const authenticated = access
+      ? client?.authorityNamespaceSessions?.get(authorityNamespaceKey(access.namespace))
+      : undefined
+    if (
+      access &&
+      authenticated &&
+      client?.authenticatedPairEstablished &&
+      client.streamSocket &&
+      authenticated.session.policyConsumer.isInstalled(access.namespace)
+    ) {
+      authenticated.session.policyConsumer.assertInstalled(access.namespace)
+      return authenticated.session.policyConsumer
+    }
+    throw new Error('terminal session authority policy admission is unavailable')
+  }
+
+  private installAuthenticatedPolicyTransport(client: ConnectedClient): void {
+    this.releaseAuthenticatedPolicyTransport(client)
+    const token = Object.freeze({})
+    client.authorityConsumerTransport = Object.freeze({
+      connectionGrantId: randomUUID(),
+      principal: `daemon-token:v1:${createHash('sha256').update(this.token).digest('base64url')}`,
+      capability: TERMINAL_AUTHORITY_CONSUMER_PROOF_CAPABILITY,
+      token
+    })
+    client.authorityNamespaceSessions = new Map()
+    client.authorityPendingPreparations = new Set()
+  }
+
+  private releaseAuthenticatedPolicyTransport(client: ConnectedClient): void {
+    const transport = client.authorityConsumerTransport
+    client.authorityConsumerTransport = undefined
+    for (const pending of client.authorityPendingPreparations ?? []) {
+      pending.active = false
+      pending.acceptances.close()
+      const preparation = pending.preparation
+      if (preparation) {
+        const cause = new Error('terminal authority consumer transport released during admission')
+        void joinTerminalAuthorityRollbackFailure(cause, () => preparation.rollback()).catch(
+          (failure) => {
+            if (failure !== cause) {
+              this.reportTerminalSessionAuthorityFailure(failure)
+            }
+          }
+        )
+      }
+    }
+    client.authorityPendingPreparations?.clear()
+    for (const installed of client.authorityNamespaceSessions?.values() ?? []) {
+      installed.acceptances.close()
+      installed.session.disconnect()
+    }
+    client.authorityNamespaceSessions?.clear()
+    client.authorityPendingPreparations = undefined
+    client.authorityNamespaceSessions = undefined
+    if (transport) {
+      this.terminalSessionAuthorityPtyOwner?.releaseAuthenticatedPolicyConsumerTransport(
+        transport.token
+      )
+    }
+  }
+
+  private reportTerminalSessionAuthorityFailure(error: unknown): void {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    const causes =
+      failure instanceof AggregateError
+        ? failure.errors.map((cause) => (cause instanceof Error ? cause.message : String(cause)))
+        : undefined
+    this.log.log('terminal-session-authority-rollback-failed', {
+      error: failure.message,
+      ...(causes ? { causes } : {})
+    })
+    this.onTerminalSessionAuthorityFailure?.(failure)
+  }
+
+  private requireAuthenticatedConsumerTransport(
+    client: ConnectedClient | undefined
+  ): TerminalAuthorityAuthenticatedConsumerTransport {
+    const capability = client?.capabilities?.terminalAuthorityConsumerProof
+    const transport = client?.authorityConsumerTransport
+    if (
+      !client?.authenticatedPairEstablished ||
+      !client.streamSocket ||
+      !isDaemonConsumerProofGrant(capability) ||
+      !transport
+    ) {
+      throw new Error('terminal authority consumer proof transport is unavailable')
+    }
+    return transport
+  }
+
+  private requireAuthenticatedConsumerRetirementTransport(
+    client: ConnectedClient | undefined
+  ): TerminalAuthorityAuthenticatedConsumerTransport {
+    const capability = client?.capabilities?.terminalAuthorityConsumerProof
+    if (
+      !isDaemonConsumerProofGrant(capability) ||
+      capability.retirementVersion !== TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION
+    ) {
+      throw new Error('terminal authority consumer retirement is unsupported')
+    }
+    return this.requireAuthenticatedConsumerTransport(client)
+  }
+
+  private authenticatedPolicyConsumerResolver(
+    client: ConnectedClient
+  ): TerminalAuthorityPolicyConsumerResolver {
+    const transport = this.requireAuthenticatedConsumerTransport(client)
+    return Object.freeze({
+      forNamespace: (namespace: TerminalSessionAuthorityPtyAccess['namespace']) => {
+        if (
+          this.clients.get(client.clientId) !== client ||
+          client.authorityConsumerTransport?.token !== transport.token
+        ) {
+          throw new Error('terminal authority consumer proof transport is stale')
+        }
+        const installed = client.authorityNamespaceSessions?.get(authorityNamespaceKey(namespace))
+        if (!installed) {
+          throw new Error('terminal authority namespace consumer is not installed')
+        }
+        installed.session.policyConsumer.assertInstalled(namespace)
+        return installed.session.policyConsumer
+      }
+    })
+  }
+
+  private publishAuthenticatedAuthorityEvent(
+    client: ConnectedClient,
+    namespaceId: string,
+    event: 'terminalAuthorityNamespaceOutcomeBoundary' | 'terminalAuthorityNamespaceOutcome',
+    payload:
+      | TerminalAuthorityNamespaceOutcomeBoundary
+      | TerminalAuthorityNamespaceOutcomePublication
+  ): Promise<void> {
+    this.requireAuthenticatedConsumerTransport(client)
+    const sessionId = `authority-outcomes:${namespaceId}`
+    return event === 'terminalAuthorityNamespaceOutcomeBoundary'
+      ? this.streamDataBatcher.enqueueSettledControlEvent(client.clientId, sessionId, {
+          type: 'event',
+          event,
+          sessionId,
+          payload: payload as TerminalAuthorityNamespaceOutcomeBoundary
+        })
+      : this.streamDataBatcher.enqueueSettledControlEvent(client.clientId, sessionId, {
+          type: 'event',
+          event,
+          sessionId,
+          payload: payload as TerminalAuthorityNamespaceOutcomePublication
+        })
+  }
+
+  private failAuthenticatedAuthorityNamespace(
+    client: ConnectedClient,
+    namespace: TerminalSessionAuthorityPtyAccess['namespace'],
+    _error: Error
+  ): void {
+    const key = authorityNamespaceKey(namespace)
+    const installed = client.authorityNamespaceSessions?.get(key)
+    if (!installed) {
+      return
+    }
+    client.authorityNamespaceSessions?.delete(key)
+    installed.acceptances.close()
+    installed.session.disconnect()
   }
 
   private setupControlSocket(socket: Socket, clientId: string): void {
@@ -679,6 +1118,8 @@ export class DaemonServer {
       // its daemon PTY, orphaning a durable, unattached session — cancel its preps (F4).
       this.cancelPendingPtySpawnPreparationsForClient(clientId)
       this.historySeedTransfers.clearOwner(clientId)
+      this.releaseHeldProducerPausesForClient(clientId)
+      this.releaseAuthenticatedPolicyTransport(client)
       const wasFullyAuthenticated = client.authenticatedPairEstablished
       this.streamDataBatcher.clear(clientId)
       client.streamSocket?.destroy()
@@ -718,6 +1159,8 @@ export class DaemonServer {
       // Why: a preflight that outlives its output channel would create an unattached daemon PTY.
       this.cancelPendingPtySpawnPreparationsForClient(client.clientId)
       this.streamDataBatcher.clear(client.clientId)
+      this.releaseHeldProducerPausesForClient(client.clientId)
+      this.releaseAuthenticatedPolicyTransport(client)
       client.streamSocket = null
     }
 
@@ -843,10 +1286,338 @@ export class DaemonServer {
     }
   }
 
+  private rememberHeldProducerPause(clientId: string, lease: HeldProducerPauseLease): void {
+    const leases = this.heldProducerPauseLeasesByClient.get(clientId) ?? new Map()
+    leases.set(heldProducerPauseLeaseKey(lease), lease)
+    this.heldProducerPauseLeasesByClient.set(clientId, leases)
+  }
+
+  private forgetHeldProducerPause(clientId: string, lease: HeldProducerPauseLease): void {
+    const leases = this.heldProducerPauseLeasesByClient.get(clientId)
+    if (!leases) {
+      return
+    }
+    leases.delete(heldProducerPauseLeaseKey(lease))
+    if (leases.size === 0) {
+      this.heldProducerPauseLeasesByClient.delete(clientId)
+    }
+  }
+
+  private releaseHeldProducerPausesForClient(clientId: string): void {
+    const leases = this.heldProducerPauseLeasesByClient.get(clientId)
+    this.heldProducerPauseLeasesByClient.delete(clientId)
+    if (!leases) {
+      return
+    }
+    const releasedSessions = new Set<string>()
+    for (const lease of leases.values()) {
+      const sessionKey = JSON.stringify([lease.sessionId, lease.incarnationId])
+      if (releasedSessions.has(sessionKey)) {
+        continue
+      }
+      releasedSessions.add(sessionKey)
+      this.host.releaseExactHeldProducerPauses(lease.sessionId, lease.incarnationId, clientId)
+    }
+  }
+
+  private forgetHeldProducerPausesForSession(sessionId: string, incarnationId: string): void {
+    for (const [clientId, leases] of this.heldProducerPauseLeasesByClient) {
+      for (const [key, lease] of leases) {
+        if (lease.sessionId === sessionId && lease.incarnationId === incarnationId) {
+          leases.delete(key)
+        }
+      }
+      if (leases.size === 0) {
+        this.heldProducerPauseLeasesByClient.delete(clientId)
+      }
+    }
+  }
+
+  private enqueueLegacyTransientFact(
+    sessionId: string,
+    fact: DaemonTransientFact,
+    exactClientId?: string
+  ): void {
+    const clientId = exactClientId ?? this.streamClientIdBySessionId.get(sessionId)
+    if (!clientId) {
+      return
+    }
+    this.streamDataBatcher.enqueueControlEvent(clientId, sessionId, {
+      type: 'event',
+      event: 'transientFact',
+      sessionId,
+      payload: fact
+    })
+  }
+
+  private recordAuthorityTransientFact(
+    sessionId: string,
+    access: TerminalSessionAuthorityPtyAccess,
+    fact: DaemonTransientFact
+  ): void {
+    const recording = this.host.recordSemanticOutcomeExact(sessionId, access, fact)
+    this.pendingAuthoritySemanticOutcomes.add(recording)
+    void recording.then(
+      () => this.pendingAuthoritySemanticOutcomes.delete(recording),
+      (error) => {
+        this.pendingAuthoritySemanticOutcomes.delete(recording)
+        this.log.log('terminal-session-authority-semantic-outcome-failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    )
+  }
+
   private async routeRequest(clientId: string, request: DaemonRequest): Promise<unknown> {
     const client = this.clients.get(clientId)
 
     switch (request.type) {
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_RESOLVE_NAMESPACE_REQUEST: {
+        this.requireAuthenticatedConsumerTransport(client)
+        const owner = this.terminalSessionAuthorityPtyOwner
+        const worktreeId = request.payload.worktreeId
+        if (!owner || typeof worktreeId !== 'string') {
+          throw new Error('terminal authority consumer namespace resolution is unavailable')
+        }
+        return await owner.resolvePolicyConsumerNamespace(worktreeId)
+      }
+
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_CHALLENGE_REQUEST: {
+        const transport = this.requireAuthenticatedConsumerTransport(client)
+        const owner = this.terminalSessionAuthorityPtyOwner
+        if (!owner) {
+          throw new Error('terminal authority consumer proof is unavailable')
+        }
+        return await owner.issuePolicyConsumerChallenge(request.payload, transport)
+      }
+
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_GRANT_REQUEST: {
+        const transport = this.requireAuthenticatedConsumerTransport(client)
+        const owner = this.terminalSessionAuthorityPtyOwner
+        const proof = parseTerminalAuthorityNamespaceAdmissionProof(request.payload)
+        if (!owner || !proof || !client) {
+          throw new Error('terminal authority consumer proof is unavailable')
+        }
+        const namespace = proof.challenge.namespace
+        const acceptances = new TerminalSessionAuthorityBoundaryAcceptances()
+        const pending: AuthenticatedAuthorityNamespacePreparation = {
+          active: true,
+          preparation: null,
+          acceptances,
+          requestId: proof.challenge.requestId,
+          namespace: Object.freeze({ ...namespace }),
+          connectionGrantId: proof.challenge.connectionGrantId,
+          consumer: Object.freeze({
+            consumerId: terminalAuthorityHostAppConsumerId(
+              namespace.authorityHostId,
+              Uint8Array.from(Buffer.from(proof.challenge.appPublicKeyB64, 'base64'))
+            ),
+            consumerIncarnationId: proof.challenge.candidateProcessIncarnationId
+          })
+        }
+        client.authorityPendingPreparations?.add(pending)
+        try {
+          pending.preparation = await owner.prepareAuthenticatedPolicyConsumerNamespace(
+            proof,
+            transport,
+            {
+              publishBoundary: async (boundary) => {
+                const accepted = acceptances.wait(boundary)
+                try {
+                  await this.publishAuthenticatedAuthorityEvent(
+                    client,
+                    namespace.namespaceId,
+                    'terminalAuthorityNamespaceOutcomeBoundary',
+                    boundary
+                  )
+                  await accepted
+                } catch (error) {
+                  acceptances.close(error instanceof Error ? error : new Error(String(error)))
+                  throw error
+                }
+              },
+              publishOutcome: (publication) =>
+                this.publishAuthenticatedAuthorityEvent(
+                  client,
+                  namespace.namespaceId,
+                  'terminalAuthorityNamespaceOutcome',
+                  publication
+                ),
+              onFailure: (error) =>
+                this.failAuthenticatedAuthorityNamespace(client, namespace, error)
+            }
+          )
+        } catch (error) {
+          pending.active = false
+          client.authorityPendingPreparations?.delete(pending)
+          acceptances.close()
+          throw error
+        }
+        if (
+          !pending.active ||
+          this.clients.get(clientId) !== client ||
+          client.authorityConsumerTransport?.token !== transport.token
+        ) {
+          pending.active = false
+          client.authorityPendingPreparations?.delete(pending)
+          acceptances.close()
+          await pending.preparation.rollback()
+          throw new Error('terminal authority consumer proof transport is unavailable')
+        }
+        const preparation = pending.preparation
+        try {
+          const session = await preparation.commit()
+          if (
+            !pending.active ||
+            this.clients.get(clientId) !== client ||
+            client.authorityConsumerTransport?.token !== transport.token
+          ) {
+            session.disconnect()
+            throw new Error('terminal authority consumer proof transport is unavailable')
+          }
+          const key = authorityNamespaceKey(namespace)
+          const existing = client.authorityNamespaceSessions?.get(key)
+          if (existing?.session === session) {
+            acceptances.close()
+          } else {
+            existing?.acceptances.close()
+            existing?.session.disconnect()
+            client.authorityNamespaceSessions?.set(key, Object.freeze({ session, acceptances }))
+          }
+          return preparation.grant
+        } catch (error) {
+          acceptances.close()
+          return await joinTerminalAuthorityRollbackFailure(error, () => preparation.rollback())
+        } finally {
+          client.authorityPendingPreparations?.delete(pending)
+          pending.active = false
+        }
+      }
+
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_CHALLENGE_REQUEST: {
+        const transport = this.requireAuthenticatedConsumerRetirementTransport(client)
+        const owner = this.terminalSessionAuthorityPtyOwner
+        const start = parseTerminalAuthorityConsumerRetirementStart(request.payload)
+        if (!owner || !start) {
+          throw new Error('terminal authority consumer retirement is unavailable')
+        }
+        return await owner.issuePolicyConsumerRetirementChallenge(start, transport)
+      }
+
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_REQUEST: {
+        const transport = this.requireAuthenticatedConsumerRetirementTransport(client)
+        const owner = this.terminalSessionAuthorityPtyOwner
+        const proof = parseTerminalAuthorityConsumerRetirementProof(request.payload)
+        if (!owner || !proof || !client) {
+          throw new Error('terminal authority consumer retirement is unavailable')
+        }
+        const result = await owner.retireAuthenticatedPolicyConsumer(proof, transport)
+        const key = authorityNamespaceKey(result.namespace)
+        const installed = client.authorityNamespaceSessions?.get(key)
+        if (installed?.session.grant.consumer.consumerId === result.consumerId) {
+          client.authorityNamespaceSessions?.delete(key)
+          installed.acceptances.close()
+          installed.session.disconnect()
+        }
+        return result
+      }
+
+      case DAEMON_TERMINAL_AUTHORITY_CONSUMER_CANCEL_REQUEST: {
+        const transport = this.requireAuthenticatedConsumerTransport(client)
+        const cancellation = parseTerminalAuthorityNamespaceAdmissionCancellation(request.payload)
+        if (
+          !client ||
+          !cancellation ||
+          cancellation.connectionGrantId !== transport.connectionGrantId
+        ) {
+          throw new Error('terminal authority namespace cancellation is unauthorized')
+        }
+        let canceled = false
+        for (const pending of client.authorityPendingPreparations ?? []) {
+          if (
+            sameAuthorityNamespace(pending.namespace, cancellation.namespace) &&
+            pending.requestId === cancellation.requestId &&
+            pending.connectionGrantId === cancellation.connectionGrantId &&
+            sameTerminalAuthorityPolicyConsumer(pending.consumer, cancellation.consumer)
+          ) {
+            client.authorityPendingPreparations?.delete(pending)
+            pending.active = false
+            pending.acceptances.close()
+            await pending.preparation?.rollback()
+            canceled = true
+          }
+        }
+        const key = authorityNamespaceKey(cancellation.namespace)
+        const installed = client.authorityNamespaceSessions?.get(key)
+        if (
+          installed &&
+          installed.session.grant.requestId === cancellation.requestId &&
+          sameTerminalAuthorityPolicyConsumer(
+            installed.session.grant.consumer,
+            cancellation.consumer
+          )
+        ) {
+          client.authorityNamespaceSessions?.delete(key)
+          installed.acceptances.close()
+          installed.session.disconnect()
+          canceled = true
+        }
+        return { canceled }
+      }
+
+      case 'acceptTerminalAuthorityNamespaceBoundary': {
+        const acceptance = parseTerminalAuthorityNamespaceBoundaryAcceptance(request.payload)
+        const authenticated = acceptance
+          ? client?.authorityNamespaceSessions?.get(authorityNamespaceKey(acceptance.namespace))
+          : undefined
+        const pending = acceptance
+          ? [...(client?.authorityPendingPreparations ?? [])].find(
+              (entry) =>
+                entry.active &&
+                sameAuthorityNamespace(entry.namespace, acceptance.namespace) &&
+                sameTerminalAuthorityPolicyConsumer(entry.consumer, acceptance.consumer)
+            )
+          : undefined
+        if (
+          acceptance &&
+          (pending ||
+            (authenticated &&
+              sameTerminalAuthorityPolicyConsumer(
+                authenticated.session.policyConsumer.identity,
+                acceptance.consumer
+              )))
+        ) {
+          ;(pending?.acceptances ?? authenticated!.acceptances).accept(acceptance)
+          return { acceptedBoundaryId: acceptance.boundaryId }
+        }
+        throw new Error('terminal authority namespace boundary acceptance is unauthorized')
+      }
+
+      case 'ackTerminalAuthorityNamespaceOutcome': {
+        const ack = parseTerminalAuthorityNamespaceOutcomeAck(request.payload)
+        const authenticated = ack
+          ? client?.authorityNamespaceSessions?.get(authorityNamespaceKey(ack.namespace))
+          : undefined
+        if (
+          ack &&
+          authenticated &&
+          sameTerminalAuthorityPolicyConsumer(
+            authenticated.session.policyConsumer.identity,
+            ack.consumer
+          )
+        ) {
+          return {
+            acknowledgedSequence: await authenticated.session.policyConsumer.acknowledge(ack)
+          }
+        }
+        throw new Error('terminal authority namespace outcome ACK is unauthorized')
+      }
+
+      case 'retireTerminalAuthorityPolicyConsumer': {
+        throw new Error('terminal authority policy consumer retirement is unsupported')
+      }
+
       case 'startHistorySeedTransfer': {
         if (!client?.authenticatedPairEstablished || client.streamSocket === null) {
           throw new Error('Daemon client connection is incomplete; reconnect')
@@ -880,10 +1651,39 @@ export class DaemonServer {
           // Why: a control-only replacement can't own terminal admission or erase the prior client's retirement request.
           throw new Error('Daemon client connection is incomplete; reconnect')
         }
-        this.createOrAttachInFlight++
         const p = request.payload
+        // Why proof is the only admission: a durable authority claim must resolve through an
+        // authenticated grant, never a consumer label the client picked for itself.
+        const authorityConsumer: TerminalAuthorityPolicyConsumerSource | null =
+          isDaemonConsumerProofGrant(client.capabilities?.terminalAuthorityConsumerProof) &&
+          client.authorityConsumerTransport !== undefined &&
+          this.terminalSessionAuthorityAdmissionReady()
+            ? this.authenticatedPolicyConsumerResolver(client)
+            : null
+        const authorityAdmitted = authorityConsumer !== null
+        if (hasTerminalSessionAuthorityCreateMetadata(p) && !authorityAdmitted) {
+          throw new Error('terminal_session_authority_unavailable')
+        }
+        this.createOrAttachInFlight++
         const attachOnly = p.attachOnly === true
+        const streamBindingNonce =
+          supportsPtyStreamBinding(this.protocolVersion) &&
+          isPtyStreamBindingNonce(p.streamBindingNonce)
+            ? p.streamBindingNonce
+            : null
         let routedSessionId = p.sessionId
+        let streamAuthorityAccess: TerminalSessionAuthorityPtyAccess | null | undefined
+        const routeTransientFact = (fact: DaemonTransientFact): void => {
+          const capturedAccess = streamAuthorityAccess
+          if (capturedAccess === undefined) {
+            throw new Error('terminal_session_authority_semantic_route_missing')
+          }
+          if (capturedAccess) {
+            this.recordAuthorityTransientFact(routedSessionId, capturedAccess, fact)
+          } else {
+            this.enqueueLegacyTransientFact(routedSessionId, fact, clientId)
+          }
+        }
         let result: Awaited<ReturnType<TerminalHost['createOrAttach']>>
         try {
           if (
@@ -927,13 +1727,51 @@ export class DaemonServer {
               ? { shellReadyTimeoutMs: p.shellReadyTimeoutMs }
               : {}),
             ...(p.agentSessionEnsure ? { agentSessionEnsure: p.agentSessionEnsure } : {}),
+            ...(p.terminalSessionAuthorityVersion !== undefined
+              ? { terminalSessionAuthorityVersion: p.terminalSessionAuthorityVersion }
+              : {}),
+            ...(p.terminalSessionAuthorityOperationId !== undefined
+              ? { terminalSessionAuthorityOperationId: p.terminalSessionAuthorityOperationId }
+              : {}),
+            ...(p.worktreeId !== undefined ? { worktreeId: p.worktreeId } : {}),
+            ...(p.paneKey !== undefined ? { paneKey: p.paneKey } : {}),
+            ...(p.paneGeneration !== undefined ? { paneGeneration: p.paneGeneration } : {}),
+            ...(p.terminalSessionAuthorityAccess !== undefined
+              ? { terminalSessionAuthorityAccess: p.terminalSessionAuthorityAccess }
+              : {}),
+            ...(authorityAdmitted ? { terminalSessionAuthorityNegotiated: true as const } : {}),
+            ...(authorityAdmitted
+              ? {
+                  terminalSessionAuthorityPolicyConsumer: authorityConsumer!
+                }
+              : {}),
             onSessionResolved: (sessionId) => {
               routedSessionId = sessionId
             },
             streamClient: {
+              onAuthorityAccess: (access) => {
+                streamAuthorityAccess = access
+              },
+              onIncarnation: (incarnationId) => {
+                this.streamClientIdBySessionId.set(routedSessionId, clientId)
+                this.streamDataBatcher.refreshSessionDroppability(routedSessionId)
+                if (streamBindingNonce) {
+                  this.streamDataBatcher.establishSessionSource(clientId, routedSessionId, {
+                    incarnationId,
+                    streamBindingNonce
+                  })
+                }
+                if (this.transientFactRelay.isBackgrounded(routedSessionId)) {
+                  this.streamDataBatcher.enqueueControlEvent(clientId, routedSessionId, {
+                    type: 'event',
+                    event: 'sessionBackgroundMarker',
+                    sessionId: routedSessionId,
+                    payload: { background: true }
+                  })
+                }
+              },
               onData: (data, rawLength = data.length, transformed = false, seq) => {
-                // Scan BEFORE enqueue: the batcher may drop this chunk, but its facts must be captured regardless.
-                this.transientFactRelay.onSessionData(routedSessionId, data)
+                this.transientFactRelay.onSessionData(routedSessionId, data, routeTransientFact)
                 const lastInputAt = this.lastInputAtBySessionId.get(routedSessionId)
                 const isInteractiveOutput =
                   data.length <= DaemonServer.INTERACTIVE_OUTPUT_MAX_CHARS &&
@@ -964,6 +1802,7 @@ export class DaemonServer {
                   sessionIdSuffix: routedSessionId.slice(-10)
                 })
                 this.transientFactRelay.onSessionExit(routedSessionId)
+                this.forgetHeldProducerPausesForSession(routedSessionId, incarnationId)
                 this.streamDataBatcher.refreshSessionDroppability(routedSessionId)
                 this.streamClientIdBySessionId.delete(routedSessionId)
                 this.lastInputAtBySessionId.delete(routedSessionId)
@@ -976,17 +1815,6 @@ export class DaemonServer {
           this.reevaluateIdleShutdown()
         }
         routedSessionId = result.agentSessionEnsure?.owner.ptyId ?? p.sessionId
-        this.streamClientIdBySessionId.set(routedSessionId, clientId)
-        this.streamDataBatcher.refreshSessionDroppability(routedSessionId)
-        // Why an attach-time marker: background resync can precede this attach, so scan suppression must start at the new stream's head.
-        if (this.transientFactRelay.isBackgrounded(routedSessionId)) {
-          this.streamDataBatcher.enqueueControlEvent(clientId, routedSessionId, {
-            type: 'event',
-            event: 'sessionBackgroundMarker',
-            sessionId: routedSessionId,
-            payload: { background: true }
-          })
-        }
         this.log.log(result.isNew ? 'session-created' : 'session-attached', {
           sessionId: routedSessionId,
           pid: result.pid
@@ -997,10 +1825,14 @@ export class DaemonServer {
           pid: result.pid,
           shellState: result.shellState,
           incarnationId: result.incarnationId,
+          ...(streamBindingNonce ? { streamBindingNonce } : {}),
           ...(result.launchAgent ? { launchAgent: result.launchAgent } : {}),
           wslDistro: result.wslDistro,
           ...(result.historySeeded !== undefined ? { historySeeded: result.historySeeded } : {}),
-          ...(result.agentSessionEnsure ? { agentSessionEnsure: result.agentSessionEnsure } : {})
+          ...(result.agentSessionEnsure ? { agentSessionEnsure: result.agentSessionEnsure } : {}),
+          ...(result.terminalSessionAuthorityAccess
+            ? { terminalSessionAuthorityAccess: result.terminalSessionAuthorityAccess }
+            : {})
         }
       }
 
@@ -1026,6 +1858,35 @@ export class DaemonServer {
         }
         return {}
 
+      case 'writeExact': {
+        const accepted =
+          typeof request.payload.data === 'string' &&
+          this.host.writeExact(
+            request.payload.sessionId,
+            request.payload.incarnationId,
+            request.payload.data
+          )
+        if (accepted) {
+          this.lastInputAtBySessionId.set(request.payload.sessionId, performance.now())
+        }
+        return { accepted }
+      }
+
+      case 'writeAuthorityExact': {
+        this.assertAuthorityPolicyAdmission(client, request.payload.authorityAccess)
+        const accepted =
+          typeof request.payload.data === 'string' &&
+          this.host.writeAuthorityExact(
+            request.payload.sessionId,
+            request.payload.authorityAccess,
+            request.payload.data
+          )
+        if (accepted) {
+          this.lastInputAtBySessionId.set(request.payload.sessionId, performance.now())
+        }
+        return { accepted }
+      }
+
       case 'resize':
         try {
           this.host.resize(request.payload.sessionId, request.payload.cols, request.payload.rows)
@@ -1037,11 +1898,71 @@ export class DaemonServer {
         }
         return {}
 
+      case 'resizeExact':
+        return {
+          accepted: this.host.resizeExact(
+            request.payload.sessionId,
+            request.payload.incarnationId,
+            request.payload.cols,
+            request.payload.rows
+          )
+        }
+
+      case 'resizeAuthorityExact':
+        this.assertAuthorityPolicyAdmission(client, request.payload.authorityAccess)
+        return {
+          accepted: this.host.resizeAuthorityExact(
+            request.payload.sessionId,
+            request.payload.authorityAccess,
+            request.payload.cols,
+            request.payload.rows
+          )
+        }
+
       case 'pausePty':
+        if (supportsExactHeldProducerPause(this.protocolVersion)) {
+          const pause = parseHeldProducerPausePayload(request.payload)
+          if (pause.mode === 'invalid') {
+            return { accepted: false }
+          }
+          if (pause.mode === 'exact') {
+            if (!client?.authenticatedPairEstablished || client.streamSocket === null) {
+              return { accepted: false }
+            }
+            const accepted = this.host.acquireExactHeldProducerPause(
+              pause.sessionId,
+              pause.incarnationId,
+              clientId,
+              pause.token
+            )
+            if (accepted) {
+              this.rememberHeldProducerPause(clientId, pause)
+            }
+            return { accepted }
+          }
+        }
         this.host.pauseProducer(request.payload.sessionId)
         return {}
 
       case 'resumePty':
+        if (supportsExactHeldProducerPause(this.protocolVersion)) {
+          const pause = parseHeldProducerPausePayload(request.payload)
+          if (pause.mode === 'invalid') {
+            return { accepted: false }
+          }
+          if (pause.mode === 'exact') {
+            const accepted = this.host.releaseExactHeldProducerPause(
+              pause.sessionId,
+              pause.incarnationId,
+              clientId,
+              pause.token
+            )
+            if (accepted) {
+              this.forgetHeldProducerPause(clientId, pause)
+            }
+            return { accepted }
+          }
+        }
         this.host.resumeProducer(request.payload.sessionId)
         return {}
 
@@ -1118,9 +2039,57 @@ export class DaemonServer {
         return {}
       }
 
+      case 'killExact': {
+        const accepted = await this.host.killExact(
+          request.payload.sessionId,
+          request.payload.incarnationId,
+          { immediate: request.payload.immediate }
+        )
+        if (accepted) {
+          this.lastInputAtBySessionId.delete(request.payload.sessionId)
+        }
+        return { accepted }
+      }
+
+      case 'killAuthorityExact': {
+        const policyConsumer = this.assertAuthorityPolicyAdmission(
+          client,
+          request.payload.authorityAccess
+        )
+        const accepted = await this.host.killAuthorityExact(
+          request.payload.sessionId,
+          request.payload.authorityAccess,
+          policyConsumer,
+          { immediate: request.payload.immediate }
+        )
+        if (accepted) {
+          this.lastInputAtBySessionId.delete(request.payload.sessionId)
+        }
+        return { accepted }
+      }
+
       case 'signal':
         this.host.signal(request.payload.sessionId, request.payload.signal)
         return {}
+
+      case 'signalExact':
+        return {
+          accepted: this.host.signalExact(
+            request.payload.sessionId,
+            request.payload.incarnationId,
+            request.payload.signal
+          )
+        }
+
+      case 'signalAuthorityExact':
+        this.assertAuthorityPolicyAdmission(client, request.payload.authorityAccess)
+        return {
+          accepted: this.host.signalAuthorityExact(
+            request.payload.sessionId,
+            request.payload.authorityAccess,
+            request.payload.signal
+          )
+        }
 
       case 'detach':
         // Note: detach token handling simplified — full impl would track tokens per client
@@ -1148,6 +2117,23 @@ export class DaemonServer {
       case 'clearScrollback':
         this.host.clearScrollback(request.payload.sessionId)
         return {}
+
+      case 'clearBufferExact':
+        return {
+          accepted: this.host.clearScrollbackExact(
+            request.payload.sessionId,
+            request.payload.incarnationId
+          )
+        }
+
+      case 'clearBufferAuthorityExact':
+        this.assertAuthorityPolicyAdmission(client, request.payload.authorityAccess)
+        return {
+          accepted: this.host.clearScrollbackAuthorityExact(
+            request.payload.sessionId,
+            request.payload.authorityAccess
+          )
+        }
 
       case 'listSessions':
         return { sessions: this.host.listSessions() }

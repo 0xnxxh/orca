@@ -19,8 +19,13 @@ import {
 } from './degraded-daemon-session-routing'
 import { DegradedDaemonFreshSpawnRouter } from './degraded-daemon-fresh-spawn-routing'
 import { DegradedDaemonOwnerRecovery } from './degraded-daemon-owner-recovery'
+import { reconcileDaemonPtyProviderInventory } from './daemon-pty-router-inventory'
+import { DaemonPtyExactOperationRouter } from './daemon-pty-router-exact-operations'
 
-export class DegradedDaemonPtyProvider implements IPtyProvider {
+export class DegradedDaemonPtyProvider
+  extends DaemonPtyExactOperationRouter
+  implements IPtyProvider
+{
   readonly isDegraded = true
 
   private current: DaemonPtyAdapter
@@ -39,6 +44,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     fallback: IPtyProvider
     probeCurrentDaemonSpawn?: () => Promise<boolean>
   }) {
+    super()
     this.current = opts.current
     this.legacy = opts.legacy
     this.fallback = opts.fallback
@@ -94,9 +100,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return mapped ? (mapped.hasPty?.(id) ?? true) : this.findProviderForExistingSession(id) !== null
   }
 
-  async probePtyLiveness(id: string): Promise<boolean | null> {
-    return await this.ownerRecovery.probe(id)
-  }
+  probePtyLiveness = (id: string): Promise<boolean | null> => this.ownerRecovery.probe(id)
 
   // Why: an unknown id cannot borrow listing authority from the fresh-spawn provider.
   providesAgentSessionOwnerListings = (ptyId: string): boolean =>
@@ -194,9 +198,16 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
     const results = await Promise.all(
-      this.allProviders().map((provider) => provider.listProcesses(opts))
+      this.allProviders().map(async (provider) => ({
+        provider,
+        processes: await provider.listProcesses(opts)
+      }))
     )
-    return results.flat()
+    return reconcileDaemonPtyProviderInventory(results, {
+      existingRouteIds: this.sessionProviders.keys(),
+      recordRoute: (id, owner) => this.ownerRecovery.recordRoute(id, owner),
+      forgetRoute: (id) => this.ownerRecovery.forgetRoute(id)
+    })
   }
 
   async getDefaultShell(): Promise<string> {
@@ -332,6 +343,10 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
       this.findProviderForExistingSession(sessionId) ??
       this.fallback
     )
+  }
+
+  protected exactProviderFor(sessionId: string): IPtyProvider | null {
+    return this.sessionProviders.get(sessionId) ?? null
   }
 
   private findProviderForExistingSession(sessionId: string): IPtyProvider | null {

@@ -39,15 +39,20 @@ export function makeMockConnection(capture: SftpWriteCapture): SshConnection {
       end: vi.fn(() => setTimeout(() => sftp.emit('close'), 0))
     })
   }
-  return {
-    canRunConcurrentExecCommands: vi.fn().mockReturnValue(false),
-    exec: vi.fn().mockResolvedValue({
-      on: vi.fn(),
-      stderr: { on: vi.fn() },
+  const exec = vi.fn().mockImplementation(async () => {
+    const channel = new EventEmitter()
+    const result = Object.assign(channel, {
+      stderr: new EventEmitter(),
       stdin: {},
       stdout: { on: vi.fn() },
       close: vi.fn()
-    }),
+    })
+    setTimeout(() => channel.emit('close'), 0)
+    return result
+  })
+  return {
+    canRunConcurrentExecCommands: vi.fn().mockReturnValue(false),
+    exec,
     sftp: vi.fn().mockImplementation(() => Promise.resolve(sftpCreate()))
   } as unknown as SshConnection
 }

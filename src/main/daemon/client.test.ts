@@ -8,6 +8,7 @@ import { DaemonClient } from './client'
 import { encodeNdjson, NDJSON_MAX_LINE_BYTES, NdjsonLineTooLongError } from './ndjson'
 import type { HelloMessage, DaemonRequest, DaemonEvent } from './types'
 import { getDaemonSocketPath } from './daemon-spawner'
+import { TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY } from './daemon-hello-protocol'
 
 function createTestDir(): string {
   return mkdtempSync(join(tmpdir(), 'daemon-client-test-'))
@@ -77,6 +78,8 @@ describe('DaemonClient', () => {
       appVersion?: string
       spawnerExecPath?: string
     }
+    helloCapabilities?: (role: 'control' | 'stream') => unknown
+    helloTail?: (role: 'control' | 'stream') => string
   }): Promise<void> {
     return new Promise((resolve) => {
       server = createServer((socket) => {
@@ -113,7 +116,7 @@ describe('DaemonClient', () => {
                 return
               }
               socket.write(
-                encodeNdjson({
+                `${encodeNdjson({
                   type: 'hello',
                   ok: true,
                   ...(!opts?.omitHelloIdentity
@@ -122,8 +125,11 @@ describe('DaemonClient', () => {
                           ? opts.helloIdentity(hello.role)
                           : { pid: 123, startedAtMs: 456, launchNonce: 'default-launch' }
                       }
+                    : {}),
+                  ...(opts?.helloCapabilities
+                    ? { capabilities: opts.helloCapabilities(hello.role) }
                     : {})
-                })
+                })}${opts?.helloTail?.(hello.role) ?? ''}`
               )
               if (hello.role === 'stream') {
                 opts?.onStreamHello?.(hello)
@@ -155,6 +161,115 @@ describe('DaemonClient', () => {
       expect(client.isConnected()).toBe(true)
       // Both control and stream sockets should have sent hello
       await waitFor(() => hellos.length > 0)
+      expect(hellos[0]?.capabilities).toBeUndefined()
+      expect(client.supportsTerminalSessionAuthority()).toBe(false)
+    })
+
+    it('enables terminal authority only after both sockets echo the exact capability', async () => {
+      const hellos: HelloMessage[] = []
+      await startMockDaemon({
+        onHello: (hello) => hellos.push(hello),
+        helloCapabilities: () => ({
+          terminalSessionAuthority: TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY
+        })
+      })
+      client = new DaemonClient({
+        socketPath,
+        tokenPath,
+        terminalSessionAuthorityConsumerProofReady: () => true
+      })
+
+      await client.ensureConnected()
+
+      expect(client.supportsTerminalSessionAuthority()).toBe(true)
+      expect(hellos).toHaveLength(2)
+      expect(
+        hellos.every(
+          (hello) =>
+            hello.capabilities?.terminalSessionAuthority ===
+            TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY
+        )
+      ).toBe(true)
+      client.disconnect()
+      expect(client.supportsTerminalSessionAuthority()).toBe(false)
+    })
+
+    it('preserves a stream event coalesced behind the hello response', async () => {
+      const event: DaemonEvent = {
+        type: 'event',
+        event: 'terminalAuthorityNamespaceOutcomeBoundary',
+        sessionId: 'authority-outcomes:namespace-a',
+        payload: {
+          version: 1,
+          consumer: {
+            consumerId: 'app-profile:client-test',
+            consumerIncarnationId: 'app-process:client-test'
+          },
+          namespace: { authorityHostId: 'host-a', namespaceId: 'namespace-a' },
+          acknowledgedSequence: 0,
+          outcomeHighWatermark: 0,
+          boundaryId: 'boundary-a',
+          consumerStart: 'new-at-tail'
+        }
+      }
+      await startMockDaemon({
+        helloTail: (role) => (role === 'stream' ? encodeNdjson(event) : '')
+      })
+      const received: unknown[] = []
+      client = new DaemonClient({ socketPath, tokenPath })
+      client.onEvent((value) => received.push(value))
+
+      await client.ensureConnected()
+
+      expect(received).toEqual([event])
+    })
+
+    it.each([34, 35])('keeps a version-only v%s daemon on the legacy path', async (version) => {
+      await startMockDaemon()
+      client = new DaemonClient({
+        socketPath,
+        tokenPath,
+        protocolVersion: version,
+        terminalSessionAuthorityConsumerProofReady: () => true
+      })
+
+      await client.ensureConnected()
+
+      expect(client.supportsTerminalSessionAuthority()).toBe(false)
+    })
+
+    it('ignores unsupported terminal authority capability values', async () => {
+      await startMockDaemon({
+        helloCapabilities: () => ({ terminalSessionAuthority: true })
+      })
+      client = new DaemonClient({
+        socketPath,
+        tokenPath,
+        terminalSessionAuthorityConsumerProofReady: () => true
+      })
+
+      await client.ensureConnected()
+
+      expect(client.supportsTerminalSessionAuthority()).toBe(false)
+    })
+
+    it('rejects disagreement between control and stream capabilities', async () => {
+      await startMockDaemon({
+        helloCapabilities: (role) =>
+          role === 'control'
+            ? { terminalSessionAuthority: TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY }
+            : {}
+      })
+      client = new DaemonClient({
+        socketPath,
+        tokenPath,
+        terminalSessionAuthorityConsumerProofReady: () => true
+      })
+
+      await expect(client.ensureConnected()).rejects.toThrow(
+        'Daemon capabilities changed during connection'
+      )
+      expect(client.supportsTerminalSessionAuthority()).toBe(false)
     })
 
     it('captures one matching endpoint identity from both authenticated sockets', async () => {

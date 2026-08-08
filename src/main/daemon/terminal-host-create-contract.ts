@@ -8,6 +8,8 @@ import type {
   AgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
+import type { TerminalAuthorityPolicyConsumerSource } from '../session-authority/terminal-session-authority-policy-consumers'
 
 export type CreateOrAttachOptions = {
   sessionId: string
@@ -33,9 +35,22 @@ export type CreateOrAttachOptions = {
     claim: AgentSessionExecutionClaim
     surface: AgentSessionSurfaceBinding
   }
+  terminalSessionAuthorityVersion?: number
+  terminalSessionAuthorityOperationId?: string
+  worktreeId?: string
+  paneKey?: string
+  paneGeneration?: number
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+  /** Set only from the authenticated daemon hello; never copied from an RPC payload. */
+  terminalSessionAuthorityNegotiated?: true
+  /** Exact authenticated daemon connection; never decoded from an RPC payload. */
+  terminalSessionAuthorityPolicyConsumer?: TerminalAuthorityPolicyConsumerSource
   streamClient: {
+    onAuthorityAccess?: (access: TerminalSessionAuthorityPtyAccess | null) => void
+    onIncarnation?: (incarnationId: PtyIncarnationId) => void
     onData: (data: string, rawLength?: number, transformed?: boolean, seq?: number) => void
     onExit: (code: number, incarnationId: PtyIncarnationId) => void
+    publishAuthorityExit?: (code: number | null, signal: string | null) => Promise<void>
   }
   /** Lets the daemon route output under the adopted owner's canonical id before
    *  attaching its stream callbacks. */
@@ -53,4 +68,18 @@ export type CreateOrAttachResult = {
   attachToken: symbol
   incarnationId: PtyIncarnationId
   agentSessionEnsure?: AgentSessionClaimedSpawnResult
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+}
+
+export function createOrAttachRequestsTerminalSessionAuthority(
+  options: CreateOrAttachOptions
+): boolean {
+  return (
+    options.terminalSessionAuthorityVersion !== undefined ||
+    options.terminalSessionAuthorityOperationId !== undefined ||
+    options.terminalSessionAuthorityAccess !== undefined ||
+    options.worktreeId !== undefined ||
+    options.paneKey !== undefined ||
+    options.paneGeneration !== undefined
+  )
 }

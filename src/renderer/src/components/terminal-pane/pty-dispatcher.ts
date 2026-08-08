@@ -13,7 +13,11 @@ import {
   drainPreHandlerPtyData,
   drainPreHandlerPtyExit
 } from './pty-pre-handler-buffer'
-import { deliverPtyExitToHandlers } from './pty-exit-delivery'
+import {
+  deliverPtyExitToHandlers,
+  registerPtyExitSidecar,
+  takePtyExitHandlers
+} from './pty-exit-delivery'
 import {
   clearReceivedPtyCharTotal,
   isPtyPushDeliveryBlackholed,
@@ -60,10 +64,6 @@ export type PtyDataMeta = {
 
 /** Sidecar PTY-data observers, invoked AFTER the primary handler so a side-effect-only watcher can't delay xterm rendering. */
 /** Per-PTY replay handlers on a dedicated pty:replay channel so the renderer can engage the replay guard and suppress xterm auto-replies. */
-const ptyExitSidecars = new Map<
-  string,
-  Set<(code: number, context: { hadPrimary: boolean }) => void>
->()
 export const ptyWriteUnavailableHandlers = new Map<string, () => void>()
 let ptyDispatcherAttached = false
 
@@ -182,32 +182,7 @@ function attachPtySecondaryPushListeners(unsubscribes: (() => void)[]): void {
       ptyReplayHandlers.get(payload.id)?.(payload.data)
     })
   )
-  unsubscribes.push(
-    window.api.pty.onExit((payload) => {
-      if (payload.preserveRendererBinding === true) {
-        // Why: host-initiated remote sleep has no requester transaction in this renderer; classify its ordered exit before pane cleanup runs.
-        markCommittedPtyShutdowns([payload.id])
-      }
-      // Why: main drops its accounting on exit; drop totals too so a reused id restarts at zero on both sides.
-      clearProcessedPtyCharTotal(payload.id)
-      clearReceivedPtyCharTotal(payload.id)
-      const sidecars = ptyExitSidecars.get(payload.id)
-      if (sidecars) {
-        ptyExitSidecars.delete(payload.id)
-      }
-      const primary = ptyExitHandlers.get(payload.id)
-      if (primary) {
-        // Why: one-shot owner — remove before invoking so a throwing callback can't stay registered for a duplicate exit.
-        ptyExitHandlers.delete(payload.id)
-      }
-      deliverPtyExitToHandlers({
-        ptyId: payload.id,
-        code: payload.code,
-        ...(primary ? { primary } : {}),
-        sidecars: sidecars ? Array.from(sidecars) : []
-      })
-    })
-  )
+  unsubscribes.push(window.api.pty.onExit(dispatchPtyExit))
   // Why: main probes on suspected lost ACKs; replying with processed totals lets it reconcile instead of resetting blindly.
   const unsubscribeResync = window.api.pty.onDeliveryResyncRequest?.((payload) => {
     window.api.pty.respondDeliveryResync?.({
@@ -222,27 +197,32 @@ function attachPtySecondaryPushListeners(unsubscribes: (() => void)[]): void {
   window.api.pty.rendererDispatcherReady?.()
 }
 
+function dispatchPtyExit(payload: {
+  id: string
+  code: number
+  incarnationId?: string
+  preserveRendererBinding?: boolean
+}): void {
+  const handlers = takePtyExitHandlers(payload.id)
+  if (payload.preserveRendererBinding === true) {
+    markCommittedPtyShutdowns([payload.id])
+  }
+  clearProcessedPtyCharTotal(payload.id)
+  clearReceivedPtyCharTotal(payload.id)
+  deliverPtyExitToHandlers({
+    ptyId: payload.id,
+    code: payload.code,
+    ...(payload.incarnationId ? { incarnationId: payload.incarnationId } : {}),
+    ...handlers
+  })
+}
+
 export function subscribeToPtyExit(
   ptyId: string,
-  watcher: (code: number, context: { hadPrimary: boolean }) => void
+  watcher: (code: number, context: { hadPrimary: boolean; incarnationId?: string }) => void
 ): () => void {
   ensurePtyDispatcher()
-  let set = ptyExitSidecars.get(ptyId)
-  if (!set) {
-    set = new Set()
-    ptyExitSidecars.set(ptyId, set)
-  }
-  set.add(watcher)
-  return () => {
-    const current = ptyExitSidecars.get(ptyId)
-    if (!current) {
-      return
-    }
-    current.delete(watcher)
-    if (current.size === 0) {
-      ptyExitSidecars.delete(ptyId)
-    }
-  }
+  return registerPtyExitSidecar(ptyId, watcher)
 }
 
 // ─── Eager PTY buffer for reconnection on restart ────────────────────

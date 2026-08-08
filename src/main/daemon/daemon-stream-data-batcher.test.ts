@@ -38,6 +38,50 @@ function nonSentinelWrites(streamSocket: { write: ReturnType<typeof vi.fn> }): P
 }
 
 describe('DaemonStreamDataBatcher', () => {
+  it('settles an exit only after prior session data reaches the stream sink', async () => {
+    const { batcher, streamSocket } = createBatcher()
+    const callbacks: ((error?: Error | null) => void)[] = []
+    streamSocket.write.mockImplementation((_line, callback) => {
+      if (typeof callback === 'function') {
+        callbacks.push(callback)
+      }
+      return true
+    })
+
+    batcher.enqueue('client-1', 'session-1', 'final output')
+    const settled = batcher.enqueueSettledControlEvent('client-1', 'session-1', {
+      type: 'event',
+      event: 'exit',
+      sessionId: 'session-1',
+      payload: { code: 0, incarnationId: 'incarnation-1' }
+    })
+
+    expect(nonSentinelWrites(streamSocket).map((entry) => entry.event)).toEqual(['data', 'exit'])
+    let completed = false
+    void settled.then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    callbacks.at(-1)?.()
+    await expect(settled).resolves.toBeUndefined()
+  })
+
+  it('rejects a pending settled event when its stream queue is cleared', async () => {
+    const { batcher, streamSocket } = createBatcher()
+    streamSocket.writableLength = 128 * 1024
+    const pending = batcher.enqueueSettledControlEvent('client-1', 'session-1', {
+      type: 'event',
+      event: 'exit',
+      sessionId: 'session-1',
+      payload: { code: 0 }
+    })
+
+    batcher.clear('client-1')
+
+    await expect(pending).rejects.toThrow('stream queue was cleared')
+  })
+
   it('coalesces background output before writing daemon stream events', () => {
     vi.useFakeTimers()
     try {
@@ -110,6 +154,41 @@ describe('DaemonStreamDataBatcher', () => {
       vi.advanceTimersByTime(2)
       expect(streamSocket.write).toHaveBeenCalledTimes(1)
       expect(String(streamSocket.write.mock.calls[0]?.[0])).toContain(`${pending}redraw`)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses per-session accounting without scanning the hot-path queue', () => {
+    vi.useFakeTimers()
+    try {
+      const { batcher } = createBatcher()
+      batcher.enqueue('client-1', 'session-1', 'bulk')
+      const pending = (
+        batcher as unknown as {
+          pendingByClient: Map<
+            string,
+            { queue: unknown[]; queuedCharsBySession: Map<string, number> }
+          >
+        }
+      ).pendingByClient.get('client-1')!
+      pending.queue = new Proxy(pending.queue, {
+        get(target, property, receiver) {
+          if (property === Symbol.iterator) {
+            throw new Error('hot-path queue scan')
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      })
+      pending.queuedCharsBySession.set('session-1', 2048)
+
+      expect(() =>
+        batcher.enqueue('client-1', 'session-1', 'echo', {
+          flushImmediately: true,
+          flushMaxChars: 1024
+        })
+      ).not.toThrow()
+      batcher.clear()
     } finally {
       vi.useRealTimers()
     }
@@ -495,6 +574,26 @@ describe('DaemonStreamDataBatcher', () => {
       expect(messages.map((m) => m.event)).toEqual(['data', 'transientFact', 'data'])
       expect(messages[0]?.payload.data).toBe('before')
       expect(messages[2]?.payload.data).toBe('after')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes one source marker between old and newly attached output', () => {
+    vi.useFakeTimers()
+    try {
+      const { batcher, streamSocket } = createBatcher()
+      batcher.enqueue('client-1', 'session-1', 'old')
+      batcher.establishSessionSource('client-1', 'session-1', {
+        incarnationId: 'inc-new',
+        streamBindingNonce: 'nonce-new'
+      })
+      batcher.enqueue('client-1', 'session-1', 'new')
+      vi.advanceTimersByTime(2)
+
+      const messages = nonSentinelWrites(streamSocket)
+      expect(messages.map((message) => message.event)).toEqual(['data', 'sessionSource', 'data'])
+      expect(messages.filter((message) => message.event === 'sessionSource')).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }

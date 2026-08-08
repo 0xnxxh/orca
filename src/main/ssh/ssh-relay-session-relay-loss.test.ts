@@ -4,11 +4,8 @@ import type { SshConnection } from './ssh-connection'
 import { SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD } from '../../shared/ssh-types'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
-// #11953: the grace-time notify is the last thing establish()/reconnect() do
-// before latching 'ready', and it can dispose the mux synchronously (writer
-// admission cap / throwing transport). Latching 'ready' there left the status
-// bar on "connected" with fs/pty/git providers bound to a dead mux and no
-// relay-loss watcher, so nothing ever scheduled a reconnect.
+// #11953: grace registration can dispose either mux synchronously (writer
+// admission cap / throwing transport). Never latch ready around a dead pair.
 
 const { muxRequestMock, openConsumerSessionMock, registeredPtyProvider } = vi.hoisted(() => ({
   muxRequestMock: vi.fn(),
@@ -40,21 +37,23 @@ vi.mock('./ssh-relay-deploy-helpers', () => ({
 }))
 
 // Mirrors the real multiplexer contract: dispose() latches, and a failed write
-// during notify disposes the mux synchronously via handleProtocolError.
+// during request disposes the mux synchronously via handleProtocolError.
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
     private disposed = false
     private disposeReason: string | null = null
     private disposeHandlers: ((reason: string) => void)[] = []
-    /** Set by the test to kill the channel from inside notify(). */
-    failNotifyMethod: string | null = null
-    notify = vi.fn((method: string) => {
-      if (method === this.failNotifyMethod) {
+    /** Set by the test to kill the channel from inside request(). */
+    failRequestMethod: string | null = null
+    notify = vi.fn()
+    request = vi.fn(async (method: string, ...args: unknown[]) => {
+      if (method === this.failRequestMethod) {
         this.dispose('connection_lost')
+        throw new Error('SSH connection lost, reconnecting...')
       }
+      return await muxRequestMock(method, ...args)
     })
     notifyWithSettlement = vi.fn()
-    request = muxRequestMock
     onNotification = vi.fn().mockReturnValue(() => {})
     onNotificationByMethod = vi.fn().mockReturnValue(() => {})
     onRequest = vi.fn().mockReturnValue(() => {})
@@ -107,6 +106,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue(registeredPtyProvider),
@@ -133,7 +133,7 @@ const { registerSshFilesystemProvider, unregisterSshFilesystemProvider } =
 const { getPtyIdsForConnection } = await import('../ipc/pty')
 
 describe('SshRelaySession relay loss during setup', () => {
-  /** Armed by a test so the *next* mux dies inside its grace-time notify. */
+  /** Armed by a test so the control mux dies inside its grace-time request. */
   let armGraceTimeFailure = false
   let armProviderRegistrationFailure = false
 
@@ -145,9 +145,12 @@ describe('SshRelaySession relay loss during setup', () => {
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
     registeredPtyProvider.attachForReconnect.mockReset().mockResolvedValue({})
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
-      mode: 'legacy-fallback',
-      clientInstanceId: options.clientInstanceId,
-      serverBuildId: 'test-relay-build'
+      state: {
+        mode: 'legacy-fallback' as const,
+        clientInstanceId: options.clientInstanceId,
+        serverBuildId: 'test-relay-build'
+      },
+      resumed: false
     }))
     mockDeploySuccess()
   })
@@ -164,14 +167,14 @@ describe('SshRelaySession relay loss during setup', () => {
     const onReady = vi.fn()
     session.setOnRelayLost(onRelayLost)
     session.setOnReady(onReady)
-    // Arm once the mux exists; every attempt issues requests before the notify.
+    // Arm once the pair exists; every attempt resolves home before registering grace.
     muxRequestMock.mockImplementation(async (method: string) => {
       const mux = session.getMux() as unknown as {
-        failNotifyMethod: string | null
+        failRequestMethod: string | null
         dispose: (reason: string) => void
       } | null
       if (mux && armGraceTimeFailure) {
-        mux.failNotifyMethod = SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD
+        mux.failRequestMethod = SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD
       }
       if (mux && armProviderRegistrationFailure && method === 'git.listWorktrees') {
         mux.dispose('connection_lost')
@@ -187,10 +190,10 @@ describe('SshRelaySession relay loss during setup', () => {
     armGraceTimeFailure = true
 
     await expect(session.establish({} as SshConnection)).rejects.toThrow(
-      'Relay connection lost during establish'
+      'SSH connection lost, reconnecting...'
     )
 
-    expect(registerSshFilesystemProvider).toHaveBeenCalledWith('target-1', expect.anything())
+    expect(registerSshFilesystemProvider).not.toHaveBeenCalled()
     expect(session.getState()).not.toBe('ready')
     expect(onReady).not.toHaveBeenCalled()
     expect(unregisterSshFilesystemProvider).toHaveBeenCalledWith('target-1')
@@ -230,6 +233,22 @@ describe('SshRelaySession relay loss during setup', () => {
     expect(onReady).not.toHaveBeenCalled()
     expect(onRelayLost).toHaveBeenCalledTimes(1)
     expect(unregisterSshFilesystemProvider).toHaveBeenCalledWith('target-1')
+  })
+
+  it('fences the provider stack and signals reconnect once when the gateway drops', async () => {
+    const { session, onRelayLost } = createSession()
+    await session.establish({} as SshConnection)
+    const mux = session.getMux() as unknown as {
+      dispose: (reason?: string) => void
+      isDisposed: () => boolean
+    }
+
+    mux.dispose('connection_lost')
+
+    expect(mux.isDisposed()).toBe(true)
+    expect(mux.dispose).toHaveBeenCalledTimes(1)
+    expect(onRelayLost).toHaveBeenCalledTimes(1)
+    expect(session.getMux()).toBeNull()
   })
 
   // #11953: reattachKnownPtys swallows every per-PTY failure, so a mux killed by the

@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store'
 import { callRuntimeRpc, type RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import { isTerminalTabPresent } from '@/store/slices/terminal-tab-retirement'
+import { killPtyAtCurrentIncarnation } from '@/lib/pty-administrative-mutations'
 
 export async function retireUnownedTerminal(args: {
   /** Present tab id, or `{ worktreeId }` for a launch whose tab is created after the spawn. */
@@ -37,7 +38,7 @@ export async function retireProvider(args: {
         terminal: args.runtimeTerminalHandle
       })
     } else if (args.runtimeTarget.kind === 'local') {
-      await window.api.pty.kill(args.ptyId)
+      await killPtyAtCurrentIncarnation(args.ptyId)
     }
   } catch {
     // Best-effort provider teardown; the retired tab must not be recreated.

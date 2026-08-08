@@ -2,6 +2,7 @@ import type { PtySpawnOptions } from './types'
 import type { RemoteCliBridgeEnv } from './ssh-pty-provider-contract'
 import { buildSshPtySpawnEnv } from './ssh-pty-spawn-env'
 import { PTY_STARTUP_INGRESS_VERSION } from '../../shared/pty-startup-ingress'
+import { TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION } from '../../shared/terminal-session-authority-wire'
 
 export function buildSshPtySpawnRequest(args: {
   options: PtySpawnOptions
@@ -32,6 +33,15 @@ export function buildSshPtySpawnRequest(args: {
       : {}),
     // Why: attach identity must survive even when hook variables are stripped from the shell env.
     ...(options.paneKey ? { paneKey: options.paneKey } : {}),
+    ...(options.worktreeId ? { worktreeId: options.worktreeId } : {}),
+    ...(options.paneGeneration !== undefined
+      ? {
+          terminalSessionAuthorityVersion: TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION,
+          paneGeneration: options.paneGeneration
+        }
+      : options.agentSessionEnsure
+        ? { terminalSessionAuthorityVersion: TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION }
+        : {}),
     ...(options.tabId ? { tabId: options.tabId } : {}),
     ...(options.startupIngress
       ? {

@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: repo slice owns local/runtime routing, add/remove/reorder side effects, and cross-slice teardown; splitting mid-refactor would obscure its invariants. */
 import type { StateCreator } from 'zustand'
 import { toast } from 'sonner'
+import { killPtyAtCurrentIncarnation } from '@/lib/pty-administrative-mutations'
 import type { AppState } from '../types'
 import type { SshRepoReadoption } from '../../../../shared/ssh-types'
 import type {
@@ -3354,7 +3355,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           killedTabIds.add(tab.id)
           for (const ptyId of get().ptyIdsByTabId[tab.id] ?? []) {
             if (!ptyId.startsWith('remote:')) {
-              window.api.pty.kill(ptyId)
+              killPtyAtCurrentIncarnation(ptyId)
             }
           }
         }

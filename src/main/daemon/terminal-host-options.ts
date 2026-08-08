@@ -2,6 +2,7 @@ import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery
 import type { TuiAgent } from '../../shared/types'
 import type { SubprocessHandle } from './session'
 import type { TakePendingOutputResult, TerminalSnapshot } from './types'
+import type { TerminalSessionAuthorityPtyOwner } from '../session-authority/terminal-session-authority-pty-owner'
 
 export type TerminalHostOptions = {
   spawnSubprocess: (opts: {
@@ -28,4 +29,9 @@ export type TerminalHostOptions = {
   ) => void
   // Why: tests need deterministic tombstone eviction without thousands of sessions.
   maxTombstones?: number
+  terminalSessionAuthority?: Readonly<{
+    ptyOwner: TerminalSessionAuthorityPtyOwner
+    authorityHostId?: string
+  }>
+  onTerminalSessionAuthorityFailure?: (error: Error) => void
 }

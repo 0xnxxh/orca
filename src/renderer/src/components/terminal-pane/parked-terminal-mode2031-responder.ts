@@ -22,7 +22,7 @@ import {
 } from '../../../../shared/terminal-color-scheme-protocol'
 import { useAppStore } from '@/store'
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
-import { subscribeToPtyData } from './pty-data-sidecar-subscriptions'
+import { hasPrimaryPtyDataHandler, subscribeToPtyData } from './pty-data-sidecar-subscriptions'
 
 export type ParkedTerminalMode2031ResponderOptions = {
   ptyId: string
@@ -36,6 +36,9 @@ export function startParkedTerminalMode2031Responder(
   const { ptyId, sendInput } = options
   let scanState = INITIAL_MODE_2031_REPLY_SCAN_STATE
   return subscribeToPtyData(ptyId, (data) => {
+    if (hasPrimaryPtyDataHandler(ptyId)) {
+      return
+    }
     const result = scanMode2031ReplyDecision(scanState, data)
     scanState = result.state
     if (result.decision !== 'subscribed') {

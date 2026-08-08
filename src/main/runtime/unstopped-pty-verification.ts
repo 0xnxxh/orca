@@ -53,7 +53,12 @@ export async function verifyUnstoppedPtys(
   }
   const livePtyIds = new Set(sessions.map((session) => session.id))
   const stillLive = failedPtyIds.filter((ptyId) => livePtyIds.has(ptyId))
-  return stillLive.length > 0 ? { status: 'live', ptyIds: stillLive } : { status: 'exited' }
+  return stillLive.length > 0
+    ? { status: 'live', ptyIds: stillLive }
+    : {
+        status: 'unverifiable',
+        reason: 'provider inventory omitted the PTY without an exact exit outcome'
+      }
 }
 
 /** Names the blocking PTYs so a wedged removal is diagnosable, not just refused. */

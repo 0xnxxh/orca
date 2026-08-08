@@ -74,7 +74,12 @@ const {
     onReplay: vi.fn(),
     attach: vi.fn(),
     attachForReconnect: vi.fn().mockResolvedValue({}),
+    listProcesses: vi.fn(),
+    getPtyMutationRouteToken: vi.fn(),
+    killExact: vi.fn(),
+    killAuthorityExact: vi.fn(),
     shutdown: vi.fn(),
+    mutationRouteToken: Object.freeze({}) as object,
     providerGeneration: 0
   },
   mockFsProvider: {},
@@ -175,7 +180,7 @@ vi.mock('../ssh/ssh-relay-reset', () => ({
 vi.mock('../ssh/ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
     constructor() {
-      return mockMux
+      return Object.create(mockMux)
     }
   }
 }))
@@ -207,6 +212,7 @@ vi.mock('./pty', () => ({
   deletePtyOwnership: vi.fn(),
   setPtyOwnership: vi.fn(),
   getSshPtyProvider: vi.fn(),
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   getPtyIdsForConnection: vi.fn().mockReturnValue([]),
   isCurrentPtyExit: vi.fn().mockReturnValue(true),
   isRendererPtyOutputPaused: vi.fn().mockReturnValue(false)
@@ -275,6 +281,7 @@ import {
   type SshTarget
 } from '../../shared/ssh-types'
 import { PTY_CONSUMER_SESSION_PROTOCOL_VERSION } from '../../shared/pty-consumer-session'
+import { PTY_EXACT_OPERATION_PROTOCOL_VERSION } from '../../shared/pty-exact-operation-protocol'
 import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 import type { SshPtyDataCallback } from '../providers/ssh-pty-provider-contract'
 import {
@@ -310,7 +317,9 @@ describe('SSH IPC handlers', () => {
     markSshRemotePtyLeasesAsync: vi.fn(),
     markSshRemotePtyLeasesForShutdown: vi.fn(),
     markSshRemotePtyLeasesAttachedAsync: vi.fn(),
-    removeSshRemotePtyLeases: vi.fn()
+    removeSshRemotePtyLeases: vi.fn(),
+    requestSshRemotePtyClose: vi.fn().mockReturnValue('recorded'),
+    clearSshRemotePtyCloseRequest: vi.fn().mockReturnValue(true)
   }
   const mockWindow = {
     isDestroyed: () => false,
@@ -347,6 +356,7 @@ describe('SSH IPC handlers', () => {
   const createRelayLaunchResult = () => ({
     transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
     platform: 'linux-x64',
+    terminalAuthorityOwnerBuildId: relayBuildId,
     serverBuildId: relayBuildId
   })
   const getLatestRelayDisposeCallback = (): RelayDisposeCallback => {
@@ -390,6 +400,8 @@ describe('SSH IPC handlers', () => {
     mockStore.markSshRemotePtyLeasesAttachedAsync.mockReset()
     mockStore.removeSshRemotePtyLeases.mockReset()
     mockStore.upsertSshPtyConsumerRecovery.mockReset()
+    mockStore.requestSshRemotePtyClose.mockReset().mockReturnValue('recorded')
+    mockStore.clearSshRemotePtyCloseRequest.mockReset().mockReturnValue(true)
 
     mockConnectionManager.connect.mockReset()
     mockConnectionManager.disconnect.mockReset()
@@ -407,6 +419,7 @@ describe('SSH IPC handlers', () => {
     mockDeployAndLaunchRelay.mockReset().mockResolvedValue({
       transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
       platform: 'linux-x64',
+      terminalAuthorityOwnerBuildId: relayBuildId,
       serverBuildId: relayBuildId
     })
     mockMux.dispose.mockReset()
@@ -426,7 +439,11 @@ describe('SSH IPC handlers', () => {
               ownerLease: 'ipc-test-owner',
               resumed: false,
               capabilities: {
-                outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
+                outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU },
+                exactOperations: { version: PTY_EXACT_OPERATION_PROTOCOL_VERSION },
+                terminalAuthorityExactOperations: { version: 1 },
+                terminalAuthorityOutcomeDelivery: { version: 1 },
+                terminalAuthorityTopology: { version: 1 }
               }
             }
           : {}
@@ -438,6 +455,37 @@ describe('SSH IPC handlers', () => {
     mockPtyProvider.onReplay.mockReset()
     mockPtyProvider.attachForReconnect.mockReset().mockResolvedValue({})
     mockPtyProvider.shutdown.mockReset()
+    mockPtyProvider.mutationRouteToken = Object.freeze({})
+    mockPtyProvider.getPtyMutationRouteToken
+      .mockReset()
+      .mockImplementation(() => mockPtyProvider.mutationRouteToken)
+    mockPtyProvider.listProcesses.mockReset().mockImplementation(async () => {
+      const ids = new Set([
+        ...vi.mocked(getPtyIdsForConnection)('ssh-1'),
+        ...mockStore
+          .getSshRemotePtyLeases('ssh-1')
+          .filter((lease) => lease.state !== 'terminated')
+          .map((lease) => lease.ptyId)
+      ])
+      return [...ids].map((id) => {
+        const relayPtyId = id.startsWith('ssh:') ? id.split('@@').slice(1).join('@@') : id
+        const lease = mockStore
+          .getSshRemotePtyLeases('ssh-1')
+          .find((candidate) => candidate.ptyId === relayPtyId)
+        return {
+          id: `ssh:ssh-1@@${relayPtyId}`,
+          incarnationId: lease?.incarnationId ?? `incarnation:${relayPtyId}`,
+          mutationRouteToken: mockPtyProvider.mutationRouteToken,
+          cwd: '/remote',
+          title: 'shell'
+        }
+      })
+    })
+    mockPtyProvider.killExact.mockReset().mockImplementation(async (id, _incarnationId, opts) => {
+      await mockPtyProvider.shutdown(id, opts)
+      return true
+    })
+    mockPtyProvider.killAuthorityExact.mockReset().mockResolvedValue(true)
     mockPtyProvider.providerGeneration = 0
     mockRegisterSshGitProvider.mockReset()
     mockPortForwardManager.addForward.mockReset()
@@ -451,7 +499,9 @@ describe('SSH IPC handlers', () => {
     mockPortForwardManager.callbacksRef.current = null
     powerMonitorOnMock.mockReset()
     powerMonitorOffMock.mockReset()
-    vi.mocked(getSshPtyProvider).mockReset()
+    vi.mocked(getSshPtyProvider)
+      .mockReset()
+      .mockReturnValue(mockPtyProvider as never)
     vi.mocked(getPtyIdsForConnection).mockReset().mockReturnValue([])
     vi.mocked(clearProviderPtyState).mockReset()
     vi.mocked(deletePtyOwnership).mockReset()
@@ -1026,6 +1076,7 @@ describe('SSH IPC handlers', () => {
     }
     mockDeployAndLaunchRelay.mockResolvedValueOnce({
       transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
+      terminalAuthorityOwnerBuildId: relayBuildId,
       serverBuildId: relayBuildId,
       hostPlatform
     })
@@ -2661,11 +2712,29 @@ describe('SSH IPC handlers', () => {
   })
 
   it('ssh:terminateSessions cannot reach expired leases without a relay', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockResolvedValue({})
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
     mockStore.getSshRemotePtyLeases.mockReturnValue([
       { targetId: 'ssh-1', ptyId: 'pty-expired', state: 'expired' }
     ])
-    vi.mocked(getSshPtyProvider).mockReturnValue(undefined)
+    vi.mocked(getSshPtyProvider).mockReturnValue(mockPtyProvider as never)
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+    vi.mocked(getSshPtyProvider).mockReturnValue(undefined)
 
     await expect(
       handlers.get('ssh:terminateSessions')!(null, { targetId: 'ssh-1' })
@@ -2712,7 +2781,7 @@ describe('SSH IPC handlers', () => {
     )
   })
 
-  it('ssh:terminateSessions tombstones an expired lease the relay reports gone', async () => {
+  it('ssh:terminateSessions preserves an expired lease when the relay reports not found', async () => {
     const target: SshTarget = {
       id: 'ssh-1',
       label: 'Server',
@@ -2736,13 +2805,16 @@ describe('SSH IPC handlers', () => {
     mockPtyProvider.shutdown.mockRejectedValue(new Error('PTY "pty-abandoned" not found'))
 
     await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
-    await handlers.get('ssh:terminateSessions')!(null, { targetId: 'ssh-1' })
+    await expect(
+      handlers.get('ssh:terminateSessions')!(null, { targetId: 'ssh-1' })
+    ).rejects.toThrow('PTY "pty-abandoned" not found')
 
-    expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
+    expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
       'ssh-1',
       'pty-abandoned',
       'terminated'
     )
+    expect(mockConnectionManager.disconnect).not.toHaveBeenCalledWith('ssh-1')
   })
 
   it('ssh:terminateSessions leaves leases it already proved terminated alone', async () => {
@@ -3260,7 +3332,7 @@ describe('SSH IPC handlers', () => {
     })
 
     await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
-    mockMux.notify.mockClear()
+    mockMux.request.mockClear()
 
     const suspendListener = powerMonitorOnMock.mock.calls.find(
       ([event]) => event === 'suspend'
@@ -3269,9 +3341,11 @@ describe('SSH IPC handlers', () => {
 
     suspendListener()
 
-    expect(mockMux.notify).toHaveBeenCalledWith(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, {
-      graceTimeSeconds: 0
-    })
+    await vi.waitFor(() =>
+      expect(mockMux.request).toHaveBeenCalledWith(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, {
+        graceTimeSeconds: 0
+      })
+    )
   })
 
   it('ssh:resetRelay expires active-session leases instead of marking them terminated', async () => {

@@ -109,6 +109,29 @@ import type {
 } from '../shared/types'
 import type { PtyModelRestoreNeededEvent } from '../shared/pty-model-restore-marker'
 import type { PtyListedSession } from '../shared/pty-listed-session'
+import {
+  TERMINAL_AUTHORITY_APP_PROJECTION_CLEAR_BELL,
+  TERMINAL_AUTHORITY_APP_PROJECTION_EVENT,
+  TERMINAL_AUTHORITY_APP_PROJECTION_SUBSCRIBE,
+  type TerminalAuthorityAppBellClearRequest,
+  type TerminalAuthorityAppProjectionDelta,
+  type TerminalAuthorityAppProjectionSnapshot,
+  type TerminalAuthorityAppProjectionSubscribe
+} from '../shared/terminal-authority-app-projection'
+import {
+  parseTerminalAuthorityAppProjectionDelta,
+  parseTerminalAuthorityAppProjectionSnapshot
+} from '../shared/terminal-authority-app-projection-validation'
+import type {
+  PtyAdministrativeMutationAccess,
+  PtyMutationAccess,
+  PtyMutationClaimant,
+  PtyMutationIdentity
+} from '../shared/pty-mutation-identity'
+import type {
+  PtyRendererBindingCancel,
+  PtyRendererBindingReady
+} from '../shared/pty-renderer-binding'
 import type {
   PtyRendererDeliveryHealthReply,
   PtyRendererDeliveryStateReport
@@ -945,6 +968,8 @@ const api = {
       // Why: closes the SIGKILL race (INVESTIGATION.md) — main sync-flushes the (worktreeId, tabId, leafId → ptyId) binding before pty:spawn returns.
       tabId?: string
       leafId?: string
+      tabGeneration?: number
+      mutationClaimant?: PtyMutationClaimant
       // Why: loose typing on purpose — renderer owns launch metadata, main owns whether the launch happened and validates (telemetry-plan.md §Agent launch semantics).
       telemetry?: { agent_kind: AgentKind; launch_source: LaunchSource; request_kind: RequestKind }
     }): Promise<{
@@ -960,13 +985,59 @@ const api = {
       coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
       agentResumeUnavailable?: true
+      mutationAccess?: PtyMutationAccess
+      administrativeMutationAccess?: PtyAdministrativeMutationAccess
     }> => ipcRenderer.invoke('pty:spawn', opts),
 
-    write: (id: string, data: string): void => {
-      ipcRenderer.send('pty:write', { id, data })
+    claimMutationAccess: (args: {
+      id: string
+      tabId: string
+      leafId: string
+      paneGeneration: number
+      claimant: PtyMutationClaimant
+    }): Promise<PtyMutationAccess> => ipcRenderer.invoke('pty:claimMutationAccess', args),
+    rendererBindingReady: (args: PtyRendererBindingReady): void => {
+      ipcRenderer.send('pty:rendererBindingReady', args)
     },
-    writeAccepted: (id: string, data: string): Promise<boolean> =>
-      ipcRenderer.invoke('pty:writeAccepted', { id, data }),
+    cancelRendererBinding: (args: PtyRendererBindingCancel): void => {
+      ipcRenderer.send('pty:cancelRendererBinding', args)
+    },
+    captureAdministrativeMutationAccess: (
+      ids: string[]
+    ): Promise<{ id: string; access: PtyAdministrativeMutationAccess }[]> =>
+      ipcRenderer.invoke('pty:captureAdministrativeMutationAccess', { ids }),
+
+    write: (id: string, data: string, mutationIdentity?: PtyMutationIdentity): void => {
+      ipcRenderer.send('pty:write', { id, data, mutationIdentity })
+    },
+    writeAccepted: (
+      id: string,
+      data: string,
+      mutationIdentity?: PtyMutationIdentity
+    ): Promise<boolean> => ipcRenderer.invoke('pty:writeAccepted', { id, data, mutationIdentity }),
+    administrativeWriteCurrent: (id: string, data: string): void => {
+      ipcRenderer.send('pty:write', { id, data, administrativeCurrent: true })
+    },
+    administrativeWriteCurrentAccepted: (id: string, data: string): Promise<boolean> =>
+      ipcRenderer.invoke('pty:writeAccepted', { id, data, administrativeCurrent: true }),
+    administrativeWriteImmediateCurrent: (id: string, data: string): void => {
+      ipcRenderer.send('pty:write', { id, data, administrativeImmediateCurrent: true })
+    },
+    administrativeWriteImmediateCurrentAccepted: (id: string, data: string): Promise<boolean> =>
+      ipcRenderer.invoke('pty:writeAccepted', { id, data, administrativeImmediateCurrent: true }),
+    administrativeWrite: (
+      id: string,
+      data: string,
+      access: PtyAdministrativeMutationAccess
+    ): void => {
+      ipcRenderer.send('pty:write', { id, data, administrativeAccess: access })
+    },
+    administrativeWriteAccepted: (
+      id: string,
+      data: string,
+      access: PtyAdministrativeMutationAccess
+    ): Promise<boolean> =>
+      ipcRenderer.invoke('pty:writeAccepted', { id, data, administrativeAccess: access }),
     onWriteUnavailable: (callback: (payload: { id: string }) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: { id: string }): void =>
         callback(payload)
@@ -974,11 +1045,21 @@ const api = {
       return () => ipcRenderer.removeListener('pty:writeUnavailable', handler)
     },
 
-    resize: (id: string, cols: number, rows: number): void => {
-      ipcRenderer.send('pty:resize', { id, cols, rows })
+    resize: (
+      id: string,
+      cols: number,
+      rows: number,
+      mutationIdentity?: PtyMutationIdentity
+    ): void => {
+      ipcRenderer.send('pty:resize', { id, cols, rows, mutationIdentity })
     },
-    claimViewport: (id: string, cols: number, rows: number): void => {
-      ipcRenderer.send('pty:claimViewport', { id, cols, rows })
+    claimViewport: (
+      id: string,
+      cols: number,
+      rows: number,
+      mutationIdentity?: PtyMutationIdentity
+    ): void => {
+      ipcRenderer.send('pty:claimViewport', { id, cols, rows, mutationIdentity })
     },
 
     /** Why: measurement-only sibling of resize — keeps the runtime's restore-target baseline fresh while a mobile-fit override blocks pty:resize. Never resizes the PTY. See docs/mobile-fit-hold.md. */
@@ -986,13 +1067,13 @@ const api = {
       ipcRenderer.send('pty:reportGeometry', { id, cols, rows })
     },
 
-    signal: (id: string, signal: string): void => {
-      ipcRenderer.send('pty:signal', { id, signal })
+    signal: (id: string, signal: string, mutationIdentity?: PtyMutationIdentity): void => {
+      ipcRenderer.send('pty:signal', { id, signal, mutationIdentity })
     },
 
     /** Why: Cmd/Ctrl+K clears the renderer xterm, but the PTY host keeps its own screen state and would repaint the next prompt at the stale cursor row. */
-    clearBuffer: (id: string): void => {
-      ipcRenderer.send('pty:clearBuffer', { id })
+    clearBuffer: (id: string, mutationIdentity?: PtyMutationIdentity): void => {
+      ipcRenderer.send('pty:clearBuffer', { id, mutationIdentity })
     },
 
     ackColdRestore: (id: string): void => {
@@ -1048,8 +1129,31 @@ const api = {
       ipcRenderer.send('pty:terminalViewAttributes', attributes)
     },
 
-    kill: (id: string, opts?: { keepHistory?: boolean }): Promise<void> =>
-      ipcRenderer.invoke('pty:kill', { id, keepHistory: opts?.keepHistory ?? false }),
+    kill: (
+      id: string,
+      opts?: { keepHistory?: boolean; mutationIdentity?: PtyMutationIdentity }
+    ): Promise<void> =>
+      ipcRenderer.invoke('pty:kill', {
+        id,
+        keepHistory: opts?.keepHistory ?? false,
+        mutationIdentity: opts?.mutationIdentity
+      }),
+    administrativeKillCurrent: (id: string, opts?: { keepHistory?: boolean }): Promise<void> =>
+      ipcRenderer.invoke('pty:kill', {
+        id,
+        keepHistory: opts?.keepHistory ?? false,
+        administrativeCurrent: true
+      }),
+    administrativeKill: (
+      id: string,
+      access: PtyAdministrativeMutationAccess,
+      opts?: { keepHistory?: boolean }
+    ): Promise<void> =>
+      ipcRenderer.invoke('pty:kill', {
+        id,
+        keepHistory: opts?.keepHistory ?? false,
+        administrativeAccess: access
+      }),
 
     listSessions: (): Promise<PtyListedSession[]> => ipcRenderer.invoke('pty:listSessions'),
     getAuthoritativeBufferSnapshotCapabilities: (
@@ -1181,15 +1285,56 @@ const api = {
       return () => ipcRenderer.removeListener('pty:sideEffect', listener)
     },
 
+    onAuthorityProjection: (
+      callback: (delta: TerminalAuthorityAppProjectionDelta) => void
+    ): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+        const delta = parseTerminalAuthorityAppProjectionDelta(value)
+        if (delta) {
+          callback(delta)
+        }
+      }
+      ipcRenderer.on(TERMINAL_AUTHORITY_APP_PROJECTION_EVENT, listener)
+      return () => ipcRenderer.removeListener(TERMINAL_AUTHORITY_APP_PROJECTION_EVENT, listener)
+    },
+
+    subscribeAuthorityProjection: async (
+      request: TerminalAuthorityAppProjectionSubscribe
+    ): Promise<TerminalAuthorityAppProjectionSnapshot> => {
+      const value = await ipcRenderer.invoke(TERMINAL_AUTHORITY_APP_PROJECTION_SUBSCRIBE, request)
+      const snapshot = parseTerminalAuthorityAppProjectionSnapshot(value)
+      if (!snapshot) {
+        throw new Error('terminal_authority_projection_snapshot_invalid')
+      }
+      return snapshot
+    },
+
+    clearAuthorityProjectionBell: (
+      request: TerminalAuthorityAppBellClearRequest
+    ): Promise<boolean> =>
+      ipcRenderer.invoke(TERMINAL_AUTHORITY_APP_PROJECTION_CLEAR_BELL, request),
+
     /** Title-only replay snapshot on (re)attach — attention facts (bells/completions) never replay. */
     getSideEffectSnapshot: (id: string): Promise<TerminalSideEffectBatch | null> =>
       ipcRenderer.invoke('pty:sideEffectSnapshot', { id }),
 
     onExit: (
-      callback: (data: { id: string; code: number; preserveRendererBinding?: boolean }) => void
+      callback: (data: {
+        id: string
+        code: number
+        incarnationId?: string
+        preserveRendererBinding?: boolean
+      }) => void
     ): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { id: string; code: number }) =>
-        callback(data)
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          id: string
+          code: number
+          incarnationId?: string
+          preserveRendererBinding?: boolean
+        }
+      ) => callback(data)
       ipcRenderer.on('pty:exit', listener)
       return () => ipcRenderer.removeListener('pty:exit', listener)
     },
@@ -1219,9 +1364,13 @@ const api = {
       return () => ipcRenderer.removeListener('pty:serializeBuffer:request', listener)
     },
 
-    onClearBufferRequest: (callback: (data: { ptyId: string }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { ptyId: string }) =>
-        callback(data)
+    onClearBufferRequest: (
+      callback: (data: { ptyId: string; incarnationId?: string; paneGeneration?: number }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { ptyId: string; incarnationId?: string; paneGeneration?: number }
+      ) => callback(data)
       ipcRenderer.on('pty:clearBuffer:request', listener)
       return () => ipcRenderer.removeListener('pty:clearBuffer:request', listener)
     },
@@ -4726,6 +4875,11 @@ const api = {
 
     revokeRuntimeAccess: (args: { deviceId: string }): Promise<{ revoked: boolean }> =>
       ipcRenderer.invoke('mobile:revokeRuntimeAccess', args),
+
+    getIdentityResetStatus: () => ipcRenderer.invoke('mobile:getIdentityResetStatus'),
+
+    resetIdentity: (): Promise<{ phase: 're-enrollment'; transactionId: string }> =>
+      ipcRenderer.invoke('mobile:resetIdentity'),
 
     isWebSocketReady: (): Promise<{ ready: boolean; endpoint: string | null }> =>
       ipcRenderer.invoke('mobile:isWebSocketReady'),

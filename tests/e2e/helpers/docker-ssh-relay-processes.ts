@@ -10,6 +10,14 @@ export type DockerSshRelayProcessSnapshot = {
   relayDir: string
 }
 
+export type DockerSshRelayDaemonRole = 'control-adapter' | 'terminal-authority' | 'legacy-combined'
+
+export type DockerSshRelayDaemonSnapshot = DockerSshRelayProcessSnapshot & {
+  role: DockerSshRelayDaemonRole
+  socketPath: string
+  authorityProcessToken?: string
+}
+
 export type DockerSshRelayArtifactState = {
   installComplete: boolean
   relayWatcher: boolean
@@ -20,6 +28,9 @@ type RelayProcessRow = {
   pid: number
   parentPid: number
   cwd: string
+  role: DockerSshRelayDaemonRole | null
+  socketPath: string | null
+  authorityProcessToken: string | null
 }
 
 const LIST_RELAY_PROCESSES_COMMAND = `
@@ -38,10 +49,24 @@ for proc in /proc/[0-9]*; do
     done
   fi
   [ -n "$type" ] || continue
+  role=-
+  socket=-
+  token=-
+  if [ "$type" = relay ]; then
+    role=legacy-combined
+    for ((i=2; i<\${#argv[@]}; i++)); do
+      case "\${argv[$i]}" in
+        --control-adapter) role=control-adapter ;;
+        --terminal-authority) role=terminal-authority ;;
+        --sock-path) i=$((i+1)); socket="\${argv[$i]:--}" ;;
+        --authority-process-token) i=$((i+1)); token="\${argv[$i]:--}" ;;
+      esac
+    done
+  fi
   pid="\${proc##*/}"
   ppid="$(awk '/^PPid:/{print $2}' "$proc/status" 2>/dev/null)"
   cwd="$(readlink "$proc/cwd" 2>/dev/null)"
-  printf '%s\\t%s\\t%s\\t%s\\n' "$type" "$pid" "$ppid" "$cwd"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$type" "$pid" "$ppid" "$cwd" "$role" "$socket" "$token"
 done
 `
 
@@ -50,7 +75,8 @@ function parseRelayProcessRows(output: string): RelayProcessRow[] {
     return []
   }
   return output.split('\n').map((line) => {
-    const [type, rawPid, rawParentPid, cwd] = line.split('\t')
+    const [type, rawPid, rawParentPid, cwd, rawRole, rawSocketPath, rawProcessToken] =
+      line.split('\t')
     // Why: Number('') is 0, so empty pid/ppid (e.g. vanished /proc status) must
     // throw and let expect.poll retry instead of accepting parentPid: 0.
     const pid = Number(rawPid)
@@ -67,8 +93,73 @@ function parseRelayProcessRows(output: string): RelayProcessRow[] {
     ) {
       throw new Error(`Unexpected Docker SSH relay process row: ${line}`)
     }
-    return { type, pid, parentPid, cwd }
+    const role = rawRole === '-' ? null : rawRole
+    if (
+      role !== null &&
+      role !== 'control-adapter' &&
+      role !== 'terminal-authority' &&
+      role !== 'legacy-combined'
+    ) {
+      throw new Error(`Unexpected Docker SSH relay role: ${line}`)
+    }
+    return {
+      type,
+      pid,
+      parentPid,
+      cwd,
+      role,
+      socketPath: rawSocketPath === '-' ? null : rawSocketPath,
+      authorityProcessToken: rawProcessToken === '-' ? null : rawProcessToken
+    }
   })
+}
+
+export function readDockerSshRelayDaemonSnapshots(
+  target: DockerSshRelayTarget
+): DockerSshRelayDaemonSnapshot[] {
+  const rows = parseRelayProcessRows(
+    execDockerSshRelayTargetCommand(target, LIST_RELAY_PROCESSES_COMMAND)
+  )
+  return rows
+    .filter((row) => row.type === 'relay')
+    .map((relay) => {
+      if (!relay.role || !relay.socketPath) {
+        throw new Error(`Detached Docker SSH relay ${relay.pid} has incomplete role identity`)
+      }
+      const watcherPids = rows
+        .filter((row) => row.type === 'watcher' && row.parentPid === relay.pid)
+        .map((row) => row.pid)
+        .sort((left, right) => left - right)
+      return {
+        relayPid: relay.pid,
+        watcherPids,
+        relayDir: relay.cwd,
+        role: relay.role,
+        socketPath: relay.socketPath,
+        ...(relay.authorityProcessToken
+          ? { authorityProcessToken: relay.authorityProcessToken }
+          : {})
+      }
+    })
+    .sort((left, right) => left.relayPid - right.relayPid)
+}
+
+export function readDockerSshRelayDaemonLogs(target: DockerSshRelayTarget): string {
+  return execDockerSshRelayTargetCommand(
+    target,
+    [
+      "find /root/.orca-remote -type f \\( -name 'relay.log' -o -name 'authority*.log' \\) -print0 2>/dev/null |",
+      "while IFS= read -r -d '' file; do",
+      '  printf \'\n===== %s =====\n\' "$file"',
+      '  tail -n 500 "$file"',
+      'done',
+      'for file in /tmp/orca-terminal-authority-input.log /tmp/orca-terminal-authority-replay.complete; do',
+      '  [ -f "$file" ] || continue',
+      '  printf \'\n===== %s =====\n\' "$file"',
+      '  tail -n 500 "$file"',
+      'done'
+    ].join('\n')
+  )
 }
 
 export function readDockerSshRelayProcessSnapshot(

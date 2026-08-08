@@ -1,3 +1,4 @@
+import { createRelayInstallLockOwnerToken } from '../../shared/relay-launch-fence-owner'
 import type { SshConnection } from './ssh-connection'
 import { execCommand, isUnconfirmedSshCommandTermination } from './ssh-relay-deploy-helpers'
 import { RELAY_DEPLOY_TIMEOUT_MS } from './ssh-relay-deploy-timing'
@@ -68,9 +69,10 @@ export async function acquireInstallLock(
   conn: SshConnection,
   remoteRelayDir: string,
   host: RemoteHostPlatform = DEFAULT_REMOTE_HOST,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; ownerToken?: string }
 ): Promise<void> {
   const lockDir = joinRemotePath(host, remoteRelayDir, RELAY_INSTALL_LOCK_NAME)
+  const ownerToken = options?.ownerToken ?? createRelayInstallLockOwnerToken()
 
   const start = Date.now()
   let lastStaleCheckAt = Number.NEGATIVE_INFINITY
@@ -83,9 +85,12 @@ export async function acquireInstallLock(
       signal: options?.signal
     })
     try {
-      const result = await execHostCommand(conn, host, tryCreateInstallLockCommand(host, lockDir), {
-        signal: options?.signal
-      })
+      const result = await execHostCommand(
+        conn,
+        host,
+        tryCreateInstallLockCommand(host, lockDir, ownerToken),
+        { signal: options?.signal }
+      )
       if (result.trim().endsWith('OK')) {
         // Why: GC may claim the sibling path between our first probe and lock
         // creation. Recheck while holding the in-tree lock; one side backs off.
@@ -116,7 +121,7 @@ export async function acquireInstallLock(
       const steal = await execHostCommand(
         conn,
         host,
-        tryStealInstallLockCommand(host, lockDir, INSTALL_LOCK_STALE_SECONDS),
+        tryStealInstallLockCommand(host, lockDir, INSTALL_LOCK_STALE_SECONDS, ownerToken),
         { signal: options?.signal }
       ).catch(() => 'BUSY')
       options?.signal?.throwIfAborted()

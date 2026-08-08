@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   renameSync,
   rmSync,
@@ -18,6 +19,7 @@ import {
   resetSecureFileWindowsUserSidForTests,
   restrictWindowsPathSync
 } from './secure-path-windows-acl'
+import { renameFileDurableSync } from './durable-file-write'
 
 type HardenedPathCacheEntry = {
   isDirectory: boolean
@@ -88,6 +90,19 @@ export function writeSecureJsonFile(targetPath: string, value: unknown): void {
 }
 
 export function writeSecureFile(targetPath: string, contents: string): void {
+  writeSecureFileInternal(targetPath, contents, false)
+}
+
+/** Durable variant for identity and other explicit crash-recovery boundaries. */
+export function writeSecureFileDurable(targetPath: string, contents: string): void {
+  writeSecureFileInternal(targetPath, contents, true)
+}
+
+export function writeSecureJsonFileDurable(targetPath: string, value: unknown): void {
+  writeSecureFileDurable(targetPath, JSON.stringify(value, null, 2))
+}
+
+function writeSecureFileInternal(targetPath: string, contents: string, durable: boolean): void {
   const dir = dirname(targetPath)
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -103,14 +118,34 @@ export function writeSecureFile(targetPath: string, contents: string): void {
     })
     // Why: writeFileSync mode is a no-op on Windows, so restrict the credential's ACL synchronously before the rename publishes it under inherited ACLs.
     applySecurePathRestriction(tmpFile, false, process.platform, true)
-    renameSync(tmpFile, targetPath)
-    // Why: these hold auth credentials, so the published path must stay current-user only; cache only on confirmed success so failures retry.
-    if (applySecurePathRestriction(targetPath, false, process.platform, true)) {
-      rememberHardenedPath(targetPath, false)
+    const hardenPublishedFile = (): void => {
+      // Why: these hold auth credentials, so the published path must stay current-user only; cache only on confirmed success so failures retry.
+      if (applySecurePathRestriction(targetPath, false, process.platform, true)) {
+        rememberHardenedPath(targetPath, false)
+      }
+    }
+    if (durable) {
+      renameFileDurableSync(tmpFile, targetPath, { afterRename: hardenPublishedFile })
+    } else {
+      renameSync(tmpFile, targetPath)
+      hardenPublishedFile()
     }
   } catch (error) {
     rmSync(tmpFile, { force: true })
     throw error
+  }
+}
+
+export function assertSecureRegularFile(targetPath: string, field: string): void {
+  try {
+    if (lstatSync(targetPath).isSymbolicLink() || !statSync(targetPath).isFile()) {
+      throw new Error(`${field} is invalid`)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === `${field} is invalid`) {
+      throw error
+    }
+    throw new Error(`${field} is unavailable`)
   }
 }
 

@@ -21,6 +21,7 @@ function createProvider(
   sessions: string[] = [],
   authoritativeOwnerListings = false
 ): ProviderMock {
+  const mutationRouteToken = Object.freeze({ label })
   const dataListeners: ((payload: { id: string; data: string; sequenceChars?: number }) => void)[] =
     []
   const replayListeners: ((payload: { id: string; data: string }) => void)[] = []
@@ -34,6 +35,15 @@ function createProvider(
     }),
     attach: vi.fn(async () => {}),
     hasPty: vi.fn((id: string) => sessions.includes(id)),
+    supportsExactPtyOperations: vi.fn((id: string) => sessions.includes(id)),
+    supportsExactHeldProducerPause: vi.fn((id: string) => sessions.includes(id)),
+    acquireExactHeldProducerPause: vi.fn(async (id: string) => sessions.includes(id)),
+    releaseExactHeldProducerPause: vi.fn(async (id: string) => sessions.includes(id)),
+    writeExact: vi.fn((id: string) => sessions.includes(id)),
+    resizeExact: vi.fn((id: string) => sessions.includes(id)),
+    killExact: vi.fn(async (id: string) => sessions.includes(id)),
+    sendSignalExact: vi.fn(async (id: string) => sessions.includes(id)),
+    clearBufferExact: vi.fn(async (id: string) => sessions.includes(id)),
     probePtyLiveness: vi.fn(async (id: string) => sessions.includes(id)),
     providesAgentSessionOwnerListings: vi.fn(() => authoritativeOwnerListings),
     write: vi.fn(),
@@ -55,7 +65,12 @@ function createProvider(
     confirmForegroundProcess: vi.fn(async () => `${label}-confirmed`),
     serialize: vi.fn(async () => '{}'),
     revive: vi.fn(async () => {}),
-    listProcesses: vi.fn(async () => sessions.map((id) => ({ id, cwd: '', title: label }))),
+    listProcesses: vi.fn(async () =>
+      sessions.map((id) => ({ id, mutationRouteToken, cwd: '', title: label }))
+    ),
+    getPtyMutationRouteToken: vi.fn((id: string) =>
+      sessions.includes(id) ? mutationRouteToken : null
+    ),
     getDefaultShell: vi.fn(async () => '/bin/zsh'),
     getProfiles: vi.fn(async () => []),
     onData: vi.fn(
@@ -296,6 +311,68 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.spawn).toHaveBeenCalledWith({ cols: 80, rows: 24 })
     expect(current.write).toHaveBeenCalledWith('daemon-session', 'old\n')
     expect(fallback.write).toHaveBeenCalledWith(fresh.id, 'new\n')
+  })
+
+  it('routes every exact mutation to the provider that owns the incarnation', async () => {
+    const current = createDaemonAdapter('daemon', ['daemon-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    await provider.discoverDaemonSessions()
+    const fresh = await provider.spawn({ cols: 80, rows: 24 })
+
+    expect(provider.writeExact('daemon-session', 'daemon-incarnation', 'daemon input')).toBe(true)
+    expect(provider.resizeExact(fresh.id, 'fallback-incarnation', 100, 30)).toBe(true)
+    await expect(
+      provider.sendSignalExact('daemon-session', 'daemon-incarnation', 'SIGTERM')
+    ).resolves.toBe(true)
+    await expect(provider.clearBufferExact(fresh.id, 'fallback-incarnation')).resolves.toBe(true)
+    await expect(
+      provider.killExact('daemon-session', 'daemon-incarnation', { immediate: true })
+    ).resolves.toBe(true)
+
+    expect(current.writeExact).toHaveBeenCalledWith(
+      'daemon-session',
+      'daemon-incarnation',
+      'daemon input'
+    )
+    expect(fallback.resizeExact).toHaveBeenCalledWith(fresh.id, 'fallback-incarnation', 100, 30)
+    expect(current.sendSignalExact).toHaveBeenCalledWith(
+      'daemon-session',
+      'daemon-incarnation',
+      'SIGTERM'
+    )
+    expect(fallback.clearBufferExact).toHaveBeenCalledWith(fresh.id, 'fallback-incarnation')
+    expect(current.killExact).toHaveBeenCalledWith('daemon-session', 'daemon-incarnation', {
+      immediate: true
+    })
+  })
+
+  it('routes exact held-pause leases across daemon and local fallback owners', async () => {
+    const current = createDaemonAdapter('daemon', ['daemon-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    await provider.discoverDaemonSessions()
+    const fresh = await provider.spawn({ cols: 80, rows: 24 })
+
+    await expect(
+      provider.acquireExactHeldProducerPause('daemon-session', 'daemon-incarnation', 'daemon-lease')
+    ).resolves.toBe(true)
+    await expect(
+      provider.acquireExactHeldProducerPause(fresh.id, 'local-incarnation', 'local-lease')
+    ).resolves.toBe(true)
+    await expect(
+      provider.releaseExactHeldProducerPause(fresh.id, 'local-incarnation', 'local-lease')
+    ).resolves.toBe(true)
+    expect(current.acquireExactHeldProducerPause).toHaveBeenCalledWith(
+      'daemon-session',
+      'daemon-incarnation',
+      'daemon-lease'
+    )
+    expect(fallback.acquireExactHeldProducerPause).toHaveBeenCalledWith(
+      fresh.id,
+      'local-incarnation',
+      'local-lease'
+    )
   })
 
   it('routes later fresh PTYs to the daemon after spawn health recovers', async () => {

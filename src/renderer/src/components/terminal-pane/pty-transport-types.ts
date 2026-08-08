@@ -13,6 +13,10 @@ import type { EventProps } from '../../../../shared/telemetry-events'
 import type { TerminalOscColorQueryReplyColors } from '../../../../shared/terminal-osc-color-reply'
 import type { TuiAgent } from '../../../../shared/types'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
+import type {
+  PtyMutationAccess,
+  PtyMutationIdentity
+} from '../../../../shared/pty-mutation-identity'
 import type { PtyDataMeta } from './pty-dispatcher'
 import type { RemoteRuntimeSnapshotOutcome } from '../../runtime/remote-runtime-terminal-multiplexer'
 
@@ -46,8 +50,18 @@ export type LocalPtySessionMetadata = {
   shellOverride?: string
 }
 
+export type PtyRendererBindingSettlement = Readonly<{
+  id: string
+  paneGeneration: number
+  ready: () => void
+  cancel: () => void
+}>
+
 export type PtyConnectResult = {
   id: string
+  mutationAccess?: PtyMutationAccess
+  /** Local-only exact fence; release only after the bound xterm has consumed reattach state. */
+  rendererBindingSettlement?: PtyRendererBindingSettlement
   /** The requested session exited while it had no primary pane handler. Its
    *  buffered final data/exit were delivered, so callers must not fresh-spawn. */
   exitedBeforeAttach?: boolean
@@ -86,6 +100,7 @@ type PtyCallbacks = {
   onError?: (message: string, errors?: string[]) => void
   onExit?: (code: number) => void
   onWriteUnavailable?: () => void
+  onMutationAccessAvailable?: () => void
   onRecoveryStateChange?: (state: PtyTransportRecoveryState) => void
   onOutputPauseChanged?: (paused: boolean, supported: boolean) => void
 }
@@ -103,6 +118,11 @@ export type PtyTransportRecoveryState = {
   epoch: number
   attempt: number
 }
+
+export type PtyTransportInputTarget = Readonly<{
+  owner: object
+  binding: object
+}>
 
 export type PtyTransport = {
   connect: (options: {
@@ -136,6 +156,10 @@ export type PtyTransport = {
   }) => void
   disconnect: () => void
   sendInput: (data: string) => boolean
+  captureInputTarget?: () => PtyTransportInputTarget | null
+  isInputTargetCurrent?: (target: PtyTransportInputTarget) => boolean
+  sendInputToTarget?: (target: PtyTransportInputTarget, data: string) => boolean
+  sendInputAcceptedToTarget?: (target: PtyTransportInputTarget, data: string) => Promise<boolean>
   // Why: latency-critical terminal query replies (CPR/DSR/DA/OSC color/pixel
   // size) must skip input coalescing — a querying program reads them in raw
   // mode with a short timeout, so a debounced reply lands on the shell prompt
@@ -144,6 +168,8 @@ export type PtyTransport = {
   // (preserving order) and sends the reply immediately.
   sendInputImmediate: (data: string) => boolean
   sendInputAccepted?: (data: string) => Promise<boolean>
+  signal?: (signal: string) => boolean
+  clearBuffer?: () => boolean
   claimViewport?: (cols: number, rows: number) => boolean
   /** Capability-negotiated paired-runtime delivery gate; false preserves legacy delivery. */
   setOutputPaused?: (paused: boolean) => boolean
@@ -165,6 +191,8 @@ export type PtyTransport = {
   /** The user dismissed the error surface; the next occurrence of the same message must surface again. */
   notifyErrorSurfaceDismissed?: () => void
   getPtyId: () => string | null
+  getMutationIdentity?: () => PtyMutationIdentity | null
+  hasMutationAccess?: () => boolean
   getConnectionId?: () => string | null | undefined
   /** The runtime captured by this transport; legacy remote PTY ids do not
    * encode their owner, and current worktree settings may have changed. */
@@ -210,6 +238,7 @@ export type IpcPtyTransportOptions = {
   worktreeId?: string
   tabId?: string
   leafId?: string
+  paneGeneration?: number
   activate?: boolean
   shellOverride?: string
   projectRuntime?: ProjectExecutionRuntimeResolution

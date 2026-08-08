@@ -1,4 +1,6 @@
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import type { TerminalAuthorityOutcomeDeliveryIdentity } from '../../shared/terminal-authority-outcome-delivery'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 
 export type RemoteCliBridgeEnv = {
   binDir: string
@@ -8,6 +10,15 @@ export type RemoteCliBridgeEnv = {
   credentialFile?: string
   pathDelimiter?: ':' | ';'
 }
+
+export type SshPtyExpectedIdentity = Readonly<{
+  paneKey?: string
+  tabId?: string
+  worktreeId?: string
+  paneGeneration?: number
+  ptyIncarnationId?: string
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+}>
 
 export type SshPtyDataCallback = (payload: {
   id: string
@@ -37,6 +48,7 @@ export type SshPtyExitCallback = (payload: {
   providerGeneration: number
   ptyIncarnation: string
   incarnationId?: PtyIncarnationId
+  authorityOutcome?: TerminalAuthorityOutcomeDeliveryIdentity
 }) => void
 
 export type SshPtyDeliveryPauseAdapter = (args: {

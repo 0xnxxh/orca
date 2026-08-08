@@ -10,6 +10,19 @@ import type {
   AgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
 import type { PtyProcessInfo } from './pty-process-info'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
+
+export type PtyMutationMode = 'legacy' | 'exact' | 'unavailable'
+export type PtyHeldProducerPauseToken = string
+export const PTY_HELD_PRODUCER_PAUSE_TOKEN_MAX_LENGTH = 256
+
+export function isPtyHeldProducerPauseToken(value: unknown): value is PtyHeldProducerPauseToken {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= PTY_HELD_PRODUCER_PAUSE_TOKEN_MAX_LENGTH
+  )
+}
 
 export type {
   PtyBackgroundStreamEvent,
@@ -51,6 +64,10 @@ export type PtySpawnOptions = {
   /** Stable terminal pane identity. Remote providers use this as PTY metadata
    *  even when it must not be exported into the spawned shell environment. */
   paneKey?: string
+  /** Durable logical generation for authority-owned remote pane allocation. */
+  paneGeneration?: number
+  /** Full durable binding required to reattach an authority-owned PTY. */
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
   /** Stable terminal tab identity used as a coarser attach guard when a pane
    *  identity is unavailable. */
   tabId?: string
@@ -120,6 +137,55 @@ export type IPtyProvider = {
   probePtyLiveness?: (id: string) => Promise<boolean | null>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
+  /** Explicit legacy is version-skew compatibility; unavailable fails closed after cutover. */
+  getPtyMutationMode?: (id: string) => PtyMutationMode
+  /** Incarnation-fenced mutations; unsupported providers omit them and retain legacy behavior. */
+  supportsExactPtyOperations?: (id: string) => boolean
+  writeExact?: (id: string, incarnationId: PtyIncarnationId, data: string) => boolean
+  resizeExact?: (id: string, incarnationId: PtyIncarnationId, cols: number, rows: number) => boolean
+  killExact?: (
+    id: string,
+    incarnationId: PtyIncarnationId,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ) => boolean | Promise<boolean>
+  sendSignalExact?: (
+    id: string,
+    incarnationId: PtyIncarnationId,
+    signal: string
+  ) => boolean | Promise<boolean>
+  clearBufferExact?: (id: string, incarnationId: PtyIncarnationId) => boolean | Promise<boolean>
+  writeAuthorityExact?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    data: string
+  ) => boolean
+  resizeAuthorityExact?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    cols: number,
+    rows: number
+  ) => boolean
+  killAuthorityExact?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ) => boolean | Promise<boolean>
+  sendSignalAuthorityExact?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    signal: string
+  ) => boolean | Promise<boolean>
+  clearBufferAuthorityExact?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ) => boolean | Promise<boolean>
+  /** Current final-host binding captured by the mutation admission layer. */
+  getTerminalSessionAuthorityAccess?: (id: string) => TerminalSessionAuthorityPtyAccess | null
+  /** Installs a durable authority binding only after the provider's physical incarnation is known. */
+  bindTerminalSessionAuthorityAccess?: (
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ) => boolean
   /**
    * Producer-side flow control: stop/restart reading the underlying PTY so a
    * flooding child blocks on write (kernel backpressure) instead of growing
@@ -130,6 +196,18 @@ export type IPtyProvider = {
    */
   pauseProducer?: (id: string) => void
   resumeProducer?: (id: string) => void
+  /** True only when this physical incarnation supports an acknowledged, non-expiring pause. */
+  supportsExactHeldProducerPause?: (id: string, incarnationId: PtyIncarnationId) => boolean
+  acquireExactHeldProducerPause?: (
+    id: string,
+    incarnationId: PtyIncarnationId,
+    token: PtyHeldProducerPauseToken
+  ) => Promise<boolean>
+  releaseExactHeldProducerPause?: (
+    id: string,
+    incarnationId: PtyIncarnationId,
+    token: PtyHeldProducerPauseToken
+  ) => Promise<boolean>
   /**
    * Hidden-delivery hint: the renderer has no visible view for this PTY, so
    * the provider's transport may keep-tail thin this PTY's monitoring stream
@@ -194,6 +272,10 @@ export type IPtyProvider = {
   revive(state: string): Promise<void>
   // Why: deadlineMs bounds the underlying RPC exactly like shutdown's deadlineMs.
   listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]>
+  /** Maps a provider-visible listing ID to the authority host's physical PTY identity. */
+  resolveTerminalSessionAuthorityPhysicalPtyId?: (id: string) => string | null
+  /** Current opaque route identity; callers compare it by reference with the listed row. */
+  getPtyMutationRouteToken?: (id: string) => object | null
   getDefaultShell(): Promise<string>
   getProfiles(): Promise<{ name: string; path: string }[]>
   onData(callback: (payload: PtyDataEvent) => void): () => void

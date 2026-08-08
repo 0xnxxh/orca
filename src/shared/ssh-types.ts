@@ -1,3 +1,5 @@
+import type { TerminalSessionAuthorityPtyAccess } from './terminal-session-authority-pty-access'
+
 // ─── SSH Connection Types ───────────────────────────────────────────
 
 export const MIN_SSH_RELAY_GRACE_PERIOD_SECONDS = 60
@@ -192,12 +194,23 @@ export type SshMutationExpectation = {
 
 export type SshRemotePtyLeaseState = 'attached' | 'detached' | 'terminated' | 'expired'
 
+export type SshRemotePtyPendingClose = {
+  incarnationId: string
+  terminalSessionAuthorityAccess: TerminalSessionAuthorityPtyAccess
+  keepHistory: boolean
+  requestedAt: number
+}
+
 export type SshRemotePtyLease = {
   targetId: string
   ptyId: string
+  incarnationId?: string
   worktreeId?: string
   tabId?: string
   leafId?: string
+  paneGeneration?: number
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+  pendingClose?: SshRemotePtyPendingClose
   state: SshRemotePtyLeaseState
   createdAt: number
   updatedAt: number

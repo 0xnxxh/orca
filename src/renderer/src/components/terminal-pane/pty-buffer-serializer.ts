@@ -4,6 +4,7 @@
 // main process to serialize a specific terminal's buffer.
 
 import type { IDisposable } from '@xterm/xterm'
+import type { PtyMutationIdentity } from '../../../../shared/pty-mutation-identity'
 
 export type SerializeOpts = {
   scrollbackRows?: number
@@ -29,6 +30,7 @@ export type SerializeFn = (
 type SerializerEntry = {
   fn: SerializeFn
   clear?: () => void
+  mutationIdentity?: PtyMutationIdentity
   owner: symbol
 }
 
@@ -45,10 +47,16 @@ let listenerAttached = false
 export function registerPtySerializer(
   ptyId: string,
   serialize: SerializeFn,
-  clear?: () => void
+  clear?: () => void,
+  mutationIdentity?: PtyMutationIdentity | null
 ): () => void {
   const owner = Symbol(ptyId)
-  serializersByPtyId.set(ptyId, { fn: serialize, clear, owner })
+  serializersByPtyId.set(ptyId, {
+    fn: serialize,
+    clear,
+    ...(mutationIdentity ? { mutationIdentity } : {}),
+    owner
+  })
   ensureSerializerListener()
   return () => {
     const current = serializersByPtyId.get(ptyId)
@@ -125,7 +133,17 @@ function ensureSerializerListener(): void {
     // Why: mobile clear is a terminal action, not a PTY byte. Clearing the
     // renderer-owned xterm keeps future mobile snapshots from rehydrating
     // scrollback that the user explicitly removed.
-    serializersByPtyId.get(request.ptyId)?.clear?.()
+    const entry = serializersByPtyId.get(request.ptyId)
+    const mutationIdentity = entry?.mutationIdentity
+    if (
+      request.incarnationId !== undefined &&
+      (!mutationIdentity ||
+        mutationIdentity.incarnationId !== request.incarnationId ||
+        mutationIdentity.paneGeneration !== request.paneGeneration)
+    ) {
+      return
+    }
+    entry?.clear?.()
   })
 
   window.api.pty.onSerializeBufferRequest((request) => {

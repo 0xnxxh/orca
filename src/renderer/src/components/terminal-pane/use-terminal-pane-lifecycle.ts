@@ -122,7 +122,11 @@ import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import { markTerminalPinnedViewport } from '@/lib/pane-manager/terminal-scroll-intent'
 import { syncTerminalScrollIntentSoon } from '@/lib/pane-manager/terminal-scroll-intent-settle'
 import { registerRuntimeTerminalTab, scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
-import { captureParkedTerminalPaneCandidates } from './terminal-parked-tab-watchers'
+import {
+  captureParkedTerminalPaneCandidates,
+  registerMountedTerminalPaneCandidateReader
+} from './terminal-parked-tab-watchers'
+import { parkedTerminalSideEffectIdentityFromMutation } from './terminal-parked-side-effect-identity'
 import { e2eConfig } from '@/lib/e2e-config'
 import {
   PRIMARY_SELECTION_MAX_LENGTH,
@@ -221,6 +225,7 @@ async function formatTerminalUrlTooltip(
 
 type UseTerminalPaneLifecycleDeps = {
   tabId: string
+  paneGeneration: number
   worktreeId: string
   cwd?: string
   startup?: {
@@ -586,6 +591,7 @@ export function retireMountedTerminalPaneSurface(args: {
 /** Wires mounted terminal panes to renderer state and terminal event handling. */
 export function useTerminalPaneLifecycle({
   tabId,
+  paneGeneration,
   worktreeId,
   cwd,
   startup,
@@ -794,6 +800,7 @@ export function useTerminalPaneLifecycle({
         : startup
     const ptyDeps = {
       tabId,
+      paneGeneration,
       worktreeId,
       cwd: startupCwd,
       startup: startupWithSetupSplitWait,
@@ -1604,6 +1611,28 @@ export function useTerminalPaneLifecycle({
     persistLayoutSnapshot()
     scheduleRuntimeGraphSync()
 
+    const readParkedPaneCandidates = () => {
+      const activePaneId = manager.getActivePane()?.id
+      return manager.getPanes().map((candidatePane) => {
+        const transport = paneTransports.get(candidatePane.id)
+        const mutationIdentity = transport?.getMutationIdentity?.()
+        const sideEffectIdentity = parkedTerminalSideEffectIdentityFromMutation(mutationIdentity)
+        return {
+          ptyId: transport?.getPtyId() ?? null,
+          ...(mutationIdentity ? { mutationIdentity: { ...mutationIdentity } } : {}),
+          ...(sideEffectIdentity ? { sideEffectIdentity } : {}),
+          paneId: candidatePane.id,
+          leafId: candidatePane.leafId,
+          drivesTabTitle: candidatePane.id === activePaneId
+        }
+      })
+    }
+    const unregisterParkedPaneCandidateReader = registerMountedTerminalPaneCandidateReader(
+      tabId,
+      worktreeId,
+      readParkedPaneCandidates
+    )
+
     // Why: deliver the startup command via the PTY connection path (waits for shell readiness), not terminal.paste() which can lose input before the shell reads stdin.
     function onCliSplitPane(event: Event): void {
       const detail = (event as CustomEvent<SplitTerminalPaneDetail>).detail
@@ -1742,16 +1771,8 @@ export function useTerminalPaneLifecycle({
       }
       imeNativeTextForwarderDisposables.clear()
       // Why: hidden-view parking starts pane-less byte watchers right after unmount; record pane identities first so watchers write the same runtime-title slots.
-      captureParkedTerminalPaneCandidates(
-        tabId,
-        worktreeId,
-        manager.getPanes().map((capturedPane) => ({
-          ptyId: paneTransports.get(capturedPane.id)?.getPtyId() ?? null,
-          paneId: capturedPane.id,
-          leafId: capturedPane.leafId,
-          drivesTabTitle: manager.getActivePane()?.id === capturedPane.id
-        }))
-      )
+      captureParkedTerminalPaneCandidates(tabId, worktreeId, readParkedPaneCandidates())
+      unregisterParkedPaneCandidateReader()
       for (const transport of paneTransports.values()) {
         const ptyId = transport.getPtyId()
         if (

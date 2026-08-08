@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   PTY_CONSUMER_OWNER_GRACE_MS,
+  PTY_CONSUMER_SCOPED_OWNER_LIMIT,
   PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
   type PtyConsumerAuthentication,
   type PtyConsumerCloseCause,
@@ -27,6 +28,7 @@ export * from './pty-consumer-session-contract'
 type ClientRecord = {
   principal: string
   clientInstanceId: string
+  ownerScope: string
   grant: Readonly<PtyConsumerSessionGrant>
   state: 'pending' | 'active' | 'displaced'
   publicationState: 'pending' | 'committed' | 'rolled-back'
@@ -52,7 +54,7 @@ export class PtyConsumerSession {
   private readonly ownerGraceMs: number
   private nextClientGeneration = 1
   private nextOwnerGeneration = 1
-  private owner: OwnerRecord | null = null
+  private readonly owners = new Map<string, OwnerRecord>()
 
   constructor(private readonly options: PtyConsumerSessionOptions) {
     assertPtyConsumerSessionOptions(options)
@@ -71,7 +73,8 @@ export class PtyConsumerSession {
     if (!authentication.authenticated) {
       throw new Error('PTY consumer authentication required')
     }
-    this.expireOwner()
+    const ownerScope = this.ownerScopeFor(hello, authentication)
+    this.expireOwner(ownerScope)
 
     // Why even an identical repeat is rejected: the two responses settle their publications
     // independently, so one shared admission cannot make one response's rollback and the other's
@@ -80,7 +83,7 @@ export class PtyConsumerSession {
       throw new Error('pty.openClient may be used only once per transport connection')
     }
 
-    const owner = this.selectOwner(hello, authentication)
+    const owner = this.selectOwner(hello, authentication, ownerScope)
     const grant = Object.freeze({
       protocolVersion: PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
       serverBuildId: this.options.serverBuildId,
@@ -89,18 +92,19 @@ export class PtyConsumerSession {
       ...(owner
         ? { ownerGeneration: owner.generation, ownerLease: owner.lease, resumed: owner.resumed }
         : {}),
-      ...intersectPtyConsumerCapabilities(hello, this.options.outputFlowControl)
+      ...intersectPtyConsumerCapabilities(hello, this.options)
     })
     const client: ClientRecord = {
       principal: authentication.principal,
       clientInstanceId: hello.clientInstanceId,
+      ownerScope,
       grant,
       state: 'pending',
       publicationState: 'pending'
     }
     this.clients.set(authentication.connectionId, client)
     if (owner) {
-      this.owner = owner
+      this.owners.set(ownerScope, owner)
     }
     return this.admissionFor(client, this.displacedOwnerFor(owner))
   }
@@ -113,39 +117,39 @@ export class PtyConsumerSession {
       return
     }
     this.clients.delete(connectionId)
-    if (this.owner?.connectionId !== connectionId) {
+    const owner = this.owners.get(client.ownerScope)
+    if (owner?.connectionId !== connectionId) {
       // Why: a pending replacement can still roll back onto the owner it is displacing; restoring an
       // 'active' record whose connection has since closed would wedge an owner that can never expire.
-      if (
-        this.owner?.replaces?.connectionId === connectionId &&
-        this.owner.replaces.state === 'active'
-      ) {
-        this.owner = {
-          ...this.owner,
+      if (owner?.replaces?.connectionId === connectionId && owner.replaces.state === 'active') {
+        this.owners.set(client.ownerScope, {
+          ...owner,
           replaces: {
-            ...this.owner.replaces,
+            ...owner.replaces,
             state: 'disconnected',
             disconnectedAt: this.now(),
             disconnectCause: cause
           }
-        }
+        })
       }
       return
     }
-    if (this.owner.state === 'pending') {
-      this.owner = this.owner.replaces ?? null
+    if (owner.state === 'pending') {
+      this.restoreOrDeleteOwner(client.ownerScope, owner.replaces)
       return
     }
-    this.owner = {
-      ...this.owner,
+    this.owners.set(client.ownerScope, {
+      ...owner,
       state: 'disconnected',
       disconnectedAt: this.now(),
       disconnectCause: cause
-    }
+    })
   }
 
   sweepExpired(): void {
-    this.expireOwner()
+    for (const ownerScope of this.owners.keys()) {
+      this.expireOwner(ownerScope)
+    }
   }
 
   activeGrant(connectionId: string): Readonly<PtyConsumerSessionGrant> | null {
@@ -169,10 +173,14 @@ export class PtyConsumerSession {
           return
         }
         client.state = 'active'
-        const owner = this.owner
+        const owner = this.owners.get(client.ownerScope)
         if (owner?.connectionId === this.connectionIdFor(client) && owner.state === 'pending') {
           this.retireDisplacedOwner(owner.replaces)
-          this.owner = { ...owner, state: 'active', replaces: undefined }
+          this.owners.set(client.ownerScope, {
+            ...owner,
+            state: 'active',
+            replaces: undefined
+          })
         }
       },
       rollbackPublication: () => {
@@ -185,8 +193,9 @@ export class PtyConsumerSession {
         }
         const connectionId = this.connectionIdFor(client)
         this.clients.delete(connectionId)
-        if (this.owner?.connectionId === connectionId && this.owner.state === 'pending') {
-          this.owner = this.owner.replaces ?? null
+        const owner = this.owners.get(client.ownerScope)
+        if (owner?.connectionId === connectionId && owner.state === 'pending') {
+          this.restoreOrDeleteOwner(client.ownerScope, owner.replaces)
         }
       }
     }
@@ -203,16 +212,18 @@ export class PtyConsumerSession {
 
   private selectOwner(
     hello: PtyConsumerSessionHello,
-    authentication: PtyConsumerAuthentication
+    authentication: PtyConsumerAuthentication,
+    ownerScope: string
   ): OwnerRecord | null {
     if (hello.requestedRole !== 'session-owner' || !authentication.allowSessionOwner) {
       return null
     }
-    const current = this.owner
+    const current = this.owners.get(ownerScope) ?? null
     // Why resume proof for a vacant record is not an error: the relay simply no longer has the record
     // the client is naming. Minting a fresh claim here resolves it in one round trip, and `resumed:
     // false` tells the client its checkpoints are void without making it delete its identity first.
     if (!current) {
+      this.assertOwnerScopeCapacity()
       return this.newOwner(hello, authentication, null)
     }
     if (!matchesPtyConsumerOwnerClaim(hello, authentication, current)) {
@@ -221,7 +232,7 @@ export class PtyConsumerSession {
         now: this.now(),
         sameClient: isPtyConsumerOwnerSameClient(hello, authentication, current),
         clampGraceTo: (disconnectedAt) => {
-          this.owner = { ...current, disconnectedAt }
+          this.owners.set(ownerScope, { ...current, disconnectedAt })
         }
       })
     }
@@ -278,12 +289,43 @@ export class PtyConsumerSession {
     }
   }
 
-  private expireOwner(): void {
+  private ownerScopeFor(
+    hello: PtyConsumerSessionHello,
+    authentication: PtyConsumerAuthentication
+  ): string {
+    return this.options.ownerScope === 'principal-client-instance'
+      ? JSON.stringify([authentication.principal, hello.clientInstanceId])
+      : 'global'
+  }
+
+  private restoreOrDeleteOwner(ownerScope: string, owner: OwnerRecord | undefined): void {
+    if (owner) {
+      this.owners.set(ownerScope, owner)
+    } else {
+      this.owners.delete(ownerScope)
+    }
+  }
+
+  private assertOwnerScopeCapacity(): void {
     if (
-      this.owner?.state === 'disconnected' &&
-      this.now() - (this.owner.disconnectedAt ?? this.now()) >= this.ownerGraceMs
+      this.options.ownerScope !== 'principal-client-instance' ||
+      this.owners.size < PTY_CONSUMER_SCOPED_OWNER_LIMIT
     ) {
-      this.owner = null
+      return
+    }
+    this.sweepExpired()
+    if (this.owners.size >= PTY_CONSUMER_SCOPED_OWNER_LIMIT) {
+      throw new Error('PTY consumer owner scope capacity reached')
+    }
+  }
+
+  private expireOwner(ownerScope: string): void {
+    const owner = this.owners.get(ownerScope)
+    if (
+      owner?.state === 'disconnected' &&
+      this.now() - (owner.disconnectedAt ?? this.now()) >= this.ownerGraceMs
+    ) {
+      this.owners.delete(ownerScope)
     }
   }
 }

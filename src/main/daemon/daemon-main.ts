@@ -1,5 +1,6 @@
 import { DaemonServer, type DaemonServerOptions } from './daemon-server'
 import type { DaemonFileLog } from './daemon-file-log'
+import type { TerminalSessionAuthorityHostRuntime } from '../session-authority/terminal-session-authority-host-runtime'
 
 export type DaemonStartOptions = {
   socketPath: string
@@ -20,7 +21,9 @@ export type DaemonStartOptions = {
   log?: DaemonFileLog
   onIdleShutdown?: () => void
   onRpcShutdown?: () => void
+  onTerminalSessionAuthorityFailure?: (error: Error) => void
   initialAdoptionTestConfig?: DaemonServerOptions['initialAdoptionTestConfig']
+  terminalSessionAuthorityRuntime?: TerminalSessionAuthorityHostRuntime
 }
 
 export type DaemonHandle = {
@@ -50,14 +53,32 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<DaemonHandl
     ...(opts.log ? { log: opts.log } : {}),
     ...(opts.onIdleShutdown ? { onIdleShutdown: opts.onIdleShutdown } : {}),
     ...(opts.onRpcShutdown ? { onRpcShutdown: opts.onRpcShutdown } : {}),
+    ...(opts.onTerminalSessionAuthorityFailure
+      ? { onTerminalSessionAuthorityFailure: opts.onTerminalSessionAuthorityFailure }
+      : {}),
     ...(opts.initialAdoptionTestConfig
       ? { initialAdoptionTestConfig: opts.initialAdoptionTestConfig }
+      : {}),
+    ...(opts.terminalSessionAuthorityRuntime
+      ? {
+          terminalSessionAuthority: {
+            ptyOwner: opts.terminalSessionAuthorityRuntime.ptyOwner,
+            authorityHostId: opts.terminalSessionAuthorityRuntime.authorityHostId
+          },
+          terminalSessionAuthorityCapabilityReadiness: {
+            hostEffectConsumerInstalled: () =>
+              opts.terminalSessionAuthorityRuntime!.ptyOwner.hostEffectConsumerInstalled()
+          }
+        }
       : {})
   })
 
   await server.start()
 
   return {
-    shutdown: () => server.shutdown()
+    shutdown: async () => {
+      await server.shutdown()
+      await opts.terminalSessionAuthorityRuntime?.close()
+    }
   }
 }

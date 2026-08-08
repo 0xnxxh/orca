@@ -14,7 +14,8 @@ import {
   classifyWorktreeForceDeleteReason,
   isProvenLivePtyRemovalError
 } from '../../shared/worktree-removal'
-import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
+import type { PtyProcessInfo } from '../providers/types'
+import { createWorktreeTeardownProviderStub as createProviderStub } from './__tests__/worktree-teardown-provider'
 
 // Why: these tests advance fake timers *before* awaiting the teardown, so a
 // rejection mid-advance had no handler yet — Node reported it as an unhandled
@@ -26,16 +27,6 @@ function settleTeardown<T>(promise: Promise<T>): Promise<T> {
   return promise
 }
 
-function createProviderStub(listProcesses: () => Promise<PtyProcessInfo[]>): IPtyProvider {
-  return {
-    shutdown: vi.fn().mockResolvedValue(undefined),
-    listProcesses: vi.fn(listProcesses),
-    onData: vi.fn().mockReturnValue(() => {}),
-    onReplay: vi.fn().mockReturnValue(() => {}),
-    onExit: vi.fn().mockReturnValue(() => {})
-  } as unknown as IPtyProvider
-}
-
 // A worktree whose PTY teardown cannot be proven must still be removable: the
 // gate that blocks Git work is the same one that made #11960 permanent.
 describe('destructive teardown when a PTY stop cannot be proven', () => {
@@ -43,10 +34,7 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
     listRegisteredPtysMock.mockReset()
   })
 
-  // Why (#11960): the sweeps routinely burn the whole budget, so re-listing on
-  // the same exhausted deadline returned "unverifiable" for a PTY that had in
-  // fact exited — wedging the workspace on every retry.
-  it('verifies a failed stop against a fresh budget when the sweeps spent the deadline', async () => {
+  it('does not turn a late empty inventory into exit proof', async () => {
     vi.useFakeTimers()
     try {
       const localProvider = createProviderStub(
@@ -68,20 +56,13 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
       )
       await vi.runAllTimersAsync()
 
-      await expect(teardown).resolves.toEqual({
-        runtimeStopped: 0,
-        providerStopped: 0,
-        registryStopped: 0
-      })
+      await expect(teardown).rejects.toThrow(/worktree_pty_inventory_missing:stale-1/)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  // The reported shape: an automation workspace whose only trace is a stale
-  // registry row the daemon 404s on, behind an inventory slow enough to consume
-  // the sweep budget. Verification must still get far enough to prove absence.
-  it('removes the reported wedged automation workspace without --force', async () => {
+  it('requires force when only an empty inventory suggests a PTY exited', async () => {
     const worktreeId = 'repo-1::C:/Users/admin/orca/workspaces/repo/auto-review-run-28'
     // Slow enough that a fixed 2s grace could not absorb it, but far enough from
     // the budget that the list-completion and timeout timers can't land in the
@@ -107,11 +88,7 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
       )
       await vi.runAllTimersAsync()
 
-      await expect(teardown).resolves.toEqual({
-        runtimeStopped: 0,
-        providerStopped: 0,
-        registryStopped: 0
-      })
+      await expect(teardown).rejects.toThrow(/worktree_pty_inventory_missing:term_abab11ee/)
     } finally {
       vi.useRealTimers()
     }
@@ -131,9 +108,7 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
     ).rejects.toThrow(/still live: w1@@live-1[\s\S]*--force/)
   })
 
-  // Why: the memory/registry rows this drops are the reason clearStoppedPtyState
-  // exists; commit 3 moved that loop, so pin it before it can silently vanish.
-  it('clears PTY state once a failed stop is proven to have exited', async () => {
+  it('preserves PTY state when inventory omission is the only exit evidence', async () => {
     const localProvider = createProviderStub(async () => [])
     ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('Session not found: stale-1')
@@ -149,11 +124,11 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         onPtyStopped,
         requirePhysicalStop: true
       })
-    ).resolves.toBeDefined()
-    expect(onPtyStopped).toHaveBeenCalledWith('stale-1')
+    ).rejects.toThrow(/worktree_pty_inventory_missing:stale-1/)
+    expect(onPtyStopped).not.toHaveBeenCalled()
   })
 
-  it('names only the PTYs that are actually live, not every failed stop', async () => {
+  it('reports an inventory-missing registry PTY as unknown instead of exited', async () => {
     const localProvider = createProviderStub(async () => [
       { id: 'w1@@live-1', cwd: '/tmp/w1', title: 'shell' }
     ])
@@ -171,11 +146,10 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
       () => new Error('expected a rejection'),
       (rejection: Error) => rejection
     )
-    expect(error.message).toContain('w1@@live-1')
-    expect(error.message).not.toContain('w1@@gone-2')
+    expect(error.message).toContain('worktree_pty_inventory_missing:w1@@gone-2')
   })
 
-  it('reports unverifiable separately from live when the process list fails', async () => {
+  it('fails destructive teardown at the inventory fence when the process list fails', async () => {
     const localProvider = createProviderStub(async () => {
       throw new Error('daemon socket closed')
     })
@@ -192,7 +166,8 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
         includeProviderInventory: false,
         requirePhysicalStop: true
       })
-    ).rejects.toThrow(/could not verify[\s\S]*stale-1[\s\S]*daemon socket closed/)
+    ).rejects.toThrow(/terminal sweep failed: daemon socket closed[\s\S]*--force/)
+    expect(localProvider.shutdown).not.toHaveBeenCalled()
   })
 
   // A gate that force cannot cross is the bug, wherever it sits. These two cover
@@ -269,9 +244,9 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
   it('waits for in-flight sweeps before force returns', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const localProvider = createProviderStub(async () => {
-        throw new Error('ssh channel closed')
-      })
+      const localProvider = createProviderStub(async () => [
+        { id: 'reg-1', cwd: '/tmp/w1', title: 'shell', worktreeId: 'w1' }
+      ])
       let shutdownFinished = false
       ;(localProvider.shutdown as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         async () => {
@@ -285,6 +260,7 @@ describe('destructive teardown when a PTY stop cannot be proven', () => {
 
       const result = await killAllProcessesForWorktree('w1', {
         localProvider,
+        includeProviderInventory: false,
         requirePhysicalStop: true,
         allowUnverifiedStop: true
       })

@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { Loader2, Server, ServerOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import type { SshConnectionStatus } from '../../../../shared/ssh-types'
 import { translate } from '@/i18n/i18n'
@@ -19,7 +20,7 @@ import {
   useSshConnectInFlight
 } from '@/ssh/ssh-connect-in-flight'
 
-type TerminalSshReconnectOverlayProps = {
+export type TerminalSshReconnectOverlayProps = {
   targetId: string
   targetLabel: string
   status: SshConnectionStatus
@@ -31,6 +32,7 @@ type TerminalSshReconnectOverlayProps = {
   // environment): Connect and the failed-connect resync then route to that
   // environment's runtime RPC and bucket instead of the local ssh.* API.
   sshOwnerEnvironmentId?: string | null
+  rootClassName?: string
 }
 
 function messageForStatus(status: SshConnectionStatus, targetLabel: string): string {
@@ -76,7 +78,8 @@ export function TerminalSshReconnectOverlay({
   status,
   targetRemoved = false,
   worktreeId,
-  sshOwnerEnvironmentId = null
+  sshOwnerEnvironmentId = null,
+  rootClassName
 }: TerminalSshReconnectOverlayProps): React.JSX.Element {
   const setSshConnectionState = useAppStore((store) => store.setSshConnectionState)
   // Why: shared registry, not local state — the sidebar card control can dial the same
@@ -141,7 +144,10 @@ export function TerminalSshReconnectOverlay({
   // Why: z-40 clears pane-local chrome (focus rim z-30); bg-card is fully opaque so terminal text cannot paint through.
   return (
     <div
-      className="pointer-events-none absolute inset-x-3 bottom-3 z-40 flex justify-center"
+      className={cn(
+        'pointer-events-none absolute inset-x-3 bottom-3 z-40 flex justify-center',
+        rootClassName
+      )}
       data-terminal-ssh-reconnect-banner={status}
     >
       <div

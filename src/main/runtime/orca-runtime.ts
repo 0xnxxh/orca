@@ -85,6 +85,8 @@ import {
   TERMINAL_INPUT_TOO_LARGE_ERROR,
   iterateTerminalInputChunks
 } from '../../shared/terminal-input'
+import type { PtyMutationTarget } from '../providers/pty-mutation-target'
+import { ptyMutationTargetsEqual } from '../providers/pty-mutation-target'
 import {
   AGENT_PROMPT_BRACKETED_PASTE_END,
   AGENT_PROMPT_SUBMIT,
@@ -1460,6 +1462,8 @@ export type RuntimeTerminalAgentStatusEvent = {
 
 type RuntimePtyTitleTrackerEntry = {
   tracker: TerminalTitleTracker
+  /** Exact PTY whose byte stream seeded this tracker; absent for legacy producers. */
+  incarnationId?: PtyIncarnationId
   // Why: onPtyData batches the mobile session-tab touch to once per chunk;
   // the stale-working-title timer fires between chunks and must touch
   // immediately. These flags route the tracker callback to the right mode.
@@ -1511,6 +1515,7 @@ type RuntimeHeadlessTerminal = {
   // the seq actually painted into this emulator, not the latest PTY seq.
   outputSequence: number
   writeChain: Promise<void>
+  activeReplyMutationTarget: PtyMutationTarget | null
 }
 
 export type RuntimePtyDataAdmission = Readonly<{
@@ -1638,15 +1643,20 @@ type RuntimePtyController = {
     stablePaneOwner?: { handle: string; tabId: string; leafId: string }
     agentSessionEnsure?: AgentSessionClaimedSpawnResult
   }>
-  write(ptyId: string, data: string): boolean
+  captureMutationTarget?(ptyId: string): PtyMutationTarget
+  write(ptyId: string, data: string, target: PtyMutationTarget): boolean
   /** Attach-only adoption of a live local daemon session so its output streams
    *  to main without a renderer pane; never creates, resizes, or focuses.
    *  False on doubt (absent session, SSH-scoped id, non-daemon provider). */
   attach?(ptyId: string): Promise<boolean>
-  kill(ptyId: string): boolean
+  kill(ptyId: string, mutationTarget: PtyMutationTarget | null): boolean
   stopAndWait?(
     ptyId: string,
-    opts?: { keepHistory?: boolean; deadlineMs?: number }
+    opts?: {
+      keepHistory?: boolean
+      deadlineMs?: number
+      mutationTarget?: PtyMutationTarget | null
+    }
   ): Promise<boolean>
   markReversibleStops?(ptyIds: readonly string[]): () => void
   getCwd?(ptyId: string): Promise<string | null>
@@ -1656,8 +1666,8 @@ type RuntimePtyController = {
   ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }>
   confirmForegroundProcess?(ptyId: string): Promise<string | null>
   hasChildProcesses?(ptyId: string): Promise<boolean>
-  clearBuffer?(ptyId: string): Promise<void>
-  resize?(ptyId: string, cols: number, rows: number): boolean
+  clearBuffer?(ptyId: string, target: PtyMutationTarget): Promise<boolean | void>
+  resize?(ptyId: string, cols: number, rows: number, target: PtyMutationTarget): boolean
   // Why: exact-id mobile polls should not enumerate every local and SSH PTY.
   hasPty?(ptyId: string): boolean | null
   listProcesses?(connectionId?: string | null): Promise<PtyProcessInfo[]>
@@ -1740,6 +1750,7 @@ const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
+const MOBILE_TERMINAL_CLOSE_TIMEOUT_MS = 10_000
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
 const RECENT_PTY_PATH_CANDIDATE_LIMIT = 1024
 const RECENT_PTY_PATH_CANDIDATE_MAX_BYTES = 4 * 1024
@@ -1911,6 +1922,65 @@ type TerminalHandleRecord = {
   leafId: string
   ptyId: string | null
   ptyGeneration: number
+  mutationTarget: PtyMutationTarget | null
+  authority: TerminalHandleAuthority | null
+}
+
+type TerminalHandleAuthority = Readonly<{
+  ptyId: string
+  connectionId: string | null
+  incarnationId: PtyIncarnationId | null
+  paneGeneration: number | null
+  processIncarnation: string
+}>
+
+type MobileTerminalCloseBinding = Readonly<{
+  leafId: string
+  ptyId: string | null
+  terminalHandle: string | null
+  authority: TerminalHandleAuthority | null
+  mutationTarget: PtyMutationTarget | null
+}>
+
+type MobileTerminalCloseTransaction = Readonly<{
+  worktreeId: string
+  parentTabId: string
+  publicationEpoch: string
+  snapshotVersion: number
+  initiatingHandle: string | null
+  bindings: readonly MobileTerminalCloseBinding[]
+}>
+
+type HandleTerminalCloseIntent = Readonly<{
+  handle: string
+  mutationTarget: PtyMutationTarget | null
+  processIncarnation: string | null
+  publicationEpoch?: string
+  snapshotVersion?: number
+  parentTabId: string
+  transaction?: MobileTerminalCloseTransaction
+}>
+
+type HeadlessTerminalClosePlan = Readonly<{
+  targets: ReadonlyMap<string, PtyMutationTarget>
+}>
+
+function getExactPtyMutationTargetAuthority(
+  target: PtyMutationTarget | null
+): { incarnationId: PtyIncarnationId; paneGeneration: number | null } | null {
+  if (target?.access.mode === 'renderer-exact') {
+    return {
+      incarnationId: target.access.identity.incarnationId,
+      paneGeneration: target.access.identity.paneGeneration ?? null
+    }
+  }
+  if (target?.access.mode === 'runtime-exact') {
+    return {
+      incarnationId: target.access.evidence.incarnationId,
+      paneGeneration: target.access.evidence.paneGeneration ?? null
+    }
+  }
+  return null
 }
 
 export type OrchestrationCompatibilityTerminalAuthority = {
@@ -2707,6 +2777,7 @@ type LayoutQueueEntry = {
   running: Promise<ApplyLayoutResult> | null
   pending: {
     target: PtyLayoutTarget
+    mutationTarget: PtyMutationTarget | null
     waiters: ((r: ApplyLayoutResult) => void)[]
   }[]
 }
@@ -4895,6 +4966,142 @@ export class OrcaRuntimeService {
     // instead of tunneling back through renderer IPC, or live handles could
     // drift from the process they are supposed to control during reloads.
     this.ptyController = controller
+  }
+
+  private capturePtyMutationTarget(ptyId: string): PtyMutationTarget | null {
+    const controller = this.ptyController
+    return controller?.captureMutationTarget?.(ptyId) ?? null
+  }
+
+  private getPtyConnectionId(ptyId: string): string | null {
+    return this.ptysById.get(ptyId)?.connectionId ?? parseAppSshPtyId(ptyId)?.connectionId ?? null
+  }
+
+  private captureTerminalHandleBinding(
+    ptyId: string,
+    ptyGeneration: number,
+    incarnationHint?: PtyIncarnationId | null
+  ): Pick<TerminalHandleRecord, 'mutationTarget' | 'authority'> {
+    const mutationTarget = this.capturePtyMutationTarget(ptyId)
+    const exactTarget = getExactPtyMutationTargetAuthority(mutationTarget)
+    const incarnationId =
+      exactTarget?.incarnationId ??
+      incarnationHint ??
+      this.ptysById.get(ptyId)?.incarnationId ??
+      null
+    return {
+      mutationTarget,
+      authority: {
+        ptyId,
+        connectionId: this.getPtyConnectionId(ptyId),
+        incarnationId,
+        paneGeneration: exactTarget?.paneGeneration ?? null,
+        processIncarnation: incarnationId
+          ? `${ptyId}:${incarnationId}`
+          : `${this.runtimeId}:${ptyId}:${ptyGeneration}`
+      }
+    }
+  }
+
+  private rebindTerminalHandleFromController(
+    record: TerminalHandleRecord,
+    incarnationId: PtyIncarnationId
+  ): void {
+    const mutationTarget = this.capturePtyMutationTarget(record.ptyId!)
+    const exactTarget = getExactPtyMutationTargetAuthority(mutationTarget)
+    record.authority = {
+      ptyId: record.ptyId!,
+      connectionId: this.getPtyConnectionId(record.ptyId!),
+      incarnationId,
+      paneGeneration:
+        exactTarget?.incarnationId === incarnationId ? exactTarget.paneGeneration : null,
+      processIncarnation: `${record.ptyId}:${incarnationId}`
+    }
+    if (exactTarget?.incarnationId === incarnationId) {
+      record.mutationTarget = mutationTarget
+    }
+  }
+
+  private ptyMutationTargetConflicts(
+    recorded: PtyMutationTarget | null,
+    current: PtyMutationTarget | null
+  ): boolean {
+    if (!recorded) {
+      return current?.access.mode !== undefined && current.access.mode !== 'unavailable'
+    }
+    if (!current) {
+      return false
+    }
+    if (
+      recorded.providerRouteToken !== null &&
+      current.providerRouteToken !== null &&
+      recorded.providerRouteToken !== current.providerRouteToken
+    ) {
+      return true
+    }
+    if (
+      recorded.ptyLifecycleToken !== null &&
+      current.ptyLifecycleToken !== null &&
+      recorded.ptyLifecycleToken !== current.ptyLifecycleToken
+    ) {
+      return true
+    }
+    if (current.access.mode === 'unavailable') {
+      return false
+    }
+    if (recorded.access.mode === 'unavailable') {
+      return true
+    }
+    return !ptyMutationTargetsEqual(recorded, current)
+  }
+
+  private terminalHandleMutationTargetConflicts(record: TerminalHandleRecord): boolean {
+    if (!record.ptyId) {
+      return record.mutationTarget !== null || record.authority !== null
+    }
+    const authority = record.authority
+    const observedIncarnation = this.ptysById.get(record.ptyId)?.incarnationId ?? null
+    if (
+      authority &&
+      (authority.ptyId !== record.ptyId ||
+        authority.connectionId !== this.getPtyConnectionId(record.ptyId) ||
+        (authority.incarnationId !== null &&
+          observedIncarnation !== null &&
+          authority.incarnationId !== observedIncarnation))
+    ) {
+      return true
+    }
+    const current = this.capturePtyMutationTarget(record.ptyId)
+    const currentExact = getExactPtyMutationTargetAuthority(current)
+    if (authority?.incarnationId) {
+      if (currentExact) {
+        if (
+          currentExact.incarnationId !== authority.incarnationId ||
+          (authority.paneGeneration !== null &&
+            currentExact.paneGeneration !== null &&
+            authority.paneGeneration !== currentExact.paneGeneration)
+        ) {
+          return true
+        }
+        record.mutationTarget = current
+        return false
+      }
+      // Exact process authority survives an unavailable or downgraded route, but
+      // the old mutation token remains unusable until the same incarnation proves itself.
+      return Boolean(
+        current && current.access.mode !== 'unavailable' && current.access.mode !== 'legacy'
+      )
+    }
+    return this.ptyMutationTargetConflicts(record.mutationTarget, current)
+  }
+
+  private isCurrentPtyMutationTarget(target: PtyMutationTarget): boolean {
+    const current = this.capturePtyMutationTarget(target.id)
+    return Boolean(current && ptyMutationTargetsEqual(target, current))
+  }
+
+  private writeCapturedPtyMutation(target: PtyMutationTarget | null, data: string): boolean {
+    return Boolean(target && this.ptyController?.write(target.id, data, target))
   }
 
   setNotifier(notifier: RuntimeNotifier | null): void {
@@ -7706,6 +7913,8 @@ export class OrcaRuntimeService {
       expectedPublicationEpoch?: string
       expectedTerminalHandle?: string
       clientNavigationId?: string
+      handleIntent?: HandleTerminalCloseIntent
+      settledPtyIds?: ReadonlySet<string>
     } = {}
   ): Promise<RuntimeMobileSessionTabCloseResult> {
     const graphEpoch = options.clientNavigationId ? this.captureReadyGraphEpoch() : null
@@ -7729,9 +7938,13 @@ export class OrcaRuntimeService {
         ...(snapshot ? { snapshotRepublished: true as const } : {})
       }
     }
+    const expectedPublicationEpoch =
+      options.handleIntent?.publicationEpoch ?? options.expectedPublicationEpoch
     if (
-      options.expectedPublicationEpoch !== undefined &&
-      snapshot?.publicationEpoch !== options.expectedPublicationEpoch
+      (expectedPublicationEpoch !== undefined &&
+        snapshot?.publicationEpoch !== expectedPublicationEpoch) ||
+      (options.handleIntent?.snapshotVersion !== undefined &&
+        snapshot?.snapshotVersion !== options.handleIntent.snapshotVersion)
     ) {
       this.republishMobileSessionTabsSnapshot(worktreeId)
       return {
@@ -7752,15 +7965,15 @@ export class OrcaRuntimeService {
     if (!tab) {
       throw new Error('tab_not_found')
     }
-    if (options.expectedTerminalHandle !== undefined) {
+    const expectedTerminalHandle = options.handleIntent?.handle ?? options.expectedTerminalHandle
+    if (expectedTerminalHandle !== undefined) {
       const terminalIncarnationMatches =
         tab.type === 'terminal' &&
         snapshot!.tabs.some(
           (candidate) =>
             candidate.type === 'terminal' &&
             candidate.parentTabId === tab.parentTabId &&
-            this.getMobileSessionTerminalHandle(worktreeId, candidate) ===
-              options.expectedTerminalHandle
+            this.getMobileSessionTerminalHandle(worktreeId, candidate) === expectedTerminalHandle
         )
       if (!terminalIncarnationMatches) {
         this.republishMobileSessionTabsSnapshot(worktreeId)
@@ -7770,6 +7983,32 @@ export class OrcaRuntimeService {
           refusalReason: 'stale-terminal',
           snapshotRepublished: true
         }
+      }
+    }
+    const terminalCloseTransaction =
+      tab.type === 'terminal'
+        ? (options.handleIntent?.transaction ??
+          this.captureMobileTerminalCloseTransaction(
+            worktreeId,
+            snapshot!,
+            tab,
+            expectedTerminalHandle ?? null,
+            options.handleIntent
+          ))
+        : null
+    if (
+      terminalCloseTransaction &&
+      tab.type === 'terminal' &&
+      (terminalCloseTransaction.worktreeId !== worktreeId ||
+        terminalCloseTransaction.parentTabId !== tab.parentTabId ||
+        this.getMobileTerminalCloseTransactionStatus(terminalCloseTransaction) === 'replaced')
+    ) {
+      this.republishMobileSessionTabsSnapshot(worktreeId)
+      return {
+        closed: true,
+        refused: true,
+        refusalReason: 'stale-terminal',
+        snapshotRepublished: true
       }
     }
     if (tab.type === 'terminal') {
@@ -7839,9 +8078,17 @@ export class OrcaRuntimeService {
       // the relay when no renderer owns the parent: an adopted tab needs the
       // renderer's live pin guard and durable close transaction.
       if (closingWholeParent && !this.tabs.has(tab.parentTabId)) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab, {
-          killPtys: options.reason === undefined || options.reason === 'user'
-        })
+        await this.closeHeadlessMobileTerminalTab(
+          worktreeId,
+          snapshot!,
+          tab,
+          terminalCloseTransaction!,
+          {
+            killPtys: options.reason === undefined || options.reason === 'user',
+            observedPtyIds,
+            settledPtyIds: options.settledPtyIds
+          }
+        )
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
         return { closed: true }
@@ -7862,21 +8109,38 @@ export class OrcaRuntimeService {
         } finally {
           releasePublicationThrottle()
         }
+        const transactionStatus = this.getMobileTerminalCloseTransactionStatus(
+          terminalCloseTransaction!
+        )
+        if (transactionStatus === 'replaced') {
+          this.republishMobileSessionTabsSnapshot(worktreeId)
+          return {
+            closed: true,
+            refused: true,
+            refusalReason: 'stale-terminal',
+            snapshotRepublished: true
+          }
+        }
         const remainingSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
         const remainingTab = remainingSnapshot?.tabs.find(
           (candidate): candidate is RuntimeMobileSessionTerminalTab =>
             candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
         )
         if (
-          remainingSnapshot &&
-          remainingTab &&
-          this.isRuntimeOwnedHeadlessMobileTab(worktreeId, remainingTab)
+          this.isRuntimeOwnedHeadlessMobileTab(worktreeId, tab) ||
+          (remainingTab && this.isRuntimeOwnedHeadlessMobileTab(worktreeId, remainingTab))
         ) {
-          // Why: after relay recovery the renderer can acknowledge a tab it no longer mirrors; the HUB must still retire its SSH-owned surface.
-          this.closeHeadlessMobileTerminalTab(worktreeId, remainingSnapshot, remainingTab, {
-            // Why: the renderer may already have durably removed the tab before acknowledging.
-            allowMissingPersistedTab: true
-          })
+          await this.closeHeadlessMobileTerminalTab(
+            worktreeId,
+            remainingSnapshot ?? snapshot!,
+            remainingTab ?? tab,
+            terminalCloseTransaction!,
+            {
+              allowMissingPersistedTab: true,
+              observedPtyIds,
+              settledPtyIds: options.settledPtyIds
+            }
+          )
           this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
           this.store?.flushOrThrow?.()
         }
@@ -7886,20 +8150,53 @@ export class OrcaRuntimeService {
       // Why: notifier implementations without the acknowledged relay may expose
       // only raw pane close. Runtime-owned parents still need de-persist + kill.
       if (closingWholeParent && this.isRuntimeOwnedHeadlessMobileTab(worktreeId, tab)) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
+        await this.closeHeadlessMobileTerminalTab(
+          worktreeId,
+          snapshot!,
+          tab,
+          terminalCloseTransaction!,
+          { observedPtyIds, settledPtyIds: options.settledPtyIds }
+        )
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
         return { closed: true }
       }
       if (!this.notifier?.closeTerminal) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
+        await this.closeHeadlessMobileTerminalTab(
+          worktreeId,
+          snapshot!,
+          tab,
+          terminalCloseTransaction!,
+          { observedPtyIds, settledPtyIds: options.settledPtyIds }
+        )
         this.store?.flushOrThrow?.()
         return { closed: true }
       }
       if (tab.id === tabId) {
         const pty = this.findPtyForMobileTerminalTab(worktreeId, tab)
         if (pty) {
-          this.ptyController?.kill(pty.ptyId)
+          const binding = terminalCloseTransaction!.bindings.find(
+            (candidate) => candidate.ptyId === pty.ptyId
+          )
+          const target = binding ? this.selectExactTerminalCloseTarget(binding) : null
+          if (!target) {
+            throw new Error('terminal_exact_close_unavailable')
+          }
+          if (
+            !options.settledPtyIds?.has(pty.ptyId) &&
+            !(await this.stopPtyForTerminalClose(pty.ptyId, target))
+          ) {
+            throw new Error('terminal_close_stop_failed')
+          }
+          if (
+            this.getMobileTerminalCloseTransactionStatus(
+              terminalCloseTransaction!,
+              new Set([pty.ptyId])
+            ) === 'replaced'
+          ) {
+            this.republishMobileSessionTabsSnapshot(worktreeId)
+            throw new Error('terminal_handle_stale')
+          }
         } else {
           this.notifier?.closeTerminal(tab.parentTabId)
         }
@@ -7933,6 +8230,420 @@ export class OrcaRuntimeService {
       })
     }
     this.notifyMobileSessionTabsChanged(worktreeId)
+  }
+
+  private getPersistedTerminalIncarnation(
+    worktreeId: string,
+    parentTabId: string,
+    leafId: string
+  ): PtyIncarnationId | null {
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    return session?.terminalPtyIncarnationsByPaneKey?.[makePaneKey(parentTabId, leafId)] ?? null
+  }
+
+  private captureMobileTerminalCloseTransaction(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    tab: RuntimeMobileSessionTerminalTab,
+    initiatingHandle: string | null,
+    handleIntent?: HandleTerminalCloseIntent
+  ): MobileTerminalCloseTransaction {
+    if (handleIntent && handleIntent.parentTabId !== tab.parentTabId) {
+      throw new Error('terminal_handle_stale')
+    }
+    const bindings = snapshot.tabs
+      .filter(
+        (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+          candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
+      )
+      .map((candidate): MobileTerminalCloseBinding => {
+        const pty = this.findPtyForMobileTerminalTab(worktreeId, candidate)
+        const ptyId =
+          pty?.ptyId ??
+          candidate.ptyId ??
+          candidate.parentLayout?.ptyIdsByLeafId?.[candidate.leafId] ??
+          null
+        if (!ptyId) {
+          return {
+            leafId: candidate.leafId,
+            ptyId: null,
+            terminalHandle: null,
+            authority: null,
+            mutationTarget: null
+          }
+        }
+        const terminalHandle = this.handleByPtyId.get(ptyId) ?? this.findHandleForPtyRecord(ptyId)
+        const record = terminalHandle ? this.handles.get(terminalHandle) : null
+        if (record && this.terminalHandleMutationTargetConflicts(record)) {
+          throw new Error('terminal_handle_stale')
+        }
+        const captured = record
+          ? { authority: record.authority, mutationTarget: record.mutationTarget }
+          : this.captureTerminalHandleBinding(
+              ptyId,
+              0,
+              pty?.incarnationId ??
+                this.getPersistedTerminalIncarnation(
+                  worktreeId,
+                  candidate.parentTabId,
+                  candidate.leafId
+                )
+            )
+        return {
+          leafId: candidate.leafId,
+          ptyId,
+          terminalHandle: terminalHandle ?? null,
+          ...captured
+        }
+      })
+    if (initiatingHandle) {
+      const initiating = bindings.find((binding) => binding.terminalHandle === initiatingHandle)
+      if (
+        !initiating ||
+        (handleIntent?.processIncarnation !== undefined &&
+          initiating.authority?.processIncarnation !== handleIntent.processIncarnation)
+      ) {
+        throw new Error('terminal_handle_stale')
+      }
+      const intendedExact = getExactPtyMutationTargetAuthority(handleIntent?.mutationTarget ?? null)
+      if (intendedExact && initiating.authority?.incarnationId !== intendedExact.incarnationId) {
+        throw new Error('terminal_handle_stale')
+      }
+    }
+    return {
+      worktreeId,
+      parentTabId: tab.parentTabId,
+      publicationEpoch: snapshot.publicationEpoch,
+      snapshotVersion: snapshot.snapshotVersion,
+      initiatingHandle,
+      bindings
+    }
+  }
+
+  private getMobileTerminalCloseTransactionStatus(
+    transaction: MobileTerminalCloseTransaction,
+    settledPtyIds: ReadonlySet<string> = new Set()
+  ): 'same' | 'retired' | 'replaced' {
+    const snapshot = this.mobileSessionTabsByWorktree.get(transaction.worktreeId)
+    const snapshotTabs = snapshot?.tabs.filter(
+      (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+        candidate.type === 'terminal' && candidate.parentTabId === transaction.parentTabId
+    )
+    const persistedSession = this.getWorkspaceSessionForWorktree(transaction.worktreeId)
+    const persistedParent = persistedSession?.tabsByWorktree[transaction.worktreeId]?.find(
+      (candidate) => candidate.id === transaction.parentTabId
+    )
+    const currentTabs =
+      snapshotTabs && snapshotTabs.length > 0
+        ? snapshotTabs
+        : persistedParent && persistedSession
+          ? this.buildHeadlessMobileSessionTerminalTabs(
+              transaction.worktreeId,
+              [persistedParent],
+              persistedSession
+            )
+          : []
+    const unsettled = transaction.bindings.filter(
+      (binding) => !binding.ptyId || !settledPtyIds.has(binding.ptyId)
+    )
+    if (currentTabs.length === 0) {
+      const hasObservedReplacement = unsettled.some((binding) => {
+        if (!binding.ptyId || !binding.authority?.incarnationId) {
+          return false
+        }
+        const currentPty = this.ptysById.get(binding.ptyId)
+        return (
+          currentPty?.connected === true &&
+          currentPty.incarnationId !== null &&
+          currentPty.incarnationId !== binding.authority.incarnationId
+        )
+      })
+      return hasObservedReplacement ? 'replaced' : 'retired'
+    }
+    let current: MobileTerminalCloseTransaction
+    try {
+      current = this.captureMobileTerminalCloseTransaction(
+        transaction.worktreeId,
+        {
+          ...(snapshot ?? {
+            worktree: transaction.worktreeId,
+            publicationEpoch: 'durable-close-check',
+            snapshotVersion: 0,
+            activeGroupId: null,
+            activeTabId: null,
+            activeTabType: null,
+            tabs: currentTabs
+          }),
+          tabs: currentTabs
+        },
+        currentTabs[0]!,
+        null
+      )
+    } catch {
+      return 'replaced'
+    }
+    if (current.bindings.length < unsettled.length) {
+      return 'replaced'
+    }
+    for (const expected of transaction.bindings) {
+      const observed = current.bindings.find((binding) => binding.leafId === expected.leafId)
+      if (!observed) {
+        if (expected.ptyId && !settledPtyIds.has(expected.ptyId)) {
+          return 'replaced'
+        }
+        continue
+      }
+      const identityChanged =
+        observed.ptyId !== expected.ptyId ||
+        observed.terminalHandle !== expected.terminalHandle ||
+        observed.authority?.connectionId !== expected.authority?.connectionId ||
+        observed.authority?.incarnationId !== expected.authority?.incarnationId ||
+        observed.authority?.paneGeneration !== expected.authority?.paneGeneration ||
+        observed.authority?.processIncarnation !== expected.authority?.processIncarnation ||
+        (observed.mutationTarget !== null &&
+          expected.mutationTarget !== null &&
+          !ptyMutationTargetsEqual(observed.mutationTarget, expected.mutationTarget))
+      if (identityChanged) {
+        return 'replaced'
+      }
+    }
+    if (
+      current.bindings.some(
+        (observed) => !transaction.bindings.some((expected) => expected.leafId === observed.leafId)
+      )
+    ) {
+      return 'replaced'
+    }
+    return 'same'
+  }
+
+  private hasMatchingSshPtyLease(ptyId: string, authority: TerminalHandleAuthority): boolean {
+    const parsed = parseAppSshPtyId(ptyId)
+    if (!parsed || !authority.incarnationId || !this.store?.getSshRemotePtyLeases) {
+      return false
+    }
+    return this.store
+      .getSshRemotePtyLeases(parsed.connectionId)
+      .some(
+        (lease) =>
+          lease.ptyId === parsed.relayPtyId &&
+          lease.incarnationId === authority.incarnationId &&
+          lease.state !== 'terminated' &&
+          lease.state !== 'expired' &&
+          (authority.paneGeneration === null ||
+            lease.paneGeneration === undefined ||
+            lease.paneGeneration === authority.paneGeneration)
+      )
+  }
+
+  private selectExactTerminalCloseTarget(
+    binding: MobileTerminalCloseBinding
+  ): PtyMutationTarget | null {
+    if (!binding.ptyId || !binding.authority?.incarnationId) {
+      return null
+    }
+    const storedExact = getExactPtyMutationTargetAuthority(binding.mutationTarget)
+    if (storedExact) {
+      if (
+        storedExact.incarnationId !== binding.authority.incarnationId ||
+        (binding.authority.paneGeneration !== null &&
+          storedExact.paneGeneration !== null &&
+          storedExact.paneGeneration !== binding.authority.paneGeneration)
+      ) {
+        return null
+      }
+    } else if (
+      binding.mutationTarget?.access.mode !== 'unavailable' ||
+      !this.hasMatchingSshPtyLease(binding.ptyId, binding.authority)
+    ) {
+      return null
+    }
+    const observedIncarnation = this.ptysById.get(binding.ptyId)?.incarnationId ?? null
+    if (observedIncarnation !== null && observedIncarnation !== binding.authority.incarnationId) {
+      return null
+    }
+    const current = this.capturePtyMutationTarget(binding.ptyId)
+    const currentExact = getExactPtyMutationTargetAuthority(current)
+    if (currentExact) {
+      return currentExact.incarnationId === binding.authority.incarnationId &&
+        (binding.authority.paneGeneration === null ||
+          currentExact.paneGeneration === null ||
+          currentExact.paneGeneration === binding.authority.paneGeneration)
+        ? current
+        : null
+    }
+    if (current?.access.mode === 'legacy') {
+      return null
+    }
+    return this.hasMatchingSshPtyLease(binding.ptyId, binding.authority)
+      ? binding.mutationTarget
+      : null
+  }
+
+  private async stopPtyForTerminalClose(
+    ptyId: string,
+    mutationTarget: PtyMutationTarget
+  ): Promise<boolean> {
+    const controller = this.ptyController
+    const stopAndWait = controller?.stopAndWait
+    if (!controller || !stopAndWait) {
+      return false
+    }
+    const deadlineMs = Date.now() + MOBILE_TERMINAL_CLOSE_TIMEOUT_MS
+    if (deadlineMs <= Date.now()) {
+      return false
+    }
+    const stopPromise = Promise.resolve()
+      .then(() =>
+        stopAndWait.call(controller, ptyId, {
+          deadlineMs,
+          mutationTarget
+        })
+      )
+      .then(
+        (stopped) => stopped === true,
+        () => false
+      )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const timedOut = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), Math.max(1, deadlineMs - Date.now()))
+        timer.unref?.()
+      })
+      return await Promise.race([stopPromise, timedOut])
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  private reconcileRecoverableHeadlessMobileTerminalClose(
+    worktreeId: string,
+    parentTabId: string
+  ): void {
+    const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    const hasParent = snapshot?.tabs.some(
+      (candidate) => candidate.type === 'terminal' && candidate.parentTabId === parentTabId
+    )
+    if (hasParent) {
+      return
+    }
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    const hasPersistedParent = session?.tabsByWorktree[worktreeId]?.some(
+      (candidate) => candidate.id === parentTabId
+    )
+    if (hasPersistedParent) {
+      this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, { force: true })
+    }
+  }
+
+  private async stopHeadlessMobileTerminalPtys(
+    worktreeId: string,
+    tab: RuntimeMobileSessionTerminalTab,
+    transaction: MobileTerminalCloseTransaction,
+    plan: HeadlessTerminalClosePlan,
+    options: {
+      killPtys?: boolean
+      settledPtyIds?: ReadonlySet<string>
+    }
+  ): Promise<Set<string>> {
+    const settledPtyIds = new Set(options.settledPtyIds ?? [])
+    if (options.killPtys === false) {
+      return settledPtyIds
+    }
+    for (const [ptyId, mutationTarget] of plan.targets) {
+      const stopped = await this.stopPtyForTerminalClose(ptyId, mutationTarget)
+      if (stopped) {
+        settledPtyIds.add(ptyId)
+      }
+      const transactionStatus = this.getMobileTerminalCloseTransactionStatus(
+        transaction,
+        settledPtyIds
+      )
+      if (transactionStatus === 'replaced') {
+        this.reconcileRecoverableHeadlessMobileTerminalClose(worktreeId, tab.parentTabId)
+        throw new Error('terminal_handle_stale')
+      }
+      if (!stopped) {
+        this.reconcileRecoverableHeadlessMobileTerminalClose(worktreeId, tab.parentTabId)
+        throw Object.assign(new Error('terminal_close_stop_failed'), { ptyId })
+      }
+    }
+    return settledPtyIds
+  }
+
+  private preflightHeadlessMobileTerminalClose(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    tab: RuntimeMobileSessionTerminalTab,
+    transaction: MobileTerminalCloseTransaction,
+    options: {
+      allowMissingPersistedTab?: boolean
+      killPtys?: boolean
+      observedPtyIds: ReadonlySet<string> | null
+      settledPtyIds?: ReadonlySet<string>
+    }
+  ): HeadlessTerminalClosePlan {
+    const settledPtyIds = options.settledPtyIds ?? new Set<string>()
+    const transactionStatus = this.getMobileTerminalCloseTransactionStatus(
+      transaction,
+      settledPtyIds
+    )
+    if (transactionStatus === 'replaced') {
+      throw new Error('terminal_handle_stale')
+    }
+    if (transactionStatus === 'retired' && options.allowMissingPersistedTab !== true) {
+      throw new Error('terminal_handle_stale')
+    }
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    if (!session || !this.store?.setWorkspaceSession) {
+      throw new Error('workspace_session_unavailable')
+    }
+    const projected = closeTerminalTabInWorkspaceSession(session, worktreeId, tab.parentTabId)
+    if (projected.pinned) {
+      throw new Error('terminal_tab_pinned')
+    }
+    if (!projected.closed && options.allowMissingPersistedTab !== true) {
+      throw new Error('tab_not_found')
+    }
+    const candidatePtyIds = new Set(projected.ptyIdsToKill)
+    for (const binding of transaction.bindings) {
+      if (binding.ptyId) {
+        candidatePtyIds.add(binding.ptyId)
+      }
+    }
+    const targets = new Map<string, PtyMutationTarget>()
+    for (const ptyId of candidatePtyIds) {
+      const hasOtherOwner = snapshot.tabs.some(
+        (candidate) =>
+          candidate.type === 'terminal' &&
+          candidate.parentTabId !== tab.parentTabId &&
+          (candidate.ptyId === ptyId ||
+            Object.values(candidate.parentLayout?.ptyIdsByLeafId ?? {}).includes(ptyId))
+      )
+      if (hasOtherOwner) {
+        continue
+      }
+      const binding = transaction.bindings.find((candidate) => candidate.ptyId === ptyId)
+      const exactTarget = binding ? this.selectExactTerminalCloseTarget(binding) : null
+      const liveOrUnknown =
+        options.observedPtyIds === null ||
+        options.observedPtyIds.has(ptyId) ||
+        this.ptysById.get(ptyId)?.connected === true ||
+        Boolean(binding?.authority && this.hasMatchingSshPtyLease(ptyId, binding.authority))
+      if (!liveOrUnknown) {
+        continue
+      }
+      if (options.killPtys === false) {
+        continue
+      }
+      if (!exactTarget) {
+        throw new Error('terminal_exact_close_unavailable')
+      }
+      targets.set(ptyId, exactTarget)
+    }
+    return { targets }
   }
 
   private getMobileSessionTerminalHandle(
@@ -8046,63 +8757,70 @@ export class OrcaRuntimeService {
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
   }
 
-  private closeHeadlessMobileTerminalTab(
+  private async closeHeadlessMobileTerminalTab(
     worktreeId: string,
     snapshot: RuntimeMobileSessionTabsSnapshot,
     tab: RuntimeMobileSessionTerminalTab,
-    options: { allowMissingPersistedTab?: boolean; killPtys?: boolean } = {}
-  ): void {
+    transaction: MobileTerminalCloseTransaction,
+    options: {
+      allowMissingPersistedTab?: boolean
+      killPtys?: boolean
+      observedPtyIds: ReadonlySet<string> | null
+      settledPtyIds?: ReadonlySet<string>
+    }
+  ): Promise<void> {
     const closedParentTabId = tab.parentTabId
-    this.clearRuntimeSessionOwnershipForMobileTab(worktreeId, snapshot, closedParentTabId)
-    const projectedPtyIds = this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId, {
-      allowMissing: options.allowMissingPersistedTab
+    const plan = this.preflightHeadlessMobileTerminalClose(
+      worktreeId,
+      snapshot,
+      tab,
+      transaction,
+      options
+    )
+    const settledPtyIds = await this.stopHeadlessMobileTerminalPtys(
+      worktreeId,
+      tab,
+      transaction,
+      plan,
+      options
+    )
+    if (this.getMobileTerminalCloseTransactionStatus(transaction, settledPtyIds) === 'replaced') {
+      this.reconcileRecoverableHeadlessMobileTerminalClose(worktreeId, closedParentTabId)
+      throw new Error('terminal_handle_stale')
+    }
+    const currentSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    const currentTab = currentSnapshot?.tabs.find(
+      (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+        candidate.type === 'terminal' && candidate.parentTabId === closedParentTabId
+    )
+    const baseSnapshot = currentSnapshot ?? snapshot
+    this.clearRuntimeSessionOwnershipForMobileTab(worktreeId, baseSnapshot, closedParentTabId)
+    this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId, {
+      // A successful provider stop may have already published its verified exit
+      // and removed the final persisted leaf before this transaction resumes.
+      allowMissing: true
     })
-    // Why: local provider ids can be reused after restart, so a dormant
-    // persisted id is not kill authority. SSH relay ids remain durable exact
-    // identities even before pane metadata reconnects.
-    const ptyIdsToKill = new Set(projectedPtyIds.filter((ptyId) => parseAppSshPtyId(ptyId)))
-    for (const candidate of snapshot.tabs) {
-      if (candidate.type !== 'terminal' || candidate.parentTabId !== closedParentTabId) {
-        continue
-      }
-      const livePty = this.findPtyForMobileTerminalTab(worktreeId, candidate)
-      const ptyId = livePty?.ptyId ?? candidate.ptyId
-      const hasOtherOwner = snapshot.tabs.some(
-        (other) =>
-          other.type === 'terminal' &&
-          other.parentTabId !== closedParentTabId &&
-          other.ptyId === ptyId
-      )
-      if (ptyId && !hasOtherOwner && (livePty || parseAppSshPtyId(ptyId))) {
-        // Why: a live serve leaf can exist before its debounced binding reaches
-        // persistence. Include it from the authoritative snapshot so split
-        // close cannot leave a provider process behind.
-        ptyIdsToKill.add(ptyId)
-      }
-    }
-    if (options.killPtys !== false) {
-      for (const ptyId of ptyIdsToKill) {
-        this.ptyController?.kill(ptyId)
-      }
-    }
-    const nextTabs = snapshot.tabs.filter((candidate) => {
+    const nextTabs = baseSnapshot.tabs.filter((candidate) => {
       if (candidate.type !== 'terminal' || candidate.parentTabId !== closedParentTabId) {
         return true
       }
       return false
     })
     const active = nextTabs.find((candidate) => candidate.isActive) ?? nextTabs[0] ?? null
+    if (!currentSnapshot && !currentTab) {
+      return
+    }
     const nextSnapshot: RuntimeMobileSessionTabsSnapshot = {
-      ...snapshot,
+      ...baseSnapshot,
       publicationEpoch: `headless:${Date.now().toString(36)}`,
-      snapshotVersion: snapshot.snapshotVersion + 1,
+      snapshotVersion: baseSnapshot.snapshotVersion + 1,
       activeTabId: active?.id ?? null,
       activeTabType: active?.type ?? null,
       tabGroups: this.buildHeadlessMobileSessionTabGroups(
         worktreeId,
         nextTabs,
         active,
-        snapshot.tabGroups
+        baseSnapshot.tabGroups
       ),
       tabs: nextTabs
     }
@@ -9150,15 +9868,38 @@ export class OrcaRuntimeService {
     ptyId: string,
     handle: string | undefined,
     incarnationId?: string,
-    options: { exactRestoredSurface?: boolean } = {}
+    options: { exactRestoredSurface?: boolean; priorIncarnationId?: string | null } = {}
   ): void {
     const trimmed = handle?.trim()
     if (!trimmed || !trimmed.startsWith('term_')) {
       return
     }
+    const boundHandle =
+      this.handleByPtyId.get(ptyId) ??
+      [...this.handles].find(([, record]) => record.ptyId === ptyId)?.[0]
+    const boundRecord = boundHandle ? this.handles.get(boundHandle) : null
+    if (boundRecord && boundHandle === trimmed) {
+      const recordedIncarnation = boundRecord.authority?.incarnationId ?? null
+      if (incarnationId && recordedIncarnation && incarnationId !== recordedIncarnation) {
+        this.invalidateAllHandlesForPty(ptyId)
+        const pty = this.ptysById.get(ptyId)
+        if (pty) {
+          pty.tabId = null
+          pty.paneKey = null
+        }
+        return
+      }
+      if (incarnationId) {
+        this.rebindTerminalHandleFromController(boundRecord, incarnationId)
+      }
+      this.handleByPtyId.set(ptyId, trimmed)
+      return
+    }
     const pty = this.ptysById.get(ptyId)
+    const priorIncarnationId =
+      options.priorIncarnationId !== undefined ? options.priorIncarnationId : pty?.incarnationId
     const changedIncarnation = Boolean(
-      incarnationId && pty?.incarnationId && incarnationId !== pty.incarnationId
+      incarnationId && priorIncarnationId && incarnationId !== priorIncarnationId
     )
     if (changedIncarnation) {
       const priorHandle = this.handleByPtyId.get(ptyId)
@@ -9281,6 +10022,9 @@ export class OrcaRuntimeService {
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
     if (pty) {
       if (incarnationId) {
+        if (pty.incarnationId && pty.incarnationId !== incarnationId) {
+          this.resetTrackedTerminalStateForProviderGeneration(ptyId)
+        }
         pty.incarnationId = incarnationId
       }
       pty.connected = true
@@ -9301,6 +10045,7 @@ export class OrcaRuntimeService {
     isWsl?: boolean
   ): void {
     this.assertPtyDidNotExitBeforeRegistration(ptyId, binding?.incarnationId)
+    const priorIncarnationId = this.ptysById.get(ptyId)?.incarnationId ?? null
     this.spawnPublishedPtys.add(ptyId)
     // Why: record the renderer pane identity at spawn time so a stalled graph
     // sync can't hide that a live PTY already backs a pending mobile create.
@@ -9318,6 +10063,18 @@ export class OrcaRuntimeService {
       ...(binding && paneKey ? { tabId: binding.tabId, paneKey } : {}),
       ...(binding?.incarnationId ? { incarnationId: binding.incarnationId } : {})
     })
+    if (
+      binding?.incarnationId &&
+      priorIncarnationId &&
+      priorIncarnationId !== binding.incarnationId
+    ) {
+      // Renderer registration is the explicit pane-boundary proof for a replacement process.
+      for (const record of this.handles.values()) {
+        if (record.ptyId === ptyId) {
+          this.rebindTerminalHandleFromController(record, binding.incarnationId)
+        }
+      }
+    }
     const pendingIncarnation = this.pendingPtyRegistrationIncarnations.get(ptyId)
     if (
       pendingIncarnation === null ||
@@ -9474,7 +10231,8 @@ export class OrcaRuntimeService {
     at: number,
     sequenceChars = data.length,
     transformed = false,
-    sourceRanges?: readonly TerminalOutputSourceRange[]
+    sourceRanges?: readonly TerminalOutputSourceRange[],
+    ptyIncarnationId?: PtyIncarnationId
   ): RuntimePtyDataAdmission {
     let completion: Promise<void> | null = null
     const sequence = this.onPtyData(
@@ -9486,7 +10244,8 @@ export class OrcaRuntimeService {
       (receipt) => {
         completion = receipt
       },
-      sourceRanges
+      sourceRanges,
+      ptyIncarnationId
     )
     if (!completion) {
       throw new Error('PTY model admission receipt was not captured')
@@ -9501,7 +10260,8 @@ export class OrcaRuntimeService {
     sequenceChars = data.length,
     transformed = false,
     captureModelReceipt?: (completion: Promise<void>) => void,
-    sourceRanges?: readonly TerminalOutputSourceRange[]
+    sourceRanges?: readonly TerminalOutputSourceRange[],
+    ptyIncarnationId?: PtyIncarnationId
   ): number {
     const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + sequenceChars
     this.ptyOutputSequenceById.set(ptyId, outputSequence)
@@ -9679,7 +10439,7 @@ export class OrcaRuntimeService {
     // pending-message delivery instead of being masked by the chunk's last
     // title (issue #1083). Uses the OSC 9999-stripped cleanData like the
     // renderer, so pure status chunks don't perturb the stale-title probe.
-    const titleTrackerEntry = this.getOrCreatePtyTitleTrackerEntry(ptyId)
+    const titleTrackerEntry = this.getOrCreatePtyTitleTrackerEntry(ptyId, ptyIncarnationId)
     const previousTitleScanTail = this.oscTitleScanTailByPtyId.get(ptyId)
     const titleInput = previousTitleScanTail
       ? `${previousTitleScanTail}${agentStatusChunk.cleanData}`
@@ -9715,7 +10475,7 @@ export class OrcaRuntimeService {
       } finally {
         // Why: flushed in the finally so a throwing tracker callback cannot
         // strand this chunk's facts to be emitted under the next chunk's seq.
-        this.flushPendingTerminalSideEffectFacts(ptyId, titleTrackerEntry)
+        this.flushPendingTerminalSideEffectFacts(ptyId, titleTrackerEntry, ptyIncarnationId)
       }
     }
     // Why: hook (OSC 9999) transitions often arrive without a title change, so
@@ -9858,14 +10618,17 @@ export class OrcaRuntimeService {
    *  pty:sideEffect batch, preserving byte order. */
   private flushPendingTerminalSideEffectFacts(
     ptyId: string,
-    entry: RuntimePtyTitleTrackerEntry
+    entry: RuntimePtyTitleTrackerEntry,
+    ptyIncarnationId?: PtyIncarnationId
   ): void {
     if (entry.pendingFacts.length === 0) {
       return
     }
     const facts = entry.pendingFacts
     entry.pendingFacts = []
-    this.emitTerminalSideEffectBatch(ptyId, facts)
+    this.emitTerminalSideEffectBatch(ptyId, facts, {
+      ptyIncarnationId: ptyIncarnationId ?? entry.incarnationId
+    })
   }
 
   /** Feed a main-fabricated OSC title/BEL frame (agent hook spinners) through
@@ -9887,7 +10650,7 @@ export class OrcaRuntimeService {
     } finally {
       entry.applyingChunk = false
       entry.applyingSyntheticFrame = false
-      this.flushPendingTerminalSideEffectFacts(ptyId, entry)
+      this.flushPendingTerminalSideEffectFacts(ptyId, entry, entry.incarnationId)
     }
     if (entry.chunkTouchedSessionTabs) {
       this.touchMobileSessionSnapshotsForPty(ptyId)
@@ -9922,26 +10685,35 @@ export class OrcaRuntimeService {
   /** A transient fact the daemon detected while it held scan authority —
    *  emitted through the same fact channel as byte-scanned facts. Arrives
    *  between chunks, so recordTerminalSideEffectFact emits it immediately. */
-  emitDaemonPtyTransientFact(ptyId: string, fact: PtyTransientFact): void {
+  emitDaemonPtyTransientFact(
+    ptyId: string,
+    fact: PtyTransientFact,
+    ptyIncarnationId?: PtyIncarnationId
+  ): void {
     switch (fact.kind) {
       case 'bell':
-        this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' })
+        this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' }, ptyIncarnationId)
         return
       case 'command-finished':
         this.retirePtyAgentLaunchAuthority(ptyId)
-        this.recordTerminalSideEffectFact(ptyId, {
-          kind: 'command-finished',
-          exitCode: fact.exitCode
-        })
+        this.recordTerminalSideEffectFact(
+          ptyId,
+          { kind: 'command-finished', exitCode: fact.exitCode },
+          ptyIncarnationId
+        )
         return
       case 'pr-link':
-        this.recordTerminalSideEffectFact(ptyId, { kind: 'pr-link', link: fact.link })
+        this.recordTerminalSideEffectFact(
+          ptyId,
+          { kind: 'pr-link', link: fact.link },
+          ptyIncarnationId
+        )
         return
       case '2031-subscribe':
-        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' }, ptyIncarnationId)
         return
       case '2031-unsubscribe':
-        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
+        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' }, ptyIncarnationId)
     }
   }
 
@@ -9973,7 +10745,11 @@ export class OrcaRuntimeService {
 
   /** Record one derived side-effect fact: batched per chunk while applying
    *  bytes, emitted immediately for between-chunk facts (stale-title timer). */
-  private recordTerminalSideEffectFact(ptyId: string, fact: TerminalSideEffectFact): void {
+  private recordTerminalSideEffectFact(
+    ptyId: string,
+    fact: TerminalSideEffectFact,
+    ptyIncarnationId?: PtyIncarnationId
+  ): void {
     if (!this.terminalSideEffectConsumerAvailable) {
       return
     }
@@ -9982,19 +10758,22 @@ export class OrcaRuntimeService {
       entry.pendingFacts.push(fact)
       return
     }
-    this.emitTerminalSideEffectBatch(ptyId, [fact])
+    this.emitTerminalSideEffectBatch(ptyId, [fact], {
+      ptyIncarnationId: ptyIncarnationId ?? entry?.incarnationId
+    })
   }
 
   private emitTerminalSideEffectBatch(
     ptyId: string,
     facts: TerminalSideEffectFact[],
-    options: { replay?: boolean } = {}
+    options: { replay?: boolean; ptyIncarnationId?: PtyIncarnationId } = {}
   ): void {
     if (!this.terminalSideEffectConsumerAvailable || facts.length === 0) {
       return
     }
     const batch: TerminalSideEffectBatch = {
       ptyId,
+      ...(options.ptyIncarnationId ? { ptyIncarnationId: options.ptyIncarnationId } : {}),
       seq: this.ptyOutputSequenceById.get(ptyId) ?? 0,
       facts,
       ...(options.replay ? { replay: true } : {}),
@@ -10044,8 +10823,11 @@ export class OrcaRuntimeService {
   /** Title-only replay batch for renderer (re)attach — the no-attention-replay
    *  rule: snapshots restore title state, never historical bells/completions. */
   getTerminalSideEffectSnapshot(ptyId: string): TerminalSideEffectBatch | null {
-    const tracker = this.ptyTitleTrackersByPtyId.get(ptyId)?.tracker
-    const recordTitle = this.ptysById.get(ptyId)?.lastOscTitle
+    const trackerEntry = this.ptyTitleTrackersByPtyId.get(ptyId)
+    const tracker = trackerEntry?.tracker
+    const pty = this.ptysById.get(ptyId)
+    const recordTitle = pty?.lastOscTitle
+    const ptyIncarnationId = pty?.incarnationId ?? trackerEntry?.incarnationId
     // Why: the cursor-agent literal drop applies to every title surface; a
     // record-fallback snapshot must not replay the bare native title the
     // tracker would have refused to emit live.
@@ -10056,6 +10838,7 @@ export class OrcaRuntimeService {
     }
     return {
       ptyId,
+      ...(ptyIncarnationId ? { ptyIncarnationId } : {}),
       seq: this.ptyOutputSequenceById.get(ptyId) ?? 0,
       replay: true,
       facts: [
@@ -10105,9 +10888,15 @@ export class OrcaRuntimeService {
     )}`
   }
 
-  private getOrCreatePtyTitleTrackerEntry(ptyId: string): RuntimePtyTitleTrackerEntry {
+  private getOrCreatePtyTitleTrackerEntry(
+    ptyId: string,
+    ptyIncarnationId?: PtyIncarnationId
+  ): RuntimePtyTitleTrackerEntry {
     const existing = this.ptyTitleTrackersByPtyId.get(ptyId)
     if (existing) {
+      if (ptyIncarnationId) {
+        existing.incarnationId = ptyIncarnationId
+      }
       return existing
     }
     // Why: trackers are created lazily on the first observed chunk. After an
@@ -10194,6 +10983,7 @@ export class OrcaRuntimeService {
     tracker.setTransientSideEffectScanningEnabled(this.terminalSideEffectConsumerAvailable)
     const entry: RuntimePtyTitleTrackerEntry = {
       tracker,
+      ...(ptyIncarnationId ? { incarnationId: ptyIncarnationId } : {}),
       applyingChunk: false,
       applyingSyntheticFrame: false,
       lastMobileTitleGateKey: null,
@@ -10919,9 +11709,13 @@ export class OrcaRuntimeService {
     if (data.length === 0 || this.getDriver(ptyId).kind === 'mobile') {
       return false
     }
+    const mutationTarget = this.capturePtyMutationTarget(ptyId)
+    if (!mutationTarget) {
+      return false
+    }
     try {
       await assertTerminalInputWithinLimitWithYield(data)
-      await this.writeTerminalInputChunks(ptyId, data, {
+      await this.writeTerminalInputChunks(ptyId, data, mutationTarget, {
         // Why: a phone can claim the floor while a paste yields between chunks.
         beforeWrite: () => {
           if (this.getDriver(ptyId).kind === 'mobile') {
@@ -10988,17 +11782,23 @@ export class OrcaRuntimeService {
   }
 
   async clearTerminalBuffer(handle: string): Promise<{ handle: string; cleared: boolean }> {
-    const leaf = this.resolveLeafForHandle(handle)
-    if (!leaf?.ptyId) {
+    const livePty = this.getLivePtyForHandle(handle)
+    const liveLeaf = livePty ? null : this.getLiveLeafForHandle(handle)
+    const ptyId = livePty?.pty.ptyId ?? liveLeaf?.leaf.ptyId ?? null
+    const mutationTarget = livePty?.record.mutationTarget ?? liveLeaf?.record.mutationTarget ?? null
+    if (!ptyId || !mutationTarget || mutationTarget.id !== ptyId) {
       throw new Error('terminal_not_found')
     }
     // Why: clear is a terminal UI action (Cmd+K on desktop), not shell input.
     // Route through the controller so renderer-owned xterm buffers, daemon
     // sessions, and SSH relay sessions all drop scrollback before the next
     // mobile snapshot.
-    await this.ptyController?.clearBuffer?.(leaf.ptyId)
-    await this.clearHeadlessTerminalBuffer(leaf.ptyId)
-    return { handle, cleared: true }
+    const providerCleared = await this.ptyController?.clearBuffer?.(ptyId, mutationTarget)
+    if (providerCleared === false) {
+      return { handle, cleared: false }
+    }
+    const headlessCleared = await this.clearHeadlessTerminalBuffer(ptyId, mutationTarget)
+    return { handle, cleared: headlessCleared }
   }
 
   getTerminalSize(ptyId: string): { cols: number; rows: number } | null {
@@ -11250,11 +12050,19 @@ export class OrcaRuntimeService {
     forwardQueryReplies = false
   ): Promise<void> {
     const state = this.getOrCreateHeadlessTerminal(ptyId)
+    const replyMutationTarget = forwardQueryReplies ? this.capturePtyMutationTarget(ptyId) : null
     const completion = state.writeChain.then(async () => {
       // Why: the ingestion-time ownership decision is closed over this
       // chain link; async scheduling cannot retroactively change it.
-      await state.emulator.write(data, { forwardQueryReplies })
-      state.outputSequence = outputSequence
+      state.activeReplyMutationTarget = replyMutationTarget
+      try {
+        await state.emulator.write(data, { forwardQueryReplies })
+        state.outputSequence = outputSequence
+      } finally {
+        if (state.activeReplyMutationTarget === replyMutationTarget) {
+          state.activeReplyMutationTarget = null
+        }
+      }
     })
     // Legacy callers remain best-effort; bounded SSH admission observes the raw receipt.
     state.writeChain = completion.catch(() => {})
@@ -11293,7 +12101,7 @@ export class OrcaRuntimeService {
           // pending and flushes at the ready marker or the 15s
           // SHELL_READY_TIMEOUT_MS bound (session.ts) — a spawn-time query
           // reply is delayed at most that bound, not lost.
-          this.ptyController?.write(ptyId, reply)
+          this.writeCapturedPtyMutation(state.activeReplyMutationTarget, reply)
         }
       }
     })
@@ -11307,7 +12115,12 @@ export class OrcaRuntimeService {
     if (viewAttributes) {
       emulator.applyPushedViewAttributes(viewAttributes)
     }
-    state = { emulator, outputSequence: 0, writeChain: Promise.resolve() }
+    state = {
+      emulator,
+      outputSequence: 0,
+      writeChain: Promise.resolve(),
+      activeReplyMutationTarget: null
+    }
     return state
   }
 
@@ -11389,16 +12202,32 @@ export class OrcaRuntimeService {
 
   // Public: desktop-initiated clears (ipc/pty.ts) must also drop this mobile
   // mirror or a resubscribing mobile client resurrects the cleared scrollback.
-  async clearHeadlessTerminalBuffer(ptyId: string): Promise<void> {
+  async clearHeadlessTerminalBuffer(
+    ptyId: string,
+    mutationTarget: PtyMutationTarget
+  ): Promise<boolean> {
+    if (mutationTarget.id !== ptyId || !this.isCurrentPtyMutationTarget(mutationTarget)) {
+      return false
+    }
     const state = this.headlessTerminals.get(ptyId)
     if (!state) {
-      return
+      return true
     }
     // Why: headless writes are queued to preserve xterm parser order. Clear
     // must join that same chain or an earlier PTY chunk can finish after the
     // clear request and repopulate mobile scrollback.
-    state.writeChain = state.writeChain.then(() => state.emulator.clearScrollback())
+    let cleared = false
+    state.writeChain = state.writeChain.then(() => {
+      if (
+        this.headlessTerminals.get(ptyId) === state &&
+        this.isCurrentPtyMutationTarget(mutationTarget)
+      ) {
+        state.emulator.clearScrollback()
+        cleared = true
+      }
+    })
     await state.writeChain
+    return cleared
   }
 
   private async serializeTerminalBufferFromAvailableState(
@@ -11918,6 +12747,9 @@ export class OrcaRuntimeService {
     if (!record) {
       return null
     }
+    if (this.terminalHandleMutationTargetConflicts(record)) {
+      throw new Error('terminal_handle_stale')
+    }
     if (record.tabId.startsWith('pty:')) {
       return { ptyId: record.ptyId }
     }
@@ -11937,6 +12769,9 @@ export class OrcaRuntimeService {
     const record = this.handles.get(handle)
     if (!record) {
       return null
+    }
+    if (this.terminalHandleMutationTargetConflicts(record)) {
+      throw new Error('terminal_handle_stale')
     }
     if (record.tabId.startsWith('pty:')) {
       return { ptyId: record.ptyId }
@@ -13611,7 +14446,10 @@ export class OrcaRuntimeService {
     return revision
   }
 
-  async applyRemoteDesktopLayout(ptyId: string): Promise<boolean> {
+  async applyRemoteDesktopLayout(
+    ptyId: string,
+    admittedMutationTarget?: PtyMutationTarget
+  ): Promise<boolean> {
     if (this.getDriver(ptyId).kind === 'mobile') {
       return true
     }
@@ -13628,7 +14466,7 @@ export class OrcaRuntimeService {
       : { kind: 'desktop', ...this.resolveRemoteDesktopHostReclaimTarget(ptyId) }
     this.freshSubscribeGuard.add(ptyId)
     try {
-      const result = await this.enqueueLayout(ptyId, layoutTarget)
+      const result = await this.enqueueLayout(ptyId, layoutTarget, admittedMutationTarget)
       // Why: only drop the recorded host size once the reclaim resize actually
       // landed. If it failed, the PTY is still at the remote-viewer width, so
       // keep the target for the next reclaim (otherwise it resolves via the
@@ -13712,19 +14550,24 @@ export class OrcaRuntimeService {
     return this.applyRemoteDesktopLayout(ptyId)
   }
 
-  claimRemoteDesktopHost(ptyId: string, cols: number, rows: number): Promise<boolean> {
+  claimRemoteDesktopHost(
+    ptyId: string,
+    cols: number,
+    rows: number,
+    mutationTarget?: PtyMutationTarget
+  ): Promise<boolean> {
     if (!this.remoteDesktopOwners.has(ptyId)) {
       // Why: disconnect can remove the owner before its queued host resize
       // lands. A host input in that window must join the reclaim, not pass it.
       return this.remoteDesktopHostReclaimTargets.has(ptyId)
-        ? this.applyRemoteDesktopLayout(ptyId)
+        ? this.applyRemoteDesktopLayout(ptyId, mutationTarget)
         : Promise.resolve(true)
     }
     const viewport = clampTerminalViewport(cols, rows)
     this.remoteDesktopHostReclaimTargets.set(ptyId, viewport)
     this.remoteDesktopOwners.delete(ptyId)
     this.bumpRemoteDesktopViewerRevision(ptyId)
-    return this.applyRemoteDesktopLayout(ptyId)
+    return this.applyRemoteDesktopLayout(ptyId, mutationTarget)
   }
 
   unregisterRemoteDesktopViewer(ptyId: string, subscriptionKey: string): Promise<boolean> {
@@ -14320,12 +15163,17 @@ export class OrcaRuntimeService {
     return true
   }
 
-  private enqueueLayout(ptyId: string, target: PtyLayoutTarget): Promise<ApplyLayoutResult> {
+  private enqueueLayout(
+    ptyId: string,
+    target: PtyLayoutTarget,
+    admittedMutationTarget?: PtyMutationTarget
+  ): Promise<ApplyLayoutResult> {
     // Why: PTY-exit short-circuit. Fresh-subscribe gate lets the very first
     // transition through even though `layouts` has no entry yet.
     if (!this.layouts.has(ptyId) && !this.isFreshSubscribe(ptyId)) {
       return Promise.resolve({ ok: false, reason: 'pty-exited' })
     }
+    const mutationTarget = admittedMutationTarget ?? this.capturePtyMutationTarget(ptyId)
 
     let entry = this.layoutQueues.get(ptyId)
     if (!entry) {
@@ -14336,27 +15184,34 @@ export class OrcaRuntimeService {
 
     return new Promise<ApplyLayoutResult>((resolve) => {
       if (!queue.running) {
-        queue.running = this.runLayoutSlot(ptyId, target, [resolve])
+        queue.running = this.runLayoutSlot(ptyId, target, mutationTarget, [resolve])
         return
       }
       const tail = queue.pending.at(-1)
-      if (tail && this.coalescesWith(tail.target, target)) {
+      const sameMutationTarget =
+        tail &&
+        ((tail.mutationTarget === null && mutationTarget === null) ||
+          (tail.mutationTarget !== null &&
+            mutationTarget !== null &&
+            ptyMutationTargetsEqual(tail.mutationTarget, mutationTarget)))
+      if (tail && sameMutationTarget && this.coalescesWith(tail.target, target)) {
         tail.target = target
         tail.waiters.push(resolve)
         return
       }
-      queue.pending.push({ target, waiters: [resolve] })
+      queue.pending.push({ target, mutationTarget, waiters: [resolve] })
     })
   }
 
   private async runLayoutSlot(
     ptyId: string,
     target: PtyLayoutTarget,
+    mutationTarget: PtyMutationTarget | null,
     waiters: ((r: ApplyLayoutResult) => void)[]
   ): Promise<ApplyLayoutResult> {
     let result: ApplyLayoutResult
     try {
-      result = await this.applyLayout(ptyId, target)
+      result = await this.applyLayout(ptyId, target, mutationTarget)
     } catch (err) {
       // Why: defensive — applyLayout itself catches resize errors, but a
       // throw from one of the synchronous map writes (e.g. notifier hook)
@@ -14374,7 +15229,7 @@ export class OrcaRuntimeService {
     }
     const next = queue.pending.shift()
     if (next) {
-      queue.running = this.runLayoutSlot(ptyId, next.target, next.waiters)
+      queue.running = this.runLayoutSlot(ptyId, next.target, next.mutationTarget, next.waiters)
     } else {
       queue.running = null
       // Why: drop the entry once empty so the map doesn't grow without bound
@@ -14384,7 +15239,11 @@ export class OrcaRuntimeService {
     return result
   }
 
-  private async applyLayout(ptyId: string, target: PtyLayoutTarget): Promise<ApplyLayoutResult> {
+  private async applyLayout(
+    ptyId: string,
+    target: PtyLayoutTarget,
+    mutationTarget: PtyMutationTarget | null
+  ): Promise<ApplyLayoutResult> {
     // Why: re-check pty-exit at the head of the slot — the queue may have
     // accepted this target before onPtyExit ran.
     if (!this.layouts.has(ptyId) && !this.isFreshSubscribe(ptyId)) {
@@ -14430,8 +15289,10 @@ export class OrcaRuntimeService {
     if (dimsChanged) {
       let ok = false
       try {
-        const r = this.ptyController?.resize?.(ptyId, target.cols, target.rows)
-        ok = r ?? true
+        const r = mutationTarget
+          ? this.ptyController?.resize?.(ptyId, target.cols, target.rows, mutationTarget)
+          : undefined
+        ok = r === true
       } catch (err) {
         console.error('[layout] ptyController.resize threw', { ptyId, err })
         ok = false
@@ -15355,7 +16216,15 @@ export class OrcaRuntimeService {
       }
       seenPtyIds.add(claim.ptyId)
       seenPaneKeys.add(paneKey)
-      const live = this.getLivePtyForHandle(claim.terminal)
+      let live: ReturnType<OrcaRuntimeService['getLivePtyForHandle']> = null
+      try {
+        live = this.getLivePtyForHandle(claim.terminal)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'terminal_handle_stale') {
+          throw new Error('terminal_orphan_stale')
+        }
+        throw error
+      }
       const pty = live?.pty
       const controllerIdentity = terminalIdentityByPtyId.get(claim.ptyId)
       if (
@@ -16108,15 +16977,7 @@ export class OrcaRuntimeService {
   getTerminalProcessIncarnation(handle: string): string | null {
     const live = this.getLivePtyForHandle(handle)
     const record = live?.record ?? this.handles.get(handle)
-    if (!record?.ptyId) {
-      return null
-    }
-    const incarnationId = live?.pty.incarnationId ?? this.ptysById.get(record.ptyId)?.incarnationId
-    if (incarnationId) {
-      return `${record.ptyId}:${incarnationId}`
-    }
-    // Why: legacy providers may omit process incarnation; retain the prior restart-degraded fence.
-    return `${this.runtimeId}:${record.ptyId}:${record.ptyGeneration}`
+    return record?.authority?.processIncarnation ?? null
   }
 
   getExactWorkerProviderSession(
@@ -16409,8 +17270,12 @@ export class OrcaRuntimeService {
       if (payload === null) {
         throw new Error('invalid_terminal_send')
       }
+      const mutationTarget = pty.record.mutationTarget
+      if (!mutationTarget) {
+        throw new Error('terminal_not_writable')
+      }
       await assertTerminalInputWithinLimitWithYield(action.text)
-      await this.writeTerminalAction(pty.pty.ptyId, action, payload, options)
+      await this.writeTerminalAction(pty.pty.ptyId, action, payload, mutationTarget, options)
       return {
         handle,
         accepted: true,
@@ -16418,13 +17283,17 @@ export class OrcaRuntimeService {
       }
     }
 
-    const { leaf } = this.getLiveLeafForHandle(handle)
+    const { record, leaf } = this.getLiveLeafForHandle(handle)
     if (!leaf.writable || !leaf.ptyId) {
       throw new Error('terminal_not_writable')
     }
     const payload = buildSendPayload(action)
     if (payload === null) {
       throw new Error('invalid_terminal_send')
+    }
+    const mutationTarget = record.mutationTarget
+    if (!mutationTarget) {
+      throw new Error('terminal_not_writable')
     }
     await assertTerminalInputWithinLimitWithYield(action.text)
     // Why: leaf.writable mirrors the renderer graph, which can still answer for
@@ -16435,7 +17304,7 @@ export class OrcaRuntimeService {
       throw new Error('terminal_not_writable')
     }
 
-    await this.writeTerminalAction(leaf.ptyId, action, payload, options)
+    await this.writeTerminalAction(leaf.ptyId, action, payload, mutationTarget, options)
 
     return {
       handle,
@@ -16459,13 +17328,21 @@ export class OrcaRuntimeService {
       if (!pty.pty.connected) {
         throw new Error('terminal_not_writable')
       }
+      const mutationTarget = pty.record.mutationTarget
+      if (!mutationTarget) {
+        throw new Error('terminal_not_writable')
+      }
       await assertTerminalInputWithinLimitWithYield(payload)
-      await this.writeTerminalAgentPrompt(pty.pty.ptyId, payload, options)
+      await this.writeTerminalAgentPrompt(pty.pty.ptyId, payload, mutationTarget, options)
       return { handle, accepted: true, bytesWritten }
     }
 
-    const { leaf } = this.getLiveLeafForHandle(handle)
+    const { record, leaf } = this.getLiveLeafForHandle(handle)
     if (!leaf.writable || !leaf.ptyId) {
+      throw new Error('terminal_not_writable')
+    }
+    const mutationTarget = record.mutationTarget
+    if (!mutationTarget) {
       throw new Error('terminal_not_writable')
     }
     await assertTerminalInputWithinLimitWithYield(payload)
@@ -16474,7 +17351,7 @@ export class OrcaRuntimeService {
     if (await this.isLeafPtyProvenAbsent(leaf.ptyId)) {
       throw new Error('terminal_not_writable')
     }
-    await this.writeTerminalAgentPrompt(leaf.ptyId, payload, options)
+    await this.writeTerminalAgentPrompt(leaf.ptyId, payload, mutationTarget, options)
     return { handle, accepted: true, bytesWritten }
   }
 
@@ -16922,6 +17799,7 @@ export class OrcaRuntimeService {
     ptyId: string,
     action: { text?: string; enter?: boolean; interrupt?: boolean },
     payload: string,
+    mutationTarget: PtyMutationTarget,
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       reserveWrite?: (ptyId: string) => void
@@ -16934,7 +17812,7 @@ export class OrcaRuntimeService {
     const hasText = typeof action.text === 'string' && action.text.length > 0
     const hasSuffix = action.enter || action.interrupt
     if (hasText) {
-      await this.writeTerminalInputChunks(ptyId, action.text!, options)
+      await this.writeTerminalInputChunks(ptyId, action.text!, mutationTarget, options)
     }
     if (hasSuffix) {
       const suffix = (action.enter ? '\r' : '') + (action.interrupt ? '\x03' : '')
@@ -16950,7 +17828,7 @@ export class OrcaRuntimeService {
         }
         throw error
       }
-      const suffixWrote = this.ptyController?.write(ptyId, suffix) ?? false
+      const suffixWrote = this.writeCapturedPtyMutation(mutationTarget, suffix)
       if (!suffixWrote) {
         throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
       }
@@ -16963,7 +17841,7 @@ export class OrcaRuntimeService {
 
     await options.beforeWrite?.(ptyId)
     options.reserveWrite?.(ptyId)
-    const wrote = this.ptyController?.write(ptyId, payload) ?? false
+    const wrote = this.writeCapturedPtyMutation(mutationTarget, payload)
     if (!wrote) {
       throw new Error('terminal_not_writable')
     }
@@ -16973,6 +17851,7 @@ export class OrcaRuntimeService {
   private async writeTerminalInputChunks(
     ptyId: string,
     text: string,
+    mutationTarget: PtyMutationTarget,
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       reserveWrite?: (ptyId: string) => void
@@ -16984,7 +17863,7 @@ export class OrcaRuntimeService {
     while (!chunk.done) {
       await options.beforeWrite?.(ptyId)
       options.reserveWrite?.(ptyId)
-      const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
+      const wrote = this.writeCapturedPtyMutation(mutationTarget, chunk.value)
       if (!wrote) {
         throw new Error('terminal_not_writable')
       }
@@ -16999,6 +17878,7 @@ export class OrcaRuntimeService {
   private async writeTerminalAgentPrompt(
     ptyId: string,
     pastePayload: string,
+    mutationTarget: PtyMutationTarget,
     options: {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       suffixFailureError?: string
@@ -17011,7 +17891,7 @@ export class OrcaRuntimeService {
       let chunk = chunks.next()
       while (!chunk.done) {
         await options.beforeWrite?.(ptyId)
-        const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
+        const wrote = this.writeCapturedPtyMutation(mutationTarget, chunk.value)
         if (!wrote) {
           throw new Error('terminal_not_writable')
         }
@@ -17024,7 +17904,7 @@ export class OrcaRuntimeService {
       completedPaste = true
     } catch (error) {
       if (wrotePasteBytes && !completedPaste) {
-        this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
+        this.writeCapturedPtyMutation(mutationTarget, AGENT_PROMPT_BRACKETED_PASTE_END)
       }
       throw error
     }
@@ -17038,7 +17918,7 @@ export class OrcaRuntimeService {
       }
       throw error
     }
-    const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
+    const suffixWrote = this.writeCapturedPtyMutation(mutationTarget, AGENT_PROMPT_SUBMIT)
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
     }
@@ -21134,8 +22014,8 @@ export class OrcaRuntimeService {
           console.warn('[worktree-create] agent did not become ready for draft paste')
           return
         }
-        this.ptyController?.write(
-          ptyId,
+        this.writeCapturedPtyMutation(
+          this.capturePtyMutationTarget(ptyId),
           `${BRACKETED_PASTE_BEGIN}${draft.content}${BRACKETED_PASTE_END}`
         )
       })
@@ -21151,7 +22031,7 @@ export class OrcaRuntimeService {
           console.warn('[worktree-create] agent did not become ready for follow-up prompt')
           return
         }
-        this.ptyController?.write(ptyId, `${followup.prompt}\r`)
+        this.writeCapturedPtyMutation(this.capturePtyMutationTarget(ptyId), `${followup.prompt}\r`)
       })
       .catch((error) => {
         console.warn('[worktree-create] failed to send startup follow-up prompt:', error)
@@ -26412,9 +27292,12 @@ export class OrcaRuntimeService {
     if (!pty || this.terminalSpawnCommandsByPtyId.has(pty.ptyId)) {
       return
     }
-    if (this.ptyController?.write(pty.ptyId, command)) {
+    const mutationTarget = this.capturePtyMutationTarget(pty.ptyId)
+    if (this.writeCapturedPtyMutation(mutationTarget, command)) {
       // Why: Enter rides its own write so a long command cannot swallow it.
-      this.ptyController.write(pty.ptyId, '\r')
+      if (!this.writeCapturedPtyMutation(mutationTarget, '\r')) {
+        return
+      }
       this.noteTerminalSpawnCommand(pty.ptyId, command)
     }
   }
@@ -26769,7 +27652,6 @@ export class OrcaRuntimeService {
 
   async closeTerminal(handle: string): Promise<RuntimeTerminalClose> {
     const pty = this.getLivePtyForHandle(handle)
-    this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
     if (pty) {
       // Why: PTY exit can immediately replace a ready SSH publication with a pending one, so capture its durable HUB surface before killing it.
       const surface =
@@ -26781,14 +27663,73 @@ export class OrcaRuntimeService {
       const siblingCount = surface?.tab.parentLayout
         ? countTerminalLayoutLeaves(surface.tab.parentLayout.root)
         : this.countLeavesInTab(tabId)
-      const ptyKilled = this.ptyController?.kill(pty.pty.ptyId) ?? false
-      if (!ptyKilled || siblingCount <= 1) {
+      const snapshot = this.mobileSessionTabsByWorktree.get(pty.pty.worktreeId)
+      const transactionTab = snapshot?.tabs.find(
+        (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+          candidate.type === 'terminal' &&
+          (candidate.ptyId === pty.pty.ptyId ||
+            candidate.parentLayout?.ptyIdsByLeafId?.[candidate.leafId] === pty.pty.ptyId)
+      )
+      const transaction =
+        snapshot && transactionTab
+          ? this.captureMobileTerminalCloseTransaction(
+              pty.pty.worktreeId,
+              snapshot,
+              transactionTab,
+              handle
+            )
+          : null
+      const binding = transaction?.bindings.find((candidate) => candidate.ptyId === pty.pty.ptyId)
+      const mutationTarget =
+        (binding ? this.selectExactTerminalCloseTarget(binding) : null) ??
+        (pty.record.mutationTarget
+          ? this.selectExactTerminalCloseTarget({
+              leafId: pty.record.leafId,
+              ptyId: pty.pty.ptyId,
+              terminalHandle: handle,
+              authority: pty.record.authority,
+              mutationTarget: pty.record.mutationTarget
+            })
+          : null)
+      if (!mutationTarget) {
+        throw new Error('terminal_exact_close_unavailable')
+      }
+      const ptyKilled = await this.stopPtyForTerminalClose(pty.pty.ptyId, mutationTarget)
+      if (!ptyKilled) {
+        throw new Error('terminal_close_stop_failed')
+      }
+      if (
+        transaction &&
+        this.getMobileTerminalCloseTransactionStatus(transaction, new Set([pty.pty.ptyId])) ===
+          'replaced'
+      ) {
+        this.republishMobileSessionTabsSnapshot(pty.pty.worktreeId)
+        throw new Error('terminal_handle_stale')
+      }
+      if (siblingCount <= 1) {
         if (surface) {
           // Why: paired viewers keep ended streams mounted until the HUB publishes removal, so explicit close uses the durable host-tab transaction instead of viewer-local exit handling.
           try {
-            await this.closeMobileSessionTab(`id:${pty.pty.worktreeId}`, tabId)
+            const result = await this.closeMobileSessionTab(`id:${pty.pty.worktreeId}`, tabId, {
+              reason: 'user',
+              handleIntent: {
+                handle,
+                mutationTarget,
+                processIncarnation: pty.record.authority?.processIncarnation ?? null,
+                parentTabId: tabId,
+                ...(transaction ? { transaction } : {})
+              },
+              settledPtyIds: new Set([pty.pty.ptyId])
+            })
+            if (result.refused) {
+              throw new Error('terminal_handle_stale')
+            }
           } catch (error) {
-            if (!(error instanceof Error) || error.message !== 'workspace_session_unavailable') {
+            if (
+              !(error instanceof Error) ||
+              (error.message !== 'workspace_session_unavailable' &&
+                error.message !== 'tab_not_found')
+            ) {
               throw error
             }
             this.notifier?.closeTerminal(tabId)
@@ -26797,19 +27738,34 @@ export class OrcaRuntimeService {
           this.notifier?.closeTerminal(tabId)
         }
       }
+      this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
       return { handle, tabId, ptyKilled }
     }
     this.assertGraphReady()
-    const { leaf } = this.getLiveLeafForHandle(handle)
+    const { record, leaf } = this.getLiveLeafForHandle(handle)
     let ptyKilled = false
     if (leaf.ptyId) {
-      ptyKilled = this.ptyController?.kill(leaf.ptyId) ?? false
+      const mutationTarget = this.selectExactTerminalCloseTarget({
+        leafId: leaf.leafId,
+        ptyId: leaf.ptyId,
+        terminalHandle: handle,
+        authority: record.authority,
+        mutationTarget: record.mutationTarget
+      })
+      if (!mutationTarget) {
+        throw new Error('terminal_exact_close_unavailable')
+      }
+      ptyKilled = await this.stopPtyForTerminalClose(leaf.ptyId, mutationTarget)
+      if (!ptyKilled) {
+        throw new Error('terminal_close_stop_failed')
+      }
     }
     // Why: in a multi-pane tab, killing the PTY is enough (renderer's exit handler closes the pane); an extra IPC close would race it and close the whole tab.
     const siblingCount = this.countLeavesInTab(leaf.tabId)
     if (!ptyKilled || siblingCount <= 1) {
       this.notifier?.closeTerminal(leaf.tabId, leaf.paneRuntimeId)
     }
+    this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
     return { handle, tabId: leaf.tabId, ptyKilled }
   }
 
@@ -26918,6 +27874,7 @@ export class OrcaRuntimeService {
       leafId,
       persistHostSessionBinding: true
     })
+    const spawnedMutationTarget = this.capturePtyMutationTarget(result.id)
     this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
     if (result.wslDistro) {
       this.preparePtyExecutionContext(result.id, result.wslDistro)
@@ -26948,7 +27905,7 @@ export class OrcaRuntimeService {
       })
     } catch (error) {
       this.setPairedRendererSessionOwnership(result.id, false)
-      this.ptyController.kill?.(result.id)
+      this.ptyController.kill(result.id, spawnedMutationTarget)
       throw error
     }
     if (createdPty) {
@@ -27130,6 +28087,7 @@ export class OrcaRuntimeService {
       if (options.deadline !== undefined && Date.now() >= options.deadline) {
         break
       }
+      const mutationTarget = this.capturePtyMutationTarget(ptyId)
       const stop = (): boolean | Promise<boolean> => {
         if (options.deadline !== undefined && Date.now() >= options.deadline) {
           return false
@@ -27143,13 +28101,14 @@ export class OrcaRuntimeService {
           if (options.deadline !== undefined) {
             return (
               this.ptyController?.stopAndWait?.(ptyId, {
-                deadlineMs: teardownRpcDeadline(options.deadline)
+                deadlineMs: teardownRpcDeadline(options.deadline),
+                mutationTarget
               }) ?? false
             )
           }
-          return this.ptyController?.stopAndWait?.(ptyId) ?? false
+          return this.ptyController?.stopAndWait?.(ptyId, { mutationTarget }) ?? false
         }
-        return Boolean(this.ptyController?.kill(ptyId))
+        return Boolean(this.ptyController?.kill(ptyId, mutationTarget))
       }
       const stopResult = options.stopPty
         ? await options.stopPty(ptyId, stop)
@@ -27378,6 +28337,9 @@ export class OrcaRuntimeService {
       const stopAndWait = ptyController.stopAndWait.bind(ptyController)
 
       const orderedLivePtyIds = [...livePtyIds].sort()
+      const mutationTargetsByPtyId = new Map(
+        orderedLivePtyIds.map((ptyId) => [ptyId, this.capturePtyMutationTarget(ptyId)])
+      )
       releaseReversibleRendererStops =
         ptyController.markReversibleStops?.(orderedLivePtyIds) ?? (() => {})
       const stopResults = await Promise.allSettled(
@@ -27385,7 +28347,8 @@ export class OrcaRuntimeService {
           ptyId,
           stopped: await stopAndWait(ptyId, {
             keepHistory: true,
-            deadlineMs: teardownRpcDeadline(sleepDeadline)
+            deadlineMs: teardownRpcDeadline(sleepDeadline),
+            mutationTarget: mutationTargetsByPtyId.get(ptyId) ?? null
           })
         }))
       )
@@ -27530,14 +28493,17 @@ export class OrcaRuntimeService {
     postStopFailure?: string
     remainingLivePtyIds?: string[]
   }> {
-    // Why: exact stop hibernates one known pane; worktree sleep discovers its complete host-owned set separately.
-    const graphEpoch = this.captureReadyGraphEpoch()
-    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
-    this.assertStableReadyGraph(graphEpoch)
     const expected = new Set(expectedPtyIds.filter((ptyId) => ptyId.length > 0))
     if (expected.size !== 1) {
       throw new Error('terminal_exact_stop_requires_single_pty')
     }
+    const mutationTargetsByPtyId = new Map(
+      [...expected].map((ptyId) => [ptyId, this.capturePtyMutationTarget(ptyId)])
+    )
+    // Why: exact stop hibernates one known pane; worktree sleep discovers its complete host-owned set separately.
+    const graphEpoch = this.captureReadyGraphEpoch()
+    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+    this.assertStableReadyGraph(graphEpoch)
     const resolvedWorktrees = [...(await this.getResolvedWorktreeMap()).values()]
     const refreshedPtyLiveness =
       await this.refreshPtyWorktreeRecordsFromController(resolvedWorktrees)
@@ -27561,6 +28527,7 @@ export class OrcaRuntimeService {
 
     const stoppedPtyIds: string[] = []
     for (const ptyId of [...expected].sort()) {
+      const mutationTarget = mutationTargetsByPtyId.get(ptyId) ?? null
       if (opts.keepHistory) {
         this.intentionalHandlelessPtyStops.set(
           ptyId,
@@ -27568,7 +28535,12 @@ export class OrcaRuntimeService {
         )
       }
       try {
-        if (!(await this.ptyController.stopAndWait(ptyId, { keepHistory: opts.keepHistory }))) {
+        if (
+          !(await this.ptyController.stopAndWait(ptyId, {
+            keepHistory: opts.keepHistory,
+            mutationTarget
+          }))
+        ) {
           throw Object.assign(new Error('terminal_exact_stop_failed'), { ptyId })
         }
       } finally {
@@ -29156,22 +30128,38 @@ export class OrcaRuntimeService {
         persistedSurface.incarnationId === session.incarnationId &&
         Boolean(worktreeId) &&
         runtimeWorktreeIdsEqual(persistedSurface.worktreeId, worktreeId as string)
+      const isTargetWorktree =
+        !targetWorktreeId ||
+        (worktreeId !== null && runtimeWorktreeIdsEqual(worktreeId, targetWorktreeId))
+      const priorPtyIncarnationId = this.ptysById.get(session.id)?.incarnationId ?? null
+      // Bind the incarnation before adopting a restored handle, but only for
+      // the targeted inventory scope; unrelated PTYs remain unassociated.
+      const restoredPty =
+        isTargetWorktree && worktreeId
+          ? this.recordPtyWorktree(session.id, worktreeId, {
+              connected: true,
+              ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+              ...(session.wslDistro !== undefined
+                ? { isWsl: Boolean(session.wslDistro), wslDistro: session.wslDistro }
+                : {}),
+              ...(restoresExactSurface
+                ? { tabId: persistedSurface.tabId, paneKey: persistedSurface.paneKey }
+                : {})
+            })
+          : null
       this.adoptControllerTerminalHandle(
         session.id,
         controllerIdentity?.handle ?? session.terminalHandle,
         controllerIdentity?.incarnationId ?? session.incarnationId,
-        { exactRestoredSurface: Boolean(restoresExactSurface && controllerIdentity) }
+        {
+          exactRestoredSurface: Boolean(restoresExactSurface && controllerIdentity),
+          priorIncarnationId: priorPtyIncarnationId
+        }
       )
-      if (
-        !targetWorktreeId ||
-        (worktreeId && runtimeWorktreeIdsEqual(worktreeId, targetWorktreeId))
-      ) {
+      if (isTargetWorktree) {
         selectedLivePtyIds.add(session.id)
       }
-      if (
-        targetWorktreeId &&
-        (!worktreeId || !runtimeWorktreeIdsEqual(worktreeId, targetWorktreeId))
-      ) {
+      if (!isTargetWorktree) {
         const receipt = this.restoredOrchestrationAuthorityByPtyId.get(session.id)
         if (receipt && runtimeWorktreeIdsEqual(receipt.worktreeId, targetWorktreeId)) {
           this.restoredOrchestrationAuthorityByPtyId.delete(session.id)
@@ -29179,27 +30167,17 @@ export class OrcaRuntimeService {
         continue
       }
       this.restoredOrchestrationAuthorityByPtyId.delete(session.id)
-      if (worktreeId) {
-        const pty = this.recordPtyWorktree(session.id, worktreeId, {
-          connected: true,
-          ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
-          ...(session.wslDistro !== undefined
-            ? { isWsl: Boolean(session.wslDistro), wslDistro: session.wslDistro }
-            : {}),
-          ...(restoresExactSurface
-            ? { tabId: persistedSurface.tabId, paneKey: persistedSurface.paneKey }
-            : {})
-        })
+      if (restoredPty) {
         if (restoresExactSurface && controllerIdentity) {
           this.rememberRestoredOrchestrationAuthority(
-            pty,
+            restoredPty,
             controllerIdentity.handle,
             controllerIdentity.incarnationId
           )
         } else {
           this.restoredOrchestrationAuthorityByPtyId.delete(session.id)
         }
-        pty.controllerTitle = session.title?.trim() || null
+        restoredPty.controllerTitle = session.title?.trim() || null
       }
       // Why: fire-and-forget so this listing hot path doesn't serialize a relay round-trip per session and a throw can't abort the sweep below.
       this.refreshPtyForegroundAgent(session.id)
@@ -31211,6 +32189,9 @@ export class OrcaRuntimeService {
     if (record.rendererGraphEpoch !== this.rendererGraphEpoch) {
       throw new Error('terminal_handle_stale')
     }
+    if (this.terminalHandleMutationTargetConflicts(record)) {
+      throw new Error('terminal_handle_stale')
+    }
 
     const leaf = this.leaves.get(this.getLeafKey(record.tabId, record.leafId))
     if (!leaf || leaf.ptyId !== record.ptyId || leaf.ptyGeneration !== record.ptyGeneration) {
@@ -31240,6 +32221,9 @@ export class OrcaRuntimeService {
     }
     if (!record.ptyId) {
       return null
+    }
+    if (this.terminalHandleMutationTargetConflicts(record)) {
+      throw new Error('terminal_handle_stale')
     }
     const pty = this.ptysById.get(record.ptyId)
     if (!pty || pty.ptyId !== record.ptyId) {
@@ -31291,9 +32275,13 @@ export class OrcaRuntimeService {
         existingRecord &&
         existingRecord.rendererGraphEpoch === this.rendererGraphEpoch &&
         existingRecord.ptyId === leaf.ptyId &&
-        existingRecord.ptyGeneration === leaf.ptyGeneration
+        existingRecord.ptyGeneration === leaf.ptyGeneration &&
+        !this.terminalHandleMutationTargetConflicts(existingRecord)
       ) {
         return existingHandle
+      }
+      if (existingRecord && this.terminalHandleMutationTargetConflicts(existingRecord)) {
+        this.invalidateLeafHandle(leafKey)
       }
     }
 
@@ -31305,6 +32293,9 @@ export class OrcaRuntimeService {
     if (this.handles.has(handle)) {
       return handle
     }
+    const binding = leaf.ptyId
+      ? this.captureTerminalHandleBinding(leaf.ptyId, leaf.ptyGeneration)
+      : { mutationTarget: null, authority: null }
     this.handles.set(handle, {
       handle,
       runtimeId: this.runtimeId,
@@ -31313,7 +32304,8 @@ export class OrcaRuntimeService {
       tabId: leaf.tabId,
       leafId: leaf.leafId,
       ptyId: leaf.ptyId,
-      ptyGeneration: leaf.ptyGeneration
+      ptyGeneration: leaf.ptyGeneration,
+      ...binding
     })
     this.handleByLeafKey.set(leafKey, handle)
     return handle
@@ -31327,7 +32319,13 @@ export class OrcaRuntimeService {
     if (!preAllocated) {
       return null
     }
+    const existingRecord = this.handles.get(preAllocated)
+    if (existingRecord && this.terminalHandleMutationTargetConflicts(existingRecord)) {
+      this.invalidateAllHandlesForPty(leaf.ptyId)
+      return null
+    }
     const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
+    const binding = this.captureTerminalHandleBinding(leaf.ptyId, leaf.ptyGeneration)
     this.handles.set(preAllocated, {
       handle: preAllocated,
       runtimeId: this.runtimeId,
@@ -31336,24 +32334,29 @@ export class OrcaRuntimeService {
       tabId: leaf.tabId,
       leafId: leaf.leafId,
       ptyId: leaf.ptyId,
-      ptyGeneration: leaf.ptyGeneration
+      ptyGeneration: leaf.ptyGeneration,
+      ...binding
     })
     this.handleByLeafKey.set(leafKey, preAllocated)
     return preAllocated
   }
 
   private issuePtyHandle(pty: RuntimePtyWorktreeRecord): string {
-    const existingHandle =
-      this.handleByPtyId.get(pty.ptyId) ?? this.findHandleForPtyRecord(pty.ptyId)
+    let existingHandle = this.handleByPtyId.get(pty.ptyId) ?? this.findHandleForPtyRecord(pty.ptyId)
     if (existingHandle) {
       const existingRecord = this.handles.get(existingHandle)
       if (
         existingRecord &&
         existingRecord.runtimeId === this.runtimeId &&
-        existingRecord.ptyId === pty.ptyId
+        existingRecord.ptyId === pty.ptyId &&
+        !this.terminalHandleMutationTargetConflicts(existingRecord)
       ) {
         this.handleByPtyId.set(pty.ptyId, existingHandle)
         return existingHandle
+      }
+      if (existingRecord && this.terminalHandleMutationTargetConflicts(existingRecord)) {
+        this.invalidateAllHandlesForPty(pty.ptyId)
+        existingHandle = null
       }
     }
 
@@ -31362,6 +32365,7 @@ export class OrcaRuntimeService {
       this.syntheticTerminalHandles.add(handle)
     }
     const syntheticId = `pty:${pty.ptyId}`
+    const binding = this.captureTerminalHandleBinding(pty.ptyId, 0, pty.incarnationId)
     this.handles.set(handle, {
       handle,
       runtimeId: this.runtimeId,
@@ -31370,7 +32374,8 @@ export class OrcaRuntimeService {
       tabId: syntheticId,
       leafId: syntheticId,
       ptyId: pty.ptyId,
-      ptyGeneration: 0
+      ptyGeneration: 0,
+      ...binding
     })
     this.handleByPtyId.set(pty.ptyId, handle)
     return handle
@@ -31381,7 +32386,8 @@ export class OrcaRuntimeService {
       if (
         record.runtimeId === this.runtimeId &&
         record.ptyId === ptyId &&
-        record.tabId.startsWith('pty:')
+        record.tabId.startsWith('pty:') &&
+        !this.terminalHandleMutationTargetConflicts(record)
       ) {
         return handle
       }
@@ -31416,7 +32422,13 @@ export class OrcaRuntimeService {
     if (!handle || !record || record.ptyId !== null || ptyId === null) {
       return false
     }
-    this.handles.set(handle, { ...record, ptyId, ptyGeneration })
+    const binding = this.captureTerminalHandleBinding(ptyId, ptyGeneration)
+    this.handles.set(handle, {
+      ...record,
+      ptyId,
+      ptyGeneration,
+      ...binding
+    })
     return true
   }
 
@@ -31711,7 +32723,11 @@ export class OrcaRuntimeService {
   }
 
   // Why: push-on-idle delivery is event-driven (no polling) because the runtime owns both the message store and terminal status detection.
-  private deliverPendingMessages(leaf: RuntimeLeafRecord, skipAbsenceProbe = false): void {
+  private deliverPendingMessages(
+    leaf: RuntimeLeafRecord,
+    skipAbsenceProbe = false,
+    admittedMutationTarget?: PtyMutationTarget
+  ): void {
     if (!this._orchestrationDb) {
       return
     }
@@ -31735,6 +32751,11 @@ export class OrcaRuntimeService {
     if (!leaf.writable || !leaf.ptyId) {
       return
     }
+    const deliveryPtyId = leaf.ptyId
+    const mutationTarget = admittedMutationTarget ?? this.capturePtyMutationTarget(deliveryPtyId)
+    if (!mutationTarget || mutationTarget.id !== deliveryPtyId) {
+      return
+    }
 
     if (
       !skipAbsenceProbe &&
@@ -31744,7 +32765,7 @@ export class OrcaRuntimeService {
       // Why: a fire-and-forget write to a prior process's ptyId reports success
       // and would mark these delivered while losing them. Proven absence keeps
       // them queued for a future surface; unknown liveness still delivers.
-      const probedPtyId = leaf.ptyId
+      const probedPtyId = deliveryPtyId
       // Why: triggers arriving mid-probe must not each arm a continuation — the
       // Claude Enter delay stamps delivered_at late, so every continuation would
       // re-read the same unread rows and double-deliver. The single armed
@@ -31757,7 +32778,7 @@ export class OrcaRuntimeService {
         .then((absent) => {
           this.probeDeferredDeliveryPtyIds.delete(probedPtyId)
           if (!absent && leaf.ptyId === probedPtyId) {
-            this.deliverPendingMessages(leaf, true)
+            this.deliverPendingMessages(leaf, true, mutationTarget)
           }
         })
         .catch(() => {
@@ -31766,7 +32787,6 @@ export class OrcaRuntimeService {
       return
     }
 
-    const deliveryPtyId = leaf.ptyId
     const flight: { enterTimer: ReturnType<typeof setTimeout> | null } = { enterTimer: null }
     this.messageDeliveryFlightsByPtyId.set(deliveryPtyId, flight)
     // Why: every sync outcome — failed write, sync-stamped branch, or a throw —
@@ -31775,7 +32795,7 @@ export class OrcaRuntimeService {
     let settlesInEnterCallback = false
     try {
       const payload = formatMessagesForInjection(unread)
-      const wrote = this.ptyController?.write(deliveryPtyId, payload) ?? false
+      const wrote = this.writeCapturedPtyMutation(mutationTarget, payload)
       if (!wrote) {
         return
       }
@@ -31807,7 +32827,7 @@ export class OrcaRuntimeService {
           if (!currentLeaf || currentLeaf.ptyId !== deliveryPtyId || !currentLeaf.writable) {
             return
           }
-          const submitted = this.ptyController?.write(deliveryPtyId, '\r') ?? false
+          const submitted = this.writeCapturedPtyMutation(mutationTarget, '\r')
           if (submitted) {
             this._orchestrationDb?.markAsDelivered(unread.map((m) => m.id))
           }

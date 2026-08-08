@@ -1,5 +1,6 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
+import { killPtyAtCurrentIncarnation } from '@/lib/pty-administrative-mutations'
 import type { AppState } from '../types'
 import type {
   Repo,
@@ -37,6 +38,7 @@ import {
   parsePaneKey
 } from '../../../../shared/stable-pane-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
+import { isPtyIncarnationId } from '../../../../shared/pty-incarnation'
 import { buildByIdIndex, buildWorktreeByIdIndex } from './worktree-by-id-index'
 import { resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
 import { isSameCodexRestartNoticeAccount } from './codex-restart-notice-account-identity'
@@ -83,6 +85,7 @@ import {
   disposeParkedTerminalWatchersForPtyIds,
   retireParkedTerminalTab
 } from '@/components/terminal-pane/terminal-parked-watcher-registry'
+import type { ParkedTerminalSideEffectIdentity } from '@/components/terminal-pane/terminal-parked-side-effect-identity'
 import {
   clearCommittedPtyShutdownSettlements,
   hasCommittedPtyShutdownSettlement,
@@ -634,6 +637,8 @@ export type TerminalSlice = {
   pendingReconnectTabByWorktree: Record<string, string[]>
   /** tabId → previous session's ptyId; for daemon backends it doubles as the sessionId, so spawn createOrAttach returns the surviving terminal. */
   pendingReconnectPtyIdByTabId: Record<string, string>
+  /** Read-only renderer projection of host-owned durable PTY incarnation bindings. */
+  hostTerminalSideEffectIdentityByPaneKey: Record<string, ParkedTerminalSideEffectIdentity>
   // Why: clearTabPtyId nulls tab.ptyId on disconnect; keep the last relay ID here so session save can still capture it for reattach after restart.
   lastKnownRelayPtyIdByTabId: Record<string, string>
   /** ANSI snapshots from daemon reattach, keyed by new ptyId; TerminalPane writes them to xterm.js to restore visual state. */
@@ -875,6 +880,7 @@ type WorkspaceHydrationPatch = Pick<
   | 'pendingReconnectWorktreeIds'
   | 'pendingReconnectTabByWorktree'
   | 'pendingReconnectPtyIdByTabId'
+  | 'hostTerminalSideEffectIdentityByPaneKey'
   | 'everActivatedWorktreeIds'
   | 'worktreeNavHistory'
   | 'worktreeNavHistoryIndex'
@@ -891,6 +897,42 @@ function replaceHydratedRecordKeys<T>(
     ...Object.fromEntries(Object.entries(current).filter(([key]) => !replaceKeys.has(key))),
     ...Object.fromEntries(Object.entries(hydrated).filter(([key]) => replaceKeys.has(key)))
   }
+}
+
+function buildHostTerminalSideEffectIdentityByPaneKey(
+  session: WorkspaceSessionState,
+  tabsByWorktree: Readonly<Record<string, readonly TerminalTab[]>>
+): Record<string, ParkedTerminalSideEffectIdentity> {
+  const tabById = buildByIdIndex(Object.values(tabsByWorktree).flat())
+  return Object.fromEntries(
+    Object.entries(session.terminalPtyIncarnationsByPaneKey ?? {}).flatMap(
+      ([paneKey, incarnationId]) => {
+        const parsed = parsePaneKey(paneKey)
+        const tab = parsed ? tabById.get(parsed.tabId) : undefined
+        if (!parsed || !tab || !isPtyIncarnationId(incarnationId)) {
+          return []
+        }
+        const paneGeneration =
+          Number.isSafeInteger(tab.generation) && (tab.generation ?? -1) >= 0 ? tab.generation! : 0
+        return [[paneKey, { incarnationId, paneGeneration }] as const]
+      }
+    )
+  )
+}
+
+function replaceHostTerminalSideEffectIdentities(
+  current: Readonly<Record<string, ParkedTerminalSideEffectIdentity>>,
+  hydrated: Readonly<Record<string, ParkedTerminalSideEffectIdentity>>,
+  targetTabIds: ReadonlySet<string>
+): Record<string, ParkedTerminalSideEffectIdentity> {
+  const belongsToTarget = (paneKey: string): boolean => {
+    const parsed = parsePaneKey(paneKey)
+    return parsed !== null && targetTabIds.has(parsed.tabId)
+  }
+  return Object.fromEntries([
+    ...Object.entries(current).filter(([paneKey]) => !belongsToTarget(paneKey)),
+    ...Object.entries(hydrated).filter(([paneKey]) => belongsToTarget(paneKey))
+  ])
 }
 
 type TerminalLayoutPtyOwnershipTransfer = ReturnType<
@@ -1037,6 +1079,11 @@ function targetScopedWorkspaceHydrationPatch(
       workspaceKeys
     ),
     pendingReconnectPtyIdByTabId,
+    hostTerminalSideEffectIdentityByPaneKey: replaceHostTerminalSideEffectIdentities(
+      state.hostTerminalSideEffectIdentityByPaneKey,
+      hydrated.hostTerminalSideEffectIdentityByPaneKey,
+      targetTabIds
+    ),
     everActivatedWorktreeIds,
     directSshPaneRetryByTabId: replaceHydratedRecordKeys(
       state.directSshPaneRetryByTabId,
@@ -1115,6 +1162,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   pendingReconnectWorktreeIds: [],
   pendingReconnectTabByWorktree: {},
   pendingReconnectPtyIdByTabId: {},
+  hostTerminalSideEffectIdentityByPaneKey: {},
   lastKnownRelayPtyIdByTabId: {},
   pendingSnapshotByPtyId: {},
   pendingColdRestoreByPtyId: {},
@@ -1593,7 +1641,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         : { runtimeEnvironmentId: null }
       const retirementTasks: Promise<unknown>[] = opts?.localPtyTeardownOwnedExternally
         ? []
-        : retirementPlan.localOrSshPtyIds.map(async (ptyId) => window.api.pty.kill(ptyId))
+        : retirementPlan.localOrSshPtyIds.map(async (ptyId) => killPtyAtCurrentIncarnation(ptyId))
       const localOrSshTaskCount = retirementTasks.length
       if (!opts?.remoteCloseOwnedByHost) {
         for (const terminal of retirementPlan.runtimeTerminals) {
@@ -2841,7 +2889,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // Why: pty.kill can flush final data before exit; unregister first so stale handlers can't fire phantom notifications during hibernation.
       const handlerSnapshots = unregisterPtyDataHandlers(rendererShutdownPtyIds) ?? []
       try {
-        await window.api.pty.kill(opts.ptyId, { keepHistory: true })
+        await killPtyAtCurrentIncarnation(opts.ptyId, { keepHistory: true })
       } catch (err) {
         restorePtyDataHandlersAfterFailedShutdown(handlerSnapshots)
         rollbackTargetShutdownState()
@@ -3087,7 +3135,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     }> => {
       const localPtyIds = rendererShutdownPtyIds.filter((ptyId) => !ptyId.startsWith('remote:'))
       const results = await Promise.allSettled(
-        localPtyIds.map((ptyId) => window.api.pty.kill(ptyId, { keepHistory: keepIdentifiers }))
+        localPtyIds.map((ptyId) =>
+          killPtyAtCurrentIncarnation(ptyId, { keepHistory: keepIdentifiers })
+        )
       )
       const stoppedPtyIds = [
         ...(runtimeEnvironmentId
@@ -4128,6 +4178,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         pendingReconnectWorktreeIds,
         pendingReconnectTabByWorktree,
         pendingReconnectPtyIdByTabId,
+        hostTerminalSideEffectIdentityByPaneKey: buildHostTerminalSideEffectIdentityByPaneKey(
+          session,
+          tabsByWorktree
+        ),
         everActivatedWorktreeIds: nextEverActivated,
         // Why: seed hydrated active worktrees so the first activation has a Back target.
         worktreeNavHistory: activeWorktreeId ? [activeWorktreeId] : [],

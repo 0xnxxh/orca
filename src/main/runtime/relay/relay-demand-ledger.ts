@@ -16,6 +16,10 @@ export class RelayDemandLedger {
     this.options = options
   }
 
+  setRelayHostId(relayHostId: string): void {
+    this.options.relayHostId = relayHostId
+  }
+
   acquireTransient(key: string): () => void {
     this.transientRefs.set(key, (this.transientRefs.get(key) ?? 0) + 1)
     let released = false

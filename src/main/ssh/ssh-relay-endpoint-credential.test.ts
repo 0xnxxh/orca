@@ -1,6 +1,9 @@
 import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
-import { relayEndpointCredentialWriteCommand } from './ssh-relay-endpoint-credential'
+import {
+  relayEndpointCredentialEnsureCommand,
+  relayEndpointCredentialWriteCommand
+} from './ssh-relay-endpoint-credential'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
 
 function decodePowerShellCommand(command: string): string {
@@ -46,5 +49,31 @@ describe('relay endpoint credential writes', () => {
     )
     expect(script).not.toContain('Set-Acl')
     expect(script).not.toContain('icacls')
+  })
+
+  it('creates a stable POSIX credential once without replacing an owner credential', () => {
+    const command = relayEndpointCredentialEnsureCommand(
+      getRemoteHostPlatform('linux-x64'),
+      '/usr/bin/node',
+      '/home/me/.orca-remote/terminal-authority/endpoint.credential'
+    )
+    expect(command).toContain('fs.linkSync(t,p)')
+    expect(command).toContain('fs.fsyncSync(d)')
+    expect(command).toContain('e.code!=="EEXIST"')
+    expect(command).not.toContain('fs.renameSync(t,p)')
+  })
+
+  it('keeps a valid stable Windows credential when concurrent launchers race', () => {
+    const script = decodePowerShellCommand(
+      relayEndpointCredentialEnsureCommand(
+        getRemoteHostPlatform('win32-x64'),
+        'C:/Program Files/nodejs/node.exe',
+        'C:/Users/me/.orca-remote/terminal-authority/endpoint.credential'
+      )
+    )
+    expect(script).toContain('if (Test-Path -LiteralPath $path -PathType Leaf)')
+    expect(script).toContain('catch [System.IO.IOException] { }')
+    expect(script).toContain('.SetAccessControl($security)')
+    expect(script).not.toContain('[System.IO.File]::Delete($path)')
   })
 })

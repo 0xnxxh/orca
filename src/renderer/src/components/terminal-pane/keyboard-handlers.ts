@@ -431,6 +431,7 @@ export function useTerminalKeyboardShortcuts({
     ): (() => void) => {
       const capturedTransport = paneTransportsRef.current.get(pane.id)
       const capturedPtyId = capturedTransport?.getPtyId() ?? null
+      const capturedInputTarget = capturedTransport?.captureInputTarget?.() ?? null
       const capturedBinding = panePtyBindingsRef.current.get(pane.id) as
         | (IDisposable & { requestWindowsShiftEnterReconfirmation?: () => void })
         | undefined
@@ -448,6 +449,7 @@ export function useTerminalKeyboardShortcuts({
           currentTransport: getCurrentTransport(),
           capturedTransport,
           capturedPtyId,
+          capturedInputTarget,
           data
         })
         if (sent) {

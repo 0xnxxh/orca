@@ -25,7 +25,6 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import TabBar from './tab-bar/TabBar'
-import TerminalPane from './terminal-pane/TerminalPane'
 import {
   ORCA_EDITOR_REQUEST_FILE_CLOSE_EVENT,
   ORCA_EDITOR_SAVE_AND_CLOSE_EVENT,
@@ -93,7 +92,6 @@ import {
   planColdActivationTabDeferral,
   pruneClosedBackgroundMountTabs,
   revealActivationDeferredTabs,
-  shouldMountBackgroundWorktreeTab,
   takeAllPendingBackgroundTerminalWorktreeMounts,
   takePendingBackgroundTerminalWorktreeMount
 } from './terminal/background-terminal-worktree-mount'
@@ -133,14 +131,13 @@ import {
   disposeAllParkedTerminalWatchers,
   pruneParkedTerminalWatchers,
   shouldDeferParkedPtyExitTabClose,
-  syncParkedTerminalTabWatchers,
   terminalWatcherLiveWorkspaceIds
 } from './terminal-pane/terminal-parked-tab-watchers'
+import { LegacyTerminalWorkspaceSurface } from './terminal-pane/LegacyTerminalWorkspaceSurface'
 import { isMainTerminalSideEffectAuthorityForPty } from './terminal-pane/terminal-side-effect-facts-handler'
 import { appendUniqueOpenFileIds } from './terminal/unsaved-close-queue'
 import { setWindowCloseRequestHandler } from './window-close-request-coordinator'
 import {
-  findActivityTerminalPortal,
   useActivityTerminalPortals,
   type ActivityTerminalPortalTarget
 } from './activity/activity-terminal-portal'
@@ -1389,91 +1386,12 @@ function Terminal(): React.JSX.Element | null {
     groupsByWorktree,
     activeGroupIdByWorktree
   )
-  // Why: legacy (non-split) host owns watcher reconciliation; split mode's overlay layers own theirs, so only dispose worktrees with no overlay layer.
+  // Surface components own handoff ordering; this host only prunes workspaces that no longer exist.
   useEffect(() => {
     pruneParkedTerminalWatchers(
       terminalWatcherLiveWorkspaceIds(workspaceSurfaces.map((workspace) => workspace.id))
     )
-    for (const workspace of workspaceSurfaces) {
-      if (
-        anyMountedWorktreeHasLayout &&
-        mountedWorktreeIdsRef.current.has(workspace.id) &&
-        getEffectiveLayoutForWorktree(workspace.id)
-      ) {
-        continue
-      }
-      const tabs = tabsByWorktree[workspace.id] ?? []
-      const parkedTabIds = new Set<string>()
-      let deferredTabIds: ReadonlySet<string> | null = null
-      if (!anyMountedWorktreeHasLayout && mountedWorktreeIdsRef.current.has(workspace.id)) {
-        const isVisible = activeView === 'terminal' && workspace.id === renderedActiveWorktreeId
-        const shouldMeasureHiddenWorktree =
-          !isVisible && measurableBackgroundWorktreeIdsRef.current.has(workspace.id)
-        const parked =
-          !isVisible &&
-          !shouldMeasureHiddenWorktree &&
-          effectiveParkedTerminalWorktreeIds.has(workspace.id)
-        if (parked) {
-          for (const tab of tabs) {
-            const activityTerminalPortal = findActivityTerminalPortal(activityTerminalPortals, {
-              worktreeId: workspace.id,
-              tabId: tab.id
-            })
-            // Why the exempt exclusion: force-park keeps eviction-exempt tabs'
-            // panes mounted (a remount would orphan their live pty) — same
-            // per-tab carve-out as Activity portals, so no watcher owns them.
-            // The set is resolved in the force-park pass and holds only those
-            // worktrees' tabs.
-            if (!activityTerminalPortal && !evictionExemptTerminalTabIds.has(tab.id)) {
-              parkedTabIds.add(tab.id)
-            }
-          }
-        }
-        // Why: activation-deferred tabs are unmounted like parked ones — the same byte watchers own their side effects until first reveal.
-        deferredTabIds =
-          activationDeferredMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
-        for (const tab of tabs) {
-          if (
-            deferredTabIds?.has(tab.id) &&
-            !parkedTabIds.has(tab.id) &&
-            canWatcherCoverParkedTerminalTab(workspace.id, tab) &&
-            !findActivityTerminalPortal(activityTerminalPortals, {
-              worktreeId: workspace.id,
-              tabId: tab.id
-            })
-          ) {
-            parkedTabIds.add(tab.id)
-          }
-        }
-      }
-      syncParkedTerminalTabWatchers({
-        worktreeId: workspace.id,
-        tabs,
-        parkedTabIds,
-        // Why: activation-deferred tabs never mounted a pane to restore their title, unlike ordinary parked tabs.
-        ...(deferredTabIds ? { restoreTitleOnStartTabIds: deferredTabIds } : {})
-      })
-    }
-  }, [
-    // Why activeTabId: revealing a deferred tab mutates the mount restriction in the same render; sync must re-run so its watcher disposes before the pane attaches.
-    activeTabId,
-    activeView,
-    activityTerminalPortals,
-    activeTabIdByWorktree,
-    anyMountedWorktreeHasLayout,
-    backgroundMountRevision,
-    evictionExemptTerminalTabIds,
-    getEffectiveLayoutForWorktree,
-    groupsByWorktree,
-    effectiveParkedTerminalWorktreeIds,
-    pendingStartupByTabId,
-    renderedActiveWorktreeId,
-    tabsByWorktree,
-    terminalParkingEnabled,
-    terminalTitleSnapshotAuthorityEnabled,
-    workspaceSessionReady,
-    workspaceSurfaces
-  ])
+  }, [workspaceSurfaces])
   // Why: on host unmount no reconciliation effect runs again, so dispose every remaining parked watcher.
   useEffect(() => () => disposeAllParkedTerminalWatchers(), [])
   // Auto-create first tab when worktree activates
@@ -2500,71 +2418,27 @@ function Terminal(): React.JSX.Element | null {
                   !shouldMeasureHiddenWorktree &&
                   effectiveParkedTerminalWorktreeIds.has(workspace.id)
                 return (
-                  <div
+                  <LegacyTerminalWorkspaceSurface
                     key={workspace.id}
-                    className={
-                      isVisible
-                        ? 'absolute inset-0'
-                        : shouldMeasureHiddenWorktree
-                          ? 'absolute inset-0 opacity-0 pointer-events-none'
-                          : 'absolute inset-0 hidden'
+                    worktreeId={workspace.id}
+                    worktreePath={workspace.path}
+                    terminalTabs={tabsByWorktree[workspace.id] ?? []}
+                    activeTabId={activeTabId}
+                    isVisible={isVisible}
+                    isTerminalTabTypeActive={activeTabType === 'terminal'}
+                    shouldMeasureHiddenWorktree={shouldMeasureHiddenWorktree}
+                    shouldColdParkTerminalPanes={shouldColdParkTerminalPanes}
+                    activityTerminalPortals={activityTerminalPortals}
+                    evictionExemptTerminalTabIds={evictionExemptTerminalTabIds}
+                    backgroundMountTabIds={
+                      backgroundMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
                     }
-                    aria-hidden={!isVisible}
-                  >
-                    {(tabsByWorktree[workspace.id] ?? [])
-                      .filter((tab) =>
-                        shouldMountBackgroundWorktreeTab(
-                          backgroundMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null,
-                          tab.id
-                        )
-                      )
-                      .map((tab) => {
-                        const activityTerminalPortal = findActivityTerminalPortal(
-                          activityTerminalPortals,
-                          { worktreeId: workspace.id, tabId: tab.id }
-                        )
-                        const isActivityPortalTab = activityTerminalPortal !== null
-                        const isActiveTerminalTab =
-                          isVisible && tab.id === activeTabId && activeTabType === 'terminal'
-                        // Why: parking unmounts the view but keeps the PTY; an Activity portal stays
-                        // mounted as a visible consumer, and a force-parked worktree's eviction-exempt
-                        // tabs stay mounted because a remount would orphan their live pty.
-                        if (
-                          shouldColdParkTerminalPanes &&
-                          !isActivityPortalTab &&
-                          !evictionExemptTerminalTabIds.has(tab.id)
-                        ) {
-                          return null
-                        }
-                        const terminalPane = (
-                          <TerminalPane
-                            key={`${tab.id}-${tab.generation ?? 0}`}
-                            tabId={tab.id}
-                            worktreeId={workspace.id}
-                            cwd={tab.startupCwd ?? workspace.path}
-                            isActive={
-                              isActiveTerminalTab || activityTerminalPortal?.active === true
-                            }
-                            // Why: keep isVisible true for the portaled tab so xterm fits/streams while the workspace surface stays hidden.
-                            isVisible={isActiveTerminalTab || isActivityPortalTab}
-                            // Why: inactive tabs here are tab-hidden (not worktree-hidden), so they need the same light resume path as split-group overlays.
-                            isWorktreeActive={isVisible || isActivityPortalTab}
-                            // Why: isolate the portaled Activity leaf so split siblings stay hidden; workspace renders pass null.
-                            isolatedPaneKey={activityTerminalPortal?.paneKey ?? null}
-                            onPtyExit={(ptyId) => handlePtyExit(tab.id, ptyId)}
-                            onCloseTab={() => handleCloseTab(tab.id)}
-                          />
-                        )
-                        if (activityTerminalPortal) {
-                          return createPortal(
-                            terminalPane,
-                            activityTerminalPortal.target,
-                            `activity-terminal-${tab.id}`
-                          )
-                        }
-                        return terminalPane
-                      })}
-                  </div>
+                    activationDeferredMountTabIds={
+                      activationDeferredMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
+                    }
+                    onPtyExit={handlePtyExit}
+                    onCloseTab={handleCloseTab}
+                  />
                 )
               })}
           </div>

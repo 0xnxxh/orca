@@ -2,16 +2,62 @@ import { TERMINAL_SCROLLBACK_SESSION_BUFFER_BYTE_LIMIT } from '../../../../share
 import { clampUtf8Tail } from './pty-eager-buffer-clamp'
 import { clearPreHandlerPtyState, drainPreHandlerPtyData } from './pty-pre-handler-buffer'
 import type { PtyDataMeta } from './pty-dispatcher'
+import type {
+  TerminalAuthorityAppOutcomeIdentity,
+  TerminalAuthorityOutcomeProjectionKind
+} from '@/lib/terminal-authority-app-projection-controller'
 
 export const ptyDataHandlers = new Map<string, (data: string, meta?: PtyDataMeta) => void>()
 export const ptyDataSidecars = new Map<string, Set<(data: string) => void>>()
 export const ptyReplayHandlers = new Map<string, (data: string) => void>()
-export const ptyExitHandlers = new Map<string, (code: number) => void>()
+const ptyExitHandlerAvailableListeners = new Set<() => void>()
+export type PtyExitHandler = (
+  code: number,
+  incarnationId?: string,
+  authorityOutcome?: TerminalAuthorityAppOutcomeIdentity
+) => unknown
+class PtyExitHandlerMap extends Map<string, PtyExitHandler> {
+  override set(key: string, value: PtyExitHandler): this {
+    super.set(key, value)
+    for (const listener of ptyExitHandlerAvailableListeners) {
+      listener()
+    }
+    return this
+  }
+}
+export const ptyExitHandlers = new PtyExitHandlerMap()
+const eventKeyedPtyExitHandlers = new WeakSet<PtyExitHandler>()
 export const ptyTeardownHandlers = new Map<string, () => void>()
 export const ptyShutdownLifecycleHandlers = new Map<
   string,
   { pause: () => void; rollback: () => void; commit: () => void }
 >()
+
+export function onPtyExitHandlerAvailable(listener: () => void): () => void {
+  ptyExitHandlerAvailableListeners.add(listener)
+  return () => ptyExitHandlerAvailableListeners.delete(listener)
+}
+
+export function registerEventKeyedPtyExitHandler(
+  ptyId: string,
+  handler: PtyExitHandler,
+  projection: TerminalAuthorityOutcomeProjectionKind
+): () => void {
+  if (projection !== 'event-keyed-idempotent') {
+    throw new Error('terminal_authority_outcome_projection_invalid')
+  }
+  eventKeyedPtyExitHandlers.add(handler)
+  ptyExitHandlers.set(ptyId, handler)
+  return () => {
+    if (ptyExitHandlers.get(ptyId) === handler) {
+      ptyExitHandlers.delete(ptyId)
+    }
+  }
+}
+
+export function isEventKeyedPtyExitHandler(handler: PtyExitHandler): boolean {
+  return eventKeyedPtyExitHandlers.has(handler)
+}
 
 export type PtyDataHandlerShutdownSnapshot = {
   ptyId: string

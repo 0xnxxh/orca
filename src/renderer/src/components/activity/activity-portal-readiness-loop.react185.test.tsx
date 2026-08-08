@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, useLayoutEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -15,15 +15,6 @@ import {
   resolveActivityPortalSwap,
   type ActivityPortalThreadRef
 } from './activity-portal-thread-reconciliation'
-import {
-  ACTIVITY_PORTAL_READINESS_MAX_FLIPS,
-  type ActivityPortalReadinessStatus
-} from './activity-portal-readiness-oscillation'
-
-// Why: re-applying ready DOM never consumes the readiness flip budget (a 'ready'
-// status resets the latch), so this retry budget is independent of
-// ACTIVITY_PORTAL_READINESS_MAX_FLIPS and must not be derived from it.
-const PORTAL_READY_REAPPLY_ATTEMPTS = 32
 
 const WORKTREE_ID = 'wt-1'
 const TAB_ID = 'tab-react185'
@@ -38,33 +29,19 @@ const thread = (tabId: string, leafId: string): ActivityPortalThreadRef => ({
   tab: { id: tabId }
 })
 
-// Same-tab panes share one TerminalPane and swap via isolatedPaneKey.
 const PANE_A = thread(TAB_ID, LEAF_A)
 const PANE_B = thread(TAB_ID, LEAF_B)
-// Cross-tab panes use separate TerminalPanes, so staging applies.
 const PANE_C = thread(OTHER_TAB_ID, LEAF_C)
 
 let root: Root
 
-// Freeze Date (not timers/rAF) so the latch's flip window cannot expire between two drains on a
-// loaded CI machine; the readiness frames are still driven by the controllers below.
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-})
-
 afterEach(() => {
-  act(() => {
-    root?.unmount()
-  })
-  vi.useRealTimers()
+  act(() => root?.unmount())
   document.body.replaceChildren()
   vi.unstubAllGlobals()
 })
 
-function installAnimationFrameController(): {
-  flush: () => Promise<void>
-  pending: () => number
-} {
+function installAnimationFrameController(): { flushUntilIdle: () => Promise<void> } {
   let nextFrameId = 1
   const callbacks = new Map<number, FrameRequestCallback>()
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
@@ -76,80 +53,31 @@ function installAnimationFrameController(): {
   vi.stubGlobal('cancelAnimationFrame', (frameId: number): void => {
     callbacks.delete(frameId)
   })
+
   return {
-    async flush() {
-      const queued = Array.from(callbacks.values())
-      callbacks.clear()
-      await act(async () => {
-        for (const callback of queued) {
-          callback(performance.now())
+    async flushUntilIdle() {
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await act(() => Promise.resolve())
+        if (callbacks.size === 0) {
+          await act(() => Promise.resolve())
+          if (callbacks.size === 0) {
+            return
+          }
         }
-        await Promise.resolve()
-      })
-    },
-    pending: () => callbacks.size
-  }
-}
-
-function installMutationObserverController(): { notify: () => void } {
-  const callbacks = new Map<MutationObserver, MutationCallback>()
-  class ControlledMutationObserver implements MutationObserver {
-    constructor(callback: MutationCallback) {
-      callbacks.set(this, callback)
-    }
-
-    observe(): void {}
-
-    disconnect(): void {
-      callbacks.delete(this)
-    }
-
-    takeRecords(): MutationRecord[] {
-      return []
-    }
-  }
-  vi.stubGlobal('MutationObserver', ControlledMutationObserver)
-  return {
-    notify() {
-      for (const [observer, callback] of callbacks) {
-        callback([], observer)
+        const queued = Array.from(callbacks.values())
+        callbacks.clear()
+        await act(async () => {
+          for (const callback of queued) {
+            callback(performance.now())
+          }
+          await Promise.resolve()
+        })
       }
+      throw new Error('Activity portal readiness did not settle')
     }
   }
 }
 
-async function flushPortalFramesUntil(
-  frames: ReturnType<typeof installAnimationFrameController>,
-  settled: () => boolean
-): Promise<void> {
-  for (let frame = 0; frame < 4 && !settled(); frame += 1) {
-    await frames.flush()
-  }
-}
-
-// Drain MutationObserver microtasks and the readiness rAF they schedule. Reports whether the
-// drain settled so a caller never reads a transition whose readiness callbacks are still queued.
-async function flushPortalReadiness(
-  frames: ReturnType<typeof installAnimationFrameController>
-): Promise<boolean> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await act(async () => {
-      await Promise.resolve()
-    })
-    if (frames.pending() === 0) {
-      await act(async () => {
-        await Promise.resolve()
-      })
-      if (frames.pending() === 0) {
-        return true
-      }
-    }
-    await frames.flush()
-  }
-  return frames.pending() === 0
-}
-
-// Models the tab-root DOM and sibling hiding emitted by a portaled TerminalPane.
 function renderPortaledTerminalPane(target: HTMLElement, tabId: string, leafIds: string[]): void {
   const isolatedLeafId = leafIds[0]
   const tabRoot = document.createElement('div')
@@ -171,12 +99,12 @@ function renderPortaledTerminalPane(target: HTMLElement, tabId: string, leafIds:
   target.replaceChildren(tabRoot)
 }
 
-// Exercises reconciliation, routing, readiness, and swapping on React's sync lane.
 async function runActivityPortalPage(args: {
   selectedThread: ActivityPortalThreadRef
   initialDisplayed: ActivityPortalThreadRef
   leafIdsByTabId: Record<string, string[]>
 }): Promise<{ displayedPaneKey: string | null; renders: number }> {
+  const frames = installAnimationFrameController()
   const { selectedThread, initialDisplayed, leafIdsByTabId } = args
   const slotEls = {
     primary: document.createElement('div'),
@@ -227,7 +155,6 @@ async function runActivityPortalPage(args: {
       })
     }
 
-    // Match Terminal's one-pane-per-(worktree, tab) routing.
     useLayoutEffect(() => {
       slotEls.primary.replaceChildren()
       slotEls.secondary.replaceChildren()
@@ -256,6 +183,7 @@ async function runActivityPortalPage(args: {
 
     useLayoutEffect(() => {
       const swap = resolveActivityPortalSwap({
+        displayedPaneKey: displayed,
         selectedThread,
         selectedHasLiveTab: true,
         visibleThread,
@@ -276,32 +204,25 @@ async function runActivityPortalPage(args: {
       if (swap?.kind === 'settle-visible') {
         setDisplayed(swap.paneKey)
       }
-      // Mirror ActivityPrototypePage's swap dependencies.
-    }, [inactiveSlotId, stagedStatus, stagedThread, visibleStatus, visibleThread])
+    }, [displayed, inactiveSlotId, stagedStatus, stagedThread, visibleStatus, visibleThread])
     return null
   }
 
   root = createRoot(document.createElement('div'))
-  await act(async () => {
-    root.render(<ActivityPortalPage />)
-    await new Promise((resolve) => setTimeout(resolve, 40))
-  })
+  act(() => root.render(<ActivityPortalPage />))
+  await frames.flushUntilIdle()
   return { displayedPaneKey, renders }
 }
 
 describe('Activity portal pane switching', () => {
   it('converges on a newly selected pane of the tab already on screen', async () => {
-    // Same-tab staging would wait forever for a second TerminalPane that never mounts.
-    const run = (): Promise<{ displayedPaneKey: string | null; renders: number }> =>
-      runActivityPortalPage({
-        selectedThread: PANE_B,
-        initialDisplayed: PANE_A,
-        leafIdsByTabId: { [TAB_ID]: [LEAF_A, LEAF_B] }
-      })
-
-    const result = await run()
+    const result = await runActivityPortalPage({
+      selectedThread: PANE_B,
+      initialDisplayed: PANE_A,
+      leafIdsByTabId: { [TAB_ID]: [LEAF_A, LEAF_B] }
+    })
     expect(result.displayedPaneKey).toBe(PANE_B.paneKey)
-    expect(result.renders).toBeLessThan(50)
+    expect(result.renders).toBeLessThan(10)
   })
 
   it('stages and swaps when the selected pane belongs to a different tab', async () => {
@@ -311,162 +232,6 @@ describe('Activity portal pane switching', () => {
       leafIdsByTabId: { [TAB_ID]: [LEAF_A, LEAF_B], [OTHER_TAB_ID]: [LEAF_C] }
     })
     expect(result.displayedPaneKey).toBe(PANE_C.paneKey)
-    expect(result.renders).toBeLessThan(50)
-  })
-
-  // Drive the latch through production wiring because React's nested-update limit is root-wide.
-  it('bounds a readiness oscillation driven through the real portal-status hook', async () => {
-    const frames = installAnimationFrameController()
-    const target = document.createElement('div')
-    document.body.append(target)
-    // Alternate hidden and ambiguous DOM states so ready remains unreachable.
-    const buildRoot = (hiddenLeafId: string | null): void => {
-      const tabRoot = document.createElement('div')
-      tabRoot.dataset.terminalTabId = TAB_ID
-      for (const leafId of [LEAF_A, LEAF_B]) {
-        const pane = document.createElement('div')
-        pane.dataset.leafId = leafId
-        pane.setAttribute('data-pty-id', `pty-${leafId}`)
-        pane.appendChild(
-          Object.assign(document.createElement('div'), { className: 'xterm-screen' })
-        )
-        if (leafId === hiddenLeafId) {
-          pane.style.display = 'none'
-        }
-        Object.defineProperty(pane, 'getClientRects', { value: () => [{}], configurable: true })
-        tabRoot.appendChild(pane)
-      }
-      target.replaceChildren(tabRoot)
-    }
-    buildRoot(LEAF_A)
-
-    let renders = 0
-    const statuses: ActivityPortalReadinessStatus[] = []
-    // Stop feeding an unlatched spin so failure is immediate and legible.
-    const RENDER_CAP = 50
-
-    function ActivityTerminalSlot(): null {
-      renders += 1
-      const status = useActivityTerminalPortalStatus(target, PANE_A.paneKey)
-      statuses.push(status)
-      // Reapply opposite isolation so MutationObserver reports opposite readiness.
-      useLayoutEffect(() => {
-        if (renders > RENDER_CAP) {
-          return
-        }
-        if (status === 'unavailable') {
-          buildRoot(null)
-        } else if (status === 'loading') {
-          buildRoot(LEAF_A)
-        }
-      })
-      return null
-    }
-
-    root = createRoot(document.createElement('div'))
-    await act(async () => {
-      root.render(<ActivityTerminalSlot />)
-    })
-    for (let frame = 0; frame < 20 && frames.pending() > 0; frame += 1) {
-      await frames.flush()
-    }
-    const settledRenders = renders
-    await frames.flush()
-
-    expect(renders).toBeLessThanOrEqual(RENDER_CAP)
-    expect(renders).toBe(settledRenders)
-    expect(frames.pending()).toBe(0)
-    expect(statuses.at(-1)).toBe('unavailable')
-  })
-
-  it('releases a latched readiness once the terminal attaches', async () => {
-    const frames = installAnimationFrameController()
-    const mutations = installMutationObserverController()
-    const target = document.createElement('div')
-    document.body.append(target)
-    const buildRoot = (mode: 'hidden' | 'sibling' | 'ready'): void => {
-      const tabRoot = document.createElement('div')
-      tabRoot.dataset.terminalTabId = TAB_ID
-      for (const leafId of [LEAF_A, LEAF_B]) {
-        const pane = document.createElement('div')
-        pane.dataset.leafId = leafId
-        pane.setAttribute('data-pty-id', `pty-${leafId}`)
-        pane.appendChild(
-          Object.assign(document.createElement('div'), { className: 'xterm-screen' })
-        )
-        if (mode === 'hidden' && leafId === LEAF_A) {
-          pane.style.display = 'none'
-        }
-        if (mode === 'ready' && leafId === LEAF_B) {
-          pane.style.display = 'none'
-        }
-        Object.defineProperty(pane, 'getClientRects', { value: () => [{}], configurable: true })
-        tabRoot.appendChild(pane)
-      }
-      target.replaceChildren(tabRoot)
-    }
-    buildRoot('hidden')
-
-    const statuses: ActivityPortalReadinessStatus[] = []
-
-    function ActivityTerminalSlot(): null {
-      const status = useActivityTerminalPortalStatus(target, PANE_A.paneKey)
-      statuses.push(status)
-      return null
-    }
-
-    root = createRoot(document.createElement('div'))
-    await act(async () => {
-      root.render(<ActivityTerminalSlot />)
-    })
-    expect(await flushPortalReadiness(frames)).toBe(true)
-    await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'unavailable')
-    expect(statuses.at(-1)).toBe('unavailable')
-
-    // Feed each DOM state separately and keep going until sibling DOM reports latched
-    // unavailable. A fixed 9-flip budget flakes when CI load drops MutationObserver
-    // deliveries below ACTIVITY_PORTAL_READINESS_MAX_FLIPS transitions.
-    let sawSiblingLoading = false
-    let sawLatchedSibling = false
-    for (
-      let flip = 0;
-      flip < ACTIVITY_PORTAL_READINESS_MAX_FLIPS * 4 && !sawLatchedSibling;
-      flip += 1
-    ) {
-      const mode = flip % 2 === 0 ? 'sibling' : 'hidden'
-      const statusesBefore = statuses.length
-      await act(async () => {
-        buildRoot(mode)
-        mutations.notify()
-      })
-      expect(await flushPortalReadiness(frames)).toBe(true)
-      if (mode !== 'sibling') {
-        continue
-      }
-      // Transition-local evidence: an unlatched subscription answers sibling DOM with 'loading',
-      // so the latch is only proven once a sibling transition that previously emitted 'loading'
-      // stops doing so and leaves 'unavailable' standing.
-      if (statuses.slice(statusesBefore).includes('loading')) {
-        sawSiblingLoading = true
-      } else if (sawSiblingLoading && statuses.at(-1) === 'unavailable') {
-        sawLatchedSibling = true
-      }
-    }
-    expect(sawLatchedSibling).toBe(true)
-    expect(statuses.at(-1)).toBe('unavailable')
-
-    // Why: under CI load MutationObserver may miss one replaceChildren; re-apply ready DOM
-    // and keep draining until attach is observed.
-    let sawReady = false
-    for (let attempt = 0; attempt < PORTAL_READY_REAPPLY_ATTEMPTS && !sawReady; attempt += 1) {
-      await act(async () => {
-        buildRoot('ready')
-        mutations.notify()
-      })
-      expect(await flushPortalReadiness(frames)).toBe(true)
-      await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'ready')
-      sawReady = statuses.at(-1) === 'ready'
-    }
-    expect(statuses.at(-1)).toBe('ready')
+    expect(result.renders).toBeLessThan(10)
   })
 })

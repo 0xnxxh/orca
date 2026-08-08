@@ -49,9 +49,10 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
-  getSshPtyProvider: vi.fn(),
+  getSshPtyProvider: vi.fn().mockReturnValue({}),
   getPtyIdsForConnection: vi.fn().mockReturnValue([]),
   clearPtyOwnershipForConnection: vi.fn(),
   clearProviderPtyState: vi.fn(),
@@ -77,9 +78,12 @@ describe('SshRelaySession managed hooks', () => {
     vi.clearAllMocks()
     process.env.ORCA_FEATURE_REMOTE_AGENT_HOOKS = '1'
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
-      mode: 'legacy-fallback',
-      clientInstanceId: options.clientInstanceId,
-      serverBuildId: 'test-relay-build'
+      state: {
+        mode: 'legacy-fallback' as const,
+        clientInstanceId: options.clientInstanceId,
+        serverBuildId: 'test-relay-build'
+      },
+      resumed: false
     }))
     mockDeploySuccess()
   })

@@ -443,6 +443,36 @@ describe('SshPtyOutputIntake', () => {
     expect(releaseRendererExit).toHaveBeenCalledOnce()
   })
 
+  it('keeps projection obligations pending while renderer binding preparation is fenced', async () => {
+    let releaseBinding!: () => void
+    const binding = new Promise<void>((resolve) => {
+      releaseBinding = resolve
+    })
+    const harness = createHarness({
+      prepareExit: vi.fn(async () => {
+        await binding
+      })
+    })
+    const dataReceipt = harness.intake.acceptData(event())
+    harness.completions[0]!.resolve()
+    await dataReceipt
+    const exit = harness.intake.acceptExit({
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    })
+    await Promise.resolve()
+
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(1)
+    expect(harness.order).not.toContain('exit')
+
+    releaseBinding()
+    await exit
+    expect(harness.order.at(-1)).toBe('exit')
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
+  })
+
   it('releases renderer exit preparation when generation close aborts finalization', async () => {
     const releaseRendererExit = vi.fn()
     const harness = createHarness({
@@ -467,6 +497,35 @@ describe('SshPtyOutputIntake', () => {
     harness.intake.closeGeneration(1, 'provider-replaced')
 
     await expect(exit).rejects.toThrow('provider-replaced')
+    expect(releaseRendererExit).toHaveBeenCalledOnce()
+    expect(harness.order).not.toContain('exit')
+  })
+
+  it('releases renderer exit preparation that completes after generation close', async () => {
+    let completePreparation!: (release: () => void) => void
+    const releaseRendererExit = vi.fn()
+    const harness = createHarness({
+      prepareExit: vi.fn(
+        () =>
+          new Promise<() => void>((resolve) => {
+            completePreparation = resolve
+          })
+      )
+    })
+    const exit = harness.intake.acceptExit({
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    })
+    await Promise.resolve()
+
+    harness.intake.closeGeneration(1, 'provider-replaced')
+    await expect(exit).rejects.toThrow('provider-replaced')
+    expect(releaseRendererExit).not.toHaveBeenCalled()
+
+    completePreparation(releaseRendererExit)
+    await Promise.resolve()
     expect(releaseRendererExit).toHaveBeenCalledOnce()
     expect(harness.order).not.toContain('exit')
   })

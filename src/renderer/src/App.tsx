@@ -218,6 +218,7 @@ import {
   refreshTerminalProviderSnapshotCapabilities
 } from './components/terminal/terminal-provider-snapshot-capability'
 import { useRemoteRuntimeRecoveryTriggers } from './runtime/use-remote-runtime-recovery-triggers'
+import { startTerminalAuthorityAppProjectionController } from './lib/terminal-authority-app-projection-startup'
 
 // Why: bound the resume-record loss window on a hard kill to ~1 min; capture skips unchanged records so per-tick cost is negligible.
 const SLEEPING_AGENT_RESUME_CAPTURE_INTERVAL_MS = 60_000
@@ -745,6 +746,10 @@ function App(): React.JSX.Element {
       }
     }
   }, [activeModal, shouldMountAddRepoDialog])
+
+  useEffect(() => {
+    startTerminalAuthorityAppProjectionController()
+  }, [])
 
   // Subscribe to IPC push events
   useIpcEvents()

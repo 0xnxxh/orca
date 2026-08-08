@@ -1,6 +1,14 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtySourceReceivingActivation } from '../../shared/pty-source-receiving-activation'
+import {
+  parseTerminalAuthorityOutcomeDeliveryIdentity,
+  type TerminalAuthorityOutcomeDeliveryIdentity
+} from '../../shared/terminal-authority-outcome-delivery'
+import {
+  sameTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
 import type {
   SshPtyDataCallback,
   SshPtyExitCallback,
@@ -44,6 +52,10 @@ export function subscribeSshPtyNotifications(args: {
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
   peekPtyIncarnation: (relayPtyId: string) => string | undefined
+  authorityOutcomeDelivery?: boolean
+  getTerminalSessionAuthorityAccess?: (
+    relayPtyId: string
+  ) => TerminalSessionAuthorityPtyAccess | undefined
 }): SshPtyNotificationSubscription {
   const toDataPayload = (
     pending: PendingSshPtySourceData,
@@ -161,6 +173,24 @@ export function subscribeSshPtyNotifications(args: {
     }
     const relayPtyId = params.id
     if (method === 'pty.exit') {
+      let authorityOutcome: TerminalAuthorityOutcomeDeliveryIdentity | undefined
+      if (params.authorityOutcome !== undefined) {
+        const parsed = parseTerminalAuthorityOutcomeDeliveryIdentity(params.authorityOutcome)
+        const expectedAccess = args.getTerminalSessionAuthorityAccess?.(relayPtyId)
+        if (
+          !args.authorityOutcomeDelivery ||
+          !parsed ||
+          !isPtyIncarnationId(params.incarnationId) ||
+          !Number.isSafeInteger(params.code) ||
+          parsed.binding.physicalPtyId !== relayPtyId ||
+          parsed.binding.ptyIncarnationId !== params.incarnationId ||
+          (expectedAccess && !sameTerminalSessionAuthorityPtyAccess(expectedAccess, parsed))
+        ) {
+          args.mux.dispose('connection_lost')
+          return
+        }
+        authorityOutcome = parsed
+      }
       const id = args.toAppPtyId(relayPtyId)
       const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
       rejectedPublications.delete(relayPtyId)
@@ -175,7 +205,8 @@ export function subscribeSshPtyNotifications(args: {
           ptyIncarnation,
           ...(isPtyIncarnationId(params.incarnationId)
             ? { incarnationId: params.incarnationId }
-            : {})
+            : {}),
+          ...(authorityOutcome ? { authorityOutcome } : {})
         })
       }
       return

@@ -9,9 +9,13 @@
  */
 import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
+import type { PtyMutationIdentity } from '../../../../shared/pty-mutation-identity'
+import type { ParkedTerminalSideEffectIdentity } from './terminal-parked-side-effect-identity'
 
 export type ParkedTerminalPaneCapture = {
   ptyId: string | null
+  mutationIdentity?: PtyMutationIdentity
+  sideEffectIdentity?: ParkedTerminalSideEffectIdentity
   /** PaneManager numeric pane id the live pane used for runtime titles. */
   paneId: number
   /** Stable terminal-layout leaf UUID (paneKey attribution). */
@@ -22,6 +26,42 @@ export type ParkedTerminalPaneCapture = {
 export type CapturedTabPanes = { worktreeId: string; panes: ParkedTerminalPaneCapture[] }
 
 export const capturedPanesByTabId = new Map<string, CapturedTabPanes>()
+
+type MountedPaneCandidateReaderEntry = {
+  worktreeId: string
+  read: () => ParkedTerminalPaneCapture[]
+}
+
+const mountedPaneCandidateReadersByTabId = new Map<string, MountedPaneCandidateReaderEntry>()
+
+export function registerMountedTerminalPaneCandidateReader(
+  tabId: string,
+  worktreeId: string,
+  read: () => ParkedTerminalPaneCapture[]
+): () => void {
+  const entry = { worktreeId, read }
+  mountedPaneCandidateReadersByTabId.set(tabId, entry)
+  return () => {
+    if (mountedPaneCandidateReadersByTabId.get(tabId) === entry) {
+      mountedPaneCandidateReadersByTabId.delete(tabId)
+    }
+  }
+}
+
+export function readMountedTerminalPaneCandidates(
+  tabId: string,
+  worktreeId: string
+): ParkedTerminalPaneCapture[] | null {
+  const entry = mountedPaneCandidateReadersByTabId.get(tabId)
+  if (!entry || entry.worktreeId !== worktreeId) {
+    return null
+  }
+  try {
+    return entry.read().map((pane) => ({ ...pane }))
+  } catch {
+    return null
+  }
+}
 
 // Why: PaneManager pane ids die with the unmounted pane, but the watcher must
 // keep writing the exact runtime-title slots the live pane used — a different
@@ -40,13 +80,101 @@ export type ParkedTabWatcherEntry = {
   /** Tab-level ptyId at watcher start; a change means the PTY was re-minted
    *  (e.g. wake respawn) and the watchers must restart against fresh ids. */
   tabPtyId: string | null
+  phase?: 'prepared' | 'parked'
+  preparationValid?: boolean
+  usesDurableCandidates?: boolean
+  paneCaptureByPtyId?: Map<string, ParkedTerminalPaneCapture>
+  suspendedPtyIds?: Set<string>
   /** Runtime-title slot each watcher writes, so parked PTY-exit handling can
    *  clear the dead leaf's slot (no live pane will ever overwrite it). */
   paneIdByPtyId: Map<string, number>
-  disposersByPtyId: Map<string, () => void>
+  activateByPtyId?: Map<string, () => boolean>
+  disposersByPtyId: Map<string, (options?: ParkedWatcherDisposeOptions) => void>
+  revealReplacementAttemptByPtyId?: Map<string, number>
+  retainedRevealPtyIds?: Set<string>
+}
+
+export type ParkedWatcherDisposeOptions = { preserveRuntimeTitle?: boolean }
+
+export type PhasedParkedTabWatcherEntry = ParkedTabWatcherEntry & {
+  phase: 'prepared' | 'parked'
+  preparationValid: boolean
+  usesDurableCandidates: boolean
+  paneCaptureByPtyId: Map<string, ParkedTerminalPaneCapture>
+  suspendedPtyIds: Set<string>
+  activateByPtyId: Map<string, () => boolean>
+  revealReplacementAttemptByPtyId: Map<string, number>
+  retainedRevealPtyIds: Set<string>
+}
+
+export function ensurePhasedParkedTabWatcherEntry(
+  entry: ParkedTabWatcherEntry
+): PhasedParkedTabWatcherEntry {
+  entry.phase ??= 'parked'
+  entry.preparationValid ??= true
+  entry.usesDurableCandidates ??= true
+  entry.paneCaptureByPtyId ??= new Map()
+  entry.suspendedPtyIds ??= new Set()
+  entry.activateByPtyId ??= new Map()
+  entry.revealReplacementAttemptByPtyId ??= new Map()
+  entry.retainedRevealPtyIds ??= new Set()
+  return entry as PhasedParkedTabWatcherEntry
 }
 
 export const parkedWatchersByTabId = new Map<string, ParkedTabWatcherEntry>()
+let nextRevealReplacementAttempt = 0
+
+export type ParkedTerminalWatcherReplacement = {
+  commit: (installSuccessor: () => boolean) => boolean
+  abort: () => void
+}
+
+/** Keep the parked owner live until a revealed pane proves its replacement binding. */
+export function beginParkedTerminalWatcherReplacement(
+  tabId: string,
+  ptyId: string
+): ParkedTerminalWatcherReplacement | null {
+  const registeredEntry = parkedWatchersByTabId.get(tabId)
+  if (!registeredEntry) {
+    return null
+  }
+  const entry = ensurePhasedParkedTabWatcherEntry(registeredEntry)
+  if (entry.phase !== 'parked' || !entry.disposersByPtyId.has(ptyId)) {
+    return null
+  }
+  nextRevealReplacementAttempt += 1
+  const attempt = nextRevealReplacementAttempt
+  entry.revealReplacementAttemptByPtyId.set(ptyId, attempt)
+  entry.retainedRevealPtyIds.add(ptyId)
+
+  const isCurrent = (): boolean =>
+    parkedWatchersByTabId.get(tabId) === entry &&
+    entry.revealReplacementAttemptByPtyId.get(ptyId) === attempt
+
+  return {
+    commit(installSuccessor): boolean {
+      if (!isCurrent() || !installSuccessor()) {
+        return false
+      }
+      entry.revealReplacementAttemptByPtyId.delete(ptyId)
+      entry.retainedRevealPtyIds.delete(ptyId)
+      const dispose = entry.disposersByPtyId.get(ptyId)
+      entry.disposersByPtyId.delete(ptyId)
+      entry.activateByPtyId.delete(ptyId)
+      entry.suspendedPtyIds.delete(ptyId)
+      dispose?.({ preserveRuntimeTitle: true })
+      if (entry.disposersByPtyId.size === 0 && parkedWatchersByTabId.get(tabId) === entry) {
+        parkedWatchersByTabId.delete(tabId)
+      }
+      return true
+    },
+    abort(): void {
+      if (isCurrent()) {
+        entry.revealReplacementAttemptByPtyId.delete(ptyId)
+      }
+    }
+  }
+}
 
 export function getParkedTerminalWatcherTabIds(): string[] {
   return Array.from(parkedWatchersByTabId.keys())
@@ -61,22 +189,30 @@ export function terminalWatcherLiveWorkspaceIds(workspaceIds: Iterable<string>):
  * Whether this tab is parked right now — the reveal remount's own mount effect
  * runs before the host effect that disposes the watcher (child effects first),
  * so a pane reading this at connect time can tell a park-reveal from an
- * in-place reattach. Empty entries are pinned-close tombstones, not live parks.
+ * in-place reattach. Empty entries are pending-close tombstones, not live parks.
  */
 export function isTerminalTabParked(tabId: string): boolean {
-  return (parkedWatchersByTabId.get(tabId)?.disposersByPtyId.size ?? 0) > 0
+  const entry = parkedWatchersByTabId.get(tabId)
+  return entry !== undefined && entry.phase !== 'prepared' && entry.disposersByPtyId.size > 0
 }
 
-export function disposeParkedTabWatchers(tabId: string): void {
+export function disposeParkedTabWatchers(
+  tabId: string,
+  options?: ParkedWatcherDisposeOptions
+): void {
   const entry = parkedWatchersByTabId.get(tabId)
   if (!entry) {
     return
   }
   parkedWatchersByTabId.delete(tabId)
   for (const dispose of entry.disposersByPtyId.values()) {
-    dispose()
+    dispose(options)
   }
+  entry.activateByPtyId?.clear()
   entry.disposersByPtyId.clear()
+  entry.suspendedPtyIds?.clear()
+  entry.revealReplacementAttemptByPtyId?.clear()
+  entry.retainedRevealPtyIds?.clear()
 }
 
 export function retireParkedTerminalTab(tabId: string): void {
@@ -84,6 +220,7 @@ export function retireParkedTerminalTab(tabId: string): void {
   // observers and unmounted-pane candidates; neither may reattach later.
   disposeParkedTabWatchers(tabId)
   capturedPanesByTabId.delete(tabId)
+  mountedPaneCandidateReadersByTabId.delete(tabId)
 }
 
 /**
@@ -99,6 +236,10 @@ export function disposeParkedTerminalWatchersForPtyIds(ptyIds: readonly string[]
       const dispose = entry.disposersByPtyId.get(ptyId)
       if (dispose) {
         entry.disposersByPtyId.delete(ptyId)
+        entry.activateByPtyId?.delete(ptyId)
+        entry.suspendedPtyIds?.add(ptyId)
+        entry.revealReplacementAttemptByPtyId?.delete(ptyId)
+        entry.retainedRevealPtyIds?.delete(ptyId)
         dispose()
       }
     }
@@ -159,6 +300,11 @@ export function pruneParkedTerminalWatchers(liveWorktreeIds: ReadonlySet<string>
   for (const [tabId, capture] of capturedPanesByTabId) {
     if (!liveWorktreeIds.has(capture.worktreeId)) {
       capturedPanesByTabId.delete(tabId)
+    }
+  }
+  for (const [tabId, reader] of mountedPaneCandidateReadersByTabId) {
+    if (!liveWorktreeIds.has(reader.worktreeId)) {
+      mountedPaneCandidateReadersByTabId.delete(tabId)
     }
   }
 }

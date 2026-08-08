@@ -7,16 +7,23 @@ import { join } from 'node:path'
 import {
   setupDaemonHandshake,
   runConnectHandshake,
-  EXIT_CODE_VERSION_MISMATCH
+  EXIT_CODE_VERSION_MISMATCH,
+  type DaemonHandshakeClientRole
 } from './relay-handshake'
 import {
   encodeHandshakeFrame,
   encodeJsonRpcFrame,
   FrameDecoder,
+  parseHandshakeMessage,
   type DecodedFrame,
   MessageType
 } from './protocol'
 import { relayTestSocketPath } from './relay-test-socket-path'
+import {
+  CURRENT_RELAY_DAEMON_COMPATIBILITY,
+  type RelayDaemonCompatibilityOffer
+} from '../shared/relay-daemon-compatibility'
+import type { SshTerminalAuthorityEndpointIdentity } from '../shared/ssh-terminal-authority-marker'
 
 // Why: --connect normally calls process.exit on mismatch / fatal handshake
 // errors. Stub it for tests so the harness sees a thrown sentinel error
@@ -27,6 +34,12 @@ class ExitCalled extends Error {
     super(`process.exit(${code})`)
     this.code = code
   }
+}
+
+const AUTHORITY_IDENTITY: SshTerminalAuthorityEndpointIdentity = {
+  authorityHostId: 'authority-host',
+  ownerInstanceId: 'owner-instance',
+  revision: 3
 }
 
 describe('handshake round-trip over a real Socket pair', () => {
@@ -78,17 +91,39 @@ describe('handshake round-trip over a real Socket pair', () => {
 
   function startDaemon(
     version: string,
-    endpointCredential?: string
+    endpointCredential?: string,
+    compatibility?: RelayDaemonCompatibilityOffer,
+    authorityIdentity?: SshTerminalAuthorityEndpointIdentity
   ): Promise<{
-    accepted: Promise<{ sock: Socket; leftover: Buffer }>
+    accepted: Promise<{
+      sock: Socket
+      leftover: Buffer
+      clientRole: DaemonHandshakeClientRole
+    }>
   }> {
     return new Promise((resolve) => {
       const acceptedDeferred: {
-        promise: Promise<{ sock: Socket; leftover: Buffer }>
-        resolve: (v: { sock: Socket; leftover: Buffer }) => void
+        promise: Promise<{
+          sock: Socket
+          leftover: Buffer
+          clientRole: DaemonHandshakeClientRole
+        }>
+        resolve: (v: {
+          sock: Socket
+          leftover: Buffer
+          clientRole: DaemonHandshakeClientRole
+        }) => void
       } = (() => {
-        let _resolve: (v: { sock: Socket; leftover: Buffer }) => void = () => {}
-        const promise = new Promise<{ sock: Socket; leftover: Buffer }>((r) => {
+        let _resolve: (v: {
+          sock: Socket
+          leftover: Buffer
+          clientRole: DaemonHandshakeClientRole
+        }) => void = () => {}
+        const promise = new Promise<{
+          sock: Socket
+          leftover: Buffer
+          clientRole: DaemonHandshakeClientRole
+        }>((r) => {
           _resolve = r
         })
         return { promise, resolve: _resolve }
@@ -99,7 +134,10 @@ describe('handshake round-trip over a real Socket pair', () => {
         setupDaemonHandshake(sock, {
           launchVersion: version,
           endpointCredential,
-          onAccepted: (s, leftover) => acceptedDeferred.resolve({ sock: s, leftover })
+          compatibility,
+          authorityIdentity,
+          onAccepted: (s, leftover, clientRole) =>
+            acceptedDeferred.resolve({ sock: s, leftover, clientRole })
         })
       })
       server.listen(sockPath, () => resolve({ accepted: acceptedDeferred.promise }))
@@ -115,12 +153,104 @@ describe('handshake round-trip over a real Socket pair', () => {
     const acceptedCb = vi.fn<(leftover: Buffer) => void>()
     runConnectHandshake(bridgeSock, '0.1.0+match', { onAccepted: acceptedCb })
 
-    const { leftover } = await accepted
+    const { leftover, clientRole } = await accepted
     expect(leftover.length).toBe(0)
+    expect(clientRole).toBe('relay')
 
     await vi.waitFor(() => expect(acceptedCb).toHaveBeenCalledTimes(1))
     expect(acceptedCb.mock.calls[0][0].length).toBe(0)
 
+    bridgeSock.destroy()
+  })
+
+  it('admits an authenticated authority probe with an exact endpoint expectation', async () => {
+    const { accepted } = await startDaemon(
+      '0.1.0+authority',
+      'secret-credential',
+      undefined,
+      AUTHORITY_IDENTITY
+    )
+    const bridgeSock = connect(sockPath)
+    await new Promise<void>((resolve) => bridgeSock.once('connect', resolve))
+    const acceptedCb = vi.fn<(leftover: Buffer) => void>()
+
+    runConnectHandshake(
+      bridgeSock,
+      '0.1.0+authority',
+      { onAccepted: acceptedCb },
+      'secret-credential',
+      AUTHORITY_IDENTITY
+    )
+
+    const admission = await accepted
+    expect(admission.clientRole).toBe('terminal-authority')
+    await vi.waitFor(() => expect(acceptedCb).toHaveBeenCalledOnce())
+    bridgeSock.destroy()
+  })
+
+  it.each([
+    ['0.1.0+older-authority', '0.1.0+newer-bridge'],
+    ['0.1.0+newer-authority', '0.1.0+older-bridge']
+  ])('admits compatible mixed authority builds: %s / %s', async (daemonVersion, bridgeVersion) => {
+    const { accepted } = await startDaemon(
+      daemonVersion,
+      'secret-credential',
+      CURRENT_RELAY_DAEMON_COMPATIBILITY,
+      AUTHORITY_IDENTITY
+    )
+    const bridgeSock = connect(sockPath)
+    await new Promise<void>((resolve) => bridgeSock.once('connect', resolve))
+    const acceptedCb = vi.fn<(leftover: Buffer) => void>()
+
+    runConnectHandshake(
+      bridgeSock,
+      bridgeVersion,
+      { onAccepted: acceptedCb },
+      'secret-credential',
+      AUTHORITY_IDENTITY
+    )
+
+    await accepted
+    await vi.waitFor(() => expect(acceptedCb).toHaveBeenCalledOnce())
+    expect(exitSpy).not.toHaveBeenCalled()
+    bridgeSock.destroy()
+  })
+
+  it('keeps ordinary relay connections exact-build', async () => {
+    await startDaemon('0.1.0+older-compatible')
+    const bridgeSock = connect(sockPath)
+    await new Promise<void>((resolve) => bridgeSock.once('connect', resolve))
+    const acceptedCb = vi.fn<(leftover: Buffer) => void>()
+
+    runConnectHandshake(bridgeSock, '0.1.0+newer-compatible', { onAccepted: acceptedCb })
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(EXIT_CODE_VERSION_MISMATCH))
+    expect(acceptedCb).not.toHaveBeenCalled()
+    bridgeSock.destroy()
+  })
+
+  it('does not let an ordinary relay opt into mixed builds with authority capabilities', async () => {
+    await startDaemon('0.1.0+server')
+    const bridgeSock = connect(sockPath)
+    await new Promise<void>((resolve) => bridgeSock.once('connect', resolve))
+    const replies: ReturnType<typeof parseHandshakeMessage>[] = []
+    const decoder = new FrameDecoder((frame) => {
+      if (frame.type === MessageType.Handshake) {
+        replies.push(parseHandshakeMessage(frame.payload))
+      }
+    })
+    bridgeSock.on('data', (data) => decoder.feed(Buffer.isBuffer(data) ? data : Buffer.from(data)))
+
+    bridgeSock.write(
+      encodeHandshakeFrame({
+        type: 'orca-relay-handshake',
+        version: '0.1.0+client',
+        compatibility: CURRENT_RELAY_DAEMON_COMPATIBILITY
+      })
+    )
+
+    await vi.waitFor(() => expect(replies).toHaveLength(1))
+    expect(replies[0]).toMatchObject({ type: 'orca-relay-handshake-mismatch', reason: 'build' })
     bridgeSock.destroy()
   })
 
@@ -211,7 +341,13 @@ describe('handshake round-trip over a real Socket pair', () => {
   })
 
   it('exits with EXIT_CODE_VERSION_MISMATCH when the daemon reports a mismatch', async () => {
-    await startDaemon('0.1.0+server-version')
+    await startDaemon('0.1.0+server-version', undefined, {
+      major: 2,
+      minMinor: 0,
+      maxMinor: 0,
+      capabilities: ['relay.rpc.v1', 'terminal-session.authority.v1'],
+      requiredCapabilities: ['relay.rpc.v1', 'terminal-session.authority.v1']
+    })
 
     const bridgeSock = connect(sockPath)
     await new Promise<void>((r) => bridgeSock.once('connect', () => r()))

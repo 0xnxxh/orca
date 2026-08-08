@@ -1,0 +1,12 @@
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_CHALLENGE_METHOD =
+  'terminalAuthority.beginConsumerAdmission'
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_GRANT_METHOD =
+  'terminalAuthority.completeConsumerAdmission'
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_CANCEL_METHOD =
+  'terminalAuthority.cancelConsumerAdmission'
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_CHALLENGE_METHOD =
+  'terminalAuthority.beginConsumerRetirement'
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_METHOD =
+  'terminalAuthority.completeConsumerRetirement'
+export const SSH_TERMINAL_AUTHORITY_CONSUMER_RESOLVE_NAMESPACE_METHOD =
+  'terminalAuthority.resolveConsumerNamespace'

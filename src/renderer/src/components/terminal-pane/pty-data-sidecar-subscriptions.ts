@@ -1,5 +1,9 @@
 import { acquirePtyDeliveryInterest } from './pty-delivery-interest'
-import { ensurePtyDispatcher, ptyDataSidecars } from './pty-dispatcher'
+import { ensurePtyDispatcher, ptyDataHandlers, ptyDataSidecars } from './pty-dispatcher'
+
+export function hasPrimaryPtyDataHandler(ptyId: string): boolean {
+  return ptyDataHandlers.has(ptyId)
+}
 
 /** Register a side-channel data watcher for a PTY without taking ownership
  *  of the primary handler. Returns an unsubscribe fn. */
@@ -9,12 +13,17 @@ export function subscribeToPtyData(ptyId: string, watcher: (data: string) => voi
   // doubles as the delivery-interest signal that suppresses main's
   // hidden-delivery gate (terminal-side-effect-authority.md, Open Items).
   const releaseDeliveryInterest = acquirePtyDeliveryInterest(ptyId)
-  let set = ptyDataSidecars.get(ptyId)
-  if (!set) {
-    set = new Set()
-    ptyDataSidecars.set(ptyId, set)
+  try {
+    let set = ptyDataSidecars.get(ptyId)
+    if (!set) {
+      set = new Set()
+      ptyDataSidecars.set(ptyId, set)
+    }
+    set.add(watcher)
+  } catch (error) {
+    releaseDeliveryInterest()
+    throw error
   }
-  set.add(watcher)
   return () => {
     releaseDeliveryInterest()
     const current = ptyDataSidecars.get(ptyId)

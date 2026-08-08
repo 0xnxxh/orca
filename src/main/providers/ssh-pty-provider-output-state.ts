@@ -11,6 +11,7 @@ import {
   type SshPtyReceivingActivationLease
 } from './ssh-pty-notification-routing'
 import type { PtySourceReceivingActivation } from '../../shared/pty-source-receiving-activation'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 
 export class SshPtyProviderOutputState {
   private readonly dataListeners = new Set<SshPtyDataCallback>()
@@ -30,6 +31,10 @@ export class SshPtyProviderOutputState {
       toAppPtyId: (id: string) => string
       livePtyIds: Set<string>
       recordExit: (relayPtyId: string, incarnationId: unknown) => void
+      authorityOutcomeDelivery?: boolean
+      getTerminalSessionAuthorityAccess?: (
+        relayPtyId: string
+      ) => TerminalSessionAuthorityPtyAccess | undefined
     }
   ) {
     this.subscription = subscribeSshPtyNotifications({
@@ -126,6 +131,15 @@ export class SshPtyProviderOutputState {
     ) {
       this.incarnationByRelayPtyId.set(relayPtyId, incarnationId)
     }
+  }
+
+  getPtyIncarnation(relayPtyId: string): string | undefined {
+    return this.incarnationByRelayPtyId.get(relayPtyId)
+  }
+
+  forgetPtyIncarnation(relayPtyId: string): void {
+    this.incarnationByRelayPtyId.delete(relayPtyId)
+    this.pausedRelayPtyIds.delete(relayPtyId)
   }
 
   private resolvePtyIncarnation(relayPtyId: string, incarnationId: unknown): string {

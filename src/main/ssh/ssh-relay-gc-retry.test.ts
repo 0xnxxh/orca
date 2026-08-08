@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeSshTerminalAuthorityProcess } from './ssh-terminal-authority-process-fixture'
 
 vi.mock('electron', () => ({ app: { getAppPath: () => '/mock/app' } }))
 vi.mock('fs', () => ({
@@ -24,6 +26,22 @@ vi.mock('./ssh-relay-deploy-helpers', () => ({
 }))
 vi.mock('./ssh-remote-node-resolution', () => ({
   resolveRemoteNodePath: vi.fn().mockResolvedValue('/usr/bin/node')
+}))
+vi.mock('./ssh-terminal-authority-discovery', () => ({
+  sshTerminalAuthorityBootstrapReadCommand: vi.fn().mockReturnValue('READ_HOME_AND_AUTHORITY'),
+  parseSshTerminalAuthorityBootstrapRead: vi.fn(() => ({
+    rawRemoteHome: '/home/user',
+    discovery: { status: 'absent' }
+  }))
+}))
+vi.mock('./ssh-terminal-authority-process', () => ({
+  establishSshTerminalAuthority: vi.fn(async (options: { relayDir: string }) =>
+    makeSshTerminalAuthorityProcess({
+      remoteHome: '/home/user',
+      ownerBuildId: '0.1.0+gc-retry',
+      ownerRelayDir: options.relayDir
+    })
+  )
 }))
 vi.mock('./ssh-relay-versioned-install', () => ({
   readLocalFullVersion: vi.fn().mockReturnValue('0.1.0+gc-retry'),
@@ -62,14 +80,16 @@ import { abandonInstall, isRelayAlreadyInstalled } from './ssh-relay-versioned-i
 import type { SshConnection } from './ssh-connection'
 
 function makeConnection(): SshConnection {
-  const channel = {
-    on: vi.fn(),
-    stderr: { on: vi.fn() },
+  const channel = Object.assign(new EventEmitter(), {
+    stderr: new EventEmitter(),
     close: vi.fn()
-  }
+  })
   return {
     canRunConcurrentExecCommands: vi.fn().mockReturnValue(true),
-    exec: vi.fn().mockResolvedValue(channel),
+    exec: vi.fn().mockImplementation(async () => {
+      setTimeout(() => channel.emit('close'), 0)
+      return channel
+    }),
     writeFile: vi.fn().mockResolvedValue(undefined)
   } as unknown as SshConnection
 }
@@ -135,7 +155,7 @@ describe('relay GC deploy retry', () => {
 
     await deployAndLaunchRelay(conn)
 
-    expect(abandonInstall).toHaveBeenCalledTimes(2)
+    expect(abandonInstall).toHaveBeenCalledTimes(1)
     expect(waitForRelayGcClaimRelease).toHaveBeenCalledTimes(1)
     expect(isRelayAlreadyInstalled).toHaveBeenCalledTimes(4)
     expect(tryAcquireRelayRepairLock).toHaveBeenCalledTimes(2)
@@ -183,8 +203,11 @@ describe('relay GC deploy retry', () => {
     expect(waitForRelayGcClaimRelease).not.toHaveBeenCalled()
     expect(tryAcquireRelayRepairLock).toHaveBeenCalledTimes(1)
     expect(tryAcquireRelayGcClaim).toHaveBeenCalledTimes(1)
-    expect(releaseRelayGcClaimWithRetry).toHaveBeenCalledTimes(1)
+    expect(releaseRelayGcClaimWithRetry).not.toHaveBeenCalled()
     expect(conn.exec).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(conn.exec).mock.calls[0]?.[0]).toContain(
+      "'--release-launch-gc-claim-owner' 'launch-token'"
+    )
   })
 
   it('retains an owned install lock when launch never becomes live', async () => {
@@ -274,6 +297,6 @@ describe('relay GC deploy retry', () => {
 
     expect(waitForRelayGcClaimRelease).toHaveBeenCalledTimes(2)
     expect(tryAcquireRelayGcClaim).toHaveBeenCalledTimes(3)
-    expect(releaseRelayGcClaimWithRetry).toHaveBeenCalledTimes(1)
+    expect(releaseRelayGcClaimWithRetry).not.toHaveBeenCalled()
   })
 })

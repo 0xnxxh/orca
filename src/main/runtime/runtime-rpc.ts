@@ -21,13 +21,33 @@ import { WebSocketTransport } from './rpc/ws-transport'
 import { readWsFallbackPort, writeWsFallbackPort } from './rpc/ws-fallback-port-store'
 import type { WebSocket } from 'ws'
 import { DeviceRegistry, type DeviceEntry, type DeviceScope } from './device-registry'
-import { loadOrCreateE2EEKeypair, type E2EEKeypair } from './e2ee-keypair'
+import {
+  loadE2EEKeypairForIdentityReset,
+  loadOrCreateE2EEKeypair,
+  type E2EEKeypair,
+  type E2EEKeypairResetTransaction
+} from './e2ee-keypair'
+import {
+  E2EEIdentityResetCoordinator,
+  type E2EEIdentityResetResult,
+  type E2EEIdentityResetStatus
+} from './e2ee-identity-reset'
+import { E2EEIdentityResetRecordStore } from './e2ee-identity-reset-record'
+import { loadDeviceRegistryForReset } from './device-registry'
+import { loadRelayRevokeOutboxForReset } from './relay/relay-revoke-outbox'
 import { UnpairedDeviceAuthThrottle } from './rpc/unpaired-device-auth-throttle'
 import {
   MobileSocketWiring,
   type AuthenticatedMobileSocket,
   type MobileSocketTransportMetadata
 } from './rpc/mobile-socket-wiring'
+import {
+  disposePtyAuthorityOutcomeResetTransports,
+  getPtyAuthorityOutcomeProcessIncarnationId,
+  listPtyAuthorityOutcomeResetTargets,
+  setPtyAuthorityOutcomeAdmissionFrozen
+} from '../ipc/pty-authority-outcome-ipc'
+import { invalidateTerminalAuthorityConsumerProofKeypair } from '../session-authority/terminal-authority-consumer-proof-keypair'
 import type { PairingRelay } from '../../shared/mobile-relay-pairing-offer'
 import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-connection-mode'
 import type { RuntimePairingReach } from '../../shared/runtime-pairing-reach'
@@ -78,6 +98,10 @@ type OrcaRuntimeRpcServerOptions = {
   longPollCap?: number
   // Why: test-only override for the ownership reclaim cadence.
   metadataOwnershipPollMs?: number
+  identityResetHooks?: Readonly<{
+    disconnectSshTargets(): Promise<void>
+    refreshDaemonProofIdentity(): Promise<void>
+  }>
 }
 
 export type PairingOfferUnavailableReason =
@@ -87,6 +111,7 @@ export type PairingOfferUnavailableReason =
   | 'invalid_advertised_endpoint'
   | 'relay_mint_failed'
   | 'network_exposure_failed'
+  | 'identity_reset_in_progress'
 
 export type PairingOfferUnavailable = {
   available: false
@@ -138,6 +163,8 @@ type MobileRelayPairingProvider = {
     context: MobilePairingConnectionContext,
     params: PairingProvisionRelayParams
   ): Promise<DeviceCredentialInstalled>
+  awaitIdentityResetRevocations?(items: readonly RelayRevokeOutboxItem[]): Promise<void>
+  identityResetCompleted?(): void
 }
 
 export type MobilePairingConnectionContext = Readonly<{
@@ -496,10 +523,12 @@ export class OrcaRuntimeRpcServer {
   private readonly keepaliveIntervalMs: number
   private readonly longPollCap: number
   private readonly metadataOwnershipPollMs: number
+  private readonly identityResetHooks: OrcaRuntimeRpcServerOptions['identityResetHooks']
   private readonly askLongPollCap: number
   private readonly relayRevokeOutbox: RelayRevokeOutbox
   private deviceRegistry: DeviceRegistry | null = null
   private e2eeKeypair: E2EEKeypair | null = null
+  private identityResetCoordinator: E2EEIdentityResetCoordinator | null = null
   private pairingInitializationFailure: PairingOfferUnavailable | null = null
   private tlsFingerprint: string | null = null
   private activeTransports: RpcTransport[] = []
@@ -545,7 +574,8 @@ export class OrcaRuntimeRpcServer {
     webClientRoot,
     keepaliveIntervalMs = KEEPALIVE_INTERVAL_MS,
     longPollCap = LONG_POLL_CAP,
-    metadataOwnershipPollMs = RUNTIME_METADATA_OWNERSHIP_POLL_MS
+    metadataOwnershipPollMs = RUNTIME_METADATA_OWNERSHIP_POLL_MS,
+    identityResetHooks
   }: OrcaRuntimeRpcServerOptions) {
     this.runtime = runtime
     this.dispatcher = new RpcDispatcher({ runtime })
@@ -560,6 +590,7 @@ export class OrcaRuntimeRpcServer {
     this.keepaliveIntervalMs = keepaliveIntervalMs
     this.longPollCap = longPollCap
     this.metadataOwnershipPollMs = metadataOwnershipPollMs
+    this.identityResetHooks = identityResetHooks
     // Why: derived, not configurable — the reservation must hold for whatever cap a caller picks.
     this.askLongPollCap = Math.max(1, Math.floor(longPollCap * ASK_LONG_POLL_SHARE))
     this.relayRevokeOutbox = new RelayRevokeOutbox(userDataPath)
@@ -589,7 +620,28 @@ export class OrcaRuntimeRpcServer {
     return this.relayRevokeOutbox
   }
 
+  getIdentityResetStatus(): E2EEIdentityResetStatus {
+    return (
+      this.identityResetCoordinator?.status() ?? Object.freeze({ inProgress: false, record: null })
+    )
+  }
+
+  async resetE2EEIdentity(): Promise<E2EEIdentityResetResult> {
+    if (!this.identityResetCoordinator) {
+      throw new Error('E2EE identity reset is unavailable')
+    }
+    this.relayRevokeOutbox.ensureDurable()
+    return await this.identityResetCoordinator.run()
+  }
+
+  isIdentityResetInProgress(): boolean {
+    return this.identityResetCoordinator?.status().inProgress === true
+  }
+
   setMobileRelayBinding(deviceId: string, binding: RelayDeviceBinding): boolean {
+    if (this.isIdentityResetInProgress()) {
+      return false
+    }
     const current = this.deviceRegistry?.getDevice(deviceId)
     if (
       current?.scope !== 'mobile' ||
@@ -621,9 +673,15 @@ export class OrcaRuntimeRpcServer {
 
   setMobileRelayPairingProvider(provider: MobileRelayPairingProvider | null): void {
     this.mobileRelayPairingProvider = provider
+    if (provider) {
+      queueMicrotask(() => this.resumePendingIdentityReset())
+    }
   }
 
   async revokeMobileDevice(deviceId: string): Promise<boolean> {
+    if (this.isIdentityResetInProgress()) {
+      return false
+    }
     const device = this.deviceRegistry?.getDevice(deviceId)
     if (device?.scope !== 'mobile') {
       return false
@@ -643,6 +701,9 @@ export class OrcaRuntimeRpcServer {
   }
 
   revokeRuntimeAccess(deviceId: string): boolean {
+    if (this.isIdentityResetInProgress()) {
+      return false
+    }
     const device = this.deviceRegistry?.getDevice(deviceId)
     if (device?.scope !== 'runtime' || !this.deviceRegistry?.removeDevice(deviceId)) {
       return false
@@ -674,6 +735,12 @@ export class OrcaRuntimeRpcServer {
         deviceId: string
         webClientUrl: string | null
       } {
+    if (this.isIdentityResetInProgress()) {
+      return pairingUnavailable(
+        'identity_reset_in_progress',
+        'Pairing is unavailable while access is being reset. Retry after re-enrollment is ready.'
+      )
+    }
     if (this.pairingInitializationFailure) {
       return this.pairingInitializationFailure
     }
@@ -732,6 +799,12 @@ export class OrcaRuntimeRpcServer {
     name?: string
     rotate?: boolean
   }): Promise<MobilePairingOffer> {
+    if (this.isIdentityResetInProgress()) {
+      return pairingUnavailable(
+        'identity_reset_in_progress',
+        'Pairing is unavailable while access is being reset. Retry after re-enrollment is ready.'
+      )
+    }
     // Why: STA-2370 — creating a mobile pairing offer is the user's explicit opt-in to LAN reach, so
     // widen the loopback listener before advertising its LAN endpoint in the QR. If the widen fails the
     // listener stays on loopback, so report unavailable rather than advertise a dead LAN endpoint.
@@ -994,6 +1067,23 @@ export class OrcaRuntimeRpcServer {
     return true
   }
 
+  private queueRelayDeviceRevokeOrThrow(binding: RelayDeviceBinding): RelayRevokeOutboxItem {
+    let item: RelayRevokeOutboxItem
+    try {
+      item = this.relayRevokeOutbox.enqueue(binding)
+    } catch (error) {
+      throw new Error(
+        `E2EE identity reset could not persist Relay revocation: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    try {
+      this.mobileRelayPairingProvider?.onDeviceRevokeQueued(item)
+    } catch {
+      // The durable item remains pending; acknowledgement is awaited by the reset coordinator.
+    }
+    return item
+  }
+
   private registerBinaryStreamHandler(
     connectionId: string | undefined,
     streamId: number,
@@ -1088,11 +1178,35 @@ export class OrcaRuntimeRpcServer {
   }
 
   private initializePairingIdentity(): PairingIdentityInitialization {
+    let pendingReset: ReturnType<E2EEIdentityResetRecordStore['read']> = null
+    try {
+      pendingReset = new E2EEIdentityResetRecordStore(this.userDataPath).read()
+      if (pendingReset) {
+        // The ordinary startup loaders intentionally fail open for legacy pairing state; a
+        // pending reset must validate every durable participant before it can resume.
+        loadRelayRevokeOutboxForReset(this.userDataPath)
+      }
+    } catch (error) {
+      console.error('[runtime] Failed to inspect E2EE identity reset state:', error)
+      setPtyAuthorityOutcomeAdmissionFrozen(true)
+      return {
+        ok: false,
+        failure: pairingUnavailable(
+          'e2ee_key_unavailable',
+          'The E2EE identity reset state is unavailable. Verify that the Orca data directory is writable.'
+        )
+      }
+    }
     let deviceRegistry: DeviceRegistry
     try {
-      deviceRegistry = new DeviceRegistry(this.userDataPath)
+      deviceRegistry = pendingReset
+        ? loadDeviceRegistryForReset(this.userDataPath)
+        : new DeviceRegistry(this.userDataPath)
     } catch (error) {
       console.error('[runtime] Failed to initialize pairing registry:', error)
+      if (pendingReset) {
+        setPtyAuthorityOutcomeAdmissionFrozen(true)
+      }
       return {
         ok: false,
         failure: pairingUnavailable(
@@ -1103,15 +1217,106 @@ export class OrcaRuntimeRpcServer {
     }
     let e2eeKeypair: E2EEKeypair
     try {
-      e2eeKeypair = loadOrCreateE2EEKeypair(this.userDataPath)
+      if (pendingReset?.phase === 'creating-successor') {
+        const transaction: E2EEKeypairResetTransaction = {
+          transactionId: pendingReset.transactionId,
+          oldPublicKeyB64: pendingReset.oldPublicKeyB64,
+          phase: 'creating-successor'
+        }
+        e2eeKeypair = loadE2EEKeypairForIdentityReset(this.userDataPath, transaction)
+      } else {
+        e2eeKeypair = loadOrCreateE2EEKeypair(this.userDataPath)
+      }
     } catch (error) {
       console.error('[runtime] Failed to initialize E2EE identity:', error)
+      if (pendingReset) {
+        setPtyAuthorityOutcomeAdmissionFrozen(true)
+      }
       return {
         ok: false,
         failure: pairingUnavailable('e2ee_key_unavailable', E2EE_KEY_UNAVAILABLE_GUIDANCE)
       }
     }
     return { ok: true, deviceRegistry, e2eeKeypair }
+  }
+
+  private initializeIdentityResetCoordinator(): void {
+    if (!this.deviceRegistry || !this.e2eeKeypair || this.identityResetCoordinator) {
+      return
+    }
+    this.identityResetCoordinator = new E2EEIdentityResetCoordinator({
+      userDataPath: this.userDataPath,
+      currentKeypair: () => this.e2eeKeypair,
+      listAuthorityTargets: () =>
+        listPtyAuthorityOutcomeResetTargets().map((entry) => ({
+          target: {
+            authorityHostId: entry.authenticatedAuthorityHostId,
+            namespaceIds: entry.namespaceIds
+          },
+          retireNamespace: entry.retireNamespace
+        })),
+      freezeAuthorityAdmissions: () => setPtyAuthorityOutcomeAdmissionFrozen(true),
+      unfreezeAuthorityAdmissions: () => setPtyAuthorityOutcomeAdmissionFrozen(false),
+      closeLiveTransports: async () => {
+        this.mobileSocketWiring?.terminateAllConnections()
+        await this.identityResetHooks?.disconnectSshTargets()
+        disposePtyAuthorityOutcomeResetTransports()
+      },
+      listRelayBindings: () => {
+        const bindings =
+          this.deviceRegistry
+            ?.listDevices()
+            .flatMap((device) => (device.relayBinding ? [device.relayBinding] : [])) ?? []
+        const known = new Map(
+          [...bindings, ...this.relayRevokeOutbox.listPending()].map((binding) => [
+            `${binding.relayHostId}\0${binding.relayDeviceId}\0${binding.ownerIdentityKey}`,
+            binding
+          ])
+        )
+        return [...known.values()]
+      },
+      enqueueRelayRevoke: (binding) => this.queueRelayDeviceRevokeOrThrow(binding),
+      awaitRelayRevocations: async (items) => {
+        if (items.length === 0) {
+          return
+        }
+        const awaitRevocations = this.mobileRelayPairingProvider?.awaitIdentityResetRevocations
+        if (!awaitRevocations) {
+          throw new Error('E2EE identity reset relay revocation is unavailable')
+        }
+        await awaitRevocations(items)
+      },
+      removeLocalCredentials: () => {
+        this.deviceRegistry?.flushPendingLastSeen()
+        this.deviceRegistry?.removeAllForIdentityReset()
+      },
+      onSuccessorPublished: async (keypair) => {
+        const registry = this.deviceRegistry
+        if (!registry) {
+          throw new Error('E2EE identity reset pairing registry is unavailable')
+        }
+        this.e2eeKeypair = keypair
+        this.mobileSocketWiring?.replaceIdentity(registry, keypair)
+        invalidateTerminalAuthorityConsumerProofKeypair()
+        await this.identityResetHooks?.refreshDaemonProofIdentity()
+      },
+      onReEnrollment: () => {
+        this.mobileRelayPairingProvider?.identityResetCompleted?.()
+      },
+      getProcessIncarnationId: () => getPtyAuthorityOutcomeProcessIncarnationId()
+    })
+    if (this.identityResetCoordinator.hasPendingRecord()) {
+      setPtyAuthorityOutcomeAdmissionFrozen(true)
+    }
+  }
+
+  private resumePendingIdentityReset(): void {
+    if (!this.identityResetCoordinator?.hasPendingRecord()) {
+      return
+    }
+    void this.identityResetCoordinator.run().catch((error) => {
+      console.error('[runtime] E2EE identity reset remains pending:', error)
+    })
   }
 
   async start(): Promise<void> {
@@ -1177,6 +1382,7 @@ export class OrcaRuntimeRpcServer {
         this.deviceRegistry = pairingIdentity.deviceRegistry
         this.e2eeKeypair = pairingIdentity.e2eeKeypair
         this.pairingInitializationFailure = null
+        this.initializeIdentityResetCoordinator()
         try {
           const host = this.resolveInitialWebSocketBindHost()
           const { transport, endpoint } = await this.startWebSocketTransport({
@@ -1231,6 +1437,7 @@ export class OrcaRuntimeRpcServer {
         )
       }
     })
+    this.resumePendingIdentityReset()
   }
 
   // Why: STA-2370 — a desktop with no previously-connected device stays on loopback until the user
@@ -1326,6 +1533,7 @@ export class OrcaRuntimeRpcServer {
         this.runtime.activateRecentPtyPathCandidateTracking?.()
         this.mobileRelayPairingProvider?.onDemandStateChanged?.()
       },
+      isAdmissionAllowed: () => !this.isIdentityResetInProgress(),
       onClose: (socket, hasOtherConnections) => {
         if (!socket) {
           return

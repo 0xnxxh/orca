@@ -57,17 +57,30 @@ vi.mock('./ssh-connection-utils', () => ({
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
 import { execCommand } from './ssh-relay-deploy-helpers'
 import type { SshConnection } from './ssh-connection'
+import {
+  sshTerminalAuthorityBootstrapRead,
+  sshTerminalAuthorityMarkerRead
+} from './ssh-terminal-authority-process-fixture'
+
+const V2_VERSION = '0.1.0+222222222222'
 
 function makeMockConnection(): SshConnection {
   return {
     canRunConcurrentExecCommands: vi.fn().mockReturnValue(false),
-    exec: vi.fn().mockResolvedValue({
-      on: vi.fn(),
-      stderr: { on: vi.fn() },
-      stdin: {},
-      stdout: { on: vi.fn() },
-      close: vi.fn()
+    exec: vi.fn().mockImplementation(() => {
+      const channel = new EventEmitter()
+      setTimeout(() => channel.emit('close'), 0)
+      return Promise.resolve(
+        Object.assign(channel, {
+          stderr: new EventEmitter(),
+          stdin: {},
+          stdout: { on: vi.fn() },
+          close: vi.fn()
+        })
+      )
     }),
+    uploadDirectory: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn().mockResolvedValue(undefined),
     // Why: production attaches and removes real SFTP/write-stream listeners, so the fake must be an emitter.
     sftp: vi.fn().mockImplementation(() => {
       const sftp = new EventEmitter()
@@ -108,6 +121,7 @@ describe('cross-version isolation', () => {
     //   v2 dir = ~/.orca-remote/relay-0.1.0+222222222222/  (does not yet exist)
     // The v2 client has fullVersion='0.1.0+222222222222' (from the fs mock above).
     //
+    let v2Installed = false
     mockExec.mockImplementation((_conn, command) => {
       if (command.includes('__ORCA_UPLOAD_STAGE_SLOT__')) {
         return Promise.resolve(
@@ -115,6 +129,7 @@ describe('cross-version isolation', () => {
         )
       }
       if (command.includes('__ORCA_UPLOAD_STAGE_PROMOTION__')) {
+        v2Installed = true
         return Promise.resolve(
           '__ORCA_UPLOAD_STAGE_PROMOTION__.sftp-namespace-00000000000000000000000000000000:PROMOTED'
         )
@@ -122,17 +137,25 @@ describe('cross-version isolation', () => {
       if (command.includes('__ORCA_REMOTE_PLATFORM__')) {
         return Promise.resolve('__ORCA_REMOTE_PLATFORM__ Linux x86_64')
       }
-      if (command === 'echo $HOME') {
-        return Promise.resolve('/home/u')
+      if (command.includes('ORCA_TERMINAL_AUTHORITY_HOME')) {
+        return Promise.resolve(sshTerminalAuthorityBootstrapRead('/home/u'))
+      }
+      if (command.includes('ORCA_TERMINAL_AUTHORITY_MARKER_ABSENT')) {
+        return Promise.resolve(
+          sshTerminalAuthorityMarkerRead({ remoteHome: '/home/u', relayVersion: V2_VERSION })
+        )
       }
       if (command.includes("-name 'relay-0.1.0+222222222222.upload-*'")) {
         return Promise.resolve('')
       }
       if (command.includes('relay-watcher.js') && command.includes('.install-complete')) {
-        return Promise.resolve('MISSING')
+        return Promise.resolve(v2Installed ? 'OK' : 'MISSING')
       }
       if (command.includes('.gc-claim') && command.includes('echo LOCKED || echo OPEN')) {
         return Promise.resolve('OPEN')
+      }
+      if (command.includes('.install-lock') && command.includes('if mkdir')) {
+        return Promise.resolve('OK')
       }
       if (command.includes('.install-lock') && command.includes('&& echo OK || echo BUSY')) {
         return Promise.resolve('OK')
@@ -140,31 +163,16 @@ describe('cross-version isolation', () => {
       if (command.includes('ORCA-NPTY-PROBE-OK')) {
         return Promise.resolve('ORCA-NPTY-PROBE-OK\n')
       }
-      if (command.includes('process.stdout.write("READY")')) {
+      if (command.includes('process.stdout.write') && command.includes('READY')) {
         return Promise.resolve('READY')
       }
       if (command.includes('test -S') && command.includes('echo ALIVE || echo DEAD')) {
         return Promise.resolve('DEAD')
       }
-      if (command.includes('__ORCA_RELAY_GC_FIND_STATUS__')) {
-        return Promise.resolve('relay-0.1.0+111111111111\nrelay-0.1.0+222222222222\n')
-      }
-      if (command.includes('relay-0.1.0+111111111111/.install-lock')) {
-        return Promise.resolve('OPEN')
-      }
-      if (command.includes('relay-0.1.0+111111111111/.install-complete')) {
-        return Promise.resolve('COMPLETE')
-      }
-      if (command.includes('relay-0.1.0+111111111111') && command.includes('relay-*.sock')) {
-        return Promise.resolve('ALIVE')
-      }
       return Promise.resolve('')
     })
 
     await deployAndLaunchRelay(conn)
-    await vi.waitFor(() =>
-      expect(mockExec.mock.calls.some(([, command]) => command.includes('relay-*.sock'))).toBe(true)
-    )
 
     const allCmds = [
       ...mockExec.mock.calls.map(([, c]) => c),
@@ -185,27 +193,8 @@ describe('cross-version isolation', () => {
       expect(cmd).not.toContain('relay-0.1.0+111111111111')
     }
 
-    // (c) GC observes v1 has a live socket and never issues an rm -rf for it
-    const v1RemoveCmds = allCmds.filter(
-      (c) => c.includes('rm -rf') && c.includes('relay-0.1.0+111111111111')
-    )
-    expect(v1RemoveCmds).toHaveLength(0)
-
-    // (d) blanket isolation: every command that mentions v1hash MUST be a
-    // GC liveness probe (`ls`, `test -d`, `test -f`, or `for f in .../*.sock`)
-    // — never a write, mkdir, chmod, touch, rm, node launch, or socket poll.
-    // This prevents a future refactor that accidentally writes to the v1 dir
-    // (e.g. shared install-complete, upload over symlink) from passing.
+    // Blanket deploy isolation: v1 must not appear in any deploy command.
     const v1Refs = allCmds.filter((c) => c.includes('relay-0.1.0+111111111111'))
-    for (const cmd of v1Refs) {
-      const isReadOnlyProbe =
-        /^\s*ls\b/.test(cmd) ||
-        /\btest -d\b/.test(cmd) ||
-        /\btest -e\b/.test(cmd) ||
-        /\btest -f\b/.test(cmd) ||
-        /\btest -S\b/.test(cmd) ||
-        /\bfor f in .*\.sock\b/.test(cmd)
-      expect(isReadOnlyProbe, `unexpected v1 reference: ${cmd}`).toBe(true)
-    }
+    expect(v1Refs).toHaveLength(0)
   })
 })

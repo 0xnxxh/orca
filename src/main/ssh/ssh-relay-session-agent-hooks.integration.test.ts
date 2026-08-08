@@ -15,7 +15,7 @@ import {
 import { agentHookServer, _internals as agentHookInternals } from '../agent-hooks/server'
 import { getSshPtyProvider } from '../ipc/pty'
 import { toAppSshPtyId } from '../providers/ssh-pty-id'
-import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
+import { sshPtyOpenClientGrant } from './ssh-pty-consumer-session-grant-fixture'
 
 const { getCohortAtEmitMock, trackMock } = vi.hoisted(() => ({
   getCohortAtEmitMock: vi.fn(),
@@ -37,6 +37,7 @@ vi.mock('./ssh-relay-deploy', () => ({
 const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
 const { SshRelaySession } = await import('./ssh-relay-session')
 
+const AUTHORITY_HOST_ID = 'test-authority-host'
 const SSH_LEAF_ID = '11111111-1111-4111-8111-111111111111'
 const REPLAY_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const BAD_LEAF_ID = '33333333-3333-4333-8333-333333333333'
@@ -100,25 +101,16 @@ function createFakeRelay(): FakeRelay {
   })
   relayFeed = (data) => dispatcher.feed(data)
 
-  dispatcher.onRequest('pty.openClient', async (params) => ({
-    protocolVersion: 1,
-    serverBuildId: 'test-relay-build',
-    clientGeneration: 1,
-    role: 'session-owner',
-    ownerGeneration:
-      typeof (params.resume as { ownerGeneration?: unknown } | undefined)?.ownerGeneration ===
-      'number'
-        ? (params.resume as { ownerGeneration: number }).ownerGeneration + 1
-        : 1,
-    ownerLease: 'test-owner-lease',
-    resumed: params.resume !== undefined,
-    capabilities: {
-      outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
-    }
-  }))
+  dispatcher.onRequest('pty.openClient', async (params) =>
+    sshPtyOpenClientGrant(params, {
+      serverBuildId: 'test-relay-build',
+      authorityHostId: AUTHORITY_HOST_ID
+    })
+  )
   dispatcher.onRequest('session.resolveHome', async (params) => ({
     resolvedPath: params.path === '~' ? '/home/orca' : params.path
   }))
+  dispatcher.onRequest('relay.configureGraceTime', async () => ({}))
   dispatcher.onRequest('git.listWorktrees', async () => [])
   dispatcher.onRequest('ports.detect', async () => ({ ports: [], platform: 'linux' }))
   dispatcher.onRequest('pty.spawn', async (params) => {
@@ -146,6 +138,18 @@ function createFakeRelay(): FakeRelay {
       dispatcher.notify(AGENT_HOOK_NOTIFICATION_METHOD, envelope as Record<string, unknown>)
     },
     dispose: () => dispatcher.dispose()
+  }
+}
+
+function fakeDeployResult(transport: MultiplexerTransport) {
+  return {
+    transport,
+    authorityHostId: AUTHORITY_HOST_ID,
+    terminalAuthorityOwnerBuildId: 'test-relay-build',
+    priorRelayStatus: { kind: 'none' as const },
+    terminalAuthorityOwnerRelayDir: '/home/orca/.orca-relay/test-relay-build',
+    serverBuildId: 'test-relay-build',
+    platform: 'linux-x64' as const
   }
 }
 
@@ -246,11 +250,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('establishes through a fake relay, spawns a remote PTY, and forwards agent status', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
     const events: CapturedStatus[] = []
     captureAgentStatuses(events)
 
@@ -300,11 +300,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('stamps SSH ownership and settles only the exact manual compact identity', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
     const events: CapturedStatus[] = []
     captureAgentStatuses(events)
     session = createSession('conn-compact')
@@ -364,16 +360,8 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
     const initialRelay = createFakeRelay()
     relay = createFakeRelay()
     vi.mocked(deployAndLaunchRelay)
-      .mockResolvedValueOnce({
-        transport: initialRelay.transport,
-        serverBuildId: 'test-relay-build',
-        platform: 'linux-x64'
-      })
-      .mockResolvedValueOnce({
-        transport: relay.transport,
-        serverBuildId: 'test-relay-build',
-        platform: 'linux-x64'
-      })
+      .mockResolvedValueOnce(fakeDeployResult(initialRelay.transport))
+      .mockResolvedValueOnce(fakeDeployResult(relay.transport))
     const clearListener = vi.fn()
     agentHookServer.setPaneStatusClearListener(clearListener)
     session = createSession('conn-clear')
@@ -411,11 +399,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
         }
       })
     )
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
     const events: CapturedStatus[] = []
     captureAgentStatuses(events)
 
@@ -439,11 +423,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('drops malformed remote hook notifications at Orca main before caching', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
     const events: CapturedStatus[] = []
     captureAgentStatuses(events)
 
@@ -470,11 +450,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('preserves explicit-prompt metadata from remote hook notifications', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
 
     session = createSession('conn-explicit-prompt')
     await session.establish({} as SshConnection)
@@ -530,11 +506,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('forwards remote hook transition metadata into main ingest', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
     const ingestSpy = vi.spyOn(agentHookServer, 'ingestRemote')
 
     session = createSession('conn-hook-metadata')
@@ -587,11 +559,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('tracks prompt sent from live SSH agent hooks but not replayed hooks', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
 
     session = createSession('conn-live-telemetry')
     await session.establish({} as SshConnection)
@@ -635,11 +603,7 @@ describe('SshRelaySession agent hooks over a fake relay transport', () => {
 
   it('preserves replay metadata from remote hook notifications', async () => {
     relay = createFakeRelay()
-    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: relay.transport,
-      serverBuildId: 'test-relay-build',
-      platform: 'linux-x64'
-    })
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue(fakeDeployResult(relay.transport))
 
     session = createSession('conn-replay-marker')
     await session.establish({} as SshConnection)

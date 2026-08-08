@@ -22,6 +22,8 @@ export type PtyListedSession = {
    * Manager force-kill live agent sessions (#8459).
    */
   agentOwnership: AgentOwnershipEvidence
+  /** Exact destructive-action target captured with this inventory row. */
+  administrativeMutationAccess?: PtyAdministrativeMutationAccess
 }
 
 /** Only proven absence authorizes destroying a session without asking. */
@@ -30,3 +32,4 @@ export function mayDestroyWithoutOwnerEvidence(session: {
 }): boolean {
   return session.agentOwnership === 'absent'
 }
+import type { PtyAdministrativeMutationAccess } from './pty-mutation-identity'

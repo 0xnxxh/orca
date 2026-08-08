@@ -11,6 +11,7 @@ import type {
 import type { RelayDispatcher, RequestContext } from './dispatcher'
 import { RelayFilesystemWatchRegistry } from './relay-filesystem-watch-registry'
 import { createRelayWatcherProcessPool } from './relay-watcher-process-pool'
+import { MAX_RELAY_WORKTREE_REMOVAL_LEASES } from './relay-worktree-removal-fence'
 
 type InstalledWatch = {
   rootPath: string
@@ -97,6 +98,11 @@ function createDispatcher() {
       detached.add(listener)
       return () => detached.delete(listener)
     }),
+    detachClient: (clientId: number) => {
+      for (const listener of detached) {
+        listener(clientId)
+      }
+    },
     // Detach here always retires the id, so the emitter's marker cleanup runs.
     isClientAttached: vi.fn(() => false),
     notificationFrameBytes: vi.fn(() => 64)
@@ -290,7 +296,7 @@ describe('RelayFilesystemWatchRegistry', () => {
   it('waits admitted PTY creation, rejects late creation, then tears down before removal', async () => {
     const finishPtyCreation = registry.beginWorktreePtySpawn('/repo/nested')
     const order: string[] = []
-    registry.setWorktreePtyTeardown(async (rootPath) => {
+    registry.worktreeRemovalFence.setBeforeRemove(async (rootPath) => {
       order.push(`pty:${rootPath}`)
     })
 
@@ -307,6 +313,194 @@ describe('RelayFilesystemWatchRegistry', () => {
     await removal
     expect(order).toEqual(['pty:/repo', 'remove'])
   })
+
+  it('holds an authority lease through control deletion and releases it after failure', async () => {
+    const authority = new RelayFilesystemWatchRegistry(
+      createDispatcher() as unknown as RelayDispatcher,
+      new FakeWatcherPool()
+    )
+    let nextLease = 1
+    registry.worktreeRemovalFence.setPeerAcquire(async (rootPath) => {
+      const leaseToken = `lease-${nextLease++}`
+      await authority.worktreeRemovalFence.acquireConnectionLease(rootPath, leaseToken, 41)
+      return async () => authority.worktreeRemovalFence.releaseConnectionLease(41, leaseToken)
+    })
+
+    await expect(
+      registry.runWithRemovalFence('/repo', async () => {
+        expect(() => authority.beginWorktreePtySpawn('/repo/late')).toThrow(
+          'deletion already in progress'
+        )
+        throw new Error('recursive deletion failed')
+      })
+    ).rejects.toThrow('recursive deletion failed')
+
+    const finish = authority.beginWorktreePtySpawn('/repo/retry')
+    finish()
+    authority.dispose()
+  })
+
+  it('reports an authority release failure without retaining the local removal root', async () => {
+    registry.worktreeRemovalFence.setPeerAcquire(async () => async () => {
+      throw new Error('authority release failed')
+    })
+
+    await expect(registry.runWithRemovalFence('/repo', async () => undefined)).rejects.toThrow(
+      'authority release failed'
+    )
+    const finish = registry.beginWorktreePtySpawn('/repo/retry')
+    finish()
+  })
+
+  it('drains an authority spawn and tears down its PTY before control deletion starts', async () => {
+    const authority = new RelayFilesystemWatchRegistry(
+      createDispatcher() as unknown as RelayDispatcher,
+      new FakeWatcherPool()
+    )
+    const finishSpawn = authority.beginWorktreePtySpawn('/repo/nested')
+    const order: string[] = []
+    authority.worktreeRemovalFence.setBeforeRemove(async () => {
+      order.push('authority-teardown')
+    })
+    registry.worktreeRemovalFence.setPeerAcquire(async (rootPath) => {
+      await authority.worktreeRemovalFence.acquireConnectionLease(rootPath, 'lease-1', 17)
+      return async () => authority.worktreeRemovalFence.releaseConnectionLease(17, 'lease-1')
+    })
+
+    const removal = registry.runWithRemovalFence('/repo', async () => {
+      order.push('control-delete')
+    })
+    await Promise.resolve()
+    expect(order).toEqual([])
+    finishSpawn()
+    await removal
+
+    expect(order).toEqual(['authority-teardown', 'control-delete'])
+    authority.dispose()
+  })
+
+  it('releases every authority lease immediately when its control connection detaches', async () => {
+    await registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 72)
+    await registry.worktreeRemovalFence.acquireConnectionLease('/other', 'lease-2', 72)
+    expect(() => registry.beginWorktreePtySpawn('/repo/new')).toThrow(
+      'deletion already in progress'
+    )
+
+    dispatcher.detachClient(72)
+
+    const finishRepo = registry.beginWorktreePtySpawn('/repo/new')
+    const finishOther = registry.beginWorktreePtySpawn('/other/new')
+    finishRepo()
+    finishOther()
+  })
+
+  it('cancels a lease acquisition waiting on spawn when its control connection detaches', async () => {
+    const finishSpawn = registry.beginWorktreePtySpawn('/repo/in-flight')
+    const acquisition = registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 81)
+    const rejected = expect(acquisition).rejects.toThrow('lease was released')
+
+    dispatcher.detachClient(81)
+    await rejected
+    const finishReplacement = registry.beginWorktreePtySpawn('/repo/replacement')
+
+    finishReplacement()
+    finishSpawn()
+  })
+
+  it('joins concurrent retries for the same authority lease until preparation completes', async () => {
+    let finishPreparation: () => void = () => undefined
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve
+    })
+    registry.worktreeRemovalFence.setBeforeRemove(() => preparation)
+
+    const first = registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 82)
+    await Promise.resolve()
+    const retry = registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 82)
+    await expect(
+      registry.worktreeRemovalFence.acquireConnectionLease('/other', 'lease-1', 82)
+    ).rejects.toThrow('reused for another root')
+    let retrySettled = false
+    void retry.then(() => {
+      retrySettled = true
+    })
+    await Promise.resolve()
+
+    expect(retrySettled).toBe(false)
+    finishPreparation()
+    await expect(Promise.all([first, retry])).resolves.toEqual([undefined, undefined])
+  })
+
+  it('rejects every joined authority lease retry when preparation fails', async () => {
+    let failPreparation: (error: Error) => void = () => undefined
+    const preparation = new Promise<void>((_resolve, reject) => {
+      failPreparation = reject
+    })
+    registry.worktreeRemovalFence.setBeforeRemove(() => preparation)
+
+    const first = registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 83)
+    await Promise.resolve()
+    const retry = registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 83)
+    const firstRejected = expect(first).rejects.toThrow('PTY teardown failed')
+    const retryRejected = expect(retry).rejects.toThrow('PTY teardown failed')
+    failPreparation(new Error('PTY teardown failed'))
+
+    await Promise.all([firstRejected, retryRejected])
+    const finish = registry.beginWorktreePtySpawn('/repo/retry')
+    finish()
+  })
+
+  it('bounds connection-owned removal leases and recovers capacity on detach', async () => {
+    for (let index = 0; index < MAX_RELAY_WORKTREE_REMOVAL_LEASES; index++) {
+      await registry.worktreeRemovalFence.acquireConnectionLease(
+        `/repo-${index}`,
+        `lease-${index}`,
+        9
+      )
+    }
+
+    await expect(
+      registry.worktreeRemovalFence.acquireConnectionLease('/overflow', 'lease-overflow', 9)
+    ).rejects.toThrow('capacity exceeded')
+
+    dispatcher.detachClient(9)
+    await expect(
+      registry.worktreeRemovalFence.acquireConnectionLease('/after-detach', 'lease-reused', 10)
+    ).resolves.toBeUndefined()
+  })
+
+  it('releases a failed authority acquisition without leaving a root fenced', async () => {
+    registry.worktreeRemovalFence.setBeforeRemove(async () => {
+      throw new Error('PTY teardown failed')
+    })
+
+    await expect(
+      registry.worktreeRemovalFence.acquireConnectionLease('/repo', 'lease-1', 3)
+    ).rejects.toThrow('PTY teardown failed')
+    const finish = registry.beginWorktreePtySpawn('/repo/retry')
+    finish()
+  })
+
+  it.each([
+    ['Windows drive', 'C:\\Repo', 'c:/repo/nested', true],
+    ['Windows UNC', '\\\\Server\\Share\\Repo', '//server/share/repo/nested', true],
+    ['POSIX backslash', '/srv/team\\repo', '/srv/team/repo/nested', false]
+  ])(
+    'uses host path semantics for a distributed %s lease',
+    async (_label, rootPath, candidatePath, shouldFence) => {
+      await registry.worktreeRemovalFence.acquireConnectionLease(rootPath, 'lease-1', 4)
+
+      if (shouldFence) {
+        expect(() => registry.beginWorktreePtySpawn(candidatePath)).toThrow(
+          'deletion already in progress'
+        )
+      } else {
+        const finish = registry.beginWorktreePtySpawn(candidatePath)
+        finish()
+      }
+      registry.worktreeRemovalFence.releaseConnectionLease(4, 'lease-1')
+    }
+  )
 
   it.each([
     ['drive spelling', 'C:\\Repo', 'c:/repo/'],

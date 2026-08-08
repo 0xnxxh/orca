@@ -20,6 +20,10 @@ import type {
   AgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
 import type * as HistorySeedProtocol from './terminal-history-seed-transfer-protocol'
+import type { DaemonPtyOperationRequest } from './daemon-pty-operation-requests'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
+import type { DaemonTerminalAuthorityOutcomeRequest } from './daemon-terminal-authority-outcome-requests'
+import type { DaemonTerminalAuthorityConsumerRequest } from './daemon-terminal-authority-consumer-requests'
 export type { TerminalModes } from './terminal-modes'
 import type { TerminalSnapshot } from './terminal-snapshot'
 export type { TerminalSnapshot } from './terminal-snapshot'
@@ -28,13 +32,17 @@ export {
   AGENT_SESSION_CREATE_OPERATION_DAEMON_PROTOCOL_VERSION,
   CLEAN_DISCONNECT_PROTOCOL_VERSION,
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
+  EXACT_HELD_PRODUCER_PAUSE_DAEMON_PROTOCOL_VERSION,
   GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
   PREVIOUS_DAEMON_PROTOCOL_VERSIONS,
   PROTOCOL_VERSION,
   PTY_STARTUP_INGRESS_PROTOCOL_VERSION,
   MODE_2031_UNSUBSCRIBE_FACT_PROTOCOL_VERSION,
+  TERMINAL_SESSION_AUTHORITY_DAEMON_PROTOCOL_VERSION,
   supportsMode2031UnsubscribeFact,
+  supportsExactHeldProducerPause,
+  supportsTerminalSessionAuthority,
   supportsPtyStartupIngress
 } from './daemon-protocol-version'
 
@@ -90,6 +98,13 @@ export type CreateOrAttachRequest = {
       claim: AgentSessionExecutionClaim
       surface: AgentSessionSurfaceBinding
     }
+    streamBindingNonce?: string
+    terminalSessionAuthorityVersion?: number
+    terminalSessionAuthorityOperationId?: string
+    worktreeId?: string
+    paneKey?: string
+    paneGeneration?: number
+    terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
   }
 }
 
@@ -105,34 +120,16 @@ export type CancelCreateOrAttachRequest = {
   payload: { sessionId: string }
 }
 
-export type WriteRequest = {
-  id: string
-  type: 'write'
-  payload: {
-    sessionId: string
-    data: string
-  }
-}
-
-export type ResizeRequest = {
-  id: string
-  type: 'resize'
-  payload: {
-    sessionId: string
-    cols: number
-    rows: number
-  }
-}
-
 // ─── Producer flow control (v19+) ───────────────────────────────────
-// Why fire-and-forget notifications (like write/resize): pause/resume ride the
-// hot data path and are best-effort — the daemon-side 5s failsafe, not an RPC
-// reply, is what guarantees a paused shell can never stay wedged.
+// Legacy calls stay fire-and-forget with a 5s failsafe. v35 exact calls add
+// optional incarnation/token fields and require an acknowledged RPC response.
 export type PausePtyRequest = {
   id: string
   type: 'pausePty'
   payload: {
     sessionId: string
+    incarnationId?: string
+    heldPauseToken?: string
   }
 }
 
@@ -141,6 +138,8 @@ export type ResumePtyRequest = {
   type: 'resumePty'
   payload: {
     sessionId: string
+    incarnationId?: string
+    heldPauseToken?: string
   }
 }
 
@@ -153,15 +152,6 @@ export type SetSessionBackgroundRequest = {
   payload: {
     sessionId: string
     background: boolean
-  }
-}
-
-export type KillRequest = {
-  id: string
-  type: 'kill'
-  payload: {
-    sessionId: string
-    immediate?: boolean
   }
 }
 
@@ -296,12 +286,10 @@ export type DaemonRequest =
   | CreateOrAttachRequest
   | HistorySeedProtocol.TerminalHistorySeedTransferRequest
   | CancelCreateOrAttachRequest
-  | WriteRequest
-  | ResizeRequest
+  | DaemonPtyOperationRequest
   | PausePtyRequest
   | ResumePtyRequest
   | SetSessionBackgroundRequest
-  | KillRequest
   | SignalRequest
   | ListSessionsRequest
   | ShutdownIfIdleRequest
@@ -319,6 +307,8 @@ export type DaemonRequest =
   | GetSizeRequest
   | TakePendingOutputRequest
   | CloseStartupQueryAuthorityRequest
+  | DaemonTerminalAuthorityOutcomeRequest
+  | DaemonTerminalAuthorityConsumerRequest
 
 // ─── RPC Responses (Daemon → Client, on control socket) ────────────
 
@@ -358,6 +348,8 @@ export type SystemResolverHealthResult = {
 export type SessionInfo = {
   sessionId: string
   incarnationId?: string
+  mutationRouteToken?: object
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
   state: SessionState
   shellState: ShellReadyState
   isAlive: boolean

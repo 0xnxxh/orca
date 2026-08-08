@@ -163,10 +163,13 @@ describe('PtyHandler', () => {
     expect(methods).toContain('pty.spawn')
     expect(methods).toContain('pty.attach')
     expect(methods).toContain('pty.shutdown')
+    expect(methods).toContain('pty.shutdownExact')
     expect(methods).toContain('pty.sendSignal')
+    expect(methods).toContain('pty.sendSignalExact')
     expect(methods).toContain('pty.getCwd')
     expect(methods).toContain('pty.getInitialCwd')
     expect(methods).toContain('pty.clearBuffer')
+    expect(methods).toContain('pty.clearBufferExact')
     expect(methods).toContain('pty.hasChildProcesses')
     expect(methods).toContain('pty.getForegroundProcess')
     expect(methods).toContain('pty.inspectProcess')
@@ -175,8 +178,74 @@ describe('PtyHandler', () => {
 
     const notifMethods = Array.from(dispatcher._notificationHandlers.keys())
     expect(notifMethods).toContain('pty.data')
+    expect(notifMethods).toContain('pty.dataExact')
     expect(notifMethods).toContain('pty.resize')
+    expect(notifMethods).toContain('pty.resizeExact')
     expect(notifMethods).toContain('pty.ackData')
+  })
+
+  it('returns a cached exact-operation capability snapshot', async () => {
+    const first = await dispatcher.callRequest('pty.getCapabilities')
+    const second = await dispatcher.callRequest('pty.getCapabilities')
+
+    expect(first).toBe(second)
+    expect(first).toMatchObject({ exactOperationVersion: 1 })
+  })
+
+  it('fences every exact mutation at the managed incarnation', async () => {
+    const { id, incarnationId } = await spawnPty()
+
+    dispatcher.callNotification('pty.dataExact', {
+      id,
+      incarnationId: 'stale-incarnation',
+      data: 'stale'
+    })
+    dispatcher.callNotification('pty.resizeExact', {
+      id,
+      incarnationId: 'stale-incarnation',
+      cols: 120,
+      rows: 40
+    })
+    expect(
+      await dispatcher.callRequest('pty.shutdownExact', {
+        id,
+        incarnationId: 'stale-incarnation'
+      })
+    ).toEqual({ accepted: false })
+    expect(
+      await dispatcher.callRequest('pty.sendSignalExact', {
+        id,
+        incarnationId: 'stale-incarnation',
+        signal: 'SIGINT'
+      })
+    ).toEqual({ accepted: false })
+    expect(
+      await dispatcher.callRequest('pty.clearBufferExact', {
+        id,
+        incarnationId: 'stale-incarnation'
+      })
+    ).toEqual({ accepted: false })
+    expect(mockPtyInstance.write).not.toHaveBeenCalled()
+    expect(mockPtyInstance.resize).not.toHaveBeenCalled()
+    expect(mockPtyInstance.kill).not.toHaveBeenCalled()
+    expect(mockPtyInstance.clear).not.toHaveBeenCalled()
+
+    dispatcher.callNotification('pty.dataExact', { id, incarnationId, data: 'current' })
+    dispatcher.callNotification('pty.resizeExact', { id, incarnationId, cols: 120, rows: 40 })
+    expect(
+      await dispatcher.callRequest('pty.sendSignalExact', { id, incarnationId, signal: 'SIGINT' })
+    ).toEqual({ accepted: true })
+    expect(await dispatcher.callRequest('pty.clearBufferExact', { id, incarnationId })).toEqual({
+      accepted: true
+    })
+    expect(await dispatcher.callRequest('pty.shutdownExact', { id, incarnationId })).toEqual({
+      accepted: true
+    })
+    expect(mockPtyInstance.write).toHaveBeenCalledWith('current')
+    expect(mockPtyInstance.resize).toHaveBeenCalledWith(120, 40)
+    expect(mockPtyInstance.kill).toHaveBeenCalledWith('SIGINT')
+    expect(mockPtyInstance.clear).toHaveBeenCalledOnce()
+    expect(mockPtyInstance.kill).toHaveBeenCalled()
   })
 
   it('pauses native output at the producer hard water and resumes after retained writes settle', async () => {

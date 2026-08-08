@@ -1,10 +1,11 @@
-import type { PtyTransport } from './pty-transport'
+import type { PtyTransport, PtyTransportInputTarget } from './pty-transport'
 
 type CapturedTerminalInputDispatch = {
   targetPaneMounted: boolean
   currentTransport: PtyTransport | undefined
   capturedTransport: PtyTransport | undefined
   capturedPtyId: string | null
+  capturedInputTarget?: PtyTransportInputTarget | null
   data: string
 }
 
@@ -17,6 +18,7 @@ export function sendCapturedTerminalInput({
   currentTransport,
   capturedTransport,
   capturedPtyId,
+  capturedInputTarget,
   data
 }: CapturedTerminalInputDispatch): boolean {
   if (
@@ -27,6 +29,9 @@ export function sendCapturedTerminalInput({
     capturedTransport.getPtyId() !== capturedPtyId
   ) {
     return false
+  }
+  if (capturedInputTarget) {
+    return capturedTransport.sendInputToTarget?.(capturedInputTarget, data) ?? false
   }
   return capturedTransport.sendInput(data)
 }

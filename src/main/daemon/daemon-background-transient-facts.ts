@@ -32,6 +32,7 @@ export const BACKGROUND_STREAM_DROP_ENABLED = process.env.ORCA_DAEMON_BACKGROUND
 
 export class BackgroundTransientFactRelay {
   private trackersBySessionId = new Map<string, TerminalTitleTracker>()
+  private factEmittersBySessionId = new Map<string, (fact: DaemonTransientFact) => void>()
   // Why: shadow foreground bytes so a provisional subscribe survives either scan-authority handoff.
   private mode2031ReplyScanStateBySessionId = new Map<string, Mode2031ReplyScanState>()
   private emitFact: (sessionId: string, fact: DaemonTransientFact) => void
@@ -59,15 +60,15 @@ export class BackgroundTransientFactRelay {
       this.trackersBySessionId.set(
         sessionId,
         createTerminalTitleTracker({
-          onBell: () => this.emitFact(sessionId, { kind: 'bell' }),
+          onBell: () => this.emitSessionFact(sessionId, { kind: 'bell' }),
           onCommandFinished: (exitCode) =>
-            this.emitFact(sessionId, { kind: 'command-finished', exitCode }),
+            this.emitSessionFact(sessionId, { kind: 'command-finished', exitCode }),
           // Note: recreating the tracker on each background toggle resets the
           // PR-link dedup memory, so a link re-printed across toggles can
           // re-fire — consumers treat pr-link as a latest-association update.
-          onPrLink: (link) => this.emitFact(sessionId, { kind: 'pr-link', link }),
-          onMode2031Subscribe: () => this.emitFact(sessionId, { kind: '2031-subscribe' }),
-          onMode2031Unsubscribe: () => this.emitFact(sessionId, { kind: '2031-unsubscribe' })
+          onPrLink: (link) => this.emitSessionFact(sessionId, { kind: 'pr-link', link }),
+          onMode2031Subscribe: () => this.emitSessionFact(sessionId, { kind: '2031-subscribe' }),
+          onMode2031Unsubscribe: () => this.emitSessionFact(sessionId, { kind: '2031-unsubscribe' })
         })
       )
     } else {
@@ -103,23 +104,42 @@ export class BackgroundTransientFactRelay {
 
   /** Feed one raw chunk, in byte order, BEFORE it is enqueued for delivery —
    *  facts must be captured even when the chunk is later keep-tail dropped. */
-  onSessionData(sessionId: string, data: string): void {
-    const previousMode2031State = this.mode2031ReplyScanStateBySessionId.get(sessionId)
-    if (previousMode2031State || data.includes('\x1b') || data.includes('\x9b')) {
-      const mode2031Result = scanMode2031ReplyDecision(
-        previousMode2031State ?? INITIAL_MODE_2031_REPLY_SCAN_STATE,
-        data
-      )
-      if (mode2031Result.state.tail.length > 0 || mode2031Result.state.pendingSubscribe) {
-        this.mode2031ReplyScanStateBySessionId.set(sessionId, mode2031Result.state)
-      } else {
-        this.mode2031ReplyScanStateBySessionId.delete(sessionId)
+  onSessionData(
+    sessionId: string,
+    data: string,
+    emitFact?: (fact: DaemonTransientFact) => void
+  ): void {
+    const tracker = this.trackersBySessionId.get(sessionId)
+    const installsEmitter = Boolean(emitFact && tracker)
+    const previousEmitter = installsEmitter
+      ? this.factEmittersBySessionId.get(sessionId)
+      : undefined
+    if (installsEmitter && emitFact) {
+      this.factEmittersBySessionId.set(sessionId, emitFact)
+    }
+    try {
+      const previousMode2031State = this.mode2031ReplyScanStateBySessionId.get(sessionId)
+      if (previousMode2031State || data.includes('\x1b') || data.includes('\x9b')) {
+        const mode2031Result = scanMode2031ReplyDecision(
+          previousMode2031State ?? INITIAL_MODE_2031_REPLY_SCAN_STATE,
+          data
+        )
+        if (mode2031Result.state.tail.length > 0 || mode2031Result.state.pendingSubscribe) {
+          this.mode2031ReplyScanStateBySessionId.set(sessionId, mode2031Result.state)
+        } else {
+          this.mode2031ReplyScanStateBySessionId.delete(sessionId)
+        }
+      }
+      tracker?.handleChunk(data, { titleScanData: '' })
+    } finally {
+      if (installsEmitter) {
+        if (previousEmitter) {
+          this.factEmittersBySessionId.set(sessionId, previousEmitter)
+        } else {
+          this.factEmittersBySessionId.delete(sessionId)
+        }
       }
     }
-    // titleScanData:'' skips title extraction (titles stay main-authoritative)
-    // and keeps the stale-working-title timer permanently unarmed — only the
-    // four transient scanners consume the chunk.
-    this.trackersBySessionId.get(sessionId)?.handleChunk(data, { titleScanData: '' })
   }
 
   getMode2031ReplyScanState(sessionId: string): Mode2031ReplyScanState {
@@ -143,5 +163,15 @@ export class BackgroundTransientFactRelay {
   private disposeTracker(sessionId: string): void {
     this.trackersBySessionId.get(sessionId)?.dispose()
     this.trackersBySessionId.delete(sessionId)
+    this.factEmittersBySessionId.delete(sessionId)
+  }
+
+  private emitSessionFact(sessionId: string, fact: DaemonTransientFact): void {
+    const emitter = this.factEmittersBySessionId.get(sessionId)
+    if (emitter) {
+      emitter(fact)
+      return
+    }
+    this.emitFact(sessionId, fact)
   }
 }

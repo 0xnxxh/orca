@@ -8,6 +8,7 @@ import { DaemonProtocolError } from './daemon-errors'
 import { DaemonPtyAdapter, LIVENESS_PROBE_TIMEOUT_MS } from './daemon-pty-adapter'
 import {
   COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
+  EXACT_PTY_OPERATIONS_DAEMON_PROTOCOL_VERSION,
   GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
   GET_SIZE_PROTOCOL_VERSION,
   PROTOCOL_VERSION
@@ -59,6 +60,7 @@ function createMockSubprocess(dataOnSubscribe?: string): SubprocessHandle & {
     resize: vi.fn(),
     pause: vi.fn<() => void>(),
     resume: vi.fn<() => void>(),
+    clear: vi.fn(),
     kill: vi.fn(() => setTimeout(() => onExitCb?.(0), 5)),
     forceKill: vi.fn(() => setTimeout(() => onExitCb?.(137), 5)),
     signal: vi.fn(),
@@ -163,6 +165,77 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(result.providerSequence).toEqual({ value: 0, generation: 'reset' })
     })
 
+    it('binds first-attach output and exact input to the returned incarnation', async () => {
+      const onData = vi.fn()
+      adapter.onData(onData)
+      const result = await adapter.spawn({ cols: 80, rows: 24, sessionId: 'exact-session' })
+
+      expect(adapter.supportsExactPtyOperations(result.id)).toBe(false)
+      // A daemon that negotiated no authority keeps its panes on the legacy mutation path; only a
+      // pane that holds authority access can be 'unavailable'.
+      expect(adapter.getPtyMutationMode(result.id)).toBe('legacy')
+      lastSubprocess._simulateData('current-output')
+      await waitFor(() => onData.mock.calls.length === 1)
+      expect(onData).toHaveBeenCalledWith({
+        id: result.id,
+        data: 'current-output',
+        incarnationId: result.incarnationId
+      })
+      expect(adapter.writeExact(result.id, 'stale-incarnation', 'stale')).toBe(false)
+      expect(adapter.resizeExact(result.id, 'stale-incarnation', 120, 40)).toBe(false)
+      await expect(
+        adapter.sendSignalExact(result.id, 'stale-incarnation', 'SIGTERM')
+      ).resolves.toBe(false)
+      await expect(adapter.clearBufferExact(result.id, 'stale-incarnation')).resolves.toBe(false)
+      expect(adapter.writeExact(result.id, result.incarnationId!, 'current')).toBe(true)
+      expect(adapter.resizeExact(result.id, result.incarnationId!, 120, 40)).toBe(true)
+      await expect(
+        adapter.sendSignalExact(result.id, result.incarnationId!, 'SIGTERM')
+      ).resolves.toBe(true)
+      await expect(adapter.clearBufferExact(result.id, result.incarnationId!)).resolves.toBe(true)
+      await waitFor(() => lastSubprocess.write.mock.calls.some(([data]) => data === 'current'))
+      expect(lastSubprocess.resize).toHaveBeenCalledWith(120, 40)
+      expect(lastSubprocess.signal).toHaveBeenCalledWith('SIGTERM')
+      expect(lastSubprocess.clear).toHaveBeenCalledOnce()
+    })
+
+    it('fails closed against a v32 daemon without the exact contract', async () => {
+      const ensureConnectedSpy = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnected')
+        .mockResolvedValue()
+      const requestSpy = vi.spyOn(DaemonClient.prototype, 'request').mockResolvedValue({
+        isNew: true,
+        incarnationId: 'legacy-incarnation',
+        pid: null,
+        shellState: 'unsupported',
+        snapshot: null
+      } as never)
+      const legacy = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        protocolVersion: EXACT_PTY_OPERATIONS_DAEMON_PROTOCOL_VERSION - 1
+      })
+      try {
+        const result = await legacy.spawn({
+          sessionId: 'legacy-exact-session',
+          cols: 80,
+          rows: 24
+        })
+        const createPayload = requestSpy.mock.calls.find(([type]) => type === 'createOrAttach')?.[1]
+        expect(createPayload).not.toHaveProperty('streamBindingNonce')
+        expect(legacy.supportsExactPtyOperations(result.id)).toBe(false)
+        expect(legacy.writeExact(result.id, 'legacy-incarnation', 'blocked')).toBe(false)
+        await expect(
+          legacy.sendSignalExact(result.id, 'legacy-incarnation', 'SIGTERM')
+        ).resolves.toBe(false)
+        await expect(legacy.clearBufferExact(result.id, 'legacy-incarnation')).resolves.toBe(false)
+      } finally {
+        legacy.dispose()
+        requestSpy.mockRestore()
+        ensureConnectedSpy.mockRestore()
+      }
+    })
+
     it('carries classified startup spans from the daemon source to the adapter', async () => {
       const onData = vi.fn()
       adapter.onData(onData)
@@ -184,11 +257,16 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(onData).toHaveBeenCalledWith({
         id,
         data: '',
+        incarnationId: expect.any(String),
         sequenceChars: query.length,
         seq: query.length,
         transformed: true
       })
-      expect(onData).toHaveBeenCalledWith({ id, data: 'prompt' })
+      expect(onData).toHaveBeenCalledWith({
+        id,
+        data: 'prompt',
+        incarnationId: expect.any(String)
+      })
       await expect(adapter.getBufferSnapshot(id)).resolves.toMatchObject({
         data: expect.not.stringContaining(']10;rgb')
       })
@@ -509,6 +587,124 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       } finally {
         notifySpy.mockRestore()
       }
+    })
+
+    it('acknowledges exact held pauses and releases only the last idempotent lease', async () => {
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
+      await waitFor(() => adapter.supportsExactHeldProducerPause(id, incarnationId!))
+      const client = (adapter as unknown as { client: DaemonClient }).client
+      const requestSpy = vi.spyOn(client, 'request')
+
+      await expect(
+        adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      await expect(
+        adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      await expect(
+        adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      expect(requestSpy).toHaveBeenCalledWith('pausePty', {
+        sessionId: id,
+        incarnationId,
+        heldPauseToken: 'lease-a'
+      })
+      expect(lastSubprocess.pause).toHaveBeenCalledTimes(1)
+
+      await expect(
+        adapter.releaseExactHeldProducerPause(id, incarnationId!, 'lease-a')
+      ).resolves.toBe(true)
+      expect(lastSubprocess.resume).not.toHaveBeenCalled()
+      await expect(
+        adapter.releaseExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      await expect(
+        adapter.releaseExactHeldProducerPause(id, incarnationId!, 'lease-b')
+      ).resolves.toBe(true)
+      expect(lastSubprocess.resume).toHaveBeenCalledTimes(1)
+    })
+
+    it('fails closed for stale incarnations and pre-v35 daemon protocols', async () => {
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
+      await waitFor(() => adapter.supportsExactHeldProducerPause(id, incarnationId!))
+      expect(adapter.supportsExactHeldProducerPause(id, 'stale-incarnation')).toBe(false)
+      await expect(
+        adapter.acquireExactHeldProducerPause(id, 'stale-incarnation', 'lease')
+      ).resolves.toBe(false)
+
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 34 })
+      const requestSpy = vi.spyOn((legacy as unknown as { client: DaemonClient }).client, 'request')
+      try {
+        expect(legacy.supportsExactHeldProducerPause(id, incarnationId!)).toBe(false)
+        await expect(
+          legacy.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+        ).resolves.toBe(false)
+        expect(requestSpy).not.toHaveBeenCalled()
+      } finally {
+        legacy.dispose()
+      }
+    })
+
+    it('rejects partial or stale v35 lease payloads without applying a legacy pause', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const client = (adapter as unknown as { client: DaemonClient }).client
+
+      await expect(
+        client.request('pausePty', { sessionId: id, incarnationId: 'missing-token' })
+      ).resolves.toEqual({ accepted: false })
+      await expect(
+        client.request('pausePty', {
+          sessionId: id,
+          incarnationId: 'stale-incarnation',
+          heldPauseToken: 'lease'
+        })
+      ).resolves.toEqual({ accepted: false })
+      expect(lastSubprocess.pause).not.toHaveBeenCalled()
+    })
+
+    it('releases exact held pauses when the owning connection closes', async () => {
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
+      await waitFor(() => adapter.supportsExactHeldProducerPause(id, incarnationId!))
+      await adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+
+      ;(adapter as unknown as { client: DaemonClient }).client.disconnect()
+
+      await waitFor(() => lastSubprocess.resume.mock.calls.length === 1)
+    })
+
+    it('disconnects to unwind a remotely applied acquire whose acknowledgement is lost', async () => {
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
+      await waitFor(() => adapter.supportsExactHeldProducerPause(id, incarnationId!))
+      const client = (adapter as unknown as { client: DaemonClient }).client
+      const originalRequest = client.request.bind(client)
+      vi.spyOn(client, 'request').mockImplementationOnce(async (type, payload) => {
+        await originalRequest(type, payload)
+        throw new Error('ack lost')
+      })
+
+      await expect(
+        adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+      ).resolves.toBe(false)
+      await waitFor(() => lastSubprocess.resume.mock.calls.length === 1)
+      expect(client.isConnected()).toBe(false)
+    })
+
+    it('does not pretend an exact release succeeded when its acknowledgement is lost', async () => {
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
+      await waitFor(() => adapter.supportsExactHeldProducerPause(id, incarnationId!))
+      await adapter.acquireExactHeldProducerPause(id, incarnationId!, 'lease')
+      const client = (adapter as unknown as { client: DaemonClient }).client
+      const originalRequest = client.request.bind(client)
+      vi.spyOn(client, 'request').mockImplementationOnce(async (type, payload) => {
+        await originalRequest(type, payload)
+        throw new Error('ack lost')
+      })
+
+      await expect(
+        adapter.releaseExactHeldProducerPause(id, incarnationId!, 'lease')
+      ).resolves.toBe(false)
+      await waitFor(() => lastSubprocess.resume.mock.calls.length === 1)
+      expect(client.isConnected()).toBe(false)
     })
   })
 
@@ -1432,24 +1628,24 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       const dataPayloads: { id: string; data: string }[] = []
       adapter.onData((payload) => dataPayloads.push(payload))
 
-      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
       lastSubprocess._simulateData('hello')
 
       await waitFor(() => dataPayloads.length > 0)
-      expect(dataPayloads[0]).toEqual({ id, data: 'hello' })
+      expect(dataPayloads[0]).toEqual({ id, data: 'hello', incarnationId })
     })
 
     it('coalesces burst data events before serializing daemon stream output', async () => {
       const dataPayloads: { id: string; data: string }[] = []
       adapter.onData((payload) => dataPayloads.push(payload))
 
-      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
       lastSubprocess._simulateData('a')
       lastSubprocess._simulateData('b')
       lastSubprocess._simulateData('c')
 
       await waitFor(() => dataPayloads.length > 0)
-      expect(dataPayloads).toEqual([{ id, data: 'abc' }])
+      expect(dataPayloads).toEqual([{ id, data: 'abc', incarnationId }])
     })
   })
 
@@ -1641,7 +1837,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
   describe('attach', () => {
     it('reattaches to existing session and receives events', async () => {
-      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await adapter.spawn({ cols: 80, rows: 24 })
 
       // Create a second adapter simulating app restart
       const adapter2 = new DaemonPtyAdapter({ socketPath, tokenPath })
@@ -1652,7 +1848,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       lastSubprocess._simulateData('after-reattach')
       await waitFor(() => dataPayloads.length > 0)
-      expect(dataPayloads[0]).toEqual({ id, data: 'after-reattach' })
+      expect(dataPayloads[0]).toEqual({ id, data: 'after-reattach', incarnationId })
 
       adapter2.dispose()
     })
@@ -1788,6 +1984,16 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         reason: 'authenticated_inventory',
         inventoryAuthority: 'authoritative'
       })
+    })
+
+    it('binds management inventory to the route captured from that RPC result', async () => {
+      const spawned = await adapter.spawn({ cols: 80, rows: 24 })
+
+      const listed = (await adapter.listSessions()).find(
+        (session) => session.sessionId === spawned.id
+      )
+
+      expect(listed?.mutationRouteToken).toBe(adapter.getPtyMutationRouteToken(spawned.id))
     })
 
     it('loads persisted Linux birth identity for audit observations', async () => {

@@ -182,7 +182,9 @@ import {
 import { scheduleImagePasteWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
 import { restoreTerminalFitToDesktop, restoreTerminalFitsToDesktop } from './terminal-fit-restore'
 import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
-import { TerminalSshReconnectOverlay } from './TerminalSshReconnectOverlay'
+import { useCodexPaneRestartHandler } from './use-codex-pane-restart-handler'
+import { TerminalRecoveryOverlayStack } from './TerminalRecoveryOverlayStack'
+import type { TerminalLegacyRecoveryNotice } from './terminal-legacy-recovery-view-model'
 import { TerminalRemoteRuntimeReconnectBanner } from './TerminalRemoteRuntimeReconnectBanner'
 import { selectTerminalTabAgentTypesByLeaf } from './terminal-tab-agent-type-index'
 import { canContinueAgentSessionInNewSession } from './terminal-agent-session-continuation'
@@ -192,6 +194,7 @@ import {
 } from './terminal-remote-runtime-recovery-ui-state'
 
 const NATIVE_CHAT_ROOT_SELECTOR = '[data-native-chat-root="true"]'
+const EMPTY_TERMINAL_LEGACY_RECOVERIES: readonly TerminalLegacyRecoveryNotice[] = []
 
 function isInsideNativeChatRoot(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(NATIVE_CHAT_ROOT_SELECTOR) !== null
@@ -238,6 +241,7 @@ import { refreshTerminalImeInputContext } from './terminal-ime-input-context-ref
 
 type TerminalPaneProps = {
   tabId: string
+  terminalGeneration?: number
   worktreeId: string
   cwd?: string
   isActive: boolean
@@ -247,6 +251,7 @@ type TerminalPaneProps = {
   isolatedPaneKey?: string | null
   // Why: ephemeral one-off command terminals don't need the header's prominent split affordance (split shortcuts still work).
   showSplitButton?: boolean
+  legacyRecoveryNotices?: readonly TerminalLegacyRecoveryNotice[]
   onPtyExit: (ptyId: string) => void
   onCloseTab: () => void
 }
@@ -288,6 +293,7 @@ function formatClipboardImagePasteError(error: unknown): string {
 function TerminalPane(
   {
     tabId,
+    terminalGeneration = 0,
     worktreeId,
     cwd,
     isActive,
@@ -295,6 +301,7 @@ function TerminalPane(
     isWorktreeActive = isVisible,
     isolatedPaneKey = null,
     showSplitButton = true,
+    legacyRecoveryNotices = EMPTY_TERMINAL_LEGACY_RECOVERIES,
     onPtyExit,
     onCloseTab
   }: TerminalPaneProps,
@@ -972,11 +979,12 @@ function TerminalPane(
       clearedScrollbackLeafIdsRef.current.add(pane.leafId)
       clearTerminalScrollbackAndFollowOutput(pane.terminal)
       // Why: also clear the host buffer for remote-server panes, or the next host snapshot replays what we just cleared.
-      const ptyId = paneTransportsRef.current.get(pane.id)?.getPtyId() ?? null
+      const transport = paneTransportsRef.current.get(pane.id)
+      const ptyId = transport?.getPtyId() ?? null
       const clearedRemoteHostBuffer = clearWebRuntimeTerminalBuffer(ptyId)
       if (!clearedRemoteHostBuffer && ptyId) {
         // Why: local/daemon/SSH PTYs keep their own screen state (ConPTY on Windows); clear it too or the next prompt repaints below a blank gap.
-        window.api.pty.clearBuffer(ptyId)
+        transport?.clearBuffer?.()
       }
       persistLayoutSnapshot()
     },
@@ -1332,6 +1340,7 @@ function TerminalPane(
 
   useTerminalPaneLifecycle({
     tabId,
+    paneGeneration: terminalGeneration,
     worktreeId,
     cwd,
     startup,
@@ -1524,8 +1533,8 @@ function TerminalPane(
     }
   }, [])
 
-  const handleRestartCodexPane = useCallback(
-    (paneId: number) => {
+  const restartCodexPaneAtGeneration = useCallback(
+    (paneId: number, paneGeneration: number) => {
       const manager = managerRef.current
       const pane = manager?.getPanes().find((candidate) => candidate.id === paneId)
       if (!manager || !pane) {
@@ -1553,6 +1562,7 @@ function TerminalPane(
 
       const newPaneBinding = connectPanePty(pane, manager, {
         tabId,
+        paneGeneration,
         worktreeId,
         cwd,
         startup: CODEX_ACCOUNT_RESTART_STARTUP,
@@ -1615,6 +1625,10 @@ function TerminalPane(
       worktreeId
     ]
   )
+  const handleRestartCodexPane = useCodexPaneRestartHandler({
+    paneGeneration: terminalGeneration,
+    restartPaneAtGeneration: restartCodexPaneAtGeneration
+  })
 
   // Why leaf bindings are a dep: a parked or deferred tab mounts with no
   // transport, so a queued restart has no ptyId to match on the mount pass. The
@@ -2755,6 +2769,11 @@ function TerminalPane(
     sshReconnectStatus &&
     sshReconnectStatus !== 'connected'
   )
+  const showLegacyRecoveryOverlay = Boolean(
+    isActive &&
+    isVisible &&
+    legacyRecoveryNotices.some((recovery) => recovery.status === 'unresolved')
+  )
   // Why: while the reconnect banner owns recovery, strip only the SSH-owned lines from the
   // (possibly aggregated) error, so a later successful connect can't flash the raw ssh:connect
   // failure and any unrelated error still surfaces after reconnect.
@@ -2904,22 +2923,35 @@ function TerminalPane(
           onRestartDaemon={() => daemonActions.setPending('restart')}
         />
       ) : null}
-      {/* Why: portal into the pane so the banner stacks above the xterm canvas (sibling mount painted under WebGL). */}
-      {showSshReconnectOverlay && sshReconnectTargetId && sshReconnectStatus
-        ? managedPanes.map((pane) =>
-            createPortal(
-              <TerminalSshReconnectOverlay
-                targetId={sshReconnectTargetId}
-                targetLabel={sshReconnectTargetLabel}
-                status={sshReconnectStatus}
-                targetRemoved={sshReconnectTargetRemoved}
-                worktreeId={worktreeId}
-                sshOwnerEnvironmentId={sshReconnectEnvironmentId}
+      {/* Why: one absolute stack keeps persistent recovery notices above SSH chrome without resizing xterm. */}
+      {showSshReconnectOverlay || showLegacyRecoveryOverlay
+        ? managedPanes.map((pane) => {
+            const showLegacyInPane = showLegacyRecoveryOverlay && pane.id === activePane?.id
+            if (!showSshReconnectOverlay && !showLegacyInPane) {
+              return null
+            }
+            return createPortal(
+              <TerminalRecoveryOverlayStack
+                legacyRecoveries={
+                  showLegacyInPane ? legacyRecoveryNotices : EMPTY_TERMINAL_LEGACY_RECOVERIES
+                }
+                sshReconnect={
+                  showSshReconnectOverlay && sshReconnectTargetId && sshReconnectStatus
+                    ? {
+                        targetId: sshReconnectTargetId,
+                        targetLabel: sshReconnectTargetLabel,
+                        status: sshReconnectStatus,
+                        targetRemoved: sshReconnectTargetRemoved,
+                        worktreeId,
+                        sshOwnerEnvironmentId: sshReconnectEnvironmentId
+                      }
+                    : null
+                }
               />,
               pane.container,
-              `ssh-reconnect-${pane.id}`
+              `terminal-recovery-stack-${pane.id}`
             )
-          )
+          })
         : null}
       <DaemonActionDialog api={daemonActions} />
       {isActive && (

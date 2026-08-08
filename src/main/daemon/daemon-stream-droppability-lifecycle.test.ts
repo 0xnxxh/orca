@@ -9,6 +9,12 @@ import type { BackgroundTransientFactRelay } from './daemon-background-transient
 import type { PendingStreamDataBatch } from './daemon-stream-keep-tail-drop'
 import type { SubprocessHandle } from './session'
 import type { DaemonRequest } from './types'
+import {
+  sameTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
+import type { TerminalSessionAuthorityPtyOwner } from '../session-authority/terminal-session-authority-pty-owner'
+import { TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY } from './daemon-hello-protocol'
 
 type MockSubprocess = SubprocessHandle & {
   emitData(data: string): void
@@ -23,6 +29,15 @@ type DaemonLifecyclePrivate = {
       controlSocket: Socket
       streamSocket: Socket | null
       authenticatedPairEstablished: boolean
+      capabilities?: {
+        terminalSessionAuthority: 1
+        terminalAuthorityConsumerProof?: { version: 1; authorityHostId: string }
+      }
+      authorityConsumerTransport?: { token: object }
+      authorityNamespaceSessions?: Map<
+        string,
+        { session: { policyConsumer: unknown; disconnect(): void }; acceptances: { close(): void } }
+      >
     }
   >
   host: {
@@ -42,6 +57,9 @@ function createMockSubprocess(): MockSubprocess {
     getForegroundProcess: () => null,
     write: vi.fn(),
     resize: vi.fn(),
+    clear: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     kill: vi.fn(() => onExit?.(0)),
     forceKill: vi.fn(() => onExit?.(137)),
     signal: vi.fn(),
@@ -61,7 +79,11 @@ function createMockSubprocess(): MockSubprocess {
   }
 }
 
-function createServerHarness() {
+function createServerHarness(
+  terminalSessionAuthority?: ConstructorParameters<
+    typeof DaemonServer
+  >[0]['terminalSessionAuthority']
+) {
   const subprocesses: MockSubprocess[] = []
   const unique = randomUUID()
   const server = new DaemonServer({
@@ -71,7 +93,15 @@ function createServerHarness() {
       const subprocess = createMockSubprocess()
       subprocesses.push(subprocess)
       return subprocess
-    }
+    },
+    ...(terminalSessionAuthority
+      ? {
+          terminalSessionAuthority,
+          terminalSessionAuthorityCapabilityReadiness: {
+            hostEffectConsumerInstalled: () => true
+          }
+        }
+      : {})
   })
   return {
     server,
@@ -82,7 +112,8 @@ function createServerHarness() {
 
 function addClient(
   daemon: DaemonLifecyclePrivate,
-  writableLength = 0
+  writableLength = 0,
+  authority = false
 ): Socket & { write: ReturnType<typeof vi.fn>; writableLength: number } {
   const controlSocket = { destroy: vi.fn() } as unknown as Socket
   const streamSocket = {
@@ -94,11 +125,41 @@ function addClient(
     write: ReturnType<typeof vi.fn>
     writableLength: number
   }
+  const policyIdentity = {
+    consumerId: 'app-profile:droppability-test',
+    consumerIncarnationId: 'app-process:droppability-test'
+  }
+  // Authority admission is proof-only, so the client carries a negotiated proof grant and one
+  // already-admitted namespace session rather than a self-named consumer.
+  const policyConsumer = {
+    identity: policyIdentity,
+    assertInstalled: () => {},
+    isInstalled: () => true,
+    disconnect: () => {}
+  }
   daemon.clients.set('client-1', {
     clientId: 'client-1',
     controlSocket,
     streamSocket,
-    authenticatedPairEstablished: true
+    authenticatedPairEstablished: true,
+    ...(authority
+      ? {
+          capabilities: {
+            terminalSessionAuthority: TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY,
+            terminalAuthorityConsumerProof: { version: 1 as const, authorityHostId: 'host-a' }
+          },
+          authorityConsumerTransport: { token: Object.freeze({}) },
+          authorityNamespaceSessions: new Map([
+            [
+              JSON.stringify(['host-a', 'namespace-a']),
+              {
+                session: { policyConsumer, disconnect: () => {} },
+                acceptances: { close: () => {} }
+              }
+            ]
+          ])
+        }
+      : {})
   })
   return streamSocket
 }
@@ -233,6 +294,86 @@ describe('daemon stream droppability lifecycle', () => {
     expect(lifecycle).toEqual(['refresh:client-1', 'marker:sessionBackgroundMarker'])
   })
 
+  it('keeps legacy transient facts on the existing ordered stream', async () => {
+    const harness = createServerHarness()
+    server = harness.server
+    const { daemon, subprocesses } = harness
+    addClient(daemon)
+    daemon.transientFactRelay.setSessionBackground('legacy-session', true)
+    const enqueue = vi.spyOn(daemon.streamDataBatcher, 'enqueueControlEvent')
+
+    await daemon.routeRequest('client-1', {
+      id: 'attach',
+      type: 'createOrAttach',
+      payload: { sessionId: 'legacy-session', cols: 80, rows: 24 }
+    })
+    subprocesses[0]!.emitData('ding\x07')
+
+    expect(enqueue).toHaveBeenCalledWith('client-1', 'legacy-session', {
+      type: 'event',
+      event: 'transientFact',
+      sessionId: 'legacy-session',
+      payload: { kind: 'bell' }
+    })
+  })
+
+  it('persists authoritative facts against the captured binding without legacy publication', async () => {
+    let currentAccess: TerminalSessionAuthorityPtyAccess | null = null
+    const recordSemanticOutcome = vi.fn(
+      async (_sessionId: string, access: TerminalSessionAuthorityPtyAccess) =>
+        sameTerminalSessionAuthorityPtyAccess(currentAccess, access)
+    )
+    const owner = {
+      prepareSpawn: vi.fn(async () => ({ kind: 'spawn', prepared: {} })),
+      commitSpawn: vi.fn(async (_prepared: unknown, incarnationId: string) => {
+        currentAccess = authorityAccess(incarnationId)
+        return currentAccess
+      }),
+      cancelSpawn: vi.fn(async () => undefined),
+      accessFor: vi.fn(() => currentAccess),
+      admits: vi.fn((_id: string, access: TerminalSessionAuthorityPtyAccess) =>
+        sameTerminalSessionAuthorityPtyAccess(currentAccess, access)
+      ),
+      recordSemanticOutcome,
+      recordExit: vi.fn(async () => {
+        currentAccess = null
+      }),
+      releaseAuthenticatedPolicyConsumerTransport: vi.fn(),
+      close: vi.fn(async () => true),
+      adopt: vi.fn()
+    } as unknown as TerminalSessionAuthorityPtyOwner
+    const harness = createServerHarness({ ptyOwner: owner })
+    server = harness.server
+    const { daemon, subprocesses } = harness
+    addClient(daemon, 0, true)
+    daemon.transientFactRelay.setSessionBackground('authority-session', true)
+    const enqueue = vi.spyOn(daemon.streamDataBatcher, 'enqueueControlEvent')
+
+    const result = (await daemon.routeRequest('client-1', {
+      id: 'attach',
+      type: 'createOrAttach',
+      payload: {
+        sessionId: 'authority-session',
+        cols: 80,
+        rows: 24,
+        terminalSessionAuthorityVersion: 1,
+        terminalSessionAuthorityOperationId: 'spawn-a',
+        worktreeId: 'repo::/srv/repo',
+        paneKey: 'pane-a',
+        paneGeneration: 1
+      }
+    })) as { terminalSessionAuthorityAccess: TerminalSessionAuthorityPtyAccess }
+    subprocesses[0]!.emitData('ding\x07')
+
+    await vi.waitFor(() => expect(recordSemanticOutcome).toHaveBeenCalledOnce())
+    expect(recordSemanticOutcome).toHaveBeenCalledWith(
+      'authority-session',
+      result.terminalSessionAuthorityAccess,
+      { kind: 'bell' }
+    )
+    expect(enqueue.mock.calls.some(([, , event]) => event.event === 'transientFact')).toBe(false)
+  })
+
   it('invalidates droppable membership for final output held behind a deep socket', async () => {
     const harness = createServerHarness()
     server = harness.server
@@ -264,3 +405,15 @@ describe('daemon stream droppability lifecycle', () => {
     expect(daemon.streamClientIdBySessionId.has('session-exit')).toBe(false)
   })
 })
+
+function authorityAccess(ptyIncarnationId: string): TerminalSessionAuthorityPtyAccess {
+  return {
+    namespace: { authorityHostId: 'host-a', namespaceId: 'namespace-a' },
+    pane: { paneKey: 'pane-a', paneGenerationId: 'renderer:1' },
+    binding: {
+      ownerIncarnationId: 'owner-a',
+      physicalPtyId: 'authority-session',
+      ptyIncarnationId
+    }
+  }
+}

@@ -14,6 +14,7 @@ import {
   joinRemotePath,
   type RemoteHostPlatform
 } from './ssh-remote-platform'
+import { createRelayInstallLockOwnerToken } from '../../shared/relay-launch-fence-owner'
 import { INSTALL_LOCK_STALE_SECONDS, RELAY_INSTALL_LOCK_NAME } from './ssh-relay-install-lock'
 import { removeRemoteTreeCommand } from './ssh-remote-commands'
 
@@ -40,9 +41,10 @@ export async function tryAcquireRelayRepairLock(
   conn: SshConnection,
   remoteRelayDir: string,
   host: RemoteHostPlatform = DEFAULT_REMOTE_HOST,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; ownerToken?: string }
 ): Promise<RelayRepairLockResult> {
   const lockDir = joinRemotePath(host, remoteRelayDir, RELAY_INSTALL_LOCK_NAME)
+  const ownerToken = options?.ownerToken ?? createRelayInstallLockOwnerToken()
   try {
     const gcClaimedBeforeAcquire = await isRelayGcClaimed(
       conn,
@@ -66,7 +68,7 @@ export async function tryAcquireRelayRepairLock(
     const firstAttempt = await execHostCommand(
       conn,
       host,
-      tryCreateInstallLockCommand(host, lockDir),
+      tryCreateInstallLockCommand(host, lockDir, ownerToken),
       options?.signal
     )
     if (firstAttempt.trim().endsWith('OK')) {
@@ -75,7 +77,7 @@ export async function tryAcquireRelayRepairLock(
     const steal = await execHostCommand(
       conn,
       host,
-      tryStealInstallLockCommand(host, lockDir, INSTALL_LOCK_STALE_SECONDS),
+      tryStealInstallLockCommand(host, lockDir, INSTALL_LOCK_STALE_SECONDS, ownerToken),
       options?.signal
     )
     if (steal.trim().endsWith('OK')) {

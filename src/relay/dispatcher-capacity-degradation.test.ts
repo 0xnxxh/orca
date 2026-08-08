@@ -281,6 +281,23 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
     }
   })
 
+  it('does not apply the dormant control-adapter admission to authority data', () => {
+    const primary = makeBoundedClient(65536)
+    const secondary = makeBoundedClient(65536)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const clientId = bounded.attachClient(secondary.write, secondary.options)
+      bounded.registerPtyDataPublicationAdmission(() => false)
+
+      expect(bounded.publishProducerNotification(clientId, 'pty.data', { id: 'pty-1' })).toBe(false)
+      expect(bounded.publishTerminalAuthorityData(clientId, { id: 'pty-1', data: 'x' })).toBe(true)
+      expect(secondary.frames).toHaveLength(1)
+      expect(primary.frames).toHaveLength(0)
+    } finally {
+      bounded.dispose()
+    }
+  })
+
   it('still closes on protocol-critical control queue overflow', () => {
     const primary = makeSaturatingClient(65536)
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)

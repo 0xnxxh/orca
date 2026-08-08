@@ -83,7 +83,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),
@@ -111,7 +112,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),
@@ -147,7 +149,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText,
       onBinary: vi.fn(),
@@ -205,7 +208,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),
@@ -253,7 +257,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: currentDesktop.publicKey,
         secretKey: currentDesktop.secretKey,
-        publicKeyB64: Buffer.from(currentDesktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(currentDesktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),
@@ -298,7 +303,8 @@ describe('MobileSocketWiring', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),

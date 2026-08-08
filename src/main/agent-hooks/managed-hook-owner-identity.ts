@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { link, lstat, mkdir, readFile, readlink, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -28,10 +28,33 @@ export function parseLinuxStartTicks(statLine: string): string | null {
   return startTicks ?? null
 }
 
-async function readLinuxPidNamespace(pid: number): Promise<string | undefined> {
+export async function readLinuxPidNamespace(pid: number | 'self'): Promise<string | undefined> {
   try {
     const namespace = await readlink(`/proc/${pid}/ns/pid`)
     return namespace.trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function parseWindowsMachineGuid(output: string): string | null {
+  const machineGuid = /^\s*MachineGuid\s+REG_[A-Z0-9_]+\s+([^\r\n]+)$/im.exec(output)?.[1]?.trim()
+  return machineGuid && machineGuid.length <= 256 ? machineGuid : null
+}
+
+async function readWindowsHostIdentity(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(
+      'reg.exe',
+      ['QUERY', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'],
+      { encoding: 'utf8', timeout: 1_000, windowsHide: true }
+    )
+    const machineGuid = parseWindowsMachineGuid(stdout)
+    if (!machineGuid) {
+      return undefined
+    }
+    const digest = createHash('sha256').update(machineGuid).digest('base64url')
+    return `win32-machine:${digest}:pid-namespace:global`
   } catch {
     return undefined
   }
@@ -111,6 +134,9 @@ async function readHostIdentity(): Promise<string> {
     } catch {
       return runtimeHostIdentity
     }
+  }
+  if (process.platform === 'win32') {
+    return (await readWindowsHostIdentity()) ?? runtimeHostIdentity
   }
   return runtimeHostIdentity
 }

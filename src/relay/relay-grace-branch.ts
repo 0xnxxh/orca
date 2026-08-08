@@ -1,11 +1,15 @@
 /** Which rule decided the current relay grace window. */
 export type RelayGraceBranch =
+  | 'terminal-authority-retained'
   | 'shutdown-deferred'
   | 'startup-empty-detached'
   | 'idle-no-ptys'
   | 'configured'
 
+type TimedRelayGraceBranch = Exclude<RelayGraceBranch, 'terminal-authority-retained'>
+
 export type RelayGraceDecisionInput = {
+  terminalSessionAuthorityAdmitted: boolean
   /** The live configured grace, not the launch-time argv value; 0 means unlimited. */
   configuredGraceMs: number
   /** Zero pooled PTYs *and* zero admitted-but-unpooled creations. */
@@ -18,10 +22,11 @@ export type RelayGraceDecisionInput = {
   idleRelayGraceMs: number
 }
 
-export type RelayGraceDecision = {
-  branch: RelayGraceBranch
-  timeoutMs: number
-}
+export type RelayGraceDecision =
+  | { branch: 'terminal-authority-retained'; armShutdown: false }
+  | { branch: TimedRelayGraceBranch; armShutdown: true; timeoutMs: number }
+
+export type RelayShutdownCause = 'administrative' | 'grace-expired'
 
 export type RelayGraceReconfigureInput = {
   previousConfiguredGraceMs: number
@@ -92,7 +97,8 @@ export function decideRelayGraceReconfigure(
   if (
     input.nextConfiguredGraceMs === input.previousConfiguredGraceMs ||
     !input.graceTimerArmed ||
-    input.shutdownInFlight
+    input.shutdownInFlight ||
+    input.currentBranch === 'terminal-authority-retained'
   ) {
     return { rearm: false }
   }
@@ -109,6 +115,9 @@ export function decideRelayGraceReconfigure(
  * could not otherwise be tested.
  */
 export function decideRelayGrace(input: RelayGraceDecisionInput): RelayGraceDecision {
+  if (input.terminalSessionAuthorityAdmitted) {
+    return { branch: 'terminal-authority-retained', armShutdown: false }
+  }
   // Why: a detached relay that never accepted a client has no PTY state and shouldn't linger forever.
   const startupEmptyDetached =
     input.detached && !input.hasAcceptedSocketClient && input.activePtyCount === 0
@@ -118,7 +127,7 @@ export function decideRelayGrace(input: RelayGraceDecisionInput): RelayGraceDeci
   // shell it is about to produce.
   const idleNoPtys = input.relayIdle && input.configuredGraceMs === 0
 
-  const branch: RelayGraceBranch = input.retryDeferredShutdown
+  const branch: TimedRelayGraceBranch = input.retryDeferredShutdown
     ? 'shutdown-deferred'
     : startupEmptyDetached
       ? 'startup-empty-detached'
@@ -137,5 +146,12 @@ export function decideRelayGrace(input: RelayGraceDecisionInput): RelayGraceDeci
         ? input.idleRelayGraceMs
         : input.configuredGraceMs
 
-  return { branch, timeoutMs }
+  return { branch, armShutdown: true, timeoutMs }
+}
+
+export function mayDisposeRelayPtysForShutdown(
+  terminalSessionAuthorityAdmitted: boolean,
+  cause: RelayShutdownCause
+): boolean {
+  return cause === 'administrative' || !terminalSessionAuthorityAdmitted
 }

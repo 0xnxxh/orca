@@ -92,21 +92,27 @@ import {
 } from '../shared/workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../shared/workspace-linked-item-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
-import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
+import { migrateMobilePairingUserdata } from './runtime/mobile-pairing-userdata-migration'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
 import {
   removeRepoFromHostWorkspaceSessions,
   removeRepoFromWorkspaceSession
 } from './orca-profiles/profile-project-session-state'
-import { hardenExistingSecureFile } from '../shared/secure-file'
 import {
   LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
   type RemovedSshTargetTombstone,
   type SshPtyConsumerRecovery,
   type SshRemotePtyLease,
+  type SshRemotePtyPendingClose,
   type SshTarget
 } from '../shared/ssh-types'
+import { isPtyIncarnationId } from '../shared/pty-incarnation'
+import {
+  parseTerminalSessionAuthorityPtyAccess,
+  sameTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../shared/terminal-session-authority-pty-access'
 import { isFolderRepo } from '../shared/repo-kind'
 import {
   getRepoExecutionHostId,
@@ -530,28 +536,7 @@ export function getCanonicalUserDataPath(): string {
  * Copies the registry and E2EE keypair forward as a pair so an update doesn't force a re-pair or mix devices with the wrong key.
  */
 export function migrateMobilePairingDataToCanonicalUserDataPath(sourceUserDataDir: string): void {
-  const targetUserDataDir = getCanonicalUserDataPath()
-  if (resolve(sourceUserDataDir) === resolve(targetUserDataDir)) {
-    return
-  }
-
-  const migrations = MOBILE_PAIRING_USERDATA_FILES.map((fileName) => ({
-    sourcePath: join(sourceUserDataDir, fileName),
-    targetPath: join(targetUserDataDir, fileName)
-  }))
-  if (migrations.some(({ sourcePath }) => !existsSync(sourcePath))) {
-    return
-  }
-  if (migrations.some(({ targetPath }) => existsSync(targetPath))) {
-    return
-  }
-
-  mkdirSync(targetUserDataDir, { recursive: true })
-  for (const { sourcePath, targetPath } of migrations) {
-    copyFileSync(sourcePath, targetPath)
-    // Why: copyFileSync drops Windows ACLs, so re-assert current-user-only on these credential copies (device tokens, E2EE key).
-    hardenExistingSecureFile(targetPath)
-  }
+  migrateMobilePairingUserdata(sourceUserDataDir, getCanonicalUserDataPath())
 }
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.
@@ -1616,18 +1601,71 @@ function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
     return null
   }
   const now = Date.now()
+  const pendingClose = normalizeSshRemotePtyPendingClose(raw.pendingClose)
+  const authorityAccess =
+    raw.terminalSessionAuthorityAccess === undefined
+      ? null
+      : parseTerminalSessionAuthorityPtyAccess(raw.terminalSessionAuthorityAccess)
+  if (
+    raw.terminalSessionAuthorityAccess !== undefined &&
+    (!authorityAccess ||
+      authorityAccess.binding.physicalPtyId !== raw.ptyId ||
+      (raw.incarnationId !== undefined &&
+        authorityAccess.binding.ptyIncarnationId !== raw.incarnationId))
+  ) {
+    return null
+  }
+  if (
+    pendingClose?.terminalSessionAuthorityAccess &&
+    !sameTerminalSessionAuthorityPtyAccess(
+      authorityAccess,
+      pendingClose.terminalSessionAuthorityAccess
+    )
+  ) {
+    return null
+  }
   return {
     targetId: raw.targetId,
     ptyId: raw.ptyId,
+    ...(typeof raw.incarnationId === 'string' && raw.incarnationId.length <= 128
+      ? { incarnationId: raw.incarnationId }
+      : {}),
     ...(typeof raw.worktreeId === 'string' ? { worktreeId: raw.worktreeId } : {}),
     ...(typeof raw.tabId === 'string' ? { tabId: raw.tabId } : {}),
     ...(typeof raw.leafId === 'string' && raw.leafId.length <= 256 ? { leafId: raw.leafId } : {}),
+    ...(Number.isSafeInteger(raw.paneGeneration) && Number(raw.paneGeneration) >= 0
+      ? { paneGeneration: Number(raw.paneGeneration) }
+      : {}),
+    ...(authorityAccess ? { terminalSessionAuthorityAccess: authorityAccess } : {}),
+    ...(state !== 'terminated' && state !== 'expired' && pendingClose ? { pendingClose } : {}),
     state,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
     ...(typeof raw.lastAttachedAt === 'number' ? { lastAttachedAt: raw.lastAttachedAt } : {}),
     ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {})
   }
+}
+
+function normalizeSshRemotePtyPendingClose(value: unknown): SshRemotePtyPendingClose | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const raw = value as Partial<SshRemotePtyPendingClose>
+  const authorityAccess = parseTerminalSessionAuthorityPtyAccess(raw.terminalSessionAuthorityAccess)
+  return isPtyIncarnationId(raw.incarnationId) &&
+    authorityAccess !== null &&
+    authorityAccess.binding.ptyIncarnationId === raw.incarnationId &&
+    typeof raw.keepHistory === 'boolean' &&
+    typeof raw.requestedAt === 'number' &&
+    Number.isFinite(raw.requestedAt) &&
+    raw.requestedAt >= 0
+    ? {
+        incarnationId: raw.incarnationId,
+        terminalSessionAuthorityAccess: authorityAccess,
+        keepHistory: raw.keepHistory,
+        requestedAt: raw.requestedAt
+      }
+    : null
 }
 
 const SSH_PTY_OWNER_LEASE_MAX_LENGTH = 512
@@ -2823,7 +2861,6 @@ export class Store {
     ) => void
   >()
   private uiChangeListeners = new Set<(ui: PersistedState['ui']) => void>()
-
   constructor(options: StoreOptions = {}) {
     // Why: profile switching yields multiple state paths; capture per Store so late async writes can't follow a global path.
     this.dataFile = options.dataFile ?? getDataFile()
@@ -3106,6 +3143,11 @@ export class Store {
           .map((record) => ({ ...record, ownerLease: decrypt(record.ownerLease) }))
           .map((record) => normalizeSshPtyConsumerRecovery(record))
           .filter((record): record is SshPtyConsumerRecovery => record !== null)
+        if (Object.hasOwn(parsed as object, 'sshTerminalAuthorityOutcomeReceipts')) {
+          delete (parsed as PersistedState & { sshTerminalAuthorityOutcomeReceipts?: unknown })
+            .sshTerminalAuthorityOutcomeReceipts
+          this.loadNeedsSave = true
+        }
 
         // Merge with defaults in case new fields were added
         const homeDir = homedir()
@@ -7072,7 +7114,7 @@ export class Store {
   }
 
   upsertSshRemotePtyLease(
-    lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
+    lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt' | 'pendingClose'> &
       Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
   ): void {
     this.state.sshRemotePtyLeases ??= []
@@ -7091,11 +7133,31 @@ export class Store {
         entry.targetId === normalizedLease.targetId && entry.ptyId === normalizedLease.ptyId
     )
     const existing = existingIndex >= 0 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
+    if (
+      existing?.pendingClose &&
+      normalizedLease.incarnationId !== undefined &&
+      normalizedLease.incarnationId !== existing.pendingClose.incarnationId
+    ) {
+      throw new Error('ssh_pty_pending_close_incarnation_conflict')
+    }
+    if (
+      existing?.pendingClose?.terminalSessionAuthorityAccess &&
+      normalizedLease.terminalSessionAuthorityAccess &&
+      !sameTerminalSessionAuthorityPtyAccess(
+        existing.pendingClose.terminalSessionAuthorityAccess,
+        normalizedLease.terminalSessionAuthorityAccess
+      )
+    ) {
+      throw new Error('ssh_pty_pending_close_authority_conflict')
+    }
     const next: SshRemotePtyLease = {
       ...existing,
       ...normalizedLease,
       createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
       updatedAt: normalizedLease.updatedAt ?? now
+    }
+    if (next.state === 'terminated' || next.state === 'expired') {
+      delete next.pendingClose
     }
     if (existingIndex >= 0) {
       this.state.sshRemotePtyLeases[existingIndex] = next
@@ -7103,6 +7165,112 @@ export class Store {
       this.state.sshRemotePtyLeases.push(next)
     }
     this.flush()
+  }
+
+  requestSshRemotePtyClose(
+    targetId: string,
+    ptyId: string,
+    request: SshRemotePtyPendingClose
+  ): 'recorded' | 'duplicate' {
+    const pendingClose = normalizeSshRemotePtyPendingClose(request)
+    if (!pendingClose) {
+      throw new Error('Invalid SSH remote PTY close request')
+    }
+    const relayPtyId = this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId)
+    const leaseIndex = this.state.sshRemotePtyLeases?.findIndex(
+      (entry) => entry.targetId === targetId && entry.ptyId === relayPtyId
+    )
+    const lease =
+      leaseIndex !== undefined && leaseIndex >= 0
+        ? this.state.sshRemotePtyLeases?.[leaseIndex]
+        : undefined
+    if (!lease || lease.state === 'terminated' || lease.state === 'expired') {
+      throw new Error('ssh_pty_close_lease_unavailable')
+    }
+    if (lease.incarnationId && lease.incarnationId !== pendingClose.incarnationId) {
+      throw new Error('ssh_pty_pending_close_incarnation_conflict')
+    }
+    if (lease.pendingClose && lease.pendingClose.incarnationId !== pendingClose.incarnationId) {
+      throw new Error('ssh_pty_pending_close_incarnation_conflict')
+    }
+    const leaseAccess = parseTerminalSessionAuthorityPtyAccess(lease.terminalSessionAuthorityAccess)
+    const requestedAccess = parseTerminalSessionAuthorityPtyAccess(
+      pendingClose.terminalSessionAuthorityAccess
+    )
+    const currentAccess = parseTerminalSessionAuthorityPtyAccess(
+      lease.pendingClose?.terminalSessionAuthorityAccess
+    )
+    if (
+      (leaseAccess && !requestedAccess) ||
+      (requestedAccess && !sameTerminalSessionAuthorityPtyAccess(leaseAccess, requestedAccess)) ||
+      (requestedAccess &&
+        currentAccess &&
+        !sameTerminalSessionAuthorityPtyAccess(currentAccess, requestedAccess))
+    ) {
+      throw new Error('ssh_pty_pending_close_authority_conflict')
+    }
+    const nextPendingClose = lease.pendingClose
+      ? {
+          ...lease.pendingClose,
+          ...(requestedAccess ? { terminalSessionAuthorityAccess: requestedAccess } : {}),
+          keepHistory: lease.pendingClose.keepHistory || pendingClose.keepHistory
+        }
+      : pendingClose
+    if (
+      lease.incarnationId === pendingClose.incarnationId &&
+      lease.pendingClose?.keepHistory === nextPendingClose.keepHistory &&
+      ((currentAccess === null && requestedAccess === null) ||
+        (currentAccess !== null &&
+          requestedAccess !== null &&
+          sameTerminalSessionAuthorityPtyAccess(currentAccess, requestedAccess)))
+    ) {
+      return 'duplicate'
+    }
+    const previous = structuredClone(lease)
+    lease.incarnationId = pendingClose.incarnationId
+    lease.pendingClose = nextPendingClose
+    lease.updatedAt = Date.now()
+    try {
+      this.flushOrThrow()
+    } catch (error) {
+      this.state.sshRemotePtyLeases![leaseIndex!] = previous
+      throw error
+    }
+    return lease.pendingClose === pendingClose ? 'recorded' : 'duplicate'
+  }
+
+  clearSshRemotePtyCloseRequest(
+    targetId: string,
+    ptyId: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    const relayPtyId = this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId)
+    const leaseIndex = this.state.sshRemotePtyLeases?.findIndex(
+      (entry) => entry.targetId === targetId && entry.ptyId === relayPtyId
+    )
+    const lease =
+      leaseIndex !== undefined && leaseIndex >= 0
+        ? this.state.sshRemotePtyLeases?.[leaseIndex]
+        : undefined
+    const pendingAccess = parseTerminalSessionAuthorityPtyAccess(
+      lease?.pendingClose?.terminalSessionAuthorityAccess
+    )
+    if (
+      !lease?.pendingClose ||
+      !sameTerminalSessionAuthorityPtyAccess(pendingAccess, authorityAccess)
+    ) {
+      return false
+    }
+    const previous = structuredClone(lease)
+    delete lease.pendingClose
+    lease.updatedAt = Date.now()
+    try {
+      this.flushOrThrow()
+    } catch (error) {
+      this.state.sshRemotePtyLeases![leaseIndex!] = previous
+      throw error
+    }
+    return true
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
@@ -7170,6 +7338,10 @@ export class Store {
         changed = true
       }
       if (shouldClearBindings) {
+        if (lease.pendingClose) {
+          delete lease.pendingClose
+          changed = true
+        }
         leasesToClear.push(lease)
       }
     }
@@ -7189,7 +7361,15 @@ export class Store {
     }
     const shouldClearBindings = state === 'terminated' || state === 'expired'
     if (lease.state === state) {
-      if (shouldClearBindings && this.clearSshRemotePtyBindingsForLeases(targetId, [lease])) {
+      const pendingCloseCleared = shouldClearBindings && lease.pendingClose !== undefined
+      if (pendingCloseCleared) {
+        delete lease.pendingClose
+        lease.updatedAt = Date.now()
+      }
+      if (
+        (shouldClearBindings && this.clearSshRemotePtyBindingsForLeases(targetId, [lease])) ||
+        pendingCloseCleared
+      ) {
         this.flush()
       }
       return
@@ -7203,6 +7383,7 @@ export class Store {
       lease.lastDetachedAt = now
     }
     if (shouldClearBindings) {
+      delete lease.pendingClose
       this.clearSshRemotePtyBindingsForLeases(targetId, [lease])
     }
     this.flush()

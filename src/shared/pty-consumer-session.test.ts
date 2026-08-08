@@ -6,6 +6,7 @@ import {
   PTY_CONSUMER_OWNER_HELD_SELF_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_PENDING_ERROR,
   PTY_CONSUMER_OWNER_RECOVERY_SUPERSEDED_ERROR,
+  PTY_CONSUMER_SCOPED_OWNER_LIMIT,
   PtyConsumerSession,
   type PtyConsumerAuthentication,
   type PtyConsumerSessionHello
@@ -32,7 +33,12 @@ function ownerHello(overrides: Partial<PtyConsumerSessionHello> = {}): PtyConsum
   }
 }
 
-function createSession(options: { now?: () => number } = {}): PtyConsumerSession {
+function createSession(
+  options: {
+    now?: () => number
+    ownerScope?: 'global' | 'principal-client-instance'
+  } = {}
+): PtyConsumerSession {
   let lease = 0
   return new PtyConsumerSession({
     serverBuildId: 'relay-build',
@@ -88,6 +94,38 @@ describe('PtyConsumerSession', () => {
         auth('connection-3', { principal: 'other' })
       )
     ).toThrow(expect.objectContaining({ code: PTY_CONSUMER_OWNER_HELD_ATTACHED_ERROR }))
+  })
+
+  it('isolates authority ownership by authenticated logical client when configured', () => {
+    const session = createSession({ ownerScope: 'principal-client-instance' })
+    const first = session.admit(ownerHello(), auth('connection-1'))
+    const second = session.admit(ownerHello({ clientInstanceId: 'client-b' }), auth('connection-2'))
+    first.commitPublication()
+    second.commitPublication()
+
+    expect(first.grant).toMatchObject({ role: 'session-owner', ownerGeneration: 1 })
+    expect(second.grant).toMatchObject({ role: 'session-owner', ownerGeneration: 2 })
+    expect(session.activeGrant('connection-1')).toBe(first.grant)
+    expect(session.activeGrant('connection-2')).toBe(second.grant)
+    expect(() => session.admit(ownerHello(), auth('connection-3'))).toThrow(
+      expect.objectContaining({ code: PTY_CONSUMER_OWNER_HELD_SELF_ERROR })
+    )
+  })
+
+  it('bounds authenticated logical owner scopes', () => {
+    const session = createSession({ ownerScope: 'principal-client-instance' })
+    for (let index = 0; index < PTY_CONSUMER_SCOPED_OWNER_LIMIT; index++) {
+      session
+        .admit(ownerHello({ clientInstanceId: `client-${index}` }), auth(`connection-${index}`))
+        .commitPublication()
+    }
+
+    expect(() =>
+      session.admit(
+        ownerHello({ clientInstanceId: 'over-capacity' }),
+        auth('over-capacity-connection')
+      )
+    ).toThrow('scope capacity')
   })
 
   it('rolls back an unpublished owner without consuming authority', () => {
@@ -567,5 +605,12 @@ describe('PtyConsumerSession', () => {
     expect(
       () => new PtyConsumerSession({ serverBuildId: 'build', ownerGraceMs: Number.MAX_VALUE })
     ).toThrow('ownerGraceMs')
+    expect(
+      () =>
+        new PtyConsumerSession({
+          serverBuildId: 'build',
+          ownerScope: 'invalid' as 'global'
+        })
+    ).toThrow('ownerScope')
   })
 })

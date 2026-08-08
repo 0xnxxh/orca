@@ -9,6 +9,7 @@ import type {
   SshPtyOutputSourceObligations,
   SshPtySourceCancellationProofCommit
 } from './ssh-pty-output-source-obligations'
+import { SshPtyClosedGenerationRanges } from './ssh-pty-closed-generation-ranges'
 
 type SshPtyOutputExitDeadlineDependencies = Readonly<{
   admission: SshPtyModelAdmission
@@ -21,8 +22,11 @@ type SshPtyOutputExitDeadlineDependencies = Readonly<{
 
 export class SshPtyOutputExitDeadline {
   private readonly barriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
+  private readonly closedGenerations = new SshPtyClosedGenerationRanges()
   private readonly preparedExits = new Set<string>()
+  private readonly preparingExits = new Map<string, Promise<void>>()
   private readonly preparedExitReleases = new Map<string, () => void>()
+  private readonly releasedBeforePreparation = new Set<string>()
   private readonly barrierMs: number
   private readonly cancellationProofMs: number
 
@@ -100,6 +104,7 @@ export class SshPtyOutputExitDeadline {
   }
 
   closeGeneration(providerGeneration: number, error: Error): void {
+    this.closedGenerations.add(providerGeneration)
     const barriers = this.barriersByGeneration.get(providerGeneration)
     if (barriers) {
       for (const barrier of barriers) {
@@ -117,15 +122,35 @@ export class SshPtyOutputExitDeadline {
     }
   }
 
-  prepareExitOnce(event: SshPtyOutputExitEvent): void {
+  async prepareExitOnce(event: SshPtyOutputExitEvent): Promise<void> {
     const key = this.exitKey(event)
     if (this.preparedExits.has(key)) {
       return
     }
-    const release = this.dependencies.intake.prepareExit(event)
-    this.preparedExits.add(key)
-    if (release) {
-      this.preparedExitReleases.set(key, release)
+    const existing = this.preparingExits.get(key)
+    if (existing) {
+      await existing
+      return
+    }
+    const preparation = Promise.resolve(this.dependencies.intake.prepareExit(event)).then(
+      (release) => {
+        const releasedBeforePreparation = this.releasedBeforePreparation.delete(key)
+        if (this.closedGenerations.has(event.providerGeneration) || releasedBeforePreparation) {
+          release?.()
+          return
+        }
+        this.preparedExits.add(key)
+        if (release) {
+          this.preparedExitReleases.set(key, release)
+        }
+      }
+    )
+    this.preparingExits.set(key, preparation)
+    try {
+      await preparation
+    } finally {
+      this.releasedBeforePreparation.delete(key)
+      this.preparingExits.delete(key)
     }
   }
 
@@ -170,7 +195,7 @@ export class SshPtyOutputExitDeadline {
     }
     this.dependencies.projections.transferPty(event.id, 'ssh-exit-delivery-canceled')
     this.dependencies.sourceObligations.commitPtyCancellationProof(commit)
-    this.prepareExitOnce(event)
+    await this.prepareExitOnce(event)
     if (!this.isActive(event.providerGeneration, barrier)) {
       return
     }
@@ -196,6 +221,9 @@ export class SshPtyOutputExitDeadline {
 
   private releasePreparedExit(event: SshPtyOutputExitEvent): void {
     const key = this.exitKey(event)
+    if (this.preparingExits.has(key) && !this.preparedExits.has(key)) {
+      this.releasedBeforePreparation.add(key)
+    }
     this.preparedExits.delete(key)
     this.releasePreparedExitKey(key)
   }

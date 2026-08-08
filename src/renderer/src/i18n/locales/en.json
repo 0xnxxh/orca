@@ -2936,6 +2936,46 @@
             "retryingBody": "Orca will retry for up to one minute. This terminal will resume if the connection returns.",
             "disconnectedBody": "Automatic retries stopped. Reconnect to resume this terminal session.",
             "reconnectButton": "Reconnect"
+          },
+          "TerminalLegacyRecoveryBanner": {
+            "reason": {
+              "ambiguousPane": "Pane generation is ambiguous",
+              "endpointUnproved": "Endpoint identity could not be proved",
+              "ptyUnproved": "Physical terminal identity could not be proved",
+              "unsupportedPlatform": "Platform proof is unavailable",
+              "workerUnreachable": "Previous terminal worker was unreachable",
+              "workspaceMismatch": "Workspace evidence did not match"
+            },
+            "preservation": {
+              "isolated": "Orca retained the previous endpoint identity, isolated it from current terminal authority, and confirmed shutdown grace is disabled.",
+              "evidenceOnly": "Orca retained the recovery evidence, but could not prove whether the previous terminal process is still running.",
+              "unreachable": "The previous worker was unreachable. Orca retained this recovery record, but could not prove whether the terminal process is still running.",
+              "unsupported": "This platform could not provide the proof required for migration. Orca retained this recovery record, but could not prove whether the terminal process is still running.",
+              "allIsolated": "Orca retained the previous endpoint identities, isolated them from current terminal authority, and confirmed shutdown grace is disabled.",
+              "allEvidenceOnly": "Orca retained recovery records, but could not prove whether the previous terminal processes are still running.",
+              "mixed": "Some previous endpoints are isolated with shutdown grace disabled. For the others, Orca retained recovery records but could not prove whether the processes are still running."
+            },
+            "workspace": {
+              "gitWorktree": "Git worktree",
+              "folder": "Folder workspace",
+              "floating": "Floating terminal"
+            },
+            "timestampUnavailable": "Unavailable",
+            "terminalLabel": "Terminal {{value0}}",
+            "copyDetails": "Copy details",
+            "field": {
+              "workspace": "Workspace",
+              "evidenceDigest": "Evidence digest",
+              "observed": "Observed"
+            },
+            "copySucceeded": "Recovery details copied.",
+            "copyFailed": "Recovery details could not be copied. Try again.",
+            "singularTitle": "Previous terminal needs review",
+            "pluralTitle": "{{value0}} previous terminals need review",
+            "singularBody": "Orca could not safely match this terminal after an upgrade. Orca did not attach to, stop, or replace it.",
+            "pluralBody": "Orca could not safely match these terminals after an upgrade. Orca did not attach to, stop, or replace them.",
+            "hideDetails": "Hide details",
+            "showDetails": "Show details"
           }
         }
       },
@@ -6449,6 +6489,19 @@
           "1de96ec8a6": "Show Orca Mobile Button",
           "682293cadf": "Show the Orca Mobile button at the top of the left sidebar.",
           "d4f2b65f30": "Show the Orca Mobile shortcut in the sidebar."
+        },
+        "MobileIdentityResetSection": {
+          "title": "Reset access identity",
+          "description": "Replace the identity used to authorize paired devices and remote connections.",
+          "helper": "Use this when the current access identity should no longer be trusted. All devices must be paired again.",
+          "pending": "Reset is waiting for every known host and Relay acknowledgement. Keep Orca open or retry after unavailable hosts return.",
+          "confirmTitle": "Reset access identity?",
+          "confirmDescription": "Existing mobile, runtime, and remote connections will be disconnected and must be paired again.",
+          "confirmLabel": "Reset access identity",
+          "action": "Reset access identity",
+          "retry": "Retry reset",
+          "completed": "Access identity reset. Pair devices again to restore access.",
+          "failed": "Access identity reset is still pending. Retry when the required hosts are available."
         },
         "NotificationsPane": {
           "906b4afebf": "Send Test Notification",

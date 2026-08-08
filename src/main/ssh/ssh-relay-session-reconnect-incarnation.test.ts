@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto'
 import type * as NodeCrypto from 'node:crypto'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
+import type { SshPtyConsumerAdmission } from './ssh-pty-consumer-session'
 
 type MockMuxInstance = {
   requestHandlers: Map<string, (params: Record<string, unknown>) => Promise<unknown>>
+  notify: ReturnType<typeof vi.fn>
 }
 
 const { acceptOutputExitMock, muxRequestMock, openConsumerSessionMock, muxInstancesRaw } =
@@ -15,12 +17,22 @@ const { acceptOutputExitMock, muxRequestMock, openConsumerSessionMock, muxInstan
     openConsumerSessionMock: vi.fn(
       async (
         _mux: unknown,
-        options: { clientInstanceId: string; outputFlowControl?: unknown }
-      ) => ({
-        clientInstanceId: options.clientInstanceId,
-        clientGeneration: 1,
-        ownerGeneration: 1,
-        ownerLease: 'test-owner-lease'
+        options: {
+          clientInstanceId: string
+          outputFlowControl?: unknown
+          exactOperations?: unknown
+          terminalAuthorityTopology?: unknown
+        }
+      ): Promise<SshPtyConsumerAdmission> => ({
+        state: {
+          mode: 'negotiated',
+          clientInstanceId: options.clientInstanceId,
+          clientGeneration: 1,
+          ownerGeneration: 1,
+          ownerLease: 'test-owner-lease',
+          terminalAuthorityTopology: { version: 1 }
+        },
+        resumed: false
       })
     ),
     muxInstancesRaw: [] as unknown[]
@@ -100,6 +112,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn(),
@@ -124,6 +137,7 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 
 const {
   registerSshPtyProvider,
+  unregisterSshPtyProvider,
   getSshPtyProvider,
   getPtyIdsForConnection,
   setPtyOwnership,
@@ -133,15 +147,18 @@ const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
 
 const APP_PTY_ID = 'ssh:target-1@@pty-live'
 const INCARNATION_LEAF_ID = '11111111-1111-4111-8111-111111111111'
+let registeredPtyProvider: ReturnType<typeof getSshPtyProvider>
 
 function detachedLease() {
   return {
     targetId: 'target-1',
     ptyId: 'pty-live',
+    incarnationId: 'incarnation-from-lease',
     state: 'detached' as const,
     worktreeId: 'worktree-1',
     tabId: 'tab-1',
-    leafId: INCARNATION_LEAF_ID
+    leafId: INCARNATION_LEAF_ID,
+    paneGeneration: 4
   }
 }
 
@@ -178,6 +195,14 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     vi.mocked(randomUUID).mockReturnValue('00000000-0000-4000-8000-000000000001')
     mockDeploySuccess()
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+    registeredPtyProvider = undefined
+    vi.mocked(registerSshPtyProvider).mockImplementation((_targetId, provider) => {
+      registeredPtyProvider = provider
+    })
+    vi.mocked(unregisterSshPtyProvider).mockImplementation(() => {
+      registeredPtyProvider = undefined
+    })
+    vi.mocked(getSshPtyProvider).mockImplementation(() => registeredPtyProvider)
   })
 
   it('bounds fifty reattaches to eight workers without slow or failed sibling head-of-line delay', async () => {
@@ -271,7 +296,125 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(openConsumerSessionMock).toHaveBeenCalledTimes(2)
     for (const [, options] of openConsumerSessionMock.mock.calls) {
       expect(options.outputFlowControl).toBeDefined()
+      expect(options.exactOperations).toBe(true)
+      expect(options.terminalAuthorityTopology).toBe(true)
     }
+  })
+
+  it('starts topology only for an exact namespace attached by authority resolution', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    const states: { kind: string }[] = []
+    const namespace = { authorityHostId: 'test-authority-host', namespaceId: 'namespace-a' }
+    const detach = session.attachResolvedNamespace(namespace, (state) => states.push(state))
+    muxRequestMock.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+        if (method !== 'terminalAuthority.topologySnapshot') {
+          return []
+        }
+        return {
+          protocolVersion: 1,
+          subscriptionId: params?.subscriptionId,
+          streamIncarnationId: 'stream-a',
+          namespace,
+          writerEpoch: 1,
+          authorityRevision: 0,
+          appliedChangeSequence: 0,
+          panes: [],
+          namespaceRecoveryNotices: { version: 1, revision: 0, notices: [] }
+        }
+      }
+    )
+
+    await session.establish(mockConn)
+
+    expect(states.at(-1)?.kind).toBe('authoritative')
+    expect(muxRequestMock).toHaveBeenCalledWith(
+      'terminalAuthority.topologySnapshot',
+      expect.objectContaining({ namespace }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    detach()
+    expect(muxInstances[0]?.notify).toHaveBeenCalledWith(
+      'terminalAuthority.topologyUnsubscribe',
+      expect.objectContaining({ namespace })
+    )
+  })
+
+  it('keeps attached namespaces on legacy behavior when topology is not granted', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    const states: { kind: string }[] = []
+    session.attachResolvedNamespace(
+      { authorityHostId: 'test-authority-host', namespaceId: 'namespace-a' },
+      (state) => states.push(state)
+    )
+    openConsumerSessionMock.mockResolvedValueOnce({
+      state: {
+        mode: 'negotiated',
+        clientInstanceId: 'client-a',
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'owner-a'
+      },
+      resumed: false
+    })
+
+    await session.establish(mockConn)
+
+    expect(states.at(-1)?.kind).toBe('legacy-fallback')
+    expect(muxRequestMock).not.toHaveBeenCalledWith(
+      'terminalAuthority.topologySnapshot',
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
+  it('keeps a committed namespace read-only when reconnecting to a peer without topology', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    const states: { kind: string; reason?: string }[] = []
+    const namespace = { authorityHostId: 'test-authority-host', namespaceId: 'namespace-a' }
+    session.attachResolvedNamespace(namespace, (state) => states.push(state))
+    muxRequestMock.mockImplementation(
+      async (method: string, params?: Record<string, unknown>): Promise<unknown> =>
+        method === 'terminalAuthority.topologySnapshot'
+          ? {
+              protocolVersion: 1,
+              subscriptionId: params?.subscriptionId,
+              streamIncarnationId: 'stream-a',
+              namespace,
+              writerEpoch: 1,
+              authorityRevision: 0,
+              appliedChangeSequence: 0,
+              panes: [],
+              namespaceRecoveryNotices: { version: 1, revision: 0, notices: [] }
+            }
+          : []
+    )
+    await session.establish(mockConn)
+    mockDeploySuccess()
+    openConsumerSessionMock.mockResolvedValueOnce({
+      state: {
+        mode: 'negotiated',
+        clientInstanceId: 'client-a',
+        clientGeneration: 2,
+        ownerGeneration: 1,
+        ownerLease: 'owner-a'
+      },
+      resumed: false
+    })
+
+    await session.reconnect(mockConn)
+
+    const committedIndex = states.findIndex((state) => state.kind === 'authoritative')
+    expect(states.slice(committedIndex + 1)).toEqual([
+      { kind: 'authority-unavailable', reason: 'disconnected' },
+      { kind: 'authority-unavailable', reason: 'capability-not-granted' }
+    ])
+    expect(states.slice(committedIndex + 1).some((state) => state.kind === 'legacy-fallback')).toBe(
+      false
+    )
   })
 
   it('rolls back a timed-out activation that resolves after its replacement commits', async () => {
@@ -327,7 +470,10 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
   it('keeps the winning reconnect incarnation when a stale health check resolves last', async () => {
     const consumerInstanceId = '00000000-0000-4000-8000-000000000000'
+    const initialAttemptId = '00000000-0000-4000-8000-000000000010'
     const initialIncarnation = '00000000-0000-4000-8000-000000000001'
+    const staleAttemptId = '00000000-0000-4000-8000-000000000011'
+    const winningAttemptId = '00000000-0000-4000-8000-000000000012'
     const winningIncarnation = '00000000-0000-4000-8000-000000000002'
     const staleIncarnation = '00000000-0000-4000-8000-000000000003'
     let resolveStaleHealthCheck!: (value: unknown) => void
@@ -344,7 +490,10 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     })
     vi.mocked(randomUUID)
       .mockReturnValueOnce(consumerInstanceId)
+      .mockReturnValueOnce(initialAttemptId)
       .mockReturnValueOnce(initialIncarnation)
+      .mockReturnValueOnce(staleAttemptId)
+      .mockReturnValueOnce(winningAttemptId)
       .mockReturnValueOnce(winningIncarnation)
       .mockReturnValue(staleIncarnation)
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
@@ -370,11 +519,13 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     await vi.waitFor(() => expect(resolveHomeCalls).toBe(2))
     await session.reconnect(mockConn)
     expect(session.getState()).toBe('ready')
+    const winningMux = session.getMux() as unknown as MockMuxInstance
 
     resolveStaleHealthCheck('/')
     await staleReconnect
 
-    const winningCliHandler = muxInstances[2]?.requestHandlers.get('orca.cli')
+    expect(session.getMux()).toBe(winningMux)
+    const winningCliHandler = winningMux.requestHandlers.get('orca.cli')
     expect(winningCliHandler).toBeDefined()
     await winningCliHandler?.({ argv: ['status'], cwd: '/', env: {} })
 
@@ -382,14 +533,15 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       'target-1',
       winningIncarnation
     )
-    expect(randomUUID).toHaveBeenCalledTimes(3)
+    expect(randomUUID).toHaveBeenCalledTimes(6)
   })
 
   it('restores and persists exact incarnation proof from reconnect attach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const incarnationId = 'incarnation-reconnect'
+    const attachForReconnect = vi.fn().mockResolvedValue({ incarnationId })
     vi.mocked(getSshPtyProvider).mockReturnValue({
-      attachForReconnect: vi.fn().mockResolvedValue({ incarnationId }),
+      attachForReconnect,
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
     vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([detachedLease()] as ReturnType<
@@ -406,6 +558,13 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     await session.establish(mockConn)
 
+    expect(attachForReconnect).toHaveBeenCalledWith('pty-live', {
+      paneKey: `tab-1:${INCARNATION_LEAF_ID}`,
+      tabId: 'tab-1',
+      worktreeId: 'worktree-1',
+      paneGeneration: 4,
+      ptyIncarnationId: 'incarnation-from-lease'
+    })
     expect(restorePtyIncarnation).toHaveBeenCalledWith(APP_PTY_ID, incarnationId)
     expect(runtime.registerPty).toHaveBeenCalledWith(APP_PTY_ID, 'worktree-1', 'target-1', {
       tabId: 'tab-1',

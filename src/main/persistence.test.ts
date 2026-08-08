@@ -59,6 +59,15 @@ const TEST_LEAF_1 = '11111111-1111-4111-8111-111111111111'
 const TEST_LEAF_2 = '22222222-2222-4222-8222-222222222222'
 const TEST_LEAF_LIVE = '33333333-3333-4333-8333-333333333333'
 const TEST_LEAF_EXPIRED = '44444444-4444-4444-8444-444444444444'
+const TEST_SSH_TERMINAL_AUTHORITY_ACCESS = {
+  namespace: { authorityHostId: 'authority-host-1', namespaceId: 'namespace-1' },
+  pane: { paneKey: 'tab:tab1/leaf:leaf1', paneGenerationId: 'generation-1' },
+  binding: {
+    ownerIncarnationId: 'owner-1',
+    physicalPtyId: 'remote-pty',
+    ptyIncarnationId: 'incarnation-1'
+  }
+} as const
 const REORDERED_DEFAULT_WORKSPACE_STATUSES = [
   { id: 'completed', label: 'Completed', color: 'conductor-done', icon: 'conductor-done' },
   { id: 'in-review', label: 'In review', color: 'conductor-review', icon: 'conductor-review' },
@@ -8104,9 +8113,11 @@ describe('Store', () => {
         {
           targetId: 'ssh-1',
           ptyId: 'remote-pty',
+          incarnationId: 'incarnation-1',
           worktreeId: 'wt1',
           tabId: 'tab1',
           leafId: 'pane:1',
+          paneGeneration: 7,
           state: 'detached',
           createdAt: 1,
           updatedAt: 1
@@ -8123,6 +8134,10 @@ describe('Store', () => {
     expect(isTerminalLeafId(leafId)).toBe(true)
     expect(layout.ptyIdsByLeafId).toEqual({ [leafId]: 'remote-pty' })
     expect(store.getSshRemotePtyLeases('ssh-1')[0].leafId).toBe(leafId)
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).toMatchObject({
+      incarnationId: 'incarnation-1',
+      paneGeneration: 7
+    })
   })
 
   it('hydrates legacy numeric agent status cache through the pane identity migration', async () => {
@@ -10703,6 +10718,141 @@ describe('Store', () => {
     expect(store.getSshRemotePtyLeases('ssh-1')).toEqual([])
     expect(session.tabsByWorktree.wt1[0].ptyId).toBeNull()
     expect(session.terminalLayoutsByTabId.tab1.ptyIdsByLeafId).toEqual({})
+  })
+
+  it('persists an exact SSH close request before returning', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'ssh-1',
+      ptyId: 'remote-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached'
+    })
+
+    expect(
+      store.requestSshRemotePtyClose('ssh-1', 'remote-pty', {
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: true,
+        requestedAt: 123
+      })
+    ).toBe('recorded')
+
+    const reloaded = await createStore()
+    expect(reloaded.getSshRemotePtyLeases('ssh-1')).toEqual([
+      expect.objectContaining({
+        ptyId: 'remote-pty',
+        incarnationId: 'incarnation-1',
+        state: 'detached',
+        pendingClose: {
+          incarnationId: 'incarnation-1',
+          terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+          keepHistory: true,
+          requestedAt: 123
+        }
+      })
+    ])
+  })
+
+  it('rolls back an SSH close request when its durability barrier fails', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'ssh-1',
+      ptyId: 'remote-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached'
+    })
+    const flush = vi.spyOn(store, 'flushOrThrow').mockImplementationOnce(() => {
+      throw new Error('disk unavailable')
+    })
+
+    expect(() =>
+      store.requestSshRemotePtyClose('ssh-1', 'remote-pty', {
+        incarnationId: 'incarnation-1',
+        terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+        keepHistory: false,
+        requestedAt: 123
+      })
+    ).toThrow('disk unavailable')
+    flush.mockRestore()
+
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('pendingClose')
+  })
+
+  it('does not replace a pending SSH close with a reused incarnation', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'ssh-1',
+      ptyId: 'remote-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached'
+    })
+    store.requestSshRemotePtyClose('ssh-1', 'remote-pty', {
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      keepHistory: false,
+      requestedAt: 123
+    })
+
+    expect(() =>
+      store.upsertSshRemotePtyLease({
+        targetId: 'ssh-1',
+        ptyId: 'remote-pty',
+        incarnationId: 'incarnation-2',
+        state: 'attached'
+      })
+    ).toThrow('ssh_pty_pending_close_incarnation_conflict')
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).toMatchObject({
+      incarnationId: 'incarnation-1',
+      pendingClose: { incarnationId: 'incarnation-1' }
+    })
+  })
+
+  it('settles only the exact pending SSH close and clears it on terminal states', async () => {
+    const store = await createStore()
+    store.upsertSshRemotePtyLease({
+      targetId: 'ssh-1',
+      ptyId: 'remote-pty',
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      state: 'detached'
+    })
+    store.requestSshRemotePtyClose('ssh-1', 'remote-pty', {
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      keepHistory: false,
+      requestedAt: 123
+    })
+
+    expect(
+      store.clearSshRemotePtyCloseRequest('ssh-1', 'remote-pty', {
+        ...TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+        pane: {
+          ...TEST_SSH_TERMINAL_AUTHORITY_ACCESS.pane,
+          paneGenerationId: 'generation-2'
+        }
+      })
+    ).toBe(false)
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).toHaveProperty('pendingClose')
+
+    expect(
+      store.clearSshRemotePtyCloseRequest('ssh-1', 'remote-pty', TEST_SSH_TERMINAL_AUTHORITY_ACCESS)
+    ).toBe(true)
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('pendingClose')
+
+    store.requestSshRemotePtyClose('ssh-1', 'remote-pty', {
+      incarnationId: 'incarnation-1',
+      terminalSessionAuthorityAccess: TEST_SSH_TERMINAL_AUTHORITY_ACCESS,
+      keepHistory: false,
+      requestedAt: 124
+    })
+
+    store.markSshRemotePtyLease('ssh-1', 'remote-pty', 'terminated')
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).toMatchObject({ state: 'terminated' })
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('pendingClose')
   })
 
   it('does not revive expired leases when marking a target detached', async () => {

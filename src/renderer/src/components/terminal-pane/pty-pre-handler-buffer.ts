@@ -13,8 +13,13 @@ type BufferedPreHandlerPtyState = {
   bytes: number
 }
 
+export type BufferedPreHandlerPtyExit = {
+  code: number
+  incarnationId?: string
+}
+
 const preHandlerPtyData = new Map<string, BufferedPreHandlerPtyState>()
-const preHandlerPtyExit = new Map<string, number>()
+const preHandlerPtyExit = new Map<string, BufferedPreHandlerPtyExit>()
 const consumedPreHandlerPtyExits = new Map<string, true>()
 const discardedPreHandlerPtyStates = new Map<string, ReturnType<typeof setTimeout>>()
 const DISCARDED_PRE_HANDLER_PTY_STATE_TTL_MS = 60_000
@@ -96,7 +101,7 @@ export function drainPreHandlerPtyData(
   }
 }
 
-export function bufferPreHandlerPtyExit(ptyId: string, code: number): void {
+export function bufferPreHandlerPtyExit(ptyId: string, code: number, incarnationId?: string): void {
   if (consumedPreHandlerPtyExits.has(ptyId) || discardedPreHandlerPtyStates.has(ptyId)) {
     return
   }
@@ -106,7 +111,10 @@ export function bufferPreHandlerPtyExit(ptyId: string, code: number): void {
       preHandlerPtyExit.delete(oldestPtyId)
     }
   }
-  preHandlerPtyExit.set(ptyId, code)
+  preHandlerPtyExit.set(ptyId, {
+    code,
+    ...(incarnationId ? { incarnationId } : {})
+  })
 }
 
 // Why: primary handlers and pane-less parked owners have fully handled this
@@ -161,14 +169,21 @@ export function hasPreHandlerPtyExit(ptyId: string): boolean {
   return preHandlerPtyExit.has(ptyId)
 }
 
-export function drainPreHandlerPtyExit(ptyId: string, handler: (code: number) => void): void {
-  const code = preHandlerPtyExit.get(ptyId)
-  if (code === undefined) {
+export function drainPreHandlerPtyExit(
+  ptyId: string,
+  handler: (code: number, incarnationId?: string) => void
+): void {
+  const exit = preHandlerPtyExit.get(ptyId)
+  if (!exit) {
     return
   }
   preHandlerPtyExit.delete(ptyId)
   try {
-    handler(code)
+    if (exit.incarnationId) {
+      handler(exit.code, exit.incarnationId)
+    } else {
+      handler(exit.code)
+    }
   } finally {
     // Why: draining transfers ownership to this handler. Even when it throws,
     // a duplicate exit must not become a new pre-handler event.

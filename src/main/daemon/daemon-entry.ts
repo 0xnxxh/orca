@@ -7,6 +7,7 @@
  * Shuts down cleanly on SIGTERM.
  */
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { startDaemon, type DaemonHandle } from './daemon-main'
 import { createPtySubprocess } from './pty-subprocess'
 import { warmWindowsConptyOnce } from './windows-conpty-warmup'
@@ -21,6 +22,8 @@ import { MacosLoginSessionDeathWatch } from './macos-login-session-death-watch'
 import { readCurrentProcessMacSystemResolverHealth } from '../network/macos-system-resolver-health'
 import { readCurrentDaemonReadyIdentity } from './daemon-ready-identity'
 import { publishDaemonPidFile } from './daemon-spawner'
+import { TerminalSessionAuthorityHostRuntime } from '../session-authority/terminal-session-authority-host-runtime'
+import { readCurrentTerminalAuthorityOwnerProcessIdentity } from '../session-authority/terminal-session-authority-owner-process'
 
 export type ParsedDaemonArgs = {
   socketPath: string
@@ -170,7 +173,7 @@ async function main(): Promise<void> {
   // forever on SIGTERM/SIGINT (it would then survive a real quit, not just updates).
   const SHUTDOWN_TIMEOUT_MS = 5000
 
-  const shutdown = async (reason: string): Promise<void> => {
+  const shutdown = async (reason: string, exitCode = 0): Promise<void> => {
     // SIGTERM and SIGINT can both fire; guard against a double daemon.shutdown().
     if (shuttingDown) {
       return
@@ -193,7 +196,7 @@ async function main(): Promise<void> {
       daemonLog.log('shutdown-error', { message: (err as Error)?.message })
     } finally {
       daemonLog.close()
-      process.exit(0)
+      process.exit(exitCode)
     }
   }
 
@@ -258,6 +261,10 @@ async function main(): Promise<void> {
         })
       : null
 
+  const terminalSessionAuthorityRuntime = await TerminalSessionAuthorityHostRuntime.open({
+    directory: path.join(path.dirname(tokenPath), 'terminal-session-authority'),
+    processIdentity: await readCurrentTerminalAuthorityOwnerProcessIdentity()
+  })
   daemon = await startDaemon({
     socketPath,
     tokenPath,
@@ -281,7 +288,12 @@ async function main(): Promise<void> {
         }
       : {}),
     log: daemonLog,
+    terminalSessionAuthorityRuntime,
     preparePtySpawn: runMacosLoginPreflight,
+    onTerminalSessionAuthorityFailure: (error) => {
+      daemonLog.log('terminal-session-authority-failure', { message: error.message })
+      void shutdown('terminal-session-authority-failure', 1)
+    },
     ...(deathWatch
       ? {
           onPtySessionExit: () => deathWatch.notifyPtyExit(),

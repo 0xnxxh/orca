@@ -126,7 +126,10 @@ export class Session {
   private pendingOutputSeq = 0
   private outputSequence = 0
   private producerPaused = false
+  private legacyProducerPauseActive = false
   private producerPauseFailsafeTimer: ReturnType<typeof setTimeout> | null = null
+  private heldProducerPauseCount = 0
+  private heldProducerPauseTokensByOwner = new Map<string, Set<string>>()
   private readonly _historySeeded: boolean | undefined
   private forceKillSent = false
   private subprocessDisposed = false
@@ -254,6 +257,7 @@ export class Session {
     if (this._state === 'exited' || this._disposed) {
       return
     }
+    this.legacyProducerPauseActive = true
     this.producerPaused = true
     this.subprocess.pause?.()
     if (this.producerPauseFailsafeTimer) {
@@ -261,13 +265,97 @@ export class Session {
     }
     this.producerPauseFailsafeTimer = setTimeout(() => {
       this.producerPauseFailsafeTimer = null
-      this.producerPaused = false
-      this.subprocess.resume?.()
+      this.legacyProducerPauseActive = false
+      if (this.heldProducerPauseCount === 0) {
+        this.producerPaused = false
+        this.subprocess.resume?.()
+      }
     }, PRODUCER_PAUSE_FAILSAFE_MS)
   }
 
   resumeProducer(): void {
-    this.releaseProducerPause({ resume: true })
+    if (this.producerPauseFailsafeTimer) {
+      clearTimeout(this.producerPauseFailsafeTimer)
+      this.producerPauseFailsafeTimer = null
+    }
+    this.legacyProducerPauseActive = false
+    if (this.heldProducerPauseCount === 0 && this.producerPaused) {
+      this.producerPaused = false
+      this.subprocess.resume?.()
+    }
+  }
+
+  supportsExactHeldProducerPause(): boolean {
+    return (
+      this._state !== 'exited' &&
+      !this._disposed &&
+      !this._isTerminating &&
+      typeof this.subprocess.pause === 'function' &&
+      typeof this.subprocess.resume === 'function'
+    )
+  }
+
+  acquireExactHeldProducerPause(ownerId: string, token: string): boolean {
+    if (!this.supportsExactHeldProducerPause()) {
+      return false
+    }
+    const ownerTokens = this.heldProducerPauseTokensByOwner.get(ownerId)
+    if (ownerTokens?.has(token)) {
+      return true
+    }
+    if (this.heldProducerPauseCount === 0) {
+      try {
+        this.subprocess.pause!()
+      } catch {
+        return false
+      }
+      this.producerPaused = true
+    }
+    const tokens = ownerTokens ?? new Set<string>()
+    tokens.add(token)
+    this.heldProducerPauseTokensByOwner.set(ownerId, tokens)
+    this.heldProducerPauseCount += 1
+    return true
+  }
+
+  releaseExactHeldProducerPause(ownerId: string, token: string): boolean {
+    const ownerTokens = this.heldProducerPauseTokensByOwner.get(ownerId)
+    if (!ownerTokens?.has(token)) {
+      return this._state !== 'exited' && !this._disposed
+    }
+    const isLastHeldPause = this.heldProducerPauseCount === 1
+    if (isLastHeldPause && !this.legacyProducerPauseActive) {
+      try {
+        this.subprocess.resume?.()
+      } catch {
+        return false
+      }
+      this.producerPaused = false
+    }
+    ownerTokens.delete(token)
+    this.heldProducerPauseCount -= 1
+    if (ownerTokens.size === 0) {
+      this.heldProducerPauseTokensByOwner.delete(ownerId)
+    }
+    return true
+  }
+
+  releaseExactHeldProducerPauses(ownerId: string): void {
+    const ownerTokens = this.heldProducerPauseTokensByOwner.get(ownerId)
+    if (!ownerTokens) {
+      return
+    }
+    this.heldProducerPauseTokensByOwner.delete(ownerId)
+    this.heldProducerPauseCount = Math.max(0, this.heldProducerPauseCount - ownerTokens.size)
+    if (this.heldProducerPauseCount > 0 || this.legacyProducerPauseActive) {
+      return
+    }
+    this.producerPaused = false
+    try {
+      this.subprocess.resume?.()
+    } catch {
+      /* Connection cleanup cannot retry a torn-down handle. */
+    }
   }
 
   private releaseProducerPause(opts: { resume: boolean }): void {
@@ -275,6 +363,9 @@ export class Session {
       clearTimeout(this.producerPauseFailsafeTimer)
       this.producerPauseFailsafeTimer = null
     }
+    this.legacyProducerPauseActive = false
+    this.heldProducerPauseTokensByOwner.clear()
+    this.heldProducerPauseCount = 0
     if (!this.producerPaused) {
       return
     }
@@ -393,15 +484,15 @@ export class Session {
     if (idx !== -1) {
       this.attachedClients.splice(idx, 1)
     }
-    // Why: with no attached client nobody will send resumePty, so a paused shell would wedge until the failsafe; resume eagerly.
+    // Why: exact leases are connection-owned; detach only retires the legacy failsafe pause.
     if (this.attachedClients.length === 0) {
-      this.releaseProducerPause({ resume: true })
+      this.resumeProducer()
     }
   }
 
   detachAllClients(): void {
     this.attachedClients.length = 0
-    this.releaseProducerPause({ resume: true })
+    this.resumeProducer()
   }
 
   getSnapshot(opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {

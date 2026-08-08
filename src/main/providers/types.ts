@@ -4,11 +4,18 @@
 
 // ─── PTY Provider ───────────────────────────────────────────────────
 
+export {
+  isPtyHeldProducerPauseToken,
+  PTY_HELD_PRODUCER_PAUSE_TOKEN_MAX_LENGTH
+} from './pty-provider-contract'
+
 export type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
   PtyDataEvent,
+  PtyHeldProducerPauseToken,
   PtyProcessInfo,
+  PtyMutationMode,
   PtyProviderBufferSnapshot,
   PtySpawnOptions,
   PtySpawnResult,

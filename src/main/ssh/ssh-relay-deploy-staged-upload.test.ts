@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeSshTerminalAuthorityProcess } from './ssh-terminal-authority-process-fixture'
 
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/mock/app' }
@@ -66,6 +68,24 @@ vi.mock('./ssh-relay-repair-lock', () => ({
   tryAcquireRelayRepairLock: vi.fn().mockResolvedValue('acquired')
 }))
 
+vi.mock('./ssh-terminal-authority-discovery', () => ({
+  sshTerminalAuthorityBootstrapReadCommand: vi.fn().mockReturnValue('echo $HOME'),
+  parseSshTerminalAuthorityBootstrapRead: vi.fn((output: string) => ({
+    rawRemoteHome: output,
+    discovery: { status: 'absent' }
+  }))
+}))
+
+vi.mock('./ssh-terminal-authority-process', () => ({
+  establishSshTerminalAuthority: vi.fn(async (options: { relayDir: string }) =>
+    makeSshTerminalAuthorityProcess({
+      remoteHome: '/home/user',
+      ownerBuildId: '0.1.0+abcdef012345',
+      ownerRelayDir: options.relayDir
+    })
+  )
+}))
+
 vi.mock('./ssh-connection-utils', () => ({
   shellEscape: (s: string) => `'${s}'`,
   createSshOperationAbortError: () =>
@@ -86,15 +106,20 @@ import {
 import type { SshConnection } from './ssh-connection'
 
 function makeMockConnection(): SshConnection {
-  return {
-    canRunConcurrentExecCommands: vi.fn().mockReturnValue(true),
-    exec: vi.fn().mockResolvedValue({
-      on: vi.fn(),
-      stderr: { on: vi.fn() },
+  const exec = vi.fn().mockImplementation(async () => {
+    const channel = new EventEmitter()
+    const result = Object.assign(channel, {
+      stderr: new EventEmitter(),
       stdin: {},
       stdout: { on: vi.fn() },
       close: vi.fn()
-    }),
+    })
+    setTimeout(() => channel.emit('close'), 0)
+    return result
+  })
+  return {
+    canRunConcurrentExecCommands: vi.fn().mockReturnValue(true),
+    exec,
     sftp: vi.fn().mockResolvedValue({
       mkdir: vi.fn((_p: string, cb: (err: Error | null) => void) => cb(null)),
       createWriteStream: vi.fn().mockReturnValue({

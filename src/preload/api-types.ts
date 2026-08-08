@@ -289,6 +289,22 @@ import type {
 import type { PtyModelRestoreNeededEvent } from '../shared/pty-model-restore-marker'
 import type { PtyListedSession } from '../shared/pty-listed-session'
 import type {
+  TerminalAuthorityAppBellClearRequest,
+  TerminalAuthorityAppProjectionDelta,
+  TerminalAuthorityAppProjectionSnapshot,
+  TerminalAuthorityAppProjectionSubscribe
+} from '../shared/terminal-authority-app-projection'
+import type {
+  PtyAdministrativeMutationAccess,
+  PtyMutationAccess,
+  PtyMutationClaimant,
+  PtyMutationIdentity
+} from '../shared/pty-mutation-identity'
+import type {
+  PtyRendererBindingCancel,
+  PtyRendererBindingReady
+} from '../shared/pty-renderer-binding'
+import type {
   PtyRendererDeliveryHealthReply,
   PtyRendererDeliveryStateReport
 } from '../shared/pty-renderer-delivery-health'
@@ -1537,6 +1553,8 @@ export type PreloadApi = {
       // Why: main sync-flushes the (worktreeId,tabId,leafId→ptyId) binding before pty:spawn returns to close a SIGKILL race (INVESTIGATION.md).
       tabId?: string
       leafId?: string
+      tabGeneration?: number
+      mutationClaimant?: PtyMutationClaimant
       // Why: main fires `agent_started` only on spawn success, so launch metadata rides this field (telemetry-plan.md §Agent launch semantics).
       telemetry?: { agent_kind: AgentKind; launch_source: LaunchSource; request_kind: RequestKind }
     }) => Promise<{
@@ -1553,16 +1571,62 @@ export type PreloadApi = {
       coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
       agentResumeUnavailable?: true
+      mutationAccess?: PtyMutationAccess
+      administrativeMutationAccess?: PtyAdministrativeMutationAccess
     }>
-    write: (id: string, data: string) => void
-    writeAccepted: (id: string, data: string) => Promise<boolean>
+    claimMutationAccess: (args: {
+      id: string
+      tabId: string
+      leafId: string
+      paneGeneration: number
+      claimant: PtyMutationClaimant
+    }) => Promise<PtyMutationAccess>
+    rendererBindingReady: (args: PtyRendererBindingReady) => void
+    cancelRendererBinding: (args: PtyRendererBindingCancel) => void
+    captureAdministrativeMutationAccess?: (
+      ids: string[]
+    ) => Promise<{ id: string; access: PtyAdministrativeMutationAccess }[]>
+    write: (id: string, data: string, mutationIdentity?: PtyMutationIdentity) => void
+    writeAccepted: (
+      id: string,
+      data: string,
+      mutationIdentity?: PtyMutationIdentity
+    ) => Promise<boolean>
+    administrativeWriteCurrent?: (id: string, data: string) => void
+    administrativeWriteCurrentAccepted?: (id: string, data: string) => Promise<boolean>
+    administrativeWriteImmediateCurrent?: (id: string, data: string) => void
+    administrativeWriteImmediateCurrentAccepted?: (id: string, data: string) => Promise<boolean>
+    administrativeWrite?: (
+      id: string,
+      data: string,
+      access: PtyAdministrativeMutationAccess
+    ) => void
+    administrativeWriteAccepted?: (
+      id: string,
+      data: string,
+      access: PtyAdministrativeMutationAccess
+    ) => Promise<boolean>
     onWriteUnavailable?: (callback: (payload: { id: string }) => void) => () => void
-    resize: (id: string, cols: number, rows: number) => void
-    claimViewport: (id: string, cols: number, rows: number) => void
+    resize: (id: string, cols: number, rows: number, mutationIdentity?: PtyMutationIdentity) => void
+    claimViewport: (
+      id: string,
+      cols: number,
+      rows: number,
+      mutationIdentity?: PtyMutationIdentity
+    ) => void
     reportGeometry: (id: string, cols: number, rows: number) => void
-    signal: (id: string, signal: string) => void
-    clearBuffer: (id: string) => void
-    kill: (id: string, opts?: { keepHistory?: boolean }) => Promise<void>
+    signal: (id: string, signal: string, mutationIdentity?: PtyMutationIdentity) => void
+    clearBuffer: (id: string, mutationIdentity?: PtyMutationIdentity) => void
+    kill: (
+      id: string,
+      opts?: { keepHistory?: boolean; mutationIdentity?: PtyMutationIdentity }
+    ) => Promise<void>
+    administrativeKillCurrent?: (id: string, opts?: { keepHistory?: boolean }) => Promise<void>
+    administrativeKill?: (
+      id: string,
+      access: PtyAdministrativeMutationAccess,
+      opts?: { keepHistory?: boolean }
+    ) => Promise<void>
     ackColdRestore: (id: string) => void
     ackData: (id: string, charCount: number, processedChars?: number) => void
     onDeliveryResyncRequest: (callback: (payload: { requestId: number }) => void) => () => void
@@ -1675,10 +1739,25 @@ export type PreloadApi = {
     /** Batched derived side-effect facts for PTYs whose bytes transit local
      *  main. */
     onSideEffect: (callback: (batch: TerminalSideEffectBatch) => void) => () => void
+    /** Install before subscribe so deltas racing the snapshot response are retained. */
+    onAuthorityProjection: (
+      callback: (delta: TerminalAuthorityAppProjectionDelta) => void
+    ) => () => void
+    subscribeAuthorityProjection: (
+      request: TerminalAuthorityAppProjectionSubscribe
+    ) => Promise<TerminalAuthorityAppProjectionSnapshot>
+    clearAuthorityProjectionBell: (
+      request: TerminalAuthorityAppBellClearRequest
+    ) => Promise<boolean>
     /** Title-only replay snapshot for (re)attach; attention facts never replay. */
     getSideEffectSnapshot: (id: string) => Promise<TerminalSideEffectBatch | null>
     onExit: (
-      callback: (data: { id: string; code: number; preserveRendererBinding?: boolean }) => void
+      callback: (data: {
+        id: string
+        code: number
+        incarnationId?: string
+        preserveRendererBinding?: boolean
+      }) => void
     ) => () => void
     onSpawned: (callback: (data: { id: string }) => void) => () => void
     onSerializeBufferRequest: (
@@ -1688,7 +1767,9 @@ export type PreloadApi = {
         opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
       }) => void
     ) => () => void
-    onClearBufferRequest: (callback: (data: { ptyId: string }) => void) => () => void
+    onClearBufferRequest: (
+      callback: (data: { ptyId: string; incarnationId?: string; paneGeneration?: number }) => void
+    ) => () => void
     sendSerializedBuffer: (
       requestId: string,
       snapshot: {
@@ -3709,6 +3790,11 @@ export type PreloadApi = {
     revokeDevice: (args: { deviceId: string }) => Promise<{ revoked: boolean }>
     listRuntimeAccessGrants: () => Promise<{ grants: RuntimeAccessGrant[] }>
     revokeRuntimeAccess: (args: { deviceId: string }) => Promise<{ revoked: boolean }>
+    getIdentityResetStatus: () => Promise<{
+      inProgress: boolean
+      record: { transactionId: string; phase: string } | null
+    }>
+    resetIdentity: () => Promise<{ phase: 're-enrollment'; transactionId: string }>
     isWebSocketReady: () => Promise<{ ready: boolean; endpoint: string | null }>
     getRelayStatus: () => Promise<{ status: MobileRelayStatus }>
     onRelayStatusChanged: (callback: (status: MobileRelayStatus) => void) => () => void

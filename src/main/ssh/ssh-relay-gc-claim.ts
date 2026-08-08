@@ -15,6 +15,7 @@ import {
   joinRemotePath,
   type RemoteHostPlatform
 } from './ssh-remote-platform'
+import { relayGcClaimOwnerFileName } from '../../shared/relay-launch-fence-owner'
 
 const DEFAULT_REMOTE_HOST = getRemoteHostPlatform('linux-x64')
 const RELAY_GC_CLAIM_SUFFIX = '.gc-claim'
@@ -71,26 +72,34 @@ export async function tryAcquireRelayGcClaim(
   signal?: AbortSignal
 ): Promise<string | null> {
   const claimPath = relayGcClaimPath(remoteRelayDir)
+  const token = createRelayGcClaimOwnerToken()
+  const ownerFileName = relayGcClaimOwnerFileName(token)
   try {
     const created = await execHostCommand(
       conn,
       host,
-      tryCreateInstallLockCommand(host, claimPath),
+      tryCreateInstallLockCommand(host, claimPath, token, ownerFileName),
       signal
     )
     if (created.trim().endsWith('OK')) {
-      return writeRelayGcClaimOwner(conn, remoteRelayDir, host, signal)
+      return writeRelayGcClaimOwner(conn, remoteRelayDir, token, host, signal)
     }
     const stolen = await execHostCommand(
       conn,
       host,
-      tryStealInstallLockCommand(host, claimPath, RELAY_GC_CLAIM_STALE_SECONDS),
+      tryStealInstallLockCommand(
+        host,
+        claimPath,
+        RELAY_GC_CLAIM_STALE_SECONDS,
+        token,
+        ownerFileName
+      ),
       signal
     )
     if (!stolen.trim().endsWith('OK')) {
       return null
     }
-    return writeRelayGcClaimOwner(conn, remoteRelayDir, host, signal)
+    return writeRelayGcClaimOwner(conn, remoteRelayDir, token, host, signal)
   } catch {
     signal?.throwIfAborted()
     return null
@@ -100,10 +109,10 @@ export async function tryAcquireRelayGcClaim(
 async function writeRelayGcClaimOwner(
   conn: SshConnection,
   remoteRelayDir: string,
+  token: string,
   host: RemoteHostPlatform,
   signal?: AbortSignal
 ): Promise<string | null> {
-  const token = `${process.pid}-${Date.now()}-${randomUUID()}`
   const claimPath = relayGcClaimPath(remoteRelayDir)
   const ownerPath = joinRemotePath(host, claimPath, RELAY_GC_OWNER_NAME)
   const command = isWindowsRemoteHost(host)
@@ -128,7 +137,11 @@ export async function isRelayGcClaimOwned(
   token: string,
   host: RemoteHostPlatform = DEFAULT_REMOTE_HOST
 ): Promise<boolean> {
-  const ownerPath = joinRemotePath(host, relayGcClaimPath(remoteRelayDir), RELAY_GC_OWNER_NAME)
+  const ownerPath = joinRemotePath(
+    host,
+    relayGcClaimPath(remoteRelayDir),
+    relayGcClaimOwnerFileName(token)
+  )
   const command = isWindowsRemoteHost(host)
     ? powerShellCommand(
         `if ((Get-Content -LiteralPath ${powerShellLiteral(ownerPath)} -Raw -ErrorAction SilentlyContinue) -ceq ${powerShellLiteral(token)}) { 'OWNED' } else { 'LOST' }`
@@ -147,19 +160,19 @@ export async function releaseRelayGcClaim(
   host: RemoteHostPlatform = DEFAULT_REMOTE_HOST
 ): Promise<RelayGcClaimReleaseResult> {
   const claimPath = relayGcClaimPath(remoteRelayDir)
-  const ownerPath = joinRemotePath(host, claimPath, RELAY_GC_OWNER_NAME)
+  const ownerPath = joinRemotePath(host, claimPath, relayGcClaimOwnerFileName(token))
   const command = isWindowsRemoteHost(host)
     ? powerShellCommand(
         `$claim = ${powerShellLiteral(claimPath)}; ` +
           `if (-not (Test-Path -LiteralPath $claim)) { 'RELEASED' } ` +
           `elseif ((Get-Content -LiteralPath ${powerShellLiteral(ownerPath)} -Raw -ErrorAction SilentlyContinue) -cne ${powerShellLiteral(token)}) { 'LOST' } ` +
-          'else { try { Remove-Item -LiteralPath $claim -Recurse -Force -ErrorAction Stop } catch {}; ' +
+          `else { try { Remove-Item -LiteralPath ${powerShellLiteral(ownerPath)} -Force -ErrorAction Stop; Remove-Item -LiteralPath $claim -Recurse -Force -ErrorAction Stop } catch {}; ` +
           "if (Test-Path -LiteralPath $claim) { 'UNKNOWN' } else { 'RELEASED' } }"
       )
     : [
         `if ! test -e ${shellEscape(claimPath)}; then echo RELEASED;`,
         `elif test "$(cat ${shellEscape(ownerPath)} 2>/dev/null)" != ${shellEscape(token)}; then echo LOST;`,
-        `else ${removeRemoteTreeCommand(host, claimPath)} 2>/dev/null;`,
+        `else rm ${shellEscape(ownerPath)} 2>/dev/null && ${removeRemoteTreeCommand(host, claimPath)} 2>/dev/null;`,
         `if test -e ${shellEscape(claimPath)}; then echo UNKNOWN; else echo RELEASED; fi; fi`
       ].join(' ')
   const output = await execHostCommand(conn, host, command).catch(() => 'UNKNOWN')
@@ -199,17 +212,24 @@ export async function waitForRelayGcClaimRelease(
       return
     }
     const claimPath = relayGcClaimPath(remoteRelayDir)
+    const token = createRelayGcClaimOwnerToken()
     const recovered = await execHostCommand(
       conn,
       host,
-      tryStealInstallLockCommand(host, claimPath, RELAY_GC_CLAIM_STALE_SECONDS),
+      tryStealInstallLockCommand(
+        host,
+        claimPath,
+        RELAY_GC_CLAIM_STALE_SECONDS,
+        token,
+        relayGcClaimOwnerFileName(token)
+      ),
       signal
     ).catch(() => 'BUSY')
     signal?.throwIfAborted()
     if (recovered.trim().endsWith('OK')) {
-      const token = await writeRelayGcClaimOwner(conn, remoteRelayDir, host, signal)
-      if (token) {
-        const release = await releaseRelayGcClaim(conn, remoteRelayDir, token, host)
+      const writtenToken = await writeRelayGcClaimOwner(conn, remoteRelayDir, token, host, signal)
+      if (writtenToken) {
+        const release = await releaseRelayGcClaim(conn, remoteRelayDir, writtenToken, host)
         if (release === 'released') {
           return
         }
@@ -233,4 +253,8 @@ export async function waitForRelayGcClaimRelease(
       }
     })
   }
+}
+
+function createRelayGcClaimOwnerToken(): string {
+  return `gc-${process.pid}-${Date.now()}-${randomUUID()}`
 }

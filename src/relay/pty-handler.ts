@@ -70,6 +70,59 @@ import {
   type AgentSessionOwnerBinding
 } from '../shared/agent-session-host-authority'
 import { createPtySlaveEchoProbe, readPtySlavePath } from '../shared/pty-slave-line-discipline-echo'
+import {
+  matchesPtyExactOperationIdentity,
+  PTY_EXACT_OPERATION_PROTOCOL_VERSION
+} from '../shared/pty-exact-operation-protocol'
+import {
+  TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION,
+  parseTerminalSessionAuthorityAttachIdentity,
+  type TerminalSessionAuthorityAttachIdentity
+} from '../shared/terminal-session-authority-wire'
+import type {
+  TerminalSessionAuthorityPtyLifecycle,
+  TerminalAuthorityAdoptedPtySpawn,
+  TerminalAuthorityManagedPty,
+  TerminalAuthorityPreparedPtySpawn
+} from '../main/session-authority/terminal-session-authority-pty-lifecycle'
+import { TerminalAuthorityEarlyOutputBuffer } from './terminal-authority-early-output-buffer'
+import type {
+  LegacyPhysicalWorkerAttachRouter,
+  LegacyPhysicalWorkerPtyRouter
+} from './legacy-physical-worker-attach-router'
+import type { LegacyPhysicalWorkerMutation } from './legacy-physical-worker-mutation'
+import type { PtySourceDeliveryIdentity } from '../shared/pty-source-credit-contract'
+import type {
+  TerminalAuthorityOutcome,
+  TerminalSessionAuthorityEffect
+} from '../shared/terminal-session-authority-mutation'
+import type { TerminalAuthorityOutcomeDeliveryAttempt } from './terminal-session-authority-outcome-delivery'
+import type { TerminalSessionAuthorityPtyAccess } from '../shared/terminal-session-authority-pty-access'
+import {
+  parsePtyAuthorityExactOperationRequest,
+  PTY_CLEAR_BUFFER_AUTHORITY_EXACT_METHOD,
+  PTY_DATA_AUTHORITY_EXACT_METHOD,
+  PTY_RESIZE_AUTHORITY_EXACT_METHOD,
+  PTY_SEND_SIGNAL_AUTHORITY_EXACT_METHOD,
+  PTY_SHUTDOWN_AUTHORITY_EXACT_METHOD,
+  type PtyAuthorityExactMutation,
+  type PtyAuthorityExactOperationRequest
+} from '../shared/terminal-authority-exact-operation-protocol'
+import {
+  managedPtyMatchesTerminalAuthorityAccess,
+  terminalAuthorityAccessForManagedPty,
+  type TerminalAuthorityExactPtyAccessResolver
+} from './terminal-authority-exact-pty-access'
+import { RelayHeldProducerPauseRegistry } from './relay-held-producer-pause-registry'
+import type { TerminalAuthorityBindingRetiredEffect } from '../main/session-authority/terminal-session-authority-host-effect-applier'
+import type { TerminalAuthorityPolicyConsumerConnection } from '../main/session-authority/terminal-session-authority-policy-consumers'
+
+const BASE_PTY_HANDLER_CAPABILITIES = Object.freeze({
+  startupIngressVersion: PTY_STARTUP_INGRESS_VERSION,
+  agentSessionClaimVersion: AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION,
+  agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION,
+  exactOperationVersion: PTY_EXACT_OPERATION_PROTOCOL_VERSION
+})
 
 // Why: only Linux compiles node-pty (no prebuilt), so the build-tools remedy is a closable setup gap
 // there and wrong advice anywhere node-pty ships one. The relay only sees an unloadable binding, never
@@ -136,6 +189,8 @@ type ManagedPty = {
   disposed?: boolean
   /** True once external cleanup observers have been notified. */
   exitListenerNotified?: boolean
+  exitFinalizationStarted?: boolean
+  authorityExitCleanupStarted?: boolean
   /** Renderer-supplied paneKey (ORCA_PANE_KEY); captured so exit observers can evict per-pane cache state. */
   paneKey?: string
   tabId?: string
@@ -154,6 +209,7 @@ type ManagedPty = {
   startupIngressIntent?: ReturnType<typeof parsePtyStartupIngressIntent>
   ownerBackend: PtyOwnerBackend
   agentSessionOwners?: AgentSessionOwnerBinding[]
+  authority?: TerminalAuthorityManagedPty
 }
 
 type RelayAgentSessionCreateResult = {
@@ -162,6 +218,7 @@ type RelayAgentSessionCreateResult = {
   replay?: string
   agentSessionEnsure?: unknown
   sourceActivation?: PtySourceReceivingActivation
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
 }
 
 const AGENT_SESSION_CREATE_OPERATION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -229,6 +286,9 @@ function disposeManagedPty(managed: ManagedPty): void {
 const DEFAULT_GRACE_TIME_MS = DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
 export const IMMEDIATE_PTY_EXIT_TIMEOUT_MS = 8_000
 export const MAX_RELAY_PTY_SESSIONS = 50
+export const TERMINAL_AUTHORITY_REQUIRED_ERROR = 'terminal_authority_required'
+export const TERMINAL_SESSION_AUTHORITY_BINDING_UNKNOWN_ERROR =
+  'terminal_session_authority_binding_unknown'
 export const REPLAY_BUFFER_MAX = 100 * 1024
 const PTY_OUTPUT_BATCH_INTERVAL_MS = 8
 const PTY_OUTPUT_DRAIN_CONTINUE_MS = 1
@@ -289,11 +349,13 @@ function resolvePtyShellOverride(shellOverride: string): string {
 type PtyProcessSummary = {
   id: string
   incarnationId: string
+  processId: number
   cwd: string
   title: string
   worktreeId?: string
   terminalHandle?: string
   agentSessionOwners?: AgentSessionOwnerBinding[]
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
 }
 
 type SerializedPtyEntry = {
@@ -354,13 +416,29 @@ export type RelayPtyWorktreeRemovalCoordinator = {
 
 export class PtyHandler {
   private ptys = new Map<string, ManagedPty>()
+  private heldProducerPauses = new RelayHeldProducerPauseRegistry({
+    resolveIncarnation: (id) => {
+      const managed = this.ptys.get(id)
+      return managed && !managed.disposed ? managed.incarnationId : null
+    },
+    pause: (id) => this.pausePtyOutput(id),
+    resume: (id) => this.maybeResumePtyOutput(id)
+  })
   private nextId = 1
   private dispatcher: RelayDispatcher
   private graceTimeMs: number
   private graceTimer: ReturnType<typeof setTimeout> | null = null
   private outputFlushTimer: ReturnType<typeof setTimeout> | null = null
   private pendingOutputByPty = new Map<string, PendingPtyOutput[]>()
-  private pendingExitByPty = new Map<string, { id: string; code: number; incarnationId: string }>()
+  private pendingExitByPty = new Map<
+    string,
+    {
+      id: string
+      code: number
+      incarnationId: string
+      authorityOutcome?: TerminalAuthorityOutcomeDeliveryAttempt
+    }
+  >()
   private pausedOutputPtys = new Set<string>()
   private consumerPausedOutputPtys = new Set<string>()
   private removeLegacyCapacityListener: (() => void) | null = null
@@ -387,16 +465,107 @@ export class PtyHandler {
     string,
     Promise<RelayAgentSessionCreateResult>
   >()
+  private readonly terminalSessionAuthority: TerminalSessionAuthorityPtyLifecycle | null
+  private readonly terminalAuthorityExactPtyAccessResolver: TerminalAuthorityExactPtyAccessResolver | null
+  private terminalAuthorityPolicyConsumerForClient:
+    | ((clientId: number) => TerminalAuthorityPolicyConsumerConnection | null)
+    | null = null
+  private legacyPhysicalWorkerAttachRouter: LegacyPhysicalWorkerAttachRouter | null
+  private legacyPhysicalWorkerPtyRouter: LegacyPhysicalWorkerPtyRouter | null
+  private readonly capabilities: Readonly<Record<string, number>>
+  private readonly onTerminalSessionAuthorityFailure: ((error: Error) => void) | null
 
-  constructor(dispatcher: RelayDispatcher, graceTimeMs = DEFAULT_GRACE_TIME_MS) {
+  constructor(
+    dispatcher: RelayDispatcher,
+    graceTimeMs = DEFAULT_GRACE_TIME_MS,
+    options?: {
+      controlAdapter?: boolean
+      terminalSessionAuthority?: TerminalSessionAuthorityPtyLifecycle
+      terminalAuthorityExactPtyAccessResolver?: TerminalAuthorityExactPtyAccessResolver
+      legacyPhysicalWorkerAttachRouter?: LegacyPhysicalWorkerAttachRouter
+      legacyPhysicalWorkerPtyRouter?: LegacyPhysicalWorkerPtyRouter
+      onTerminalSessionAuthorityFailure?: (error: Error) => void
+    }
+  ) {
     this.dispatcher = dispatcher
     this.graceTimeMs = graceTimeMs
-    this.registerHandlers()
+    this.terminalSessionAuthority = options?.terminalSessionAuthority ?? null
+    this.terminalAuthorityExactPtyAccessResolver =
+      options?.terminalAuthorityExactPtyAccessResolver ?? null
+    this.legacyPhysicalWorkerPtyRouter = options?.legacyPhysicalWorkerPtyRouter ?? null
+    this.legacyPhysicalWorkerAttachRouter =
+      this.legacyPhysicalWorkerPtyRouter ?? options?.legacyPhysicalWorkerAttachRouter ?? null
+    this.onTerminalSessionAuthorityFailure = options?.onTerminalSessionAuthorityFailure ?? null
+    this.capabilities = Object.freeze({
+      ...BASE_PTY_HANDLER_CAPABILITIES,
+      ...(this.terminalSessionAuthority
+        ? { terminalSessionAuthorityVersion: TERMINAL_SESSION_AUTHORITY_SPAWN_VERSION }
+        : {})
+    })
+    if (options?.controlAdapter) {
+      this.registerControlAdapterHandlers()
+    } else {
+      this.registerHandlers()
+    }
     this.removeLegacyCapacityListener =
       this.dispatcher.onLegacyPtyCapacity?.(() => this.handleLegacyCapacity()) ?? null
   }
 
-  setConsumerDeliveryPaused(id: string, paused: boolean): void {
+  private registerControlAdapterHandlers(): void {
+    const reject = async (): Promise<never> => {
+      throw new Error(TERMINAL_AUTHORITY_REQUIRED_ERROR)
+    }
+    for (const method of [
+      'pty.spawn',
+      'pty.attach',
+      'pty.shutdown',
+      'pty.shutdownExact',
+      PTY_SHUTDOWN_AUTHORITY_EXACT_METHOD,
+      'pty.sendSignal',
+      'pty.sendSignalExact',
+      PTY_SEND_SIGNAL_AUTHORITY_EXACT_METHOD,
+      'pty.getCwd',
+      'pty.getInitialCwd',
+      'pty.getSize',
+      'pty.clearBuffer',
+      'pty.clearBufferExact',
+      PTY_CLEAR_BUFFER_AUTHORITY_EXACT_METHOD,
+      'pty.hasChildProcesses',
+      'pty.getForegroundProcess',
+      'pty.inspectProcess',
+      'pty.listProcesses',
+      'pty.getDefaultShell',
+      'pty.serialize',
+      'pty.revive',
+      'pty.getProfiles',
+      'pty.closeStartupQueryAuthority'
+    ]) {
+      this.dispatcher.onRequest(method, reject)
+    }
+    this.dispatcher.onRequest('pty.getCapabilities', async () => ({
+      terminalAuthorityRequired: true
+    }))
+    for (const method of [
+      'pty.data',
+      'pty.dataExact',
+      PTY_DATA_AUTHORITY_EXACT_METHOD,
+      'pty.resize',
+      'pty.resizeExact',
+      PTY_RESIZE_AUTHORITY_EXACT_METHOD,
+      'pty.ackData'
+    ]) {
+      this.dispatcher.onNotification(method, () => {})
+    }
+  }
+
+  setConsumerDeliveryPaused(
+    id: string,
+    paused: boolean,
+    identity?: PtySourceDeliveryIdentity
+  ): void {
+    if (identity && this.legacyPhysicalWorkerPtyRouter?.setDeliveryPaused(identity, paused)) {
+      return
+    }
     if (paused) {
       this.consumerPausedOutputPtys.add(id)
       this.pausePtyOutput(id)
@@ -406,11 +575,52 @@ export class PtyHandler {
     this.maybeResumePtyOutput(id)
   }
 
+  async setConsumerHeldProducerPause(
+    id: string,
+    incarnationId: string,
+    token: string,
+    paused: boolean
+  ): Promise<boolean> {
+    if (this.legacyPhysicalWorkerPtyRouter?.reservesPublicPtyIdentity(id, incarnationId)) {
+      return await this.legacyPhysicalWorkerPtyRouter.setHeldProducerPause(
+        id,
+        incarnationId,
+        token,
+        paused
+      )
+    }
+    return this.heldProducerPauses.set(id, incarnationId, token, paused)
+  }
+
   setSourcePublication(publication: RelayPtySourcePublication): void {
     this.sourcePublication = publication
   }
 
-  handleSourceCreditAvailable(id: string): void {
+  setLegacyPhysicalWorkerPtyRouter(router: LegacyPhysicalWorkerPtyRouter): void {
+    if (
+      (this.legacyPhysicalWorkerPtyRouter && this.legacyPhysicalWorkerPtyRouter !== router) ||
+      (this.legacyPhysicalWorkerAttachRouter && this.legacyPhysicalWorkerAttachRouter !== router)
+    ) {
+      throw new Error('legacy physical worker router is already configured')
+    }
+    this.legacyPhysicalWorkerPtyRouter = router
+    this.legacyPhysicalWorkerAttachRouter = router
+    this.terminalSessionAuthority?.requestHostEffectDelivery()
+  }
+
+  setTerminalAuthorityPolicyConsumerForClient(
+    resolve: (clientId: number) => TerminalAuthorityPolicyConsumerConnection | null
+  ): void {
+    if (this.terminalAuthorityPolicyConsumerForClient) {
+      throw new Error('terminal authority exact-operation admission is already configured')
+    }
+    this.terminalAuthorityPolicyConsumerForClient = resolve
+  }
+
+  handleSourceCreditAvailable(id: string, identity?: PtySourceDeliveryIdentity): void {
+    if (identity && this.legacyPhysicalWorkerPtyRouter?.handleDownstreamCredit(identity)) {
+      return
+    }
     this.sourcePublication?.onCreditAvailable(id)
   }
 
@@ -483,7 +693,7 @@ export class PtyHandler {
   }
 
   async shutdownForWorktreePath(rootPath: string): Promise<void> {
-    const matchingIds = [...this.ptys.values()]
+    const matchingPtys = [...this.ptys.values()]
       .filter((managed) => {
         const ownedPath = managed.worktreeId
           ? splitWorktreeId(managed.worktreeId)?.worktreePath
@@ -493,8 +703,12 @@ export class PtyHandler {
           isPathInsideOrEqual(rootPath, managed.initialCwd)
         )
       })
-      .map((managed) => managed.id)
-    await Promise.all(matchingIds.map((id) => this.shutdown({ id, immediate: true })))
+      .map(({ id, incarnationId }) => ({ id, incarnationId }))
+    await Promise.all(
+      matchingPtys.map(({ id, incarnationId }) =>
+        this.shutdownExact({ id, incarnationId, immediate: true })
+      )
+    )
   }
 
   get configuredGraceTimeMs(): number {
@@ -504,6 +718,55 @@ export class PtyHandler {
   /** Subscribe to PTY-exit events (relay-hook server uses this to evict per-paneKey caches). */
   setExitListener(listener: PtyExitListener | null): void {
     this.exitListener = listener
+  }
+
+  publishTerminalSessionAuthorityOutcome(
+    outcome: TerminalAuthorityOutcome,
+    effect: Extract<TerminalSessionAuthorityEffect, { kind: 'terminal-exited' }>,
+    attempt: TerminalAuthorityOutcomeDeliveryAttempt
+  ): boolean {
+    const managed = this.ptys.get(effect.binding.physicalPtyId)
+    if (managed?.authority && managedAuthorityMatchesOutcome(managed.authority, outcome, effect)) {
+      this.completeManagedPtyExit(managed, effect.code, attempt)
+      return true
+    }
+    return (
+      this.legacyPhysicalWorkerPtyRouter?.publishAuthorityOutcome?.(outcome, effect, attempt) ??
+      false
+    )
+  }
+
+  async ensureTerminalSessionAuthorityBindingRetired(
+    access: TerminalSessionAuthorityPtyAccess,
+    reason: TerminalAuthorityBindingRetiredEffect['reason']
+  ): Promise<void> {
+    if (reason === 'exit') {
+      return
+    }
+    const managed = this.ptys.get(access.binding.physicalPtyId)
+    if (
+      managed &&
+      !managed.disposed &&
+      managed.authority &&
+      managedPtyMatchesTerminalAuthorityAccess(managed.authority, access)
+    ) {
+      await this.shutdown({ id: managed.id, immediate: true })
+      return
+    }
+    const owner = await this.classifyAuthorityExactPty(access)
+    if (owner === 'exited' || owner === 'current-owner-closed') {
+      return
+    }
+    if (owner !== 'imported-owner-closed') {
+      throw new Error('terminal_session_authority_retired_binding_is_not_fenced')
+    }
+    const accepted = await this.legacyPhysicalWorkerPtyRouter?.ensureAuthorityShutdown?.(access, {
+      kind: 'shutdown',
+      immediate: true
+    })
+    if (!accepted) {
+      throw new Error('terminal_session_authority_physical_shutdown_pending')
+    }
   }
 
   /** Notified when the last PTY leaves the pool, so the relay can re-arm its idle grace. */
@@ -546,6 +809,7 @@ export class PtyHandler {
 
   // Why: the sole removal path, so the three exit routes can't drift on who announces an empty pool.
   private removePty(id: string): void {
+    this.heldProducerPauses.clear(id)
     this.ptys.delete(id)
     if (this.ptys.size > 0) {
       return
@@ -675,6 +939,9 @@ export class PtyHandler {
 
   /** Wire onData/onExit listeners for a managed PTY and store it. */
   private wireAndStore(managed: ManagedPty): void {
+    if (this.terminalSessionAuthority && !managed.authority) {
+      throw new Error('terminal_session_authority_binding_required')
+    }
     managed.physicalExit = new PhysicalExitTracker()
     this.ptys.set(managed.id, managed)
     // Why: a second announce covers any store whose admission window has already closed.
@@ -698,49 +965,97 @@ export class PtyHandler {
       onEmission: emitIngressData,
       ...(echoProbe ? { echoProbe } : {})
     })
-    managed.pty.onData((data: string) => {
-      const startup = managed.startupCommand
-      if (startup?.waitForShellReady && startup.scanState && !startup.delivered) {
-        const scanned = scanForShellReady(startup.scanState, data)
-        data = scanned.output
-        if (scanned.matched) {
-          this.scheduleStartupCommandDelivery(managed, STARTUP_COMMAND_WRITE_DELAY_MS)
-        }
+    managed.pty.onData((data: string) => this.acceptManagedPtyData(managed, data))
+    managed.pty.onExit(({ exitCode }: { exitCode: number }) =>
+      this.beginManagedPtyExit(managed, exitCode)
+    )
+  }
+
+  private acceptManagedPtyData(managed: ManagedPty, data: string): void {
+    if (this.ptys.get(managed.id) !== managed || managed.disposed) {
+      return
+    }
+    const startup = managed.startupCommand
+    if (startup?.waitForShellReady && startup.scanState && !startup.delivered) {
+      const scanned = scanForShellReady(startup.scanState, data)
+      data = scanned.output
+      if (scanned.matched) {
+        this.scheduleStartupCommandDelivery(managed, STARTUP_COMMAND_WRITE_DELAY_MS)
       }
-      managed.startupIngress?.accept(data)
+    }
+    managed.startupIngress?.accept(data)
+  }
+
+  private beginManagedPtyExit(managed: ManagedPty, exitCode: number): void {
+    managed.physicalExit?.markExited()
+    if (
+      managed.exitFinalizationStarted ||
+      this.ptys.get(managed.id) !== managed ||
+      managed.disposed
+    ) {
+      return
+    }
+    managed.exitFinalizationStarted = true
+    // Why: neutralize pty.kill synchronously so node-pty's 'close' SIGHUP can't hit a recycled pid on POSIX.
+    if (process.platform !== 'win32') {
+      ;(managed.pty as unknown as { kill: (sig?: string) => void }).kill = () => {}
+    }
+    if (managed.killTimer) {
+      clearTimeout(managed.killTimer)
+      managed.killTimer = undefined
+    }
+    void this.finalizeManagedPtyExit(managed, exitCode).catch((error) => {
+      this.failTerminalSessionAuthority(error)
     })
-    managed.pty.onExit(({ exitCode }: { exitCode: number }) => {
-      managed.physicalExit?.markExited()
-      if (managed.disposed) {
-        return
-      }
-      // Why: neutralize pty.kill synchronously so node-pty's 'close' SIGHUP can't hit a recycled pid on POSIX.
-      if (process.platform !== 'win32') {
-        ;(managed.pty as unknown as { kill: (sig?: string) => void }).kill = () => {}
-      }
-      // Why: clear the SIGKILL fallback timer on clean exit so it doesn't fire later.
-      if (managed.killTimer) {
-        clearTimeout(managed.killTimer)
-        managed.killTimer = undefined
-      }
-      this.clearStartupCommandTimer(managed)
-      this.releaseRelayIngress(managed)
-      this.pausedOutputPtys.delete(managed.id)
-      this.consumerPausedOutputPtys.delete(managed.id)
-      this.flushPtyOutput(managed.id)
-      this.pendingExitByPty.set(managed.id, {
-        id: managed.id,
-        code: exitCode,
-        incarnationId: managed.incarnationId
-      })
-      this.publishPendingExit(managed.id)
-      this.notifyExitListener(managed)
-      this.agentSessionOwners.release(managed.id)
-      this.removePty(managed.id)
-      this.clearPtyInputState(managed.id)
-      // Why: release the ptmx fd on natural exit, else the master fd leaks until GC (docs/fix-pty-fd-leak.md).
-      disposeManagedPty(managed)
+  }
+
+  private async finalizeManagedPtyExit(
+    managed: ManagedPty,
+    exitCode: number | null
+  ): Promise<void> {
+    if (managed.authority) {
+      const recording = this.terminalSessionAuthority!.recordExit(managed.authority, exitCode)
+      void recording.then(
+        () => this.completeManagedPtyExit(managed, exitCode),
+        (error) => this.failTerminalSessionAuthority(error)
+      )
+      return
+    } else if (this.terminalSessionAuthority) {
+      throw new Error('terminal_session_authority_binding_required')
+    }
+    this.completeManagedPtyExit(managed, exitCode)
+  }
+
+  private completeManagedPtyExit(
+    managed: ManagedPty,
+    exitCode: number | null,
+    authorityOutcome?: TerminalAuthorityOutcomeDeliveryAttempt
+  ): void {
+    if (managed.authorityExitCleanupStarted) {
+      return
+    }
+    if (this.ptys.get(managed.id) !== managed || managed.disposed) {
+      return
+    }
+    managed.authorityExitCleanupStarted = true
+    this.clearStartupCommandTimer(managed)
+    this.releaseRelayIngress(managed)
+    this.pausedOutputPtys.delete(managed.id)
+    this.consumerPausedOutputPtys.delete(managed.id)
+    this.flushPtyOutput(managed.id)
+    this.pendingExitByPty.set(managed.id, {
+      id: managed.id,
+      code: exitCode ?? -1,
+      incarnationId: managed.incarnationId,
+      ...(authorityOutcome ? { authorityOutcome } : {})
     })
+    this.publishPendingExit(managed.id)
+    this.notifyExitListener(managed)
+    this.agentSessionOwners.release(managed.id)
+    this.removePty(managed.id)
+    this.clearPtyInputState(managed.id)
+    // Why: release the ptmx fd on natural exit, else the master fd leaks until GC (docs/fix-pty-fd-leak.md).
+    disposeManagedPty(managed)
   }
 
   private releaseRelayIngress(managed: ManagedPty): void {
@@ -774,21 +1089,32 @@ export class PtyHandler {
   private registerHandlers(): void {
     this.dispatcher.onRequest('pty.spawn', (p, context) => this.spawn(p, context))
     this.dispatcher.onRequest('pty.attach', (p, context) => this.attach(p, context))
-    this.dispatcher.onRequest('pty.shutdown', (p) => this.shutdown(p))
-    this.dispatcher.onRequest('pty.sendSignal', (p) => this.sendSignal(p))
+    this.dispatcher.onRequest('pty.shutdown', (p, context) => this.shutdown(p, context))
+    this.dispatcher.onRequest(PTY_SHUTDOWN_AUTHORITY_EXACT_METHOD, (p, context) =>
+      this.requestAuthorityExactMutation(PTY_SHUTDOWN_AUTHORITY_EXACT_METHOD, p, context)
+    )
+    this.dispatcher.onRequest(PTY_SEND_SIGNAL_AUTHORITY_EXACT_METHOD, (p, context) =>
+      this.requestAuthorityExactMutation(PTY_SEND_SIGNAL_AUTHORITY_EXACT_METHOD, p, context)
+    )
+    this.dispatcher.onRequest(PTY_CLEAR_BUFFER_AUTHORITY_EXACT_METHOD, (p, context) =>
+      this.requestAuthorityExactMutation(PTY_CLEAR_BUFFER_AUTHORITY_EXACT_METHOD, p, context)
+    )
+    this.dispatcher.onRequest('pty.sendSignal', (p, context) => this.sendSignal(p, context))
+    this.dispatcher.onRequest('pty.sendSignalExact', (p, context) =>
+      this.sendSignalExact(p, context)
+    )
     this.dispatcher.onRequest('pty.getCwd', (p) => this.getCwd(p))
     this.dispatcher.onRequest('pty.getInitialCwd', (p) => this.getInitialCwd(p))
     this.dispatcher.onRequest('pty.getSize', (p) => this.getSize(p))
-    this.dispatcher.onRequest('pty.clearBuffer', (p) => this.clearBuffer(p))
+    this.dispatcher.onRequest('pty.clearBuffer', (p, context) => this.clearBuffer(p, context))
+    this.dispatcher.onRequest('pty.clearBufferExact', (p, context) =>
+      this.clearBufferExact(p, context)
+    )
     this.dispatcher.onRequest('pty.hasChildProcesses', (p) => this.hasChildProcesses(p))
     this.dispatcher.onRequest('pty.getForegroundProcess', (p) => this.getForegroundProcess(p))
     this.dispatcher.onRequest('pty.inspectProcess', (p) => this.inspectProcess(p))
-    this.dispatcher.onRequest('pty.getCapabilities', async () => ({
-      startupIngressVersion: PTY_STARTUP_INGRESS_VERSION,
-      agentSessionClaimVersion: AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION,
-      agentSessionCreateOperationVersion: AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION
-    }))
-    this.dispatcher.onRequest('pty.listProcesses', () => this.listProcesses())
+    this.dispatcher.onRequest('pty.getCapabilities', async () => this.capabilities)
+    this.dispatcher.onRequest('pty.listProcesses', (_p, context) => this.listProcesses(context))
     this.dispatcher.onRequest('pty.getDefaultShell', async () => resolveDefaultShell())
     this.dispatcher.onRequest('pty.serialize', (p) => this.serialize(p))
     this.dispatcher.onRequest('pty.revive', (p) => this.revive(p))
@@ -797,8 +1123,17 @@ export class PtyHandler {
       this.closeStartupQueryAuthority(p)
     )
 
-    this.dispatcher.onNotification('pty.data', (p) => this.writeData(p))
-    this.dispatcher.onNotification('pty.resize', (p) => this.resize(p))
+    this.dispatcher.onNotification('pty.data', (p, context) => this.writeData(p, context))
+    this.dispatcher.onNotification('pty.dataExact', (p, context) => this.writeExactData(p, context))
+    this.dispatcher.onNotification(PTY_DATA_AUTHORITY_EXACT_METHOD, (p, context) =>
+      this.notifyAuthorityExactMutation(PTY_DATA_AUTHORITY_EXACT_METHOD, p, context)
+    )
+    this.dispatcher.onNotification('pty.resize', (p, context) => this.resize(p, context))
+    this.dispatcher.onNotification('pty.resizeExact', (p, context) => this.resizeExact(p, context))
+    this.dispatcher.onNotification(PTY_RESIZE_AUTHORITY_EXACT_METHOD, (p, context) =>
+      this.notifyAuthorityExactMutation(PTY_RESIZE_AUTHORITY_EXACT_METHOD, p, context)
+    )
+    this.dispatcher.onRequest('pty.shutdownExact', (p, context) => this.shutdownExact(p, context))
     this.dispatcher.onNotification('pty.ackData', (_p) => {
       /* flow control ack -- not yet enforced */
     })
@@ -816,7 +1151,7 @@ export class PtyHandler {
   ): Promise<{ appliedSeq: number }> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       throw new Error(`PTY "${id}" not found`)
     }
     return { appliedSeq: managed.startupIngress?.closeQueryAuthority() ?? 0 }
@@ -1085,13 +1420,22 @@ export class PtyHandler {
     return true
   }
 
-  private publishPendingExit(id: string): void {
+  private publishPendingExit(id: string): boolean {
     if (this.pendingOutputByPty.has(id)) {
-      return
+      return false
     }
     const exit = this.pendingExitByPty.get(id)
     if (!exit) {
-      return
+      return false
+    }
+    const capableClients = exit.authorityOutcome
+      ? this.dispatcher.activeClientIds().filter(exit.authorityOutcome.supportsClient)
+      : []
+    const params = {
+      id: exit.id,
+      code: exit.code,
+      incarnationId: exit.incarnationId,
+      ...(capableClients.length > 0 ? { authorityOutcome: exit.authorityOutcome!.identity } : {})
     }
     if (this.sourcePublication?.accepts(id)) {
       try {
@@ -1099,19 +1443,22 @@ export class PtyHandler {
         // ledger delivery; the settled state alone decides completion.
         if (this.sourcePublication.exitPublicationSettled(id)) {
           this.pendingExitByPty.delete(id)
-          return
+          exit.authorityOutcome?.markOrderedComplete()
+          return true
         }
-        if (!this.sourcePublication.sealAndPublishExit(exit)) {
-          return
+        if (!this.sourcePublication.sealAndPublishExit(params)) {
+          return false
         }
+        exit.authorityOutcome?.markPublished(capableClients)
         if (
           this.sourcePublication.accepts(id) &&
           !this.sourcePublication.exitPublicationSettled(id)
         ) {
-          return
+          return true
         }
         this.pendingExitByPty.delete(id)
-        return
+        exit.authorityOutcome?.markOrderedComplete()
+        return true
       } catch (err) {
         // Why: a source-publication fault must never escape onExit — it reaches
         // uncaughtException and kills the whole relay daemon. Fall back to the legacy exit.
@@ -1126,7 +1473,7 @@ export class PtyHandler {
     // the broadcast below would hand them a second copy.
     let retiredExitPublished: boolean | null | undefined
     try {
-      retiredExitPublished = this.sourcePublication?.publishExitAfterRetire?.(exit)
+      retiredExitPublished = this.sourcePublication?.publishExitAfterRetire?.(params)
     } catch (err) {
       process.stderr.write(
         `[pty-handler] retired pty exit publication failed for ${id}: ${
@@ -1137,12 +1484,15 @@ export class PtyHandler {
     const published =
       retiredExitPublished ??
       (this.dispatcher.tryNotifyPtyExit
-        ? this.dispatcher.tryNotifyPtyExit(exit)
-        : (this.dispatcher.notify('pty.exit', exit), true))
+        ? this.dispatcher.tryNotifyPtyExit(params)
+        : (this.dispatcher.notify('pty.exit', params), true))
     if (!published) {
-      return
+      return false
     }
+    exit.authorityOutcome?.markPublished(capableClients)
+    exit.authorityOutcome?.markOrderedComplete()
     this.pendingExitByPty.delete(id)
+    return true
   }
 
   private pendingProducerBytes(id: string): number {
@@ -1169,6 +1519,7 @@ export class PtyHandler {
     if (
       !this.pausedOutputPtys.has(id) ||
       this.consumerPausedOutputPtys.has(id) ||
+      this.heldProducerPauses.has(id) ||
       this.pendingProducerBytes(id) > PTY_OUTPUT_PRODUCER_LOW_BYTES ||
       this.dispatcher.legacyRetentionBelowLowWater === false
     ) {
@@ -1261,7 +1612,7 @@ export class PtyHandler {
   ): Promise<RelayAgentSessionCreateResult> {
     const operationId = params.agentSessionCreateOperationId
     if (operationId === undefined) {
-      return await this.spawnOnce(params, context)
+      return this.spawnResultForClient(await this.spawnOnce(params, context), context)
     }
     if (
       typeof operationId !== 'string' ||
@@ -1276,7 +1627,10 @@ export class PtyHandler {
       const sourceActivation =
         context && this.sourcePublication?.receivingActivation?.(result.id, context.clientId)
       const { sourceActivation: _staleActivation, ...stableResult } = result
-      return { ...stableResult, ...(sourceActivation ? { sourceActivation } : {}) }
+      return this.spawnResultForClient(
+        { ...stableResult, ...(sourceActivation ? { sourceActivation } : {}) },
+        context
+      )
     }
     if (this.agentSessionCreateOperations.size >= AGENT_SESSION_CREATE_OPERATION_LIMIT) {
       throw new Error('agent_session_operation_capacity')
@@ -1286,7 +1640,7 @@ export class PtyHandler {
     try {
       const result = await operation
       this.expireAgentSessionCreateOperation(operationId, operation)
-      return result
+      return this.spawnResultForClient(result, context)
     } catch (error) {
       const outcomeUnknown =
         typeof error === 'object' &&
@@ -1390,6 +1744,7 @@ export class PtyHandler {
         id: managed.id,
         incarnationId: managed.incarnationId,
         agentSessionEnsure: result,
+        ...this.managedAuthorityAccess(managed),
         ...(sourceActivation ? { sourceActivation } : {}),
         ...(adoptedReplay ? { replay: adoptedReplay } : {})
       }
@@ -1413,7 +1768,9 @@ export class PtyHandler {
   ): Promise<{
     id: string
     incarnationId: string
+    replay?: string
     sourceActivation?: PtySourceReceivingActivation
+    terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
   }> {
     const pty = await this.loadPty()
     if (!pty) {
@@ -1440,7 +1797,11 @@ export class PtyHandler {
     let id: string
     do {
       id = `pty-${this.nextId++}`
-    } while (this.ptys.has(id) || this.pendingReviveIds.has(id))
+    } while (
+      this.ptys.has(id) ||
+      this.pendingReviveIds.has(id) ||
+      this.legacyPhysicalWorkerPtyRouter?.reservesPhysicalPtyId(id)
+    )
 
     // Why: augmenter values override renderer env so remote paths and hook coords win over local userData.
     const paneKey = typeof env?.ORCA_PANE_KEY === 'string' ? env.ORCA_PANE_KEY : undefined
@@ -1483,6 +1844,19 @@ export class PtyHandler {
       throw new Error('client_disconnected')
     }
 
+    let authorityPreparation: TerminalAuthorityPreparedPtySpawn | null = null
+    if (this.terminalSessionAuthority) {
+      const policyConsumer = this.policyConsumerForClient(context)
+      if (!policyConsumer) {
+        throw new Error(TERMINAL_AUTHORITY_REQUIRED_ERROR)
+      }
+      const authority = await this.terminalSessionAuthority.prepareSpawn(params, id, policyConsumer)
+      if (authority.kind === 'adopt') {
+        return this.adoptAuthorityPty(authority, context)
+      }
+      authorityPreparation = authority
+    }
+
     // Why: SSH exec channels give the relay a minimal environment without
     // .zprofile/.bash_profile sourced. Spawning a login shell ensures PATH
     // includes Homebrew, nvm, and user-installed CLIs (claude, codex, gh).
@@ -1500,6 +1874,14 @@ export class PtyHandler {
         env: { ...spawnEnv, ORCA_SHELL_READY_MARKER: '0', ...shellLaunch.env }
       })
     } catch (error) {
+      if (authorityPreparation) {
+        try {
+          await this.terminalSessionAuthority!.cancelSpawn(authorityPreparation)
+        } catch (authorityError) {
+          this.failTerminalSessionAuthority(authorityError)
+          throw authorityError
+        }
+      }
       // Why: Windows loads conpty.node only on first spawn, so handle that late binding failure here.
       if (isMissingNodePtyNativeBinding(error)) {
         this.invalidatePtyModuleAfterBindingFailure()
@@ -1508,6 +1890,35 @@ export class PtyHandler {
       throw error
     }
     onPhysicalSpawnCommitted?.()
+    const incarnationId = randomUUID()
+    let authority: TerminalAuthorityManagedPty | undefined
+    const earlyOutput = new TerminalAuthorityEarlyOutputBuffer()
+    let earlyExitCode: number | null = null
+    let earlyDataListener: { dispose: () => void } | null = null
+    let earlyExitListener: { dispose: () => void } | null = null
+    if (authorityPreparation) {
+      try {
+        term.pause()
+        earlyDataListener = term.onData((data: string) => {
+          earlyOutput.append(data)
+        })
+        earlyExitListener = term.onExit(({ exitCode }: { exitCode: number }) => {
+          earlyExitCode = exitCode
+        })
+        authority = await this.terminalSessionAuthority!.commitSpawn(
+          authorityPreparation,
+          incarnationId
+        )
+        if (earlyOutput.exceededCapacity) {
+          throw new Error('terminal_session_authority_early_output_capacity_exceeded')
+        }
+      } catch (error) {
+        earlyDataListener?.dispose()
+        earlyExitListener?.dispose()
+        this.failTerminalSessionAuthority(error)
+        throw error
+      }
+    }
 
     // Why: capture paneKey so the exit listener can evict per-pane caches without a separate ptyId→paneKey map.
     const tabId = typeof env?.ORCA_TAB_ID === 'string' ? env.ORCA_TAB_ID : undefined
@@ -1515,14 +1926,19 @@ export class PtyHandler {
       paneKey: typeof params.paneKey === 'string' ? params.paneKey : paneKey,
       tabId: typeof params.tabId === 'string' ? params.tabId : tabId
     }
-    const worktreeId = typeof env?.ORCA_WORKTREE_ID === 'string' ? env.ORCA_WORKTREE_ID : undefined
+    const worktreeId =
+      typeof params.worktreeId === 'string'
+        ? params.worktreeId
+        : typeof env?.ORCA_WORKTREE_ID === 'string'
+          ? env.ORCA_WORKTREE_ID
+          : undefined
     const startupIngressIntent =
       params.startupIngressVersion === PTY_STARTUP_INGRESS_VERSION
         ? parsePtyStartupIngressIntent(params.startupIngress)
         : undefined
     const managed: ManagedPty = {
       id,
-      incarnationId: randomUUID(),
+      incarnationId,
       pty: term,
       initialCwd: cwd,
       buffered: new RecentPtyOutputBuffer({
@@ -1541,6 +1957,7 @@ export class PtyHandler {
         shellPath: shell,
         wslDistro: terminalWindowsWslDistro
       }),
+      ...(authority ? { authority } : {}),
       ...(startupIngressIntent ? { startupIngressIntent } : {}),
       ...(terminalHandle ? { terminalHandle } : {}),
       ...(shouldProviderDeliverCommand
@@ -1558,11 +1975,34 @@ export class PtyHandler {
           }
         : {})
     }
-    this.sourcePublication?.activate(id, managed.incarnationId, context)
-    const sourceActivation =
-      context && this.sourcePublication?.receivingActivation?.(id, context.clientId)
-    this.wireAndStore(managed)
-    if (context?.isStale() && !params.agentSessionEnsure && !params.agentSessionCreateOperationId) {
+    let sourceActivation: PtySourceReceivingActivation | undefined
+    try {
+      this.sourcePublication?.activate(id, managed.incarnationId, context)
+      sourceActivation =
+        context && this.sourcePublication?.receivingActivation?.(id, context.clientId)
+      this.wireAndStore(managed)
+      earlyDataListener?.dispose()
+      earlyExitListener?.dispose()
+      for (const data of earlyOutput.values()) {
+        this.acceptManagedPtyData(managed, data)
+      }
+      if (earlyExitCode !== null) {
+        this.beginManagedPtyExit(managed, earlyExitCode)
+      } else if (authority) {
+        term.resume()
+      }
+    } catch (error) {
+      if (authority) {
+        this.failTerminalSessionAuthority(error)
+      }
+      throw error
+    }
+    if (
+      context?.isStale() &&
+      !params.agentSessionEnsure &&
+      !params.agentSessionCreateOperationId &&
+      !managed.authority
+    ) {
       // Why: if the client reconnected while pty.spawn was in flight, the
       // response is discarded and no renderer can own this PTY. Shut it down
       // immediately so it does not linger as an unreachable remote shell.
@@ -1579,8 +2019,91 @@ export class PtyHandler {
     return {
       id,
       incarnationId: managed.incarnationId,
+      ...this.managedAuthorityAccess(managed),
       ...(sourceActivation ? { sourceActivation } : {})
     }
+  }
+
+  private adoptAuthorityPty(
+    adopted: TerminalAuthorityAdoptedPtySpawn,
+    context?: RequestContext
+  ): {
+    id: string
+    incarnationId: string
+    replay?: string
+    sourceActivation?: PtySourceReceivingActivation
+    terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+  } {
+    const managed = this.ptys.get(adopted.binding.physicalPtyId)
+    if (
+      !managed ||
+      managed.disposed ||
+      managed.incarnationId !== adopted.binding.ptyIncarnationId
+    ) {
+      throw new Error('terminal_session_authority_live_binding_missing')
+    }
+    const authority = this.terminalSessionAuthority!.managedFromAdoption(adopted)
+    if (!this.terminalSessionAuthority!.bindingIsReachable(authority)) {
+      throw new Error('terminal_session_authority_binding_unreachable')
+    }
+    managed.authority = authority
+    this.sourcePublication?.activate(managed.id, managed.incarnationId, context)
+    const sourceActivation =
+      context && this.sourcePublication?.receivingActivation?.(managed.id, context.clientId)
+    const replay = managed.buffered.read()
+    return {
+      id: managed.id,
+      incarnationId: managed.incarnationId,
+      ...this.managedAuthorityAccess(managed),
+      ...(replay ? { replay } : {}),
+      ...(sourceActivation ? { sourceActivation } : {})
+    }
+  }
+
+  private spawnResultForClient(
+    result: RelayAgentSessionCreateResult,
+    context?: RequestContext
+  ): RelayAgentSessionCreateResult {
+    if (this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      return result
+    }
+    const { terminalSessionAuthorityAccess: _access, ...legacyResult } = result
+    return legacyResult
+  }
+
+  private managedAuthorityAccess(
+    managed: ManagedPty
+  ): Readonly<{ terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess }> {
+    return managed.authority
+      ? { terminalSessionAuthorityAccess: terminalAuthorityAccessForManagedPty(managed.authority) }
+      : {}
+  }
+
+  private managedAuthorityAccessForClient(
+    managed: ManagedPty,
+    context?: RequestContext
+  ): Readonly<{ terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess }> {
+    return this.clientSupportsTerminalAuthorityExactOperations(context)
+      ? this.managedAuthorityAccess(managed)
+      : {}
+  }
+
+  private clientSupportsTerminalAuthorityExactOperations(context?: RequestContext): boolean {
+    return this.policyConsumerForClient(context) !== null
+  }
+
+  private policyConsumerForClient(
+    context?: RequestContext
+  ): TerminalAuthorityPolicyConsumerConnection | null {
+    return context && this.terminalSessionAuthority && this.terminalAuthorityExactPtyAccessResolver
+      ? (this.terminalAuthorityPolicyConsumerForClient?.(context.clientId) ?? null)
+      : null
+  }
+
+  private failTerminalSessionAuthority(error: unknown): void {
+    const normalized = error instanceof Error ? error : new Error(String(error))
+    this.creationFenced = true
+    this.onTerminalSessionAuthorityFailure?.(normalized)
   }
 
   private async attach(
@@ -1591,24 +2114,108 @@ export class PtyHandler {
     replay?: string
     sourceRecovery?: PtySourceRecoveryResult
     sourceActivation?: PtySourceReceivingActivation
+    terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
   }> {
     const id = params.id as string
-    const managed = this.ptys.get(id)
-    // Why: after dispose, pty.kill is a POSIX no-op; treat disposed as not-found so failures aren't silent.
+    const authorityAttach = this.terminalSessionAuthority
+      ? parseTerminalSessionAuthorityAttachIdentity(params)
+      : null
+    if (this.terminalSessionAuthority && !authorityAttach) {
+      throw new Error('terminal_session_authority_attach_identity_required')
+    }
+    const policyConsumer = this.terminalSessionAuthority
+      ? this.policyConsumerForClient(context)
+      : null
+    if (this.terminalSessionAuthority && !policyConsumer) {
+      throw new Error(TERMINAL_AUTHORITY_REQUIRED_ERROR)
+    }
+    const candidate = this.ptys.get(id)
+    const managed =
+      candidate &&
+      !candidate.disposed &&
+      (!authorityAttach || !this.managedAuthorityAttachMismatches(candidate, authorityAttach))
+        ? candidate
+        : undefined
     if (!managed || managed.disposed) {
+      if (this.terminalSessionAuthority) {
+        let state
+        try {
+          state = await this.terminalSessionAuthority.missingPtyState(params, id)
+        } catch (error) {
+          this.failTerminalSessionAuthority(error)
+          throw error
+        }
+        if (state.kind === 'unknown') {
+          if (candidate && authorityAttach) {
+            throw new Error(`PTY "${id}" not found (authority identity mismatch)`)
+          }
+          throw new Error(TERMINAL_SESSION_AUTHORITY_BINDING_UNKNOWN_ERROR)
+        }
+        if (state.kind === 'unreachable-predecessor') {
+          throw new Error('terminal_session_authority_binding_unreachable')
+        }
+        if (state.kind === 'reachable-record') {
+          if (state.ownerKind === 'current-owner') {
+            const error = new Error('terminal_session_authority_live_binding_missing')
+            this.failTerminalSessionAuthority(error)
+            throw error
+          }
+          if (!this.legacyPhysicalWorkerAttachRouter || !authorityAttach) {
+            throw new Error('terminal_session_authority_binding_unreachable')
+          }
+          if (
+            candidate &&
+            !candidate.disposed &&
+            candidate.incarnationId === state.binding.ptyIncarnationId
+          ) {
+            throw new Error('terminal_session_authority_public_pty_identity_ambiguous')
+          }
+          const sourceRecovery = parseSourceRecoveryRequest(params.sourceRecovery)
+          const routed = await this.legacyPhysicalWorkerAttachRouter.attachReachablePty({
+            pane: state.pane,
+            binding: state.binding,
+            worktreeId: authorityAttach.worktreeId,
+            ...(typeof params.expectedTabId === 'string'
+              ? { expectedTabId: params.expectedTabId }
+              : {}),
+            ...(sourceRecovery ? { sourceRecovery } : {}),
+            suppressReplayNotification: params.suppressReplayNotification === true,
+            ...(context ? { context } : {})
+          })
+          if (!routed) {
+            throw new Error('terminal_session_authority_binding_unreachable')
+          }
+          if (routed.incarnationId !== state.binding.ptyIncarnationId) {
+            const error = new Error('terminal_session_authority_routed_binding_mismatch')
+            this.failTerminalSessionAuthority(error)
+            throw error
+          }
+          return routed
+        }
+      }
+      if (candidate && authorityAttach) {
+        throw new Error(`PTY "${id}" not found (authority identity mismatch)`)
+      }
       throw new Error(`PTY "${id}" not found`)
     }
+    if (managed.authority) {
+      policyConsumer!.assertInstalled(managed.authority.runtime.service.namespace)
+    }
+    if (!this.managedAuthorityIsReachable(managed)) {
+      throw new Error('terminal_session_authority_binding_unreachable')
+    }
+    const authorityAccess = this.managedAuthorityAccessForClient(managed, context)
 
     // Why: verify liveness because shells can exit without node-pty onExit.
     if (managed.pty.pid && !isProcessAlive(managed.pty.pid)) {
       managed.physicalExit?.markExited()
-      this.releaseRelayIngress(managed)
-      this.flushPtyOutput(id)
-      this.notifyExitListener(managed)
-      this.agentSessionOwners.release(managed.id)
-      disposeManagedPty(managed)
-      this.removePty(id)
-      this.clearPtyFlowState(id)
+      managed.exitFinalizationStarted = true
+      try {
+        await this.finalizeManagedPtyExit(managed, null)
+      } catch (error) {
+        this.failTerminalSessionAuthority(error)
+        throw error
+      }
       throw new Error(`PTY "${id}" not found`)
     }
 
@@ -1645,12 +2252,14 @@ export class PtyHandler {
       return {
         incarnationId: managed.incarnationId,
         sourceRecovery: activation,
+        ...authorityAccess,
         ...(sourceActivation ? { sourceActivation } : {})
       }
     }
     if (activation === 'existing' && this.sourcePublication?.accepts(id)) {
       return {
         incarnationId: managed.incarnationId,
+        ...authorityAccess,
         ...(sourceActivation ? { sourceActivation } : {})
       }
     }
@@ -1667,6 +2276,7 @@ export class PtyHandler {
         return {
           incarnationId: managed.incarnationId,
           replay,
+          ...authorityAccess,
           ...(sourceActivation ? { sourceActivation } : {})
         }
       }
@@ -1674,31 +2284,341 @@ export class PtyHandler {
     }
     return {
       incarnationId: managed.incarnationId,
+      ...authorityAccess,
       ...(sourceActivation ? { sourceActivation } : {})
     }
   }
 
-  private writeData(params: Record<string, unknown>): void {
+  private managedAuthorityAttachMismatches(
+    managed: ManagedPty,
+    expected: TerminalSessionAuthorityAttachIdentity
+  ): boolean {
+    const authority = managed.authority
+    return (
+      !authority ||
+      managed.worktreeId !== expected.worktreeId ||
+      authority.pane.paneKey !== expected.paneKey ||
+      authority.pane.paneGenerationId !== `renderer:${expected.paneGeneration}` ||
+      authority.binding.physicalPtyId !== managed.id ||
+      authority.binding.ptyIncarnationId !== managed.incarnationId ||
+      expected.ptyIncarnationId !== managed.incarnationId
+    )
+  }
+
+  private writeData(params: Record<string, unknown>, context?: RequestContext): void {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      return
+    }
     const id = params.id as string
     const data = params.data as string
     if (typeof data !== 'string') {
       return
     }
     const managed = this.ptys.get(id)
-    if (managed && !managed.disposed) {
+    if (managed && !managed.disposed && this.managedAuthorityIsReachable(managed)) {
       this.lastInputAtByPty.set(id, performance.now())
       this.interactiveOutputCharsByPty.set(id, 0)
       managed.pty.write(data)
     }
   }
 
-  private resize(params: Record<string, unknown>): void {
+  private writeExactData(params: Record<string, unknown>, context?: RequestContext): void {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      return
+    }
+    if (this.importedPtyCollidesWithManaged(params)) {
+      return
+    }
+    const managed = this.exactManagedPty(params)
+    if (typeof params.data !== 'string') {
+      return
+    }
+    if (!managed) {
+      void this.dispatchImportedMutation(params.id as string, params.incarnationId as string, {
+        kind: 'data',
+        data: params.data
+      })
+      return
+    }
+    this.lastInputAtByPty.set(managed.id, performance.now())
+    this.interactiveOutputCharsByPty.set(managed.id, 0)
+    managed.pty.write(params.data)
+  }
+
+  private resize(params: Record<string, unknown>, context?: RequestContext): void {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      return
+    }
     const id = params.id as string
     const cols = Math.max(1, Math.min(500, Math.floor(Number(params.cols) || 80)))
     const rows = Math.max(1, Math.min(500, Math.floor(Number(params.rows) || 24)))
     const managed = this.ptys.get(id)
-    if (managed && !managed.disposed) {
+    if (managed && !managed.disposed && this.managedAuthorityIsReachable(managed)) {
       managed.pty.resize(cols, rows)
+    }
+  }
+
+  private resizeExact(params: Record<string, unknown>, context?: RequestContext): void {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      return
+    }
+    if (this.importedPtyCollidesWithManaged(params)) {
+      return
+    }
+    const managed = this.exactManagedPty(params)
+    const cols = Math.max(1, Math.min(500, Math.floor(Number(params.cols) || 80)))
+    const rows = Math.max(1, Math.min(500, Math.floor(Number(params.rows) || 24)))
+    if (!managed) {
+      void this.dispatchImportedMutation(params.id as string, params.incarnationId as string, {
+        kind: 'resize',
+        cols,
+        rows
+      })
+      return
+    }
+    managed.pty.resize(cols, rows)
+  }
+
+  private async shutdownExact(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<{ accepted: boolean }> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_incarnation_mutation_rejected')
+    }
+    if (this.importedPtyCollidesWithManaged(params)) {
+      return { accepted: false }
+    }
+    if (!this.exactManagedPty(params)) {
+      return {
+        accepted: await this.dispatchImportedMutation(
+          params.id as string,
+          params.incarnationId as string,
+          {
+            kind: 'shutdown',
+            immediate: params.immediate === true,
+            keepHistory: params.keepHistory === true
+          }
+        )
+      }
+    }
+    await this.shutdown(params)
+    return { accepted: true }
+  }
+
+  private notifyAuthorityExactMutation(
+    method: typeof PTY_DATA_AUTHORITY_EXACT_METHOD | typeof PTY_RESIZE_AUTHORITY_EXACT_METHOD,
+    params: Record<string, unknown>,
+    context: RequestContext
+  ): void {
+    const policyConsumer = this.policyConsumerForClient(context)
+    if (!policyConsumer) {
+      return
+    }
+    let request: PtyAuthorityExactOperationRequest
+    try {
+      request = parsePtyAuthorityExactOperationRequest(method, params)
+    } catch {
+      return
+    }
+    void this.dispatchAuthorityExactMutation(request, policyConsumer).catch((error) => {
+      this.failTerminalSessionAuthority(error)
+    })
+  }
+
+  private async requestAuthorityExactMutation(
+    method:
+      | typeof PTY_SHUTDOWN_AUTHORITY_EXACT_METHOD
+      | typeof PTY_SEND_SIGNAL_AUTHORITY_EXACT_METHOD
+      | typeof PTY_CLEAR_BUFFER_AUTHORITY_EXACT_METHOD,
+    params: Record<string, unknown>,
+    context: RequestContext
+  ): Promise<{ accepted: boolean }> {
+    const policyConsumer = this.policyConsumerForClient(context)
+    if (!policyConsumer) {
+      throw new Error('terminal_authority_exact_operations_not_granted')
+    }
+    const request = parsePtyAuthorityExactOperationRequest(method, params)
+    return { accepted: await this.dispatchAuthorityExactMutation(request, policyConsumer) }
+  }
+
+  private async dispatchAuthorityExactMutation(
+    request: PtyAuthorityExactOperationRequest,
+    policyConsumer: TerminalAuthorityPolicyConsumerConnection
+  ): Promise<boolean> {
+    this.assertAllowedAuthorityMutation(request.mutation)
+    policyConsumer.assertInstalled(request.terminalSessionAuthorityAccess.namespace)
+    const managed = this.ptys.get(request.id)
+    if (managed && !managed.disposed) {
+      if (
+        !managed.authority ||
+        !managedPtyMatchesTerminalAuthorityAccess(
+          managed.authority,
+          request.terminalSessionAuthorityAccess
+        )
+      ) {
+        return false
+      }
+      if (this.managedAuthorityIsReachable(managed)) {
+        return await this.applyAuthorityExactMutation(managed, request.mutation, policyConsumer)
+      }
+      if (request.mutation.kind !== 'shutdown') {
+        return false
+      }
+      const owner = await this.classifyAuthorityExactPty(request.terminalSessionAuthorityAccess)
+      if (owner === 'exited') {
+        return true
+      }
+      if (owner === 'current-owner-closed' || owner === 'imported-owner-closed') {
+        return await this.closeAndEnsureManagedShutdown(managed, request.mutation, policyConsumer)
+      }
+      return false
+    }
+    const owner = await this.classifyAuthorityExactPty(request.terminalSessionAuthorityAccess)
+    if (owner === 'exited') {
+      return request.mutation.kind === 'shutdown'
+    }
+    if (owner === 'current-owner-closed') {
+      if (request.mutation.kind !== 'shutdown') {
+        return false
+      }
+      await this.terminalSessionAuthority!.closeExactPtyAccess(
+        request.terminalSessionAuthorityAccess,
+        policyConsumer
+      )
+      return true
+    }
+    if (owner === 'current-owner') {
+      const error = new Error('terminal_session_authority_live_binding_missing')
+      this.failTerminalSessionAuthority(error)
+      throw error
+    }
+    if (
+      (owner !== 'imported-owner' && owner !== 'imported-owner-closed') ||
+      !this.legacyPhysicalWorkerPtyRouter
+    ) {
+      return false
+    }
+    if (request.mutation.kind === 'shutdown') {
+      return await this.legacyPhysicalWorkerPtyRouter.dispatchAuthorityShutdown(
+        request.terminalSessionAuthorityAccess,
+        request.mutation,
+        () =>
+          this.terminalSessionAuthority!.closeExactPtyAccess(
+            request.terminalSessionAuthorityAccess,
+            policyConsumer
+          )
+      )
+    }
+    if (owner !== 'imported-owner') {
+      return false
+    }
+    try {
+      return await this.legacyPhysicalWorkerPtyRouter.dispatchAuthorityMutation(
+        request.terminalSessionAuthorityAccess,
+        request.mutation
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private async classifyAuthorityExactPty(
+    access: TerminalSessionAuthorityPtyAccess
+  ): Promise<Awaited<ReturnType<TerminalAuthorityExactPtyAccessResolver['classify']>>> {
+    try {
+      return await this.terminalAuthorityExactPtyAccessResolver!.classify(access)
+    } catch (error) {
+      this.failTerminalSessionAuthority(error)
+      throw error
+    }
+  }
+
+  private async applyAuthorityExactMutation(
+    managed: ManagedPty,
+    mutation: PtyAuthorityExactMutation,
+    policyConsumer: TerminalAuthorityPolicyConsumerConnection
+  ): Promise<boolean> {
+    if (mutation.kind === 'data') {
+      this.lastInputAtByPty.set(managed.id, performance.now())
+      this.interactiveOutputCharsByPty.set(managed.id, 0)
+      managed.pty.write(mutation.data)
+      return true
+    }
+    if (mutation.kind === 'resize') {
+      const cols = Math.max(1, Math.min(500, Math.floor(mutation.cols) || 80))
+      const rows = Math.max(1, Math.min(500, Math.floor(mutation.rows) || 24))
+      managed.pty.resize(cols, rows)
+      return true
+    }
+    if (mutation.kind === 'signal') {
+      managed.pty.kill(mutation.signal)
+      return true
+    }
+    if (mutation.kind === 'clear') {
+      managed.startupIngress?.snapshotBarrier()
+      managed.pty.clear()
+      return true
+    }
+    return await this.closeAndEnsureManagedShutdown(managed, mutation, policyConsumer)
+  }
+
+  private async closeAndEnsureManagedShutdown(
+    managed: ManagedPty,
+    mutation: Extract<PtyAuthorityExactMutation, { kind: 'shutdown' }>,
+    policyConsumer: TerminalAuthorityPolicyConsumerConnection
+  ): Promise<boolean> {
+    await this.terminalSessionAuthority!.closePty(managed.authority!, policyConsumer)
+    try {
+      await this.shutdown({ id: managed.id, ...mutation })
+    } catch (error) {
+      process.stderr.write(
+        `[pty-handler] exact PTY shutdown remains pending for ${managed.id}: ${error instanceof Error ? error.message : String(error)}\n`
+      )
+    }
+    return true
+  }
+
+  private assertAllowedAuthorityMutation(mutation: PtyAuthorityExactMutation): void {
+    if (mutation.kind === 'signal' && !ALLOWED_SIGNALS.has(mutation.signal)) {
+      throw new Error(`Signal not allowed: ${mutation.signal}`)
+    }
+  }
+
+  private exactManagedPty(params: Record<string, unknown>): ManagedPty | null {
+    const managed = this.ptys.get(params.id as string)
+    return managed &&
+      !managed.disposed &&
+      this.managedAuthorityIsReachable(managed) &&
+      matchesPtyExactOperationIdentity(managed.incarnationId, params.incarnationId)
+      ? managed
+      : null
+  }
+
+  private importedPtyCollidesWithManaged(params: Record<string, unknown>): boolean {
+    const id = typeof params.id === 'string' ? params.id : ''
+    const incarnationId = typeof params.incarnationId === 'string' ? params.incarnationId : ''
+    const managed = this.ptys.get(id)
+    return Boolean(
+      managed &&
+      !managed.disposed &&
+      managed.incarnationId === incarnationId &&
+      this.legacyPhysicalWorkerPtyRouter?.reservesPublicPtyIdentity(id, incarnationId)
+    )
+  }
+
+  private async dispatchImportedMutation(
+    id: string,
+    incarnationId: string,
+    mutation: LegacyPhysicalWorkerMutation
+  ): Promise<boolean> {
+    if (!id || !incarnationId || !this.legacyPhysicalWorkerPtyRouter) {
+      return false
+    }
+    try {
+      return await this.legacyPhysicalWorkerPtyRouter.dispatchMutation(id, incarnationId, mutation)
+    } catch {
+      return false
     }
   }
 
@@ -1706,13 +2626,16 @@ export class PtyHandler {
     params: Record<string, unknown>
   ): Promise<{ cols: number; rows: number } | null> {
     const managed = this.ptys.get(params.id as string)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       return null
     }
     return { cols: managed.pty.cols, rows: managed.pty.rows }
   }
 
-  private async shutdown(params: Record<string, unknown>): Promise<void> {
+  private async shutdown(params: Record<string, unknown>, context?: RequestContext): Promise<void> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_legacy_mutation_rejected')
+    }
     const id = params.id as string
     const immediate = params.immediate as boolean
     const managed = this.ptys.get(id)
@@ -1732,7 +2655,13 @@ export class PtyHandler {
     }
   }
 
-  private async sendSignal(params: Record<string, unknown>): Promise<void> {
+  private async sendSignal(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<void> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_legacy_mutation_rejected')
+    }
     const id = params.id as string
     const signal = params.signal as string
     if (!ALLOWED_SIGNALS.has(signal)) {
@@ -1740,10 +2669,38 @@ export class PtyHandler {
     }
     const managed = this.ptys.get(id)
     // Why: dispose neutralizes pty.kill on POSIX; treat disposed as not-found so signals don't silently no-op.
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       throw new Error(`PTY "${id}" not found`)
     }
     managed.pty.kill(signal)
+  }
+
+  private async sendSignalExact(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<{ accepted: boolean }> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_incarnation_mutation_rejected')
+    }
+    const signal = params.signal as string
+    if (!ALLOWED_SIGNALS.has(signal)) {
+      throw new Error(`Signal not allowed: ${signal}`)
+    }
+    if (this.importedPtyCollidesWithManaged(params)) {
+      return { accepted: false }
+    }
+    const managed = this.exactManagedPty(params)
+    if (!managed) {
+      return {
+        accepted: await this.dispatchImportedMutation(
+          params.id as string,
+          params.incarnationId as string,
+          { kind: 'signal', signal }
+        )
+      }
+    }
+    managed.pty.kill(signal)
+    return { accepted: true }
   }
 
   private waitForPhysicalExit(managed: ManagedPty, timeoutMs: number): Promise<void> {
@@ -1830,7 +2787,7 @@ export class PtyHandler {
   private async getCwd(params: Record<string, unknown>): Promise<string> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       throw new Error(`PTY "${id}" not found`)
     }
     return resolveProcessCwd(managed.pty.pid, managed.initialCwd)
@@ -1839,25 +2796,56 @@ export class PtyHandler {
   private async getInitialCwd(params: Record<string, unknown>): Promise<string> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       throw new Error(`PTY "${id}" not found`)
     }
     return managed.initialCwd
   }
 
-  private async clearBuffer(params: Record<string, unknown>): Promise<void> {
+  private async clearBuffer(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<void> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_legacy_mutation_rejected')
+    }
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (managed && !managed.disposed) {
+    if (managed && !managed.disposed && this.managedAuthorityIsReachable(managed)) {
       managed.startupIngress?.snapshotBarrier()
       managed.pty.clear()
     }
   }
 
+  private async clearBufferExact(
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<{ accepted: boolean }> {
+    if (context && this.clientSupportsTerminalAuthorityExactOperations(context)) {
+      throw new Error('terminal_authority_incarnation_mutation_rejected')
+    }
+    if (this.importedPtyCollidesWithManaged(params)) {
+      return { accepted: false }
+    }
+    const managed = this.exactManagedPty(params)
+    if (!managed) {
+      return {
+        accepted: await this.dispatchImportedMutation(
+          params.id as string,
+          params.incarnationId as string,
+          { kind: 'clear' }
+        )
+      }
+    }
+    managed.startupIngress?.snapshotBarrier()
+    managed.pty.clear()
+    return { accepted: true }
+  }
+
   private async hasChildProcesses(params: Record<string, unknown>): Promise<boolean> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       return false
     }
     return await processHasChildren(managed.pty.pid)
@@ -1866,7 +2854,7 @@ export class PtyHandler {
   private async getForegroundProcess(params: Record<string, unknown>): Promise<string | null> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       return null
     }
     return await getForegroundProcessName(managed.pty.pid, managed.pty.process || null)
@@ -1878,7 +2866,7 @@ export class PtyHandler {
   }> {
     const id = params.id as string
     const managed = this.ptys.get(id)
-    if (!managed || managed.disposed) {
+    if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
       throw new Error('terminal_gone')
     }
     const foregroundProcess = await getForegroundProcessName(
@@ -1891,16 +2879,21 @@ export class PtyHandler {
     }
   }
 
-  private async listProcesses(): Promise<PtyProcessSummary[]> {
+  private async listProcesses(context?: RequestContext): Promise<PtyProcessSummary[]> {
     const results: PtyProcessSummary[] = []
     for (const [id, managed] of this.ptys) {
+      if (!this.managedAuthorityIsReachable(managed)) {
+        continue
+      }
       const title =
         (await getForegroundProcessName(managed.pty.pid, managed.pty.process || null)) || 'shell'
       results.push({
         id,
         incarnationId: managed.incarnationId,
+        processId: managed.pty.pid,
         cwd: managed.initialCwd,
         title,
+        ...this.managedAuthorityAccessForClient(managed, context),
         ...(managed.worktreeId ? { worktreeId: managed.worktreeId } : {}),
         ...(managed.terminalHandle ? { terminalHandle: managed.terminalHandle } : {}),
         ...(this.agentSessionOwners.listForPty(id).length
@@ -1911,12 +2904,24 @@ export class PtyHandler {
     return results
   }
 
+  private managedAuthorityIsReachable(managed: ManagedPty): boolean {
+    if (!managed.authority) {
+      return this.terminalSessionAuthority === null
+    }
+    try {
+      return this.terminalSessionAuthority?.bindingIsReachable(managed.authority) === true
+    } catch (error) {
+      this.failTerminalSessionAuthority(error)
+      return false
+    }
+  }
+
   private async serialize(params: Record<string, unknown>): Promise<string> {
     const ids = params.ids as string[]
     const entries: SerializedPtyEntry[] = []
     for (const id of ids) {
       const managed = this.ptys.get(id)
-      if (!managed) {
+      if (!managed || managed.disposed || !this.managedAuthorityIsReachable(managed)) {
         continue
       }
       const { pid, cols, rows } = managed.pty
@@ -1940,6 +2945,9 @@ export class PtyHandler {
   }
 
   private async revive(params: Record<string, unknown>): Promise<void> {
+    if (this.terminalSessionAuthority) {
+      throw new Error('terminal_session_authority_revival_unsupported')
+    }
     const state = params.state as string
     const entries = JSON.parse(state) as SerializedPtyEntry[]
 
@@ -2097,8 +3105,10 @@ export class PtyHandler {
     this.pendingExitByPty.clear()
     this.pausedOutputPtys.clear()
     this.consumerPausedOutputPtys.clear()
+    this.heldProducerPauses.clearAll()
     this.lastInputAtByPty.clear()
     this.interactiveOutputCharsByPty.clear()
+    this.legacyPhysicalWorkerPtyRouter?.dispose()
     this.sourcePublication?.dispose()
     this.sourcePublication = null
     const results = await Promise.allSettled(
@@ -2195,4 +3205,21 @@ export class PtyHandler {
   get graceTimerActive(): boolean {
     return this.graceTimer !== null
   }
+}
+
+function managedAuthorityMatchesOutcome(
+  managed: TerminalAuthorityManagedPty,
+  outcome: TerminalAuthorityOutcome,
+  effect: Extract<TerminalSessionAuthorityEffect, { kind: 'terminal-exited' }>
+): boolean {
+  const namespace = managed.runtime.service.namespace
+  return (
+    namespace.authorityHostId === outcome.result.namespace.authorityHostId &&
+    namespace.namespaceId === outcome.result.namespace.namespaceId &&
+    managed.pane.paneKey === outcome.result.pane.paneKey &&
+    managed.pane.paneGenerationId === outcome.result.pane.paneGenerationId &&
+    managed.binding.ownerIncarnationId === effect.binding.ownerIncarnationId &&
+    managed.binding.physicalPtyId === effect.binding.physicalPtyId &&
+    managed.binding.ptyIncarnationId === effect.binding.ptyIncarnationId
+  )
 }

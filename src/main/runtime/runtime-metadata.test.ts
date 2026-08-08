@@ -11,6 +11,7 @@ import {
 } from '../../shared/runtime-environment-store'
 import { DeviceRegistry } from './device-registry'
 import { loadOrCreateE2EEKeypair } from './e2ee-keypair'
+import { E2EE_IDENTITY_MARKER_FILENAME } from './mobile-pairing-files'
 import {
   clearRuntimeMetadata,
   clearRuntimeMetadataIfOwned,
@@ -176,8 +177,8 @@ describe('runtime metadata', () => {
       const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-secure-files-'))
       tempDirs.push(userDataPath)
 
-      new DeviceRegistry(userDataPath).addDevice('phone')
       loadOrCreateE2EEKeypair(userDataPath)
+      new DeviceRegistry(userDataPath).addDevice('phone')
       addEnvironmentFromPairingCode(userDataPath, {
         name: 'desk',
         pairingCode: encodePairingOffer({
@@ -191,6 +192,7 @@ describe('runtime metadata', () => {
       for (const path of [
         join(userDataPath, 'orca-devices.json'),
         join(userDataPath, 'orca-e2ee-keypair.json'),
+        join(userDataPath, E2EE_IDENTITY_MARKER_FILENAME),
         getEnvironmentStorePath(userDataPath)
       ]) {
         expect(statSync(path).mode & 0o777).toBe(0o600)
@@ -216,9 +218,11 @@ describe('runtime metadata', () => {
         name: 'desk',
         pairingCode
       })
+      const identity = loadOrCreateE2EEKeypair(userDataPath)
 
       const devicesPath = join(userDataPath, 'orca-devices.json')
       const keypairPath = join(userDataPath, 'orca-e2ee-keypair.json')
+      const markerPath = join(userDataPath, E2EE_IDENTITY_MARKER_FILENAME)
       const environmentsPath = getEnvironmentStorePath(userDataPath)
       writeFileSync(
         devicesPath,
@@ -232,11 +236,7 @@ describe('runtime metadata', () => {
           }
         ])
       )
-      writeFileSync(
-        keypairPath,
-        JSON.stringify({ v: 1, publicKeyB64: keyMaterial, secretKeyB64: keyMaterial })
-      )
-      for (const path of [devicesPath, keypairPath, environmentsPath]) {
+      for (const path of [devicesPath, keypairPath, markerPath, environmentsPath]) {
         chmodSync(path, 0o644)
       }
       chmodSync(userDataPath, 0o755)
@@ -245,25 +245,23 @@ describe('runtime metadata', () => {
         token: 'token',
         scope: 'mobile'
       })
-      expect(loadOrCreateE2EEKeypair(userDataPath).publicKeyB64).toBe(keyMaterial)
+      expect(loadOrCreateE2EEKeypair(userDataPath).publicKeyB64).toBe(identity.publicKeyB64)
       expect(listEnvironments(userDataPath)[0]?.id).toBe(environment.id)
 
-      for (const path of [devicesPath, keypairPath, environmentsPath]) {
+      for (const path of [devicesPath, keypairPath, markerPath, environmentsPath]) {
         expect(statSync(path).mode & 0o777).toBe(0o600)
       }
       expect(statSync(userDataPath).mode & 0o777).toBe(0o700)
     }
   )
 
-  it('replaces oversized E2EE keypair files instead of reading them as metadata', () => {
+  it('fails closed on oversized E2EE keypair files instead of replacing them', () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-large-keypair-'))
     tempDirs.push(userDataPath)
     const keypairPath = join(userDataPath, 'orca-e2ee-keypair.json')
     writeFileSync(keypairPath, 'x'.repeat(9 * 1024))
 
-    const keypair = loadOrCreateE2EEKeypair(userDataPath)
-
-    expect(keypair.publicKey).toHaveLength(32)
-    expect(statSync(keypairPath).size).toBeLessThan(1024)
+    expect(() => loadOrCreateE2EEKeypair(userDataPath)).toThrow('too large')
+    expect(statSync(keypairPath).size).toBe(9 * 1024)
   })
 })

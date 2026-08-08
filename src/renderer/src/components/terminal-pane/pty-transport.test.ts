@@ -14,13 +14,19 @@ import {
   TERMINAL_INPUT_MAX_BYTES
 } from '../../../../shared/terminal-input'
 import { CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS } from '../../../../shared/clipboard-text'
+import type { PtyMutationAccess } from '../../../../shared/pty-mutation-identity'
 
 describe('createIpcPtyTransport', () => {
   const originalWindow = (globalThis as { window?: typeof window }).window
   let onData: ((payload: { id: string; data: string }) => void) | null = null
   let onReplay: ((payload: { id: string; data: string }) => void) | null = null
   let onExit:
-    | ((payload: { id: string; code: number; preserveRendererBinding?: boolean }) => void)
+    | ((payload: {
+        id: string
+        code: number
+        incarnationId?: string
+        preserveRendererBinding?: boolean
+      }) => void)
     | null = null
   let onWriteUnavailable: ((payload: { id: string }) => void) | null = null
 
@@ -41,7 +47,10 @@ describe('createIpcPtyTransport', () => {
         ...originalWindow?.api,
         pty: {
           ...originalWindow?.api?.pty,
-          spawn: vi.fn().mockResolvedValue({ id: 'pty-1' }),
+          spawn: vi.fn().mockResolvedValue({ id: 'pty-1', mutationAccess: { mode: 'legacy' } }),
+          claimMutationAccess: vi.fn().mockResolvedValue({ mode: 'legacy' }),
+          rendererBindingReady: vi.fn(),
+          cancelRendererBinding: vi.fn(),
           write: vi.fn(),
           writeAccepted: vi.fn().mockResolvedValue(true),
           onWriteUnavailable: vi.fn((callback: (payload: { id: string }) => void) => {
@@ -63,6 +72,7 @@ describe('createIpcPtyTransport', () => {
               callback: (payload: {
                 id: string
                 code: number
+                incarnationId?: string
                 preserveRendererBinding?: boolean
               }) => void
             ) => {
@@ -345,7 +355,11 @@ describe('createIpcPtyTransport', () => {
     expect(replayedToNewPane).toHaveBeenCalledWith('replay output')
     expect(receivedByOldPane).not.toHaveBeenCalled()
 
-    onExit?.({ id: 'pty-1', code: 0 })
+    onExit?.({
+      id: 'pty-1',
+      code: 0,
+      incarnationId: '11111111-1111-4111-8111-111111111111'
+    })
     expect(exitSeenByNewPane).toHaveBeenCalledWith(0)
   })
 
@@ -385,6 +399,226 @@ describe('createIpcPtyTransport', () => {
     expect(staleData).not.toHaveBeenCalled()
     expect(staleExit).not.toHaveBeenCalled()
     expect(window.api.pty.kill).not.toHaveBeenCalled()
+  })
+
+  it('keeps the newer exact claimant when overlapping reconnects resolve out of order', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const ready = window.api.pty.rendererBindingReady as unknown as ReturnType<typeof vi.fn>
+    const cancel = window.api.pty.cancelRendererBinding as unknown as ReturnType<typeof vi.fn>
+    let resolveStale!: (value: unknown) => void
+    let resolveCurrent!: (value: unknown) => void
+    spawn
+      .mockReturnValueOnce(new Promise((resolve) => (resolveStale = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (resolveCurrent = resolve)))
+    const createPane = () =>
+      createIpcPtyTransport({
+        tabId: 'tab-1',
+        leafId: '11111111-1111-4111-8111-111111111111',
+        paneGeneration: 7
+      })
+    const staleData = vi.fn()
+    const stalePane = createPane()
+    const staleConnect = stalePane.connect({
+      url: '',
+      sessionId: 'pty-1',
+      callbacks: { onData: staleData }
+    })
+    const staleClaimant = spawn.mock.calls[0]?.[0].mutationClaimant
+    const currentData = vi.fn()
+    const currentPane = createPane()
+    const currentConnect = currentPane.connect({
+      url: '',
+      sessionId: 'pty-1',
+      callbacks: { onData: currentData }
+    })
+    const currentClaimant = spawn.mock.calls[1]?.[0].mutationClaimant
+    const exactAccess = (claimant: unknown, mutationLeaseId: string) => ({
+      mode: 'exact' as const,
+      identity: {
+        incarnationId: '11111111-1111-4111-8111-111111111111',
+        paneGeneration: 7,
+        mutationLeaseId
+      },
+      claimant
+    })
+    const currentAccess = exactAccess(currentClaimant, 'lease-current')
+    resolveCurrent({ id: 'pty-1', isReattach: true, mutationAccess: currentAccess })
+    const currentResult = await currentConnect
+    expect(ready).not.toHaveBeenCalled()
+    const staleAccess = exactAccess(staleClaimant, 'lease-stale')
+    resolveStale({ id: 'pty-1', isReattach: true, mutationAccess: staleAccess })
+    await staleConnect
+    if (!currentResult || typeof currentResult !== 'object' || !('id' in currentResult)) {
+      throw new Error('Expected an exact reattach result')
+    }
+    currentResult.rendererBindingSettlement?.ready()
+
+    onData?.({ id: 'pty-1', data: 'recovered once' })
+
+    expect(currentData).toHaveBeenCalledExactlyOnceWith('recovered once')
+    expect(staleData).not.toHaveBeenCalled()
+    expect(ready).toHaveBeenCalledExactlyOnceWith({ id: 'pty-1', access: currentAccess })
+    expect(cancel).toHaveBeenCalledWith({
+      id: 'pty-1',
+      paneGeneration: 7,
+      claimant: staleClaimant,
+      access: staleAccess
+    })
+  })
+
+  it('prevents a late stale attach from stealing the surviving exact handler', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    let resolveCurrent!: (value: unknown) => void
+    spawn.mockReturnValueOnce(new Promise((resolve) => (resolveCurrent = resolve)))
+    const currentData = vi.fn()
+    const currentExit = vi.fn()
+    const currentPane = createIpcPtyTransport({
+      tabId: 'tab-1',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 3
+    })
+    const currentConnect = currentPane.connect({
+      url: '',
+      sessionId: 'pty-1',
+      callbacks: { onData: currentData, onExit: currentExit }
+    })
+    const currentClaimant = spawn.mock.calls[0]?.[0].mutationClaimant
+    const currentAccess = {
+      mode: 'exact' as const,
+      identity: {
+        incarnationId: '11111111-1111-4111-8111-111111111111',
+        paneGeneration: 3,
+        mutationLeaseId: 'lease-current'
+      },
+      claimant: currentClaimant
+    }
+    resolveCurrent({ id: 'pty-1', isReattach: true, mutationAccess: currentAccess })
+    const currentResult = await currentConnect
+    if (!currentResult || typeof currentResult !== 'object' || !('id' in currentResult)) {
+      throw new Error('Expected an exact reattach result')
+    }
+    currentResult.rendererBindingSettlement?.ready()
+
+    const staleData = vi.fn()
+    const staleExit = vi.fn()
+    const stalePane = createIpcPtyTransport({
+      tabId: 'tab-1',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 2
+    })
+    stalePane.attach({
+      existingPtyId: 'pty-1',
+      callbacks: { onData: staleData, onExit: staleExit }
+    })
+
+    onData?.({ id: 'pty-1', data: 'recovered once' })
+    onExit?.({
+      id: 'pty-1',
+      code: 0,
+      incarnationId: currentAccess.identity.incarnationId
+    })
+
+    expect(currentData).toHaveBeenCalledExactlyOnceWith('recovered once')
+    expect(currentExit).toHaveBeenCalledExactlyOnceWith(0)
+    expect(staleData).not.toHaveBeenCalled()
+    expect(staleExit).not.toHaveBeenCalled()
+    expect(stalePane.getPtyId()).toBeNull()
+  })
+
+  it('keeps one transport bound when its stale reconnect resolves after the current reconnect', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const ready = window.api.pty.rendererBindingReady as unknown as ReturnType<typeof vi.fn>
+    let resolveStale!: (value: unknown) => void
+    let resolveCurrent!: (value: unknown) => void
+    spawn
+      .mockReturnValueOnce(new Promise((resolve) => (resolveStale = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (resolveCurrent = resolve)))
+    const transport = createIpcPtyTransport({
+      tabId: 'tab-1',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 7
+    })
+    const staleData = vi.fn()
+    const staleConnect = transport.connect({
+      url: '',
+      sessionId: 'pty-1',
+      callbacks: { onData: staleData }
+    })
+    const staleClaimant = spawn.mock.calls[0]?.[0].mutationClaimant
+    const currentData = vi.fn()
+    const currentConnect = transport.connect({
+      url: '',
+      sessionId: 'pty-1',
+      callbacks: { onData: currentData }
+    })
+    const currentClaimant = spawn.mock.calls[1]?.[0].mutationClaimant
+    const exactAccess = (claimant: unknown, mutationLeaseId: string) => ({
+      mode: 'exact' as const,
+      identity: {
+        incarnationId: '11111111-1111-4111-8111-111111111111',
+        paneGeneration: 7,
+        mutationLeaseId
+      },
+      claimant
+    })
+    const currentAccess = exactAccess(currentClaimant, 'lease-current')
+    resolveCurrent({ id: 'pty-1', isReattach: true, mutationAccess: currentAccess })
+    const currentResult = await currentConnect
+    const staleAccess = exactAccess(staleClaimant, 'lease-stale')
+    resolveStale({ id: 'pty-1', isReattach: true, mutationAccess: staleAccess })
+    await staleConnect
+    if (!currentResult || typeof currentResult !== 'object' || !('id' in currentResult)) {
+      throw new Error('Expected an exact reattach result')
+    }
+    currentResult.rendererBindingSettlement?.ready()
+
+    onData?.({ id: 'pty-1', data: 'recovered once' })
+
+    expect(transport.getPtyId()).toBe('pty-1')
+    expect(transport.isConnected()).toBe(true)
+    expect(currentData).toHaveBeenCalledExactlyOnceWith('recovered once')
+    expect(staleData).not.toHaveBeenCalled()
+    expect(ready).toHaveBeenCalledExactlyOnceWith({ id: 'pty-1', access: currentAccess })
+  })
+
+  it('cancels an unsettled exact renderer binding when its transport detaches', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const ready = window.api.pty.rendererBindingReady as unknown as ReturnType<typeof vi.fn>
+    const cancel = window.api.pty.cancelRendererBinding as unknown as ReturnType<typeof vi.fn>
+    let resolveSpawn!: (value: unknown) => void
+    spawn.mockReturnValueOnce(new Promise((resolve) => (resolveSpawn = resolve)))
+    const transport = createIpcPtyTransport({
+      tabId: 'tab-1',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 9
+    })
+    const pendingConnect = transport.connect({ url: '', sessionId: 'pty-1', callbacks: {} })
+    const claimant = spawn.mock.calls[0]?.[0].mutationClaimant
+    const access = {
+      mode: 'exact' as const,
+      identity: {
+        incarnationId: '11111111-1111-4111-8111-111111111111',
+        paneGeneration: 9,
+        mutationLeaseId: 'lease-detached'
+      },
+      claimant
+    }
+    resolveSpawn({ id: 'pty-1', isReattach: true, mutationAccess: access })
+    await pendingConnect
+
+    transport.detach?.()
+
+    expect(ready).not.toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      id: 'pty-1',
+      paneGeneration: 9,
+      claimant,
+      access
+    })
   })
 
   it('retires a rejected fresh fallback before it can publish PTY handlers', async () => {
@@ -636,6 +870,94 @@ describe('createIpcPtyTransport', () => {
     expect(onDisconnect).toHaveBeenCalledTimes(1)
     expect(onPtyExit).toHaveBeenCalledWith(sessionId)
     expect(transport.isConnected()).toBe(false)
+  })
+
+  it('keeps a reused exact incarnation live when the buffered exit belongs to its predecessor', async () => {
+    const { bufferPreHandlerPtyExit } = await import('./pty-pre-handler-buffer')
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const write = window.api.pty.write as unknown as ReturnType<typeof vi.fn>
+    const sessionId = 'reused-exact-session'
+    const currentIdentity = {
+      incarnationId: 'incarnation-b',
+      paneGeneration: 11,
+      mutationLeaseId: 'lease-b'
+    }
+    bufferPreHandlerPtyExit(sessionId, 17, 'incarnation-a')
+    spawn.mockImplementationOnce(async (args: { mutationClaimant?: unknown }) => ({
+      id: sessionId,
+      isReattach: true,
+      mutationAccess: {
+        mode: 'exact',
+        identity: currentIdentity,
+        claimant: args.mutationClaimant
+      }
+    }))
+    const onExitCallback = vi.fn()
+    const transport = createIpcPtyTransport({
+      tabId: 'tab-exact',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 11
+    })
+
+    const result = await transport.connect({
+      url: '',
+      sessionId,
+      callbacks: { onExit: onExitCallback }
+    })
+
+    expect(result).toEqual(expect.objectContaining({ id: sessionId, isReattach: true }))
+    expect(onExitCallback).not.toHaveBeenCalled()
+    expect(transport.isConnected()).toBe(true)
+    expect(transport.sendInput('still live')).toBe(true)
+    expect(write).toHaveBeenCalledWith(sessionId, 'still live', currentIdentity)
+
+    onExit?.({ id: sessionId, code: 0, incarnationId: 'incarnation-b' })
+    expect(onExitCallback).toHaveBeenCalledExactlyOnceWith(0)
+    expect(transport.isConnected()).toBe(false)
+  })
+
+  it('delivers a matching buffered exact exit once', async () => {
+    const { bufferPreHandlerPtyExit, drainPreHandlerPtyExit } =
+      await import('./pty-pre-handler-buffer')
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const sessionId = 'matching-exact-session'
+    bufferPreHandlerPtyExit(sessionId, 23, 'incarnation-current')
+    spawn.mockImplementationOnce(async (args: { mutationClaimant?: unknown }) => ({
+      id: sessionId,
+      isReattach: true,
+      mutationAccess: {
+        mode: 'exact',
+        identity: {
+          incarnationId: 'incarnation-current',
+          paneGeneration: 12,
+          mutationLeaseId: 'lease-current'
+        },
+        claimant: args.mutationClaimant
+      }
+    }))
+    const onExitCallback = vi.fn()
+    const transport = createIpcPtyTransport({
+      tabId: 'tab-exact',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 12
+    })
+
+    await expect(
+      transport.connect({
+        url: '',
+        sessionId,
+        callbacks: { onExit: onExitCallback }
+      })
+    ).resolves.toEqual({ id: sessionId, exitedBeforeAttach: true })
+    expect(onExitCallback).toHaveBeenCalledExactlyOnceWith(23)
+
+    onExit?.({ id: sessionId, code: 23, incarnationId: 'incarnation-current' })
+    const duplicateExit = vi.fn()
+    drainPreHandlerPtyExit(sessionId, duplicateExit)
+    expect(onExitCallback).toHaveBeenCalledTimes(1)
+    expect(duplicateExit).not.toHaveBeenCalled()
   })
 
   it('rejects a buffered dead-session exit before publishing its final frame', async () => {
@@ -1107,6 +1429,50 @@ describe('createIpcPtyTransport', () => {
     const sshTransport = createIpcPtyTransport({ connectionId: 'ssh-1' })
     await sshTransport.connect({ url: '', callbacks: {} })
     expect(sshTransport.sendInputAccepted).toBeUndefined()
+  })
+
+  it('refuses attach input until the exact mutation claim is authoritative', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    let resolveClaim!: (value: PtyMutationAccess | PromiseLike<PtyMutationAccess>) => void
+    vi.mocked(window.api.pty.claimMutationAccess).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveClaim = resolve
+      })
+    )
+    const onMutationAccessAvailable = vi.fn()
+    const transport = createIpcPtyTransport({
+      tabId: 'terminal-tab-1',
+      leafId: '11111111-1111-4111-8111-111111111111',
+      paneGeneration: 4
+    })
+
+    transport.attach({
+      existingPtyId: 'pending-access-pty',
+      callbacks: { onMutationAccessAvailable }
+    })
+
+    expect(transport.hasMutationAccess?.()).toBe(false)
+    expect(transport.sendInput('must-not-buffer')).toBe(false)
+    await expect(transport.sendInputAccepted?.('must-not-buffer')).resolves.toBe(false)
+    expect(window.api.pty.write).not.toHaveBeenCalled()
+    const claimant = vi.mocked(window.api.pty.claimMutationAccess).mock.calls[0]?.[0].claimant
+    const identity = {
+      incarnationId: 'incarnation-attach',
+      paneGeneration: 4,
+      mutationLeaseId: 'lease-attach'
+    }
+    resolveClaim({ mode: 'exact', identity, claimant })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(transport.hasMutationAccess?.()).toBe(true)
+    expect(onMutationAccessAvailable).toHaveBeenCalledOnce()
+    expect(transport.sendInput('accepted-after-claim')).toBe(true)
+    expect(window.api.pty.write).toHaveBeenCalledExactlyOnceWith(
+      'pending-access-pty',
+      'accepted-after-claim',
+      identity
+    )
   })
 
   it('chunks large local IPC terminal input before renderer-to-main writes', async () => {

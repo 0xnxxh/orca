@@ -4,8 +4,8 @@ import {
   retireParkedTerminalTab
 } from './terminal-parked-watcher-registry'
 import {
-  reconcileParkedWatcherPtyIds,
-  resolveParkedTerminalPaneCandidates
+  resolveParkedTerminalPaneCandidates,
+  selectParkedTerminalPaneCandidateKey
 } from './terminal-parked-watcher-reconciliation'
 
 const TAB_ID = 'tab-1'
@@ -21,6 +21,41 @@ afterEach(() => {
 })
 
 describe('paired parked-watcher reconciliation', () => {
+  it('projects host-owned cold identity only for the persisted pane generation', () => {
+    const paneKey = `${TAB_ID}:${FIRST_LEAF_ID}`
+    const state = {
+      runtimePaneTitlesByTabId: {},
+      hostTerminalSideEffectIdentityByPaneKey: {
+        [paneKey]: {
+          incarnationId: '33333333-3333-4333-8333-333333333333',
+          paneGeneration: 4
+        }
+      },
+      terminalLayoutsByTabId: {
+        [TAB_ID]: {
+          root: { type: 'leaf' as const, leafId: FIRST_LEAF_ID },
+          activeLeafId: FIRST_LEAF_ID,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [FIRST_LEAF_ID]: FIRST_PTY_ID }
+        }
+      }
+    }
+
+    expect(
+      resolveParkedTerminalPaneCandidates({ id: TAB_ID, ptyId: FIRST_PTY_ID, generation: 4 }, state)
+    ).toEqual([
+      expect.objectContaining({
+        sideEffectIdentity: {
+          incarnationId: '33333333-3333-4333-8333-333333333333',
+          paneGeneration: 4
+        }
+      })
+    ])
+    expect(
+      resolveParkedTerminalPaneCandidates({ id: TAB_ID, ptyId: FIRST_PTY_ID, generation: 5 }, state)
+    ).toEqual([expect.not.objectContaining({ sideEffectIdentity: expect.anything() })])
+  })
+
   it('prefers an authoritative inactive split-leaf remint over the unmount capture', () => {
     captureParkedTerminalPaneCandidates(TAB_ID, WORKTREE_ID, [
       { ptyId: FIRST_PTY_ID, paneId: 1, leafId: FIRST_LEAF_ID, drivesTabTitle: true },
@@ -66,22 +101,34 @@ describe('paired parked-watcher reconciliation', () => {
     ])
   })
 
-  it('surgically reconciles a reminted split leaf without restarting its sibling', () => {
-    expect(
-      reconcileParkedWatcherPtyIds({
-        currentTabPtyId: FIRST_PTY_ID,
-        entryTabPtyId: FIRST_PTY_ID,
-        paneIdByPtyId: new Map([
-          [FIRST_PTY_ID, 1],
-          [OLD_SECOND_PTY_ID, 2]
-        ]),
-        expectedPtyIds: new Set([FIRST_PTY_ID, NEW_SECOND_PTY_ID])
-      })
-    ).toEqual({
-      restartAll: false,
-      addedPtyIds: [NEW_SECOND_PTY_ID],
-      retainedPtyIds: [FIRST_PTY_ID],
-      retiredPaneIds: [2]
-    })
+  it('keys PTY, leaf, and title-driving mutations that require a fresh handoff', () => {
+    const state = {
+      runtimePaneTitlesByTabId: {},
+      terminalLayoutsByTabId: {
+        [TAB_ID]: {
+          root: {
+            type: 'split' as const,
+            direction: 'vertical' as const,
+            first: { type: 'leaf' as const, leafId: FIRST_LEAF_ID },
+            second: { type: 'leaf' as const, leafId: SECOND_LEAF_ID }
+          },
+          activeLeafId: FIRST_LEAF_ID,
+          expandedLeafId: null,
+          ptyIdsByLeafId: {
+            [FIRST_LEAF_ID]: FIRST_PTY_ID,
+            [SECOND_LEAF_ID]: OLD_SECOND_PTY_ID
+          }
+        }
+      }
+    }
+    const tabs = [{ id: TAB_ID, ptyId: FIRST_PTY_ID }]
+    const initial = selectParkedTerminalPaneCandidateKey(state, tabs)
+
+    state.terminalLayoutsByTabId[TAB_ID].activeLeafId = SECOND_LEAF_ID
+    const activeChanged = selectParkedTerminalPaneCandidateKey(state, tabs)
+    state.terminalLayoutsByTabId[TAB_ID].ptyIdsByLeafId[SECOND_LEAF_ID] = NEW_SECOND_PTY_ID
+
+    expect(activeChanged).not.toBe(initial)
+    expect(selectParkedTerminalPaneCandidateKey(state, tabs)).not.toBe(activeChanged)
   })
 })

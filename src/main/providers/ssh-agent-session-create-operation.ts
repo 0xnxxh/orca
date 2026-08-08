@@ -10,6 +10,7 @@ import {
   type PtySourceReceivingActivation
 } from '../../shared/pty-source-receiving-activation'
 import { validateClaimedSshSpawn } from './ssh-agent-session-claim-validation'
+import { parseTerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 
 export const SSH_AGENT_SESSION_CAPABILITY_PROBE_TIMEOUT_MS = 5_000
 
@@ -171,6 +172,10 @@ function parseSshPtySpawnResult(value: unknown): PtySpawnResult {
       ? (value as PtySpawnResult)
       : ({} as PtySpawnResult)
   const activation = parsePtySourceReceivingActivation(result.sourceActivation)
+  const authorityAccess =
+    result.terminalSessionAuthorityAccess === undefined
+      ? null
+      : parseTerminalSessionAuthorityPtyAccess(result.terminalSessionAuthorityAccess)
   if (
     activation &&
     (typeof result.id !== 'string' ||
@@ -180,5 +185,17 @@ function parseSshPtySpawnResult(value: unknown): PtySpawnResult {
   ) {
     throw new Error('Invalid SSH PTY source activation identity')
   }
-  return activation ? { ...result, sourceActivation: activation } : result
+  if (
+    result.terminalSessionAuthorityAccess !== undefined &&
+    (!authorityAccess ||
+      authorityAccess.binding.physicalPtyId !== result.id ||
+      authorityAccess.binding.ptyIncarnationId !== result.incarnationId)
+  ) {
+    throw new Error('Invalid SSH terminal authority spawn identity')
+  }
+  return {
+    ...result,
+    ...(activation ? { sourceActivation: activation } : {}),
+    ...(authorityAccess ? { terminalSessionAuthorityAccess: authorityAccess } : {})
+  }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS,
-  createPtyInputWriteQueue
+  createPtyInputWriteQueue,
+  type PtyInputWriteQueue
 } from './pty-input-write-queue'
 import {
   TERMINAL_INPUT_CHUNK_MAX_BYTES,
@@ -14,10 +15,10 @@ type WriteRecord = { id: string; data: string }
 
 function createRecordingQueue(options: { writable?: () => boolean } = {}): {
   writes: WriteRecord[]
-  queue: ReturnType<typeof createPtyInputWriteQueue>
+  queue: PtyInputWriteQueue<string>
 } {
   const writes: WriteRecord[] = []
-  const queue = createPtyInputWriteQueue({
+  const queue = createPtyInputWriteQueue<string>({
     isWritable: () => options.writable?.() ?? true,
     write: (id, data) => writes.push({ id, data })
   })
@@ -57,7 +58,7 @@ describe('pty input write queue', () => {
 
   it('does not coalesce across different PTY ids', async () => {
     const writes: WriteRecord[] = []
-    const queue = createPtyInputWriteQueue({
+    const queue = createPtyInputWriteQueue<string>({
       isWritable: () => true,
       write: (id, data) => writes.push({ id, data })
     })
@@ -132,7 +133,7 @@ describe('pty input write queue', () => {
   it('clear() drops pending input that has not been written yet', async () => {
     const writes: WriteRecord[] = []
     const pendingYields: (() => void)[] = []
-    const queue = createPtyInputWriteQueue({
+    const queue = createPtyInputWriteQueue<string>({
       isWritable: () => true,
       write: (id, data) => writes.push({ id, data }),
       yieldBetweenWrites: () =>

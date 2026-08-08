@@ -10,9 +10,10 @@ import { SshConnection } from './ssh-connection'
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
 import { SshChannelMultiplexer } from './ssh-channel-multiplexer'
 import { uploadDirectoryViaSystemSsh } from './ssh-system-fallback'
+import { CURRENT_RELAY_DAEMON_COMPATIBILITY } from '../../shared/relay-daemon-compatibility'
 import type { SshTarget } from '../../shared/ssh-types'
 
-const RELAY_VERSION = '0.1.0+systemtransport'
+const RELAY_VERSION = '0.1.0+abcdef012345'
 
 function makeTarget(): SshTarget {
   return {
@@ -63,6 +64,11 @@ const fs = require('fs');
 const net = require('net');
 const sentinel = 'ORCA-RELAY v0.1.0 READY\\n';
 const sockPath = process.argv[process.argv.indexOf('--sock-path') + 1];
+const authorityMarkerPath = process.argv[process.argv.indexOf('--authority-marker-path') + 1];
+const credentialFile = process.argv[process.argv.indexOf('--credential-file') + 1];
+const authorityProcessToken = process.argv[process.argv.indexOf('--authority-process-token') + 1];
+const relayVersion = '${RELAY_VERSION}';
+const compatibility = ${JSON.stringify(CURRENT_RELAY_DAEMON_COMPATIBILITY)};
 
 function encode(msg) {
   const payload = Buffer.from(JSON.stringify(msg), 'utf8');
@@ -91,14 +97,68 @@ function serve(socket, onResolved) {
       if (message.method === 'session.resolveHome') {
         socket.write(
           encode({ jsonrpc: '2.0', id: message.id, result: process.env.HOME }),
-          onResolved
+          () => {
+            onResolved();
+            socket.end();
+          }
         );
       }
     }
   });
 }
 
-if (process.argv.includes('--detached')) {
+if (process.argv.includes('--terminal-authority')) {
+  const child = require('child_process').spawn(
+    process.execPath,
+    [
+      __filename,
+      '--authority-server',
+      '--sock-path',
+      sockPath,
+      '--authority-marker-path',
+      authorityMarkerPath,
+      '--credential-file',
+      credentialFile,
+      '--authority-process-token',
+      authorityProcessToken
+    ],
+    { detached: true, stdio: 'ignore' }
+  );
+  child.unref();
+  process.exit(0);
+} else if (process.argv.includes('--authority-server')) {
+  fs.mkdirSync(require('path').dirname(authorityMarkerPath), { recursive: true });
+  fs.writeFileSync(authorityMarkerPath, JSON.stringify({
+    markerVersion: 1,
+    authorityHostId: 'authority-host',
+    ownerInstanceId: 'authority-owner',
+    ownerPid: process.pid,
+    ownerProcessToken: authorityProcessToken,
+    ownerBuildId: relayVersion,
+    ownerRelayDir: require('path').join(process.env.HOME, '.orca-remote', 'relay-' + relayVersion),
+    socketPath: sockPath,
+    credentialFile,
+    compatibility,
+    revision: 1
+  }) + '\\n');
+  try { fs.unlinkSync(sockPath); } catch {}
+  const server = net.createServer((socket) => serve(socket, () => server.close()));
+  process.once('SIGTERM', () => {
+    try { server.close(); } catch {}
+    try { fs.unlinkSync(authorityMarkerPath); } catch {}
+    try { fs.unlinkSync(sockPath); } catch {}
+    process.exit(0);
+  });
+  server.listen(sockPath);
+} else if (process.argv.includes('--detached')) {
+  const child = require('child_process').spawn(
+    process.execPath,
+    [__filename, '--relay-server', '--sock-path', sockPath],
+    { detached: true, stdio: 'ignore' }
+  );
+  child.unref();
+  process.exit(0);
+} else if (process.argv.includes('--relay-server')) {
   try { fs.unlinkSync(sockPath); } catch {}
   const server = net.createServer((socket) => {
     serve(socket, () => server.close());
@@ -146,6 +206,44 @@ function createRelayTree(root: string, remoteHome: string): void {
   writeFakeRelay(remoteDir)
 }
 
+async function stopFakeAuthority(tempDir: string): Promise<void> {
+  const markerPath = join(
+    tempDir,
+    'remote-home',
+    '.orca-remote',
+    'terminal-authority',
+    'active-endpoint'
+  )
+  let ownerPid: unknown
+  try {
+    ownerPid = JSON.parse(readFileSync(markerPath, 'utf8')).ownerPid
+  } catch {
+    return
+  }
+  if (typeof ownerPid !== 'number' || !Number.isInteger(ownerPid) || ownerPid <= 0) {
+    return
+  }
+  try {
+    process.kill(ownerPid, 'SIGTERM')
+  } catch {
+    return
+  }
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    try {
+      process.kill(ownerPid, 0)
+    } catch {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  try {
+    process.kill(ownerPid, 'SIGKILL')
+  } catch {
+    // The authority exited between the final probe and fallback kill.
+  }
+}
+
 describe('system SSH transport integration', () => {
   let tempDir: string
   let oldHome: string | undefined
@@ -172,10 +270,11 @@ describe('system SSH transport integration', () => {
     process.env.ORCA_SSH_FORCE_SYSTEM_TRANSPORT = '1'
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     if (process.platform === 'win32') {
       return
     }
+    await stopFakeAuthority(tempDir)
     if (oldHome === undefined) {
       delete process.env.HOME
     } else {

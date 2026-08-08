@@ -12,8 +12,10 @@ import type { PtyProcessInspection } from '../providers/pty-process-inspection'
 import { shouldHandoffDaemonHistory } from './daemon-history-handoff'
 import type { DaemonPtyRouterDataEvent, DaemonPtyRouterExitEvent } from './daemon-pty-router-events'
 import { DaemonSessionOwnerResolver } from './daemon-session-owner-resolution'
+import { reconcileDaemonPtyProviderInventory } from './daemon-pty-router-inventory'
+import { DaemonPtyExactOperationRouter } from './daemon-pty-router-exact-operations'
 
-export class DaemonPtyRouter implements IPtyProvider {
+export class DaemonPtyRouter extends DaemonPtyExactOperationRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
@@ -21,6 +23,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   private readonly subscriptions: DaemonPtyAdapterSubscriptionFanout
 
   constructor(opts: { current: DaemonPtyAdapter; legacy: DaemonPtyAdapter[] }) {
+    super()
     this.current = opts.current
     this.legacy = opts.legacy
     this.ownerResolver = new DaemonSessionOwnerResolver(this.allAdapters(), this.sessionAdapters)
@@ -193,9 +196,17 @@ export class DaemonPtyRouter implements IPtyProvider {
     // Why: runtime exact-stop/liveness flows must fail closed if any adapter
     // cannot provide a trustworthy process list.
     const results = await Promise.all(
-      this.allAdapters().map((adapter) => adapter.listProcesses(opts))
+      this.allAdapters().map(async (adapter) => ({
+        provider: adapter,
+        processes: await adapter.listProcesses(opts)
+      }))
     )
-    return results.flat()
+    return reconcileDaemonPtyProviderInventory(results, {
+      existingRouteIds: this.sessionAdapters.keys(),
+      recordRoute: (id, adapter, process) =>
+        this.ownerResolver.recordRoute(id, adapter, process.incarnationId),
+      forgetRoute: (id) => this.ownerResolver.forgetRoute(id)
+    })
   }
 
   async getDefaultShell(): Promise<string> {
@@ -311,6 +322,10 @@ export class DaemonPtyRouter implements IPtyProvider {
 
   private adapterFor(sessionId: string): DaemonPtyAdapter {
     return this.sessionAdapters.get(sessionId) ?? this.current
+  }
+
+  protected exactProviderFor(sessionId: string): DaemonPtyAdapter | null {
+    return this.sessionAdapters.get(sessionId) ?? null
   }
 
   private adapterForInspection(sessionId: string): DaemonPtyAdapter {

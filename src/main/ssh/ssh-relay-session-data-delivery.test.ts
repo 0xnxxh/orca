@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
-import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
+import {
+  createMockDeps,
+  legacyFallbackSession,
+  mockDeploySuccess
+} from './ssh-relay-session-test-fixtures'
 
 const {
   acceptOutputDataMock,
@@ -92,6 +96,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
 }))
 
 vi.mock('../ipc/pty', () => ({
+  waitForSshPtyPendingCloseReplay: vi.fn().mockResolvedValue(undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),
@@ -281,9 +286,9 @@ describe('SshRelaySession data delivery', () => {
   it('transfers negotiated owner recovery exactly once across an explicit detach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
-      platform: 'linux-x64',
-      serverBuildId: 'test-relay-build'
+      ...mockDeploySuccess(),
+      serverBuildId: 'control-relay-build',
+      terminalAuthorityOwnerBuildId: 'test-relay-build'
     })
     const first = new SshRelaySession('recovery-target', getMainWindow, mockStore, mockPortForward)
 
@@ -321,9 +326,9 @@ describe('SshRelaySession data delivery', () => {
       outputFlowControl: { version: 1, windowSu: 256 * 1024 }
     })
     vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
-      platform: 'linux-x64',
-      serverBuildId: 'test-relay-build'
+      ...mockDeploySuccess(),
+      serverBuildId: 'control-relay-build',
+      terminalAuthorityOwnerBuildId: 'test-relay-build'
     })
 
     const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
@@ -351,9 +356,9 @@ describe('SshRelaySession data delivery', () => {
     const targetId = 'fresh-relay-retry'
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     vi.mocked(deployAndLaunchRelay).mockResolvedValue({
-      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
-      platform: 'linux-x64',
-      serverBuildId: 'test-relay-build'
+      ...mockDeploySuccess(),
+      serverBuildId: 'control-relay-build',
+      terminalAuthorityOwnerBuildId: 'test-relay-build'
     })
     vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([
       {
@@ -541,11 +546,9 @@ describe('SshRelaySession data delivery', () => {
   })
 
   it('keeps unoffered source metadata out of legacy intake', async () => {
-    openConsumerSessionMock.mockImplementationOnce(async (_mux, options) => ({
-      mode: 'legacy-fallback',
-      clientInstanceId: options.clientInstanceId,
-      serverBuildId: 'test-relay-build'
-    }))
+    openConsumerSessionMock.mockImplementationOnce(async (_mux, options) =>
+      legacyFallbackSession(options.clientInstanceId)
+    )
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
@@ -576,11 +579,9 @@ describe('SshRelaySession data delivery', () => {
   })
 
   it('keeps same-build method-not-found fallback token-free', async () => {
-    openConsumerSessionMock.mockImplementationOnce(async (_mux, options) => ({
-      mode: 'legacy-fallback',
-      clientInstanceId: options.clientInstanceId,
-      serverBuildId: 'test-relay-build'
-    }))
+    openConsumerSessionMock.mockImplementationOnce(async (_mux, options) =>
+      legacyFallbackSession(options.clientInstanceId)
+    )
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
 

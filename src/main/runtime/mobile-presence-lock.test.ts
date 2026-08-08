@@ -60,6 +60,18 @@ const store = {
   })
 }
 
+const TEST_PROVIDER_ROUTE_TOKEN = Object.freeze({})
+const TEST_PTY_LIFECYCLE_TOKEN = Object.freeze({})
+
+function captureTestMutationTarget(ptyId: string) {
+  return Object.freeze({
+    id: ptyId,
+    providerRouteToken: TEST_PROVIDER_ROUTE_TOKEN,
+    ptyLifecycleToken: TEST_PTY_LIFECYCLE_TOKEN,
+    access: Object.freeze({ mode: 'legacy' as const })
+  })
+}
+
 // Why (#7588): held-modal repro needs indefinite hold (null); legacy tests need the finite 5s default. Wrap per-test without mutating the shared stub.
 function createRuntime(mobileAutoRestoreFitMs: number | null = 5_000) {
   const effectiveStore = {
@@ -77,6 +89,7 @@ function createRuntime(mobileAutoRestoreFitMs: number | null = 5_000) {
   let resizeSucceeds = true
 
   runtime.setPtyController({
+    captureMutationTarget: captureTestMutationTarget,
     write: (_ptyId, data) => {
       writes.push(data)
       return true
@@ -131,6 +144,39 @@ describe('mobile presence lock — driver state machine', () => {
   it('starts idle for unknown PTY', () => {
     const { runtime } = createRuntime()
     expect(runtime.getDriver('pty-1')).toEqual({ kind: 'idle' })
+  })
+
+  it('refuses input when the controller cannot capture an immutable mutation target', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const write = vi.fn(() => true)
+    runtime.setPtyController({
+      write,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await expect(runtime.writeTerminalPreviewInput('pty-1', 'input')).resolves.toBe(false)
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('does not commit layout state when resize does not explicitly accept', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const resize = vi.fn()
+    runtime.setPtyController({
+      captureMutationTarget: captureTestMutationTarget,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      resize: resize as never,
+      getSize: () => ({ cols: 150, rows: 40 })
+    })
+
+    await expect(runtime.resizeForClient('pty-1', 'mobile-fit', 'phone-A', 45, 20)).rejects.toThrow(
+      'resize_failed'
+    )
+    expect(resize).toHaveBeenCalledOnce()
+    expect(runtime.getLayout('pty-1')).toBeNull()
+    expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
   })
 
   it('stops a preview paste when mobile claims the floor between chunks', async () => {

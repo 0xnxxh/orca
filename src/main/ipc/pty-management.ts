@@ -9,6 +9,12 @@ import {
 } from '../daemon/daemon-init'
 import type { MacDaemonTccAttributionHealth } from '../daemon/daemon-health'
 import type { DaemonSessionInfo } from '../daemon/types'
+import {
+  killListedPty,
+  listedPtyIdentityKey,
+  type PtyListedKillTarget
+} from '../providers/pty-listed-session-kill'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 
 // Why: poll past the daemon's 5s SIGTERM→SIGKILL ladder (KILL_TIMEOUT_MS in session.ts), else slow-exiting shells falsely look "refused".
 const MAX_POLL_ATTEMPTS = 65
@@ -38,7 +44,14 @@ function isDaemonDegraded(): boolean {
   )
 }
 
-async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionInfo[]> {
+type DaemonSessionInventory = Readonly<{
+  sessions: DaemonSessionInfo[]
+  failedProtocolVersions: number[]
+}>
+
+async function collectSessionInventory(
+  adapters: DaemonPtyAdapter[]
+): Promise<DaemonSessionInventory> {
   const results = await Promise.allSettled(
     adapters.map(async (adapter) => {
       const sessions = await adapter.listSessions()
@@ -48,7 +61,56 @@ async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSess
       }))
     })
   )
-  return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+  return {
+    sessions: results.flatMap((result) => (result.status === 'fulfilled' ? result.value : [])),
+    failedProtocolVersions: results.flatMap((result, index) =>
+      result.status === 'rejected' ? [adapters[index].protocolVersion] : []
+    )
+  }
+}
+
+async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionInfo[]> {
+  return (await collectSessionInventory(adapters)).sessions
+}
+
+async function collectSessionsExact(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionInfo[]> {
+  const inventory = await collectSessionInventory(adapters)
+  if (inventory.failedProtocolVersions.length > 0) {
+    throw new Error(
+      `pty_management_inventory_unavailable:${inventory.failedProtocolVersions.join(',')}`
+    )
+  }
+  return inventory.sessions
+}
+
+type ExactDaemonSessionInfo = DaemonSessionInfo & {
+  terminalSessionAuthorityAccess?: TerminalSessionAuthorityPtyAccess
+  mutationRouteToken?: object
+}
+
+function daemonSessionTarget(session: ExactDaemonSessionInfo): PtyListedKillTarget {
+  return {
+    id: session.sessionId,
+    ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+    ...(session.terminalSessionAuthorityAccess
+      ? { terminalSessionAuthorityAccess: session.terminalSessionAuthorityAccess }
+      : {}),
+    ...(session.mutationRouteToken ? { mutationRouteToken: session.mutationRouteToken } : {})
+  }
+}
+
+function daemonSessionIdentityKey(session: ExactDaemonSessionInfo): string {
+  return JSON.stringify([
+    session.protocolVersion,
+    listedPtyIdentityKey(daemonSessionTarget(session)) ?? ['unavailable', session.sessionId]
+  ])
+}
+
+async function killDaemonSession(
+  adapter: DaemonPtyAdapter,
+  session: ExactDaemonSessionInfo
+): Promise<boolean> {
+  return await killListedPty(adapter, daemonSessionTarget(session), { immediate: true })
 }
 
 export function registerDaemonManagementHandlers(): void {
@@ -88,9 +150,12 @@ export function registerDaemonManagementHandlers(): void {
     }> => {
       const adapters = getDaemonAdapters()
       // Why: snapshot session IDs up front so mid-kill respawns aren't counted as "remaining".
-      const initial = await collectSessions(adapters)
-      const initialIds = new Set(initial.map((s) => s.sessionId))
-      const initialCount = initial.length
+      const initial = await collectSessionsExact(adapters)
+      const initialByIdentity = new Map(
+        initial.map((session) => [daemonSessionIdentityKey(session), session] as const)
+      )
+      const initialIdentities = new Set(initialByIdentity.keys())
+      const initialCount = initialByIdentity.size
 
       if (initialCount === 0) {
         return { killedCount: 0, remainingCount: 0, killedSessionIds: [] }
@@ -98,29 +163,28 @@ export function registerDaemonManagementHandlers(): void {
 
       // Why: no retry — session.kill() is idempotent and runs its own kill ladder; allSettled so one rejection doesn't abort the rest.
       await Promise.allSettled(
-        initial.map(async (session) => {
+        [...initialByIdentity.values()].map(async (session) => {
           // Why: assumes PROTOCOL_VERSION stays distinct from PREVIOUS_DAEMON_PROTOCOL_VERSIONS (types.ts), else legacy sessions misroute here.
           const owner = adapters.find((a) => a.protocolVersion === session.protocolVersion)
           if (!owner) {
             return
           }
-          // Why: immediate=true only matters to legacy/future adapters; swallow rejections since remainingCount reports stuck sessions.
-          await owner.shutdown(session.sessionId, { immediate: true }).catch(() => {})
+          await killDaemonSession(owner, session).catch(() => false)
         })
       )
 
       // Why: count only the initial-snapshot intersection so renderer respawns mid-kill aren't counted as remaining.
       let remainingOriginalCount = initialCount
-      let remainingOriginalIds = initialIds
+      let remainingOriginalIdentities = initialIdentities
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
         await sleep(POLL_INTERVAL_MS)
-        const current = await collectSessions(adapters)
-        remainingOriginalIds = new Set(
+        const current = await collectSessionsExact(adapters)
+        remainingOriginalIdentities = new Set(
           current
-            .filter((session) => initialIds.has(session.sessionId))
-            .map((session) => session.sessionId)
+            .map(daemonSessionIdentityKey)
+            .filter((identity) => initialIdentities.has(identity))
         )
-        remainingOriginalCount = remainingOriginalIds.size
+        remainingOriginalCount = remainingOriginalIdentities.size
         if (remainingOriginalCount === 0) {
           break
         }
@@ -130,9 +194,9 @@ export function registerDaemonManagementHandlers(): void {
       return {
         killedCount,
         remainingCount: remainingOriginalCount,
-        killedSessionIds: [...initialIds].filter(
-          (sessionId) => !remainingOriginalIds.has(sessionId)
-        )
+        killedSessionIds: [...initialByIdentity]
+          .filter(([identity]) => !remainingOriginalIdentities.has(identity))
+          .map(([, session]) => session.sessionId)
       }
     }
   )
@@ -144,18 +208,23 @@ export function registerDaemonManagementHandlers(): void {
         return { success: false }
       }
       const adapters = getDaemonAdapters()
-      const sessions = await collectSessions(adapters)
-      const match = sessions.find((s) => s.sessionId === args.sessionId)
-      if (!match) {
+      let sessions: DaemonSessionInfo[]
+      try {
+        sessions = await collectSessionsExact(adapters)
+      } catch {
         return { success: false }
       }
+      const matches = sessions.filter((session) => session.sessionId === args.sessionId)
+      if (matches.length !== 1) {
+        return { success: false }
+      }
+      const match = matches[0]
       const owner = adapters.find((a) => a.protocolVersion === match.protocolVersion)
       if (!owner) {
         return { success: false }
       }
       try {
-        await owner.shutdown(args.sessionId, { immediate: true })
-        return { success: true }
+        return { success: await killDaemonSession(owner, match) }
       } catch {
         return { success: false }
       }

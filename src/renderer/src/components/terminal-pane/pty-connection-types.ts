@@ -18,6 +18,7 @@ import type { DirectSshPaneRetryAttemptId } from '@/store/slices/direct-ssh-term
 
 export type PtyConnectionDeps = {
   tabId: string
+  paneGeneration: number
   worktreeId: string
   cwd?: string
   startup?: {

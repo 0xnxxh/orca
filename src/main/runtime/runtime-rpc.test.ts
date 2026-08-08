@@ -26,6 +26,7 @@ import {
 import { decrypt, deriveSharedKey, encrypt, generateKeyPair } from './rpc/e2ee-crypto'
 import { WebSocketTransport } from './rpc/ws-transport'
 import { DeviceRegistry } from './device-registry'
+import { loadOrCreateE2EEKeypair } from './e2ee-keypair'
 import { DEVICE_REGISTRY_FILENAME, E2EE_KEYPAIR_FILENAME } from './mobile-pairing-files'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../shared/protocol-version'
 
@@ -5639,6 +5640,7 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     // Why: a device that has actually connected (lastSeenAt > 0) may reconnect, so the listener must be
     // reachable at startup without waiting for a new pairing action.
+    loadOrCreateE2EEKeypair(userDataPath)
     const registry = new DeviceRegistry(userDataPath)
     const device = registry.getOrCreatePendingDevice('Paired phone', 'mobile')
     registry.updateLastSeen(device.deviceId)
@@ -5669,6 +5671,7 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
     // Why: a pending device (offer created but never connected: lastSeenAt === 0) is not a reconnect, so
     // the listener must stay loopback — this distinguishes the reconnect widen from a blanket any-device
     // widen (a revert to listDevices().length > 0 would wrongly expose the LAN here).
+    loadOrCreateE2EEKeypair(userDataPath)
     const registry = new DeviceRegistry(userDataPath)
     registry.getOrCreatePendingDevice('Pending phone', 'mobile')
 
@@ -5699,6 +5702,7 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
     // Why: the local web client authenticating marks its grant lastSeenAt > 0 like any other socket, so a
     // blanket "any connected device" widen republished the runtime on every interface one launch later —
     // exactly what the user declined by picking "This computer only".
+    loadOrCreateE2EEKeypair(userDataPath)
     const registry = new DeviceRegistry(userDataPath)
     const device = registry.getOrCreatePendingDevice('Runtime local', 'runtime', 'this-computer')
     registry.updateLastSeen(device.deviceId)
@@ -5722,6 +5726,7 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     // Why: registries written by older desktops only ever held network-reach grants; a missing field must
     // keep the reconnect widen or an already-paired phone would be stranded by the upgrade.
+    loadOrCreateE2EEKeypair(userDataPath)
     const legacyDevice = {
       deviceId: 'legacy-device',
       name: 'Legacy phone',

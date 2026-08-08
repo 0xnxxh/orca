@@ -18,6 +18,16 @@ import type {
 import type { DeviceCredentialInstallAuthorization } from './relay-control-requests'
 import { deriveRelayHostId } from './relay-http-client'
 import { RelayDemandLedger } from './relay-demand-ledger'
+import {
+  awaitDesktopRelayIdentityResetRevocations,
+  completeDesktopRelayIdentityReset
+} from './desktop-relay-identity-reset'
+import {
+  createDesktopPairingRelay,
+  getDesktopPairingEndpoints,
+  provisionDesktopRelay,
+  type DesktopRelayPairingOperations
+} from './desktop-relay-pairing-operations'
 
 type DesktopRelayServiceOptions = {
   authConfig: OrcaCloudAuthConfig
@@ -57,9 +67,8 @@ export class DesktopRelayService {
   private stopped = false
 
   constructor(options: DesktopRelayServiceOptions) {
-    const keypair = options.runtimeRpc.getE2EEKeypair()
-    const mobileSocketWiring = options.runtimeRpc.getMobileSocketWiring()
-    if (!keypair || !mobileSocketWiring) {
+    const initialKeypair = options.runtimeRpc.getE2EEKeypair()
+    if (!initialKeypair || !options.runtimeRpc.getMobileSocketWiring()) {
       throw new Error('mobile_runtime_not_ready')
     }
     this.runtimeRpc = options.runtimeRpc
@@ -67,7 +76,7 @@ export class DesktopRelayService {
     this.demandLedger = new RelayDemandLedger({
       deviceRegistry: options.runtimeRpc.getDeviceRegistry()!,
       revokeOutbox: this.revokeOutbox,
-      relayHostId: deriveRelayHostId(keypair.publicKey)
+      relayHostId: deriveRelayHostId(initialKeypair.publicKey)
     })
     this.coordinator = new RelayAuthCoordinator({
       readContext: () => readRelayAuthContext(options.authConfig, options.userDataPath),
@@ -76,6 +85,11 @@ export class DesktopRelayService {
           `${identity.userId}\0${identity.profileId}\0${identity.organizationId}`
         ),
       openBroker: async ({ context, isCurrent, refreshAccessToken }) => {
+        const keypair = this.runtimeRpc.getE2EEKeypair()
+        const mobileSocketWiring = this.runtimeRpc.getMobileSocketWiring()
+        if (!keypair || !mobileSocketWiring) {
+          throw new Error('mobile_runtime_not_ready')
+        }
         const broker = await RelaySessionBroker.connect({
           authConfig: options.authConfig,
           accessToken: context.accessToken,
@@ -123,19 +137,7 @@ export class DesktopRelayService {
   async createPairingRelay(
     relayDeviceId: string
   ): Promise<{ relay: PairingRelay; binding: RelayDeviceBinding }> {
-    return await this.withTransientDemand(`pairing:${relayDeviceId}`, async () => {
-      const broker = await this.requireActiveBroker()
-      const relay = await broker.createPairingRelay(relayDeviceId)
-      return {
-        relay,
-        binding: {
-          relayHostId: broker.hostId,
-          relayDeviceId,
-          ownerIdentityKey: broker.ownerIdentityKey,
-          inviteExpiresAt: relay.inviteExpiresAt
-        }
-      }
-    })
+    return await createDesktopPairingRelay(relayDeviceId, this.pairingOperations())
   }
 
   onDeviceRevokeQueued(item: RelayRevokeOutboxItem): void {
@@ -154,81 +156,38 @@ export class DesktopRelayService {
     context: MobilePairingConnectionContext,
     params: PairingGetEndpointsParams
   ): Promise<PairingGetEndpointsResult> {
-    this.requireMobileDevice(context.deviceId)
-    if (
-      this.runtimeRpc.getDeviceRegistry()?.getMobilePairingConnectionMode(context.deviceId) ===
-      'local-only'
-    ) {
-      return { v: 1, relay: null }
-    }
-    return await this.withTransientDemand(`endpoints:${context.deviceId}`, async () => {
-      const broker = await this.activeBrokerForDemand()
-      if (!broker?.endpoint) {
-        return { v: 1, relay: null }
-      }
-      this.assertRelayHost(context, broker)
-      const result: PairingGetEndpointsResult = { v: 1, relay: broker.endpoint }
-      if (params.installReqId) {
-        result.installStatus = await broker.credentialInstallStatus(
-          context.deviceId,
-          params.installReqId
-        )
-      }
-      if (params.resumeConfirmReqId) {
-        if (
-          context.transport.transport !== 'relay' ||
-          context.transport.credentialKind !== 'resume'
-        ) {
-          throw new Error('resume_confirmation_unavailable')
-        }
-        result.resumeConfirmation = await broker.confirmResume(
-          context.transport.basisConnId,
-          params.resumeConfirmReqId
-        )
-      }
-      return result
-    })
+    return await getDesktopPairingEndpoints(context, params, this.pairingOperations())
   }
 
   async provisionRelay(
     context: MobilePairingConnectionContext,
     params: PairingProvisionRelayParams
   ): Promise<DeviceCredentialInstalled> {
-    this.requireMobileDevice(context.deviceId)
-    if (
-      this.runtimeRpc.getDeviceRegistry()?.getMobilePairingConnectionMode(context.deviceId) ===
-      'local-only'
-    ) {
-      throw new Error('relay_disabled_for_device')
-    }
-    return await this.withTransientDemand(`provision:${context.deviceId}`, async () => {
-      const broker = await this.requireActiveBroker()
-      if (!broker.endpoint) {
-        throw new Error('relay_control_not_active')
-      }
-      this.assertRelayHost(context, broker)
-      const authorization = pairingAuthorizationForContext(context, broker.hostId)
-      if (!authorization) {
-        // Why: a resume splice proves renewal through confirmation; it cannot be
-        // repurposed as either of the two initial-install authorization modes.
-        throw new Error('relay_provision_authorization_unavailable')
-      }
-      if (
-        !this.runtimeRpc.setMobileRelayBinding(context.deviceId, {
-          relayHostId: broker.hostId,
-          relayDeviceId: context.deviceId,
-          ownerIdentityKey: broker.ownerIdentityKey
-        })
-      ) {
-        throw new Error('mobile_device_not_found')
-      }
-      this.refreshDemand()
-      return await broker.installCredential(context.deviceId, params, authorization)
-    })
+    return await provisionDesktopRelay(context, params, this.pairingOperations())
   }
 
   demandStateChanged(): void {
     this.refreshDemand()
+  }
+
+  /** Reopens future brokers with the successor identity after a completed reset publication. */
+  identityResetCompleted(): void {
+    completeDesktopRelayIdentityReset({
+      runtimeRpc: this.runtimeRpc,
+      demandLedger: this.demandLedger,
+      fenceAndCloseNow: () => this.fenceAndCloseNow(),
+      refreshDemand: () => this.refreshDemand()
+    })
+  }
+
+  /** Waits for parsed relay acknowledgements; failures leave the durable item pending. */
+  async awaitIdentityResetRevocations(items: readonly RelayRevokeOutboxItem[]): Promise<void> {
+    await awaitDesktopRelayIdentityResetRevocations(items, {
+      revokeOutbox: this.revokeOutbox,
+      withTransientDemand: (key, operation) => this.withTransientDemand(key, operation),
+      requireActiveBroker: () => this.requireActiveBroker(),
+      refreshDemand: () => this.refreshDemand()
+    })
   }
 
   stop(): void {
@@ -253,6 +212,18 @@ export class DesktopRelayService {
   private requireMobileDevice(deviceId: string): void {
     if (this.runtimeRpc.getDeviceRegistry()?.getDevice(deviceId)?.scope !== 'mobile') {
       throw new Error('mobile_device_not_found')
+    }
+  }
+
+  private pairingOperations(): DesktopRelayPairingOperations {
+    return {
+      runtimeRpc: this.runtimeRpc,
+      withTransientDemand: (key, operation) => this.withTransientDemand(key, operation),
+      activeBrokerForDemand: () => this.activeBrokerForDemand(),
+      requireActiveBroker: () => this.requireActiveBroker(),
+      requireMobileDevice: (deviceId) => this.requireMobileDevice(deviceId),
+      assertRelayHost: (context, broker) => this.assertRelayHost(context, broker),
+      refreshDemand: () => this.refreshDemand()
     }
   }
 

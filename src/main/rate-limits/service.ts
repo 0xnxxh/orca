@@ -31,6 +31,7 @@ import {
   type CodexAccountSelectionTarget,
   type NormalizedCodexAccountSelectionTarget
 } from '../codex-accounts/runtime-selection'
+import { registerMainWindowClosedCleanup } from '../window/main-window-lifecycle'
 
 export type InactiveCodexAccountInfo = {
   id: string
@@ -301,12 +302,12 @@ export class RateLimitService {
     const refreshOnResume = (): void => {
       void this.refreshIfWindowActive()
     }
-    // Why: attach() can replace windows; remove the previous closed listener too, not only the focus listeners.
+    let removeClosedCleanup = (): void => {}
     const detachWindowListeners = (): void => {
       mainWindow.removeListener('focus', refreshOnResume)
       mainWindow.removeListener('show', refreshOnResume)
       mainWindow.removeListener('restore', refreshOnResume)
-      mainWindow.removeListener('closed', onClosed)
+      removeClosedCleanup()
     }
     const onClosed = (): void => {
       detachWindowListeners()
@@ -320,7 +321,7 @@ export class RateLimitService {
     mainWindow.on('focus', refreshOnResume)
     mainWindow.on('show', refreshOnResume)
     mainWindow.on('restore', refreshOnResume)
-    mainWindow.on('closed', onClosed)
+    removeClosedCleanup = registerMainWindowClosedCleanup(mainWindow, onClosed)
     this.detachWindowListeners = detachWindowListeners
   }
 

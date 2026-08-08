@@ -414,7 +414,16 @@ export async function moveTerminalPaneByLeafId(
 export async function sendToTerminal(page: Page, ptyId: string, text: string): Promise<void> {
   await page.evaluate(
     ({ ptyId, text }) => {
-      window.api.pty.write(ptyId, text)
+      for (const manager of window.__paneManagers?.values() ?? []) {
+        const pane = manager
+          .getPanes()
+          .find((candidate) => candidate.container.dataset.ptyId === ptyId)
+        if (pane) {
+          pane.terminal.input(text)
+          return
+        }
+      }
+      throw new Error(`sendToTerminal: no mounted pane owns PTY ${ptyId}`)
     },
     { ptyId, text }
   )

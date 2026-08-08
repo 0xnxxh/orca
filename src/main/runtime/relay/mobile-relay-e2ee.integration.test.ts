@@ -132,7 +132,8 @@ describe('desktop relay E2EE integration', () => {
       e2eeKeypair: {
         publicKey: desktopKeys.publicKey,
         secretKey: desktopKeys.secretKey,
-        publicKeyB64: Buffer.from(desktopKeys.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktopKeys.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: (socket, plaintext, reply, sendBinary) => {
         expect(socket.transport).toEqual({

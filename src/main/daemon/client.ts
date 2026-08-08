@@ -19,6 +19,13 @@ import type {
 } from './types'
 import { addNodePtyRecoveryHint } from './node-pty-error-hints'
 import { decodeDaemonResponseError } from './daemon-errors'
+import {
+  CURRENT_DAEMON_HELLO_CAPABILITIES,
+  parseDaemonHelloCapabilities,
+  sameDaemonHelloCapabilities,
+  TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY,
+  type DaemonHelloCapabilities
+} from './daemon-hello-protocol'
 
 const CONNECT_TIMEOUT_MS = 5000
 const CONNECTION_ATTEMPT_WAIT_MS = CONNECT_TIMEOUT_MS * 4
@@ -28,6 +35,7 @@ export type DaemonClientOptions = {
   socketPath: string
   tokenPath: string
   protocolVersion?: number
+  terminalSessionAuthorityConsumerProofReady?: () => boolean
 }
 
 type PendingRequest = {
@@ -36,10 +44,17 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>
 }
 
+type AuthenticatedDaemonHello = Readonly<{
+  identity: DaemonEndpointIdentity | null
+  capabilities: DaemonHelloCapabilities
+  tail: Buffer
+}>
+
 export class DaemonClient {
   private socketPath: string
   private tokenPath: string
   private protocolVersion: number
+  private terminalSessionAuthorityConsumerProofReady: () => boolean
   private clientId = randomUUID()
 
   private controlSocket: Socket | null = null
@@ -57,6 +72,7 @@ export class DaemonClient {
   private connectingPromise: Promise<void> | null = null
   private connectionAttemptGeneration = 0
   private daemonIdentity: DaemonEndpointIdentity | null = null
+  private negotiatedCapabilities: DaemonHelloCapabilities = {}
   private observedAuthenticatedDisconnect = false
 
   private pendingRequests = new Map<string, PendingRequest>()
@@ -69,6 +85,8 @@ export class DaemonClient {
     this.socketPath = opts.socketPath
     this.tokenPath = opts.tokenPath
     this.protocolVersion = opts.protocolVersion ?? PROTOCOL_VERSION
+    this.terminalSessionAuthorityConsumerProofReady =
+      opts.terminalSessionAuthorityConsumerProofReady ?? (() => false)
   }
 
   isConnected(): boolean {
@@ -81,6 +99,24 @@ export class DaemonClient {
 
   hasObservedAuthenticatedDisconnect(): boolean {
     return this.observedAuthenticatedDisconnect
+  }
+
+  supportsTerminalSessionAuthority(): boolean {
+    return (
+      this.connected &&
+      this.negotiatedCapabilities.terminalSessionAuthority ===
+        TERMINAL_SESSION_AUTHORITY_HELLO_CAPABILITY
+    )
+  }
+
+  terminalSessionAuthorityConsumerProofHostId(): string | null {
+    const capability = this.negotiatedCapabilities.terminalAuthorityConsumerProof
+    return capability && 'version' in capability ? capability.authorityHostId : null
+  }
+
+  terminalSessionAuthorityConsumerRetirementSupported(): boolean {
+    const capability = this.negotiatedCapabilities.terminalAuthorityConsumerProof
+    return Boolean(capability && 'version' in capability && capability.retirementVersion === 1)
   }
 
   async ensureConnected(): Promise<void> {
@@ -131,33 +167,45 @@ export class DaemonClient {
     }
 
     try {
+      const requestedCapabilities = this.requestedHelloCapabilities()
       // Sequential: control first, then stream
       const pendingControlSocket = await this.connectSocket(remainingMs())
       this.assertConnectionAttemptCurrent(attemptGeneration, pendingControlSocket)
       this.controlSocket = pendingControlSocket
-      const controlIdentity = await this.sendHello(
+      const controlHello = await this.sendHello(
         this.controlSocket,
         token,
         'control',
-        remainingMs()
+        remainingMs(),
+        requestedCapabilities
       )
       this.assertConnectionAttemptCurrent(attemptGeneration, this.controlSocket)
-      pendingListenerCleanups.push(this.setupControlParser(this.controlSocket))
+      pendingListenerCleanups.push(this.setupControlParser(this.controlSocket, controlHello.tail))
 
       const pendingStreamSocket = await this.connectSocket(remainingMs())
       this.assertConnectionAttemptCurrent(attemptGeneration, pendingStreamSocket)
       this.streamSocket = pendingStreamSocket
-      const streamIdentity = await this.sendHello(this.streamSocket, token, 'stream', remainingMs())
+      const streamHello = await this.sendHello(
+        this.streamSocket,
+        token,
+        'stream',
+        remainingMs(),
+        requestedCapabilities
+      )
       this.assertConnectionAttemptCurrent(attemptGeneration, this.streamSocket)
-      if (!sameDaemonIdentity(controlIdentity, streamIdentity)) {
+      if (!sameDaemonIdentity(controlHello.identity, streamHello.identity)) {
         throw new DaemonProtocolError('Daemon identity changed during connection')
       }
-      pendingListenerCleanups.push(this.setupStreamParser(this.streamSocket))
+      if (!sameDaemonHelloCapabilities(controlHello.capabilities, streamHello.capabilities)) {
+        throw new DaemonProtocolError('Daemon capabilities changed during connection')
+      }
+      pendingListenerCleanups.push(this.setupStreamParser(this.streamSocket, streamHello.tail))
 
       this.assertConnectionAttemptCurrent(attemptGeneration)
       this.connected = true
       this.observedAuthenticatedDisconnect = false
-      this.daemonIdentity = controlIdentity
+      this.daemonIdentity = controlHello.identity
+      this.negotiatedCapabilities = controlHello.capabilities
       this.disconnectArmed = true
       this.connectionGeneration++
 
@@ -184,6 +232,7 @@ export class DaemonClient {
       this.streamSocket = null
       this.connected = false
       this.daemonIdentity = null
+      this.negotiatedCapabilities = {}
       this.disconnectArmed = false
       throw error
     }
@@ -259,6 +308,7 @@ export class DaemonClient {
     this.connectionAttemptGeneration++
     this.connected = false
     this.daemonIdentity = null
+    this.negotiatedCapabilities = {}
     this.disconnectArmed = false
     this.cleanupActiveSocketListeners()
 
@@ -331,18 +381,23 @@ export class DaemonClient {
     socket: Socket,
     token: string,
     role: 'control' | 'stream',
-    timeoutMs: number
-  ): Promise<DaemonEndpointIdentity | null> {
+    timeoutMs: number,
+    requestedCapabilities: DaemonHelloCapabilities = this.requestedHelloCapabilities()
+  ): Promise<AuthenticatedDaemonHello> {
     return new Promise((resolve, reject) => {
       const hello: HelloMessage = {
         type: 'hello',
         version: this.protocolVersion,
         token,
         clientId: this.clientId,
-        role
+        role,
+        ...(requestedCapabilities.terminalSessionAuthority !== undefined ||
+        requestedCapabilities.terminalAuthorityConsumerProof !== undefined
+          ? { capabilities: requestedCapabilities }
+          : {})
       }
 
-      let buffer = ''
+      let buffer = Buffer.alloc(0)
       let settled = false
       let timer: ReturnType<typeof setTimeout> | null = null
       const cleanup = (): void => {
@@ -354,7 +409,14 @@ export class DaemonClient {
         socket.removeListener('error', onError)
         socket.removeListener('close', onClose)
       }
-      const finish = (error?: Error, identity: DaemonEndpointIdentity | null = null): void => {
+      const finish = (
+        error?: Error,
+        hello: AuthenticatedDaemonHello = {
+          identity: null,
+          capabilities: {},
+          tail: Buffer.alloc(0)
+        }
+      ): void => {
         if (settled) {
           return
         }
@@ -364,19 +426,17 @@ export class DaemonClient {
           reject(error)
           return
         }
-        resolve(identity)
+        resolve(hello)
       }
-      // Why: daemon socket chunks can split emoji/box-drawing UTF-8 bytes.
-      // Decoding each Buffer independently would permanently inject U+FFFD.
-      const decoder = new StringDecoder('utf8')
       const onData = (chunk: Buffer): void => {
-        buffer += decoder.write(chunk)
-        const newlineIdx = buffer.indexOf('\n')
+        buffer = Buffer.concat([buffer, chunk])
+        const newlineIdx = buffer.indexOf(0x0a)
         if (newlineIdx === -1) {
           return
         }
 
-        const line = buffer.slice(0, newlineIdx)
+        const line = buffer.subarray(0, newlineIdx).toString('utf8')
+        const tail = buffer.subarray(newlineIdx + 1)
         try {
           const response = JSON.parse(line) as HelloResponse
           if (response.ok) {
@@ -388,7 +448,11 @@ export class DaemonClient {
               finish(new DaemonProtocolError('Invalid daemon identity'))
               return
             }
-            finish(undefined, identity)
+            finish(undefined, {
+              identity,
+              capabilities: parseDaemonHelloCapabilities(response.capabilities),
+              tail
+            })
           } else {
             finish(
               new DaemonProtocolError(addNodePtyRecoveryHint(response.error ?? 'Hello rejected'))
@@ -415,7 +479,24 @@ export class DaemonClient {
     })
   }
 
-  private setupControlParser(socket: Socket): () => void {
+  private requestedHelloCapabilities(): DaemonHelloCapabilities {
+    try {
+      // Why nothing is offered without a proof keypair: authority admission is proof-only, so a
+      // client that cannot prove itself must negotiate the legacy non-authority path instead.
+      if (!this.terminalSessionAuthorityConsumerProofReady()) {
+        return {}
+      }
+      return {
+        terminalSessionAuthority: CURRENT_DAEMON_HELLO_CAPABILITIES.terminalSessionAuthority,
+        terminalAuthorityConsumerProof:
+          CURRENT_DAEMON_HELLO_CAPABILITIES.terminalAuthorityConsumerProof
+      }
+    } catch {
+      return {}
+    }
+  }
+
+  private setupControlParser(socket: Socket, initialData: Buffer): () => void {
     // Why: control responses may contain terminal/startup data with multibyte
     // text; keep incomplete UTF-8 bytes until the next socket chunk.
     const decoder = new StringDecoder('utf8')
@@ -445,10 +526,13 @@ export class DaemonClient {
 
     const onData = (chunk: Buffer) => parser.feed(decoder.write(chunk))
     socket.on('data', onData)
+    if (initialData.length > 0) {
+      parser.feed(decoder.write(initialData))
+    }
     return () => socket.off('data', onData)
   }
 
-  private setupStreamParser(socket: Socket): () => void {
+  private setupStreamParser(socket: Socket, initialData: Buffer): () => void {
     // Why: PTY output streams include emoji/box-drawing tables; socket chunks
     // can split those UTF-8 sequences across packets.
     const decoder = new StringDecoder('utf8')
@@ -466,6 +550,9 @@ export class DaemonClient {
 
     const onData = (chunk: Buffer) => parser.feed(decoder.write(chunk))
     socket.on('data', onData)
+    if (initialData.length > 0) {
+      parser.feed(decoder.write(initialData))
+    }
     return () => socket.off('data', onData)
   }
 
@@ -480,6 +567,7 @@ export class DaemonClient {
     }
     this.connected = false
     this.daemonIdentity = null
+    this.negotiatedCapabilities = {}
     this.cleanupActiveSocketListeners()
 
     for (const [id, pending] of this.pendingRequests) {

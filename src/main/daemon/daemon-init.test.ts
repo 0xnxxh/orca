@@ -248,6 +248,8 @@ type MockAdapter = {
   shutdown: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
   disconnectOnly: ReturnType<typeof vi.fn>
+  terminalAuthorityAppHostTransport: ReturnType<typeof vi.fn>
+  installTerminalAuthorityAppAdmission: ReturnType<typeof vi.fn>
   onData: ReturnType<typeof vi.fn>
   onExit: ReturnType<typeof vi.fn>
   // Why: the router calls onData/onExit on each adapter; the stub returns a no-op unsubscribe so router subscription doesn't explode.
@@ -294,6 +296,13 @@ vi.mock('./daemon-health', () => ({
 }))
 
 vi.mock('./client', () => ({ DaemonClient: daemonClientMock }))
+
+vi.mock('../session-authority/terminal-authority-consumer-proof-keypair', () => ({
+  getTerminalAuthorityConsumerProofKeypair: () => ({
+    publicKey: new Uint8Array(32).fill(1),
+    secretKey: new Uint8Array(32).fill(2)
+  })
+}))
 
 vi.mock('./daemon-lifecycle-event', () => ({
   trackDaemonReplaced: trackDaemonReplacedMock,
@@ -375,6 +384,8 @@ vi.mock('./daemon-pty-adapter', () => ({
     readonly shutdown: ReturnType<typeof vi.fn>
     readonly dispose: ReturnType<typeof vi.fn>
     readonly disconnectOnly: ReturnType<typeof vi.fn>
+    readonly terminalAuthorityAppHostTransport: ReturnType<typeof vi.fn>
+    readonly installTerminalAuthorityAppAdmission: ReturnType<typeof vi.fn>
     readonly onData: ReturnType<typeof vi.fn>
     readonly onExit: ReturnType<typeof vi.fn>
     readonly callOrder: string[]
@@ -404,6 +415,8 @@ vi.mock('./daemon-pty-adapter', () => ({
           throw disconnectOnlyError
         }
       })
+      this.terminalAuthorityAppHostTransport = vi.fn(async () => null)
+      this.installTerminalAuthorityAppAdmission = vi.fn()
       this.onData = vi.fn(() => {
         if (routerSubscriptionError.current) {
           const error = routerSubscriptionError.current

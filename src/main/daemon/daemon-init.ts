@@ -59,6 +59,8 @@ import {
 } from '../claude-accounts/live-pty-gate'
 import { parseDaemonReadyIdentity, readDaemonProcessIncarnation } from './daemon-ready-identity'
 import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
+import { getTerminalAuthorityConsumerProofKeypair } from '../session-authority/terminal-authority-consumer-proof-keypair'
+import { installPtyAuthorityOutcomeHostTransport } from '../ipc/pty-authority-outcome-ipc'
 
 // Why: daemon init runs concurrent with window load, so an in-process t timestamp (not harness stderr timing) measures cold-start.
 function logDaemonMilestone(event: string, details: Record<string, unknown> = {}): void {
@@ -907,6 +909,7 @@ export async function initDaemonPtyProvider(
     pidPath: getDaemonPidPath(runtimeDir),
     profileScope: runtimeDir,
     historyPath: getHistoryDir(),
+    terminalSessionAuthorityConsumerProofKeypair: getTerminalAuthorityConsumerProofKeypair(),
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
     respawn: async (reason: DaemonRespawnReason) => {
       // Why: attribute rather than emit — the launcher below is the one that completes the
@@ -935,6 +938,7 @@ export async function initDaemonPtyProvider(
     // Why: the launcher's temporary pair closes only after this permanent pair is established, leaving no adoption gap.
     await newAdapter.establishLifecycleLease()
     releaseDaemonAdoptionLease(newSpawner.getHandle())
+    await installDaemonAuthorityAppAdmission(newAdapter)
 
     legacyAdapters = await createLegacyDaemonAdapters(runtimeDir)
     routedAdapter =
@@ -1058,6 +1062,33 @@ function getCurrentDaemonAdapter(provider: DaemonProvider): DaemonPtyAdapter {
   return provider
 }
 
+async function installDaemonAuthorityAppAdmission(daemonAdapter: DaemonPtyAdapter): Promise<void> {
+  const transport = await daemonAdapter.terminalAuthorityAppHostTransport()
+  if (transport) {
+    daemonAdapter.installTerminalAuthorityAppAdmission(
+      installPtyAuthorityOutcomeHostTransport(transport)
+    )
+  }
+}
+
+/** Rebinds the live daemon consumer to the successor proof key after identity reset publication. */
+export async function refreshDaemonAuthorityAppProofIdentity(): Promise<void> {
+  if (!adapter) {
+    return
+  }
+  const adapters =
+    adapter instanceof DaemonPtyRouter || adapter instanceof DegradedDaemonPtyProvider
+      ? adapter.getAllAdapters()
+      : [adapter]
+  const proofKeypair = getTerminalAuthorityConsumerProofKeypair()
+  for (const daemonAdapter of adapters) {
+    if (daemonAdapter === getCurrentDaemonAdapter(adapter)) {
+      daemonAdapter.setTerminalAuthorityConsumerProofKeypair(proofKeypair)
+      await installDaemonAuthorityAppAdmission(daemonAdapter)
+    }
+  }
+}
+
 function getLegacyDaemonAdapters(provider: DaemonProvider): DaemonPtyAdapter[] {
   if (provider instanceof DaemonPtyRouter || provider instanceof DegradedDaemonPtyProvider) {
     return [...provider.getLegacyAdapters()]
@@ -1142,6 +1173,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     pidPath: getDaemonPidPath(runtimeDir),
     profileScope: runtimeDir,
     historyPath: getHistoryDir(),
+    terminalSessionAuthorityConsumerProofKeypair: getTerminalAuthorityConsumerProofKeypair(),
     respawn: async (reason: DaemonRespawnReason) => {
       // Why: attribute rather than emit — the launcher below is the one that completes the
       // replacement, and emitting here would fire before the outcome is known.
@@ -1168,6 +1200,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     // Temporary launcher lease overlaps this permanent pair so a manual restart can't strand a newly spawned daemon during adoption.
     await newCurrent.establishLifecycleLease()
     releaseDaemonAdoptionLease(currentSpawner.getHandle())
+    await installDaemonAuthorityAppAdmission(newCurrent)
 
     // Re-wrap in a router only if legacy adapters exist; they're preserved by reference and still route to their pre-upgrade daemons.
     newProvider =

@@ -1,5 +1,6 @@
 import type { PtyConsumerSessionHello } from '../shared/pty-consumer-session'
 import type { RelayClientSessionIdentity, RequestContext } from './dispatcher'
+import { parseOpenClientCapabilities } from './ssh-pty-open-client-capabilities'
 
 export type OpenClientParams = PtyConsumerSessionHello & {
   protocolVersion: number
@@ -13,18 +14,13 @@ export function parseOpenClientParams(params: Record<string, unknown>): OpenClie
     typeof params.resume === 'object' && params.resume !== null
       ? (params.resume as Record<string, unknown>)
       : undefined
-  const capabilities =
-    typeof params.capabilities === 'object' && params.capabilities !== null
-      ? (params.capabilities as Record<string, unknown>)
-      : undefined
-  const outputFlowControl =
-    typeof capabilities?.outputFlowControl === 'object' && capabilities.outputFlowControl !== null
-      ? (capabilities.outputFlowControl as Record<string, unknown>)
-      : undefined
+  const requestedRole = String(
+    params.requestedRole ?? ''
+  ) as PtyConsumerSessionHello['requestedRole']
   return {
     protocolVersion: Number(params.protocolVersion),
     clientInstanceId: String(params.clientInstanceId ?? ''),
-    requestedRole: String(params.requestedRole ?? '') as PtyConsumerSessionHello['requestedRole'],
+    requestedRole,
     ...(resume
       ? {
           resume: {
@@ -33,18 +29,7 @@ export function parseOpenClientParams(params: Record<string, unknown>): OpenClie
           }
         }
       : {}),
-    ...(outputFlowControl
-      ? {
-          capabilities: {
-            outputFlowControl: {
-              versions: Array.isArray(outputFlowControl.versions)
-                ? outputFlowControl.versions.map(Number)
-                : [],
-              requestedWindowSu: Number(outputFlowControl.requestedWindowSu)
-            }
-          }
-        }
-      : {})
+    ...parseOpenClientCapabilities(params, requestedRole)
   }
 }
 

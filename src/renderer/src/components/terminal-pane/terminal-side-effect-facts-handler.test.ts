@@ -4,6 +4,7 @@ import {
   _dispatchTerminalSideEffectBatchForTest,
   _resetTerminalSideEffectFactConsumersForTest,
   isMainTerminalSideEffectAuthorityForPty,
+  prepareTerminalSideEffectFactConsumer,
   registerTerminalSideEffectFactConsumer,
   type TerminalSideEffectFactConsumerCallbacks
 } from './terminal-side-effect-facts-handler'
@@ -440,59 +441,28 @@ describe('registerTerminalSideEffectFactConsumer', () => {
     expect(events).toEqual([])
   })
 
-  it('hands off facts emitted between the parked watcher unregistering and the pane registering', () => {
-    // Why: the reveal window — the watcher unregisters synchronously in the
-    // effect flush, the pane registers only after its async reattach resolves,
-    // and replay is title-only, so an unbuffered bell/command-code-done is lost.
-    const watcher = createCallbackRecorder()
-    const disposeWatcher = registerTerminalSideEffectFactConsumer({
+  it('keeps the predecessor live across an arbitrarily slow prepared replacement', () => {
+    vi.useFakeTimers()
+    const predecessor = createCallbackRecorder()
+    registerTerminalSideEffectFactConsumer({ ptyId: PTY_ID, callbacks: predecessor.callbacks })
+    const successor = createCallbackRecorder()
+    const prepared = prepareTerminalSideEffectFactConsumer({
       ptyId: PTY_ID,
-      callbacks: watcher.callbacks
-    })
-    disposeWatcher()
-
-    const events: unknown[][] = []
-    _dispatchTerminalSideEffectBatchForTest(
-      batch([{ kind: 'bell' }, { kind: 'command-code-done', prompt: 'Fix the spinner' }], {
-        seq: 7
-      })
-    )
-    // A PTY that never had a consumer stays dropped — no buffer was opened.
-    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }], { ptyId: 'never-consumed' }))
-
-    expect(events).toEqual([])
-    expect(watcher.events).toEqual([])
-
-    const neverConsumed = createCallbackRecorder()
-    registerTerminalSideEffectFactConsumer({
-      ptyId: 'never-consumed',
-      callbacks: neverConsumed.callbacks
-    })
-    expect(neverConsumed.events).toEqual([])
-
-    const dispose = registerTerminalSideEffectFactConsumer({
-      ptyId: PTY_ID,
-      callbacks: {
-        onBell: () => events.push(['bell']),
-        onCommandCodeDone: (prompt) => events.push(['cc-done', prompt])
-      }
+      callbacks: successor.callbacks
     })
 
-    expect(events).toEqual([['bell'], ['cc-done', 'Fix the spinner']])
-    expect(watcher.events).toEqual([])
+    vi.advanceTimersByTime(75_000)
+    for (let seq = 1; seq <= 100; seq += 1) {
+      _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }], { seq }))
+    }
 
-    // Drained exactly once: a later registration gets nothing.
-    dispose()
-    const later: unknown[][] = []
-    registerTerminalSideEffectFactConsumer({
-      ptyId: PTY_ID,
-      callbacks: {
-        onBell: () => later.push(['bell']),
-        onCommandCodeDone: (prompt) => later.push(['cc-done', prompt])
-      }
-    })
-
-    expect(later).toEqual([])
+    expect(predecessor.events).toHaveLength(100)
+    expect(successor.events).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+    expect(prepared.activate()).toBe(true)
+    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }], { seq: 101 }))
+    expect(successor.events).toEqual([['bell']])
+    vi.useRealTimers()
   })
 
   it('does not buffer replay batches across a handoff', () => {
@@ -517,59 +487,157 @@ describe('registerTerminalSideEffectFactConsumer', () => {
     expect(events).toEqual([])
   })
 
-  it('drains the handoff buffer before the register snapshot, so the replay is stale', async () => {
-    // Why: the drained live title sets lastLiveTitleSeq, which is what makes
-    // the async snapshot's older title lose to the fact the pane already got.
+  it('auto-activates a prepared parked owner when its predecessor releases', async () => {
     const snapshot = batch([{ kind: 'title', normalizedTitle: 'snapshot', rawTitle: 'snapshot' }], {
       replay: true,
-      seq: 20
+      seq: 20,
+      ptyIncarnationId: 'incarnation-1'
     })
     ;(globalThis as { window: unknown }).window = {
       api: { pty: { getSideEffectSnapshot: vi.fn(async () => snapshot) } }
     }
 
+    const predecessor = createCallbackRecorder()
     const dispose = registerTerminalSideEffectFactConsumer({
       ptyId: PTY_ID,
-      callbacks: createCallbackRecorder().callbacks
+      incarnationId: 'incarnation-1',
+      callbacks: predecessor.callbacks
+    })
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'title', normalizedTitle: 'live', rawTitle: 'live' }], {
+        seq: 20,
+        ptyIncarnationId: 'incarnation-1'
+      })
+    )
+
+    const successor = createCallbackRecorder()
+    prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      incarnationId: 'incarnation-1',
+      callbacks: successor.callbacks,
+      restoreTitleOnRegister: true,
+      activateOnPredecessorRelease: true
     })
     dispose()
     _dispatchTerminalSideEffectBatchForTest(
-      batch([{ kind: 'title', normalizedTitle: 'live', rawTitle: 'live' }], { seq: 20 })
+      batch([{ kind: 'bell' }], { seq: 21, ptyIncarnationId: 'incarnation-1' })
     )
-
-    const { callbacks, events } = createCallbackRecorder()
-    registerTerminalSideEffectFactConsumer({
-      ptyId: PTY_ID,
-      callbacks,
-      restoreTitleOnRegister: true
-    })
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(events).toEqual([['title', 'live', 'live']])
+    expect(predecessor.events).toEqual([['title', 'live', 'live']])
+    expect(successor.events).toEqual([['bell']])
   })
 
-  it('drops a handoff-buffered batch once the buffer TTL expires', () => {
-    vi.useFakeTimers()
-    try {
-      const dispose = registerTerminalSideEffectFactConsumer({
-        ptyId: PTY_ID,
-        callbacks: createCallbackRecorder().callbacks
-      })
-      dispose()
-      _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }]))
-      expect(vi.getTimerCount()).toBe(1)
+  it('leaves the predecessor active when a prepared successor is cancelled', () => {
+    const predecessor = createCallbackRecorder()
+    registerTerminalSideEffectFactConsumer({ ptyId: PTY_ID, callbacks: predecessor.callbacks })
+    const successor = createCallbackRecorder()
+    const prepared = prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      callbacks: successor.callbacks
+    })
 
-      vi.advanceTimersByTime(15_001)
-      expect(vi.getTimerCount()).toBe(0)
+    prepared.cancel()
+    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }]))
 
-      const { callbacks, events } = createCallbackRecorder()
-      registerTerminalSideEffectFactConsumer({ ptyId: PTY_ID, callbacks })
+    expect(predecessor.events).toEqual([['bell']])
+    expect(successor.events).toEqual([])
+    expect(prepared.activate()).toBe(false)
+  })
 
-      expect(events).toEqual([])
-    } finally {
-      vi.useRealTimers()
+  it('allows only the latest prepared successor to activate', () => {
+    const predecessor = createCallbackRecorder()
+    registerTerminalSideEffectFactConsumer({ ptyId: PTY_ID, callbacks: predecessor.callbacks })
+    const stale = createCallbackRecorder()
+    const stalePrepared = prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      callbacks: stale.callbacks
+    })
+    const current = createCallbackRecorder()
+    const currentPrepared = prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      callbacks: current.callbacks
+    })
+
+    expect(stalePrepared.activate()).toBe(false)
+    expect(currentPrepared.activate()).toBe(true)
+    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }]))
+
+    expect(predecessor.events).toEqual([])
+    expect(stale.events).toEqual([])
+    expect(current.events).toEqual([['bell']])
+  })
+
+  it('does not inherit the title cursor across exact PTY incarnations', async () => {
+    const snapshot = batch([{ kind: 'title', normalizedTitle: 'new', rawTitle: 'new' }], {
+      replay: true,
+      seq: 5,
+      ptyIncarnationId: 'incarnation-new'
+    })
+    ;(globalThis as { window: unknown }).window = {
+      api: { pty: { getSideEffectSnapshot: vi.fn(async () => snapshot) } }
     }
+    registerTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      incarnationId: 'incarnation-old',
+      callbacks: createCallbackRecorder().callbacks
+    })
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'title', normalizedTitle: 'old', rawTitle: 'old' }], {
+        seq: 50,
+        ptyIncarnationId: 'incarnation-old'
+      })
+    )
+    const successor = createCallbackRecorder()
+    const prepared = prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      incarnationId: 'incarnation-new',
+      callbacks: successor.callbacks,
+      restoreTitleOnRegister: true
+    })
+
+    expect(prepared.activate('incarnation-new')).toBe(true)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(successor.events).toEqual([['title', 'new', 'new']])
+  })
+
+  it('fences same-id facts by exact incarnation before and after commit', () => {
+    const predecessor = createCallbackRecorder()
+    registerTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      incarnationId: 'incarnation-old',
+      callbacks: predecessor.callbacks
+    })
+    const successor = createCallbackRecorder()
+    const prepared = prepareTerminalSideEffectFactConsumer({
+      ptyId: PTY_ID,
+      incarnationId: 'incarnation-new',
+      callbacks: successor.callbacks
+    })
+
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'bell' }], { seq: 1, ptyIncarnationId: 'incarnation-new' })
+    )
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'bell' }], { seq: 2, ptyIncarnationId: 'incarnation-old' })
+    )
+    expect(predecessor.events).toEqual([['bell']])
+    expect(successor.events).toEqual([])
+
+    expect(prepared.activate('incarnation-new')).toBe(true)
+    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: 'bell' }], { seq: 3 }))
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'bell' }], { seq: 4, ptyIncarnationId: 'incarnation-old' })
+    )
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: 'bell' }], { seq: 5, ptyIncarnationId: 'incarnation-new' })
+    )
+
+    expect(predecessor.events).toEqual([['bell']])
+    expect(successor.events).toEqual([['bell']])
   })
 
   it('subscribes to the channel once and routes IPC batches', () => {

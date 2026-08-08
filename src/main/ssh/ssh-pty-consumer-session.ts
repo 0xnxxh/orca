@@ -1,101 +1,31 @@
+import { PTY_CONSUMER_SESSION_PROTOCOL_VERSION } from '../../shared/pty-consumer-session'
+import { PTY_EXACT_OPERATION_PROTOCOL_VERSION } from '../../shared/pty-exact-operation-protocol'
+import { TERMINAL_AUTHORITY_EXACT_OPERATIONS_VERSION } from '../../shared/terminal-authority-exact-operation-protocol'
+import { TERMINAL_AUTHORITY_OUTCOME_DELIVERY_VERSION } from '../../shared/terminal-authority-outcome-delivery'
+import { TERMINAL_AUTHORITY_NAMESPACE_OUTCOME_VERSION } from '../../shared/terminal-session-authority-consumer-transport'
+import { TERMINAL_AUTHORITY_CONSUMER_PROOF_VERSION } from '../../shared/terminal-session-authority-consumer-proof'
+import { TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION } from '../../shared/terminal-session-authority-consumer-retirement'
 import {
-  PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
-  type PtyConsumerSessionGrant
-} from '../../shared/pty-consumer-session'
+  TERMINAL_AUTHORITY_TOPOLOGY_STREAM_VERSION,
+  terminalAuthorityTopologyGrantFromPtyCapabilities
+} from '../../shared/terminal-authority-topology-stream-contract'
 import type { SshChannelMultiplexer } from './ssh-channel-multiplexer'
+import { validateSshPtyConsumerSessionGrant } from './ssh-pty-consumer-session-grant-validation'
+import type {
+  OpenSshPtyConsumerSessionOptions,
+  SshPtyConsumerAdmission
+} from './ssh-pty-consumer-session-types'
+
+export type {
+  OpenSshPtyConsumerSessionOptions,
+  SshPtyConsumerAdmission,
+  SshPtyConsumerOwnerState,
+  SshPtyConsumerSessionState,
+  SshPtyLegacyFallbackState
+} from './ssh-pty-consumer-session-types'
 
 export const SSH_PTY_OPEN_CLIENT_METHOD = 'pty.openClient'
 export const SSH_PTY_OPEN_CLIENT_TIMEOUT_MS = 10_000
-
-export type SshPtyConsumerOwnerState = {
-  mode: 'negotiated'
-  clientInstanceId: string
-  clientGeneration: number
-  ownerGeneration: number
-  ownerLease: string
-  outputFlowControl?: {
-    version: 1
-    windowSu: number
-  }
-}
-
-export type SshPtyLegacyFallbackState = {
-  mode: 'legacy-fallback'
-  clientInstanceId: string
-  serverBuildId: string
-}
-
-export type SshPtyConsumerSessionState = SshPtyConsumerOwnerState | SshPtyLegacyFallbackState
-
-export type SshPtyConsumerAdmission = {
-  state: SshPtyConsumerSessionState
-  // Why not on the owner state itself: this describes one admission's outcome, not the persisted
-  // claim, and it must never round-trip through the recovery record.
-  resumed: boolean
-}
-
-export type OpenSshPtyConsumerSessionOptions = {
-  clientInstanceId: string
-  expectedServerBuildId: string | undefined
-  resume?: Pick<SshPtyConsumerOwnerState, 'ownerGeneration' | 'ownerLease'>
-  outputFlowControl?: {
-    requestedWindowSu: number
-  }
-  allowSameBuildLegacyFallback?: boolean
-}
-
-function validateGrant(
-  value: unknown,
-  options: OpenSshPtyConsumerSessionOptions
-): PtyConsumerSessionGrant {
-  if (typeof value !== 'object' || value === null) {
-    throw new Error('Remote relay returned an invalid pty.openClient grant')
-  }
-  if (!options.expectedServerBuildId) {
-    throw new Error('Local relay build identity is unavailable')
-  }
-  const grant = value as Partial<PtyConsumerSessionGrant>
-  if (
-    grant.protocolVersion !== PTY_CONSUMER_SESSION_PROTOCOL_VERSION ||
-    grant.serverBuildId !== options.expectedServerBuildId
-  ) {
-    throw new Error(
-      `Remote relay session contract mismatch — expected build ${options.expectedServerBuildId}, got ${grant.serverBuildId ?? 'unknown'}`
-    )
-  }
-  if (
-    !Number.isSafeInteger(grant.clientGeneration) ||
-    grant.clientGeneration! <= 0 ||
-    grant.role !== 'session-owner' ||
-    !Number.isSafeInteger(grant.ownerGeneration) ||
-    grant.ownerGeneration! <= 0 ||
-    typeof grant.ownerLease !== 'string' ||
-    grant.ownerLease.length === 0 ||
-    grant.ownerLease.length > 512
-  ) {
-    throw new Error('Remote relay did not grant an authenticated PTY session owner')
-  }
-  // Why not treated as a legacy relay: client and relay ship in one build, and the build id was already
-  // matched above — a missing `resumed` here is corruption, not an older peer.
-  if (typeof grant.resumed !== 'boolean') {
-    throw new Error('Remote relay owner grant did not state whether the claim was resumed')
-  }
-  const requestedFlow = options.outputFlowControl
-  const grantedFlow = grant.capabilities?.outputFlowControl
-  if (requestedFlow) {
-    if (
-      grantedFlow?.version !== 1 ||
-      !Number.isSafeInteger(grantedFlow.windowSu) ||
-      grantedFlow.windowSu <= 0 ||
-      grantedFlow.windowSu > requestedFlow.requestedWindowSu
-    ) {
-      throw new Error('Remote relay did not grant the offered PTY output-flow-control capability')
-    }
-  } else if (grantedFlow) {
-    throw new Error('Remote relay granted an unoffered PTY output-flow-control capability')
-  }
-  return grant as PtyConsumerSessionGrant
-}
 
 export async function openSshPtyConsumerSession(
   mux: SshChannelMultiplexer,
@@ -110,13 +40,72 @@ export async function openSshPtyConsumerSession(
         clientInstanceId: options.clientInstanceId,
         requestedRole: 'session-owner',
         ...(options.resume ? { resume: options.resume } : {}),
-        ...(options.outputFlowControl
+        ...(options.outputFlowControl ||
+        options.exactOperations ||
+        options.heldProducerPause ||
+        options.terminalAuthorityExactOperations ||
+        options.terminalAuthorityOutcomeDelivery ||
+        options.terminalAuthorityNamespaceOutcomeClaim ||
+        options.terminalAuthorityConsumerProof ||
+        options.terminalAuthorityTopology
           ? {
               capabilities: {
-                outputFlowControl: {
-                  versions: [1],
-                  requestedWindowSu: options.outputFlowControl.requestedWindowSu
-                }
+                ...(options.outputFlowControl
+                  ? {
+                      outputFlowControl: {
+                        versions: [1],
+                        requestedWindowSu: options.outputFlowControl.requestedWindowSu
+                      }
+                    }
+                  : {}),
+                ...(options.exactOperations
+                  ? { exactOperations: { versions: [PTY_EXACT_OPERATION_PROTOCOL_VERSION] } }
+                  : {}),
+                ...(options.heldProducerPause ? { heldProducerPause: { versions: [1] } } : {}),
+                ...(options.terminalAuthorityExactOperations
+                  ? {
+                      terminalAuthorityExactOperations: {
+                        versions: [TERMINAL_AUTHORITY_EXACT_OPERATIONS_VERSION]
+                      }
+                    }
+                  : {}),
+                ...(options.terminalAuthorityOutcomeDelivery
+                  ? {
+                      terminalAuthorityOutcomeDelivery: {
+                        versions: [TERMINAL_AUTHORITY_OUTCOME_DELIVERY_VERSION]
+                      }
+                    }
+                  : {}),
+                ...(options.terminalAuthorityNamespaceOutcomeClaim
+                  ? {
+                      terminalAuthorityNamespaceOutcomes: {
+                        versions: [TERMINAL_AUTHORITY_NAMESPACE_OUTCOME_VERSION],
+                        consumer: options.terminalAuthorityNamespaceOutcomeClaim.consumer,
+                        expectedConsumerIncarnationId:
+                          options.terminalAuthorityNamespaceOutcomeClaim
+                            .expectedConsumerIncarnationId
+                      }
+                    }
+                  : {}),
+                ...(options.terminalAuthorityConsumerProof
+                  ? {
+                      terminalAuthorityConsumerProof: {
+                        versions: [TERMINAL_AUTHORITY_CONSUMER_PROOF_VERSION],
+                        ...(options.terminalAuthorityConsumerRetirement
+                          ? {
+                              retirementVersions: [TERMINAL_AUTHORITY_CONSUMER_RETIREMENT_VERSION]
+                            }
+                          : {})
+                      }
+                    }
+                  : {}),
+                ...(options.terminalAuthorityTopology
+                  ? {
+                      terminalAuthorityTopology: {
+                        versions: [TERMINAL_AUTHORITY_TOPOLOGY_STREAM_VERSION]
+                      }
+                    }
+                  : {})
               }
             }
           : {})
@@ -128,6 +117,7 @@ export async function openSshPtyConsumerSession(
     if (
       code === -32601 &&
       options.allowSameBuildLegacyFallback === true &&
+      options.requiredTerminalAuthorityConsumerProofHostId === undefined &&
       typeof options.expectedServerBuildId === 'string' &&
       options.expectedServerBuildId.length > 0
     ) {
@@ -142,7 +132,7 @@ export async function openSshPtyConsumerSession(
     }
     throw error
   }
-  const grant = validateGrant(result, options)
+  const grant = validateSshPtyConsumerSessionGrant(result, options)
   return {
     state: {
       mode: 'negotiated',
@@ -152,6 +142,36 @@ export async function openSshPtyConsumerSession(
       ownerLease: grant.ownerLease!,
       ...(grant.capabilities?.outputFlowControl
         ? { outputFlowControl: grant.capabilities.outputFlowControl }
+        : {}),
+      ...(grant.capabilities?.exactOperations
+        ? { exactOperations: grant.capabilities.exactOperations }
+        : {}),
+      ...(grant.capabilities?.heldProducerPause
+        ? { heldProducerPause: grant.capabilities.heldProducerPause }
+        : {}),
+      ...(grant.capabilities?.terminalAuthorityExactOperations
+        ? {
+            terminalAuthorityExactOperations: grant.capabilities.terminalAuthorityExactOperations
+          }
+        : {}),
+      ...(grant.capabilities?.terminalAuthorityOutcomeDelivery
+        ? {
+            terminalAuthorityOutcomeDelivery: grant.capabilities.terminalAuthorityOutcomeDelivery
+          }
+        : {}),
+      ...(grant.capabilities?.terminalAuthorityNamespaceOutcomes
+        ? {
+            terminalAuthorityNamespaceOutcomes:
+              grant.capabilities.terminalAuthorityNamespaceOutcomes
+          }
+        : {}),
+      ...(grant.capabilities?.terminalAuthorityConsumerProof
+        ? {
+            terminalAuthorityConsumerProof: grant.capabilities.terminalAuthorityConsumerProof
+          }
+        : {}),
+      ...(terminalAuthorityTopologyGrantFromPtyCapabilities(grant.capabilities)
+        ? { terminalAuthorityTopology: { version: 1 as const } }
         : {})
     },
     resumed: grant.resumed!

@@ -8,6 +8,7 @@ import type {
   AgentOwnershipEvidence,
   PtyListedSession
 } from '../../../../shared/pty-listed-session'
+import type { PtyAdministrativeMutationAccess } from '../../../../shared/pty-mutation-identity'
 
 /** `null` === "no local sample" (e.g. SSH PTY); UI renders as em-dash. */
 export type Metric = number | null
@@ -23,6 +24,7 @@ export type UnifiedSessionRow = {
   bound: boolean
   /** Ownership as the provider could establish it; anything but `absent` means confirm first. */
   agentOwnership: AgentOwnershipEvidence
+  administrativeMutationAccess?: PtyAdministrativeMutationAccess
   tabId: string | null
   cpu: Metric
   memory: Metric

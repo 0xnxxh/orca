@@ -9,8 +9,19 @@ import type { CreateOrAttachResult } from './terminal-host-create-contract'
 import type { TerminalHostOptions } from './terminal-host-options'
 import type { TerminalHostTombstones } from './terminal-host-tombstones'
 import type { TerminalSessionTeardown } from './terminal-session-teardown'
+import type { TerminalSessionAuthorityPtyAccess } from '../../shared/terminal-session-authority-pty-access'
 import { SessionNotFoundError } from './types'
 import { resolveWslSessionContext } from './wsl-session-context'
+
+export type TerminalHostSessionCreationHooks = Readonly<{
+  wrapSubprocess: (
+    subprocess: ReturnType<TerminalHostOptions['spawnSubprocess']>
+  ) => ReturnType<TerminalHostOptions['spawnSubprocess']>
+  onSpawnFailure: (error: unknown) => Promise<void>
+  beforePublish: (session: Session) => Promise<TerminalSessionAuthorityPtyAccess>
+  afterPublish: (session: Session) => void
+  onPostDispatchFailure: (error: unknown) => void
+}>
 
 type TerminalHostSessionCreateDependencies = {
   sessions: Map<string, Session>
@@ -20,7 +31,8 @@ type TerminalHostSessionCreateDependencies = {
   creationFenced: boolean
   onDeadSessionRemoved: (sessionId: string) => void
   onSessionCreated: (sessionId: string, generation: string | undefined, isAlive: boolean) => void
-  onSessionExit: (sessionId: string, generation: string | undefined) => void
+  onSessionExit: (sessionId: string, generation: string | undefined, code: number) => void
+  creationHooks?: TerminalHostSessionCreationHooks
 }
 
 export async function createOrAttachTerminalSession(
@@ -42,6 +54,7 @@ export async function createOrAttachTerminalSession(
   if (existing && existing.isAlive && !existing.isTerminating) {
     const snapshot = existing.getSnapshot()
     existing.detachAllClients()
+    opts.streamClient.onIncarnation?.(existing.incarnationId)
     const token = existing.attachClient(opts.streamClient)
     return {
       isNew: false,
@@ -74,70 +87,86 @@ export async function createOrAttachTerminalSession(
   deps.killedTombstones.clearForCreate(opts.sessionId)
   const size = normalizePtySize(opts.cols, opts.rows)
   const wslDistro = resolveWslSessionContext(opts)?.distro
-  const subprocess = deps.spawnSubprocess({
-    sessionId: opts.sessionId,
-    cols: size.cols,
-    rows: size.rows,
-    cwd: opts.cwd,
-    env: opts.env,
-    envToDelete: opts.envToDelete,
-    command: opts.command,
-    startupCommandDelivery: opts.startupCommandDelivery,
-    ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
-    shellOverride: opts.shellOverride,
-    terminalWindowsWslDistro: opts.terminalWindowsWslDistro,
-    terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation
-  })
-
-  // Why: a fallback shell does not emit the preferred shell's ready marker;
-  // retaining the stale capability would indefinitely queue its first command.
-  const shellReadySupported =
-    (opts.shellReadySupported ?? false) &&
-    (subprocess.shellPath === undefined || shellPathSupportsPtyStartupBarrier(subprocess.shellPath))
-  const session = new Session({
-    sessionId: opts.sessionId,
-    cols: size.cols,
-    rows: size.rows,
-    terminalHandle: opts.env?.ORCA_TERMINAL_HANDLE,
-    launchAgent: opts.launchAgent,
-    subprocess,
-    ownerBackend: resolvePtyOwnerBackend({
-      platform: process.platform,
-      shellPath: subprocess.shellPath,
-      wslDistro
-    }),
-    shellReadySupported,
-    historySeedChunks: opts.historySeedChunks,
-    ...(opts.startupIngress ? { startupIngress: opts.startupIngress } : {}),
-    wslDistro,
-    onExit: () => deps.onSessionExit(opts.sessionId, opts.agentSessionGeneration),
-    ...(opts.shellReadyTimeoutMs !== undefined
-      ? { shellReadyTimeoutMs: opts.shellReadyTimeoutMs }
-      : {})
-  })
-
-  deps.sessions.set(opts.sessionId, session)
-  deps.onSessionCreated(opts.sessionId, opts.agentSessionGeneration, session.isAlive)
-  const token = session.attachClient(opts.streamClient)
-
-  if (opts.command && !subprocess.startupCommandDeliveredInShellArgs) {
-    const submit = process.platform === 'win32' ? '\r' : '\n'
-    // Why: only Orca-wrapped shells advertise the paste-safe startup barrier.
-    session.write(
-      buildStartupCommandSubmission(opts.command, {
-        submit,
-        bracketedPasteSafe: shellReadySupported
-      })
-    )
+  let subprocess: ReturnType<TerminalHostOptions['spawnSubprocess']>
+  try {
+    subprocess = deps.spawnSubprocess({
+      sessionId: opts.sessionId,
+      cols: size.cols,
+      rows: size.rows,
+      cwd: opts.cwd,
+      env: opts.env,
+      envToDelete: opts.envToDelete,
+      command: opts.command,
+      startupCommandDelivery: opts.startupCommandDelivery,
+      ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
+      shellOverride: opts.shellOverride,
+      terminalWindowsWslDistro: opts.terminalWindowsWslDistro,
+      terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation
+    })
+  } catch (error) {
+    await deps.creationHooks?.onSpawnFailure(error)
+    throw error
   }
+  try {
+    const sessionSubprocess = deps.creationHooks?.wrapSubprocess(subprocess) ?? subprocess
+    // Why: a fallback shell does not emit the preferred shell's ready marker;
+    // retaining the stale capability would indefinitely queue its first command.
+    const shellReadySupported =
+      (opts.shellReadySupported ?? false) &&
+      (subprocess.shellPath === undefined ||
+        shellPathSupportsPtyStartupBarrier(subprocess.shellPath))
+    const session = new Session({
+      sessionId: opts.sessionId,
+      cols: size.cols,
+      rows: size.rows,
+      terminalHandle: opts.env?.ORCA_TERMINAL_HANDLE,
+      launchAgent: opts.launchAgent,
+      subprocess: sessionSubprocess,
+      ownerBackend: resolvePtyOwnerBackend({
+        platform: process.platform,
+        shellPath: subprocess.shellPath,
+        wslDistro
+      }),
+      shellReadySupported,
+      historySeedChunks: opts.historySeedChunks,
+      ...(opts.startupIngress ? { startupIngress: opts.startupIngress } : {}),
+      wslDistro,
+      onExit: (code) => deps.onSessionExit(opts.sessionId, opts.agentSessionGeneration, code),
+      ...(opts.shellReadyTimeoutMs !== undefined
+        ? { shellReadyTimeoutMs: opts.shellReadyTimeoutMs }
+        : {})
+    })
+    const terminalSessionAuthorityAccess = await deps.creationHooks?.beforePublish(session)
 
-  return {
-    isNew: true,
-    snapshot: null,
-    pid: subprocess.pid,
-    shellState: session.shellState,
-    incarnationId: session.incarnationId,
-    ...getDaemonSessionResultMetadata(session),
-    attachToken: token
+    deps.sessions.set(opts.sessionId, session)
+    deps.onSessionCreated(opts.sessionId, opts.agentSessionGeneration, session.isAlive)
+    opts.streamClient.onIncarnation?.(session.incarnationId)
+    const token = session.attachClient(opts.streamClient)
+    deps.creationHooks?.afterPublish(session)
+
+    if (opts.command && !subprocess.startupCommandDeliveredInShellArgs) {
+      const submit = process.platform === 'win32' ? '\r' : '\n'
+      // Why: only Orca-wrapped shells advertise the paste-safe startup barrier.
+      session.write(
+        buildStartupCommandSubmission(opts.command, {
+          submit,
+          bracketedPasteSafe: shellReadySupported
+        })
+      )
+    }
+
+    return {
+      isNew: true,
+      snapshot: null,
+      pid: subprocess.pid,
+      shellState: session.shellState,
+      incarnationId: session.incarnationId,
+      ...getDaemonSessionResultMetadata(session),
+      attachToken: token,
+      ...(terminalSessionAuthorityAccess ? { terminalSessionAuthorityAccess } : {})
+    }
+  } catch (error) {
+    deps.creationHooks?.onPostDispatchFailure(error)
+    throw error
   }
 }

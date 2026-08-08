@@ -28,6 +28,7 @@ import {
   registerPaneKeyTeardownListener,
   getLocalPtyProvider,
   getSshPtyProvider,
+  publishTerminalSideEffectBatchToRenderer,
   registerHeadlessPtyRuntime,
   type CodexHomeLaunchContext
 } from './ipc/pty'
@@ -36,7 +37,8 @@ import {
   disconnectDaemon,
   getDaemonProvider,
   listLiveDaemonPtyIds,
-  shutdownDaemon
+  shutdownDaemon,
+  refreshDaemonAuthorityAppProofIdentity
 } from './daemon/daemon-init'
 import {
   hasRecordedLegacySharedCodexPane,
@@ -188,6 +190,7 @@ import {
   ensureAutoUpdaterConfigured
 } from './window/attach-main-window-services'
 import { createMainWindow, loadMainWindow } from './window/createMainWindow'
+import { registerMainWindowClosedCleanup } from './window/main-window-lifecycle'
 import {
   getDashboardPopoutWindow,
   zoomDashboardPopoutIfFocused
@@ -261,7 +264,7 @@ import { AgentAwakeService } from './agent-awake-service'
 import { registerSystemResumeBroadcast } from './system-resume-broadcast'
 import { settleTeardownWithinDeadline } from './quit-teardown-deadline'
 import { quitTeardownStartGate } from './quit-teardown-start-gate'
-import { beginSshShutdown } from './ipc/ssh'
+import { beginSshShutdown, disconnectAllSshTargetsForIdentityReset } from './ipc/ssh'
 import { PluginService } from './plugins/plugin-service'
 import { PluginKillListService } from './plugins/plugin-kill-list-service'
 import { getPluginsDataDir } from './plugins/plugin-discovery'
@@ -307,7 +310,6 @@ import {
 import type { AgentStatusState } from '../shared/agent-status-types'
 import { resolveTuiAgentPermissionMode } from '../shared/tui-agent-permissions'
 import { isAskUserQuestionTool } from '../shared/agent-question-answered-intent'
-import type { TerminalSideEffectBatch } from '../shared/terminal-side-effect-facts'
 import {
   HEADLESS_RUNTIME_WINDOW_ID,
   type RuntimeDesktopWindowStatus
@@ -1392,7 +1394,7 @@ function openMainWindow(): BrowserWindow {
   rateLimits.attach(window)
   // Why: quota probes spawn CLIs and hit network, so don't fetch immediately and compete with first paint; show/focus listeners refresh later.
   rateLimits.start({ fetchImmediately: false })
-  window.on('closed', () => {
+  registerMainWindowClosedCleanup(window, () => {
     if (mainWindow === window) {
       mainWindow = null
     }
@@ -2367,11 +2369,7 @@ void app.whenReady().then(async () => {
       agentHookServer.ingestTerminalStatus(event)
     },
     // Why: serve can be promoted in place, so wire the listener from startup; runtime enables desktop-only scanners only for a ready renderer.
-    onTerminalSideEffects: (batch: TerminalSideEffectBatch) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pty:sideEffect', batch)
-      }
-    },
+    onTerminalSideEffects: publishTerminalSideEffectBatchToRenderer,
     getDesktopWindowStatus: getDesktopWindowStatus,
     // Why: worktree.ps pulls hook-reported agent status (same source as the desktop sidebar) at query time so mobile shows the same agents.
     getAgentStatusSnapshot: () =>
@@ -2819,7 +2817,11 @@ void app.whenReady().then(async () => {
           preferPinnedWsPort: true
         }
       : {}),
-    webClientRoot: getBundledWebClientRoot()
+    webClientRoot: getBundledWebClientRoot(),
+    identityResetHooks: {
+      disconnectSshTargets: disconnectAllSshTargetsForIdentityReset,
+      refreshDaemonProofIdentity: refreshDaemonAuthorityAppProofIdentity
+    }
   })
   registerMobileHandlers(runtimeRpc, {
     getRelayStatus: () => desktopRelayStatus,
@@ -2956,6 +2958,8 @@ void app.whenReady().then(async () => {
       runtimeRpc.setMobileRelayPairingProvider({
         createPairingRelay: (relayDeviceId) => relayService.createPairingRelay(relayDeviceId),
         onDeviceRevokeQueued: (item) => relayService.onDeviceRevokeQueued(item),
+        awaitIdentityResetRevocations: (items) => relayService.awaitIdentityResetRevocations(items),
+        identityResetCompleted: () => relayService.identityResetCompleted(),
         onDemandStateChanged: () => relayService.demandStateChanged(),
         getEndpoints: (context, params) => relayService.getEndpoints(context, params),
         provisionRelay: (context, params) => relayService.provisionRelay(context, params)

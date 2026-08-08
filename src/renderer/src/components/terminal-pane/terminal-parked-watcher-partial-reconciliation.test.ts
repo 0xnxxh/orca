@@ -29,12 +29,22 @@ vi.mock('./terminal-parked-pty-watcher', () => ({
     const dispose = vi.fn()
     startedWatchers.push({ pane: args.pane, dispose })
     args.entry.paneIdByPtyId.set(args.pane.ptyId, args.pane.paneId)
+    args.entry.paneCaptureByPtyId?.set(args.pane.ptyId, args.pane)
+    args.entry.activateByPtyId?.set(
+      args.pane.ptyId,
+      vi.fn(() => true)
+    )
     args.entry.disposersByPtyId.set(args.pane.ptyId, dispose)
+    return true
   }
 }))
 
 vi.mock('./pty-pre-handler-buffer', () => ({
   discardPreHandlerPtyState: vi.fn()
+}))
+
+vi.mock('../terminal/terminal-provider-snapshot-capability', () => ({
+  terminalProviderHasAuthoritativeSnapshot: () => true
 }))
 
 const state = {
@@ -52,8 +62,10 @@ vi.mock('@/store', () => ({
 }))
 
 import {
+  activatePreparedParkedTerminalTabWatchers,
   captureParkedTerminalPaneCandidates,
   pruneParkedTerminalWatchers,
+  registerMountedTerminalPaneCandidateReader,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
 
@@ -76,12 +88,24 @@ afterEach(() => {
   pruneParkedTerminalWatchers(new Set())
 })
 
-it('retains a continuing watcher and title while reconciling a reminted split leaf', () => {
-  captureParkedTerminalPaneCandidates(TAB_ID, WORKTREE_ID, [
+it('replaces the exact watcher set while preserving a continuing pane title', () => {
+  const mountedPanes = [
     { ptyId: FIRST_PTY_ID, paneId: 1, leafId: FIRST_LEAF_ID, drivesTabTitle: true },
     { ptyId: OLD_SECOND_PTY_ID, paneId: 2, leafId: SECOND_LEAF_ID, drivesTabTitle: false }
-  ])
+  ]
+  captureParkedTerminalPaneCandidates(TAB_ID, WORKTREE_ID, mountedPanes)
+  const unregisterReader = registerMountedTerminalPaneCandidateReader(
+    TAB_ID,
+    WORKTREE_ID,
+    () => mountedPanes
+  )
   sync()
+  activatePreparedParkedTerminalTabWatchers({
+    worktreeId: WORKTREE_ID,
+    tabs: [{ id: TAB_ID, ptyId: FIRST_PTY_ID }],
+    parkedTabIds: new Set([TAB_ID])
+  })
+  unregisterReader()
 
   state.terminalLayoutsByTabId[TAB_ID] = {
     root: {
@@ -97,11 +121,20 @@ it('retains a continuing watcher and title while reconciling a reminted split le
       [SECOND_LEAF_ID]: NEW_SECOND_PTY_ID
     }
   }
+  const unregisterReplacementReader = registerMountedTerminalPaneCandidateReader(
+    TAB_ID,
+    WORKTREE_ID,
+    () => [
+      { ptyId: FIRST_PTY_ID, paneId: 1, leafId: FIRST_LEAF_ID, drivesTabTitle: true },
+      { ptyId: NEW_SECOND_PTY_ID, paneId: 2, leafId: SECOND_LEAF_ID, drivesTabTitle: false }
+    ]
+  )
   sync()
+  unregisterReplacementReader()
 
-  expect(startedWatchers[0].dispose).not.toHaveBeenCalled()
+  expect(startedWatchers[0].dispose).toHaveBeenCalledOnce()
   expect(startedWatchers[1].dispose).toHaveBeenCalledOnce()
-  expect(startedWatchers[2].pane).toMatchObject({
+  expect(startedWatchers[3].pane).toMatchObject({
     ptyId: NEW_SECOND_PTY_ID,
     paneId: 2,
     drivesTabTitle: false

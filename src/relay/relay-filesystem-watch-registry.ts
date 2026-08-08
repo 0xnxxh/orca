@@ -22,7 +22,7 @@ import {
   trackRelayWatcherSetup,
   type RelayWatcherPendingSetup
 } from './relay-watcher-setup-tracking'
-import { RelayWatcherRemovalFence } from './relay-watcher-removal-fence'
+import { RelayWorktreeRemovalFence } from './relay-worktree-removal-fence'
 import { releaseStaleRelayWatches } from './relay-watcher-stale-client-release'
 import { PromiseSettlementWaiters } from '../shared/promise-settlement-waiters'
 import { joinRelayWatcherPendingSetup } from './relay-watcher-pending-setup-join'
@@ -34,7 +34,7 @@ export class RelayFilesystemWatchRegistry {
   private readonly watches = new Map<string, RelayWatcherTeardownState>()
   private readonly pendingSetups = new Map<string, RelayWatcherPendingSetup>()
   private readonly teardownTracker: RelayWatcherTeardownTracker
-  private readonly removalFence: RelayWatcherRemovalFence
+  readonly worktreeRemovalFence: RelayWorktreeRemovalFence
 
   constructor(
     private readonly dispatcher: RelayDispatcher,
@@ -43,7 +43,7 @@ export class RelayFilesystemWatchRegistry {
     this.teardownTracker = new RelayWatcherTeardownTracker((rootPath) =>
       this.watcherPool.forgetRoot(rootPath)
     )
-    this.removalFence = new RelayWatcherRemovalFence(
+    this.worktreeRemovalFence = new RelayWorktreeRemovalFence(
       this.watches,
       this.pendingSetups,
       this.teardownTracker,
@@ -54,7 +54,7 @@ export class RelayFilesystemWatchRegistry {
 
   watch(rootPath: string, context?: RequestContext, watchId?: number): Promise<void> {
     const rootKey = normalizeRuntimePathForComparison(rootPath)
-    if (this.removalFence.isActive(rootKey)) {
+    if (this.worktreeRemovalFence.isActive(rootPath)) {
       return Promise.reject(new Error('Remote worktree deletion already in progress'))
     }
     const existing = this.watches.get(rootKey)
@@ -167,18 +167,13 @@ export class RelayFilesystemWatchRegistry {
   }
 
   async runWithRemovalFence<T>(rootPath: string, operation: () => Promise<T>): Promise<T> {
-    return this.removalFence.run(normalizeRuntimePathForComparison(rootPath), operation)
+    return this.worktreeRemovalFence.run(rootPath, operation)
   }
-
   beginWorktreePtySpawn(path: string): () => void {
-    return this.removalFence.beginOperation(normalizeRuntimePathForComparison(path))
+    return this.worktreeRemovalFence.beginOperation(path)
   }
-
-  setWorktreePtyTeardown(teardown: (rootPath: string) => Promise<void>): void {
-    this.removalFence.setBeforeRemove(teardown)
-  }
-
   dispose(): void {
+    this.worktreeRemovalFence.dispose()
     this.watches.forEach((state) => void this.closeWatch(state).catch(() => {}))
     this.watcherPool.dispose()
   }

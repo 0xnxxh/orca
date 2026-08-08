@@ -869,6 +869,9 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       revokeDevice: () => Promise.resolve({ revoked: false }),
       listRuntimeAccessGrants: () => Promise.resolve({ grants: [] }),
       revokeRuntimeAccess: () => Promise.resolve({ revoked: false }),
+      getIdentityResetStatus: () => Promise.resolve({ inProgress: false, record: null }),
+      resetIdentity: () =>
+        Promise.reject(new Error('identity reset is unavailable in the web client')),
       isWebSocketReady: () =>
         Promise.resolve({ ready: Boolean(activeEnvironment), endpoint: null }),
       getRelayStatus: () => Promise.resolve({ status: 'offline' as const }),
@@ -3140,8 +3143,16 @@ function createShellApi(): NonNullable<Partial<PreloadApi>['shell']> {
 function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
   return {
     spawn: () => Promise.reject(new Error('Local PTYs are unavailable in the web client.')),
+    claimMutationAccess: () => Promise.resolve({ mode: 'unavailable' }),
+    captureAdministrativeMutationAccess: () => Promise.resolve([]),
     write: () => {},
     writeAccepted: () => Promise.resolve(false),
+    administrativeWriteCurrent: () => {},
+    administrativeWriteCurrentAccepted: () => Promise.resolve(false),
+    administrativeWriteImmediateCurrent: () => {},
+    administrativeWriteImmediateCurrentAccepted: () => Promise.resolve(false),
+    administrativeWrite: () => {},
+    administrativeWriteAccepted: () => Promise.resolve(false),
     resize: () => {},
     claimViewport: () => {},
     reportGeometry: () => {},
@@ -3149,6 +3160,8 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
     // Web panes clear the host buffer via the terminal.clearBuffer runtime RPC.
     clearBuffer: () => {},
     kill: () => Promise.resolve(),
+    administrativeKillCurrent: () => Promise.resolve(),
+    administrativeKill: () => Promise.resolve(),
     ackColdRestore: () => {},
     ackData: () => {},
     onDeliveryResyncRequest: () => noopUnsubscribe,
@@ -3178,6 +3191,15 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
     getMainBufferSnapshot: () => Promise.resolve(null),
     // Why: remote-runtime PTYs skip local main (no side-effect source); renderer byte parsing stays authoritative.
     onSideEffect: () => noopUnsubscribe,
+    onAuthorityProjection: () => noopUnsubscribe,
+    subscribeAuthorityProjection: () =>
+      Promise.reject(
+        new Error('Terminal authority projection requires a negotiated host transport.')
+      ),
+    clearAuthorityProjectionBell: () =>
+      Promise.reject(
+        new Error('Terminal authority projection requires a negotiated host transport.')
+      ),
     getSideEffectSnapshot: () => Promise.resolve(null),
     getRendererDeliveryDebugSnapshot: () =>
       Promise.resolve({
@@ -3208,6 +3230,8 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
         rendererDispatcherReadyForcedCount: 0
       }),
     resetRendererDeliveryDebug: () => Promise.resolve(),
+    rendererBindingReady: () => {},
+    cancelRendererBinding: () => {},
     onData: () => noopUnsubscribe,
     onReplay: () => noopUnsubscribe,
     onModelRestoreNeeded: () => noopUnsubscribe,

@@ -11,9 +11,11 @@ const PTY_ID = 'pty-parked-2031'
 const FISH_PROMPT_HANDOFF = `${ESC}[?2031h${ESC}[0m~/orca ${ESC}[32m❯${ESC}[0m ${ESC}[?2031l`
 
 let sidecarWatcher: ((data: string) => void) | null = null
+let primaryHandlerRegistered = false
 const unsubscribe = vi.fn()
 
 vi.mock('./pty-data-sidecar-subscriptions', () => ({
+  hasPrimaryPtyDataHandler: () => primaryHandlerRegistered,
   subscribeToPtyData: (_ptyId: string, watcher: (data: string) => void) => {
     sidecarWatcher = watcher
     return unsubscribe
@@ -44,6 +46,7 @@ function startResponder(): { sendInput: ReturnType<typeof vi.fn>; feed: (data: s
 
 beforeEach(() => {
   sidecarWatcher = null
+  primaryHandlerRegistered = false
   vi.clearAllMocks()
 })
 
@@ -63,6 +66,15 @@ describe('parked-tab DECSET 2031 responder honors the chunk-final state (#9993)'
 
     expect(sendInput).toHaveBeenCalledTimes(1)
     expect(sendInput).toHaveBeenCalledWith(`${ESC}[?997;1n`)
+  })
+
+  it('leaves mounted-pane subscriptions to the primary handler', () => {
+    const { sendInput, feed } = startResponder()
+    primaryHandlerRegistered = true
+
+    feed(`${ESC}[?2031h`)
+
+    expect(sendInput).not.toHaveBeenCalled()
   })
 
   it('stays silent across a run of fish prompts', () => {

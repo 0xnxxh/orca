@@ -122,7 +122,30 @@ export function writeDockerSshRelayTargetFile(
   )
 }
 
-export function startDockerSshRelayTarget(testInfo: TestInfo): DockerSshRelayTarget {
+export function blockDockerSshRelayReconnect(target: DockerSshRelayTarget): void {
+  execDockerSshRelayTargetCommand(
+    target,
+    'test -f /root/.ssh/authorized_keys && ' +
+      'mv /root/.ssh/authorized_keys /root/.ssh/authorized_keys.orca-e2e-blocked'
+  )
+}
+
+export function restoreDockerSshRelayReconnect(target: DockerSshRelayTarget): void {
+  execDockerSshRelayTargetCommand(
+    target,
+    'if [ -f /root/.ssh/authorized_keys.orca-e2e-blocked ]; then ' +
+      'mv /root/.ssh/authorized_keys.orca-e2e-blocked /root/.ssh/authorized_keys; fi'
+  )
+}
+
+export function startDockerSshRelayTarget(
+  testInfo: TestInfo,
+  options: { maxSessions?: number } = {}
+): DockerSshRelayTarget {
+  const maxSessions = options.maxSessions ?? 10
+  if (!Number.isInteger(maxSessions) || maxSessions < 1 || maxSessions > 64) {
+    throw new Error('Docker SSH MaxSessions must be an integer between 1 and 64')
+  }
   const host = process.env.ORCA_E2E_SSH_TARGET_HOST?.trim() || '127.0.0.1'
   if (host === 'localhost' || host === '::1' || host.startsWith('127.')) {
     if (process.env.ORCA_E2E_SSH_TARGET_HOST) {
@@ -158,7 +181,7 @@ export function startDockerSshRelayTarget(testInfo: TestInfo): DockerSshRelayTar
           'chmod 600 /root/.ssh/authorized_keys',
           'git config --global user.email e2e@test.local',
           'git config --global user.name "Orca Docker SSH E2E"',
-          'exec /usr/sbin/sshd -D -e'
+          `exec /usr/sbin/sshd -D -e -o MaxSessions=${maxSessions}`
         ].join(' && ')
       ],
       { timeoutMs: 120_000 }

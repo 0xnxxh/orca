@@ -15,7 +15,8 @@ describe('relay HTTP client', () => {
         accessToken: 'ordinary-access-token',
         keypair: {
           ...keypair,
-          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+          installationId: 'fixture-installation-0001'
         },
         fetch
       })
@@ -143,7 +144,8 @@ describe('relay HTTP client', () => {
         accessToken: 'ordinary-access-token',
         keypair: {
           ...keypair,
-          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+          installationId: 'fixture-installation-0001'
         },
         requestDeadlineMs: 5,
         fetch
@@ -185,7 +187,8 @@ describe('relay HTTP client', () => {
         accessToken: 'ordinary-access-token',
         keypair: {
           ...keypair,
-          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64')
+          publicKeyB64: Buffer.from(keypair.publicKey).toString('base64'),
+          installationId: 'fixture-installation-0001'
         },
         fetch
       })

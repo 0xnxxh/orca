@@ -18,7 +18,14 @@ import {
   updateHistFileForFallback,
   logHistoryInjection
 } from '../terminal-history'
-import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
+import type {
+  IPtyProvider,
+  PtyHeldProducerPauseToken,
+  PtyProcessInfo,
+  PtySpawnOptions,
+  PtySpawnResult
+} from './types'
+import { isPtyHeldProducerPauseToken } from './pty-provider-contract'
 import {
   ensureNodePtySpawnHelperExecutable,
   validateWorkingDirectory,
@@ -75,6 +82,11 @@ import {
   expandWindowsEnvironmentVariables,
   expandWindowsPathEnvironmentVariables
 } from '../../shared/windows-environment-expansion'
+import {
+  parseTerminalSessionAuthorityPtyAccess,
+  sameTerminalSessionAuthorityPtyAccess,
+  type TerminalSessionAuthorityPtyAccess
+} from '../../shared/terminal-session-authority-pty-access'
 
 const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_PANE_KEY',
@@ -86,6 +98,13 @@ const PANE_IDENTITY_ENV_KEYS = [
 let ptyCounter = 0
 const ptyProcesses = new Map<string, pty.IPty>()
 const ptyIncarnations = new Map<string, string>()
+const legacyProducerPausedPtys = new Set<string>()
+const heldProducerPauses = new Map<
+  string,
+  { incarnationId: string; tokens: Set<PtyHeldProducerPauseToken> }
+>()
+const ptyMutationRouteTokens = new Map<string, Readonly<{ incarnationId: string; token: object }>>()
+const ptyAuthorityAccessById = new Map<string, TerminalSessionAuthorityPtyAccess>()
 // Why: agent sessions always sweep descendant trees; plain terminals preserve nohup children except on immediate win32 shutdown.
 const ptyAgentSessionIds = new Set<string>()
 // Why: descendant capture is async, so reattach/duplicate shutdown must wait for the original owner, not return a dying PTY.
@@ -127,6 +146,7 @@ const ptyLoadGeneration = new Map<string, number>()
 type DataCallback = (payload: {
   id: string
   data: string
+  incarnationId?: string
   sequenceChars?: number
   transformed?: boolean
   seq?: number
@@ -251,6 +271,10 @@ function clearPtyState(id: string): void {
   disposePtyExitListener(id)
   ptyProcesses.delete(id)
   ptyIncarnations.delete(id)
+  legacyProducerPausedPtys.delete(id)
+  heldProducerPauses.delete(id)
+  ptyMutationRouteTokens.delete(id)
+  ptyAuthorityAccessById.delete(id)
   ptyAgentSessionIds.delete(id)
   ptyShellName.delete(id)
   ptyAgentForegroundContextPaths.delete(id)
@@ -264,8 +288,24 @@ function clearPtyState(id: string): void {
   ptyPhysicalExits.delete(id)
 }
 
-function createPtyPhysicalExit(id: string): void {
-  ptyPhysicalExits.set(id, new PhysicalExitTracker())
+function releaseLocalProducerPausesForTeardown(id: string, proc: pty.IPty): void {
+  const wasPaused =
+    legacyProducerPausedPtys.delete(id) || (heldProducerPauses.get(id)?.tokens.size ?? 0) > 0
+  heldProducerPauses.delete(id)
+  if (!wasPaused) {
+    return
+  }
+  try {
+    proc.resume()
+  } catch {
+    /* PTY already destroyed */
+  }
+}
+
+function createPtyPhysicalExit(id: string): PhysicalExitTracker {
+  const physicalExit = new PhysicalExitTracker()
+  ptyPhysicalExits.set(id, physicalExit)
+  return physicalExit
 }
 
 function waitForPtyPhysicalExit(id: string, physicalExit?: PhysicalExitTracker): Promise<void> {
@@ -338,6 +378,20 @@ function allocatePtyId(sessionId: string | undefined): string {
   return id
 }
 
+function mutationRouteTokenForLocalPty(id: string): object | null {
+  const incarnationId = ptyIncarnations.get(id)
+  if (!incarnationId || !ptyProcesses.has(id)) {
+    return null
+  }
+  const existing = ptyMutationRouteTokens.get(id)
+  if (existing?.incarnationId === incarnationId) {
+    return existing.token
+  }
+  const token = Object.freeze({})
+  ptyMutationRouteTokens.set(id, Object.freeze({ incarnationId, token }))
+  return token
+}
+
 async function prepareLocalPtySpawn(id: string): Promise<void> {
   const pendingSpawn: PendingLocalPtySpawn = { canceled: false }
   const pending = pendingLocalPtySpawns.get(id) ?? new Set()
@@ -399,6 +453,7 @@ function reattachLocalPty(id: string, cols: number, rows: number): PtySpawnResul
   }
   return {
     id,
+    ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
     pid: existing.pid,
     ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
     isReattach: true
@@ -513,7 +568,8 @@ export type LocalPtyProviderOptions = {
     data: string,
     timestamp: number,
     sequenceChars?: number,
-    transformed?: boolean
+    transformed?: boolean,
+    incarnationId?: string
   ) => void
 }
 
@@ -881,7 +937,7 @@ export class LocalPtyProvider implements IPtyProvider {
       : process.platform === 'win32'
         ? null
         : undefined
-    createPtyPhysicalExit(id)
+    const physicalExit = createPtyPhysicalExit(id)
     ptyProcesses.set(id, proc)
     ptyInitialCwd.set(id, cwd)
     if (spawnedWslDistro !== undefined) {
@@ -904,14 +960,18 @@ export class LocalPtyProvider implements IPtyProvider {
     )
     ptyLoadGeneration.set(id, loadGeneration)
     ptyIncarnations.set(id, incarnationId)
+    mutationRouteTokenForLocalPty(id)
     this.opts.onSpawned?.(id, incarnationId)
 
     const emitIngressData = (emission: PtyIngressEmission): void => {
+      if (ptyProcesses.get(id) !== proc || ptyIncarnations.get(id) !== incarnationId) {
+        return
+      }
       const sequenceChars = emission.rawEndSeq - emission.rawStartSeq
       if (emission.transformed || sequenceChars !== emission.data.length) {
-        this.opts.onData?.(id, emission.data, Date.now(), sequenceChars, true)
+        this.opts.onData?.(id, emission.data, Date.now(), sequenceChars, true, incarnationId)
       } else {
-        this.opts.onData?.(id, emission.data, Date.now())
+        this.opts.onData?.(id, emission.data, Date.now(), undefined, undefined, incarnationId)
       }
       for (const cb of dataListeners) {
         cb(
@@ -919,11 +979,12 @@ export class LocalPtyProvider implements IPtyProvider {
             ? {
                 id,
                 data: emission.data,
+                incarnationId,
                 sequenceChars,
                 seq: emission.rawEndSeq,
                 transformed: true
               }
-            : { id, data: emission.data }
+            : { id, data: emission.data, incarnationId }
         )
       }
     }
@@ -1000,6 +1061,9 @@ export class LocalPtyProvider implements IPtyProvider {
 
     const disposables: { dispose: () => void }[] = []
     const onDataDisposable = proc.onData((rawData) => {
+      if (ptyProcesses.get(id) !== proc || ptyIncarnations.get(id) !== incarnationId) {
+        return
+      }
       let data = rawData
       if (shellReadyScanState && resolveShellReady) {
         const scanned = scanForShellReady(shellReadyScanState, rawData)
@@ -1016,7 +1080,10 @@ export class LocalPtyProvider implements IPtyProvider {
 
     const onExitDisposable = proc.onExit(({ exitCode }) => {
       const wasTerminationRequested = ptyTerminationMode.has(id)
-      ptyPhysicalExits.get(id)?.markExited()
+      physicalExit.markExited()
+      if (ptyProcesses.get(id) !== proc || ptyIncarnations.get(id) !== incarnationId) {
+        return
+      }
       // Why: neutralize proc.kill before destroy — node-pty SIGHUPs on socket 'close', which can race here and signal a reaped/recycled pid.
       if (process.platform !== 'win32') {
         ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
@@ -1076,25 +1143,257 @@ export class LocalPtyProvider implements IPtyProvider {
   write(id: string, data: string): void {
     ptyProcesses.get(id)?.write(data)
   }
+  supportsExactPtyOperations(id: string): boolean {
+    const access = ptyAuthorityAccessById.get(id)
+    return Boolean(
+      access &&
+      ptyProcesses.has(id) &&
+      access.binding.physicalPtyId === id &&
+      access.binding.ptyIncarnationId === ptyIncarnations.get(id)
+    )
+  }
+  getPtyMutationMode(id: string): 'legacy' | 'exact' | 'unavailable' {
+    if (!ptyProcesses.has(id) || !ptyIncarnations.has(id)) {
+      return 'unavailable'
+    }
+    return this.supportsExactPtyOperations(id) ? 'exact' : 'legacy'
+  }
+  writeExact(id: string, incarnationId: string, data: string): boolean {
+    const proc = ptyProcesses.get(id)
+    if (!proc || ptyIncarnations.get(id) !== incarnationId) {
+      return false
+    }
+    try {
+      proc.write(data)
+      return true
+    } catch {
+      return false
+    }
+  }
   resize(id: string, cols: number, rows: number): void {
     ptyProcesses.get(id)?.resize(cols, rows)
+  }
+  resizeExact(id: string, incarnationId: string, cols: number, rows: number): boolean {
+    const proc = ptyProcesses.get(id)
+    if (!proc || ptyIncarnations.get(id) !== incarnationId) {
+      return false
+    }
+    try {
+      proc.resize(cols, rows)
+      return true
+    } catch {
+      return false
+    }
+  }
+  async killExact(
+    id: string,
+    incarnationId: string,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ): Promise<boolean> {
+    const proc = ptyProcesses.get(id)
+    if (!proc || ptyIncarnations.get(id) !== incarnationId) {
+      return false
+    }
+    await this.shutdown(id, opts)
+    return true
+  }
+
+  sendSignalExact(id: string, incarnationId: string, signal: string): boolean {
+    const proc = ptyProcesses.get(id)
+    if (!proc || ptyIncarnations.get(id) !== incarnationId) {
+      return false
+    }
+    try {
+      process.kill(proc.pid, signal)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  clearBufferExact(id: string, incarnationId: string): boolean {
+    const proc = ptyProcesses.get(id)
+    if (!proc || ptyIncarnations.get(id) !== incarnationId) {
+      return false
+    }
+    try {
+      startupIngressByPty.get(id)?.snapshotBarrier()
+      proc.clear()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  bindTerminalSessionAuthorityAccess(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    const access = parseTerminalSessionAuthorityPtyAccess(authorityAccess)
+    const incarnationId = ptyIncarnations.get(id)
+    if (
+      !access ||
+      !ptyProcesses.has(id) ||
+      access.binding.physicalPtyId !== id ||
+      access.binding.ptyIncarnationId !== incarnationId
+    ) {
+      return false
+    }
+    ptyAuthorityAccessById.set(id, access)
+    return true
+  }
+
+  writeAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    data: string
+  ): boolean {
+    return this.localAuthorityAccessMatches(id, authorityAccess)
+      ? this.writeExact(id, authorityAccess.binding.ptyIncarnationId, data)
+      : false
+  }
+
+  resizeAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    cols: number,
+    rows: number
+  ): boolean {
+    return this.localAuthorityAccessMatches(id, authorityAccess)
+      ? this.resizeExact(id, authorityAccess.binding.ptyIncarnationId, cols, rows)
+      : false
+  }
+
+  async killAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ): Promise<boolean> {
+    return this.localAuthorityAccessMatches(id, authorityAccess)
+      ? await this.killExact(id, authorityAccess.binding.ptyIncarnationId, opts)
+      : false
+  }
+
+  sendSignalAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess,
+    signal: string
+  ): boolean {
+    return this.localAuthorityAccessMatches(id, authorityAccess)
+      ? this.sendSignalExact(id, authorityAccess.binding.ptyIncarnationId, signal)
+      : false
+  }
+
+  clearBufferAuthorityExact(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    return this.localAuthorityAccessMatches(id, authorityAccess)
+      ? this.clearBufferExact(id, authorityAccess.binding.ptyIncarnationId)
+      : false
+  }
+
+  getTerminalSessionAuthorityAccess(id: string): TerminalSessionAuthorityPtyAccess | null {
+    return ptyAuthorityAccessById.get(id) ?? null
   }
 
   // Why: node-pty pause() stops reading the master fd, so a flooding child blocks on write — true producer backpressure.
   pauseProducer(id: string): void {
+    const proc = ptyProcesses.get(id)
+    if (!proc) {
+      return
+    }
     try {
-      ptyProcesses.get(id)?.pause()
+      proc.pause()
+      legacyProducerPausedPtys.add(id)
     } catch {
       /* PTY already destroyed */
     }
   }
 
   resumeProducer(id: string): void {
+    legacyProducerPausedPtys.delete(id)
+    if ((heldProducerPauses.get(id)?.tokens.size ?? 0) > 0) {
+      return
+    }
     try {
       ptyProcesses.get(id)?.resume()
     } catch {
       /* PTY already destroyed */
     }
+  }
+
+  supportsExactHeldProducerPause(id: string, incarnationId: string): boolean {
+    const proc = ptyProcesses.get(id)
+    return Boolean(
+      proc &&
+      ptyIncarnations.get(id) === incarnationId &&
+      !ptyShutdownOperations.has(id) &&
+      typeof proc.pause === 'function' &&
+      typeof proc.resume === 'function'
+    )
+  }
+
+  async acquireExactHeldProducerPause(
+    id: string,
+    incarnationId: string,
+    token: PtyHeldProducerPauseToken
+  ): Promise<boolean> {
+    if (
+      !isPtyHeldProducerPauseToken(token) ||
+      !this.supportsExactHeldProducerPause(id, incarnationId)
+    ) {
+      return false
+    }
+    const current = heldProducerPauses.get(id)
+    if (current?.incarnationId === incarnationId && current.tokens.has(token)) {
+      return true
+    }
+    if (current && current.incarnationId !== incarnationId) {
+      return false
+    }
+    try {
+      if (!current || current.tokens.size === 0) {
+        ptyProcesses.get(id)!.pause()
+      }
+    } catch {
+      return false
+    }
+    const pause = current ?? { incarnationId, tokens: new Set<PtyHeldProducerPauseToken>() }
+    pause.tokens.add(token)
+    heldProducerPauses.set(id, pause)
+    return true
+  }
+
+  async releaseExactHeldProducerPause(
+    id: string,
+    incarnationId: string,
+    token: PtyHeldProducerPauseToken
+  ): Promise<boolean> {
+    if (
+      !isPtyHeldProducerPauseToken(token) ||
+      !this.supportsExactHeldProducerPause(id, incarnationId)
+    ) {
+      return false
+    }
+    const current = heldProducerPauses.get(id)
+    if (!current || current.incarnationId !== incarnationId || !current.tokens.has(token)) {
+      return true
+    }
+    if (current.tokens.size > 1 || legacyProducerPausedPtys.has(id)) {
+      current.tokens.delete(token)
+      if (current.tokens.size === 0) {
+        heldProducerPauses.delete(id)
+      }
+      return true
+    }
+    try {
+      ptyProcesses.get(id)!.resume()
+    } catch {
+      return false
+    }
+    heldProducerPauses.delete(id)
+    return true
   }
 
   // Why: proc.cols/rows are node-pty's authoritative applied size (post-clamp/no-op), used by the renderer drift-check.
@@ -1123,6 +1422,7 @@ export class LocalPtyProvider implements IPtyProvider {
     if (!proc) {
       return
     }
+    releaseLocalProducerPausesForTeardown(id, proc)
     const entry: PtyShutdownOperation = {
       promise: Promise.resolve(),
       immediate: opts.immediate === true,
@@ -1366,15 +1666,38 @@ export class LocalPtyProvider implements IPtyProvider {
   }
 
   async listProcesses(): Promise<PtyProcessInfo[]> {
-    return Array.from(ptyProcesses.entries()).map(([id, proc]) => ({
-      id,
-      ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
-      cwd: ptyInitialCwd.get(id) ?? '',
-      title: proc.process || ptyShellName.get(id) || 'shell',
-      ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
-      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
-      ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {})
-    }))
+    return Array.from(ptyProcesses.entries()).map(([id, proc]) => {
+      const mutationRouteToken = mutationRouteTokenForLocalPty(id)
+      return {
+        id,
+        ...(mutationRouteToken ? { mutationRouteToken } : {}),
+        ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
+        ...(ptyAuthorityAccessById.get(id)
+          ? { terminalSessionAuthorityAccess: ptyAuthorityAccessById.get(id) }
+          : {}),
+        cwd: ptyInitialCwd.get(id) ?? '',
+        title: proc.process || ptyShellName.get(id) || 'shell',
+        ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
+        ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
+        ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {})
+      }
+    })
+  }
+
+  getPtyMutationRouteToken(id: string): object | null {
+    return mutationRouteTokenForLocalPty(id)
+  }
+
+  private localAuthorityAccessMatches(
+    id: string,
+    authorityAccess: TerminalSessionAuthorityPtyAccess
+  ): boolean {
+    const current = ptyAuthorityAccessById.get(id) ?? null
+    return (
+      authorityAccess.binding.physicalPtyId === id &&
+      authorityAccess.binding.ptyIncarnationId === ptyIncarnations.get(id) &&
+      sameTerminalSessionAuthorityPtyAccess(current, authorityAccess)
+    )
   }
 
   async getDefaultShell(): Promise<string> {
@@ -1446,6 +1769,7 @@ export class LocalPtyProvider implements IPtyProvider {
   killAll(): void {
     cancelAllPendingLocalPtySpawns()
     for (const [id, proc] of ptyProcesses) {
+      releaseLocalProducerPausesForTeardown(id, proc)
       runPtyCleanup(id)
       disposePtyListeners(id)
       disposePtyExitListener(id)

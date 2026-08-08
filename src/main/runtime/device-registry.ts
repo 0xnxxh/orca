@@ -3,14 +3,19 @@
 // compromising one device doesn't expose others. The registry is a simple
 // JSON file with hardened permissions matching the runtime metadata pattern.
 import { randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { hardenExistingSecureFile, writeSecureJsonFile } from '../../shared/secure-file'
+import {
+  assertSecureRegularFile,
+  hardenExistingSecureFile,
+  writeSecureJsonFile
+} from '../../shared/secure-file'
 import type { DeviceScope } from '../../shared/runtime-types'
 import { DEVICE_REGISTRY_FILENAME } from './mobile-pairing-files'
 import type { RelayDeviceBinding } from './relay/relay-revoke-outbox'
 import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-connection-mode'
 import type { RuntimePairingReach } from '../../shared/runtime-pairing-reach'
+import { parseOrdinaryDevices, parseStrictDevices } from './device-registry-record-validation'
 
 export type { DeviceScope }
 
@@ -28,37 +33,23 @@ export type DeviceEntry = {
   pairingReach?: RuntimePairingReach
 }
 
-function validRelayBinding(value: unknown, deviceId: string): RelayDeviceBinding | undefined {
-  if (!value || typeof value !== 'object') {
-    return undefined
-  }
-  const binding = value as Partial<RelayDeviceBinding>
-  return binding.relayDeviceId === deviceId &&
-    typeof binding.relayHostId === 'string' &&
-    typeof binding.ownerIdentityKey === 'string'
-    ? {
-        relayHostId: binding.relayHostId,
-        relayDeviceId: binding.relayDeviceId,
-        ownerIdentityKey: binding.ownerIdentityKey,
-        ...(typeof binding.inviteExpiresAt === 'number' && Number.isFinite(binding.inviteExpiresAt)
-          ? { inviteExpiresAt: binding.inviteExpiresAt }
-          : {})
-      }
-    : undefined
-}
-
 // Why: a lastSeen refresh is pure bookkeeping, so coalesce reconnect bursts into one write instead of
 // paying a secure-file rewrite (two synchronous PowerShell ACL spawns on Windows) per connection.
 const LAST_SEEN_FLUSH_DELAY_MS = 250
+const MAX_DEVICE_REGISTRY_FILE_BYTES = 256 * 1024
+
+type DeviceRegistryLoadOptions = {
+  strict?: boolean
+}
 
 export class DeviceRegistry {
   private readonly registryPath: string
   private devices: DeviceEntry[] = []
   private pendingLastSeenFlush: NodeJS.Timeout | null = null
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: DeviceRegistryLoadOptions = {}) {
     this.registryPath = join(userDataPath, DEVICE_REGISTRY_FILENAME)
-    this.load()
+    this.load(options.strict === true)
   }
 
   addDevice(
@@ -202,6 +193,15 @@ export class DeviceRegistry {
     return this.devices
   }
 
+  /** Removes every local pairing only after the reset transaction reaches its cleanup phase. */
+  removeAllForIdentityReset(): void {
+    if (this.devices.length === 0) {
+      return
+    }
+    this.save([])
+    this.devices = []
+  }
+
   validateToken(token: string): DeviceEntry | null {
     return this.devices.find((d) => d.token === token) ?? null
   }
@@ -273,27 +273,37 @@ export class DeviceRegistry {
     }
   }
 
-  private load(): void {
-    if (!existsSync(this.registryPath)) {
+  private load(strict: boolean): void {
+    if (strict) {
+      try {
+        lstatSync(this.registryPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new Error('Device registry is missing')
+        }
+        throw new Error('Device registry is unavailable')
+      }
+    } else if (!existsSync(this.registryPath)) {
       this.devices = []
       return
     }
     try {
+      if (strict) {
+        assertSecureRegularFile(this.registryPath, 'Device registry')
+      }
       hardenExistingSecureFile(this.registryPath)
-      const parsed = JSON.parse(readFileSync(this.registryPath, 'utf-8')) as DeviceEntry[]
-      this.devices = parsed.map((device) => ({
-        ...device,
-        // Why: older registries only existed for phone pairing. Treat missing
-        // scope as mobile so legacy device tokens do not gain new CLI powers.
-        scope: device.scope === 'runtime' ? 'runtime' : 'mobile',
-        relayBinding: validRelayBinding(device.relayBinding, device.deviceId),
-        mobilePairingConnectionMode:
-          device.mobilePairingConnectionMode === 'local-only' ? 'local-only' : 'automatic',
-        // Why: registries written before this field existed only ever held network-reach grants (phones and
-        // LAN links), so a missing value must keep binding every interface on reconnect.
-        pairingReach: device.pairingReach === 'this-computer' ? 'this-computer' : 'network'
-      }))
-    } catch {
+      if (strict && statSync(this.registryPath).size > MAX_DEVICE_REGISTRY_FILE_BYTES) {
+        throw new Error('Device registry is too large')
+      }
+      const parsed: unknown = JSON.parse(readFileSync(this.registryPath, 'utf-8'))
+      this.devices = strict ? parseStrictDevices(parsed) : parseOrdinaryDevices(parsed)
+    } catch (error) {
+      if (strict) {
+        if (error instanceof Error && error.message.startsWith('Device registry')) {
+          throw error
+        }
+        throw new Error('Device registry is invalid')
+      }
       this.devices = []
     }
   }
@@ -303,4 +313,9 @@ export class DeviceRegistry {
     // Why: every registry save includes the latest in-memory timestamps, so a later timer would rewrite it.
     this.cancelPendingLastSeenFlush()
   }
+}
+
+/** Strict reset loader kept separate from ordinary fail-open startup loading. */
+export function loadDeviceRegistryForReset(userDataPath: string): DeviceRegistry {
+  return new DeviceRegistry(userDataPath, { strict: true })
 }

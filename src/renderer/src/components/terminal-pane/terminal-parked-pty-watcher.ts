@@ -1,6 +1,8 @@
 import { isTerminalLeafId } from '../../../../shared/stable-pane-id'
 import { isRemoteRuntimePtyId, sendRuntimePtyInput } from '@/runtime/runtime-terminal-inspection'
+import { toPtyAdministrativeMutationEvidence } from '../../../../shared/pty-mutation-identity'
 import { useAppStore } from '@/store'
+import { writePtyWithAdministrativeMutationAccess } from '@/lib/pty-administrative-mutations'
 import { closeTerminalTab } from '../terminal/terminal-tab-actions'
 import { startParkedTerminalByteWatcher } from './parked-terminal-byte-watcher'
 import { subscribeToPtyExit } from './pty-dispatcher'
@@ -17,6 +19,7 @@ import {
 } from './terminal-pane-close-identity'
 import {
   capturedPanesByTabId,
+  ensurePhasedParkedTabWatcherEntry,
   parkedWatchersByTabId,
   type ParkedTabWatcherEntry,
   type ParkedTerminalPaneCapture
@@ -29,8 +32,9 @@ export function startParkedPtyWatcher(args: {
   entry: ParkedTabWatcherEntry
   restoreTitleOnRegister: boolean
   restorePolicy: TerminalParkRestorePolicy
-}): void {
-  const { worktreeId, tab, pane, entry, restoreTitleOnRegister, restorePolicy } = args
+}): boolean {
+  const { worktreeId, tab, pane, restoreTitleOnRegister, restorePolicy } = args
+  const entry = ensurePhasedParkedTabWatcherEntry(args.entry)
   const state = useAppStore.getState()
   const ptyId = pane.ptyId
   // Why: the tab model can change after the park decision, and legacy leaf ids make pane keys throw.
@@ -40,26 +44,39 @@ export function startParkedPtyWatcher(args: {
     !isTerminalLeafId(pane.leafId) ||
     !isParkRestorableTerminalPty(ptyId, worktreeId, restorePolicy)
   ) {
-    return
+    return false
+  }
+  const disposeCurrentWatcher = (retainPaneIdentity = false): void => {
+    entry.disposersByPtyId.get(ptyId)?.()
+    entry.disposersByPtyId.delete(ptyId)
+    entry.activateByPtyId.delete(ptyId)
+    entry.revealReplacementAttemptByPtyId.delete(ptyId)
+    entry.retainedRevealPtyIds.delete(ptyId)
+    if (!retainPaneIdentity) {
+      entry.paneCaptureByPtyId.delete(ptyId)
+      entry.paneIdByPtyId.delete(ptyId)
+    }
   }
   const handlePtyExit = (_code: number, { hadPrimary }: { hadPrimary: boolean }): void => {
+    if (entry.phase === 'prepared') {
+      entry.preparationValid = false
+      disposeCurrentWatcher()
+      return
+    }
     useAppStore.getState().clearRuntimePaneTitle(tab.id, pane.paneId)
     if (entry.disposersByPtyId.size > 1) {
       discardPreHandlerPtyState(ptyId)
       collapseParkedExitedLeaf(tab.id, ptyId)
-      entry.disposersByPtyId.get(ptyId)?.()
-      entry.disposersByPtyId.delete(ptyId)
+      disposeCurrentWatcher()
       return
     }
     if (hadPrimary) {
-      entry.disposersByPtyId.get(ptyId)?.()
-      entry.disposersByPtyId.delete(ptyId)
+      disposeCurrentWatcher()
       return
     }
 
-    // Why: the empty entry prevents a pending pinned-close confirmation from restarting the dead PTY.
-    entry.disposersByPtyId.get(ptyId)?.()
-    entry.disposersByPtyId.delete(ptyId)
+    // Why: the empty entry prevents a pending close confirmation from restarting the dead PTY.
+    disposeCurrentWatcher(true)
     closeTerminalTab(tab.id, {
       captureRecentlyClosed: false,
       hostCloseReason: 'pty-exit',
@@ -74,8 +91,16 @@ export function startParkedPtyWatcher(args: {
     })
   }
   const initialTitle = state.runtimePaneTitlesByTabId[tab.id]?.[pane.paneId]
-  const disposeWatcher = startParkedTerminalByteWatcher({
+  const administrativeMutationAccess = pane.mutationIdentity
+    ? {
+        mode: 'exact' as const,
+        evidence: toPtyAdministrativeMutationEvidence(pane.mutationIdentity)
+      }
+    : null
+  const watcher = startParkedTerminalByteWatcher({
     ptyId,
+    ...(pane.mutationIdentity ? { mutationIdentity: pane.mutationIdentity } : {}),
+    ...(pane.sideEffectIdentity ? { sideEffectIdentity: pane.sideEffectIdentity } : {}),
     tabId: tab.id,
     worktreeId,
     leafId: pane.leafId,
@@ -84,17 +109,47 @@ export function startParkedPtyWatcher(args: {
     ...(initialTitle !== undefined ? { initialTitle } : {}),
     ...(restoreTitleOnRegister ? { restoreTitleOnRegister: true } : {}),
     sendInput: (data) => {
-      sendRuntimePtyInput(useAppStore.getState().settings, ptyId, data)
+      if (administrativeMutationAccess) {
+        writePtyWithAdministrativeMutationAccess(ptyId, data, administrativeMutationAccess)
+      } else {
+        sendRuntimePtyInput(useAppStore.getState().settings, ptyId, data)
+      }
     }
   })
-  const unsubscribeExit = isRemoteRuntimePtyId(ptyId)
-    ? () => {}
-    : subscribeToPtyExit(ptyId, handlePtyExit)
-  entry.paneIdByPtyId.set(ptyId, pane.paneId)
-  entry.disposersByPtyId.set(ptyId, () => {
-    unsubscribeExit()
-    disposeWatcher()
-  })
+  let unsubscribeExit: (() => void) | null = null
+  try {
+    unsubscribeExit = isRemoteRuntimePtyId(ptyId)
+      ? () => {}
+      : subscribeToPtyExit(ptyId, handlePtyExit)
+    if (!entry.preparationValid) {
+      throw new Error('parked_pty_exited_during_preparation')
+    }
+    entry.paneCaptureByPtyId.set(ptyId, pane)
+    entry.suspendedPtyIds.delete(ptyId)
+    entry.revealReplacementAttemptByPtyId.delete(ptyId)
+    entry.retainedRevealPtyIds.delete(ptyId)
+    entry.paneIdByPtyId.set(ptyId, pane.paneId)
+    entry.activateByPtyId.set(ptyId, watcher.activateParked)
+    entry.disposersByPtyId.set(ptyId, (options) => {
+      try {
+        unsubscribeExit?.()
+      } finally {
+        watcher.dispose(options)
+      }
+    })
+    return true
+  } catch {
+    entry.paneCaptureByPtyId.delete(ptyId)
+    entry.paneIdByPtyId.delete(ptyId)
+    entry.activateByPtyId.delete(ptyId)
+    entry.disposersByPtyId.delete(ptyId)
+    try {
+      unsubscribeExit?.()
+    } finally {
+      watcher.dispose()
+    }
+    return false
+  }
 }
 
 export function collapseParkedExitedLeaf(tabId: string, ptyId: string): void {

@@ -1,5 +1,6 @@
 import type { TerminalTab } from '../../../../shared/types'
 import type { useAppStore } from '@/store'
+import { isTerminalLeafId, makePaneKey } from '../../../../shared/stable-pane-id'
 import {
   collectLeafIdsInOrder,
   resolveRootlessTerminalLayoutLeafId
@@ -9,11 +10,36 @@ import {
   type ParkedTerminalPaneCapture
 } from './terminal-parked-watcher-registry'
 
-export type ParkableTerminalTabModel = Pick<TerminalTab, 'id' | 'ptyId'>
+export type ParkableTerminalTabModel = Pick<TerminalTab, 'id' | 'ptyId' | 'generation'>
 
-type ParkedPaneFallbackState = {
+type ParkedPaneLayoutState = {
   terminalLayoutsByTabId: ReturnType<typeof useAppStore.getState>['terminalLayoutsByTabId']
+}
+
+type ParkedPaneFallbackState = ParkedPaneLayoutState & {
   runtimePaneTitlesByTabId: ReturnType<typeof useAppStore.getState>['runtimePaneTitlesByTabId']
+  hostTerminalSideEffectIdentityByPaneKey?: ReturnType<
+    typeof useAppStore.getState
+  >['hostTerminalSideEffectIdentityByPaneKey']
+}
+
+export function selectParkedTerminalPaneCandidateKey(
+  state: ParkedPaneLayoutState,
+  tabs: readonly ParkableTerminalTabModel[]
+): string {
+  return tabs
+    .map((tab) => {
+      const layout = state.terminalLayoutsByTabId[tab.id]
+      const rootLeafIds = collectLeafIdsInOrder(layout?.root)
+      const rootlessLeafId = layout ? resolveRootlessTerminalLayoutLeafId(layout) : null
+      const leafIds =
+        rootLeafIds.length > 0 ? rootLeafIds : rootlessLeafId !== null ? [rootlessLeafId] : []
+      const ptyIdsByLeafId = layout?.ptyIdsByLeafId ?? {}
+      return `${tab.id}:${layout?.activeLeafId ?? ''}:${leafIds
+        .map((leafId) => `${leafId}=${ptyIdsByLeafId[leafId] ?? ''}`)
+        .join(',')}`
+    })
+    .join('|')
 }
 
 export function fallbackParkedPaneCandidates(
@@ -32,12 +58,22 @@ export function fallbackParkedPaneCandidates(
   const titleSlots = Object.keys(state.runtimePaneTitlesByTabId[tab.id] ?? {})
   const reusableSlot =
     leafIds.length === 1 && titleSlots.length === 1 ? Number(titleSlots[0]) : null
-  return leafIds.map((leafId, index) => ({
-    ptyId: ptyIdsByLeafId[leafId] ?? (leafIds.length === 1 ? tab.ptyId : null),
-    paneId: reusableSlot ?? -(index + 1),
-    leafId,
-    drivesTabTitle: layout?.activeLeafId ? leafId === layout.activeLeafId : index === 0
-  }))
+  const paneGeneration = tab.generation ?? 0
+  return leafIds.map((leafId, index) => {
+    const paneKey =
+      tab.id.length > 0 && !tab.id.includes(':') && isTerminalLeafId(leafId)
+        ? makePaneKey(tab.id, leafId)
+        : null
+    const sideEffectIdentity =
+      paneKey !== null ? state.hostTerminalSideEffectIdentityByPaneKey?.[paneKey] : undefined
+    return {
+      ptyId: ptyIdsByLeafId[leafId] ?? (leafIds.length === 1 ? tab.ptyId : null),
+      paneId: reusableSlot ?? -(index + 1),
+      leafId,
+      drivesTabTitle: layout?.activeLeafId ? leafId === layout.activeLeafId : index === 0,
+      ...(sideEffectIdentity?.paneGeneration === paneGeneration ? { sideEffectIdentity } : {})
+    }
+  })
 }
 
 export function resolveParkedTerminalPaneCandidates(
@@ -54,7 +90,10 @@ export function resolveParkedTerminalPaneCandidates(
       (captured.panes.length === fallback.length &&
         fallback.every((pane) =>
           captured.panes.some(
-            (candidate) => candidate.leafId === pane.leafId && candidate.ptyId === pane.ptyId
+            (candidate) =>
+              candidate.leafId === pane.leafId &&
+              candidate.ptyId === pane.ptyId &&
+              candidate.drivesTabTitle === pane.drivesTabTitle
           )
         )))
   if (capturedIsCurrent) {
@@ -62,30 +101,17 @@ export function resolveParkedTerminalPaneCandidates(
   }
   return fallback.map((pane) => {
     const prior = captured?.panes.find((candidate) => candidate.leafId === pane.leafId)
-    return prior ? { ...pane, paneId: prior.paneId, drivesTabTitle: prior.drivesTabTitle } : pane
+    return prior
+      ? {
+          ...pane,
+          paneId: prior.paneId,
+          ...(prior.ptyId === pane.ptyId && prior.mutationIdentity
+            ? { mutationIdentity: prior.mutationIdentity }
+            : {}),
+          ...(prior.ptyId === pane.ptyId && prior.sideEffectIdentity
+            ? { sideEffectIdentity: prior.sideEffectIdentity }
+            : {})
+        }
+      : pane
   })
-}
-
-export function reconcileParkedWatcherPtyIds(args: {
-  currentTabPtyId: string | null
-  entryTabPtyId: string | null
-  paneIdByPtyId: ReadonlyMap<string, number>
-  expectedPtyIds: ReadonlySet<string>
-}): {
-  restartAll: boolean
-  addedPtyIds: string[]
-  retainedPtyIds: string[]
-  retiredPaneIds: number[]
-} {
-  const retainedPtyIds = Array.from(args.paneIdByPtyId.keys()).filter((ptyId) =>
-    args.expectedPtyIds.has(ptyId)
-  )
-  return {
-    restartAll: args.entryTabPtyId !== args.currentTabPtyId,
-    addedPtyIds: Array.from(args.expectedPtyIds).filter((ptyId) => !args.paneIdByPtyId.has(ptyId)),
-    retainedPtyIds,
-    retiredPaneIds: Array.from(args.paneIdByPtyId)
-      .filter(([ptyId]) => !args.expectedPtyIds.has(ptyId))
-      .map(([, paneId]) => paneId)
-  }
 }

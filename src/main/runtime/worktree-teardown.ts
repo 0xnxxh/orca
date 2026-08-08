@@ -1,9 +1,5 @@
-import type { IPtyProvider } from '../providers/types'
+import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 import type { OrcaRuntimeService } from './orca-runtime'
-import { listRegisteredPtys } from '../memory/pty-registry'
-import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
-import { splitWorktreeId, splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
-import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 import {
   isUnstoppedPtyRemovalError,
   WORKTREE_TEARDOWN_FORCE_HINT,
@@ -12,16 +8,17 @@ import {
 import { settleBeforeDeadline } from './settle-before-deadline'
 import { createWorktreeSweepTracker, settleSweepsForForcedRemoval } from './forced-sweep-settlement'
 import {
+  clearStoppedPtyState,
+  sweepProviderPtysForWorktree,
+  sweepRegisteredPtysForWorktree
+} from './worktree-pty-inventory-sweep'
+import {
   describeError,
   describeFailedPtySweep,
   describeUnstoppedPtys,
   verifyUnstoppedPtys,
   type UnstoppedPtyVerdict
 } from './unstopped-pty-verification'
-
-// Why: normal inventories still coalesce into one process scan, while a stale
-// or pathological inventory cannot fan out unbounded provider/RPC shutdowns.
-const WORKTREE_TEARDOWN_CONCURRENCY = 32
 
 export type WorktreeTeardownDeps = {
   runtime?: OrcaRuntimeService
@@ -97,6 +94,13 @@ export async function killAllProcessesForWorktree(
     `${WORKTREE_TEARDOWN_TIMEOUT_PREFIX} ${worktreeId}. ${WORKTREE_TEARDOWN_FORCE_HINT}`
   )
   const sweeps = createWorktreeSweepTracker()
+  let providerInventory: Promise<PtyProcessInfo[]> | null = null
+  const loadProviderInventory = (): Promise<PtyProcessInfo[]> => {
+    providerInventory ??= deps.localProvider.listProcesses({
+      deadlineMs: teardownRpcDeadline(deadline)
+    })
+    return providerInventory
+  }
   const stopAttempts = new Map<string, Promise<boolean>>()
   const stopPty = (
     ptyId: string,
@@ -153,13 +157,15 @@ export async function killAllProcessesForWorktree(
       ? Promise.resolve(0)
       : settleBeforeDeadline(
           sweeps.track(() =>
-            sweepProviderByPrefix(
+            sweepProviderPtysForWorktree(
               worktreeId,
               deps.localProvider,
               deadline,
+              teardownRpcDeadline(deadline),
               stopPty,
               deps.onPtyStopped,
-              deps.requirePhysicalStop
+              deps.requirePhysicalStop === true,
+              loadProviderInventory
             )
           ),
           0,
@@ -171,12 +177,15 @@ export async function killAllProcessesForWorktree(
       ? Promise.resolve(0)
       : settleBeforeDeadline(
           sweeps.track(() =>
-            sweepRegistryForWorktree(
+            sweepRegisteredPtysForWorktree(
               worktreeId,
               deps.localProvider,
               deadline,
+              teardownRpcDeadline(deadline),
               stopPty,
-              deps.onPtyStopped
+              deps.onPtyStopped,
+              deps.requirePhysicalStop === true,
+              loadProviderInventory
             )
           ),
           0,
@@ -253,124 +262,4 @@ export async function killAllProcessesForWorktree(
   }
 
   return { runtimeStopped: runtimeResult.stopped, providerStopped, registryStopped }
-}
-
-async function sweepProviderByPrefix(
-  worktreeId: string,
-  provider: IPtyProvider,
-  deadline: number,
-  stopPty: (
-    ptyId: string,
-    stop: () => Promise<boolean>
-  ) => Promise<{ stopped: boolean; owner: boolean }>,
-  onPtyStopped?: (ptyId: string) => void,
-  failClosed = false
-): Promise<number> {
-  const prefix = `${worktreeId}@@`
-  // Why (#10252): the cwd fallback only proves ownership when the filesystem path
-  // is the *whole* worktree path. A folder-workspace instance strips its
-  // `::workspace:<uuid>` suffix to a checkout dir shared with sibling instances,
-  // so leave the fallback unset whenever stripping shortened the path — else
-  // deleting one instance would sweep the others.
-  const fullWorktreePath = splitWorktreeId(worktreeId)?.worktreePath
-  const cwdFallbackPath =
-    splitWorktreeIdForFilesystem(worktreeId)?.worktreePath === fullWorktreePath
-      ? fullWorktreePath
-      : undefined
-  const rpcDeadline = teardownRpcDeadline(deadline)
-  const sessions = failClosed
-    ? await provider.listProcesses({ deadlineMs: rpcDeadline })
-    : await provider.listProcesses({ deadlineMs: rpcDeadline }).catch(() => [])
-  const ownedSessions = sessions.filter((session) => {
-    // Why: older daemon/relay process rows may omit cwd; their established ID
-    // and authoritative worktree ownership must remain usable during teardown.
-    const cwdOwned =
-      cwdFallbackPath !== undefined &&
-      session.worktreeId === undefined &&
-      typeof session.cwd === 'string' &&
-      session.cwd.length > 0 &&
-      isPathInsideOrEqual(cwdFallbackPath, session.cwd)
-    return session.id.startsWith(prefix) || session.worktreeId === worktreeId || cwdOwned
-  })
-  // Why: agent shutdown snapshots coalesce only when requests begin together;
-  // bounded concurrency avoids serial process scans without unbounded fanout.
-  const stopped = await mapWithConcurrency(
-    ownedSessions,
-    WORKTREE_TEARDOWN_CONCURRENCY,
-    async (session) => {
-      if (Date.now() >= deadline) {
-        return 0
-      }
-      const stopResult = await stopPty(session.id, async () => {
-        if (Date.now() >= deadline) {
-          return false
-        }
-        try {
-          await provider.shutdown(session.id, { immediate: true, deadlineMs: rpcDeadline })
-          return Date.now() < deadline
-        } catch {
-          return false
-        }
-      })
-      if (stopResult.owner && Date.now() < deadline) {
-        clearStoppedPtyState(session.id, onPtyStopped)
-        return 1
-      }
-      return 0
-    }
-  )
-  return stopped.reduce<number>((count, value) => count + value, 0)
-}
-
-async function sweepRegistryForWorktree(
-  worktreeId: string,
-  localProvider: IPtyProvider,
-  deadline: number,
-  stopPty: (
-    ptyId: string,
-    stop: () => Promise<boolean>
-  ) => Promise<{ stopped: boolean; owner: boolean }>,
-  onPtyStopped?: (ptyId: string) => void
-): Promise<number> {
-  const rpcDeadline = teardownRpcDeadline(deadline)
-  const entries = listRegisteredPtys().filter((r) => r.worktreeId === worktreeId)
-  const stopped = await mapWithConcurrency(
-    entries,
-    WORKTREE_TEARDOWN_CONCURRENCY,
-    async (entry) => {
-      if (Date.now() >= deadline) {
-        return 0
-      }
-      const stopResult = await stopPty(entry.ptyId, async () => {
-        if (Date.now() >= deadline) {
-          return false
-        }
-        try {
-          await localProvider.shutdown(entry.ptyId, { immediate: true, deadlineMs: rpcDeadline })
-          return Date.now() < deadline
-        } catch {
-          return false
-        }
-      })
-      if (stopResult.owner && Date.now() < deadline) {
-        clearStoppedPtyState(entry.ptyId, onPtyStopped)
-        return 1
-      }
-      return 0
-    }
-  )
-  return stopped.reduce<number>((count, value) => count + value, 0)
-}
-
-function clearStoppedPtyState(ptyId: string, onPtyStopped?: (ptyId: string) => void): void {
-  if (!onPtyStopped) {
-    return
-  }
-  try {
-    // Why: daemon shutdown does not always fan a local pty:exit event back
-    // through pty.ts, but removed worktrees must immediately drop memory rows.
-    onPtyStopped(ptyId)
-  } catch {
-    /* cleanup is best-effort and must not block git-level removal */
-  }
 }

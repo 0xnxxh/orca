@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-04",
+  "updatedAt": "2026-08-06",
   "policy": {
     "maturityLevels": ["experimental", "soak", "blocking", "accepted-gap", "deprecated"],
     "blockingPromotion": {
@@ -9671,6 +9671,113 @@
         "The live topology uses an SSH Git worktree; folder-workspace behavior is covered by target-scoped renderer reconciliation rather than a second headed topology."
       ],
       "demotionRule": "Keep experimental or demote if same-authority snapshots can overwrite newer pushes, reconnect silently loses persisted intent, one forward operation disturbs unrelated forwards, live HTTP diverges from renderer/main inventory, or either transport topology flakes without an identified product or harness fault."
+    },
+    {
+      "id": "terminal-session-authority.hot-path-and-locator-isolation",
+      "title": "Terminal authority hot paths remain read-only and host locators remain isolated",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-runtime",
+      "layer": "relay-authority-provider-contract",
+      "surfaces": [
+        "terminal binding reachability",
+        "exact terminal input",
+        "terminal output publication",
+        "authority workspace namespace location"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "daemon", "ssh", "paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["ssh"],
+      "coverageNotes": "A macOS deterministic provider-contract run drives a fake PTY through the real relay handler, lifecycle, registry, service, journal, and authority projection. Pure path-flavor cases cover POSIX, Windows drive, UNC, extended-device aliases, roots, delimiter isolation, floating namespaces, UTF-8 byte bounds, and deterministic namespace hashing without consulting the client filesystem. Native Linux PTY, Windows ConPTY/named-pipe, daemon, paired-runtime, and live SSH transport measurements remain uncollected.",
+      "motivatingLinks": ["https://github.com/stablyai/orca/pull/12600"],
+      "invariant": "After an exact PTY binding commits, reachability inspection, exact input routing, and ordinary physical output publication must not append, compact, or revise terminal topology. Their retained state and queues remain bounded per PTY. Authority workspace identity is derived only from the authority host's canonical path, with distinct POSIX, Windows, injected-delimiter, and floating keys; canonical paths use their own exact 32 KiB UTF-8 bound rather than the shorter authority-ID bound.",
+      "oracle": "Commit one real durable authority binding, snapshot its revision, journal byte length, and synced-record count, then perform 25,000 direct reachability checks, 25,000 exact input notifications, and 25,000 physical output callbacks. Require each phase below 2,000 ms, observed heap growth below 32 MiB, exact input/output counts, zero pending output or exit queues, no pause or flush timer, zero service mutations, zero added durable writes or bytes, and an unchanged revision. Separately canonicalize POSIX, drive, UNC, and \\\\?\\ aliases, prove alias-key equality and cross-flavor/floating/delimiter inequality, accept exactly 32 KiB, reject the next UTF-8 byte, and derive the namespace directory from the complete host/namespace tuple.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/relay/terminal-session-authority-hot-path.test.ts src/main/session-authority/terminal-session-authority-workspace-isolation.test.ts src/shared/terminal-session-authority-locator.test.ts src/main/session-authority/terminal-session-authority-workspace-locator.test.ts --reporter=verbose"
+      ],
+      "testFiles": [
+        "src/relay/terminal-session-authority-hot-path.test.ts",
+        "src/main/session-authority/terminal-session-authority-workspace-isolation.test.ts",
+        "src/shared/terminal-session-authority-locator.test.ts",
+        "src/main/session-authority/terminal-session-authority-workspace-locator.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/relay/terminal-session-authority-hot-path.test.ts",
+          "assertions": [
+            "expect(reachabilityMs).toBeLessThan(PHASE_BUDGET_MS)",
+            "expect(inputMs).toBeLessThan(PHASE_BUDGET_MS)",
+            "expect(outputMs).toBeLessThan(PHASE_BUDGET_MS)",
+            "expect(heapGrowthBytes).toBeLessThan(HEAP_GROWTH_BUDGET_BYTES)",
+            "expect(state.pendingOutputByPty.size).toBe(0)",
+            "expect(mutationSpy).not.toHaveBeenCalled()",
+            "expect(durableWrites).toBe(durableWritesBefore)",
+            "expect(statSync(logPath).size).toBe(logBytesBefore)",
+            "expect(service.snapshotForObserver(observer).revision).toBe(revisionBefore)"
+          ]
+        },
+        {
+          "file": "src/main/session-authority/terminal-session-authority-workspace-isolation.test.ts",
+          "assertions": [
+            "expect(terminalAuthorityNamespaceLocatorKey(deviceDrive)).toBe(terminalAuthorityNamespaceLocatorKey(drive))",
+            "expect(new Set(keys).size).toBe(keys.length)",
+            "expect(new TextEncoder().encode(exactBoundary)).toHaveLength(MAX_CANONICAL_PATH_BYTES)",
+            "expect(terminalSessionAuthorityNamespaceDirectory('authority-root', namespace)).toBe(expected)"
+          ]
+        },
+        {
+          "file": "src/shared/terminal-session-authority-locator.test.ts",
+          "assertions": [
+            "terminal authority namespace locator validates host-canonical path flavor"
+          ]
+        },
+        {
+          "file": "src/main/session-authority/terminal-session-authority-workspace-locator.test.ts",
+          "assertions": ["terminal authority workspace locator uses authority-host realpath"]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-06",
+          "runner": "local",
+          "platform": "macos",
+          "result": "passed",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/relay/terminal-session-authority-hot-path.test.ts src/main/session-authority/terminal-session-authority-workspace-isolation.test.ts src/shared/terminal-session-authority-locator.test.ts src/main/session-authority/terminal-session-authority-workspace-locator.test.ts --reporter=verbose",
+          "durationSeconds": 0.57,
+          "summary": "13/13 passed in two repeated local runs. Worst observed 25,000-operation phases were 3.93 ms reachability, 6.14 ms exact input, and 10.63 ms output, with 2,223,304 bytes heap growth, zero topology writes, and zero pending output queues."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 15,
+        "scope": "four deterministic authority hot-path and locator contract files"
+      },
+      "flakeHistory": {
+        "status": "not-started",
+        "evidence": "Two repeated local macOS runs exist; CI and cross-platform soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "partial",
+        "evidence": "The 2 KiB and exact-32-KiB locator assertions are red under the prior generic 1 KiB authority-ID validation and green with locator-specific validation. The mutation, queue, memory, and latency oracles have no retained intentional-break artifact yet."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Each 25,000-operation phase must finish below 2,000 ms; synchronous observed heap growth must remain below 32 MiB; the output/exit queues, pause set, and flush timer must be empty; and service mutation count, synced journal count, journal bytes, and topology revision must remain unchanged. Across two local runs, worst observed phase times were 3.93/6.14/10.63 ms and heap growth was 2.12 MiB, with every topology and queue count at zero."
+      },
+      "promotionCriteria": [
+        "Collect 100 consecutive focused CI passes or 14 days of soak history.",
+        "Run the same measured contract on native Linux and Windows runners.",
+        "Add native PTY/ConPTY and live SSH transport latency artifacts without weakening the deterministic zero-write oracle.",
+        "Retain an intentional-break artifact for topology writes, queue retention, and latency or memory budget violations."
+      ],
+      "knownGaps": [
+        "Only macOS executed the measured test; Windows path behavior is exercised through node:path.win32, not a native Windows filesystem.",
+        "The PTY is deterministic and in-process, so native PTY, ConPTY, named-pipe, SSH-channel, and renderer latency are not measured.",
+        "The 2,000 ms phase ceiling is a coarse CI regression guard, not a user-visible input-latency SLO.",
+        "Heap growth is a synchronous process-level observation without forced GC; retained native memory and file descriptors need separate evidence.",
+        "Imported legacy-worker broker routing and durable source-credit/exit checkpoints are outside this gate."
+      ],
+      "demotionRule": "Keep experimental or demote if a hot-path phase mutates or compacts topology, retains an unbounded queue, exceeds its budget without an identified runner fault, or any canonical alias can collide across host path flavors or exceed the declared byte boundary."
     },
     {
       "id": "remote-wire.cross-version-terminal-journey",

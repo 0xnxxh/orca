@@ -10,13 +10,22 @@ import { expect, it, vi } from 'vitest'
  *  fsync-only log reads identically for the correct and the broken order. The rename is the boundary
  *  the ordering is defined against, so it has to appear in the same sequence. */
 const syscalls: ('fsync:file' | 'fsync:directory' | 'rename')[] = []
+let directoryFsyncFailure: string | null = null
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof NodeFs>('node:fs')
   return {
     ...actual,
     fsyncSync: (fd: number) => {
-      syscalls.push(actual.fstatSync(fd).isDirectory() ? 'fsync:directory' : 'fsync:file')
+      const isDirectory = actual.fstatSync(fd).isDirectory()
+      syscalls.push(isDirectory ? 'fsync:directory' : 'fsync:file')
+      if (isDirectory && directoryFsyncFailure) {
+        const error = new Error(
+          `directory fsync failed: ${directoryFsyncFailure}`
+        ) as NodeJS.ErrnoException
+        error.code = directoryFsyncFailure
+        throw error
+      }
       return actual.fsyncSync(fd)
     },
     renameSync: (from: NodeFs.PathLike, to: NodeFs.PathLike) => {
@@ -62,6 +71,59 @@ it('fsyncs the file before rename, and the directory after where supported', asy
       supported ? ['fsync:file', 'rename', 'fsync:directory'] : ['fsync:file', 'rename']
     )
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('routes explicit lifecycle secure writes through the durability boundary', async () => {
+  const { writeSecureFileDurable } = await import('../shared/secure-file')
+  const dir = mkdtempSync(join(tmpdir(), 'orca-secure-fsync-'))
+  try {
+    const supported = directoryFsyncSupported(dir)
+    syscalls.length = 0
+    const target = join(dir, 'secret.json')
+    writeSecureFileDurable(target, '{"ok":1}')
+    expect(readFileSync(target, 'utf-8')).toBe('{"ok":1}')
+    expect(syscalls).toEqual(
+      supported ? ['fsync:file', 'rename', 'fsync:directory'] : ['fsync:file', 'rename']
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('keeps ordinary secure writes free of lifecycle fsync overhead', async () => {
+  const { writeSecureFile } = await import('../shared/secure-file')
+  const dir = mkdtempSync(join(tmpdir(), 'orca-secure-write-'))
+  try {
+    syscalls.length = 0
+    writeSecureFile(join(dir, 'ordinary.json'), '{"ok":1}')
+    expect(syscalls).toEqual(['rename'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('propagates POSIX directory fsync failures but degrades only for unsupported errors', async () => {
+  if (process.platform === 'win32') {
+    return
+  }
+  const { writeFileDurableSync } = await import('./durable-file-write')
+  const dir = mkdtempSync(join(tmpdir(), 'orca-directory-fsync-'))
+  try {
+    const target = join(dir, 'state.json')
+    directoryFsyncFailure = 'EIO'
+    expect(() => writeFileDurableSync(`${target}.tmp`, target, '{"ok":1}')).toThrow(
+      'directory fsync failed'
+    )
+
+    directoryFsyncFailure = 'EINVAL'
+    expect(() =>
+      writeFileDurableSync(`${target}.unsupported.tmp`, target, '{"ok":2}')
+    ).not.toThrow()
+    expect(readFileSync(target, 'utf-8')).toBe('{"ok":2}')
+  } finally {
+    directoryFsyncFailure = null
     rmSync(dir, { recursive: true, force: true })
   }
 })

@@ -116,7 +116,8 @@ describe('mobile auth critical path', () => {
       e2eeKeypair: {
         publicKey: desktop.publicKey,
         secretKey: desktop.secretKey,
-        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64'),
+        installationId: 'fixture-installation-0001'
       },
       onText: vi.fn(),
       onBinary: vi.fn(),

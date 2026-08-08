@@ -20,22 +20,14 @@ import {
   selectColdParkedTerminalTabs,
   type TerminalTabColdParkCandidate
 } from './terminal-hidden-view-parking'
-import {
-  recordParkVerdictFlips,
-  type ParkVerdictFlipRecord
-} from './terminal-park-verdict-flip-telemetry'
-import { withholdUnparkableTerminalTabs } from './terminal-cold-park-withheld-tabs'
 import { getTerminalParkingPolicyOverrides } from './terminal-parking-e2e-overrides'
 import {
   selectEvictionExemptTerminalTabIds,
   selectEvictionExemptTerminalTabLayoutKey
 } from './terminal-eviction-exempt-tabs'
 import { selectSleepingRecordParkExemptTabIds } from './sleeping-record-park-exemption'
-import {
-  canWatcherCoverParkedTerminalTab,
-  disposeParkedTerminalWatchersForWorktree,
-  syncParkedTerminalTabWatchers
-} from './terminal-parked-tab-watchers'
+import { useTerminalParkVerdictTelemetry } from './terminal-park-verdict-flip-telemetry'
+import { useTerminalTabParkHandoff } from './use-terminal-tab-park-handoff'
 
 type TerminalOverlayTabAssignment = {
   groupId: string
@@ -113,7 +105,6 @@ export function useTerminalTabColdParking(args: {
   const wasMeasuringHiddenWorktreeRef = useRef(false)
   const measureParkCooldownUntilRef = useRef<number | null>(null)
   const terminalTabParkingTimersRef = useRef(new Map<string, number>())
-  const parkVerdictRecordsRef = useRef(new Map<string, ParkVerdictFlipRecord>())
   const [terminalTabParkingRevision, setTerminalTabParkingRevision] = useState(0)
   const [coldParkedTerminalTabIds, setColdParkedTerminalTabIds] = useState<ReadonlySet<string>>(
     () => new Set()
@@ -210,22 +201,17 @@ export function useTerminalTabColdParking(args: {
       },
       ...overrides
     })
-    const { parkedTabIds, parkVerdictPinUntilMsByTabId } = withholdUnparkableTerminalTabs({
-      worktreeId,
-      terminalTabs,
-      coldParkedTabIds: nextColdParkedTerminalTabIds,
-      parkVerdictRecords: parkVerdictRecordsRef.current,
-      nowMs
-    })
     setColdParkedTerminalTabIds((current) =>
-      haveSameTerminalTabIds(current, parkedTabIds) ? current : parkedTabIds
+      haveSameTerminalTabIds(current, nextColdParkedTerminalTabIds)
+        ? current
+        : nextColdParkedTerminalTabIds
     )
 
     for (const candidate of candidates) {
       if (
         candidate.isVisible ||
         candidate.hasActivityTerminalPortal ||
-        parkedTabIds.has(candidate.id)
+        nextColdParkedTerminalTabIds.has(candidate.id)
       ) {
         continue
       }
@@ -233,8 +219,6 @@ export function useTerminalTabColdParking(args: {
         parkingEnabled: terminalParkingEnabled,
         hiddenSinceMs: candidate.hiddenSinceMs,
         parkCooldownUntilMs: measureParkCooldownUntilRef.current,
-        // Why: pin expiry may be the only remaining wakeup after damping stops churn.
-        parkVerdictPinUntilMs: parkVerdictPinUntilMsByTabId.get(candidate.id) ?? null,
         nowMs,
         ...overrides
       })
@@ -278,11 +262,8 @@ export function useTerminalTabColdParking(args: {
     [evictionExemptLayoutKey, isForceParked, terminalTabs, worktreeId]
   )
 
-  // Why: the rendered park verdict — worktree-level park (prop from
-  // Terminal.tsx) or per-tab cold park, never portal-hosted tabs. Render and
-  // the watcher-sync effect must share this exact set so watcher lifecycle
-  // tracks the committed unmounts.
-  const parkedTerminalTabIds = useMemo(() => {
+  // Policy intent only; observer preparation below decides what may unmount.
+  const desiredParkedTerminalTabIds = useMemo(() => {
     const parked = new Set<string>()
     for (const terminalTab of terminalTabs) {
       const assignment = assignments.get(terminalTab.id)
@@ -316,11 +297,7 @@ export function useTerminalTabColdParking(args: {
       // Why: activation-deferred tabs render no pane regardless of the park
       // policy, so watchers must own their side effects immediately. Targeted
       // restrictions do not enter this set or add a new eager watcher burst.
-      if (
-        activationDeferredMountTabIds?.has(terminalTab.id) &&
-        !hasActivityTerminalPortal &&
-        canWatcherCoverParkedTerminalTab(worktreeId, terminalTab)
-      ) {
+      if (activationDeferredMountTabIds?.has(terminalTab.id) && !hasActivityTerminalPortal) {
         parked.add(terminalTab.id)
       }
     }
@@ -339,36 +316,16 @@ export function useTerminalTabColdParking(args: {
     worktreeId
   ])
 
-  // Why: observation only — records whether the *rendered* park verdict churns,
-  // so a crash bundle can confirm or refute a park-flip update loop. Watching
-  // the pre-gate cold set instead would miss loops driven by coldParkTerminalPanes
-  // or the portal/measuring gates. Changes no verdict; see
-  // terminal-park-verdict-flip-telemetry.ts.
-  useEffect(() => {
-    recordParkVerdictFlips({
-      records: parkVerdictRecordsRef.current,
-      liveTabIds: new Set(terminalTabs.map((terminalTab) => terminalTab.id)),
-      nextParkedTabIds: parkedTerminalTabIds,
-      nowMs: Date.now()
-    })
-  }, [parkedTerminalTabIds, terminalTabs])
-
-  // Why: runs in the same effect flush as the commit that parked/revealed the
-  // panes — watcher disposal therefore lands before any PTY data IPC can
-  // reach a freshly remounted pane, and watcher start lands after the parked
-  // pane's unmount capture.
-  useEffect(() => {
-    syncParkedTerminalTabWatchers({
-      worktreeId,
-      tabs: terminalTabs,
-      parkedTabIds: parkedTerminalTabIds,
-      // Why: activation-deferred tabs have no prior pane-owned title slot;
-      // pull main's title-only snapshot when their watcher starts.
-      restoreTitleOnStartTabIds: activationDeferredMountTabIds ?? undefined
-    })
-  }, [activationDeferredMountTabIds, parkedTerminalTabIds, terminalTabs, worktreeId])
-
-  useEffect(() => () => disposeParkedTerminalWatchersForWorktree(worktreeId), [worktreeId])
-
+  const parkedTerminalTabIds = useTerminalTabParkHandoff({
+    worktreeId,
+    terminalTabs,
+    desiredParkedTabIds: desiredParkedTerminalTabIds,
+    shouldTrackPaneCandidates:
+      coldParkTerminalPanes ||
+      coldParkedTerminalTabIds.size > 0 ||
+      (activationDeferredMountTabIds?.size ?? 0) > 0,
+    activationDeferredMountTabIds
+  })
+  useTerminalParkVerdictTelemetry({ terminalTabs, parkedTabIds: parkedTerminalTabIds })
   return parkedTerminalTabIds
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeSshTerminalAuthorityProcess } from './ssh-terminal-authority-process-fixture'
 import type * as RelayInstallMarkerModule from './ssh-relay-install-marker'
 
 vi.mock('electron', () => ({
@@ -62,6 +63,24 @@ vi.mock('./ssh-relay-gc-claim', () => ({
   releaseRelayGcClaimWithRetry: vi.fn().mockResolvedValue('released'),
   tryAcquireRelayGcClaim: vi.fn().mockResolvedValue('launch-token'),
   waitForRelayGcClaimRelease: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('./ssh-terminal-authority-discovery', () => ({
+  sshTerminalAuthorityBootstrapReadCommand: vi.fn().mockReturnValue('echo $HOME'),
+  parseSshTerminalAuthorityBootstrapRead: vi.fn((output: string) => ({
+    rawRemoteHome: output,
+    discovery: { status: 'absent' }
+  }))
+}))
+
+vi.mock('./ssh-terminal-authority-process', () => ({
+  establishSshTerminalAuthority: vi.fn(async (options: { relayDir: string }) =>
+    makeSshTerminalAuthorityProcess({
+      remoteHome: '/home/user',
+      ownerBuildId: '0.1.0+testhash',
+      ownerRelayDir: options.relayDir
+    })
+  )
 }))
 
 vi.mock('./ssh-connection-utils', () => ({

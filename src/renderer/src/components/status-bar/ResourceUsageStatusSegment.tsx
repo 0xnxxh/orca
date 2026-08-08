@@ -27,6 +27,10 @@ import { cn } from '@/lib/utils'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
+import {
+  killPtyAtCurrentIncarnation,
+  killPtyWithAdministrativeMutationAccess
+} from '@/lib/pty-administrative-mutations'
 import { useAppStore } from '../../store'
 import { useWorktreeMap } from '../../store/selectors'
 import { runWorktreeDelete } from '../sidebar/delete-worktree-flow'
@@ -1052,7 +1056,12 @@ export function ResourceUsageStatusSegment({
         // Why: await the kill before refreshing, else the refresh re-reads the daemon list before the kill lands and re-adds the row.
         void (async () => {
           try {
-            await window.api.pty.kill(session.sessionId)
+            await (session.administrativeMutationAccess
+              ? killPtyWithAdministrativeMutationAccess(
+                  session.sessionId,
+                  session.administrativeMutationAccess
+                )
+              : killPtyAtCurrentIncarnation(session.sessionId))
           } catch {
             /* already dead */
           }
@@ -1078,7 +1087,16 @@ export function ResourceUsageStatusSegment({
     // Why: optimistic removal so rows disappear immediately instead of waiting for the next daemon-side list refresh.
     const orphanIds = new Set(orphans.map((s) => s.id))
     removeSessions(orphanIds)
-    await Promise.allSettled(orphans.map((s) => window.api.pty.kill(s.id)))
+    await Promise.allSettled(
+      orphans.map((session) =>
+        session.administrativeMutationAccess
+          ? killPtyWithAdministrativeMutationAccess(
+              session.id,
+              session.administrativeMutationAccess
+            )
+          : killPtyAtCurrentIncarnation(session.id)
+      )
+    )
     void refreshSessions()
   }, [sessions, resourceSessionBindings, workspaceSessionReady, refreshSessions, removeSessions])
 
@@ -1091,7 +1109,12 @@ export function ResourceUsageStatusSegment({
     // Why: optimistic removal avoids a flash where the dialog closes but the killed row lingers until the next list refresh.
     removeSession(target.sessionId)
     try {
-      await window.api.pty.kill(target.sessionId)
+      await (target.administrativeMutationAccess
+        ? killPtyWithAdministrativeMutationAccess(
+            target.sessionId,
+            target.administrativeMutationAccess
+          )
+        : killPtyAtCurrentIncarnation(target.sessionId))
     } catch {
       /* already dead — fall through */
     } finally {

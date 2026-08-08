@@ -1,6 +1,10 @@
 // ─── Events (Daemon → Client, on stream socket) ────────────────────
 import type { TerminalGitHubPRLink } from '../../shared/terminal-github-pr-link-detector'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import type {
+  TerminalAuthorityNamespaceOutcomeBoundary,
+  TerminalAuthorityNamespaceOutcomePublication
+} from '../../shared/terminal-session-authority-consumer-transport'
 
 export type DataEvent = {
   type: 'event'
@@ -13,6 +17,16 @@ export type DataEvent = {
     transformed?: boolean
     /** Legacy v23 name retained for old adapter fixtures. */
     sequenceChars?: number
+  }
+}
+
+export type SessionSourceEvent = {
+  type: 'event'
+  event: 'sessionSource'
+  sessionId: string
+  payload: {
+    incarnationId: PtyIncarnationId
+    streamBindingNonce: string
   }
 }
 
@@ -83,10 +97,27 @@ export type TransientFactEvent = {
   payload: DaemonTransientFact
 }
 
+export type TerminalAuthorityNamespaceOutcomeBoundaryEvent = {
+  type: 'event'
+  event: 'terminalAuthorityNamespaceOutcomeBoundary'
+  sessionId: string
+  payload: TerminalAuthorityNamespaceOutcomeBoundary
+}
+
+export type TerminalAuthorityNamespaceOutcomeEvent = {
+  type: 'event'
+  event: 'terminalAuthorityNamespaceOutcome'
+  sessionId: string
+  payload: TerminalAuthorityNamespaceOutcomePublication
+}
+
 export type DaemonEvent =
   | DataEvent
+  | SessionSourceEvent
   | ExitEvent
   | TerminalErrorEvent
   | SessionBackgroundMarkerEvent
   | DataGapEvent
   | TransientFactEvent
+  | TerminalAuthorityNamespaceOutcomeBoundaryEvent
+  | TerminalAuthorityNamespaceOutcomeEvent
