@@ -103,9 +103,15 @@ Limits, stated rather than implied:
   Electron's GUI starts under WSL; no display server was started and that
   remains an open question for any journey needing a window.
 - WSL evidence is against `d74f5ed0eae` and on Node 22 rather than the required 24. The other two platforms ran the same oracle on Node 24.
-- `src/main/providers` is red on that distro for an unrelated reason: bash
-  5.3.9 emits 7 OSC 133 markers where `local-pty-shell-ready.test.ts` hardcodes 4. Outside this journey's surface, but it means "the unit suites are green on
-  WSL" would be false.
+- `src/main/providers` is red on that distro for an unrelated reason:
+  `local-pty-shell-ready.test.ts` pins an exact OSC 133 marker count and saw 7
+  splits where it expects 4. The WSL run attributed that to bash 5.3.9, but that
+  is **not** the cause — macOS runs the same bash 5.3.9 and the spec passes there
+  67/67. The trigger is environmental to that distro, most plausibly a
+  system-wide bashrc contributing prompt hooks, and the underlying defect is that
+  the spec asserts an absolute count of markers it does not own. Outside this
+  journey's surface, so left for its owner rather than reinterpreted blind — but
+  it means "the unit suites are green on WSL" would be false.
 
 ### Journey 1 — Local macOS, Linux, and Windows (proven 2026-08-08)
 
