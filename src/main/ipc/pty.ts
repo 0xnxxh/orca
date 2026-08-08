@@ -58,6 +58,7 @@ import {
 } from '../../shared/command-token-scanner'
 import { agentHookServer } from '../agent-hooks/server'
 import { wslHookRelayManager } from '../agent-hooks/wsl-hook-relay-manager'
+import { ensureWslHookRelayForReattach } from '../agent-hooks/wsl-hook-relay-reattach'
 import { isAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 import {
@@ -4300,7 +4301,7 @@ export function registerPtyHandlers(
         if (!handle) {
           throw new Error('terminal_pane_owner_unknown')
         }
-        return {
+        const result = {
           id: preAdoptedStablePane.result.id,
           ...(preAdoptedStablePane.result.incarnationId
             ? { incarnationId: preAdoptedStablePane.result.incarnationId }
@@ -4314,6 +4315,11 @@ export function registerPtyHandlers(
             leafId: preAdoptedStablePane.owner.leafId
           }
         }
+        ensureWslHookRelayForReattach(
+          { isReattach: true, wslDistro: preAdoptedStablePane.result.wslDistro },
+          args.connectionId
+        )
+        return result
       }
       if (!preAdoptedStablePane) {
         await assertFolderWorkspacePtyPathUsable(args.worktreeId)
@@ -4882,6 +4888,7 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
+          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId
@@ -6225,6 +6232,7 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
+          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId
