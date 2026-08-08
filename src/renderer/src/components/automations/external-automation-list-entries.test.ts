@@ -22,13 +22,10 @@ describe('buildExternalAutomationListEntries', () => {
     expect(buildExternalAutomationListEntries([manager()])).toEqual([])
   })
 
-  it('lists jobs only', () => {
+  it('lists jobs from an unavailable manager', () => {
     expect(
       buildExternalAutomationListEntries([
         manager({
-          status: 'available',
-          error: null,
-          canManage: true,
           jobs: [
             {
               id: 'job-1',
