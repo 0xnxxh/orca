@@ -67,6 +67,7 @@ import TabBarCreateEntry from './TabBarCreateEntry'
 
 function terminalResult(overrides: Partial<OpenTabSearchResult> = {}): OpenTabSearchResult {
   return {
+    executionHostId: 'local',
     source: 'workspace',
     id: 'open-tab:workspace:tab-1',
     title: 'Add tab search and jump in worktree',

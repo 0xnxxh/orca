@@ -2,6 +2,7 @@
 // omnibox. Pure: no store, no React.
 
 import { isClipboardTextByteLengthOverLimit } from '../../../../shared/clipboard-text'
+import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
 import {
   searchBrowserPages,
   type BrowserPaletteSearchResult,
@@ -27,6 +28,7 @@ export const OPEN_TAB_SEARCH_QUERY_MAX_BYTES = 2 * 1024
 export type OpenTabSearchSource = 'workspace' | 'browser' | 'simulator'
 
 type OpenTabSearchResultBase = {
+  executionHostId: ExecutionHostId
   /** Stable across renders, so selection survives the deferred query. */
   id: string
   title: string
@@ -128,9 +130,11 @@ function getEditorRelativePath(entry: SearchableWorkspaceTab | undefined): strin
 function baseResult(
   source: OpenTabSearchSource,
   id: string,
-  result: EngineResult
+  result: EngineResult,
+  executionHostId: ExecutionHostId
 ): OpenTabSearchResultBase {
   return {
+    executionHostId,
     id: `open-tab:${source}:${id}`,
     title: result.title,
     matchedText: getMatchedText(result),
@@ -165,12 +169,22 @@ export function searchOpenTabs({
   }
 
   const workspaceEntriesByTabId = new Map(workspaceTabs.map((entry) => [entry.tab.id, entry]))
+  const browserEntriesByPageId = new Map(browserPages.map((entry) => [entry.page.id, entry]))
+  const simulatorEntriesByTabId = new Map(simulatorTabs.map((entry) => [entry.tab.id, entry]))
+  const entryHostId = (
+    entry: SearchableWorkspaceTab | SearchableBrowserPage | SearchableSimulatorTab | undefined
+  ): ExecutionHostId => entry?.worktree.hostId ?? LOCAL_EXECUTION_HOST_ID
 
   return [
     // Why no isCurrentTab filter: Cmd+J lists the tab you are on, and hiding it
     // made the omnibox look broken when you searched for the tab on screen.
     ...rank('workspace', searchWorkspaceTabs([...workspaceTabs], trimmed), (result) => ({
-      ...baseResult('workspace', result.tabId, result),
+      ...baseResult(
+        'workspace',
+        result.tabId,
+        result,
+        entryHostId(workspaceEntriesByTabId.get(result.tabId))
+      ),
       source: 'workspace',
       contentType: result.contentType,
       tabId: result.tabId,
@@ -179,14 +193,24 @@ export function searchOpenTabs({
       relativePath: getEditorRelativePath(workspaceEntriesByTabId.get(result.tabId))
     })),
     ...rank('browser', searchBrowserPages([...browserPages], trimmed), (result) => ({
-      ...baseResult('browser', result.pageId, result),
+      ...baseResult(
+        'browser',
+        result.pageId,
+        result,
+        entryHostId(browserEntriesByPageId.get(result.pageId))
+      ),
       source: 'browser',
       contentType: 'browser',
       pageId: result.pageId,
       workspaceId: result.workspaceId
     })),
     ...rank('simulator', searchSimulatorTabs([...simulatorTabs], trimmed), (result) => ({
-      ...baseResult('simulator', result.tabId, result),
+      ...baseResult(
+        'simulator',
+        result.tabId,
+        result,
+        entryHostId(simulatorEntriesByTabId.get(result.tabId))
+      ),
       source: 'simulator',
       contentType: 'simulator',
       tabId: result.tabId,

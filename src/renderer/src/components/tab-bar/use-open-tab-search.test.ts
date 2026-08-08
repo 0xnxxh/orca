@@ -237,6 +237,41 @@ describe('useOpenTabSearch', () => {
     expect(result.current.every((entry) => entry.worktreeId === 'wt-1')).toBe(true)
   })
 
+  it('keeps the active runtime host when worktree ids collide', () => {
+    const runtimeHost = 'runtime:host-1' as const
+    const localWorktree = { ...makeWorktree('wt-1', 'Local'), hostId: 'local' as const }
+    const runtimeWorktree = {
+      ...makeWorktree('wt-1', 'Runtime'),
+      hostId: runtimeHost,
+      path: '/runtime/wt-1'
+    }
+    seedStore({
+      activeWorkspaceExecutionHostId: runtimeHost,
+      repos: [
+        { ...repo, executionHostId: 'local', path: '/local/repo-1' },
+        { ...repo, executionHostId: runtimeHost, path: '/runtime/repo-1' }
+      ],
+      worktreesByRepo: { 'repo-1': [localWorktree, runtimeWorktree] }
+    })
+
+    const { result } = renderSearch()
+
+    expect(result.current).not.toHaveLength(0)
+    expect(result.current.every((entry) => entry.executionHostId === runtimeHost)).toBe(true)
+  })
+
+  it('does not rebuild results for agent-status heartbeats while open', () => {
+    const { result } = renderSearch()
+    const initialResults = result.current
+    const state = useAppStore.getState()
+
+    act(() => {
+      useAppStore.setState({ agentStatusByPaneKey: { ...state.agentStatusByPaneKey } })
+    })
+
+    expect(result.current).toBe(initialResults)
+  })
+
   it('includes tabs from every column of the worktree, not just the focused one', () => {
     const { result } = renderSearch()
 

@@ -30,7 +30,8 @@ vi.mock('@/components/browser-pane/browser-focus', () => ({
 
 import { activateOpenTabSearchResult } from './open-tab-selection-routing'
 
-const terminalResult: OpenTabSearchResult = {
+const terminalResult: Extract<OpenTabSearchResult, { source: 'workspace' }> = {
+  executionHostId: 'runtime:host-1',
   source: 'workspace',
   id: 'open-tab:workspace:tab-1',
   title: 'Claude Code',
@@ -53,6 +54,7 @@ const editorResult: OpenTabSearchResult = {
 }
 
 const browserResult: OpenTabSearchResult = {
+  executionHostId: 'runtime:host-1',
   source: 'browser',
   id: 'open-tab:browser:page-1',
   title: 'Project Docs',
@@ -64,6 +66,7 @@ const browserResult: OpenTabSearchResult = {
 }
 
 const simulatorResult: OpenTabSearchResult = {
+  executionHostId: 'runtime:host-1',
   source: 'simulator',
   id: 'open-tab:simulator:tab-3',
   title: 'iPhone 15',
@@ -92,6 +95,7 @@ describe('activateOpenTabSearchResult', () => {
     expect(mocks.activateWorkspaceTab).toHaveBeenCalledWith({
       contentType: 'terminal',
       entityId: 'term-1',
+      executionHostId: 'runtime:host-1',
       groupId: 'group-2',
       tabId: 'tab-1',
       worktreeId: 'wt-1'
@@ -112,6 +116,7 @@ describe('activateOpenTabSearchResult', () => {
   it('carries the activation focus target into the browser focus request', () => {
     const outcome = activateOpenTabSearchResult(browserResult)
     expect(mocks.activateBrowserPage).toHaveBeenCalledWith({
+      executionHostId: 'runtime:host-1',
       pageId: 'page-1',
       workspaceId: 'ws-1',
       worktreeId: 'wt-1'
@@ -140,7 +145,11 @@ describe('activateOpenTabSearchResult', () => {
       throw new Error('expected activation')
     }
     outcome.focus?.()
-    expect(mocks.activateSimulatorTab).toHaveBeenCalledWith({ tabId: 'tab-3', worktreeId: 'wt-1' })
+    expect(mocks.activateSimulatorTab).toHaveBeenCalledWith({
+      executionHostId: 'runtime:host-1',
+      tabId: 'tab-3',
+      worktreeId: 'wt-1'
+    })
     expect(mocks.focusTerminalTabSurface).toHaveBeenCalledWith('tab-3')
   })
 

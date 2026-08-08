@@ -13,6 +13,12 @@ import {
   type SearchableWorkspaceTab
 } from '@/lib/workspace-tab-palette-search'
 import type { AppState } from '@/store/types'
+import {
+  getRepoExecutionHostId,
+  getWorktreeExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 
 export type OpenTabSearchEntries = {
   workspaceTabs: readonly SearchableWorkspaceTab[]
@@ -31,35 +37,51 @@ export type OpenTabSearchEntryState = Pick<
   | 'activeTabType'
   | 'activeTabTypeByWorktree'
   | 'activeWorktreeId'
-  | 'agentStatusByPaneKey'
   | 'browserPagesByWorkspace'
   | 'browserTabsByWorktree'
   | 'groupsByWorktree'
   | 'openFiles'
-  | 'retainedAgentsByPaneKey'
-  | 'sleepingAgentSessionsByPaneKey'
   | 'tabsByWorktree'
   | 'unifiedTabsByWorktree'
 > & {
+  executionHostId: ExecutionHostId
   generatedTitlesEnabled: boolean
-  repo: Pick<Repo, 'displayName' | 'id'> | null
-  worktree: Worktree | null
+  repo: Pick<Repo, 'connectionId' | 'displayName' | 'executionHostId' | 'id'> | null
+  worktree: Worktree
 }
 
-const EMPTY_ENTRIES: OpenTabSearchEntries = {
-  workspaceTabs: [],
-  browserPages: [],
-  simulatorTabs: []
-}
+export type OpenTabSearchAgentState = Pick<
+  AppState,
+  'agentStatusByPaneKey' | 'retainedAgentsByPaneKey' | 'sleepingAgentSessionsByPaneKey'
+>
 
 // No group id: every tab of the worktree is offered, including the one the
 // column already shows, matching how Cmd+J lists the tab you are on.
 export function selectOpenTabSearchEntryState(
   state: AppState,
   worktreeId: string
-): OpenTabSearchEntryState {
+): OpenTabSearchEntryState | null {
+  const preferredHostId =
+    state.activeWorktreeId === worktreeId
+      ? (state.activeWorkspaceExecutionHostId ?? LOCAL_EXECUTION_HOST_ID)
+      : undefined
   // Why getKnownWorktreeById: folder workspaces are absent from worktreesByRepo.
-  const worktree = state.getKnownWorktreeById(worktreeId) ?? null
+  const worktree = state.getKnownWorktreeById(worktreeId, preferredHostId) ?? null
+  if (!worktree) {
+    return null
+  }
+  const repoCandidates = state.repos.filter((candidate) => candidate.id === worktree.repoId)
+  const repo =
+    (preferredHostId
+      ? repoCandidates.find((candidate) => getRepoExecutionHostId(candidate) === preferredHostId)
+      : undefined) ??
+    repoCandidates[0] ??
+    null
+  const executionHostId = getWorktreeExecutionHostId(
+    worktree,
+    repo ?? undefined,
+    preferredHostId ?? LOCAL_EXECUTION_HOST_ID
+  )
   return {
     activeBrowserTabId: state.activeBrowserTabId,
     activeFileId: state.activeFileId,
@@ -70,33 +92,40 @@ export function selectOpenTabSearchEntryState(
     activeTabType: state.activeTabType,
     activeTabTypeByWorktree: state.activeTabTypeByWorktree,
     activeWorktreeId: state.activeWorktreeId,
-    agentStatusByPaneKey: state.agentStatusByPaneKey,
     browserPagesByWorkspace: state.browserPagesByWorkspace,
     browserTabsByWorktree: state.browserTabsByWorktree,
+    executionHostId,
     generatedTitlesEnabled: state.settings?.tabAutoGenerateTitle === true,
     groupsByWorktree: state.groupsByWorktree,
     openFiles: state.openFiles,
-    repo: worktree
-      ? (state.repos.find((candidate) => candidate.id === worktree.repoId) ?? null)
-      : null,
-    retainedAgentsByPaneKey: state.retainedAgentsByPaneKey,
-    sleepingAgentSessionsByPaneKey: state.sleepingAgentSessionsByPaneKey,
+    repo,
     tabsByWorktree: state.tabsByWorktree,
     unifiedTabsByWorktree: state.unifiedTabsByWorktree,
     worktree
   }
 }
 
-export function buildOpenTabSearchEntries(state: OpenTabSearchEntryState): OpenTabSearchEntries {
-  if (!state.worktree) {
-    return EMPTY_ENTRIES
+export function selectOpenTabSearchAgentState(state: AppState): OpenTabSearchAgentState {
+  return {
+    agentStatusByPaneKey: state.agentStatusByPaneKey,
+    retainedAgentsByPaneKey: state.retainedAgentsByPaneKey,
+    sleepingAgentSessionsByPaneKey: state.sleepingAgentSessionsByPaneKey
   }
+}
 
+export function buildOpenTabSearchEntries(
+  state: OpenTabSearchEntryState,
+  agentState: OpenTabSearchAgentState
+): OpenTabSearchEntries {
   const { repo, worktree } = state
-  const worktrees = [worktree]
+  const scopedWorktree =
+    worktree.hostId === state.executionHostId
+      ? worktree
+      : { ...worktree, hostId: state.executionHostId }
+  const worktrees = [scopedWorktree]
   const scope = {
     worktrees,
-    repoMap: new Map(repo ? [[repo.id, { displayName: repo.displayName }]] : []),
+    repoMap: new Map(repo ? [[repo.id, repo]] : []),
     worktreeOrder: new Map([[worktree.id, 0]])
   }
 
@@ -106,9 +135,9 @@ export function buildOpenTabSearchEntries(state: OpenTabSearchEntryState): OpenT
       unifiedTabsByWorktree: state.unifiedTabsByWorktree,
       tabsByWorktree: state.tabsByWorktree,
       openFiles: state.openFiles,
-      agentStatusByPaneKey: state.agentStatusByPaneKey,
-      retainedAgentsByPaneKey: state.retainedAgentsByPaneKey,
-      sleepingAgentSessionsByPaneKey: state.sleepingAgentSessionsByPaneKey,
+      agentStatusByPaneKey: agentState.agentStatusByPaneKey,
+      retainedAgentsByPaneKey: agentState.retainedAgentsByPaneKey,
+      sleepingAgentSessionsByPaneKey: agentState.sleepingAgentSessionsByPaneKey,
       activeGroupIdByWorktree: state.activeGroupIdByWorktree,
       groupsByWorktree: state.groupsByWorktree,
       activeWorktreeId: state.activeWorktreeId,

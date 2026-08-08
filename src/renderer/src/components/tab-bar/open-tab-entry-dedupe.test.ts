@@ -14,6 +14,7 @@ function editorTab(
   relativePath: string | null
 ): Extract<OpenTabSearchResult, { source: 'workspace' }> {
   return {
+    executionHostId: 'local',
     source: 'workspace',
     id: `open-tab:workspace:tab-${relativePath ?? 'none'}`,
     title: 'zebra.ts',
@@ -70,6 +71,7 @@ describe('dropFileEntriesCoveredByTabResults', () => {
     const results: OpenTabSearchResult[] = [
       { ...editorTab(null), contentType: 'terminal' },
       {
+        executionHostId: 'local',
         source: 'browser',
         id: 'open-tab:browser:page-1',
         title: 'zebra',
@@ -80,6 +82,7 @@ describe('dropFileEntriesCoveredByTabResults', () => {
         workspaceId: 'ws-1'
       },
       {
+        executionHostId: 'local',
         source: 'simulator',
         id: 'open-tab:simulator:tab-2',
         title: 'zebra',

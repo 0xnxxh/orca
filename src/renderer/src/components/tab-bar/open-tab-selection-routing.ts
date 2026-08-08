@@ -40,6 +40,7 @@ function requestBrowserPageFocus(detail: BrowserFocusRequestDetail): void {
 export function activateOpenTabSearchResult(result: OpenTabSearchResult): OpenTabSelectionOutcome {
   if (result.source === 'browser') {
     const activation = activateBrowserPagePaletteResult({
+      executionHostId: result.executionHostId,
       pageId: result.pageId,
       workspaceId: result.workspaceId,
       worktreeId: result.worktreeId
@@ -62,6 +63,7 @@ export function activateOpenTabSearchResult(result: OpenTabSearchResult): OpenTa
 
   if (result.source === 'simulator') {
     const activation = activateSimulatorTabPaletteResult({
+      executionHostId: result.executionHostId,
       tabId: result.tabId,
       worktreeId: result.worktreeId
     })
@@ -78,6 +80,7 @@ export function activateOpenTabSearchResult(result: OpenTabSearchResult): OpenTa
   }
 
   const activation = activateWorkspaceTabPaletteResult({
+    executionHostId: result.executionHostId,
     contentType: result.contentType,
     entityId: result.entityId,
     groupId: result.groupId,
