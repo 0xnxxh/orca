@@ -333,52 +333,19 @@ function getTerminalTabOwnerWorktreeId(
   return terminalTabOwnerCache.get(tabId) ?? null
 }
 
-function updateUnifiedTerminalLabel(
-  unifiedTabs: Tab[],
-  terminalTabId: string,
-  label: string
-): Tab[] | null {
+/** Null when the terminal has no unified tab or the field already holds `value`. */
+function updateUnifiedTerminalLabelField<
+  K extends 'label' | 'generatedLabel' | 'agentRenamedLabel'
+>(unifiedTabs: Tab[], terminalTabId: string, field: K, value: Tab[K]): Tab[] | null {
   const unifiedIndex = unifiedTabs.findIndex(
     (entry) => entry.contentType === 'terminal' && entry.entityId === terminalTabId
   )
-  if (unifiedIndex === -1 || unifiedTabs[unifiedIndex]?.label === label) {
-    return null
-  }
-  return unifiedTabs.map((entry, index) => (index === unifiedIndex ? { ...entry, label } : entry))
-}
-
-function updateUnifiedTerminalAgentRenamedLabel(
-  unifiedTabs: Tab[],
-  terminalTabId: string,
-  agentRenamedLabel: string | null
-): Tab[] | null {
-  const unifiedIndex = unifiedTabs.findIndex(
-    (entry) => entry.contentType === 'terminal' && entry.entityId === terminalTabId
-  )
-  if (
-    unifiedIndex === -1 ||
-    (unifiedTabs[unifiedIndex]?.agentRenamedLabel ?? null) === agentRenamedLabel
-  ) {
+  const current = unifiedTabs[unifiedIndex]
+  if (!current || (current[field] ?? null) === (value ?? null)) {
     return null
   }
   return unifiedTabs.map((entry, index) =>
-    index === unifiedIndex ? { ...entry, agentRenamedLabel } : entry
-  )
-}
-
-function updateUnifiedTerminalGeneratedLabel(
-  unifiedTabs: Tab[],
-  terminalTabId: string,
-  generatedLabel: string
-): Tab[] | null {
-  const unifiedIndex = unifiedTabs.findIndex(
-    (entry) => entry.contentType === 'terminal' && entry.entityId === terminalTabId
-  )
-  if (unifiedIndex === -1 || unifiedTabs[unifiedIndex]?.generatedLabel === generatedLabel) {
-    return null
-  }
-  return unifiedTabs.map((entry, index) =>
-    index === unifiedIndex ? { ...entry, generatedLabel } : entry
+    index === unifiedIndex ? { ...entry, [field]: value } : entry
   )
 }
 
@@ -501,6 +468,13 @@ function requestAgentRenamedTabTitle(get: () => AppState, tabId: string, liveTit
   if (!ownerWorktreeId) {
     return
   }
+  // Why: an SSH-hosted agent writes its transcript on the remote host, and the
+  // remote filesystem contract has no ranged read — scanning it would pull the
+  // whole transcript over the link on every title frame. Skip instead, and never
+  // read the remote path locally where it could resolve to an unrelated file.
+  if (getRemoteConnectionIdForWorktree(state, ownerWorktreeId)) {
+    return
+  }
   const transcriptPaths = Object.entries(state.agentStatusByPaneKey).flatMap(([paneKey, entry]) => {
     const transcriptPath = entry?.providerSession?.transcriptPath?.trim()
     return transcriptPath && getTabIdFromPaneKey(paneKey) === tabId ? [transcriptPath] : []
@@ -509,7 +483,6 @@ function requestAgentRenamedTabTitle(get: () => AppState, tabId: string, liveTit
     tabId,
     liveTitle,
     transcriptPaths,
-    connectionId: getRemoteConnectionIdForWorktree(state, ownerWorktreeId),
     apply: (agentRenamedTitle) => get().setTabAgentRenamedTitle(tabId, agentRenamedTitle)
   })
 }
@@ -2042,9 +2015,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       if (!currentTab || (currentTab.agentRenamedTitle ?? null) === agentRenamedTitle) {
         return s
       }
-      const unifiedTabsWithRenamedLabel = updateUnifiedTerminalAgentRenamedLabel(
+      const unifiedTabsWithRenamedLabel = updateUnifiedTerminalLabelField(
         s.unifiedTabsByWorktree[ownerWorktreeId] ?? [],
         tabId,
+        'agentRenamedLabel',
         agentRenamedTitle
       )
       scheduleRuntimeGraphSync()
@@ -2084,9 +2058,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const nextTitle = title.trim() || getFallbackTabTitle(currentTab)
       const currentUnifiedTabs = s.unifiedTabsByWorktree[ownerWorktreeId] ?? []
       if (isDecorativeAgentTitleFrameChange(currentTab.title, nextTitle)) {
-        const unifiedTabsWithCurrentLabel = updateUnifiedTerminalLabel(
+        const unifiedTabsWithCurrentLabel = updateUnifiedTerminalLabelField(
           currentUnifiedTabs,
           tabId,
+          'label',
           currentTab.title
         )
         return unifiedTabsWithCurrentLabel
@@ -2098,9 +2073,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             }
           : s
       }
-      const unifiedTabsWithUpdatedLabel = updateUnifiedTerminalLabel(
+      const unifiedTabsWithUpdatedLabel = updateUnifiedTerminalLabelField(
         currentUnifiedTabs,
         tabId,
+        'label',
         nextTitle
       )
       if (currentTab.title === nextTitle) {
@@ -2200,9 +2176,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         tab.id === tabId ? { ...tab, generatedTitle } : tab
       )
       const currentUnifiedTabs = s.unifiedTabsByWorktree[ownerWorktreeId] ?? []
-      const unifiedTabsWithGeneratedLabel = updateUnifiedTerminalGeneratedLabel(
+      const unifiedTabsWithGeneratedLabel = updateUnifiedTerminalLabelField(
         currentUnifiedTabs,
         tabId,
+        'generatedLabel',
         generatedTitle
       )
       scheduleRuntimeGraphSync()

@@ -5,7 +5,7 @@ import {
   resolveTerminalTabTitle,
   resolveUnifiedTabLabel
 } from '../../../../shared/tab-title-resolution'
-import { createTestStore, makeWorktree, seedStore } from './store-test-helpers'
+import { createTestStore, makeWorktree, seedStore, TEST_REPO } from './store-test-helpers'
 
 const WORKTREE_ID = 'repo1::/path/wt1'
 const LEAF_ID = '11111111-1111-4111-8111-111111111111'
@@ -128,6 +128,17 @@ describe('deliberate in-agent rename vs generated tab title', () => {
     expect(resolveTerminalTabTitle(store.getState().tabsByWorktree[WORKTREE_ID][0], true)).toBe(
       '✳ billing-fix'
     )
+  })
+
+  it('does not scan an SSH-hosted pane, whose transcript lives on the remote host', async () => {
+    const store = createTestStore()
+    const tabId = seedAgentTab(store)
+    store.setState({ repos: [{ ...TEST_REPO, connectionId: 'ssh-1' }] })
+
+    store.getState().updateTabTitle(tabId, '✳ billing-fix')
+    await Promise.resolve()
+
+    expect(getRenamedTitle).not.toHaveBeenCalled()
   })
 
   it('does not scan transcripts while generated titles are off', async () => {

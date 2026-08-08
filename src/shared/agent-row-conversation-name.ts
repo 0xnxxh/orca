@@ -9,7 +9,10 @@
 import type { AgentType } from './agent-status-types'
 import { isAgentRenamedTerminalTitle } from './agent-session-rename-title'
 import { isClaudeManagementTitle } from './agent-title-core'
-import { stripLeadingAgentTitleDecorationOrEmpty } from './agent-title-decoration'
+import {
+  stripLeadingAgentTitleDecoration,
+  stripLeadingAgentTitleDecorationOrEmpty
+} from './agent-title-decoration'
 import { formatAgentTypeLabel } from './agent-type-label'
 import { isMeaningfulOpenCodeTerminalTitle } from './opencode-terminal-title'
 import { SYNTHETIC_AGENT_TITLE_PROFILES } from './synthetic-agent-title'
@@ -132,7 +135,7 @@ export function getAgentRowConversationName(
   }
   const liveTitle = tab.title?.trim() ?? ''
   if (isAgentRenamedTerminalTitle(liveTitle, tab.agentRenamedTitle)) {
-    return stripLeadingAgentTitleDecorationOrEmpty(liveTitle) || liveTitle
+    return stripLeadingAgentTitleDecoration(liveTitle)
   }
   if (isMeaningfulOpenCodeTerminalTitle(liveTitle)) {
     return liveTitle

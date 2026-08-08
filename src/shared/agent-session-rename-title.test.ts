@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   findClaudeSessionRenameRecord,
-  isAgentRenamedTerminalTitle,
-  readClaudeSessionRenamedTitle
+  isAgentRenamedTerminalTitle
 } from './agent-session-rename-title'
+
+const readClaudeSessionRenamedTitle = (lines: Iterable<string>): string | null =>
+  findClaudeSessionRenameRecord(lines)?.customTitle ?? null
 
 // Records copied from a real Claude transcript for a session that answered one
 // prompt and was then renamed with `/rename billing-fix`.
@@ -18,7 +20,7 @@ const CUSTOM_TITLE_LINE = JSON.stringify({
   sessionId: 'ac1a3f53-82b1-41ab-8db8-028c1fc15c48'
 })
 
-describe('readClaudeSessionRenamedTitle', () => {
+describe('the rename a Claude transcript currently records', () => {
   it('reads the deliberate rename and ignores auto-generated titles', () => {
     expect(readClaudeSessionRenamedTitle([AI_TITLE_LINE, CUSTOM_TITLE_LINE])).toBe('billing-fix')
   })

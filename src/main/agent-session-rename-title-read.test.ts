@@ -59,4 +59,8 @@ describe('readAgentSessionRenamedTitle', () => {
   it('ignores an empty transcript path', async () => {
     await expect(readAgentSessionRenamedTitle({ transcriptPath: '  ' })).resolves.toBeNull()
   })
+
+  it('resolves null for an ill-typed transcript path instead of rejecting', async () => {
+    await expect(readAgentSessionRenamedTitle({ transcriptPath: 7 as never })).resolves.toBeNull()
+  })
 })

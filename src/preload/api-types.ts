@@ -2468,11 +2468,8 @@ export type PreloadApi = {
     }) => Promise<void>
   }
   agentSession: {
-    /** Deliberate in-agent rename (Claude `/rename`) recorded in a transcript. */
-    getRenamedTitle: (args: {
-      transcriptPath: string
-      connectionId?: string
-    }) => Promise<string | null>
+    /** Deliberate in-agent rename (Claude `/rename`) recorded in a local transcript. */
+    getRenamedTitle: (args: { transcriptPath: string }) => Promise<string | null>
   }
   preflight: PreflightApi
   notifications: {

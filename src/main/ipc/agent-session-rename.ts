@@ -14,14 +14,7 @@ export function registerAgentSessionRenameHandlers(): void {
   ipcMain.removeHandler('agentSession:getRenamedTitle')
   ipcMain.handle(
     'agentSession:getRenamedTitle',
-    async (_event, args?: AgentSessionRenamedTitleArgs): Promise<string | null> => {
-      if (!args || typeof args.transcriptPath !== 'string') {
-        return null
-      }
-      return readAgentSessionRenamedTitle({
-        transcriptPath: args.transcriptPath,
-        ...(typeof args.connectionId === 'string' ? { connectionId: args.connectionId } : {})
-      })
-    }
+    async (_event, args?: AgentSessionRenamedTitleArgs): Promise<string | null> =>
+      typeof args?.transcriptPath === 'string' ? readAgentSessionRenamedTitle(args) : null
   )
 }

@@ -2140,10 +2140,8 @@ const api = {
   },
 
   agentSession: {
-    getRenamedTitle: (args: {
-      transcriptPath: string
-      connectionId?: string
-    }): Promise<string | null> => ipcRenderer.invoke('agentSession:getRenamedTitle', args)
+    getRenamedTitle: (args: { transcriptPath: string }): Promise<string | null> =>
+      ipcRenderer.invoke('agentSession:getRenamedTitle', args)
   },
 
   preflight: {
