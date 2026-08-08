@@ -253,17 +253,17 @@ async function openViewMenu(page: Page): Promise<void> {
 }
 
 async function dismissOverlayChrome(page: Page): Promise<void> {
-  // Why: open Radix menus aria-hide the rest of the page so later getByRole for
-  // Filters/chips fails. Escape is unsafe (Tasks treats it as leave-page). Click
-  // the issues heading, which stays outside the menu portal.
-  if (
-    (await page.getByRole('menuitemradio', { name: 'Board' }).count()) === 0 &&
-    (await page.locator('[data-slot="popover-content"]').count()) === 0
-  ) {
-    return
+  // Why: open Radix menus aria-hide/inert the rest of the page so later getByRole
+  // for Filters/chips fails. Escape is unsafe (Tasks treats it as leave-page).
+  // Force-clicking inert page chrome does not close modal menus in headless CI —
+  // toggle the View trigger (not inert) and the Filters button for popovers.
+  if ((await page.getByRole('menuitemradio', { name: 'Board' }).count()) > 0) {
+    await page.getByRole('button', { name: 'View', exact: true }).click()
   }
-  const heading = page.getByText('Linear issues', { exact: true }).first()
-  await ((await heading.count()) > 0 ? heading.click({ force: true }) : page.mouse.click(24, 24))
+  if ((await page.locator('[data-slot="popover-content"]').count()) > 0) {
+    const filtersButton = page.getByRole('button', { name: 'Filters', exact: true })
+    await ((await filtersButton.count()) > 0 ? filtersButton.click() : page.mouse.click(24, 24))
+  }
   await expect(page.getByRole('menuitemradio', { name: 'Board' })).toHaveCount(0)
   await expect(page.locator('[data-slot="popover-content"]')).toHaveCount(0)
 }
