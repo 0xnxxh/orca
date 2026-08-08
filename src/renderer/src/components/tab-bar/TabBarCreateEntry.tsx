@@ -101,6 +101,11 @@ export default function TabBarCreateEntry({
     [shouldResolveAbsolutePaths, worktreeId]
   )
   const allowAbsolutePaths = useAppStore(allowAbsolutePathsSelector)
+  // Why the worktree path: editor↔file dedupe folds case by the worktree's
+  // filesystem, which a Windows client's own platform does not describe.
+  const worktreePath = useAppStore((state) =>
+    menuOpen ? (state.getKnownWorktreeById(worktreeId)?.path ?? null) : null
+  )
   const localPlatform = getRendererAppPlatform() === 'win32' ? 'windows' : 'posix'
 
   // Why: once ArrowDown moves focus into the static menu list, ArrowUp on the
@@ -150,14 +155,23 @@ export default function TabBarCreateEntry({
         allowAbsolutePaths,
         localPlatform
       }),
-      tabResults
+      tabResults,
+      worktreePath
     )
     if (matchingMenuOptions.length === 0) {
       return entryOptions
     }
     // Why: a matched create-menu action should win over a generic new-file fallback.
     return entryOptions.filter((option) => option.classification.kind !== 'new-file')
-  }, [allowAbsolutePaths, fileList, localPlatform, matchingMenuOptions.length, query, tabResults])
+  }, [
+    allowAbsolutePaths,
+    fileList,
+    localPlatform,
+    matchingMenuOptions.length,
+    query,
+    tabResults,
+    worktreePath
+  ])
   const matchingAgentOptions = useMemo(
     () => findMatchingTabAgentLaunchOptions(query, agentOptions),
     [agentOptions, query]

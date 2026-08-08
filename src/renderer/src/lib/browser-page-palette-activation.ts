@@ -32,11 +32,13 @@ export function activateBrowserPagePaletteResult({
     (candidate) => candidate.id === workspaceId
   )
   const worktree = initialState.getKnownWorktreeById(worktreeId, executionHostId)
-  if (!page || !workspace) {
-    return { status: 'failed', reason: 'missing-page' }
-  }
+  // Why worktree first: removing a worktree also purges its browser workspaces
+  // and pages, so a page-first check would report a dead workspace as a stale page.
   if (!worktree) {
     return { status: 'failed', reason: 'missing-worktree' }
+  }
+  if (!page || !workspace) {
+    return { status: 'failed', reason: 'missing-page' }
   }
 
   // Why: activateAndRevealWorktree mutates store state, so a later page lookup

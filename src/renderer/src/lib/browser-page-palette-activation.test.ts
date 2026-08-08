@@ -242,6 +242,22 @@ describe('activateBrowserPagePaletteResult', () => {
     expect(mocks.activateAndRevealWorktree).not.toHaveBeenCalled()
   })
 
+  // Deleting a worktree purges its browser workspaces and pages too, so the
+  // worktree check must win or a dead workspace reads as a stale page.
+  it('reports a deleted worktree as a missing workspace once its pages are purged', () => {
+    seedStore({
+      worktreesByRepo: {},
+      browserTabsByWorktree: {},
+      browserPagesByWorkspace: {}
+    })
+
+    expect(activateBrowserPagePaletteResult(target)).toEqual({
+      status: 'failed',
+      reason: 'missing-worktree'
+    })
+    expect(mocks.activateAndRevealWorktree).not.toHaveBeenCalled()
+  })
+
   it('reports a failed worktree activation distinguishably from a stale page', () => {
     mocks.activateAndRevealWorktree.mockReturnValue(false)
 
