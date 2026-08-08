@@ -93,8 +93,15 @@ describe('matchSearchNavigate', () => {
   })
 
   it('returns null for wrong key', () => {
-    const e = makeKeyEvent({ metaKey: true, key: 'f' })
+    // `code` too, not just `key`: matching is physical-key based so a CJK IME rewriting
+    // `key` cannot hide the shortcut (#13033). A different key means a different `code`.
+    const e = makeKeyEvent({ metaKey: true, key: 'f', code: 'KeyF' })
     expect(matchSearchNavigate(e, isMac, true, searchState)).toBeNull()
+  })
+
+  it('still matches Cmd+G when a Korean IME has rewritten key (#13033)', () => {
+    const e = makeKeyEvent({ metaKey: true, key: 'ㅎ', code: 'KeyG' })
+    expect(matchSearchNavigate(e, isMac, true, searchState)).toBe('next')
   })
 
   it('returns null when alt is pressed', () => {

@@ -320,6 +320,7 @@ import {
 import { isRendererHiddenPtyDeliveryGateEnabled } from './terminal-hidden-delivery-gate'
 import type { DirectSshPaneRetryAttempt } from '@/store/slices/direct-ssh-terminal-recovery'
 import { directSshAuthoritiesEqual } from '@/store/slices/direct-ssh-terminal-authority-ledger'
+import { isLatinShortcutKey } from './terminal-ime-latin-shortcut-key'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
 const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
@@ -2236,7 +2237,7 @@ export function connectPanePty(
     }
     if (
       (event.metaKey || event.ctrlKey) &&
-      event.key.toLowerCase() === 'c' &&
+      isLatinShortcutKey(event, 'c') &&
       pane.terminal.hasSelection()
     ) {
       return

@@ -36,6 +36,7 @@ import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { resolveWindowsShiftEnterEncodingForPane } from './terminal-windows-shift-enter'
 import { resolveTerminalInputHostPlatform } from './terminal-input-host-platform'
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
+import { isLatinShortcutKey } from './terminal-ime-latin-shortcut-key'
 import {
   markTerminalFollowOutput,
   markTerminalPinnedViewport,
@@ -135,7 +136,7 @@ export function matchSearchNavigate(
   if (!mod) {
     return null
   }
-  if (e.key.toLowerCase() !== 'g') {
+  if (!isLatinShortcutKey(e, 'g')) {
     return null
   }
   if (!searchOpen) {

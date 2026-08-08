@@ -11,6 +11,7 @@ import {
 } from './preview-terminal-shortcuts'
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
 import { shouldBypassXtermForMacNativeText } from '@/components/terminal-pane/xterm-bypass-policy'
+import { isLatinShortcutKey } from '../terminal-pane/terminal-ime-latin-shortcut-key'
 
 /**
  * Installs the preview terminal's ONE custom key handler (xterm allows a single
@@ -94,7 +95,7 @@ export function installPreviewTerminalKeyHandler(args: {
       (platform === 'darwin' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
       !event.altKey &&
       !event.shiftKey &&
-      event.key.toLowerCase() === 'v'
+      isLatinShortcutKey(event, 'v')
     if (
       !isMenuPasteChord &&
       keybindingMatchesAction('terminal.paste', event, platform, keybindings)
