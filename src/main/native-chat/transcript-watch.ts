@@ -68,6 +68,7 @@ function subscribeViaResolvePoll(
   // UNC twin is resolved lazily (the distro may still be cold) and memoized so
   // the exact-path install doesn't wait on the slower id-glob (#10326).
   let hostReadableExactPath: string | null = null
+  let lastWslTranslateAt = 0
 
   function scheduleAttempt(): void {
     if (closed) {
@@ -100,11 +101,19 @@ function subscribeViaResolvePoll(
     let result: NativeChatTranscriptSubscription | null
     try {
       if (exactPath && !hostReadableExactPath) {
-        // Non-WSL paths stay raw: installTranscriptWatcher already handles a
-        // not-yet-created file, so don't spend an extra probe per tick.
-        hostReadableExactPath = needsWslHostTranslation(exactPath)
-          ? await toHostReadableTranscriptPath(exactPath)
-          : exactPath
+        if (!needsWslHostTranslation(exactPath)) {
+          // Non-WSL paths stay raw: installTranscriptWatcher already handles a
+          // not-yet-created file, so don't spend an extra probe per tick.
+          hostReadableExactPath = exactPath
+        } else if (Date.now() - lastWslTranslateAt >= FALLBACK_RESOLVE_POLL_MS) {
+          // Why: translating sync-stats the UNC twin per distro over the 9P
+          // share, and the guest file usually appears well after the hook does,
+          // so retry on the slow cadence rather than every fast tick. The raw
+          // guest path is never installed on Windows — it would resolve against
+          // the current drive (`C:\home\…`) and bind chat to a look-alike file.
+          lastWslTranslateAt = Date.now()
+          hostReadableExactPath = await toHostReadableTranscriptPath(exactPath)
+        }
       }
       result = hostReadableExactPath
         ? await attemptInstall({ ...args, filePath: hostReadableExactPath }, decode)

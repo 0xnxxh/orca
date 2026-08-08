@@ -135,6 +135,37 @@ describe('toHostReadableTranscriptPath', () => {
     await wslCodexSessionsDirs({ platform: 'win32', listWslHomeDirs })
     expect(listWslHomeDirs).toHaveBeenCalledTimes(1)
   })
+
+  it('re-probes after the TTL so a distro that was booting is not excluded forever', async () => {
+    // Why: getWslHomeAsync returns null for a distro whose 5s $HOME probe timed
+    // out on a cold boot. Latching that partial list for the process lifetime
+    // would leave that distro's transcripts permanently unresolvable (#10326).
+    vi.useFakeTimers()
+    try {
+      const listWslHomeDirs = vi
+        .fn<() => Promise<string[]>>()
+        .mockResolvedValueOnce([UBUNTU_HOME])
+        .mockResolvedValue([UBUNTU_HOME, DEBIAN_HOME])
+
+      const debianRollout = '\\\\wsl.localhost\\Debian\\home\\other\\x.jsonl'
+      const call = (): Promise<string | null> =>
+        toHostReadableTranscriptPath('/home/other/x.jsonl', {
+          platform: 'win32',
+          pathExists: (candidate) => candidate === debianRollout,
+          listWslHomeDirs
+        })
+
+      await expect(call()).resolves.toBeNull()
+      await expect(call()).resolves.toBeNull()
+      expect(listWslHomeDirs).toHaveBeenCalledTimes(1)
+
+      vi.setSystemTime(Date.now() + 6 * 60_000)
+      await expect(call()).resolves.toBe(debianRollout)
+      expect(listWslHomeDirs).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('wslCodexSessionsDirs', () => {

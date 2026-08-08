@@ -39,6 +39,11 @@ export type HostReadableTranscriptPathDeps = {
 // caches, but getWslHomeAsync does NOT cache failures, so a cold/stopped distro
 // would re-spawn wsl.exe on every tick. Cache the composed answer here instead.
 const WSL_HOME_DIRS_EMPTY_RETRY_MS = 30_000
+// Why: a distro that was booting when we first probed resolves to no $HOME and
+// would otherwise be excluded for the whole session. Both branches expire so it
+// is retried; getWslHomeAsync caches successes, so a refresh only re-spawns
+// wsl.exe for the distros that actually failed.
+const WSL_HOME_DIRS_TTL_MS = 5 * 60_000
 let cachedWslHomeDirs: string[] | null = null
 let cachedWslHomeDirsExpiresAt = 0
 let inflightWslHomeDirs: Promise<string[]> | null = null
@@ -51,10 +56,7 @@ async function defaultListWslHomeDirs(): Promise<string[]> {
 }
 
 async function wslHomeDirs(load: () => Promise<string[]>): Promise<string[]> {
-  if (
-    cachedWslHomeDirs &&
-    (cachedWslHomeDirs.length > 0 || Date.now() < cachedWslHomeDirsExpiresAt)
-  ) {
+  if (cachedWslHomeDirs && Date.now() < cachedWslHomeDirsExpiresAt) {
     return cachedWslHomeDirs
   }
   if (inflightWslHomeDirs) {
@@ -64,7 +66,8 @@ async function wslHomeDirs(load: () => Promise<string[]>): Promise<string[]> {
     .catch(() => [] as string[])
     .then((dirs) => {
       cachedWslHomeDirs = dirs
-      cachedWslHomeDirsExpiresAt = Date.now() + WSL_HOME_DIRS_EMPTY_RETRY_MS
+      cachedWslHomeDirsExpiresAt =
+        Date.now() + (dirs.length > 0 ? WSL_HOME_DIRS_TTL_MS : WSL_HOME_DIRS_EMPTY_RETRY_MS)
       inflightWslHomeDirs = null
       return dirs
     })
