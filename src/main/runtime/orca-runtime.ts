@@ -1756,6 +1756,11 @@ const MOBILE_TERMINAL_CREATE_RESULT_TTL_MS = 60_000
 const WORKTREE_CREATE_RESULT_TTL_MS = 60_000
 const FOREGROUND_AGENT_WRAPPER_RETRY_INTERVAL_MS = 150
 const FOREGROUND_AGENT_WRAPPER_RETRY_TIMEOUT_MS = 6_500
+// Why this long: it must exceed any agent's spinner repaint period, since one
+// frame inside the window is what distinguishes a working pane from an idle
+// one. Agent TUIs repaint several times a second, so this is an order of
+// magnitude of headroom, and it only delays mail on a restored pane.
+const RESTORED_IDLE_QUIESCENCE_MS = 2_000
 const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
@@ -16582,6 +16587,9 @@ export class OrcaRuntimeService {
   // Why: probe dedupe shares one promise across callers, but each caller's
   // continuation would re-deliver the same unread rows; arm one per pty.
   private readonly probeDeferredDeliveryPtyIds = new Set<string>()
+  // Why: mail arriving in a burst would otherwise open one quiescence window
+  // per message against the same pane.
+  private readonly restoredIdleProbePtyIds = new Set<string>()
 
   private controllerKnowsPtyIsLive(ptyId: string): boolean {
     try {
@@ -31345,10 +31353,89 @@ export class OrcaRuntimeService {
       // for a live observation to authorize it.
       if (leaf.lastAgentStatus === 'idle' && leaf.lastAgentStatusObservedLive) {
         this.deliverPendingMessages(leaf, { mailboxHandle: handle, reservedTypes })
+        return
+      }
+      // Why null counts: a cold relaunch returns its restore payload before the
+      // renderer publishes the graph, so the seeded status lands on a pty with
+      // no leaves yet and the pane comes back carrying no status at all. That is
+      // the commonest shape of this bug, not the seeded idle. 'working' and
+      // 'permission' are positive evidence of not-idle and never probe.
+      if (leaf.lastAgentStatus === 'idle' || leaf.lastAgentStatus === null) {
+        this.confirmRestoredIdleThenDeliver(leaf, handle)
       }
     } catch {
       // Unknown/stale handles can't be pointed now; the persisted message stays available via explicit check or future idle delivery.
     }
+  }
+
+  /**
+   * Authorize a seeded `idle` that no live frame will ever confirm.
+   *
+   * Why this exists: an idle agent TUI is silent. Claude paints its title on
+   * the working→idle edge and then emits nothing until it is given work, so a
+   * pane restored while its agent sits at the prompt never produces the live
+   * observation the seeded gate waits for, and its mail strands for as long as
+   * the pane stays idle. Quiescence plus a recognized foreground agent
+   * establishes the same fact the missing title would have carried: a byte in
+   * the window means a spinner, tool output, or a human typing — none of which
+   * are safe to submit into — and a foreground that is not a known agent means
+   * there is nothing there to wake.
+   */
+  private confirmRestoredIdleThenDeliver(leaf: RuntimeLeafRecord, mailboxHandle: string): void {
+    const ptyId = leaf.ptyId
+    if (!ptyId || !this.ptyController || this.restoredIdleProbePtyIds.has(ptyId)) {
+      return
+    }
+    const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
+    const outputAtBeforeWindow = leaf.lastOutputAt
+    this.restoredIdleProbePtyIds.add(ptyId)
+    setTimeout(() => {
+      void (async () => {
+        try {
+          // Why re-read rather than trust the captured leaf: a graph resync
+          // replaces leaf objects, and a live frame during the window already
+          // delivered on real evidence.
+          const settled = this.leaves.get(leafKey)
+          if (
+            !settled ||
+            settled.ptyId !== ptyId ||
+            (settled.lastAgentStatus !== 'idle' && settled.lastAgentStatus !== null) ||
+            settled.lastAgentStatusObservedLive ||
+            settled.lastOutputAt !== outputAtBeforeWindow
+          ) {
+            return
+          }
+          const foregroundProcess = await this.ptyController?.getForegroundProcess(ptyId)
+          if (
+            !foregroundProcess ||
+            !(await this.isRecognizedForegroundAgentProcess(ptyId, foregroundProcess))
+          ) {
+            return
+          }
+          // Why re-check after the await: the foreground read is itself slow
+          // enough for the pane to start working underneath it.
+          const confirmed = this.leaves.get(leafKey)
+          if (
+            !confirmed ||
+            confirmed.ptyId !== ptyId ||
+            (confirmed.lastAgentStatus !== 'idle' && confirmed.lastAgentStatus !== null) ||
+            confirmed.lastOutputAt !== outputAtBeforeWindow
+          ) {
+            return
+          }
+          // The probe IS the live observation, so later mail for this pane
+          // delivers immediately instead of paying the window again.
+          confirmed.lastAgentStatusObservedLive = true
+          // Why no reservedTypes: that snapshot guards a sub-millisecond race
+          // with a check resolving in the same drain, which this window has
+          // long outlived. Replaying it here could suppress a type forever;
+          // deliverPendingMessages re-reads the waiters that are still live.
+          this.deliverPendingMessages(confirmed, { mailboxHandle })
+        } finally {
+          this.restoredIdleProbePtyIds.delete(ptyId)
+        }
+      })()
+    }, RESTORED_IDLE_QUIESCENCE_MS)
   }
 
   private deliverPendingMessagesForLeaf(leaf: RuntimeLeafRecord): void {
