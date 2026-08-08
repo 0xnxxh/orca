@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   emptyLinearIssueAttributeFilter,
+  LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH,
   type LinearIssueAttributeFilter
 } from './linear-issue-attribute-filter'
 import {
@@ -203,6 +204,22 @@ describe('serializeLinearIssueViewResumeState', () => {
       'workspace-a': filter({ labelIds: ['a', 'b'] })
     })
   })
+
+  // Why: bounding runs after the emptiness check, so a filter whose ids are all
+  // over-length is non-empty going in and empty coming out.
+  it('omits a filter that only becomes empty once bounded', () => {
+    const serialized = serializeLinearIssueViewResumeState({
+      ...defaultLinearIssueViewResumeState(),
+      filtersByWorkspaceId: {
+        'workspace-over-length': filter({
+          labelIds: ['x'.repeat(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH + 1)]
+        })
+      }
+    })
+
+    expect(serialized.filtersByWorkspaceId).toEqual({})
+    expect(normalizeLinearIssueViewResumeState(serialized)).toBeUndefined()
+  })
 })
 
 describe('selectLinearWorkspaceIssueFilter', () => {
@@ -292,6 +309,14 @@ describe('setLinearWorkspaceIssueFilter', () => {
     const filters = setLinearWorkspaceIssueFilter({}, 'workspace-a', FILTER_A)
 
     expect(setLinearWorkspaceIssueFilter(filters, 'workspace-a', { ...FILTER_A })).toBe(filters)
+    // Why: the contract is stability of the CANONICAL filter, so a duplicated or
+    // unsorted id must not churn the record either.
+    expect(
+      setLinearWorkspaceIssueFilter(filters, 'workspace-a', {
+        ...FILTER_A,
+        stateIds: ['state-a', 'state-a']
+      })
+    ).toBe(filters)
   })
 
   it('removes the entry when the filter is cleared and leaves other workspaces alone', () => {

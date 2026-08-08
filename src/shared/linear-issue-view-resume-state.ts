@@ -199,9 +199,13 @@ export function serializeLinearIssueViewResumeState(
     // Why: canonicalize dedupes but does not bound; only the throwing parser does, and
     // an over-length facet list here is rejected by `ui.set` and drops the WHOLE
     // taskResumeState for paired clients on every subsequent write.
-    filtersByWorkspaceId[workspaceId] = boundLinearIssueAttributeFilter(
-      canonicalizeLinearIssueAttributeFilter(filter)
-    )
+    const bounded = boundLinearIssueAttributeFilter(canonicalizeLinearIssueAttributeFilter(filter))
+    // Why: bounding drops over-length ids, so a filter that was non-empty above can
+    // become empty here — persisting it would break the "empties omitted" contract.
+    if (isEmptyLinearIssueAttributeFilter(bounded)) {
+      continue
+    }
+    filtersByWorkspaceId[workspaceId] = bounded
     order.push(workspaceId)
   }
   return {

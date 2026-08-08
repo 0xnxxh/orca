@@ -6,6 +6,7 @@ import {
 } from '../../../../shared/linear-issue-attribute-filter'
 import {
   defaultLinearIssueViewResumeState,
+  LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
   serializeLinearIssueViewResumeState
 } from '../../../../shared/linear-issue-view-resume-state'
 import type { OrcaRuntimeService } from '../../orca-runtime'
@@ -104,9 +105,38 @@ describe('ui.set Linear issue view resume state', () => {
           }
         }
       }
+    ],
+    // Why: the renderer caps the map through `trimToMostRecentWorkspaces` and bounds
+    // its keys, so these two limits must stay equal to the schema's or every write drops.
+    [
+      'an over-long workspace key',
+      {
+        ...VALID_VIEW,
+        filtersByWorkspaceId: {
+          ['w'.repeat(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH + 1)]: {
+            stateIds: ['state-1'],
+            priorities: [],
+            assignee: null,
+            labelIds: []
+          }
+        }
+      }
+    ],
+    [
+      'more workspaces than the persisted limit',
+      {
+        ...VALID_VIEW,
+        filtersByWorkspaceId: Object.fromEntries(
+          Array.from({ length: LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES + 1 }, (_, index) => [
+            `workspace-${index}`,
+            { stateIds: [`state-${index}`], priorities: [], assignee: null, labelIds: [] }
+          ])
+        )
+      }
     ]
   ])('drops only the view when it has %s', async (_label, linearIssueView) => {
     const { dispatcher, updateUIState } = makeDispatcher()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const response = await dispatcher.dispatch(
       makeRequest({
@@ -127,6 +157,16 @@ describe('ui.set Linear issue view resume state', () => {
         linearIssueView: undefined
       }
     })
+    // Why: deep equality treats an absent key and an explicit `undefined` as equal, but
+    // a merging store does not — an explicit `undefined` is what clears the stored view.
+    const [payload] = updateUIState.mock.calls[0] as [{ taskResumeState: object }]
+    expect('linearIssueView' in payload.taskResumeState).toBe(true)
+    // Why: the discard is otherwise invisible; the log is the only trace of the drift.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('linearIssueView'),
+      expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })])
+    )
+    warn.mockRestore()
   })
 
   // Why: hand-written fixtures can't catch renderer/schema drift — only the renderer's

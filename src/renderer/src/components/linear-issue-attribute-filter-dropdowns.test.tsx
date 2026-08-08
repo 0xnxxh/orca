@@ -179,4 +179,45 @@ describe('LinearIssueAttributeFilterDropdowns', () => {
       expect(metadataMocks.useTeamsStates).toHaveBeenCalledWith([], undefined, null)
     }
   )
+
+  // Why: restored filters render before the team fetch settles, when availableTeams is
+  // still the issue-scraped subset — pruning there deletes another team's facets for good.
+  it.each([
+    [false, false],
+    [true, true]
+  ])('prunes unknown facet ids only once teams are settled (%s)', (teamsSettled, expectPrune) => {
+    const team: LinearTeam = { id: 'team-1', name: 'Engineering', key: 'ENG' }
+    const onChange = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+
+    act(() => {
+      root.render(
+        <LinearIssueAttributeFilterDropdowns
+          value={{
+            stateIds: ['state-from-another-team'],
+            priorities: [],
+            assignee: null,
+            labelIds: []
+          }}
+          onChange={onChange}
+          workspaceId="workspace-1"
+          primaryTeam={team}
+          selectedTeamIds={[]}
+          availableTeams={[team]}
+          teamsSettled={teamsSettled}
+        />
+      )
+    })
+
+    if (expectPrune) {
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ stateIds: [], labelIds: [], assignee: null })
+      )
+    } else {
+      expect(onChange).not.toHaveBeenCalled()
+    }
+  })
 })
