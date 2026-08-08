@@ -7325,10 +7325,10 @@ export default function TaskPage(): React.JSX.Element {
         return
       }
 
-      // Why: open menus/popovers own Esc; capture-phase leave would steal it from Radix.
+      // Why: open menus/popovers/selects own Esc; capture-phase leave would steal it from Radix.
       if (
         document.querySelector(
-          '[data-slot="dropdown-menu-content"], [data-slot="popover-content"], [role="menu"]'
+          '[data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [role="menu"]'
         )
       ) {
         return
