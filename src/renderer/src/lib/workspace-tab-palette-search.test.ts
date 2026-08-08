@@ -491,4 +491,15 @@ describe('workspace-tab-palette-search', () => {
       worktreeRange: null
     })
   })
+
+  it('omits the fixed Terminal tab secondary on terminals', () => {
+    const entries = buildEntries()
+    const emptyQuery = searchWorkspaceTabs(entries, '')[0]
+    expect(emptyQuery).toMatchObject({
+      contentType: 'terminal',
+      secondaryText: '',
+      secondaryRange: null
+    })
+    expect(entries[0]?.secondarySearchTexts).toEqual([])
+  })
 })

@@ -108,9 +108,13 @@ describe('simulator-palette-search', () => {
       }
     ]
 
-    expect(searchSimulatorTabs(entries, 'mobile')[0]?.secondaryRange).toEqual({ start: 0, end: 6 })
+    // Why no secondaryRange: type aliases match without a display secondary.
+    expect(searchSimulatorTabs(entries, 'mobile')).toHaveLength(1)
+    expect(searchSimulatorTabs(entries, 'mobile')[0]?.secondaryText).toBe('')
+    expect(searchSimulatorTabs(entries, 'mobile')[0]?.secondaryRange).toBeNull()
     expect(searchSimulatorTabs(entries, 'simulator')).toHaveLength(1)
     expect(searchSimulatorTabs(entries, 'ios')).toHaveLength(1)
+    expect(searchSimulatorTabs(entries, 'emulator')).toHaveLength(1)
   })
 
   it('searches worktree and repo metadata', () => {

@@ -221,9 +221,11 @@ export function buildSearchableWorkspaceTabs({
         entries.push({
           ...baseEntry,
           title,
-          secondaryText: 'Terminal tab',
+          // Why: type is already clear from the status/content icon; a fixed
+          // "Terminal tab" label only crowds the row (and used to leave a bare "· ·").
+          secondaryText: '',
           titleSearchText: title,
-          secondarySearchTexts: ['Terminal tab'],
+          secondarySearchTexts: [],
           agentMetadata: collectAgentMetadataForTerminal({
             terminalTabId: tab.entityId,
             worktreeId: worktree.id,
