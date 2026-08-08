@@ -106,6 +106,50 @@ describe('terminal quick command host collections', () => {
     )
   })
 
+  it('does not let an older load overwrite a concurrent mutation', async () => {
+    let resolveLoad: (value: ReturnType<typeof success>) => void = () => undefined
+    const staleLoad = new Promise<ReturnType<typeof success>>((resolve) => {
+      resolveLoad = resolve
+    })
+    const edited = { ...savedCommand, command: 'pnpm test' }
+    const call = vi.fn(({ method, params }: { method: string; params?: unknown }) => {
+      if (method === 'status.get') {
+        return Promise.resolve(
+          success({
+            runtimeId: 'runtime-1',
+            graphStatus: 'ready',
+            runtimeProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+            minCompatibleRuntimeClientVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
+            capabilities: [TERMINAL_QUICK_COMMANDS_RUNTIME_CAPABILITY]
+          })
+        )
+      }
+      if (method === 'settings.getTerminalQuickCommands') {
+        return staleLoad
+      }
+      if (method === 'settings.updateTerminalQuickCommands') {
+        return Promise.resolve(success({ terminalQuickCommands: [edited] }))
+      }
+      throw new Error(`Unexpected method: ${method} ${String(params)}`)
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call } } })
+    const store = createTestStore()
+
+    const load = store.getState().loadRuntimeTerminalQuickCommands('env-race', { force: true })
+    await vi.waitFor(() =>
+      expect(call).toHaveBeenCalledWith(
+        expect.objectContaining({ method: 'settings.getTerminalQuickCommands' })
+      )
+    )
+    await store.getState().upsertTerminalQuickCommand('runtime:env-race', edited)
+    resolveLoad(success({ terminalQuickCommands: [savedCommand] }))
+    await load
+
+    expect(store.getState().runtimeTerminalQuickCommands.get('env-race')?.commands).toEqual([
+      edited
+    ])
+  })
+
   it('drops cached commands before revalidating a new connection', async () => {
     installRuntime()
     const store = createTestStore()

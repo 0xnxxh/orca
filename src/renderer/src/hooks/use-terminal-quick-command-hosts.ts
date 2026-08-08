@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import type { GlobalSettings, TerminalQuickCommand } from '../../../shared/types'
 import {
   LOCAL_EXECUTION_HOST_ID,
@@ -71,6 +71,9 @@ export function getTerminalQuickCommandHostOptions(
 export function useTerminalQuickCommandHosts(worktreeId: string): {
   executionHostId: ExecutionHostId
   hosts: TerminalQuickCommandHost[]
+  refreshRemoteHost: () => void
+  remoteHostLoadFailed: boolean
+  remoteHostPending: boolean
 } {
   const executionHostId = useAppStore((state) => getExecutionHostIdForWorktree(state, worktreeId))
   const settings = useAppStore((state) => state.settings)
@@ -97,6 +100,26 @@ export function useTerminalQuickCommandHosts(worktreeId: string): {
       void loadRemote(remoteEnvironmentId)
     }
   }, [loadRemote, remoteConnectionGeneration, remoteEnvironmentId])
+
+  const refreshRemoteHost = useCallback((): void => {
+    if (remoteEnvironmentId) {
+      void loadRemote(remoteEnvironmentId, { force: true })
+    }
+  }, [loadRemote, remoteEnvironmentId])
+
+  const remoteHostPending = Boolean(
+    remoteHostId &&
+    remoteEnvironmentId &&
+    (remoteState?.connectionGeneration !== remoteConnectionGeneration ||
+      remoteState.supported === null ||
+      remoteState === undefined)
+  )
+  const remoteHostLoadFailed = Boolean(
+    remoteHostPending &&
+    remoteState?.connectionGeneration === remoteConnectionGeneration &&
+    !remoteState.loading &&
+    remoteState.error
+  )
 
   const hosts = useMemo(() => {
     const hostOptions = getTerminalQuickCommandHostOptions(settings, runtimeEnvironments)
@@ -131,5 +154,11 @@ export function useTerminalQuickCommandHosts(worktreeId: string): {
     settings
   ])
 
-  return { executionHostId, hosts }
+  return {
+    executionHostId,
+    hosts,
+    refreshRemoteHost,
+    remoteHostLoadFailed,
+    remoteHostPending
+  }
 }

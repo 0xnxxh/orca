@@ -35,10 +35,14 @@ type EditorState =
   | {
       mode: 'add'
       command: TerminalQuickCommand
+      connectionGeneration: number
+      hostId: ExecutionHostId
     }
   | {
       mode: 'edit'
       command: TerminalQuickCommand
+      connectionGeneration: number
+      hostId: ExecutionHostId
     }
   | null
 
@@ -58,6 +62,20 @@ export function getAvailableQuickCommandHostId(
     : LOCAL_EXECUTION_HOST_ID
 }
 
+export function isQuickCommandEditorHostCurrent(
+  hostId: ExecutionHostId,
+  connectionGeneration: number,
+  hostOptions: readonly { id: ExecutionHostId }[],
+  runtimeStatuses: ReadonlyMap<string, { connectionGeneration?: number }>
+): boolean {
+  const host = parseExecutionHostId(hostId)
+  return (
+    hostOptions.some((option) => option.id === hostId) &&
+    (host?.kind !== 'runtime' ||
+      (runtimeStatuses.get(host.environmentId)?.connectionGeneration ?? 0) === connectionGeneration)
+  )
+}
+
 export function shouldShowQuickCommandsRefreshError(
   commandsAreCurrent: boolean,
   runtimeCommands: { error: string | null; ready: boolean } | undefined
@@ -72,6 +90,7 @@ export function QuickCommandsPane({
   const repos = useAppStore((s) => s.repos)
   const activeRepoId = useAppStore((s) => s.activeRepoId)
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
+  const runtimeStatuses = useAppStore((s) => s.runtimeStatusByEnvironmentId)
   const runtimeCommands = useAppStore((s) => s.runtimeTerminalQuickCommands)
   const loadRuntimeCommands = useAppStore((s) => s.loadRuntimeTerminalQuickCommands)
   const ownership = getSettingOwnershipSummary('terminalQuickCommands')
@@ -79,11 +98,9 @@ export function QuickCommandsPane({
   const [selectedHostId, setSelectedHostId] = useState<ExecutionHostId>(LOCAL_EXECUTION_HOST_ID)
   const selectedHost = parseExecutionHostId(selectedHostId)
   const selectedEnvironmentId = selectedHost?.kind === 'runtime' ? selectedHost.environmentId : null
-  const selectedRuntimeConnectionGeneration = useAppStore((state) =>
-    selectedEnvironmentId
-      ? (state.runtimeStatusByEnvironmentId.get(selectedEnvironmentId)?.connectionGeneration ?? 0)
-      : 0
-  )
+  const selectedRuntimeConnectionGeneration = selectedEnvironmentId
+    ? (runtimeStatuses.get(selectedEnvironmentId)?.connectionGeneration ?? 0)
+    : 0
   const selectedRuntimeCommands = selectedEnvironmentId
     ? runtimeCommands.get(selectedEnvironmentId)
     : undefined
@@ -100,13 +117,11 @@ export function QuickCommandsPane({
 
   useEffect(() => {
     if (selectedEnvironmentId) {
-      void loadRuntimeCommands(selectedEnvironmentId)
+      void loadRuntimeCommands(selectedEnvironmentId, { force: true })
     }
   }, [loadRuntimeCommands, selectedEnvironmentId, selectedRuntimeConnectionGeneration])
 
-  const hostOptions = useMemo(() => {
-    return getTerminalQuickCommandHostOptions(settings, runtimeEnvironments)
-  }, [runtimeEnvironments, settings])
+  const hostOptions = getTerminalQuickCommandHostOptions(settings, runtimeEnvironments)
 
   const [editor, setEditor] = useState<EditorState>(null)
   const consumedAddIntentSignalRef = useRef(0)
@@ -117,9 +132,20 @@ export function QuickCommandsPane({
   const [scopePopoverOpen, setScopePopoverOpen] = useState(false)
 
   const availableHostId = getAvailableQuickCommandHostId(selectedHostId, hostOptions)
+  const editorHostIsCurrent =
+    editor === null ||
+    isQuickCommandEditorHostCurrent(
+      editor.hostId,
+      editor.connectionGeneration,
+      hostOptions,
+      runtimeStatuses
+    )
   if (availableHostId !== selectedHostId) {
     setSelectedHostId(availableHostId)
     setScopeSelection(null)
+  }
+  if (!editorHostIsCurrent) {
+    setEditor(null)
   }
 
   const hostRepos = useMemo(
@@ -177,7 +203,12 @@ export function QuickCommandsPane({
     // Why: Settings deep-links use this one-shot signal to open the add dialog;
     // consume it before paint so the pane never flashes without the editor.
     consumedAddIntentSignalRef.current = intentSignal
-    setEditor({ mode: 'add', command: createDraftForCurrentFilter() })
+    setEditor({
+      mode: 'add',
+      command: createDraftForCurrentFilter(),
+      connectionGeneration: selectedRuntimeConnectionGeneration,
+      hostId: selectedHostId
+    })
   }
 
   const toggleScope = (key: string): void => {
@@ -206,8 +237,20 @@ export function QuickCommandsPane({
   }
 
   const saveCommand = (next: TerminalQuickCommand): void => {
+    if (
+      !editor ||
+      !isQuickCommandEditorHostCurrent(
+        editor.hostId,
+        editor.connectionGeneration,
+        hostOptions,
+        runtimeStatuses
+      )
+    ) {
+      setEditor(null)
+      return
+    }
     useAppStore.getState().recordFeatureInteraction('quick-commands')
-    void useAppStore.getState().upsertTerminalQuickCommand(selectedHostId, next)
+    void useAppStore.getState().upsertTerminalQuickCommand(editor.hostId, next)
   }
 
   const removeCommand = async (command: TerminalQuickCommand): Promise<void> => {
@@ -237,14 +280,28 @@ export function QuickCommandsPane({
           <Label>
             {translate('auto.components.settings.QuickCommandsPane.f91b649324', 'Saved Commands')}
           </Label>
-          <p className="text-xs text-muted-foreground">{ownership.description}</p>
+          <p className="text-xs text-muted-foreground">
+            {shouldShowTerminalQuickCommandHostOwnership(hostOptions)
+              ? ownership.description
+              : translate(
+                  'auto.components.settings.settingOwnership.terminalQuickCommands',
+                  'Commands are saved on this client, then scoped globally or to a project setup so they run from the selected terminal context.'
+                )}
+          </p>
         </div>
         <Button
           type="button"
           variant="outline"
           size="sm"
           disabled={!canManageSelectedHost}
-          onClick={() => setEditor({ mode: 'add', command: createDraftForCurrentFilter() })}
+          onClick={() =>
+            setEditor({
+              mode: 'add',
+              command: createDraftForCurrentFilter(),
+              connectionGeneration: selectedRuntimeConnectionGeneration,
+              hostId: selectedHostId
+            })
+          }
         >
           <Plus />
           {translate('auto.components.settings.QuickCommandsPane.5aacc8f7dc', 'Add Command')}
@@ -253,7 +310,7 @@ export function QuickCommandsPane({
 
       {shouldShowTerminalQuickCommandHostOwnership(hostOptions) ? (
         <div className="space-y-2">
-          <Label>
+          <Label htmlFor="quick-command-storage-host">
             {translate('auto.components.settings.QuickCommandsPane.89f7e57fcc', 'Saved on')}
           </Label>
           <Select
@@ -263,7 +320,7 @@ export function QuickCommandsPane({
               setScopeSelection(null)
             }}
           >
-            <SelectTrigger size="sm" className="w-56">
+            <SelectTrigger id="quick-command-storage-host" size="sm" className="w-56">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -352,7 +409,14 @@ export function QuickCommandsPane({
             commands={commands}
             visibleCommands={visibleCommands}
             repoById={repoById}
-            onEdit={(command) => setEditor({ mode: 'edit', command })}
+            onEdit={(command) =>
+              setEditor({
+                mode: 'edit',
+                command,
+                connectionGeneration: selectedRuntimeConnectionGeneration,
+                hostId: selectedHostId
+              })
+            }
             onRemove={(command) => void removeCommand(command)}
           />
         </>

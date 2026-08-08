@@ -129,9 +129,12 @@ function makeProps() {
     globalCommands: [] as never[],
     mostRecent: null,
     addHosts: [],
+    hostLoadFailed: false,
+    hostOwnershipPending: false,
     onAddCommand: vi.fn(),
     onDeleteCommand: vi.fn(),
     onEditCommand: vi.fn(),
+    onMenuOpen: vi.fn(),
     onRunCommand: vi.fn()
   }
 }

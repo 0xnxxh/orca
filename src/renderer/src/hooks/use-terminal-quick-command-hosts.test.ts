@@ -34,9 +34,14 @@ import {
 } from './use-terminal-quick-command-hosts'
 
 let renderedHosts: TerminalQuickCommandHost[] = []
+let remoteHostLoadFailed = false
+let remoteHostPending = false
 
 function Probe(): null {
-  renderedHosts = useTerminalQuickCommandHosts('worktree-1').hosts
+  const result = useTerminalQuickCommandHosts('worktree-1')
+  renderedHosts = result.hosts
+  remoteHostLoadFailed = result.remoteHostLoadFailed
+  remoteHostPending = result.remoteHostPending
   return null
 }
 
@@ -51,6 +56,8 @@ describe('useTerminalQuickCommandHosts', () => {
     testState.runtimeTerminalQuickCommands = new Map()
     testState.settings = getDefaultSettings('/tmp')
     renderedHosts = []
+    remoteHostLoadFailed = false
+    remoteHostPending = false
     const container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -69,33 +76,78 @@ describe('useTerminalQuickCommandHosts', () => {
   })
 
   it.each([
-    { name: 'unsupported', supported: false, generation: 4, expected: ['local'] },
-    { name: 'stale generation', supported: true, generation: 3, expected: ['local'] },
+    {
+      name: 'unsupported',
+      supported: false,
+      generation: 4,
+      expected: ['local'],
+      pending: false
+    },
+    {
+      name: 'stale generation',
+      supported: true,
+      generation: 3,
+      expected: ['local'],
+      pending: true
+    },
     {
       name: 'supported current generation',
       supported: true,
       generation: 4,
-      expected: ['local', 'runtime:build']
+      expected: ['local', 'runtime:build'],
+      pending: false
     }
-  ])('gates the remote host when it is $name', async ({ supported, generation, expected }) => {
+  ])(
+    'gates the remote host when it is $name',
+    async ({ supported, generation, expected, pending }) => {
+      testState.runtimeTerminalQuickCommands = new Map([
+        [
+          'build',
+          {
+            commands: [],
+            connectionGeneration: generation,
+            error: null,
+            loading: false,
+            ready: true,
+            supported
+          }
+        ]
+      ])
+
+      await act(async () => root.render(createElement(Probe)))
+
+      expect(renderedHosts.map((host) => host.hostId)).toEqual(expected)
+      expect(remoteHostPending).toBe(pending)
+      expect(testState.loadRuntimeTerminalQuickCommands).toHaveBeenCalledWith('build')
+    }
+  )
+
+  it('keeps mutations pending until remote capability ownership resolves', async () => {
+    await act(async () => root.render(createElement(Probe)))
+
+    expect(renderedHosts.map((host) => host.hostId)).toEqual(['local'])
+    expect(remoteHostPending).toBe(true)
+  })
+
+  it('distinguishes an unresolved host failure from active loading', async () => {
     testState.runtimeTerminalQuickCommands = new Map([
       [
         'build',
         {
           commands: [],
-          connectionGeneration: generation,
-          error: null,
+          connectionGeneration: 4,
+          error: 'offline',
           loading: false,
-          ready: true,
-          supported
+          ready: false,
+          supported: null
         }
       ]
     ])
 
     await act(async () => root.render(createElement(Probe)))
 
-    expect(renderedHosts.map((host) => host.hostId)).toEqual(expected)
-    expect(testState.loadRuntimeTerminalQuickCommands).toHaveBeenCalledWith('build')
+    expect(remoteHostPending).toBe(true)
+    expect(remoteHostLoadFailed).toBe(true)
   })
 })
 

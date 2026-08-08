@@ -148,6 +148,9 @@ export function getRuntimeEnvironmentConnectionGeneration(environmentId: string)
   return connectionGenerationByEnvironment.get(environmentId) ?? 0
 }
 
+export const clearRuntimeEnvironmentConnectionGenerationsForTests = (): void =>
+  connectionGenerationByEnvironment.clear()
+
 function advanceRuntimeEnvironmentConnectionGeneration(environmentId: string): number {
   const next = getRuntimeEnvironmentConnectionGeneration(environmentId) + 1
   connectionGenerationByEnvironment.set(environmentId, next)
@@ -264,17 +267,17 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
         status.status !== null &&
         (previous?.status == null || previous.status.runtimeId !== status.status.runtimeId)
       const activeEnvironmentId = s.settings?.activeRuntimeEnvironmentId?.trim()
-      if (connectionChanged) {
-        advanceRuntimeEnvironmentConnectionGeneration(environmentId)
-      }
+      const connectionGeneration = connectionChanged
+        ? advanceRuntimeEnvironmentConnectionGeneration(environmentId)
+        : (previous?.connectionGeneration ??
+          status.connectionGeneration ??
+          getRuntimeEnvironmentConnectionGeneration(environmentId))
       if (activeEnvironmentId === environmentId && (sessionEnded || connectionChanged)) {
         bumpProviderRuntimeSessionGeneration()
       }
       next.set(environmentId, {
         ...status,
-        connectionGeneration: connectionChanged
-          ? (previous?.connectionGeneration ?? 0) + 1
-          : (previous?.connectionGeneration ?? status.connectionGeneration ?? 0)
+        connectionGeneration
       })
       return { runtimeStatusByEnvironmentId: next }
     })

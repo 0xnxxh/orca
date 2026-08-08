@@ -35,7 +35,8 @@ export function TabBarQuickCommandsButton({
 }: TabBarQuickCommandsButtonProps): React.JSX.Element | null {
   const recentByGroup = useAppStore((s) => s.recentQuickCommandIdByGroup)
   const repos = useAppStore((s) => s.repos)
-  const { executionHostId, hosts } = useTerminalQuickCommandHosts(worktreeId)
+  const { executionHostId, hosts, refreshRemoteHost, remoteHostLoadFailed, remoteHostPending } =
+    useTerminalQuickCommandHosts(worktreeId)
   const confirm = useConfirmationDialog()
   // Why: floating terminals share a synthetic worktree id (`global-floating-terminal`)
   // that has no separator, so naive `getRepoIdFromWorktreeId` would return that
@@ -157,7 +158,7 @@ export function TabBarQuickCommandsButton({
   }
 
   // Empty state: single button that opens the dialog directly.
-  if (!hasAnyCommands && hosts.length === 1) {
+  if (!hasAnyCommands && hosts.length === 1 && !remoteHostPending) {
     return (
       <>
         <Tooltip>
@@ -206,6 +207,9 @@ export function TabBarQuickCommandsButton({
         globalCommands={globalCommands}
         mostRecent={mostRecent}
         addHosts={hosts}
+        hostLoadFailed={remoteHostLoadFailed}
+        hostOwnershipPending={remoteHostPending}
+        onMenuOpen={refreshRemoteHost}
         onAddCommand={addRepoCommand}
         onEditCommand={(entry) =>
           setEditor({ mode: 'edit', command: entry.command, hostId: entry.hostId })

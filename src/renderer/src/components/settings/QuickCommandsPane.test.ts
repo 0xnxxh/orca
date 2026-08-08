@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getAvailableQuickCommandHostId,
+  isQuickCommandEditorHostCurrent,
   shouldOpenQuickCommandAddIntent,
   shouldShowQuickCommandsRefreshError
 } from './QuickCommandsPane'
@@ -32,6 +33,17 @@ describe('QuickCommandsPane host state', () => {
         { id: 'runtime:available' }
       ])
     ).toBe('runtime:available')
+  })
+
+  it('retires a remote editor when the same host reconnects with a new generation', () => {
+    expect(
+      isQuickCommandEditorHostCurrent(
+        'runtime:build',
+        3,
+        [{ id: 'local' }, { id: 'runtime:build' }],
+        new Map([['build', { connectionGeneration: 4 }]])
+      )
+    ).toBe(false)
   })
 
   it('surfaces refresh failures only when cached commands remain usable', () => {

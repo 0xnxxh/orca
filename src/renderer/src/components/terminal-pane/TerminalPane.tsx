@@ -239,7 +239,6 @@ import {
   resyncTerminalFocusForWindowFocus,
   setRegularTerminalInputFocusAttribute
 } from './regular-terminal-focus-ownership'
-import { refreshTerminalImeInputContext } from './terminal-ime-input-context-refresh'
 import { useTerminalQuickCommandHosts } from '@/hooks/use-terminal-quick-command-hosts'
 
 type TerminalPaneProps = {
@@ -689,6 +688,13 @@ function TerminalPane(
     }
     toggleNativeChatForLeaf(activeLeafId)
   }, [toggleNativeChatForLeaf])
+  // Stable identity: this reaches the session-option surface's useMemo deps, so an
+  // inline arrow would rebuild the surface on every TerminalPane render.
+  const switchNativeChatToTerminal = useCallback(() => {
+    if (chatLeafId) {
+      toggleNativeChatForLeaf(chatLeafId)
+    }
+  }, [chatLeafId, toggleNativeChatForLeaf])
   const readNativeChatTerminalScreen = useCallback((): string | null => {
     if (!chatLeafId) {
       return null
@@ -798,7 +804,12 @@ function TerminalPane(
     : quickCommandRepoId
       ? 'This Repo'
       : null
-  const { hosts: quickCommandHosts } = useTerminalQuickCommandHosts(worktreeId)
+  const {
+    hosts: quickCommandHosts,
+    refreshRemoteHost: refreshQuickCommandRemoteHost,
+    remoteHostLoadFailed: quickCommandHostLoadFailed,
+    remoteHostPending: quickCommandHostOwnershipPending
+  } = useTerminalQuickCommandHosts(worktreeId)
   const visibleQuickCommandHosts = quickCommandHosts.map((host) => {
     const commands = host.commands.filter(isTerminalQuickCommandComplete)
     return {
@@ -1680,6 +1691,7 @@ function TerminalPane(
     panePtyBindingsRef,
     paneCwdRef,
     fallbackCwd: cwd ?? '',
+    koreanWonToBackquoteEnabled: settings?.terminalKoreanWonToBackquote === true,
     expandedPaneIdRef,
     setExpandedPane,
     restoreExpandedLayout,
@@ -1787,8 +1799,6 @@ function TerminalPane(
     }
     let ownsRegularTerminalFocus = false
     let releasedHelperOnWindowBlur: HTMLElement | null = null
-    // Why: the IME refresh's blur emits a focusout that would clear terminalInputFocused mid-handoff; latch it so Terminal-first shortcut routing survives until refocus.
-    let refreshingImeInputContext = false
     const syncFocused = (focused: boolean): void => {
       ownsRegularTerminalFocus = focused
       if (focused) {
@@ -1802,24 +1812,12 @@ function TerminalPane(
         return
       }
       syncFocused(true)
-      // Why: helper→helper handoffs skip window blur and can leave a stale macOS NSTextInputContext; the refocus's non-helper relatedTarget prevents recursion.
-      if (isXtermHelperTextarea(event.relatedTarget) && event.relatedTarget !== event.target) {
-        refreshingImeInputContext = true
-        try {
-          refreshTerminalImeInputContext(event.target, {})
-        } finally {
-          refreshingImeInputContext = false
-        }
-      }
     }
     const onFocusOut = (event: FocusEvent): void => {
       if (!isXtermHelperTextarea(event.target)) {
         return
       }
       if (isXtermHelperTextarea(event.relatedTarget)) {
-        return
-      }
-      if (refreshingImeInputContext) {
         return
       }
       syncFocused(false)
@@ -2497,6 +2495,11 @@ function TerminalPane(
     forceBracketedMultilineTextPaste,
     rightClickToPaste
   })
+  useEffect(() => {
+    if (contextMenu.open) {
+      refreshQuickCommandRemoteHost()
+    }
+  }, [contextMenu.open, refreshQuickCommandRemoteHost])
   const getContextMenuLeafId = useCallback((): string | null => {
     const paneId = contextMenu.menuPaneId
     const manager = managerRef.current
@@ -2973,7 +2976,7 @@ function TerminalPane(
                 targetPtyId={chatPanePtyId}
                 launchAgent={chatPaneLaunchAgent}
                 resolvedAgent={chatPaneResolvedAgent}
-                onSwitchToTerminal={() => toggleNativeChatForLeaf(chatPane.leafId)}
+                onSwitchToTerminal={switchNativeChatToTerminal}
                 readTerminalScreen={readNativeChatTerminalScreen}
                 contextMenuActions={{
                   onSplitRight: () => contextMenu.runForPane(chatPane.id, contextMenu.onSplitRight),
@@ -3036,6 +3039,8 @@ function TerminalPane(
         onToggleNativeChat={handleContextMenuToggleNativeChat}
         onCopyAgentSessionContext={() => void contextMenu.onCopyAgentSessionContext()}
         quickCommandHosts={visibleQuickCommandHosts}
+        quickCommandHostLoadFailed={quickCommandHostLoadFailed}
+        quickCommandHostOwnershipPending={quickCommandHostOwnershipPending}
         quickCommandRepoLabel={quickCommandRepoLabel}
         onQuickCommand={contextMenu.onQuickCommand}
         onAddQuickCommand={(hostId) =>

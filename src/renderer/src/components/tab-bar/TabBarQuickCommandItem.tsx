@@ -44,7 +44,7 @@ export function TabBarQuickCommandItem({
             {command.label}
           </span>
           {showHostLabel ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground">{entry.hostLabel}</span>
+            <span className="shrink-0 text-[11px] text-muted-foreground">{entry.hostLabel}</span>
           ) : null}
         </span>
         <span className="block truncate font-mono text-[11px] text-muted-foreground">

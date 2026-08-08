@@ -44,7 +44,14 @@ vi.mock('./terminal-context-menu-dismiss', () => ({
 
 function childrenText(children: React.ReactNode): string {
   return React.Children.toArray(children)
-    .filter((child): child is string => typeof child === 'string')
+    .map((child) => {
+      if (typeof child === 'string') {
+        return child
+      }
+      return React.isValidElement<{ children?: React.ReactNode }>(child)
+        ? childrenText(child.props.children)
+        : ''
+    })
     .join('')
 }
 
@@ -76,6 +83,8 @@ function renderMenu(overrides: Record<string, unknown> = {}): string {
     quickCommandHosts: [
       { hostId: 'local' as const, label: 'Local Linux', repoCommands: [], globalCommands: [] }
     ],
+    quickCommandHostLoadFailed: false,
+    quickCommandHostOwnershipPending: false,
     quickCommandRepoLabel: 'Orca',
     onQuickCommand: vi.fn(),
     onAddQuickCommand: vi.fn(),
@@ -218,5 +227,40 @@ describe('TerminalContextMenu', () => {
     expect(rendered).toContain('Orca')
     expect(rendered).toContain('Global')
     expect(rendered).not.toContain('Local Mac')
+  })
+
+  it('passes hosted identity when running a command', () => {
+    const onQuickCommand = vi.fn()
+    const command = {
+      id: 'review',
+      label: 'Remote review',
+      action: 'agent-prompt' as const,
+      agent: 'codex' as const,
+      prompt: 'Review this change',
+      scope: { type: 'global' as const }
+    }
+    renderMenu({
+      onQuickCommand,
+      quickCommandHosts: [
+        {
+          hostId: 'runtime:build',
+          label: 'Build Server',
+          repoCommands: [],
+          globalCommands: [command]
+        }
+      ]
+    })
+
+    const commandItem = items.list.find((item) => childrenText(item.children) === 'Remote review')
+    commandItem?.onSelect?.()
+
+    expect(onQuickCommand).toHaveBeenCalledWith(command, 'runtime:build\0review')
+  })
+
+  it('suppresses add actions while remote host ownership is loading', () => {
+    const rendered = renderMenu({ quickCommandHostOwnershipPending: true })
+
+    expect(rendered).toContain('Loading host…')
+    expect(rendered).not.toContain('Add Quick Command…')
   })
 })

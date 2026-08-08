@@ -37,6 +37,7 @@ export type TerminalQuickCommandHostsSlice = {
 }
 
 const mutationChains = new Map<string, Promise<void>>()
+const mutationRevisions = new Map<string, number>()
 const loadRequests = new Map<string, { connectionGeneration: number; request: Promise<void> }>()
 
 function readCommands(result: unknown): TerminalQuickCommand[] {
@@ -87,6 +88,7 @@ async function mutateRemoteCommands(
   environmentId: string,
   mutation: TerminalQuickCommandMutation
 ): Promise<boolean> {
+  mutationRevisions.set(environmentId, (mutationRevisions.get(environmentId) ?? 0) + 1)
   const previous = mutationChains.get(environmentId) ?? Promise.resolve()
   let succeeded = false
   const request = previous.then(async () => {
@@ -201,13 +203,17 @@ export const createTerminalQuickCommandHostsSlice: StateCreator<
           return
         }
         await (mutationChains.get(trimmed) ?? Promise.resolve())
+        const mutationRevision = mutationRevisions.get(trimmed) ?? 0
         const result = await callRuntimeRpc<{ terminalQuickCommands: unknown }>(
           { kind: 'environment', environmentId: trimmed },
           'settings.getTerminalQuickCommands',
           undefined,
           { timeoutMs: 15_000 }
         )
-        if (getRuntimeEnvironmentConnectionGeneration(trimmed) !== connectionGeneration) {
+        if (
+          getRuntimeEnvironmentConnectionGeneration(trimmed) !== connectionGeneration ||
+          (mutationRevisions.get(trimmed) ?? 0) !== mutationRevision
+        ) {
           return
         }
         updateEntry(set, trimmed, () => ({
@@ -268,6 +274,7 @@ export const createTerminalQuickCommandHostsSlice: StateCreator<
         if (!keep.has(id)) {
           next.delete(id)
           mutationChains.delete(id)
+          mutationRevisions.delete(id)
           loadRequests.delete(id)
           changed = true
         }

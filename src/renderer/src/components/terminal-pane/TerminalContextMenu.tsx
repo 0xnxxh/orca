@@ -59,8 +59,10 @@ type TerminalContextMenuProps = {
   onToggleNativeChat: () => void
   onCopyAgentSessionContext: () => void
   quickCommandHosts: TerminalQuickCommandMenuHost[]
+  quickCommandHostLoadFailed: boolean
+  quickCommandHostOwnershipPending: boolean
   quickCommandRepoLabel: string | null
-  onQuickCommand: (command: TerminalQuickCommand) => void
+  onQuickCommand: (command: TerminalQuickCommand, historyId: string) => void
   onAddQuickCommand: (hostId: ExecutionHostId) => void
   onToggleExpand: () => void
   onSetTitle: () => void
@@ -95,6 +97,8 @@ export default function TerminalContextMenu({
   onToggleNativeChat,
   onCopyAgentSessionContext,
   quickCommandHosts,
+  quickCommandHostLoadFailed,
+  quickCommandHostOwnershipPending,
   quickCommandRepoLabel,
   onQuickCommand,
   onAddQuickCommand,
@@ -178,6 +182,8 @@ export default function TerminalContextMenu({
         </DropdownMenuItem>
         <TerminalQuickCommandsSubmenu
           hosts={quickCommandHosts}
+          hostLoadFailed={quickCommandHostLoadFailed}
+          hostOwnershipPending={quickCommandHostOwnershipPending}
           repoLabel={quickCommandRepoLabel}
           onRun={onQuickCommand}
           onClose={() => onOpenChange(false)}
