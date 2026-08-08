@@ -8818,6 +8818,122 @@ describe('connectPanePty', () => {
     expect(writes.join('')).toContain('live-after-snapshot')
   })
 
+  it('forwards the destination grid on reveal when the reattach fit was deferred by a display:none pane', async () => {
+    // Why: a restored floating-workspace pane reattaches while its panel is still closed, so the
+    // pane is display:none for the whole replay. The snapshot pins xterm to the PTY's grid, and the
+    // reattach fit is the only step that pushes the client grid back and signals SIGWINCH — losing
+    // it strands the PTY at the snapshot grid and the first reveal reflows the replay under a live TUI.
+    const { connectPanePty } = await import('./pty-connection')
+    const { safeFit } = await import('@/lib/pane-manager/pane-tree-ops')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
+      sessionId
+        ? {
+            id: sessionId,
+            snapshot: 'source-grid snapshot',
+            snapshotCols: 80,
+            snapshotRows: 24
+          }
+        : null
+    )
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'tab-pty' }] }
+    } as StoreState
+    const pane = createPane(1)
+    let xtermContainerDisplay = 'none'
+    const xtermContainer = new EventTarget() as HTMLElement
+    Object.defineProperty(xtermContainer, 'parentElement', { value: null })
+    Object.defineProperty(xtermContainer, 'ownerDocument', {
+      value: { defaultView: { getComputedStyle: () => ({ display: xtermContainerDisplay }) } }
+    })
+    ;(pane as { xtermContainer?: HTMLElement }).xtermContainer = xtermContainer
+    pane.fitAddon.proposeDimensions = vi.fn(() => undefined) as never
+    const signalPty = window.api.pty.signal as unknown as ReturnType<typeof vi.fn>
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      isVisibleRef: { current: false }
+    })
+
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+    transport.resize.mockClear()
+    signalPty.mockClear()
+
+    // Reveal: the panel opens, the pane gains a box, and the first fit becomes measurable.
+    xtermContainerDisplay = 'block'
+    ;(deps.isVisibleRef as { current: boolean }).current = true
+    pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 120, rows: 40 })) as never
+    safeFit(pane as never)
+    await flushAsyncTicks(12)
+
+    expect(transport.resize).toHaveBeenCalledWith(120, 40)
+    expect(signalPty).toHaveBeenCalledWith('tab-pty', 'SIGWINCH')
+  })
+
+  it('suppresses the deferred reattach grid push when mobile claims the PTY while hidden', async () => {
+    // Why: the pre-check at reattach time cannot see a takeover that happens while the pane
+    // waits for a box, and this path calls transport.resize directly, bypassing
+    // forwardPtyResize's own suppression.
+    const { connectPanePty } = await import('./pty-connection')
+    const { safeFit } = await import('@/lib/pane-manager/pane-tree-ops')
+    const { setFitOverride } = await import('@/lib/pane-manager/mobile-fit-overrides')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
+      sessionId
+        ? {
+            id: sessionId,
+            snapshot: 'source-grid snapshot',
+            snapshotCols: 80,
+            snapshotRows: 24
+          }
+        : null
+    )
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'tab-pty' }] }
+    } as StoreState
+    const pane = createPane(1)
+    let xtermContainerDisplay = 'none'
+    const xtermContainer = new EventTarget() as HTMLElement
+    Object.defineProperty(xtermContainer, 'parentElement', { value: null })
+    Object.defineProperty(xtermContainer, 'ownerDocument', {
+      value: { defaultView: { getComputedStyle: () => ({ display: xtermContainerDisplay }) } }
+    })
+    ;(pane as { xtermContainer?: HTMLElement }).xtermContainer = xtermContainer
+    pane.fitAddon.proposeDimensions = vi.fn(() => undefined) as never
+    const signalPty = window.api.pty.signal as unknown as ReturnType<typeof vi.fn>
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      isVisibleRef: { current: false }
+    })
+
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+    transport.resize.mockClear()
+    signalPty.mockClear()
+
+    try {
+      // Mobile takes the PTY while the pane is still hidden.
+      setFitOverride('tab-pty', 'mobile-fit', 49, 20)
+
+      xtermContainerDisplay = 'block'
+      ;(deps.isVisibleRef as { current: boolean }).current = true
+      pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 120, rows: 40 })) as never
+      safeFit(pane as never)
+      await flushAsyncTicks(12)
+
+      expect(transport.resize).not.toHaveBeenCalledWith(120, 40)
+      expect(signalPty).not.toHaveBeenCalledWith('tab-pty', 'SIGWINCH')
+    } finally {
+      setFitOverride('tab-pty', 'desktop-fit', 0, 0)
+    }
+  })
+
   it('restores a pinned viewport only after a same-size reattach snapshot finishes parsing', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const { markTerminalFollowOutput, markTerminalPinnedViewport } =
