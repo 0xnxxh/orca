@@ -32,8 +32,11 @@ export function activateBrowserPagePaletteResult({
     (candidate) => candidate.id === workspaceId
   )
   const worktree = initialState.getKnownWorktreeById(worktreeId, executionHostId)
-  if (!page || !workspace || !worktree) {
+  if (!page || !workspace) {
     return { status: 'failed', reason: 'missing-page' }
+  }
+  if (!worktree) {
+    return { status: 'failed', reason: 'missing-worktree' }
   }
 
   // Why: activateAndRevealWorktree mutates store state, so a later page lookup

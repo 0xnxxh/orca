@@ -227,14 +227,14 @@ describe('useOpenTabSearch', () => {
   it('returns no results while disabled', () => {
     const { result } = renderSearch({ enabled: false })
 
-    expect(result.current).toEqual([])
+    expect(result.current.results).toEqual([])
   })
 
   it('returns only tabs from the requested worktree', () => {
     const { result } = renderSearch()
 
-    expect(result.current.map((entry) => entry.title)).not.toContain('zebra delta')
-    expect(result.current.every((entry) => entry.worktreeId === 'wt-1')).toBe(true)
+    expect(result.current.results.map((entry) => entry.title)).not.toContain('zebra delta')
+    expect(result.current.results.every((entry) => entry.worktreeId === 'wt-1')).toBe(true)
   })
 
   it('keeps the active runtime host when worktree ids collide', () => {
@@ -256,8 +256,10 @@ describe('useOpenTabSearch', () => {
 
     const { result } = renderSearch()
 
-    expect(result.current).not.toHaveLength(0)
-    expect(result.current.every((entry) => entry.executionHostId === runtimeHost)).toBe(true)
+    expect(result.current.results).not.toHaveLength(0)
+    expect(result.current.results.every((entry) => entry.executionHostId === runtimeHost)).toBe(
+      true
+    )
   })
 
   it('resolves a hosted worktree when the active host is unknown', () => {
@@ -279,8 +281,10 @@ describe('useOpenTabSearch', () => {
 
     const { result } = renderSearch()
 
-    expect(result.current).not.toHaveLength(0)
-    expect(result.current.every((entry) => entry.executionHostId === runtimeHost)).toBe(true)
+    expect(result.current.results).not.toHaveLength(0)
+    expect(result.current.results.every((entry) => entry.executionHostId === runtimeHost)).toBe(
+      true
+    )
   })
 
   it('returns tabs for a remote-only worktree when the active host is unknown', () => {
@@ -298,20 +302,38 @@ describe('useOpenTabSearch', () => {
 
     const { result } = renderSearch()
 
-    expect(result.current).not.toHaveLength(0)
-    expect(result.current.every((entry) => entry.executionHostId === sshHost)).toBe(true)
+    expect(result.current.results).not.toHaveLength(0)
+    expect(result.current.results.every((entry) => entry.executionHostId === sshHost)).toBe(true)
+  })
+
+  it('falls back to the active host when neither the worktree nor a repo names one', () => {
+    const runtimeHost = 'runtime:env-1' as const
+    seedStore({
+      activeWorkspaceExecutionHostId: runtimeHost,
+      repos: [],
+      worktreesByRepo: {
+        'repo-1': [{ ...makeWorktree('wt-1', 'Runtime'), runtimeOwnerEnvironmentId: 'env-1' }]
+      }
+    })
+
+    const { result } = renderSearch()
+
+    expect(result.current.results).not.toHaveLength(0)
+    expect(result.current.results.every((entry) => entry.executionHostId === runtimeHost)).toBe(
+      true
+    )
   })
 
   it('does not rebuild results for agent-status heartbeats while open', () => {
     const { result } = renderSearch()
-    const initialResults = result.current
+    const initialResults = result.current.results
     const state = useAppStore.getState()
 
     act(() => {
       useAppStore.setState({ agentStatusByPaneKey: { ...state.agentStatusByPaneKey } })
     })
 
-    expect(result.current).toBe(initialResults)
+    expect(result.current.results).toBe(initialResults)
   })
 
   it('includes tabs from every column of the worktree, not just the focused one', () => {
@@ -319,7 +341,7 @@ describe('useOpenTabSearch', () => {
 
     // zebra alpha is the focused tab and still listed, ranked first by the
     // engine's current-tab bonus, the way Cmd+J lists the tab you are on.
-    expect(result.current.map((entry) => entry.title)).toEqual([
+    expect(result.current.results.map((entry) => entry.title)).toEqual([
       'zebra alpha',
       'zebra beta',
       'zebra gamma',
@@ -329,7 +351,7 @@ describe('useOpenTabSearch', () => {
 
   it('reflects tab changes while open', () => {
     const { result } = renderSearch({ query: 'epsilon' })
-    expect(result.current).toEqual([])
+    expect(result.current.results).toEqual([])
 
     const state = useAppStore.getState()
     act(() => {
@@ -358,7 +380,7 @@ describe('useOpenTabSearch', () => {
       })
     })
 
-    expect(result.current.map((entry) => entry.title)).toEqual(['zebra epsilon'])
+    expect(result.current.results.map((entry) => entry.title)).toEqual(['zebra epsilon'])
   })
 
   it('reflects the generated-titles setting in matched titles', () => {
@@ -373,7 +395,7 @@ describe('useOpenTabSearch', () => {
     })
 
     const { result } = renderSearch({ query: 'generated' })
-    expect(result.current.map((entry) => entry.title)).toEqual(['zebra generated'])
+    expect(result.current.results.map((entry) => entry.title)).toEqual(['zebra generated'])
 
     seedStore({
       tabsByWorktree: {
@@ -381,6 +403,6 @@ describe('useOpenTabSearch', () => {
       }
     })
     const disabled = renderSearch({ query: 'generated' })
-    expect(disabled.result.current).toEqual([])
+    expect(disabled.result.current.results).toEqual([])
   })
 })

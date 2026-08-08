@@ -215,7 +215,7 @@ describe('activateBrowserPagePaletteResult', () => {
     })
   })
 
-  it('reports a missing page, workspace or worktree as a stale target', () => {
+  it('reports a missing page or workspace as a stale target', () => {
     seedStore({ browserPagesByWorkspace: {} })
     expect(activateBrowserPagePaletteResult(target)).toEqual({
       status: 'failed',
@@ -228,12 +228,17 @@ describe('activateBrowserPagePaletteResult', () => {
       reason: 'missing-page'
     })
 
+    expect(mocks.activateAndRevealWorktree).not.toHaveBeenCalled()
+  })
+
+  // A live page in a dead workspace is a different story than a dead page.
+  it('reports an absent worktree as a missing workspace', () => {
     seedStore({ worktreesByRepo: {} })
+
     expect(activateBrowserPagePaletteResult(target)).toEqual({
       status: 'failed',
-      reason: 'missing-page'
+      reason: 'missing-worktree'
     })
-
     expect(mocks.activateAndRevealWorktree).not.toHaveBeenCalled()
   })
 

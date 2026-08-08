@@ -172,9 +172,14 @@ describe('activateOpenTabSearchResult', () => {
 
   it('reports a missing worktree distinguishably from a stale tab', () => {
     mocks.activateWorkspaceTab.mockReturnValue({ status: 'failed', reason: 'missing-worktree' })
+    mocks.activateBrowserPage.mockReturnValue({ status: 'failed', reason: 'missing-worktree' })
     mocks.activateSimulatorTab.mockReturnValue({ status: 'failed', reason: 'missing-worktree' })
 
     expect(activateOpenTabSearchResult(terminalResult)).toEqual({
+      status: 'failed',
+      message: 'Workspace no longer exists'
+    })
+    expect(activateOpenTabSearchResult(browserResult)).toEqual({
       status: 'failed',
       message: 'Workspace no longer exists'
     })

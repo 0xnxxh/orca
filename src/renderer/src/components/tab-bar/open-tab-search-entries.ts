@@ -77,7 +77,9 @@ export function selectOpenTabSearchEntryState(
       : undefined) ??
     repoCandidates[0] ??
     null
-  const executionHostId = getWorktreeExecutionHostId(worktree, repo ?? undefined)
+  // preferredHostId last: it found this worktree, so it beats the local default
+  // when neither the worktree nor a repo names a host.
+  const executionHostId = getWorktreeExecutionHostId(worktree, repo ?? undefined, preferredHostId)
   return {
     activeBrowserTabId: state.activeBrowserTabId,
     activeFileId: state.activeFileId,

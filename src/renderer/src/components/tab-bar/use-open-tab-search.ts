@@ -18,11 +18,17 @@ export type UseOpenTabSearchOptions = {
   worktreeId: string
 }
 
+export type OpenTabSearchSnapshot = {
+  /** The query `results` describe; lags the requested query while deferred. */
+  query: string
+  results: OpenTabSearchResult[]
+}
+
 export function useOpenTabSearch({
   enabled,
   query,
   worktreeId
-}: UseOpenTabSearchOptions): OpenTabSearchResult[] {
+}: UseOpenTabSearchOptions): OpenTabSearchSnapshot {
   // Why null while disabled: a closed menu stays stable across store churn.
   const state = useAppStore(
     useShallow((store) => (enabled ? selectOpenTabSearchEntryState(store, worktreeId) : null))
@@ -41,7 +47,10 @@ export function useOpenTabSearch({
   const deferredQuery = useDeferredValue(query)
 
   return useMemo(
-    () => (entries ? searchOpenTabs({ ...entries, query: deferredQuery }) : EMPTY_RESULTS),
+    () => ({
+      query: deferredQuery,
+      results: entries ? searchOpenTabs({ ...entries, query: deferredQuery }) : EMPTY_RESULTS
+    }),
     [deferredQuery, entries]
   )
 }
