@@ -13,6 +13,7 @@ import {
   installTerminalImeBoundaryProbe,
   readTerminalImeBoundaryTrace
 } from './terminal-ime-boundary-probe'
+import { resolveInputSourceId } from './macos-input-source-resolver'
 import {
   createTerminalImeByteReader,
   removeTerminalImeByteReader,
@@ -21,7 +22,16 @@ import {
 } from './terminal-ime-byte-reader'
 
 const ABC_ID = 'com.apple.keylayout.ABC'
-const SIMPLE_TELEX_ID = 'com.apple.inputmethod.VietnameseSimpleTelex'
+// The bare `VietnameseSimpleTelex` ID is NOT installed on current macOS — the real one is nested
+// under `VietnameseIM.`. Verified by live TIS enumeration 2026-08-05. Both are kept as candidates
+// because the flat form shipped on older releases. Resolved lazily; see the Cangjie spec.
+const SIMPLE_TELEX_CANDIDATES = [
+  'com.apple.inputmethod.VietnameseIM.VietnameseSimpleTelex',
+  'com.apple.inputmethod.VietnameseSimpleTelex'
+] as const
+let resolvedSimpleTelexId: string | null = null
+const simpleTelexInputSourceId = (): string =>
+  (resolvedSimpleTelexId ??= resolveInputSourceId('vietnamese', SIMPLE_TELEX_CANDIDATES))
 const RECORDED_VIETNAMESE_COMMIT_BOUNDARIES = [
   { type: 'compositionend', data: 'tiếng ', value: 'tiếng ' },
   { type: 'compositionend', data: 'việt', value: 'tiếng việt' }
@@ -47,7 +57,7 @@ function typeKeyCodes(processId: number, keyCodes: readonly number[]): void {
 }
 
 function selectInputSource(inputSourceId: string): void {
-  execFileSync('swift', ['.tmp/select-input-source.swift', inputSourceId])
+  execFileSync('swift', ['tests/e2e/select-input-source.swift', inputSourceId])
 }
 
 test.describe('Native macOS Vietnamese terminal input @headful', () => {
@@ -65,9 +75,14 @@ test.describe('Native macOS Vietnamese terminal input @headful', () => {
     await waitForActiveWorktree(orcaPage)
     await ensureTerminalVisible(orcaPage)
     await waitForActiveTerminalManager(orcaPage, 30_000)
-    await expect(orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())).resolves.toBe(
-      SIMPLE_TELEX_ID
-    )
+    // Fails loudly, naming near-matches, if Simple Telex is not installed at all.
+    simpleTelexInputSourceId()
+    // TIS and `getKeyboardInputSourceId` report this source in DIFFERENT namespaces — TIS nests it
+    // under VietnameseIM, the app API does not. The precondition above is TIS-space; this assertion
+    // is app-space, so match the leaf rather than comparing across namespaces.
+    await expect(
+      orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())
+    ).resolves.toMatch(/(^|\.)VietnameseSimpleTelex$/)
 
     const ptyId = await waitForActivePanePtyId(orcaPage)
     let reader = createTerminalImeByteReader(testRepoPath, 1)

@@ -18,6 +18,10 @@ import {
 } from './worktree-meta-updates'
 import { useWorktreeIssueLink } from './use-worktree-issue-link'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
+import {
+  isImeOwnedKeyboardEvent,
+  useImeEnterGestureOwnership
+} from '@/lib/ime-composition-keyboard-event'
 import { ExternalLink, LoaderCircle } from 'lucide-react'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
@@ -33,6 +37,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   const closeModal = useAppStore((s) => s.closeModal)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const submitShortcutLabel = getScreenSubmitShortcutLabel()
+  const commentEnterGesture = useImeEnterGestureOwnership()
 
   const isEditMeta = activeModal === 'edit-meta'
   const isOpen = isEditMeta
@@ -158,18 +163,39 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
 
   const handleCommentKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // The carry token owns modifier-carrying Enters, so the chord resolves first — otherwise
+      // a modifier held through the confirm redispatch loses the user's deliberate save.
+      if (isScreenSubmitShortcut(e)) {
+        if (isImeOwnedKeyboardEvent(e)) {
+          return
+        }
+        e.preventDefault()
+        e.stopPropagation()
+        handleSave()
+        return
+      }
+      // Free-prose CJK lands here, and the plain-Enter path is reachable by the confirm's
+      // unmarked redispatch, so it needs full gesture ownership rather than the oracle.
+      if (commentEnterGesture.ownsKeyDown(e)) {
+        return
+      }
       const isPlainEnter = e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey
-      if (isPlainEnter || isScreenSubmitShortcut(e)) {
+      if (isPlainEnter) {
         e.preventDefault()
         e.stopPropagation()
         handleSave()
       }
     },
-    [handleSave]
+    [commentEnterGesture, handleSave]
   )
 
   const handleIssueKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // Oracle tier only: issue/PR fields take digits and URLs, not CJK prose, so the
+      // unmarked-redispatch residual isn't worth the carry token here.
+      if (isImeOwnedKeyboardEvent(e)) {
+        return
+      }
       if (e.key === 'Enter') {
         e.preventDefault()
         handleSave()
@@ -318,6 +344,9 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
               ref={setCommentTextareaRef}
               value={commentInput}
               onChange={handleCommentChange}
+              onCompositionStart={() => commentEnterGesture.setComposing(true)}
+              onCompositionEnd={() => commentEnterGesture.setComposing(false)}
+              onKeyUp={(e) => commentEnterGesture.onKeyUp(e)}
               onKeyDown={handleCommentKeyDown}
               placeholder={translate(
                 'auto.components.sidebar.WorktreeMetaDialog.030d484fc0',

@@ -9,6 +9,7 @@ import { safeFind } from '../terminal-search-safe-find'
 import { resolveTerminalShortcutAction } from './terminal-shortcut-policy'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
 import { createTerminalNativeOnlyShortcutTracker } from './terminal-native-only-shortcut'
+import { installTerminalNativeInputListeners } from './terminal-native-input-listeners'
 import {
   keybindingMatchesAction,
   type KeybindingOverrides,
@@ -35,6 +36,7 @@ import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { resolveWindowsShiftEnterEncodingForPane } from './terminal-windows-shift-enter'
 import { resolveTerminalInputHostPlatform } from './terminal-input-host-platform'
 import { isImeOwnedKeyboardEvent } from '@/lib/ime-composition-keyboard-event'
+import { isLatinShortcutKey } from '@/lib/ime-latin-shortcut-key'
 import {
   markTerminalFollowOutput,
   markTerminalPinnedViewport,
@@ -134,7 +136,7 @@ export function matchSearchNavigate(
   if (!mod) {
     return null
   }
-  if (e.key.toLowerCase() !== 'g') {
+  if (!isLatinShortcutKey(e, 'g')) {
     return null
   }
   if (!searchOpen) {
@@ -269,14 +271,16 @@ export function useTerminalKeyboardShortcuts({
     // location from its own keydown event and clear it on keyup.
     let optionKeyLocation = 0
     const nativeOnlyShortcutTracker = createTerminalNativeOnlyShortcutTracker()
-    const onModifierDown = (e: KeyboardEvent): void => {
-      if (isImeOwnedKeyboardEvent(e)) {
-        return
-      }
-      if (e.key === 'Alt') {
-        optionKeyLocation = e.location
-      }
-    }
+    const disposeNativeInputListeners = installTerminalNativeInputListeners(
+      window,
+      nativeOnlyShortcutTracker,
+      (location) => {
+        optionKeyLocation = location
+      },
+      // Why: the pane has never dropped the tracked side on blur — an Option held
+      // across a focus round-trip still resolves left vs right.
+      { forgetOptionKeyLocationOnBlur: false }
+    )
 
     // Why: this callback is installed once per active tab and invoked only for
     // Windows Shift+Enter, keeping store work and allocations off ordinary keys.
@@ -634,58 +638,10 @@ export function useTerminalKeyboardShortcuts({
       }
     }
 
-    const onKeyUp = (e: KeyboardEvent): void => {
-      if (isImeOwnedKeyboardEvent(e)) {
-        return
-      }
-      if (e.key === 'Alt') {
-        optionKeyLocation = 0
-      }
-    }
-
-    const onNativeOnlyShortcutCompanion = (e: KeyboardEvent): void => {
-      if (isImeOwnedKeyboardEvent(e)) {
-        return
-      }
-      if (nativeOnlyShortcutTracker.consumeCompanion(e)) {
-        // Why: canceling only the companion keypress prevents Chromium's text
-        // insertion without canceling the keydown default used by the OS switch.
-        if (e.type === 'keypress') {
-          e.preventDefault()
-        }
-        e.stopImmediatePropagation()
-      }
-    }
-
-    // Why: modern Chromium can skip keypress and insert via beforeinput; block
-    // only this chord's text so an IME commit in the same window remains intact.
-    const onNativeOnlyBeforeInput = (e: Event): void => {
-      if (!(e instanceof InputEvent) || !nativeOnlyShortcutTracker.shouldSuppressBeforeInput(e)) {
-        return
-      }
-      e.preventDefault()
-      e.stopImmediatePropagation()
-    }
-
-    const onNativeOnlyBlur = (): void => {
-      nativeOnlyShortcutTracker.clear()
-    }
-
-    window.addEventListener('keydown', onModifierDown, { capture: true })
-    window.addEventListener('keyup', onKeyUp, { capture: true })
     window.addEventListener('keydown', onKeyDown, { capture: true })
-    window.addEventListener('keypress', onNativeOnlyShortcutCompanion, { capture: true })
-    window.addEventListener('keyup', onNativeOnlyShortcutCompanion, { capture: true })
-    window.addEventListener('beforeinput', onNativeOnlyBeforeInput, { capture: true })
-    window.addEventListener('blur', onNativeOnlyBlur)
     return () => {
-      window.removeEventListener('keydown', onModifierDown, { capture: true })
-      window.removeEventListener('keyup', onKeyUp, { capture: true })
+      disposeNativeInputListeners()
       window.removeEventListener('keydown', onKeyDown, { capture: true })
-      window.removeEventListener('keypress', onNativeOnlyShortcutCompanion, { capture: true })
-      window.removeEventListener('keyup', onNativeOnlyShortcutCompanion, { capture: true })
-      window.removeEventListener('beforeinput', onNativeOnlyBeforeInput, { capture: true })
-      window.removeEventListener('blur', onNativeOnlyBlur)
     }
   }, [
     isActive,

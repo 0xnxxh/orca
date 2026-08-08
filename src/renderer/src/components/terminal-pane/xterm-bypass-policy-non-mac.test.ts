@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { shouldBypassXtermKeyboardEvent } from './xterm-bypass-policy'
-import { event } from './xterm-bypass-event-fixture'
+import { event } from './__fixtures__/xterm-bypass-event'
 
 describe('shouldBypassXtermKeyboardEvent — Windows/Linux', () => {
   const withSel = { isMac: false, hasSelection: true }
@@ -147,10 +147,7 @@ describe('shouldBypassXtermKeyboardEvent — Windows/Linux', () => {
 
   it('does not apply the macOS initial-jamo bypass', () => {
     expect(
-      shouldBypassXtermKeyboardEvent(
-        event({ key: 'ㄱ', code: 'KeyR', keyCode: 82, isComposing: false }),
-        noSel
-      )
+      shouldBypassXtermKeyboardEvent(event({ key: 'ㄱ', code: 'KeyR', keyCode: 82 }), noSel)
     ).toBe(false)
   })
 

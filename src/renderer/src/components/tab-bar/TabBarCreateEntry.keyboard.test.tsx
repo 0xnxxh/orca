@@ -3,6 +3,10 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  dispatchOrdinaryImplicitSubmit,
+  dispatchRecordedImeImplicitSubmit
+} from '../ime-enter-guarded-form.test-events'
 import type { TabEntryOption } from './tab-create-entry-action'
 import type { TabAgentLaunchOption } from './tab-agent-launch-options'
 
@@ -238,5 +242,25 @@ describe('TabBarCreateEntry keyboard navigation', () => {
 
     pressKey(firstItem, 'ArrowUp')
     expect(document.activeElement).toBe(input)
+  })
+
+  it('does not open an entry on the recorded Korean Enter redispatch', () => {
+    entryOptionsMock.options = [fileOption('한글.ts')]
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    mount(<TabBarCreateEntry worktreeId="wt" groupId="g" menuOpen onOpenEntry={onOpenEntry} />)
+    const input = container.querySelector('input') as HTMLInputElement
+
+    expect(dispatchRecordedImeImplicitSubmit(input)).toBe(true)
+    expect(onOpenEntry).not.toHaveBeenCalled()
+  })
+
+  it('opens an entry exactly once on an ordinary Enter', () => {
+    entryOptionsMock.options = [fileOption('한글.ts')]
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    mount(<TabBarCreateEntry worktreeId="wt" groupId="g" menuOpen onOpenEntry={onOpenEntry} />)
+    const input = container.querySelector('input') as HTMLInputElement
+
+    expect(dispatchOrdinaryImplicitSubmit(input)).toBe(false)
+    expect(onOpenEntry).toHaveBeenCalledOnce()
   })
 })

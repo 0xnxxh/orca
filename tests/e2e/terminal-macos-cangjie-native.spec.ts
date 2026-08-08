@@ -14,6 +14,7 @@ import {
   installTerminalImeBoundaryProbe,
   readTerminalImeBoundaryTrace
 } from './terminal-ime-boundary-probe'
+import { resolveInputSourceId } from './macos-input-source-resolver'
 import {
   createTerminalImeByteReader,
   removeTerminalImeByteReader,
@@ -22,7 +23,15 @@ import {
 } from './terminal-ime-byte-reader'
 
 const ABC_ID = 'com.apple.keylayout.ABC'
-const CANGJIE_ID = 'com.apple.inputmethod.TCIM.Cangjie'
+// Apple ships Cangjie under both bundle IDs — this host has TCIM.Cangjie and TYIM.Cangjie
+// installed simultaneously. Resolved lazily so collection on non-darwin never shells out to swift.
+const CANGJIE_CANDIDATES = [
+  'com.apple.inputmethod.TCIM.Cangjie',
+  'com.apple.inputmethod.TYIM.Cangjie'
+] as const
+let resolvedCangjieId: string | null = null
+const cangjieInputSourceId = (): string =>
+  (resolvedCangjieId ??= resolveInputSourceId('cangjie', CANGJIE_CANDIDATES))
 const RECORDED_CANGJIE_CANCEL_BOUNDARIES = [
   { type: 'keydown', key: '尸', code: 'KeyS', keyCode: 229, isComposing: false },
   { type: 'compositionstart', data: '' },
@@ -60,7 +69,7 @@ function typeKeyCodes(processId: number, keyCodes: readonly number[]): void {
 }
 
 function selectInputSource(inputSourceId: string): void {
-  execFileSync('swift', ['.tmp/select-input-source.swift', inputSourceId])
+  execFileSync('swift', ['tests/e2e/select-input-source.swift', inputSourceId])
 }
 
 async function readActiveComposition(page: Page): Promise<string | null> {
@@ -89,10 +98,14 @@ test.describe('Native macOS Cangjie terminal input @headful', () => {
     await ensureTerminalVisible(orcaPage)
     await waitForActiveTerminalManager(orcaPage, 30_000)
     await expect(orcaPage.evaluate(() => window.api.app.getKeyboardInputSourceId())).resolves.toBe(
-      CANGJIE_ID
+      cangjieInputSourceId()
     )
 
     const ptyId = await waitForActivePanePtyId(orcaPage)
+    // The line count MUST stay 1 — see the identical note in terminal-macos-pinyin-native.spec.ts.
+    // The cancelled preedit emits nothing, so "nothing leaked" is enforced at the PTY by the single
+    // captured line being exactly `ordinary\n`: a leaked key carries no newline and would prepend to
+    // it. Raising this count silently turns that into a check that only the control worked.
     const reader = createTerminalImeByteReader(testRepoPath, 1)
     let completed = false
     try {

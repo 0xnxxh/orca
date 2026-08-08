@@ -17,7 +17,6 @@ export type XtermBypassEvent = {
   key: string
   code?: string
   keyCode?: number
-  isComposing?: boolean
   repeat?: boolean
   defaultPrevented?: boolean
   metaKey: boolean

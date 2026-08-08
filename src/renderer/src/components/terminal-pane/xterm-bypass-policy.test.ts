@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { shouldBypassXtermKeyboardEvent } from './xterm-bypass-policy'
-import { event } from './xterm-bypass-event-fixture'
+import { event } from './__fixtures__/xterm-bypass-event'
 
 describe('shouldBypassXtermKeyboardEvent — macOS', () => {
   const opts = { isMac: true, hasSelection: true }
@@ -117,10 +117,7 @@ describe('shouldBypassXtermKeyboardEvent — macOS', () => {
 
   it('bypasses the recorded unmarked initial jamo so macOS can start IME composition', () => {
     expect(
-      shouldBypassXtermKeyboardEvent(
-        event({ key: 'ㄱ', code: 'KeyR', keyCode: 82, isComposing: false }),
-        noSel
-      )
+      shouldBypassXtermKeyboardEvent(event({ key: 'ㄱ', code: 'KeyR', keyCode: 82 }), noSel)
     ).toBe(true)
   })
 
@@ -128,7 +125,7 @@ describe('shouldBypassXtermKeyboardEvent — macOS', () => {
     for (const type of ['keydown', 'keyup']) {
       expect(
         shouldBypassXtermKeyboardEvent(
-          event({ type, key: '₩', code: 'Backquote', keyCode: 192, isComposing: false }),
+          event({ type, key: '₩', code: 'Backquote', keyCode: 192 }),
           noSel
         )
       ).toBe(true)
@@ -137,10 +134,7 @@ describe('shouldBypassXtermKeyboardEvent — macOS', () => {
 
   it('does not bypass ordinary unmodified Latin input', () => {
     expect(
-      shouldBypassXtermKeyboardEvent(
-        event({ key: 'r', code: 'KeyR', keyCode: 82, isComposing: false }),
-        noSel
-      )
+      shouldBypassXtermKeyboardEvent(event({ key: 'r', code: 'KeyR', keyCode: 82 }), noSel)
     ).toBe(false)
   })
 

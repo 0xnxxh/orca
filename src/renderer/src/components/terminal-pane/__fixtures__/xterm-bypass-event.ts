@@ -1,4 +1,4 @@
-import type { XtermBypassEvent } from './xterm-bypass-policy'
+import type { XtermBypassEvent } from '../xterm-bypass-policy'
 
 // Shared test fixture: builds a fully-defaulted XtermBypassEvent so the bypass
 // and IME candidate-guard suites all stay in sync when the event shape changes.

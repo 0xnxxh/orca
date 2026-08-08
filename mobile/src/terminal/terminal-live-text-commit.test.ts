@@ -25,6 +25,26 @@ describe('terminal live native replacement commits', () => {
     ).toEqual({ committedText: 'ab', payload: 'b' })
   })
 
+  it('replaces the full field when UIKit transforms the proposed input', () => {
+    expect(
+      deriveTerminalLiveCommit('ㅇ', {
+        text: '아',
+        replacementText: 'ㅏ',
+        replacementRange: { start: 1, end: 1 }
+      })
+    ).toEqual({ committedText: '아', payload: '\x7f아' })
+  })
+
+  it('emits nothing when a proposed transform leaves the field unchanged', () => {
+    expect(
+      deriveTerminalLiveCommit('a', {
+        text: 'a',
+        replacementText: '´',
+        replacementRange: { start: 1, end: 1 }
+      })
+    ).toEqual({ committedText: 'a', payload: '' })
+  })
+
   it('derives deletion from the native range and counts emoji as one terminal character', () => {
     expect(
       deriveTerminalLiveCommit('a😀', {
@@ -35,14 +55,21 @@ describe('terminal live native replacement commits', () => {
     ).toEqual({ committedText: 'a', payload: '\x7f' })
   })
 
-  it('emits nothing for the collapsed pre-delete cursor snapshot', () => {
+  it('uses the authoritative field text for a collapsed transformed deletion', () => {
     expect(
       deriveTerminalLiveCommit('a', {
         text: '',
         replacementText: '',
         replacementRange: { start: 1, end: 1 }
       })
-    ).toBeNull()
+    ).toEqual({ committedText: '', payload: '\x7f' })
+    expect(
+      deriveTerminalLiveCommit('😀', {
+        text: '',
+        replacementText: '',
+        replacementRange: { start: 2, end: 2 }
+      })
+    ).toEqual({ committedText: '', payload: '\x7f' })
   })
 
   it('emits nothing for a cancelled preedit or ambiguous non-suffix replacement', () => {

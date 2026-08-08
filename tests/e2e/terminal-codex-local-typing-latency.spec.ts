@@ -312,10 +312,18 @@ test.describe('local Codex terminal typing latency', () => {
       const echo = summarizeLatencies(parseLatencies)
       const painted = summarizeLatencies(renderLatencies)
 
+      const inputLatencies = report.dataSamples
+        .filter((sample) => sample.index >= WARMUP_KEYSTROKES)
+        .map((sample) => sample.keyToDataMs)
+      const input = summarizeLatencies(inputLatencies)
       const summary =
         `${formatDistribution('echo(key->parse)', echo)} | ` +
         `${formatDistribution('paint(key->render)', painted)} | ` +
-        `keys=${report.keysObserved} parseEvents=${report.parseEvents}`
+        `${formatDistribution('input(key->onData)', input)} | ` +
+        `keys=${report.keysObserved} parseEvents=${report.parseEvents} ` +
+        `dataSamples=${report.dataSamples.length} dataEvents=${report.dataEvents} ` +
+        `unattributedData=${report.unattributedDataEvents} imeKeys=${report.imeKeysObserved} ` +
+        `inputMeasured=${inputLatencies.length}`
       testInfo.annotations.push({ type: 'codex-local-typing-latency', description: summary })
       // Why stdout too: annotations are invisible in the default list reporter,
       // and these numbers are the whole point of the run.
@@ -332,6 +340,10 @@ test.describe('local Codex terminal typing latency', () => {
       // Why: a dropped keystroke means the composer stopped echoing, which the
       // latency percentiles alone would silently hide.
       expect(report.samples.length).toBe(TOTAL_KEYSTROKES)
+      // Why counts before percentiles on the input arm too: an unhooked `onData`
+      // records nothing, and a distribution over nothing reads as perfect latency.
+      expect(report.dataSamples.length).toBe(TOTAL_KEYSTROKES)
+      expect(input.count).toBe(TOTAL_KEYSTROKES - WARMUP_KEYSTROKES)
       expect(echo.p50).toBeLessThan(MAX_P50_ECHO_LATENCY_MS)
       expect(echo.p95).toBeLessThan(MAX_P95_ECHO_LATENCY_MS)
       expect(echo.max).toBeLessThan(MAX_WORST_ECHO_LATENCY_MS)

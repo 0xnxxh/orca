@@ -481,6 +481,21 @@ function createPaneContainer(): HTMLElement {
   return container
 }
 
+function makeInspectableBufferLine(text: string) {
+  const cells = Array.from(text)
+  return {
+    length: cells.length,
+    getCell: (column: number) => {
+      const char = cells[column]
+      return char === undefined ? undefined : { getChars: () => char, getWidth: () => 1 }
+    },
+    translateToString: (trimRight = false, start = 0, end = cells.length) => {
+      const value = cells.slice(start, end).join('')
+      return trimRight ? value.trimEnd() : value
+    }
+  }
+}
+
 function createPane(paneId: number) {
   const leafId = leafIdForPane(paneId)
   const activeBuffer = {
@@ -16342,6 +16357,13 @@ describe('connectPanePty', () => {
     setReattachPaneTitle('renamed shell')
 
     const pane = createPane(1)
+    Object.assign(pane.terminal.buffer.active, {
+      cursorY: 39,
+      getLine: (row: number) =>
+        makeInspectableBufferLine(
+          row === 1 ? '  Cursor Agent' : row === 8 ? '  → Plan, search, build anything' : ''
+        )
+    })
     const textarea = {} as HTMLTextAreaElement
     configureTerminalFocusMode(pane, textarea)
     const manager = createManager(1)
@@ -16380,8 +16402,8 @@ describe('connectPanePty', () => {
     const pane = createPane(1)
     // Why: a buffer whose visible rows carry no Cursor Agent screen models a shell foreground after a dead run left its screen in scrollback.
     Object.assign(pane.terminal.buffer.active, {
-      cursorX: 2,
-      getLine: () => undefined
+      cursorY: 39,
+      getLine: () => makeInspectableBufferLine('')
     })
     const textarea = {} as HTMLTextAreaElement
     configureTerminalFocusMode(pane, textarea)

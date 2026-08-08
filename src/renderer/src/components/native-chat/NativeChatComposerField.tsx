@@ -1,12 +1,8 @@
-import type {
-  ClipboardEventHandler,
-  CompositionEventHandler,
-  KeyboardEventHandler,
-  RefObject
-} from 'react'
-import { useLayoutEffect, useRef } from 'react'
+import type { ClipboardEventHandler, KeyboardEventHandler, RefObject } from 'react'
+import { useLayoutEffect } from 'react'
 import { Image as ImageIcon, ImageOff, X } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
+import { useImeEnterGestureOwnership } from '@/lib/ime-composition-keyboard-event'
 import { cn } from '@/lib/utils'
 import { NATIVE_FILE_DROP_TARGET } from '../../../../shared/native-file-drop'
 import { basename } from '@/lib/path'
@@ -39,8 +35,8 @@ export type NativeChatComposerFieldProps = {
   onDraftChange: (value: string, element: HTMLTextAreaElement) => void
   onTextareaSelect: (element: HTMLTextAreaElement) => void
   onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>
-  onCompositionStart: CompositionEventHandler<HTMLTextAreaElement>
-  onCompositionEnd: CompositionEventHandler<HTMLTextAreaElement>
+  onCompositionStart: (event: React.CompositionEvent<HTMLTextAreaElement>) => void
+  onCompositionEnd: (event: React.CompositionEvent<HTMLTextAreaElement>) => void
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>
   pickerListboxId: string
   onChoosePickerItem: (item: NativeChatPickerItem) => void
@@ -98,16 +94,15 @@ export function NativeChatComposerField({
   sessionOptionsSurface,
   sessionOptionsSnapshot
 }: NativeChatComposerFieldProps): React.JSX.Element {
-  const compositionActiveRef = useRef(false)
-  const pendingCompositionEnterRef = useRef<object | null>(null)
+  const imeEnter = useImeEnterGestureOwnership()
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
-    if (!textarea || compositionActiveRef.current || textarea.value === draft) {
+    if (!textarea || imeEnter.isComposing() || textarea.value === draft) {
       return
     }
     textarea.value = draft
-  }, [draft, textareaRef])
+  }, [draft, textareaRef, imeEnter])
 
   return (
     <div className="shrink-0 bg-background">
@@ -181,54 +176,18 @@ export function NativeChatComposerField({
               rows={2}
               onChange={(e) => onDraftChange(e.target.value, e.currentTarget)}
               onKeyDown={(event) => {
-                const ownsCompositionEnter =
-                  (event.nativeEvent.isComposing || compositionActiveRef.current) &&
-                  ((event.key === 'Enter' && (event.keyCode === 13 || event.keyCode === 229)) ||
-                    (event.key === 'Process' && event.keyCode === 229))
-                if (ownsCompositionEnter) {
-                  pendingCompositionEnterRef.current = {}
-                  return
-                }
-                if (
-                  pendingCompositionEnterRef.current &&
-                  event.key === 'Enter' &&
-                  event.keyCode === 13 &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  pendingCompositionEnterRef.current = null
-                  event.preventDefault()
-                  return
-                }
-                onKeyDown(event)
-              }}
-              onKeyUp={(event) => {
-                if (event.key === 'Process' && event.keyCode === 229) {
-                  pendingCompositionEnterRef.current = null
-                  return
-                }
-                if (
-                  pendingCompositionEnterRef.current &&
-                  event.key === 'Enter' &&
-                  event.keyCode === 13
-                ) {
-                  const pendingCompositionEnter = pendingCompositionEnterRef.current
-                  requestAnimationFrame(() => {
-                    if (pendingCompositionEnterRef.current === pendingCompositionEnter) {
-                      pendingCompositionEnterRef.current = null
-                    }
-                  })
+                if (!imeEnter.ownsKeyDown(event)) {
+                  onKeyDown(event)
                 }
               }}
-              onBlur={() => {
-                compositionActiveRef.current = false
-                pendingCompositionEnterRef.current = null
-              }}
+              onKeyUp={imeEnter.onKeyUp}
+              onBlur={imeEnter.reset}
               onCompositionStart={(event) => {
-                compositionActiveRef.current = true
+                imeEnter.setComposing(true)
                 onCompositionStart(event)
               }}
               onCompositionEnd={(event) => {
-                compositionActiveRef.current = false
+                imeEnter.setComposing(false)
                 onCompositionEnd(event)
               }}
               onPaste={onPaste}
