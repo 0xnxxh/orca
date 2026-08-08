@@ -173,6 +173,19 @@ describe('preload sandbox guard lexical masking', () => {
       [{ kind: 'node-builtin', detail: 'node:tty' }]
     )
   })
+
+  // `return /re/` is a regex, not division. The bare previous-character
+  // heuristic sees the `n` of `return` and leaves the pattern unmasked, so a
+  // safe preload fails to build.
+  it('ignores a module call inside a regex that follows a keyword', () => {
+    expect(findPreloadSandboxViolations('function f() { return /require("node:fs")/ }')).toEqual([])
+  })
+
+  it('still treats a slash after an identifier as division', () => {
+    expect(
+      findPreloadSandboxViolations('const r = total / count; const fs = require("node:fs")')
+    ).toEqual([{ kind: 'node-builtin', detail: 'node:fs' }])
+  })
 })
 
 describe('preload sandbox guard assertions', () => {

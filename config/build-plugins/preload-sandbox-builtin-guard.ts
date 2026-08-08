@@ -70,6 +70,32 @@ const MASKED = '\u0000'
  * Marks every comment and string-literal character, preserving offsets, so a match can be tested
  * for whether it sits in code or in data. Interpolations stay code: `${require('fs')}` is real.
  */
+/** A `/` after one of these starts a regex; after any other identifier it divides. */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  'return',
+  'typeof',
+  'instanceof',
+  'in',
+  'of',
+  'new',
+  'delete',
+  'void',
+  'throw',
+  'case',
+  'do',
+  'else',
+  'yield',
+  'await'
+])
+
+function identifierEndingAt(code: string, endIndex: number): string {
+  let start = endIndex
+  while (start > 0 && /[\w$]/.test(code[start - 1]!)) {
+    start -= 1
+  }
+  return code.slice(start, endIndex + 1)
+}
+
 function maskLexicalSpans(code: string): string {
   const chars = code.split('')
   const mask = (from: number, to: number): void => {
@@ -137,7 +163,12 @@ function maskLexicalSpans(code: string): string {
       continue
     }
     if (!/\s/.test(char)) {
-      regexAllowed = !/[\w$)\]]/.test(char)
+      // Why the keyword check: `return /re/` is a regex, but the char before the
+      // slash is a word character, so the bare heuristic would call it division
+      // and leave the pattern's contents unmasked.
+      regexAllowed = /[\w$]/.test(char)
+        ? REGEX_PRECEDING_KEYWORDS.has(identifierEndingAt(code, index))
+        : !/[)\]]/.test(char)
     }
     if (char === '`') {
       inTemplate = true
