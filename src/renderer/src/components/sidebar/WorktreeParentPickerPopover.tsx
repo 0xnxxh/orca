@@ -299,7 +299,8 @@ export function WorktreeParentPickerPopover({
   }
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    // Why: modal traps focus (incl. post-menu xterm restore); non-modal loses search focus.
+    <Popover modal open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor virtualRef={virtualAnchorRef} />
       <PopoverContent
         align="start"
@@ -307,6 +308,12 @@ export function WorktreeParentPickerPopover({
         sideOffset={8}
         collisionPadding={PICKER_VIEWPORT_PADDING}
         className="flex max-h-(--radix-popover-content-available-height) w-80 flex-col p-0"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          inputRef.current?.focus()
+        }}
+        // Why: virtual anchor has no trigger for Radix to restore focus to.
+        onCloseAutoFocus={(event) => event.preventDefault()}
         onInteractOutside={(event) => {
           if (suppressInitialOutsideCloseRef.current) {
             event.preventDefault()
@@ -333,7 +340,6 @@ export function WorktreeParentPickerPopover({
               'auto.components.sidebar.WorktreeParentPickerPopover.searchPlaceholder',
               'Search worktrees...'
             )}
-            autoFocus
           />
           <CommandList ref={listRef} className="max-h-72 min-h-0 flex-1">
             {filtered.length === 0 ? (
