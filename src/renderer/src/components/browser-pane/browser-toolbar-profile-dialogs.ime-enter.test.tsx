@@ -19,6 +19,8 @@ function renderDialogs(onCreateProfile: () => void): HTMLInputElement {
       newProfileName="한국 프로필"
       onNewProfileNameChange={() => {}}
       isCreatingProfile={false}
+      useNativeUserAgent={false}
+      onUseNativeUserAgentChange={() => {}}
       onCreateProfile={onCreateProfile}
       onCancelNewProfile={() => {}}
     />
