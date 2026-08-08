@@ -1,4 +1,7 @@
-import { selectAutoAdvertisedPairingAddress } from '../../../../shared/pairing-address-auto-selection'
+import {
+  isVirtualBridgeInterface,
+  selectAutoAdvertisedPairingAddress
+} from '../../../../shared/pairing-address-auto-selection'
 
 export type MobileNetworkInterface = {
   name: string
@@ -12,7 +15,8 @@ export function selectRefreshedNetworkAddress(
   // Why: callers that explicitly know the user picked a manual address
   // (not an OS-enumerated one) pass this so the refresh path keeps their
   // selection instead of snapping back to a tailnet/LAN fallback.
-  currentAddressIsManual: boolean = false
+  currentAddressIsManual: boolean = false,
+  currentAddressWasExplicitlySelected: boolean = false
 ): string | undefined {
   // Why: an empty refresh result usually means discovery is transiently
   // unavailable, not that the user wants to drop their selection. Keep the
@@ -20,9 +24,14 @@ export function selectRefreshedNetworkAddress(
   if (interfaces.length === 0) {
     return currentAddressIsManual ? currentAddress : undefined
   }
+  if (currentAddressIsManual) {
+    return currentAddress
+  }
+  const currentInterface = interfaces.find((iface) => iface.address === currentAddress)
   if (
-    currentAddress &&
-    (currentAddressIsManual || interfaces.some((iface) => iface.address === currentAddress))
+    currentInterface &&
+    (currentAddressWasExplicitlySelected ||
+      !isVirtualBridgeInterface(currentInterface.name, currentInterface.hasDefaultRoute))
   ) {
     return currentAddress
   }

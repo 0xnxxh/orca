@@ -20,6 +20,7 @@ describe('getWindowsDefaultRouteInterfaceNames', () => {
     )
 
     const script = runPowerShell.mock.calls[0]![0] as string
+    expect(runPowerShell.mock.calls[0]![1]).toBe(3_000)
     expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
     expect(script).toContain("$_.State -eq 'Alive'")
     expect(script).toContain("$_.DestinationPrefix -eq '0.0.0.0/0'")

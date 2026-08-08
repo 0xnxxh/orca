@@ -169,7 +169,13 @@ describe('registerMobileHandlers', () => {
       ],
       Ethernet: [{ family: 'IPv4', internal: false, address: '192.168.50.25' }]
     })
-    defaultRouteInterfaceNamesMock.mockResolvedValue(new Set(['vEthernet (Production LAN)']))
+    defaultRouteInterfaceNamesMock.mockResolvedValue(
+      new Set([
+        'vEthernet (Production LAN)',
+        'vEthernet (Default Switch)',
+        'vEthernet (WSL (Hyper-V firewall))'
+      ])
+    )
     const createMobilePairingOffer = vi.fn().mockResolvedValue({
       available: true,
       pairingUrl: 'orca://pair#external-switch',
@@ -188,8 +194,16 @@ describe('registerMobileHandlers', () => {
           hasDefaultRoute: true
         },
         { name: 'Ethernet', address: '192.168.50.25' },
-        { name: 'vEthernet (Default Switch)', address: '172.28.80.1' },
-        { name: 'vEthernet (WSL (Hyper-V firewall))', address: '172.20.96.1' }
+        {
+          name: 'vEthernet (Default Switch)',
+          address: '172.28.80.1',
+          hasDefaultRoute: true
+        },
+        {
+          name: 'vEthernet (WSL (Hyper-V firewall))',
+          address: '172.20.96.1',
+          hasDefaultRoute: true
+        }
       ]
     })
     await handlers.get('mobile:getPairingQR')?.(null, {})

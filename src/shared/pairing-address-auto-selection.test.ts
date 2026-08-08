@@ -12,11 +12,13 @@ const EXTERNAL_SWITCH = {
 } satisfies PairingNetworkInterface & { hasDefaultRoute: boolean }
 const DEFAULT_SWITCH: PairingNetworkInterface = {
   name: 'vEthernet (Default Switch)',
-  address: '172.28.80.1'
+  address: '172.28.80.1',
+  hasDefaultRoute: true
 }
 const WSL_SWITCH: PairingNetworkInterface = {
   name: 'vEthernet (WSL (Hyper-V firewall))',
-  address: '172.20.96.1'
+  address: '172.20.96.1',
+  hasDefaultRoute: true
 }
 const PHYSICAL_LAN: PairingNetworkInterface = {
   name: 'Ethernet',
@@ -49,6 +51,24 @@ describe('selectAutoAdvertisedPairingAddress', () => {
 
   it('filters a vEthernet adapter when route reachability is ambiguous', () => {
     expect(selectAutoAdvertisedPairingAddress([AMBIGUOUS_SWITCH])).toBeUndefined()
+  })
+
+  it.each([
+    'vEthernet (Default Switch)',
+    'vEthernet (default switch)',
+    'vEthernet (WSL)',
+    'vEthernet (WSL (Hyper-V firewall))'
+  ])('keeps the known host-local %s label filtered with a default route', (name) => {
+    expect(isVirtualBridgeInterface(name, true)).toBe(true)
+  })
+
+  it.each([
+    'vEthernet (Default Switchboard)',
+    'vEthernet (WSL-LAN)',
+    'vEthernet (WSL LAN)',
+    'vEthernet (WSL External)'
+  ])('does not treat the route-backed near-match %s as a known host-local label', (name) => {
+    expect(isVirtualBridgeInterface(name, true)).toBe(false)
   })
 
   it.each([

@@ -11,8 +11,13 @@ export type PairingNetworkInterface = {
 const VIRTUAL_BRIDGE_INTERFACE_PATTERN =
   /^(?:docker|br-|virbr|vmnet|vboxnet|veth|lxcbr|cni|flannel|cali|bridge)|VMware Network Adapter|VirtualBox Host-Only/i
 const HYPER_V_INTERFACE_PATTERN = /^vEthernet /i
+const HOST_LOCAL_HYPER_V_INTERFACE_PATTERN =
+  /^vEthernet \((?:Default Switch|WSL(?: \(Hyper-V firewall\))?)\)$/i
 
 export function isVirtualBridgeInterface(name: string, hasDefaultRoute?: boolean): boolean {
+  if (HOST_LOCAL_HYPER_V_INTERFACE_PATTERN.test(name)) {
+    return true
+  }
   if (HYPER_V_INTERFACE_PATTERN.test(name)) {
     return hasDefaultRoute !== true
   }
