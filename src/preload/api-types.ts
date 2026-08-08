@@ -3660,7 +3660,7 @@ export type PreloadApi = {
   }
   mobile: {
     listNetworkInterfaces: () => Promise<{
-      interfaces: { name: string; address: string }[]
+      interfaces: { name: string; address: string; hasDefaultRoute?: boolean }[]
     }>
     getPairingQR: (args?: {
       address?: string
