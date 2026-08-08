@@ -7325,6 +7325,15 @@ export default function TaskPage(): React.JSX.Element {
         return
       }
 
+      // Why: open menus/popovers own Esc; capture-phase leave would steal it from Radix.
+      if (
+        document.querySelector(
+          '[data-slot="dropdown-menu-content"], [data-slot="popover-content"], [role="menu"]'
+        )
+      ) {
+        return
+      }
+
       // Why: Esc first blurs a focused input so it doesn't accidentally close the whole page; only closes once focus is outside an input.
       if (
         target instanceof HTMLInputElement ||
