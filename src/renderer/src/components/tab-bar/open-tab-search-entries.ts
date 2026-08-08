@@ -16,7 +16,6 @@ import type { AppState } from '@/store/types'
 import {
   getRepoExecutionHostId,
   getWorktreeExecutionHostId,
-  LOCAL_EXECUTION_HOST_ID,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 
@@ -63,7 +62,7 @@ export function selectOpenTabSearchEntryState(
 ): OpenTabSearchEntryState | null {
   const preferredHostId =
     state.activeWorktreeId === worktreeId
-      ? (state.activeWorkspaceExecutionHostId ?? LOCAL_EXECUTION_HOST_ID)
+      ? (state.activeWorkspaceExecutionHostId ?? undefined)
       : undefined
   // Why getKnownWorktreeById: folder workspaces are absent from worktreesByRepo.
   const worktree = state.getKnownWorktreeById(worktreeId, preferredHostId) ?? null
@@ -71,17 +70,14 @@ export function selectOpenTabSearchEntryState(
     return null
   }
   const repoCandidates = state.repos.filter((candidate) => candidate.id === worktree.repoId)
+  const resolvedHostId = worktree.hostId ?? preferredHostId
   const repo =
-    (preferredHostId
-      ? repoCandidates.find((candidate) => getRepoExecutionHostId(candidate) === preferredHostId)
+    (resolvedHostId
+      ? repoCandidates.find((candidate) => getRepoExecutionHostId(candidate) === resolvedHostId)
       : undefined) ??
     repoCandidates[0] ??
     null
-  const executionHostId = getWorktreeExecutionHostId(
-    worktree,
-    repo ?? undefined,
-    preferredHostId ?? LOCAL_EXECUTION_HOST_ID
-  )
+  const executionHostId = getWorktreeExecutionHostId(worktree, repo ?? undefined)
   return {
     activeBrowserTabId: state.activeBrowserTabId,
     activeFileId: state.activeFileId,

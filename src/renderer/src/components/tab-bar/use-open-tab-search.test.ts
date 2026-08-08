@@ -260,6 +260,48 @@ describe('useOpenTabSearch', () => {
     expect(result.current.every((entry) => entry.executionHostId === runtimeHost)).toBe(true)
   })
 
+  it('resolves a hosted worktree when the active host is unknown', () => {
+    const runtimeHost = 'runtime:host-1' as const
+    const runtimeWorktree = {
+      ...makeWorktree('wt-1', 'Runtime'),
+      hostId: runtimeHost,
+      path: '/runtime/wt-1'
+    }
+    const localWorktree = { ...makeWorktree('wt-1', 'Local'), hostId: 'local' as const }
+    seedStore({
+      activeWorkspaceExecutionHostId: null,
+      repos: [
+        { ...repo, executionHostId: runtimeHost, path: '/runtime/repo-1' },
+        { ...repo, executionHostId: 'local', path: '/local/repo-1' }
+      ],
+      worktreesByRepo: { 'repo-1': [runtimeWorktree, localWorktree] }
+    })
+
+    const { result } = renderSearch()
+
+    expect(result.current).not.toHaveLength(0)
+    expect(result.current.every((entry) => entry.executionHostId === runtimeHost)).toBe(true)
+  })
+
+  it('returns tabs for a remote-only worktree when the active host is unknown', () => {
+    const sshHost = 'ssh:remote-1' as const
+    const remoteWorktree = {
+      ...makeWorktree('wt-1', 'Remote'),
+      hostId: sshHost,
+      path: '/remote/wt-1'
+    }
+    seedStore({
+      activeWorkspaceExecutionHostId: null,
+      repos: [{ ...repo, executionHostId: sshHost, path: '/remote/repo-1' }],
+      worktreesByRepo: { 'repo-1': [remoteWorktree] }
+    })
+
+    const { result } = renderSearch()
+
+    expect(result.current).not.toHaveLength(0)
+    expect(result.current.every((entry) => entry.executionHostId === sshHost)).toBe(true)
+  })
+
   it('does not rebuild results for agent-status heartbeats while open', () => {
     const { result } = renderSearch()
     const initialResults = result.current

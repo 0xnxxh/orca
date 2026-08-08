@@ -76,7 +76,7 @@ export function activateOpenTabSearchResult(result: OpenTabSearchResult): OpenTa
         )
       )
     }
-    return { status: 'activated', focus: () => focusTerminalTabSurface(activation.tabId) }
+    return { status: 'activated', focus: null }
   }
 
   const activation = activateWorkspaceTabPaletteResult({

@@ -138,19 +138,16 @@ describe('activateOpenTabSearchResult', () => {
     expect(events[0]?.detail).toEqual(detail)
   })
 
-  it('focuses the simulator tab the activation reports', () => {
+  it('leaves focus unchanged after activating a simulator tab', () => {
     const outcome = activateOpenTabSearchResult(simulatorResult)
 
-    if (outcome.status !== 'activated') {
-      throw new Error('expected activation')
-    }
-    outcome.focus?.()
     expect(mocks.activateSimulatorTab).toHaveBeenCalledWith({
       executionHostId: 'runtime:host-1',
       tabId: 'tab-3',
       worktreeId: 'wt-1'
     })
-    expect(mocks.focusTerminalTabSurface).toHaveBeenCalledWith('tab-3')
+    expect(outcome).toEqual({ status: 'activated', focus: null })
+    expect(mocks.focusTerminalTabSurface).not.toHaveBeenCalled()
   })
 
   it('reports a stale target per source', () => {
