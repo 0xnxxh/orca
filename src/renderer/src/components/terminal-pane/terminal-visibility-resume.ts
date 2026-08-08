@@ -79,9 +79,8 @@ export function resumeTerminalVisibility({
         if (flushDeferredPaneMetricOptionsIfMeasurable(pane)) {
           flushedDeferredMetrics = true
         }
-        // Why here: the light path skips fitting, so a devicePixelRatio change
-        // that landed while this tab was hidden has no other repair point (the
-        // heavy path reaches the same check through fitAllRevealedPanes).
+        // Why here: the light path neither recreates WebGL nor fits, so a dpr
+        // change that landed while this tab was hidden has no other repair point.
         repairPaneWebglCanvasDprMismatch(pane)
       }
       // Why: intra-worktree tab switches only toggle the overlay. Keeping

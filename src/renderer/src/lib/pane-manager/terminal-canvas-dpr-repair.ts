@@ -15,14 +15,12 @@ import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl
 type XtermRendererInternals = {
   _canvas?: HTMLCanvasElement
   _gl?: { canvas?: HTMLCanvasElement }
+  dimensions?: {
+    device?: { canvas?: { width?: number; height?: number } }
+  }
   handleDevicePixelRatioChange?: () => void
   handleResize?: (cols: number, rows: number) => void
 }
-
-// Fractional css widths round differently across zoom levels; one device px of
-// slack keeps the check from false-firing on rounding while still catching any
-// real dpr mismatch (the smallest is a 1.25x step ≈ 25% of the width).
-const BACKING_MISMATCH_TOLERANCE_PX = 1
 
 export function repairPaneWebglCanvasDprMismatch(pane: ManagedPane): boolean {
   const renderer = (
@@ -35,13 +33,21 @@ export function repairPaneWebglCanvasDprMismatch(pane: ManagedPane): boolean {
     return false
   }
   const view = canvas.ownerDocument?.defaultView
-  const rect = canvas.getBoundingClientRect()
-  if (!view || rect.width <= 0 || rect.height <= 0) {
+  const expected = renderer.dimensions?.device?.canvas
+  const expectedWidth = expected?.width ?? 0
+  const expectedHeight = expected?.height ?? 0
+  if (!view || expectedWidth <= 0 || expectedHeight <= 0) {
     return false
   }
-  const expectedWidth = Math.round(rect.width * view.devicePixelRatio)
   const staleBackingWidth = canvas.width
-  if (Math.abs(staleBackingWidth - expectedWidth) <= BACKING_MISMATCH_TOLERANCE_PX) {
+  const staleBackingHeight = canvas.height
+  // xterm rounds its CSS canvas size before ResizeObserver converts it back to
+  // device pixels; allow that round trip without forcing layout on every fit.
+  const roundingTolerance = Math.max(1, Math.ceil(view.devicePixelRatio / 2))
+  if (
+    Math.abs(staleBackingWidth - expectedWidth) <= roundingTolerance &&
+    Math.abs(staleBackingHeight - expectedHeight) <= roundingTolerance
+  ) {
     return false
   }
   try {

@@ -4,8 +4,10 @@ import { repairPaneWebglCanvasDprMismatch } from './terminal-canvas-dpr-repair'
 
 function makePane(args: {
   backingWidth: number
-  cssWidth: number
+  expectedWidth: number
   dpr: number
+  backingHeight?: number
+  expectedHeight?: number
   connected?: boolean
   hasRenderer?: boolean
 }): {
@@ -19,13 +21,25 @@ function makePane(args: {
   const refresh = vi.fn()
   const canvas = {
     width: args.backingWidth,
+    height: args.backingHeight ?? 1200,
     isConnected: args.connected ?? true,
     ownerDocument: { defaultView: { devicePixelRatio: args.dpr } },
-    getBoundingClientRect: () => ({ width: args.cssWidth, height: 600 })
+    getBoundingClientRect: () => {
+      throw new Error('repair detection must not force layout')
+    }
   }
   const renderer =
     (args.hasRenderer ?? true)
-      ? { _canvas: canvas, handleDevicePixelRatioChange, handleResize }
+      ? {
+          _canvas: canvas,
+          dimensions: {
+            device: {
+              canvas: { width: args.expectedWidth, height: args.expectedHeight ?? 1200 }
+            }
+          },
+          handleDevicePixelRatioChange,
+          handleResize
+        }
       : undefined
   const pane = {
     id: 1,
@@ -45,7 +59,7 @@ describe('repairPaneWebglCanvasDprMismatch', () => {
     // backing behind a 1080px css box at dpr 1 (half-size/smeared text).
     const { pane, handleDevicePixelRatioChange, handleResize, refresh } = makePane({
       backingWidth: 2160,
-      cssWidth: 1080,
+      expectedWidth: 1080,
       dpr: 1
     })
 
@@ -60,15 +74,15 @@ describe('repairPaneWebglCanvasDprMismatch', () => {
   })
 
   it('repairs the opposite direction (dpr-1 backing upscaled on retina)', () => {
-    const { pane, handleResize } = makePane({ backingWidth: 1080, cssWidth: 1080, dpr: 2 })
+    const { pane, handleResize } = makePane({ backingWidth: 1080, expectedWidth: 2160, dpr: 2 })
     expect(repairPaneWebglCanvasDprMismatch(pane)).toBe(true)
     expect(handleResize).toHaveBeenCalledTimes(1)
   })
 
-  it('is a no-op when backing matches css times dpr', () => {
+  it('is a no-op when backing matches the renderer device dimensions', () => {
     const { pane, handleResize, refresh } = makePane({
       backingWidth: 2160,
-      cssWidth: 1080,
+      expectedWidth: 2160,
       dpr: 2
     })
     expect(repairPaneWebglCanvasDprMismatch(pane)).toBe(false)
@@ -77,25 +91,57 @@ describe('repairPaneWebglCanvasDprMismatch', () => {
   })
 
   it('tolerates sub-pixel rounding without churning', () => {
-    // 1080.4 css at dpr 2 rounds to 2161; a 2160 backing is within tolerance.
-    const { pane, handleResize } = makePane({ backingWidth: 2160, cssWidth: 1080.4, dpr: 2 })
+    // ResizeObserver can round one device pixel away from renderer dimensions.
+    const { pane, handleResize } = makePane({ backingWidth: 2160, expectedWidth: 2161, dpr: 2 })
     expect(repairPaneWebglCanvasDprMismatch(pane)).toBe(false)
     expect(handleResize).not.toHaveBeenCalled()
   })
 
-  it('skips detached, zero-box, and renderer-less panes', () => {
-    const detached = makePane({ backingWidth: 2160, cssWidth: 1080, dpr: 1, connected: false })
+  it('tolerates the larger device-pixel round trip on high-dpr displays', () => {
+    const { pane, handleResize } = makePane({ backingWidth: 2160, expectedWidth: 2162, dpr: 4 })
+    expect(repairPaneWebglCanvasDprMismatch(pane)).toBe(false)
+    expect(handleResize).not.toHaveBeenCalled()
+  })
+
+  it('repairs when only the canvas height has stale backing', () => {
+    const { pane, handleResize } = makePane({
+      backingWidth: 2160,
+      expectedWidth: 2160,
+      dpr: 2,
+      backingHeight: 600,
+      expectedHeight: 1200
+    })
+    expect(repairPaneWebglCanvasDprMismatch(pane)).toBe(true)
+    expect(handleResize).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips detached, zero-dimension, and renderer-less panes', () => {
+    const detached = makePane({
+      backingWidth: 2160,
+      expectedWidth: 1080,
+      dpr: 1,
+      connected: false
+    })
     expect(repairPaneWebglCanvasDprMismatch(detached.pane)).toBe(false)
 
-    const zeroBox = makePane({ backingWidth: 2160, cssWidth: 0, dpr: 1 })
-    expect(repairPaneWebglCanvasDprMismatch(zeroBox.pane)).toBe(false)
+    const zeroDimension = makePane({ backingWidth: 2160, expectedWidth: 0, dpr: 1 })
+    expect(repairPaneWebglCanvasDprMismatch(zeroDimension.pane)).toBe(false)
 
-    const noRenderer = makePane({ backingWidth: 2160, cssWidth: 1080, dpr: 1, hasRenderer: false })
+    const noRenderer = makePane({
+      backingWidth: 2160,
+      expectedWidth: 1080,
+      dpr: 1,
+      hasRenderer: false
+    })
     expect(repairPaneWebglCanvasDprMismatch(noRenderer.pane)).toBe(false)
   })
 
   it('reports failure without throwing when the repair path throws mid-teardown', () => {
-    const { pane, handleResize } = makePane({ backingWidth: 2160, cssWidth: 1080, dpr: 1 })
+    const { pane, handleResize } = makePane({
+      backingWidth: 2160,
+      expectedWidth: 1080,
+      dpr: 1
+    })
     handleResize.mockImplementation(() => {
       throw new Error('disposed')
     })
