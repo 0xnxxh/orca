@@ -4,11 +4,6 @@ import {
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
-import { isAiVaultSyntheticSessionPath } from '../../../../shared/ai-vault-session-deletion'
-
-// One definition, shared with main's delete validator; re-exported here under
-// the name this module's callers already use.
-export { isAiVaultSyntheticSessionPath as isSyntheticAiVaultSessionPath }
 
 export function canUseLocalAiVaultSessionPathActions(
   executionHostId: ExecutionHostId | null | undefined
@@ -16,6 +11,14 @@ export function canUseLocalAiVaultSessionPathActions(
   // Why: Electron shell open/reveal APIs only validate paths on this computer;
   // SSH session history exposes paths that exist on the remote host instead.
   return normalizeExecutionHostId(executionHostId) === LOCAL_EXECUTION_HOST_ID
+}
+
+export function isSyntheticAiVaultSessionPath(filePath: string): boolean {
+  // Why: newer OpenCode sessions use a synthetic `<database>#<sessionId>`
+  // scanner identity backed by SQLite — not a real filesystem path. A '#'
+  // session marker never appears in a genuine local transcript path, so it is
+  // a reliable v1 signal that there is no single file to open in Orca.
+  return filePath.includes('#')
 }
 
 /**
@@ -34,5 +37,5 @@ export function canOpenAiVaultSessionLogInOrca(
   if (!canUseLocalAiVaultSessionPathActions(session.executionHostId)) {
     return false
   }
-  return !isAiVaultSyntheticSessionPath(filePath)
+  return !isSyntheticAiVaultSessionPath(filePath)
 }

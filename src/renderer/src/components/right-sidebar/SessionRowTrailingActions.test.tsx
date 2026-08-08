@@ -23,8 +23,6 @@ function renderActions(onContinueInNewSession?: () => void): string {
         onContinueInNewSession={onContinueInNewSession}
         onCopyId={vi.fn()}
         onCopyPath={vi.fn()}
-        deleteBlockedReason={null}
-        onRequestDelete={vi.fn()}
       />
     </TooltipProvider>
   )

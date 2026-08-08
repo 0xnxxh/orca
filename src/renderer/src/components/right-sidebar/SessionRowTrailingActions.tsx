@@ -58,9 +58,7 @@ export function SessionRowTrailingActions({
   onCopyPath,
   onOpenLog,
   onRevealLog,
-  onOpenCwd,
-  deleteBlockedReason,
-  onRequestDelete
+  onOpenCwd
 }: {
   session: AiVaultSession
   detailsExpanded: boolean
@@ -81,9 +79,6 @@ export function SessionRowTrailingActions({
   onOpenLog?: () => void
   onRevealLog?: () => void
   onOpenCwd?: () => void
-  // Null when Delete is offered; otherwise the tooltip explaining why it isn't.
-  deleteBlockedReason: string | null
-  onRequestDelete: () => void
 }) {
   const jumpToWorktreeTooltip = aiVaultWorktreeJumpTooltip(worktreeInfo)
 
@@ -265,8 +260,6 @@ export function SessionRowTrailingActions({
             onOpenLog={onOpenLog}
             onRevealLog={onRevealLog}
             onOpenCwd={onOpenCwd}
-            deleteBlockedReason={deleteBlockedReason}
-            onDelete={onRequestDelete}
           />
         </DropdownMenuContent>
       </DropdownMenu>
