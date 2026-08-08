@@ -17,7 +17,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT } from '../../../shared/updater-renderer-events'
+import {
+  ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT,
+  ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT
+} from '../../../shared/updater-renderer-events'
 import { registerUpdaterBeforeUnloadBypass } from './updater-beforeunload'
 import {
   isLazyChunkLoadError,
@@ -117,6 +120,49 @@ describe('loadLazyWithRetry during a committed update install', () => {
     }).catch(() => undefined)
 
     expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBeNull()
+  })
+
+  it('does not mistake an in-flight ordinary recovery reload for an update install', async () => {
+    // The ordinary recovery path announces itself with ORCA_APP_RESTART_STARTED_EVENT,
+    // which also marks the shared "intentional restart" flag. Only an updater install
+    // swaps app.asar, so keying off the shared flag would mislabel this failure — and
+    // hide, behind an update-shaped outcome, a chunk failure that has nothing to do
+    // with updating.
+    const breadcrumbs = installBreadcrumbSink()
+
+    const first = loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'chunk-a'
+    }).catch(() => undefined)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'chunk-b'
+    }).catch(() => undefined)
+
+    const mislabelled = breadcrumbs.filter(
+      (crumb) => crumb.data.reloadKey === 'chunk-b' && crumb.data.outcome === 'update-install-in-progress'
+    )
+    expect(mislabelled).toEqual([])
+    await first
+  })
+
+  it('restores ordinary recovery when the install aborts', async () => {
+    // A cancelled or failed install must not leave chunk recovery disabled for the
+    // rest of the session — the bundle was never swapped.
+    installBreadcrumbSink()
+    commitUpdateInstall()
+    window.dispatchEvent(new Event(ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT))
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'right-sidebar'
+    }).catch(() => undefined)
+
+    expect(window.location.reload).toHaveBeenCalled()
   })
 
   it('still requests recovery when no install is committed', async () => {

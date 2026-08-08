@@ -4,7 +4,7 @@ import {
   requestLazyChunkRecoveryReload,
   type LazyChunkRecoveryReloadOutcome
 } from './lazy-chunk-recovery-reload'
-import { isIntentionalAppRestartInProgress } from './updater-beforeunload'
+import { isUpdaterInstallCommitted } from './updater-beforeunload'
 
 /**
  * Resilient replacement for React.lazy.
@@ -201,7 +201,7 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
   // offsets return another file's bytes. Reloading cannot land — the process is
   // already being torn down — and waiting out the grace window only delays the
   // restart. Contain immediately and leave the guard clean for the next document.
-  if (isIntentionalAppRestartInProgress()) {
+  if (isUpdaterInstallCommitted()) {
     recordReloadBreadcrumb(
       'lazy_chunk_reload_skipped',
       reloadKey,
