@@ -16,7 +16,11 @@ import { resolveTerminalHostSessionCwd } from './terminal-host-session-cwd'
 import { TerminalHostTombstones } from './terminal-host-tombstones'
 import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
 import { createOrAttachTerminalSession } from './terminal-host-session-create'
-import { computeSessionScrollbackRows } from './daemon-scrollback-budget'
+import {
+  allocateSessionScrollbackRows,
+  resolveDaemonScrollbackBudgetCells
+} from './daemon-scrollback-budget'
+import { isValidPtySize } from './daemon-pty-size'
 import { isShellProcess } from '../../shared/agent-detection'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
@@ -36,6 +40,7 @@ export class TerminalHost {
   private disposePromise: Promise<void> | null = null
   private readonly agentSessionOwners = new ClaimedAgentPtyOwnerRegistry()
   private readonly agentSessionGenerations = new TerminalHostAgentSessionGenerations()
+  private readonly scrollbackBudgetCells = resolveDaemonScrollbackBudgetCells()
 
   constructor(opts: TerminalHostOptions) {
     this.spawnSubprocess = opts.spawnSubprocess
@@ -81,12 +86,19 @@ export class TerminalHost {
     })
   }
 
-  // Why: retained rows are O(sessions × depth) and session count is unbounded, so re-split the
-  // daemon's row budget whenever the count changes rather than letting every session hold full depth.
-  private applyScrollbackBudget(): void {
-    const rows = computeSessionScrollbackRows(this.sessions.size)
-    for (const session of this.sessions.values()) {
-      session.setRetainedScrollbackRows(rows)
+  // Why: retained grid is O(columns × depth), so keep one width-aware budget across live sessions.
+  private applyScrollbackBudget(proposedSize?: { sessionId: string; columns: number }): void {
+    const sessions = [...this.sessions.entries()]
+    const rowLimits = allocateSessionScrollbackRows(
+      sessions.map(([sessionId, session]) =>
+        sessionId === proposedSize?.sessionId
+          ? proposedSize.columns
+          : (session.getAppliedSize()?.cols ?? 80)
+      ),
+      { budgetCells: this.scrollbackBudgetCells }
+    )
+    for (let index = 0; index < sessions.length; index += 1) {
+      sessions[index][1].setRetainedScrollbackRows(rowLimits[index])
     }
   }
 
@@ -99,7 +111,16 @@ export class TerminalHost {
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
-    this.getAliveSession(sessionId).resize(cols, rows)
+    const session = this.getAliveSession(sessionId)
+    if (!isValidPtySize(cols, rows)) {
+      return
+    }
+    const previousColumns = session.getAppliedSize()?.cols
+    if (cols !== previousColumns) {
+      // Tighten before xterm widens its retained lines; loosen before narrowing reflow can drop history.
+      this.applyScrollbackBudget({ sessionId, columns: cols })
+    }
+    session.resize(cols, rows)
   }
 
   // Why null-not-throw (unlike write/resize): pause/resume are best-effort hints against a session that may have exited.

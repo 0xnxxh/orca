@@ -8,7 +8,7 @@ import { TerminalHost } from './terminal-host'
 import type { SubprocessHandle } from './session'
 import { HeadlessEmulator } from './headless-emulator'
 import {
-  computeSessionScrollbackRows,
+  allocateSessionScrollbackRows,
   DAEMON_SCROLLBACK_FULL_ROWS
 } from './daemon-scrollback-budget'
 
@@ -57,10 +57,10 @@ describe('TerminalHost scrollback budget', () => {
     applyRows.mockRestore()
   })
 
-  async function create(sessionId: string): Promise<void> {
+  async function create(sessionId: string, cols = 80): Promise<void> {
     await host.createOrAttach({
       sessionId,
-      cols: 80,
+      cols,
       rows: 24,
       streamClient: { onData: vi.fn(), onExit: vi.fn() }
     })
@@ -85,7 +85,7 @@ describe('TerminalHost scrollback budget', () => {
     const lastFour = applyRows.mock.calls.slice(-4)
     expect(lastFour).toHaveLength(4)
     for (const call of lastFour) {
-      expect(call[0]).toBe(computeSessionScrollbackRows(4))
+      expect(call[0]).toBe(DAEMON_SCROLLBACK_FULL_ROWS)
     }
   })
 
@@ -105,15 +105,83 @@ describe('TerminalHost scrollback budget', () => {
       await create(`session-${i}`)
     }
     const applied = lastAppliedRows()
-    expect(applied).toBe(computeSessionScrollbackRows(SESSIONS))
+    expect(applied).toBe(allocateSessionScrollbackRows(Array(SESSIONS).fill(80))[0])
     expect(applied).toBeLessThan(DAEMON_SCROLLBACK_FULL_ROWS)
+  })
+
+  it('accounts for each session width without stranding narrow-session capacity', async () => {
+    const columns: number[] = []
+    for (let i = 0; i < 20; i++) {
+      await create(`narrow-${i}`, 40)
+      await create(`wide-${i}`, 120)
+      columns.push(40, 120)
+    }
+
+    expect(applyRows.mock.calls.slice(-40).map((call) => call[0])).toEqual(
+      allocateSessionScrollbackRows(columns)
+    )
   })
 
   it('applies each concurrent create before yielding', async () => {
     const pending = Array.from({ length: 30 }, (_, i) => create(`concurrent-${i}`))
 
-    expect(lastAppliedRows()).toBe(computeSessionScrollbackRows(30))
+    expect(lastAppliedRows()).toBe(allocateSessionScrollbackRows(Array(30).fill(80))[0])
     await Promise.all(pending)
+  })
+
+  it('applies a width-aware budget before resizing the emulator', async () => {
+    const resizeEmulator = vi.spyOn(HeadlessEmulator.prototype, 'resize')
+    try {
+      for (let i = 0; i < 25; i++) {
+        await create(`session-${i}`)
+      }
+      expect(lastAppliedRows()).toBe(DAEMON_SCROLLBACK_FULL_ROWS)
+      applyRows.mockClear()
+
+      host.resize('session-0', 160, 24)
+
+      expect(applyRows.mock.calls.map((call) => call[0])).toEqual(
+        allocateSessionScrollbackRows([160, ...Array(24).fill(80)])
+      )
+      expect(applyRows.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        resizeEmulator.mock.invocationCallOrder[0]
+      )
+
+      applyRows.mockClear()
+      resizeEmulator.mockClear()
+      host.resize('session-0', 80, 24)
+      expect(applyRows.mock.calls.map((call) => call[0])).toEqual(Array(25).fill(5000))
+      expect(applyRows.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        resizeEmulator.mock.invocationCallOrder[0]
+      )
+    } finally {
+      resizeEmulator.mockRestore()
+    }
+  })
+
+  it('does not scan sessions again for a row-only or rejected resize', async () => {
+    await create('a')
+    await create('b')
+    applyRows.mockClear()
+
+    host.resize('a', 80, 40)
+    host.resize('a', Number.NaN, 40)
+
+    expect(applyRows).not.toHaveBeenCalled()
+  })
+
+  it('budgets a one-column resize at the headless emulator applied width', async () => {
+    for (let i = 0; i < 27; i++) {
+      await create(`session-${i}`)
+    }
+    applyRows.mockClear()
+
+    host.resize('session-0', 1, 24)
+
+    expect(host.getAppliedSize('session-0')?.cols).toBe(2)
+    expect(applyRows.mock.calls.map((call) => call[0])).toEqual(
+      allocateSessionScrollbackRows([2, ...Array(26).fill(80)])
+    )
   })
 
   it('restores depth to survivors when sessions exit', async () => {
