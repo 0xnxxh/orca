@@ -202,6 +202,7 @@ const restoreLocalWatcherAfterFailedRemovalMock = vi.hoisted(() => vi.fn())
 const restoreRemoteWatcherAfterFailedRemovalMock = vi.hoisted(() => vi.fn())
 const forgetLocalWatcherRemovalSnapshotMock = vi.hoisted(() => vi.fn())
 const forgetRemoteWatcherRemovalSnapshotMock = vi.hoisted(() => vi.fn())
+const scanLocalRepoWorktreesForResolutionMock = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => electronMocks)
 vi.mock('../ipc/filesystem-watcher', () => ({
@@ -412,6 +413,10 @@ vi.mock('../git/worktree', () => ({
   addWorktree: addWorktreeMock,
   removeWorktree: removeWorktreeMock,
   forceDeleteLocalBranch: forceDeleteLocalBranchMock
+}))
+
+vi.mock('./repo-worktree-resolution-scan', () => ({
+  scanLocalRepoWorktreesForResolution: scanLocalRepoWorktreesForResolutionMock
 }))
 
 vi.mock('../terminal-history-deletion', () => ({
@@ -653,6 +658,18 @@ function resetRuntimeTestMocks(): void {
   forgetRemoteWatcherRemovalSnapshotMock.mockReset()
   vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
   vi.mocked(listWorktreesStrict).mockResolvedValue(MOCK_GIT_WORKTREES)
+  scanLocalRepoWorktreesForResolutionMock
+    .mockReset()
+    .mockImplementation(async (repoPath: string, options: { wslDistro?: string }) => {
+      try {
+        const worktrees = options.wslDistro
+          ? await listWorktrees(repoPath, options)
+          : await listWorktrees(repoPath)
+        return { ok: true, worktrees }
+      } catch {
+        return { ok: false, worktrees: [] }
+      }
+    })
   vi.mocked(addWorktree).mockReset()
   vi.mocked(assertWorktreeCleanForRemoval).mockReset()
   vi.mocked(assertWorktreeCleanForRemoval).mockResolvedValue(undefined)
