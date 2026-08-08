@@ -645,9 +645,19 @@ function App(): React.JSX.Element {
         restoreFloatingTerminalReturnFocus()
       }
       setFloatingTerminalOpen(resolvedOpen)
-      persistFloatingTerminalPanelOpen(resolvedOpen)
+      // Why gated on the flag: `settings` is undefined until it hydrates, so the
+      // feature-off effect force-closes the panel on every boot. Persisting there would
+      // overwrite the user's restored `open` with a value they never chose.
+      if (floatingTerminalEnabled) {
+        persistFloatingTerminalPanelOpen(resolvedOpen)
+      }
     },
-    [floatingTerminalOpen, rememberFloatingTerminalReturnFocus, restoreFloatingTerminalReturnFocus]
+    [
+      floatingTerminalEnabled,
+      floatingTerminalOpen,
+      rememberFloatingTerminalReturnFocus,
+      restoreFloatingTerminalReturnFocus
+    ]
   )
 
   useEffect(() => {

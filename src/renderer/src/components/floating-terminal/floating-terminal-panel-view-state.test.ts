@@ -35,6 +35,18 @@ describe('floating terminal panel view state', () => {
     expect(readPersistedFloatingTerminalPanelViewState()).toEqual({ open: true, maximized: false })
   })
 
+  it('lets a later write destroy a restored open preference', () => {
+    // Why pinned: this is the hazard the App-side guard exists for. `settings` hydrates
+    // asynchronously, so the feature flag reads false on every boot before it resolves and
+    // the feature-off effect force-closes the panel. If that path persists, it overwrites a
+    // preference the user never changed - which is exactly what shipped and had to be fixed.
+    persistFloatingTerminalPanelOpen(true)
+    expect(readPersistedFloatingTerminalPanelViewState()?.open).toBe(true)
+
+    persistFloatingTerminalPanelOpen(false)
+    expect(readPersistedFloatingTerminalPanelViewState()?.open).toBe(false)
+  })
+
   it('restores the half a older record carries', () => {
     // Why: a record written before the second flag existed must still restore.
     window.localStorage.setItem(
