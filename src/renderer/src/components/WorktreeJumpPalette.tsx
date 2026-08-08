@@ -268,6 +268,10 @@ const EMPTY_QUERY_RECENT_TAB_CAP = 6
 const EMPTY_QUERY_ROW_BUDGET = 10
 const EMPTY_QUERY_WORKTREE_CAP = 5
 const EMPTY_RECENT_TAB_ORDER: readonly string[] = []
+const EMPTY_SORTED_WORKTREES: Worktree[] = []
+const EMPTY_BROWSER_PAGE_ENTRIES: SearchableBrowserPage[] = []
+const EMPTY_SIMULATOR_TAB_ENTRIES: SearchableSimulatorTab[] = []
+const EMPTY_WORKSPACE_TAB_ENTRIES: SearchableWorkspaceTab[] = []
 // Why: the interleaved layout emits a section header twice; the second copy needs a distinct entry id.
 const CONTINUED_SECTION_HEADER_ID_SUFFIX = '__continued'
 
@@ -483,6 +487,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     useShallow((s) => selectWorktreePaletteCacheInputs(s, visible || statusInputsLingering))
   )
   const migrationUnsupportedByPtyId = useAppStore((s) => s.migrationUnsupportedByPtyId)
+  const activeView = useAppStore((s) => s.activeView)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const activeTabType = useAppStore((s) => s.activeTabType)
   const activeTabId = useAppStore((s) => s.activeTabId)
@@ -733,37 +738,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     return hasQuery && filterPredicate ? scope.filter(filterPredicate.matchesWorktree) : scope
   }, [allWorktrees, filterPredicate, hasQuery, switchableWorktreesForRows])
 
-  // Why: typed queries route through sortWorktreesSmart — ranking only diverges on the empty-query branch.
-  const sortedWorktrees = useMemo(
-    () =>
-      hasQuery
-        ? sortWorktreesSmart(
-            searchScopeWorktrees,
-            tabsByWorktree,
-            repoMap,
-            agentStatusByPaneKey,
-            runtimePaneTitlesByTabId,
-            ptyIdsByTabId,
-            migrationUnsupportedByPtyId,
-            terminalLayoutsByTabId
-          )
-        : searchScopeWorktrees,
-    [
-      hasQuery,
-      searchScopeWorktrees,
-      tabsByWorktree,
-      repoMap,
-      agentStatusByPaneKey,
-      runtimePaneTitlesByTabId,
-      ptyIdsByTabId,
-      migrationUnsupportedByPtyId,
-      terminalLayoutsByTabId
-    ]
-  )
-
+  // Why: browser-tab search is cross-worktree, so sort all worktrees once (including archived).
+  // Gated on paletteStatusInputsActive so the closed-but-mounted palette skips the sort entirely.
   const browserSortedWorktrees = useMemo(() => {
-    // Why: browser-tab search is cross-worktree, so keep indexing browser pages even when the owning worktree is archived/hidden.
-    // The filter still applies — narrowing before the sort also shrinks the open-tab index it feeds.
+    if (!paletteStatusInputsActive) {
+      return EMPTY_SORTED_WORKTREES
+    }
     const scope = filterPredicate
       ? allWorktrees.filter(filterPredicate.matchesWorktree)
       : allWorktrees
@@ -778,6 +758,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       terminalLayoutsByTabId
     )
   }, [
+    paletteStatusInputsActive,
     allWorktrees,
     filterPredicate,
     tabsByWorktree,
@@ -788,6 +769,13 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     migrationUnsupportedByPtyId,
     terminalLayoutsByTabId
   ])
+
+  // Why: derive typed-query sort from browserSortedWorktrees (P2-a) — both call sortWorktreesSmart
+  // with the same deps, so filtering the superset avoids a redundant sort.
+  const sortedWorktrees = useMemo(
+    () => (hasQuery ? browserSortedWorktrees.filter((w) => !w.isArchived) : searchScopeWorktrees),
+    [hasQuery, browserSortedWorktrees, searchScopeWorktrees]
+  )
 
   // Why: browser search includes archived worktrees, so this map must cover all worktrees, not just non-archived.
   const worktreeMap = useMemo(() => {
@@ -838,6 +826,9 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   )
 
   const browserPageEntries = useMemo<SearchableBrowserPage[]>(() => {
+    if (!paletteStatusInputsActive) {
+      return EMPTY_BROWSER_PAGE_ENTRIES
+    }
     return buildSearchableBrowserPages({
       worktrees: browserSortedWorktrees,
       repoMap,
@@ -849,6 +840,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       activeTabType
     })
   }, [
+    paletteStatusInputsActive,
     activeBrowserTabId,
     activeTabType,
     activeWorktreeId,
@@ -865,6 +857,9 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   )
 
   const simulatorTabEntries = useMemo<SearchableSimulatorTab[]>(() => {
+    if (!paletteStatusInputsActive) {
+      return EMPTY_SIMULATOR_TAB_ENTRIES
+    }
     return buildSearchableSimulatorTabs({
       worktrees: browserSortedWorktrees,
       repoMap,
@@ -876,6 +871,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       activeTabType
     })
   }, [
+    paletteStatusInputsActive,
     activeGroupIdByWorktree,
     activeTabType,
     activeWorktreeId,
@@ -892,6 +888,9 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   )
 
   const workspaceTabEntries = useMemo<SearchableWorkspaceTab[]>(() => {
+    if (!paletteStatusInputsActive) {
+      return EMPTY_WORKSPACE_TAB_ENTRIES
+    }
     return buildSearchableWorkspaceTabs({
       worktrees: browserSortedWorktrees,
       repoMap,
@@ -914,6 +913,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       generatedTitlesEnabled: settings?.tabAutoGenerateTitle === true
     })
   }, [
+    paletteStatusInputsActive,
     activeFileId,
     activeFileIdByWorktree,
     activeGroupIdByWorktree,
@@ -1334,22 +1334,39 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     ]
   )
 
-  const quickActionContext = buildQuickActionContext()
+  // Why: filtering via buildQuickActionContext() inside a memo with stable primitive deps
+  // instead of calling it inline every render — a fresh context object as a useMemo dep
+  // defeated the middleItems memo (new identity every keystroke).
+  const availableActionResults = useMemo(() => {
+    const ctx = buildQuickActionContext()
+    return actionResults.filter((action) => action.isAvailable(ctx).available)
+  }, [
+    actionResults,
+    buildQuickActionContext,
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- these are the availability-determining primitives buildQuickActionContext reads from the store; listing them ensures the memo recomputes when availability actually changes, not on every render.
+    activeView,
+    activeWorktreeId,
+    worktreesByRepo,
+    repos,
+    sshConnectionStates,
+    activeGroupIdByWorktree,
+    groupsByWorktree,
+    isLoading,
+    settings?.activeRuntimeEnvironmentId
+  ])
 
   const middleItems = useMemo<(SettingsPaletteItem | QuickActionPaletteItem)[]>(
     () =>
       rankCmdJMiddleResults({
         query: deferredQuery,
         settingsResults,
-        actionResults: actionResults.filter(
-          (action) => action.isAvailable(quickActionContext).available
-        )
+        actionResults: availableActionResults
       }).map((result) =>
         result.kind === 'settings'
           ? { id: result.id, type: 'settings' as const, result }
           : { id: `quick-action:${result.id}`, type: 'quick-action' as const, result }
       ),
-    [actionResults, deferredQuery, quickActionContext, settingsResults]
+    [availableActionResults, deferredQuery, settingsResults]
   )
 
   // Why: both lists are relevance-sorted, so their heads carry each section's best hit. The stronger
@@ -1476,25 +1493,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
         })
       }
     }
-    // Why the create row is excluded: it's present for every non-empty query, so counting it would
-    // make "suppress lone headers" always false and reinstate the noise the rule exists to kill.
-    const populatedSectionCount = [
-      visibleWorktreeItems.length,
-      visibleProjectTargetItems.length,
-      visibleMiddleItems.length,
-      visibleOpenTabItems.length
-    ].filter((count) => count > 0).length
-
-    // Header rule: empty query shows lone headers as signposts; on query, suppress unless both sections are populated (else noise).
-    const showWorktreeHeader = hasQuery
-      ? visibleWorktreeItems.length > 0 && populatedSectionCount > 1
-      : visibleWorktreeItems.length > 0
-    const showOpenTabsHeader = hasQuery
-      ? visibleOpenTabItems.length > 0 && populatedSectionCount > 1
-      : visibleOpenTabItems.length > 0
-    const showProjectTargetHeader =
-      hasQuery && visibleProjectTargetItems.length > 0 && populatedSectionCount > 1
-    const showMiddleHeader = hasQuery && visibleMiddleItems.length > 0 && populatedSectionCount > 1
+    // Why always: a lone search section still needs its label (mock single-section Open Tabs);
+    // empty sections stay unlabeled because their push helpers short-circuit on zero rows.
+    const showWorktreeHeader = visibleWorktreeItems.length > 0
+    const showOpenTabsHeader = visibleOpenTabItems.length > 0
+    const showProjectTargetHeader = visibleProjectTargetItems.length > 0
+    const showMiddleHeader = visibleMiddleItems.length > 0
 
     // idSuffix: the interleaved layout re-emits a header for the section's remainder, which needs its own key.
     const pushOpenTabsHeader = (idSuffix = ''): void => {

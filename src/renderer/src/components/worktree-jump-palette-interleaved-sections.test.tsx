@@ -7,6 +7,10 @@ import type * as ReactI18Next from 'react-i18next'
 import type { Repo, Tab, TabGroup, TerminalTab, Worktree } from '../../../shared/types'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
+import {
+  layoutMultiPrimaryPaletteSections,
+  orderMultiPrimaryPaletteItems
+} from './cmd-j/palette-section-render-cap'
 import WorktreeJumpPalette from './WorktreeJumpPalette'
 
 vi.mock('react-i18next', async (importOriginal) => {
@@ -275,5 +279,58 @@ describe('WorktreeJumpPalette interleaved primary sections', () => {
     for (const { header, rowId } of rows) {
       expect(header).toBe(rowId.startsWith('workspace-tab:') ? 'Open Tabs' : 'Worktrees')
     }
+  })
+
+  it('renders selectable rows in the same order as orderMultiPrimaryPaletteItems', async () => {
+    await renderPalette(makeInterleavedQueryState())
+
+    await act(async () => {
+      setCommandQuery?.('perf')
+    })
+    await flushEffects()
+
+    const renderedIds = Array.from(
+      testContainer.querySelectorAll<HTMLElement>('[data-command-item]')
+    )
+      .map((el) => el.dataset.commandItem!)
+      .filter((id) => id.startsWith('workspace-tab:') || id.startsWith('worktree:'))
+
+    const tabIds = renderedIds.filter((id) => id.startsWith('workspace-tab:'))
+    const worktreeIds = renderedIds.filter((id) => id.startsWith('worktree:'))
+
+    const layout = layoutMultiPrimaryPaletteSections({
+      leadingItems: tabIds,
+      trailingItems: worktreeIds
+    })
+    const expectedOrder = orderMultiPrimaryPaletteItems(layout)
+    expect(renderedIds).toEqual(expectedOrder)
+  })
+
+  it('keeps the Open Tabs header when a typed query only hits tabs', async () => {
+    await renderPalette({
+      worktreesByRepo: {
+        'repo-1': [makeWorktree('wt-tabs', 'tab-host'), makeWorktree('wt-other', 'docs-only')]
+      },
+      showSleepingWorkspaces: true,
+      ptyIdsByTabId: { 'term-0': ['pty-0'] },
+      tabsByWorktree: {
+        'wt-tabs': [makeTerminalTab('term-0', 'wt-tabs', 'ubuntu agent session')]
+      },
+      unifiedTabsByWorktree: {
+        'wt-tabs': [makeUnifiedTab('tab-0', 'wt-tabs', 'term-0', 'ubuntu agent session')]
+      },
+      groupsByWorktree: { 'wt-tabs': [makeGroup('wt-tabs', ['tab-0'])] },
+      activeGroupIdByWorktree: { 'wt-tabs': 'group-wt-tabs' }
+    })
+
+    await act(async () => {
+      setCommandQuery?.('ubuntu')
+    })
+    await flushEffects()
+
+    const rows = getPrimaryRowsBySectionHeader()
+    expect(rows).toEqual([{ header: 'Open Tabs', rowId: 'workspace-tab:tab-0' }])
+    expect(testContainer.textContent).toContain('Open Tabs')
+    expect(testContainer.textContent).not.toContain('Worktrees')
   })
 })
