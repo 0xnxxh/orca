@@ -270,6 +270,46 @@ describe('WSL direct Git reads', () => {
     })
   })
 
+  it('keeps the fast path when direct and login Git both report an expected failure', async () => {
+    await withPlatform('win32', async () => {
+      seedWslGitReadEnvironmentForTests(DISTRO, LOGIN_ENVIRONMENT)
+      execFileMock
+        .mockImplementationOnce((_command, _args, _options, callback) => {
+          const child = createMockChild()
+          queueMicrotask(() =>
+            callback?.(Object.assign(new Error('exit 1'), { code: 1 }), '', 'missing ref')
+          )
+          return child
+        })
+        .mockImplementationOnce((_command, _args, _options, callback) => {
+          const child = createMockChild()
+          queueMicrotask(() =>
+            callback?.(Object.assign(new Error('exit 1'), { code: 1 }), '', 'missing ref')
+          )
+          return child
+        })
+        .mockImplementationOnce((_command, _args, _options, callback) => {
+          const child = createMockChild()
+          queueMicrotask(() => callback?.(null, 'ok', ''))
+          return child
+        })
+      const options = {
+        cwd: String.raw`C:\repo`,
+        preferWslDirectGit: true as const,
+        wslDistro: DISTRO
+      }
+
+      await expect(gitExecFileAsync(['rev-parse', '--verify', 'missing'], options)).rejects.toThrow(
+        'exit 1'
+      )
+      await gitExecFileAsync(['status', '--short'], options)
+
+      expect(execFileMock.mock.calls[0]?.[1]).toContain('--exec')
+      expect(execFileMock.mock.calls[1]?.[1]?.slice(3, 5)).toEqual(['sh', '-lc'])
+      expect(execFileMock.mock.calls[2]?.[1]).toContain('--exec')
+    })
+  })
+
   it('streams opted-in reads directly', async () => {
     await withPlatform('win32', async () => {
       seedWslGitReadEnvironmentForTests(DISTRO, LOGIN_ENVIRONMENT)

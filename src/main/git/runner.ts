@@ -387,13 +387,19 @@ function directWslGitExitCode(error: unknown, resolved: ResolvedCommand): number
   return typeof code === 'number' ? code : null
 }
 
-function disableOrInvalidateDirectWslGit(error: unknown, resolved: ResolvedCommand): void {
-  if (!resolved.wsl) {
-    return
-  }
-  if (isDirectWslGitNotFound(error, resolved)) {
+function invalidateMissingDirectWslGit(error: unknown, resolved: ResolvedCommand): boolean {
+  const isMissing = isDirectWslGitNotFound(error, resolved)
+  if (isMissing && resolved.wsl) {
     invalidateWslGitReadEnvironment(resolved.wsl.distro)
-  } else {
+  }
+  return isMissing
+}
+
+function disableDirectWslGitAfterSuccessfulFallback(
+  wasMissing: boolean,
+  resolved: ResolvedCommand
+): void {
+  if (!wasMissing && resolved.wsl) {
     disableWslGitReadEnvironment(resolved.wsl.distro)
   }
 }
@@ -979,8 +985,10 @@ export async function gitExecFileAsync(
         result = await capture(resolved)
       } catch (error) {
         if (directWslGitExitCode(error, resolved) !== null && !options.signal?.aborted) {
-          disableOrInvalidateDirectWslGit(error, resolved)
+          const wasMissing = invalidateMissingDirectWslGit(error, resolved)
           result = await capture(resolveGitCommand(args, options, true))
+          // Why: matching failures can be normal Git control flow; only a successful login retry proves the direct environment was insufficient.
+          disableDirectWslGitAfterSuccessfulFallback(wasMissing, resolved)
           const { stdout, stderr } = result
           return { stdout: stdout as string, stderr: stderr as string }
         }
@@ -1232,9 +1240,11 @@ export async function gitStreamStdout(
         directWslGitExitCode(error, resolved) !== null &&
         !options.signal?.aborted
       ) {
-        disableOrInvalidateDirectWslGit(error, resolved)
+        const wasMissing = invalidateMissingDirectWslGit(error, resolved)
         resolved = resolveGitCommandWithoutProbe(args, gitOptions)
-        return stream(resolved)
+        const result = await stream(resolved)
+        disableDirectWslGitAfterSuccessfulFallback(wasMissing, resolved)
+        return result
       }
       throw error
     }
