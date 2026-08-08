@@ -3107,8 +3107,6 @@ function createUpdaterApi(): NonNullable<Partial<PreloadApi>['updater']> {
     // Why: the web build serves chunks over HTTP from a running server, so no
     // installer ever swaps the archive underneath it.
     isInstallCommittedNow: () => false,
-    isInstallCommitted: () => Promise.resolve(false),
-    onInstallCommitted: () => () => undefined,
     check: () => Promise.resolve(),
     download: () => Promise.resolve(),
     quitAndInstall: () => Promise.resolve(),

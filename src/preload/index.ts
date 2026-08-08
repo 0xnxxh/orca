@@ -1,39 +1,8 @@
 /* eslint-disable max-lines -- Why: preload is the audited renderer/Electron IPC contract; co-locating the surface eases security and type-drift review. */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
-import {
-  UPDATER_INSTALL_COMMITTED_CHANNEL,
-  UPDATER_IS_INSTALL_COMMITTED_CHANNEL,
-  UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL
-} from '../shared/updater-install-events'
+import { createInstallCommitmentReader } from './updater-install-commitment-bridge'
 
-// Why here, in preload, rather than in the renderer: preload runs before any
-// document script, so this listener exists from the document's first instant. A
-// renderer that subscribed from a React effect would miss a broadcast sent before
-// it mounted, and could not recover it — the async seed goes unanswered while the
-// Linux package install blocks main inside spawnSync.
-let installCommitted = false
-let mainHasSpoken = false
-
-ipcRenderer.on(UPDATER_INSTALL_COMMITTED_CHANNEL, (_event, committed: boolean) => {
-  mainHasSpoken = true
-  installCommitted = committed === true
-})
-
-// Subscribe first, then sample: a `true` that arrives while this call is in flight
-// must not be overwritten by the older `false` it returns.
-try {
-  const sampled = ipcRenderer.sendSync(UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL) === true
-  if (!mainHasSpoken) {
-    installCommitted = sampled
-  }
-} catch {
-  // An unanswered probe must never stop a window loading; the live subscription
-  // above still covers any commitment that happens from here on.
-}
-
-function readInstallCommitted(): boolean {
-  return installCommitted
-}
+const readInstallCommitted = createInstallCommitmentReader(ipcRenderer)
 import { electronAPI } from '@electron-toolkit/preload'
 import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
@@ -3077,12 +3046,6 @@ const api = {
     // A live read of preload's buffered value, not a snapshot: the renderer's first
     // lazy import must see a commitment that landed after preload sampled.
     isInstallCommittedNow: () => readInstallCommitted(),
-    isInstallCommitted: () => ipcRenderer.invoke(UPDATER_IS_INSTALL_COMMITTED_CHANNEL),
-    onInstallCommitted: (callback) => {
-      const listener = (_event: Electron.IpcRendererEvent, committed: boolean) => callback(committed)
-      ipcRenderer.on(UPDATER_INSTALL_COMMITTED_CHANNEL, listener)
-      return () => ipcRenderer.removeListener(UPDATER_INSTALL_COMMITTED_CHANNEL, listener)
-    },
     onStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)
       ipcRenderer.on('updater:status', listener)

@@ -2742,8 +2742,6 @@ export type PreloadApi = {
   updater: {
     /** Synchronous live read of preload's buffered commitment, safe before React mounts. */
     isInstallCommittedNow: () => boolean
-    isInstallCommitted: () => Promise<boolean>
-    onInstallCommitted: (callback: (committed: boolean) => void) => () => void
     getVersion: () => Promise<string>
     getStatus: () => Promise<UpdateStatus>
     check: (options?: UpdateCheckOptions) => Promise<void>
