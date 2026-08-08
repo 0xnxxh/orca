@@ -1,26 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import './terminal-hydration-store-test-bootstrap'
+import { describe, expect, it } from 'vitest'
 import type { Tab, TerminalTab, WorkspaceSessionState } from '../../../../shared/types'
 import { getDefaultWorkspaceSession } from '../../../../shared/constants'
 import { buildWorkspaceSessionPayload } from '@/lib/workspace-session'
 import { createTestStore, makeLayout, makeTab, makeWorktree, seedStore } from './store-test-helpers'
-
-vi.mock('sonner', () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }))
-vi.mock('@/runtime/sync-runtime-graph', () => ({
-  scheduleRuntimeGraphSync: vi.fn()
-}))
-vi.mock('@/components/terminal-pane/pty-transport', () => ({
-  registerEagerPtyBuffer: vi.fn(),
-  ensurePtyDispatcher: vi.fn()
-}))
-
-const apiProxy = (): unknown =>
-  new Proxy(() => undefined, {
-    get: (_target, prop) => (prop === 'then' ? undefined : apiProxy()),
-    apply: () => Promise.resolve(null)
-  })
-
-// @ts-expect-error -- mocked browser preload API
-globalThis.window = { api: apiProxy() }
 
 const WORKTREE_ID = 'repo1::/wt-1'
 
@@ -140,16 +123,17 @@ describe('hydrateWorkspaceSession canonical PTY overlap', () => {
       'split-tab'
     ])
     expect(state.pendingReconnectPtyIdByTabId['split-tab']).toBe(soloPtyId)
-    expect(
-      Object.values(state.terminalLayoutsByTabId['split-tab']?.ptyIdsByLeafId ?? {})
-    ).toContain(soloPtyId)
+    // Why: the split row keeps its own PTY and gives up the one the canonical row owns.
+    expect(Object.values(state.terminalLayoutsByTabId['split-tab']?.ptyIdsByLeafId ?? {})).toEqual([
+      soloPtyId
+    ])
     expect(persisted.tabsByWorktree[WORKTREE_ID]?.map((tab) => tab.id)).toEqual([
       'canonical-tab',
       'split-tab'
     ])
     expect(
       Object.values(persisted.terminalLayoutsByTabId['split-tab']?.ptyIdsByLeafId ?? {})
-    ).toContain(soloPtyId)
+    ).toEqual([soloPtyId])
   })
 
   it('ignores a canonical row’s stale leaf binding when scoring another row’s live PTY', () => {

@@ -38,6 +38,8 @@ export type WorkspaceTerminalRowHydration = {
   releasedPtyIdsByTabId: Map<string, Set<string>>
   /** Rows dropped as pure canonical duplicates; they are never retired, so callers clean up after them. */
   subsumedTabIds: string[]
+  /** Rows dropped for an unusable tab id; like subsumed rows they need caller-side cleanup. */
+  invalidTabIds: string[]
   /** The canonical row that inherited each subsumed row's PTYs, so pointers at it can follow. */
   canonicalTabIdBySubsumedTabId: Map<string, string>
 }
@@ -51,11 +53,13 @@ export function hydrateWorkspaceTerminalRows(
   const canonical = readCanonicalTerminals(session, worktreeId, rows)
   const releasedPtyIdsByTabId = new Map<string, Set<string>>()
   const subsumedTabIds: string[] = []
+  const invalidTabIds: string[] = []
   const canonicalTabIdBySubsumedTabId = new Map<string, string>()
   const retained: TerminalTab[] = []
   for (const row of rows) {
     // Why: old web-client mirrors could persist host surface ids with "::"; makePaneKey reserves ":" as its separator.
     if (!isValidTerminalTabId(row.id)) {
+      invalidTabIds.push(row.id)
       continue
     }
     const claim = options.rowsFromRemoteSnapshot
@@ -77,6 +81,7 @@ export function hydrateWorkspaceTerminalRows(
       .map((row, index) => restoreCanonicalMetadata(row, index, canonical)),
     releasedPtyIdsByTabId,
     subsumedTabIds,
+    invalidTabIds,
     canonicalTabIdBySubsumedTabId
   }
 }

@@ -3982,10 +3982,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           validWorktreeIds.has(record.worktreeId)
         )
       )
-      // Why: a subsumed row is dropped rather than retired, so nothing else clears the sleeping
-      // records keyed to it and the workspace keeps a pane nobody can wake.
+      // Why: a dropped row is never retired, so nothing else clears the sleeping records keyed to
+      // it — its worktree is still valid — and the workspace keeps a pane nobody can wake.
       for (const [, hydration] of rowHydrationByWorktree) {
-        for (const tabId of hydration.subsumedTabIds) {
+        for (const tabId of [...hydration.subsumedTabIds, ...hydration.invalidTabIds]) {
           sleepingAgentSessionsByPaneKey = removeSleepingAgentSessionsForTab(
             sleepingAgentSessionsByPaneKey,
             tabId
