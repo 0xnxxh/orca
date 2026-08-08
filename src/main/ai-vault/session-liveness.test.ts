@@ -112,6 +112,39 @@ describe('resolveAiVaultSessionLiveness', () => {
     await expect(liveness).resolves.toBe('live')
   })
 
+  it('reads hook identity after a controlled foreground-inspection barrier', async () => {
+    let markInspectionStarted: () => void = () => {}
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve
+    })
+    let releaseInspection: (inspection: {
+      available: boolean
+      process: string | null
+    }) => void = () => {}
+    const inspection = new Promise<{ available: boolean; process: string | null }>((resolve) => {
+      releaseInspection = resolve
+    })
+    let statuses = [status({ sessionId: 'session-other', ptyId: 'managed-pty' })]
+    const deps = dependencies({
+      listProcesses: async () => [processInfo('managed-pty')],
+      getStatusSnapshot: () => statuses,
+      inspectForegroundProcess: () => {
+        markInspectionStarted()
+        return inspection
+      }
+    })
+
+    const liveness = resolveAiVaultSessionLiveness(
+      { agent: 'gemini', sessionId: 'session-live' },
+      deps
+    )
+    await inspectionStarted
+    statuses = [status({ sessionId: 'session-live', ptyId: 'managed-pty' })]
+    releaseInspection({ available: true, process: 'gemini' })
+
+    await expect(liveness).resolves.toBe('live')
+  })
+
   it('treats WSL hook ownership as local authority', async () => {
     const deps = dependencies({
       listProcesses: async () => [processInfo('wsl-pty')],

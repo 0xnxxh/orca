@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AgentStatusIpcPayload } from '../../shared/agent-status-types'
 import type { AiVaultDeleteSessionResult } from '../../shared/ai-vault-session-deletion'
 import type { ValidateAiVaultSessionDeleteTargetArgs } from './session-delete-target'
 
@@ -12,6 +13,7 @@ vi.mock('electron', () => ({ shell: { trashItem: trashItemMock } }))
 vi.mock('../wsl-unc-delete', () => ({ tryDeleteWslUncPath: vi.fn().mockResolvedValue(false) }))
 
 import { deleteAiVaultSessionFile } from './session-delete'
+import { resolveAiVaultSessionLiveness } from './session-liveness'
 
 type AiVaultSessionLiveness = 'live' | 'not-live' | 'unknown'
 
@@ -88,6 +90,78 @@ describe('live AI Vault session delete safety invariant', () => {
 
     expect.soft(result).toEqual({ outcome: 'rejected', agent: 'gemini', reason: 'session-live' })
     expect.soft(existsSync(filePath), 'externally owned transcript must survive on disk').toBe(true)
+  })
+
+  it('survives an exact live local hook identity absent from managed PTY inventory', async () => {
+    trashItemMock.mockImplementation((path: string) => rm(path))
+    const inspectForegroundProcess = vi.fn()
+    const externalLiveStatus: AgentStatusIpcPayload = {
+      paneKey: 'tab:external-live',
+      terminalHandle: 'term_external-live',
+      connectionId: null,
+      receivedAt: 1,
+      stateStartedAt: 1,
+      state: 'working',
+      prompt: 'test',
+      agentType: 'gemini',
+      providerSession: { key: 'session_id', id: 'session-live' }
+    }
+
+    const { filePath, result } = await attemptDelete(() =>
+      resolveAiVaultSessionLiveness(
+        { agent: 'gemini', sessionId: 'session-live' },
+        {
+          listProcesses: async () => [],
+          getStatusSnapshot: () => [externalLiveStatus],
+          inspectForegroundProcess,
+          getStatusPtyId: () => 'external-live',
+          getAgentHint: () => null
+        }
+      )
+    )
+
+    expect.soft(result).toEqual({
+      outcome: 'rejected',
+      agent: 'gemini',
+      reason: 'session-liveness-unknown'
+    })
+    expect.soft(existsSync(filePath), 'external live transcript must survive on disk').toBe(true)
+    expect(inspectForegroundProcess).not.toHaveBeenCalled()
+  })
+
+  it('survives a dismissed live row retained as liveness-only identity', async () => {
+    trashItemMock.mockImplementation((path: string) => rm(path))
+    const retainedIdentity: AgentStatusIpcPayload = {
+      paneKey: 'tab:external-live',
+      connectionId: null,
+      receivedAt: 1,
+      stateStartedAt: 1,
+      state: 'working',
+      prompt: 'test',
+      agentType: 'gemini',
+      providerSession: { key: 'session_id', id: 'session-live' },
+      providerSessionOnly: true
+    }
+
+    const { filePath, result } = await attemptDelete(() =>
+      resolveAiVaultSessionLiveness(
+        { agent: 'gemini', sessionId: 'session-live' },
+        {
+          listProcesses: async () => [],
+          getStatusSnapshot: () => [retainedIdentity],
+          inspectForegroundProcess: vi.fn(),
+          getStatusPtyId: () => null,
+          getAgentHint: () => null
+        }
+      )
+    )
+
+    expect.soft(result).toEqual({
+      outcome: 'rejected',
+      agent: 'gemini',
+      reason: 'session-liveness-unknown'
+    })
+    expect.soft(existsSync(filePath), 'dismissed live transcript must survive on disk').toBe(true)
   })
 
   it('fails closed when authoritative liveness is unavailable', async () => {

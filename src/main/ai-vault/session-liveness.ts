@@ -16,6 +16,8 @@ type ProcessInspection = {
   process: string | null
 }
 
+type AgentProcessInspection = 'target-agent' | 'unknown' | 'other'
+
 export type AiVaultSessionLivenessDependencies = {
   deadlineMs?: number
   listProcesses: () => Promise<PtyProcessInfo[]>
@@ -30,6 +32,7 @@ export type AiVaultSessionIdentityRead =
   | { outcome: 'missing' }
   | { outcome: 'unknown' }
 
+/** Binds the requested identity to the validated transcript on disk. */
 export async function readAiVaultSessionIdentity(target: {
   agent: AiVaultAgent
   sessionId: string | undefined
@@ -78,10 +81,10 @@ function isValidSessionId(sessionId: string | undefined): sessionId is string {
 
 async function inspectInBatches<T>(
   values: readonly T[],
-  inspect: (value: T) => Promise<'live' | 'unknown' | 'other'>,
+  inspect: (value: T) => Promise<AgentProcessInspection>,
   deadlineMs?: number
-): Promise<('live' | 'unknown' | 'other')[]> {
-  const results: ('live' | 'unknown' | 'other')[] = []
+): Promise<AgentProcessInspection[]> {
+  const results: AgentProcessInspection[] = []
   let nextIndex = 0
   const worker = async (): Promise<void> => {
     while (nextIndex < values.length) {
@@ -100,6 +103,7 @@ async function inspectInBatches<T>(
   return results
 }
 
+/** Resolves owning-runtime liveness without treating unavailable evidence as absence. */
 export async function resolveAiVaultSessionLiveness(
   target: { agent: AiVaultAgent; sessionId: string | undefined },
   deps: AiVaultSessionLivenessDependencies
@@ -109,10 +113,8 @@ export async function resolveAiVaultSessionLiveness(
   }
 
   let processes: PtyProcessInfo[]
-  let statuses: AgentStatusIpcPayload[]
   try {
     processes = await deps.listProcesses()
-    statuses = deps.getStatusSnapshot()
   } catch {
     return 'unknown'
   }
@@ -120,8 +122,7 @@ export async function resolveAiVaultSessionLiveness(
     return 'unknown'
   }
 
-  const localStatuses = statuses.filter(isLocalStatus)
-  const results = await inspectInBatches(
+  const processInspections = await inspectInBatches(
     processes,
     async (process) => {
       let inspection: ProcessInspection
@@ -144,18 +145,41 @@ export async function resolveAiVaultSessionLiveness(
       if (!ownsTargetAgent) {
         return 'other'
       }
-
-      const identities = localStatuses.filter(
-        (status) => status.agentType === target.agent && deps.getStatusPtyId(status) === process.id
-      )
-      if (identities.some((status) => status.providerSession?.id === target.sessionId)) {
-        return 'live'
-      }
-      return identities.some((status) => status.providerSession) ? 'other' : 'unknown'
+      return 'target-agent'
     },
     deps.deadlineMs
   )
 
+  let localStatuses: AgentStatusIpcPayload[]
+  try {
+    localStatuses = deps.getStatusSnapshot().filter(isLocalStatus)
+  } catch {
+    return 'unknown'
+  }
+  const processIds = new Set(processes.map((process) => process.id))
+  const hasUnmatchedTargetStatus = localStatuses.some(
+    (status) =>
+      status.agentType === target.agent &&
+      status.providerSession?.id === target.sessionId &&
+      !processIds.has(deps.getStatusPtyId(status) ?? '')
+  )
+  if (hasUnmatchedTargetStatus) {
+    return 'unknown'
+  }
+
+  const results = processInspections.map((inspection, index) => {
+    if (inspection !== 'target-agent') {
+      return inspection
+    }
+    const identities = localStatuses.filter(
+      (status) =>
+        status.agentType === target.agent && deps.getStatusPtyId(status) === processes[index]!.id
+    )
+    if (identities.some((status) => status.providerSession?.id === target.sessionId)) {
+      return 'live'
+    }
+    return identities.some((status) => status.providerSession) ? 'other' : 'unknown'
+  })
   if (results.includes('live')) {
     return 'live'
   }
