@@ -85,8 +85,10 @@ Environment requirements:
 - WSL source-control reads repeatedly started a login shell. Slow profile scripts and banner output added
   latency and could contaminate Git's machine-readable output.
 - The first read retains the login-shell behavior while a background per-distro probe captures Git's
-  absolute path and `PATH`. Later status, numstat, and upstream/config reads execute directly. Mutations,
-  network operations, SSH, relay, native Git, and risky profile environments stay on the existing path.
+  absolute path, `HOME`, and `PATH`. Later status, numstat, and upstream/config reads execute directly.
+  Mutations, network operations, SSH, relay, native Git, and risky profile environments stay on the
+  existing path. Transient probes retry; a successful login-shell fallback disables unsafe direct reads,
+  while matching ordinary Git failures keep the fast path enabled.
 - Real Windows 11/WSL2 ABBA results, with 3 warmups and 20 samples per natural-profile pair:
 
 | Operation                    | Login median / p95 | Direct median / p95 |
@@ -97,8 +99,8 @@ Environment requirements:
 | DrvFS stage+refresh          | 1,272.7 / 1,318.8 ms | 1,225.3 / 1,246.4 ms |
 
 - With a deterministic 250 ms login-profile delay, 2 warmups and 10 samples, native status fell from
-  330.1 / 339.4 ms median / p95 to 64.5 / 67.7 ms. Every benchmark pair produced byte-identical Git
-  payloads. The profile also emitted 106 bytes of non-Git banner text per login-shell invocation.
+  330.1 / 339.4 ms median / p95 to 64.5 / 67.7 ms. Every benchmark pair produced byte-identical stdout
+  and stderr. The profile also emitted 106 bytes of non-Git banner text per login-shell invocation.
 
 ## Next investigation: WSL filesystem-host routing
 
