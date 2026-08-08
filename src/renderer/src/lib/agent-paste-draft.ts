@@ -1,6 +1,6 @@
 import type { TuiAgent, GlobalSettings } from '../../../shared/types'
 import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
-import { draftPasteReadyBudgetMs } from '../../../shared/draft-paste-ready-scanner'
+import { DRAFT_PASTE_READY_TIMEOUT_MS } from '../../../shared/draft-paste-ready-scanner'
 import { useAppStore } from '@/store'
 import {
   inspectRuntimeTerminalProcess,
@@ -68,8 +68,7 @@ export function getSettingsForAgentTabRuntimeOwner(
  * Returns true when the paste was issued, false on timeout or missing
  * PTY. `onTimeout` lets the caller surface a UI hint (e.g. toast) when
  * the agent doesn't reach a ready state. `timeoutMs` overrides the
- * per-signal readiness budget only; waiting for the PTY to spawn keeps its
- * own fixed budget.
+ * readiness budget only; waiting for the PTY to spawn keeps its own budget.
  *
  * Readiness combines DECSET 2004 with one agent-specific follow-up signal:
  *   1. `\x1b[?2004h` (DECSET 2004 — bracketed-paste-enable) on the PTY
@@ -110,7 +109,7 @@ export async function pasteDraftWhenAgentReady(args: {
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   // Why: the readiness budget starts once the PTY exists, so a slow spawn
   // shortens nothing — a cold composer still gets its full window.
-  const budget = timeoutMs ?? draftPasteReadyBudgetMs(readySignal)
+  const budget = timeoutMs ?? DRAFT_PASTE_READY_TIMEOUT_MS
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
     // Why: fast-starting TUIs can emit the paste-ready escape sequence before
@@ -153,7 +152,7 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
 
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const budget = timeoutMs ?? draftPasteReadyBudgetMs(readySignal)
+  const budget = timeoutMs ?? DRAFT_PASTE_READY_TIMEOUT_MS
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
     const fallbackReady = agentConfig

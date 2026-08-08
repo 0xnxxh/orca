@@ -306,7 +306,7 @@ import { isWslUncPath } from '../../../../shared/wsl-paths'
 import { isTuiAgent, TUI_AGENT_CONFIG } from '../../../../shared/tui-agent-config'
 import {
   createDraftPasteReadyScanner,
-  draftPasteReadyBudgetMs
+  DRAFT_PASTE_READY_TIMEOUT_MS
 } from '../../../../shared/draft-paste-ready-scanner'
 import { sendAgentDraftPasteContent } from '@/lib/agent-draft-paste-content'
 import { writeTerminalPastePtyInput } from './terminal-pty-paste-writer'
@@ -4883,7 +4883,7 @@ export function connectPanePty(
       startupDraftHardTimer = setTimeout(() => {
         startupDraftHardTimer = null
         void deliverStartupDraftIfAgentOwnsPty()
-      }, draftPasteReadyBudgetMs(startupDraftReadySignal))
+      }, DRAFT_PASTE_READY_TIMEOUT_MS)
     }
     const armStartupDraftQuietTimer = (): void => {
       if (!startupDraftReadyScanner || startupDraftPasteSettled) {

@@ -418,7 +418,7 @@ import {
 } from '../../shared/tui-agent-config'
 import {
   createDraftPasteReadyScanner,
-  draftPasteReadyBudgetMs
+  DRAFT_PASTE_READY_TIMEOUT_MS
 } from '../../shared/draft-paste-ready-scanner'
 import { detectInstalledAgentsWithShellPathHydration, detectRemoteAgents } from '../ipc/preflight'
 import {
@@ -21374,7 +21374,7 @@ export class OrcaRuntimeService {
       // delivery paths do, instead of silently dropping the prompt (STA-3367).
       hardTimer = setTimeout(() => {
         void this.resolveDraftPastePtyIfAgentOwns(ptyId, agent).then(finish)
-      }, draftPasteReadyBudgetMs(readySignal))
+      }, DRAFT_PASTE_READY_TIMEOUT_MS)
     })
   }
 

@@ -20,32 +20,21 @@ export type DraftPasteReadyScanResult = {
   armQuietTimer: boolean
 }
 
-// Why: the markerless quiet-window signal guesses readiness from output silence,
-// so a long budget just delays a wrong answer. Keep it tight.
-const QUIET_WINDOW_READY_TIMEOUT_MS = 8000
-// Why: marker-gated signals (Codex '›', opencode show-cursor) are positive
-// readiness proofs — the paste fires only when the marker actually renders, so a
-// longer budget can never paste prematurely; it only tolerates a slow cold boot.
-// First-run codex on a cold app can take >8s to mount its composer, past which
-// the old budget gave up and dropped the launch prompt (STA-3367).
-const MARKER_READY_TIMEOUT_MS = 20000
-
 /**
- * How long a delivery path should wait for `readySignal` before falling back.
+ * Backstop for every draft-paste delivery path: how long to wait for a ready
+ * signal before falling back to a best-effort, ownership-checked paste.
  *
- * Lives beside the scanner because the budget is a property of the signal — only
- * this module knows which signals are marker-gated — not of the calling path. All
- * three draft-delivery owners (renderer tab paste, renderer startup paste, main
- * runtime startup paste) consume this so the policy cannot drift between them.
+ * One budget for all signals. The value is a property of how slowly an agent can
+ * boot, not of how readiness is detected — a marker, a quiet window, and a
+ * process check all wait on the same cold start. First-run codex on a cold app
+ * can take >8s to mount its composer, past which the old budget gave up and
+ * dropped the launch prompt (STA-3367).
  *
- * This is a backstop, not a correctness gate: every caller must still attempt a
- * best-effort delivery when the agent owns the PTY after the budget expires.
+ * Lives beside the scanner so all three delivery owners (renderer tab paste,
+ * renderer startup paste, main runtime startup paste) share one policy and
+ * cannot drift apart.
  */
-export function draftPasteReadyBudgetMs(readySignal: DraftPasteReadySignal): number {
-  return readySignal === 'render-quiet-after-bracketed-paste'
-    ? QUIET_WINDOW_READY_TIMEOUT_MS
-    : MARKER_READY_TIMEOUT_MS
-}
+export const DRAFT_PASTE_READY_TIMEOUT_MS = 20000
 
 /**
  * Pure, incremental scanner shared by the renderer and main-process draft-paste
