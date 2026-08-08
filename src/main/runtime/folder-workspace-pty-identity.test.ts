@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getDefaultWorkspaceSession } from '../../shared/constants'
+import type { RuntimeClientEvent } from '../../shared/runtime-client-events'
 import { makePaneKey } from '../../shared/stable-pane-id'
 import type { WorkspaceSessionState } from '../../shared/types'
 import { FOLDER_WORKSPACE_INSTANCE_SEPARATOR } from '../../shared/worktree-id'
@@ -21,7 +22,8 @@ const REPO = {
   path: FOLDER_PATH,
   displayName: 'folder-project',
   badgeColor: 'blue',
-  addedAt: 1
+  addedAt: 1,
+  kind: 'folder'
 } as const
 
 type RuntimeInternals = {
@@ -40,6 +42,11 @@ type RuntimeInternals = {
   }) => boolean
   ptysById: Map<string, { worktreeId: string }>
   recordPtyWorktree: (ptyId: string, worktreeId: string, state?: Record<string, unknown>) => unknown
+  onClientEvent: (listener: (event: RuntimeClientEvent) => void) => () => void
+  onPtyExit: (ptyId: string, exitCode: number) => void
+  sleepTerminalsForWorktree: (worktreeSelector: string) => Promise<unknown>
+  acquireWorktreeTerminalSpawn: (worktreeId?: string) => Promise<() => void>
+  getTerminalSleepClientEventSnapshot: () => RuntimeClientEvent[]
 }
 
 const OWNED_CONTROLLER_SESSIONS = [
@@ -48,14 +55,26 @@ const OWNED_CONTROLLER_SESSIONS = [
 ]
 
 function createRuntimeInternals(
-  options: { session?: WorkspaceSessionState; sessions?: unknown[] } = {}
+  options: {
+    session?: WorkspaceSessionState
+    sessions?: unknown[]
+    // Consecutive controller inventories, so a sleep sees its PTY then sees it gone.
+    processLists?: unknown[][]
+  } = {}
 ): RuntimeInternals {
-  const meta = { [WORKSPACE_A]: { hostId: 'local' }, [WORKSPACE_B]: { hostId: 'local' } }
+  const meta: Record<string, Record<string, unknown>> = {
+    [WORKSPACE_A]: { hostId: 'local' },
+    [WORKSPACE_B]: { hostId: 'local' }
+  }
   const store = {
     getRepos: () => [REPO],
     getRepo: (id: string) => (id === REPO_ID ? REPO : undefined),
     getAllWorktreeMeta: () => meta,
-    getWorktreeMeta: (worktreeId: string) => meta[worktreeId as keyof typeof meta],
+    getWorktreeMeta: (worktreeId: string) => meta[worktreeId],
+    setWorktreeMeta: (worktreeId: string, patch: Record<string, unknown>) => {
+      meta[worktreeId] = { ...meta[worktreeId], ...patch }
+      return meta[worktreeId]
+    },
     getWorkspaceSession: () => options.session ?? getDefaultWorkspaceSession(),
     setWorkspaceSession: () => {},
     flushOrThrow: () => {}
@@ -64,10 +83,28 @@ function createRuntimeInternals(
   runtime.setPtyController({
     write: () => true,
     kill: () => true,
+    stopAndWait: async (ptyId: string) => {
+      runtime.onPtyExit(ptyId, -1)
+      return true
+    },
     getForegroundProcess: async () => null,
-    listProcesses: async () => options.sessions ?? OWNED_CONTROLLER_SESSIONS
+    listProcesses: async () =>
+      options.processLists
+        ? (options.processLists.shift() ?? [])
+        : (options.sessions ?? OWNED_CONTROLLER_SESSIONS)
   } as never)
   return runtime as unknown as RuntimeInternals
+}
+
+/**
+ * Resolves to 'blocked' only if `pending` has not settled once the microtask queue drains —
+ * an uncontended mutation lease is pure-promise, so this never waits on wall-clock time.
+ */
+async function raceAgainstMicrotaskDrain(pending: Promise<unknown>): Promise<string> {
+  return await Promise.race([
+    pending.then(() => 'acquired'),
+    new Promise<string>((resolve) => setTimeout(() => resolve('blocked'), 0))
+  ])
 }
 
 describe('folder workspaces sharing one directory', () => {
@@ -149,5 +186,43 @@ describe('folder workspaces sharing one directory', () => {
 
     expect([...(inventory?.livePtyIds ?? [])]).toEqual(['legacy-cwd-pty'])
     expect(internals.ptysById.get('legacy-cwd-pty')?.worktreeId).toBe(WORKSPACE_B)
+  })
+
+  it('leaves a sleeping instance asleep when a sibling instance spawns a terminal', async () => {
+    const internals = createRuntimeInternals({
+      processLists: [[{ id: PTY_A, worktreeId: WORKSPACE_A, cwd: FOLDER_PATH, title: 'a' }], []]
+    })
+    const events: RuntimeClientEvent[] = []
+    internals.onClientEvent((event) => events.push(event))
+
+    await internals.sleepTerminalsForWorktree(`id:${WORKSPACE_A}`)
+    const release = await internals.acquireWorktreeTerminalSpawn(WORKSPACE_B)
+    release()
+
+    // A shared identity key would wake A's stopped terminals on B's spawn and tell clients so.
+    expect(
+      events.filter(
+        (event) => event.type === 'worktreeTerminalSleepState' && event.phase === 'woken'
+      )
+    ).toEqual([])
+    expect(internals.getTerminalSleepClientEventSnapshot()).toEqual([
+      expect.objectContaining({ worktreeId: WORKSPACE_A, phase: 'committed', ptyIds: [PTY_A] })
+    ])
+  })
+
+  it('does not serialize a sibling instance behind this instance held terminal mutation', async () => {
+    const internals = createRuntimeInternals()
+    const releaseA = await internals.acquireWorktreeTerminalSpawn(WORKSPACE_A)
+
+    const spawnB = internals.acquireWorktreeTerminalSpawn(WORKSPACE_B)
+    const spawnSecondA = internals.acquireWorktreeTerminalSpawn(WORKSPACE_A)
+
+    expect(await raceAgainstMicrotaskDrain(spawnB)).toBe('acquired')
+    // Control: same-instance mutations must still queue, so 'acquired' above is not a free pass.
+    expect(await raceAgainstMicrotaskDrain(spawnSecondA)).toBe('blocked')
+
+    releaseA()
+    ;(await spawnB)()
+    ;(await spawnSecondA)()
   })
 })
