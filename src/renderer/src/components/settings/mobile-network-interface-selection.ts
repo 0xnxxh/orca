@@ -3,6 +3,7 @@ import { selectAutoAdvertisedPairingAddress } from '../../../../shared/pairing-a
 export type MobileNetworkInterface = {
   name: string
   address: string
+  hasDefaultRoute?: boolean
 }
 
 export function selectRefreshedNetworkAddress(
