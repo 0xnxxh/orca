@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const netFetchMock = vi.hoisted(() => vi.fn())
@@ -20,12 +21,12 @@ vi.mock('node:fs/promises', () => ({
     return contents
   }
 }))
-// Posix-shaped host home so `node:path.join` behaves the same on every test runner.
 vi.mock('node:os', () => ({ homedir: () => '/home/neil' }))
 
 import { fetchKimiRateLimits } from './kimi-fetcher'
 
-const HOST_CREDENTIALS = '/home/neil/.kimi-code/credentials/kimi-code.json'
+// Built with `join` so the key matches the separator the fetcher emits on this runner's platform.
+const HOST_CREDENTIALS = join('/home/neil', '.kimi-code', 'credentials', 'kimi-code.json')
 const WSL_HOME = '\\\\wsl.localhost\\Ubuntu\\home\\neil\\.kimi-code'
 const WSL_CREDENTIALS = `${WSL_HOME}\\credentials\\kimi-code.json`
 

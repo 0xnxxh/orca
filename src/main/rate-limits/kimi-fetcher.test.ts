@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const netFetchMock = vi.hoisted(() => vi.fn())
@@ -53,6 +54,11 @@ const USAGE_RESPONSE = {
     }
   ],
   subType: 'TYPE_PURCHASE'
+}
+
+// Built with `join` so the expectation matches the separator the fetcher emits on this platform.
+function hostCredentialsPath(kimiHome: string): string {
+  return join(kimiHome, 'credentials', 'kimi-code.json')
 }
 
 function freshCredentials(): string {
@@ -161,7 +167,7 @@ describe('fetchKimiRateLimits', () => {
     const result = await fetchKimiRateLimits()
 
     expect(result.status).toBe('ok')
-    expect(fsState.readPaths).toEqual(['/home/test/.kimi-code/credentials/kimi-code.json'])
+    expect(fsState.readPaths).toEqual([hostCredentialsPath('/home/test/.kimi-code')])
   })
 
   it('honors KIMI_CODE_HOME for the host home', async () => {
@@ -172,7 +178,7 @@ describe('fetchKimiRateLimits', () => {
     const result = await fetchKimiRateLimits()
 
     expect(result.status).toBe('ok')
-    expect(fsState.readPaths).toEqual(['/custom/kimi-home/credentials/kimi-code.json'])
+    expect(fsState.readPaths).toEqual([hostCredentialsPath('/custom/kimi-home')])
   })
 
   it('ignores a blank KIMI_CODE_HOME instead of reading from the process cwd', async () => {
@@ -182,6 +188,6 @@ describe('fetchKimiRateLimits', () => {
 
     await fetchKimiRateLimits()
 
-    expect(fsState.readPaths).toEqual(['/home/test/.kimi-code/credentials/kimi-code.json'])
+    expect(fsState.readPaths).toEqual([hostCredentialsPath('/home/test/.kimi-code')])
   })
 })
