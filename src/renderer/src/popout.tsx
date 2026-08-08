@@ -9,7 +9,6 @@ import {
   recordRendererCrashBreadcrumb
 } from './lib/crash-diagnostics'
 import { applyDocumentTheme } from './lib/document-theme'
-import { registerUpdaterInstallCommitment } from './lib/updater-install-commitment'
 import { buildAppFontFamily } from './lib/app-font-family'
 import { I18nProvider } from './i18n/I18nProvider'
 import { translate } from './i18n/i18n'
@@ -100,9 +99,6 @@ function PopoutSettingsSync(): null {
 
 function PopoutRoot(): React.JSX.Element {
   useTranslation()
-  // Why: this window has its own JS context and its own lazy chunks read from the
-  // same app.asar, so it needs the install signal independently of the app root.
-  useEffect(() => registerUpdaterInstallCommitment(), [])
   return (
     <RecoverableRenderErrorBoundary
       boundaryId="dashboard-popout.root"

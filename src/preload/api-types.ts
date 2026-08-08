@@ -2740,8 +2740,8 @@ export type PreloadApi = {
     onChanged: (callback: (event: RemoteWorkspaceChangedEvent) => void) => () => void
   }
   updater: {
-    /** Captured synchronously in preload, before any document script runs. */
-    installCommittedAtLoad: boolean
+    /** Synchronous live read of preload's buffered commitment, safe before React mounts. */
+    isInstallCommittedNow: () => boolean
     isInstallCommitted: () => Promise<boolean>
     onInstallCommitted: (callback: (committed: boolean) => void) => () => void
     getVersion: () => Promise<string>

@@ -6,14 +6,33 @@ import {
   UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL
 } from '../shared/updater-install-events'
 
-function readInstallCommittedAtLoad(): boolean {
-  try {
-    return ipcRenderer.sendSync(UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL) === true
-  } catch {
-    // An unanswered probe must never stop a window loading; the broadcast and the
-    // async seed still cover every case except a document born mid-install.
-    return false
+// Why here, in preload, rather than in the renderer: preload runs before any
+// document script, so this listener exists from the document's first instant. A
+// renderer that subscribed from a React effect would miss a broadcast sent before
+// it mounted, and could not recover it — the async seed goes unanswered while the
+// Linux package install blocks main inside spawnSync.
+let installCommitted = false
+let mainHasSpoken = false
+
+ipcRenderer.on(UPDATER_INSTALL_COMMITTED_CHANNEL, (_event, committed: boolean) => {
+  mainHasSpoken = true
+  installCommitted = committed === true
+})
+
+// Subscribe first, then sample: a `true` that arrives while this call is in flight
+// must not be overwritten by the older `false` it returns.
+try {
+  const sampled = ipcRenderer.sendSync(UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL) === true
+  if (!mainHasSpoken) {
+    installCommitted = sampled
   }
+} catch {
+  // An unanswered probe must never stop a window loading; the live subscription
+  // above still covers any commitment that happens from here on.
+}
+
+function readInstallCommitted(): boolean {
+  return installCommitted
 }
 import { electronAPI } from '@electron-toolkit/preload'
 import { preloadE2EConfig } from './e2e-config'
@@ -3055,7 +3074,9 @@ const api = {
     // Why: captured before any document script runs, so a window created or
     // reloaded during an install knows before its first lazy import. The async
     // seed below cannot be relied on — the Linux package install blocks main.
-    installCommittedAtLoad: readInstallCommittedAtLoad(),
+    // A live read of preload's buffered value, not a snapshot: the renderer's first
+    // lazy import must see a commitment that landed after preload sampled.
+    isInstallCommittedNow: () => readInstallCommitted(),
     isInstallCommitted: () => ipcRenderer.invoke(UPDATER_IS_INSTALL_COMMITTED_CHANNEL),
     onInstallCommitted: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, committed: boolean) => callback(committed)

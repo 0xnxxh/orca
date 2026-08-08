@@ -17,17 +17,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT,
-  ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT
-} from '../../../shared/updater-renderer-events'
-import { registerUpdaterInstallCommitment } from './updater-install-commitment'
+import { ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT } from '../../../shared/updater-renderer-events'
+
 import {
   isLazyChunkLoadError,
   loadLazyWithRetry,
   resetLazyChunkReloadRequestsForTest
 } from './lazy-with-retry'
-import { resetUpdaterInstallCommitmentForTest } from './updater-install-commitment'
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
 
@@ -36,7 +32,7 @@ const CORRUPT_CHUNK_ERROR = (): SyntaxError => new SyntaxError("Unexpected token
 
 type Breadcrumb = { name: string; data: Record<string, unknown> }
 
-const broadcastListeners: ((committed: boolean) => void)[] = []
+let mainSaysCommitted = false
 
 function installBreadcrumbSink(): Breadcrumb[] {
   const breadcrumbs: Breadcrumb[] = []
@@ -49,46 +45,33 @@ function installBreadcrumbSink(): Breadcrumb[] {
   return breadcrumbs
 }
 
-/** Main is the authority: this is what every renderer, popout included, receives. */
+/** Main is the authority; preload buffers it, so every renderer reads it live. */
 function broadcastInstallCommitted(committed: boolean): void {
-  for (const listener of broadcastListeners) {
-    listener(committed)
-  }
+  mainSaysCommitted = committed
 }
 
 describe('loadLazyWithRetry during a committed update install', () => {
-  let unregister: (() => void) | null = null
-
   beforeEach(() => {
     window.sessionStorage.clear()
     resetLazyChunkReloadRequestsForTest()
     vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
-    broadcastListeners.length = 0
+    mainSaysCommitted = false
     ;(window as unknown as { api: { updater: unknown } }).api = {
       ...(window as unknown as { api?: Record<string, unknown> }).api,
-      updater: {
-        isInstallCommitted: () => Promise.resolve(false),
-        onInstallCommitted: (cb: (c: boolean) => void) => {
-          broadcastListeners.push(cb)
-          return () => undefined
-        }
-      }
+      updater: { isInstallCommittedNow: () => mainSaysCommitted }
     } as never
-    unregister = registerUpdaterInstallCommitment()
   })
 
   afterEach(() => {
-    unregister?.()
-    unregister = null
-    resetUpdaterInstallCommitmentForTest()
     vi.restoreAllMocks()
     window.sessionStorage.clear()
     resetLazyChunkReloadRequestsForTest()
     delete (window as unknown as { api?: unknown }).api
   })
 
+  // Main is the authority; preload buffers it for every document.
   const commitUpdateInstall = (): void => {
-    window.dispatchEvent(new Event(ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT))
+    broadcastInstallCommitted(true)
   }
 
   it('does not request a recovery reload once the installer is committed', async () => {
@@ -201,19 +184,9 @@ describe('loadLazyWithRetry during a committed update install', () => {
     expect(window.location.reload).not.toHaveBeenCalled()
   })
 
-  it('seeds a window opened mid-install, which never saw the broadcast', async () => {
-    unregister?.()
-    ;(window as unknown as { api: Record<string, unknown> }).api = {
-      ...(window as unknown as { api: Record<string, unknown> }).api,
-      updater: {
-        isInstallCommitted: () => Promise.resolve(true),
-        onInstallCommitted: () => () => undefined
-      }
-    } as never
-    unregister = registerUpdaterInstallCommitment()
-    await Promise.resolve()
-    await Promise.resolve()
+  it('covers a window opened mid-install, which never saw a broadcast', async () => {
     installBreadcrumbSink()
+    broadcastInstallCommitted(true)
 
     await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
       retries: 0,
@@ -284,16 +257,9 @@ describe('loadLazyWithRetry during a committed update install', () => {
     // answered while the Linux package install blocks main inside spawnSync. The
     // synchronous preload capture is the only thing that can be true this early —
     // note this test deliberately does NOT call registerUpdaterInstallCommitment.
-    unregister?.()
-    unregister = null
-    resetUpdaterInstallCommitmentForTest()
     ;(window as unknown as { api: Record<string, unknown> }).api = {
       crashReports: { recordBreadcrumb: () => undefined },
-      updater: {
-        installCommittedAtLoad: true,
-        isInstallCommitted: () => new Promise<boolean>(() => undefined),
-        onInstallCommitted: () => () => undefined
-      }
+      updater: { isInstallCommittedNow: () => true }
     } as never
 
     await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {

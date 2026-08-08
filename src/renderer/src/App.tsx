@@ -117,7 +117,6 @@ import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
 import { MacosTccPromptNoticeHost } from './hooks/MacosTccPromptNoticeHost'
 import { useRadixBodyPointerEventsRecovery } from './hooks/useRadixBodyPointerEventsRecovery'
 import { registerUpdaterBeforeUnloadBypass } from './lib/updater-beforeunload'
-import { registerUpdaterInstallCommitment } from './lib/updater-install-commitment'
 import {
   ORCA_APP_RESTART_ABORTED_EVENT,
   ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT
@@ -1258,7 +1257,6 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => registerUpdaterBeforeUnloadBypass(), [])
-  useEffect(() => registerUpdaterInstallCommitment(), [])
 
   useEffect(() => {
     setRuntimeGraphSyncEnabled(workspaceSessionReady)
