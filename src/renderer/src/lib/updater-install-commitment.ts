@@ -4,11 +4,34 @@ import { ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT } from '../../../shared/upd
 // to be true in the dashboard popout too — it has its own JS context and its own
 // lazy chunks read from the same archive. Main broadcasts the authoritative value;
 // the local event only arms the initiating window a few milliseconds earlier.
-let broadcastCommitted = false
+// null until main has said something authoritative for this document.
+let broadcastCommitted: boolean | null = null
 let locallyStarted = false
+let loadTimeCommitted: boolean | null = null
+
+// Why: a document created or reloaded mid-install — View → Reload, crash recovery,
+// dock activation, a popout — misses the broadcast, and its async seed can lose the
+// race outright because the Linux package install blocks main inside spawnSync.
+// Preload captures this synchronously before any document script, so the very first
+// lazy import already knows. Read lazily so it is available before React mounts.
+function committedAtDocumentLoad(): boolean {
+  if (loadTimeCommitted === null) {
+    loadTimeCommitted = window.api?.updater?.installCommittedAtLoad === true
+  }
+  return loadTimeCommitted
+}
 
 export function isUpdaterInstallCommitted(): boolean {
-  return broadcastCommitted || locallyStarted
+  // This window just asked to install, which is fresher than any earlier verdict —
+  // a stale `false` from a previous aborted install must not mask it.
+  if (locallyStarted) {
+    return true
+  }
+  // Otherwise main is authoritative: only it can stand the archive back up.
+  if (broadcastCommitted !== null) {
+    return broadcastCommitted
+  }
+  return committedAtDocumentLoad()
 }
 
 /**
@@ -28,6 +51,7 @@ export function registerUpdaterInstallCommitment(): () => void {
     broadcastCommitted = committed
     if (!committed) {
       locallyStarted = false
+      loadTimeCommitted = false
     }
   }
   const unsubscribe = window.api?.updater?.onInstallCommitted?.(applyBroadcast)
@@ -47,12 +71,14 @@ export function registerUpdaterInstallCommitment(): () => void {
   return () => {
     window.removeEventListener(ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT, markLocal)
     unsubscribe?.()
-    broadcastCommitted = false
+    broadcastCommitted = null
     locallyStarted = false
+    loadTimeCommitted = null
   }
 }
 
 export function resetUpdaterInstallCommitmentForTest(): void {
-  broadcastCommitted = false
+  broadcastCommitted = null
   locallyStarted = false
+  loadTimeCommitted = null
 }

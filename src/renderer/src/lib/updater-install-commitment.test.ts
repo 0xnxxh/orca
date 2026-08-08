@@ -110,6 +110,20 @@ describe('renderer updater install commitment', () => {
     expect(isUpdaterInstallCommitted()).toBe(false)
   })
 
+  it('arms again after an earlier install aborted', () => {
+    // The user cancels one update, then restarts for the next. A stale false from
+    // the first must not swallow the second window's early arming.
+    installBridge()
+    unregister = registerUpdaterInstallCommitment()
+    broadcast(true)
+    broadcast(false)
+    expect(isUpdaterInstallCommitted()).toBe(false)
+
+    window.dispatchEvent(new Event(ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT))
+
+    expect(isUpdaterInstallCommitted()).toBe(true)
+  })
+
   it('detaches cleanly so a stale listener cannot re-arm a new document', () => {
     installBridge()
     const stop = registerUpdaterInstallCommitment()

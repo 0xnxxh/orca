@@ -1742,6 +1742,32 @@ describe('updater', () => {
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('commits install state before the native installer, and clears it on recovery', async () => {
+    // Cross-layer wiring: renderers read this to stop loading lazy chunks out of an
+    // archive the installer is replacing. If this call is ever dropped, every
+    // renderer silently loses that protection while the tests stay green.
+    vi.useFakeTimers()
+    const commitment = await import('./updater-install-commitment')
+    commitment.resetUpdaterInstallCommitmentForTest()
+
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+    setupAutoUpdater(mainWindow as never)
+
+    let committedWhenInstallerRan: boolean | null = null
+    autoUpdaterMock.quitAndInstall.mockImplementation(() => {
+      committedWhenInstallerRan = commitment.isUpdaterInstallCommitted()
+      autoUpdaterMock.emit('error', new Error('installer refused'))
+    })
+
+    quitAndInstall()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(committedWhenInstallerRan).toBe(true)
+    // A failed install leaves the archive intact, so renderers must recover normally.
+    expect(commitment.isUpdaterInstallCommitted()).toBe(false)
+  })
+
   it('runs pre-quit cleanup before local PTY cleanup during update install', async () => {
     vi.useFakeTimers()
 

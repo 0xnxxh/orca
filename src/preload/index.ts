@@ -2,8 +2,19 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import {
   UPDATER_INSTALL_COMMITTED_CHANNEL,
-  UPDATER_IS_INSTALL_COMMITTED_CHANNEL
+  UPDATER_IS_INSTALL_COMMITTED_CHANNEL,
+  UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL
 } from '../shared/updater-install-events'
+
+function readInstallCommittedAtLoad(): boolean {
+  try {
+    return ipcRenderer.sendSync(UPDATER_IS_INSTALL_COMMITTED_SYNC_CHANNEL) === true
+  } catch {
+    // An unanswered probe must never stop a window loading; the broadcast and the
+    // async seed still cover every case except a document born mid-install.
+    return false
+  }
+}
 import { electronAPI } from '@electron-toolkit/preload'
 import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
@@ -3041,6 +3052,10 @@ const api = {
         awaitBeforeUnloadCheckpoint
       ),
 
+    // Why: captured before any document script runs, so a window created or
+    // reloaded during an install knows before its first lazy import. The async
+    // seed below cannot be relied on — the Linux package install blocks main.
+    installCommittedAtLoad: readInstallCommittedAtLoad(),
     isInstallCommitted: () => ipcRenderer.invoke(UPDATER_IS_INSTALL_COMMITTED_CHANNEL),
     onInstallCommitted: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, committed: boolean) => callback(committed)

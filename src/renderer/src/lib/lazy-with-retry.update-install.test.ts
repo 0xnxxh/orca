@@ -27,6 +27,7 @@ import {
   loadLazyWithRetry,
   resetLazyChunkReloadRequestsForTest
 } from './lazy-with-retry'
+import { resetUpdaterInstallCommitmentForTest } from './updater-install-commitment'
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
 
@@ -79,6 +80,7 @@ describe('loadLazyWithRetry during a committed update install', () => {
   afterEach(() => {
     unregister?.()
     unregister = null
+    resetUpdaterInstallCommitmentForTest()
     vi.restoreAllMocks()
     window.sessionStorage.clear()
     resetLazyChunkReloadRequestsForTest()
@@ -273,6 +275,33 @@ describe('loadLazyWithRetry during a committed update install', () => {
     expect(setItem).not.toHaveBeenCalled()
     expect(removeItem).not.toHaveBeenCalled()
     expect(getItem).not.toHaveBeenCalled()
+  })
+
+  it('skips recovery in a document born mid-install, before any registration', async () => {
+    // Every reload/reopen path lands here: View -> Reload, force reload, the
+    // app:reload IPC, renderer-crash recovery, dock activation, a new popout. The
+    // fresh document never saw a broadcast, and its async seed can never be
+    // answered while the Linux package install blocks main inside spawnSync. The
+    // synchronous preload capture is the only thing that can be true this early —
+    // note this test deliberately does NOT call registerUpdaterInstallCommitment.
+    unregister?.()
+    unregister = null
+    resetUpdaterInstallCommitmentForTest()
+    ;(window as unknown as { api: Record<string, unknown> }).api = {
+      crashReports: { recordBreadcrumb: () => undefined },
+      updater: {
+        installCommittedAtLoad: true,
+        isInstallCommitted: () => new Promise<boolean>(() => undefined),
+        onInstallCommitted: () => () => undefined
+      }
+    } as never
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'app.root'
+    }).catch(() => undefined)
+
+    expect(window.location.reload).not.toHaveBeenCalled()
   })
 
   it('still requests recovery when no install is committed', async () => {
