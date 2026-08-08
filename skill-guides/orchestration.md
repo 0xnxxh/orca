@@ -135,7 +135,7 @@ orca orchestration inbox [--limit <n>] [--json]
 
 Rules:
 
-- Omit `--from` unless impersonating another terminal; Orca auto-resolves it from the current terminal.
+- Omit `--from`; Orca resolves it from the current terminal. A managed agent pane may only name itself — `--from` is routing metadata and cannot grant another terminal's identity.
 - A coordinator `check` returns the bound Run's oldest FIFO Delivery (up to 50 messages) and replays that exact batch until `--ack <delivery_id>`. Process every message before acknowledging; `check --ack <id> --wait` acknowledges, checks, and waits in one operation.
 - Use `--peek` and `--all` only for read-only history/debugging. Type filters decide when a waiter wakes; the returned actionable Delivery is still the oldest full batch.
 - Use `dispatch:<id>` for coordinator guidance to one supervised worker. Orca routes that stable address locally or through the connected-server relay; do not substitute a remote terminal handle.

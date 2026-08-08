@@ -20,7 +20,7 @@ import {
 } from '../../../../shared/orchestration-rpc-contract'
 import { clampOrchestrationAskTimeoutMs } from '../../../../shared/orchestration-ask-timeout'
 import { ORCHESTRATION_GATE_METHODS } from './orchestration-gates'
-import { resolveRunScope } from './orchestration-run-scope'
+import { assertCallerHandleMatchesEvidence, resolveRunScope } from './orchestration-run-scope'
 import { ORCHESTRATION_RUN_METHODS } from './orchestration-runs'
 import { ORCHESTRATION_WORKER_METHODS } from './orchestration-worker-methods'
 import { ORCHESTRATION_FEDERATION_METHODS } from './orchestration-federation-methods'
@@ -392,10 +392,14 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         orchestrationCapability,
         legacyCoordinatorRunId,
         revalidateLegacyCoordinator,
-        orchestrationCompatibilityCallerAuthority
+        orchestrationCompatibilityCallerAuthority,
+        orchestrationCompatibilityEvidence
       }
     ) => {
       const db = runtime.getOrchestrationDb()
+      if (params.from) {
+        assertCallerHandleMatchesEvidence(runtime, params.from, orchestrationCompatibilityEvidence)
+      }
       const from = params.from ?? 'unknown'
       const attestedCaller =
         orchestrationCompatibilityCallerAuthority?.terminalHandle === from
@@ -689,6 +693,14 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
     ) => {
       const db = runtime.getOrchestrationDb()
+      // Why: check consumes the named handle's mail, so naming someone else is mail theft, not just a mislabel.
+      if (params.terminal) {
+        assertCallerHandleMatchesEvidence(
+          runtime,
+          params.terminal,
+          orchestrationCompatibilityEvidence
+        )
+      }
       const handle = params.terminal ?? 'unknown'
       const typeFilter = parseMessageTypes(params.types)
 
@@ -991,6 +1003,10 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       { orchestrationCompatibilityEvidence, runtime, legacyCoordinatorRunId }
     ) => {
       const db = runtime.getOrchestrationDb()
+      // Why: check before any effect so a rejected impersonation cannot consume the original message first.
+      if (params.from) {
+        assertCallerHandleMatchesEvidence(runtime, params.from, orchestrationCompatibilityEvidence)
+      }
       const original = db.getMessageById(params.id)
       if (!original) {
         throw new Error(`Message not found: ${params.id}`)
@@ -1365,7 +1381,13 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
     params: AskParams,
     handler: async (
       params,
-      { runtime, signal, orchestrationCapability, recordMutationReceipt }
+      {
+        runtime,
+        signal,
+        orchestrationCapability,
+        recordMutationReceipt,
+        orchestrationCompatibilityEvidence
+      }
     ) => {
       // Why: group addresses have no unambiguous first-answer authority.
       if (params.to && isGroupAddress(params.to)) {
@@ -1375,6 +1397,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       const db = runtime.getOrchestrationDb()
+      if (params.from) {
+        assertCallerHandleMatchesEvidence(runtime, params.from, orchestrationCompatibilityEvidence)
+      }
       const from = params.from ?? 'unknown'
       // Why: echoed on every return so a clamped caller reports the budget actually waited, not the one it asked for.
       const timeoutMs = clampOrchestrationAskTimeoutMs(params.timeoutMs)

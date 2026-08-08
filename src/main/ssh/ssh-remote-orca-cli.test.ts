@@ -41,7 +41,7 @@ function createFakeChild(): FakeChild {
 }
 
 describe('runRemoteOrcaCli', () => {
-  function createRuntime() {
+  function createRuntime(attestedCaller: { terminalHandle: string } | null = null) {
     const messages: {
       id: string
       from_handle: string
@@ -96,6 +96,8 @@ describe('runRemoteOrcaCli', () => {
       }),
       getOrchestrationDb: () => db,
       getTerminalPaneKey: () => null,
+      // Why: the bridge forwards remote pane evidence on every orchestration call; a double that omits this would authenticate by accident.
+      verifyOrchestrationCompatibilityCaller: vi.fn(() => attestedCaller),
       deliverPendingMessagesForHandle: vi.fn(),
       notifyMessageArrived: vi.fn(),
       linearIssueContext: vi.fn(async (request: unknown) => ({
@@ -192,6 +194,29 @@ describe('runRemoteOrcaCli', () => {
     const payload = JSON.parse(result.stdout) as { ok: boolean }
     expect(payload.ok).toBe(true)
     expect(db.getUnreadMessages('term_windows')[0]?.from_handle).toBe('term_ssh')
+  })
+
+  it('rejects a remote sender whose --from is not the attested pane', async () => {
+    const { runtime, db } = createRuntime({ terminalHandle: 'term_ssh_other' })
+
+    const result = await runRemoteOrcaCli(
+      runtime,
+      {
+        argv: ['orchestration', 'send', '--to', 'term_windows', '--subject', 'ping', '--json'],
+        cwd: '/home/alice/repo',
+        env: {
+          ORCA_TERMINAL_HANDLE: 'term_ssh',
+          ORCA_PANE_KEY: 'tab_ssh:11111111-1111-4111-8111-111111111111',
+          ORCA_AGENT_LAUNCH_TOKEN: 'launch-secret'
+        }
+      },
+      LEGACY_FALLBACK_OPTIONS
+    )
+
+    const payload = JSON.parse(result.stdout) as { ok: boolean; error?: { code: string } }
+    expect(payload.ok).toBe(false)
+    expect(payload.error?.code).toBe('consumer_fenced')
+    expect(db.getUnreadMessages('term_windows')).toHaveLength(0)
   })
 
   it('does not trust caller-supplied remote pane identity in the legacy fallback', async () => {

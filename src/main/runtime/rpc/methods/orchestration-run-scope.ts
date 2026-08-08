@@ -14,7 +14,9 @@ export type RunScopeParams = {
   callerEvidence?: OrchestrationCompatibilityEvidence
 }
 
-// Why: declared handles select mutable Run bindings, so attested callers may only name themselves.
+// Why: declared handles select mutable Run bindings and mailboxes, so attested callers may only name themselves.
+// Why: evidence is caller-supplied env, so a caller that presents none keeps its declared handle — plain shells,
+// hook-disabled SSH panes, restored panes, and older clients have none. This fences mistakes, not a hostile pane.
 export function assertCallerHandleMatchesEvidence(
   runtime: OrcaRuntimeService,
   callerTerminalHandle: string,

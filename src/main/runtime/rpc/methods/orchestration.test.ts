@@ -3141,4 +3141,112 @@ describe('orchestration RPC methods', () => {
       expect(db.listTasks()).toHaveLength(1)
     })
   })
+
+  describe('attested sender identity', () => {
+    const workerPaneKey = 'tab_worker:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+
+    function attestAs(terminalHandle: string, paneKey: string): void {
+      ctx = {
+        runtime,
+        orchestrationCompatibilityEvidence: {
+          terminalHandle,
+          paneKey,
+          launchToken: 'launch-secret'
+        }
+      }
+      vi.spyOn(runtime, 'verifyOrchestrationCompatibilityCaller').mockReturnValue({
+        hostScope: { kind: 'local', hostId: 'local' },
+        paneKey,
+        terminalHandle,
+        processIncarnation: `runtime_test:${terminalHandle}:1`,
+        launchTokenHash: 'hash'
+      })
+    }
+
+    it('rejects a send whose --from names another terminal', async () => {
+      setup()
+      attestAs('term_worker', workerPaneKey)
+
+      await expect(
+        call('orchestration.send', {
+          from: 'term_coord',
+          to: `run:${activeRunId}`,
+          subject: 'spoofed'
+        })
+      ).rejects.toMatchObject({ code: 'consumer_fenced' })
+      expect(db.getInbox()).toHaveLength(0)
+    })
+
+    it('rejects a reply whose --from names another terminal without consuming the original', async () => {
+      setup()
+      const original = db.insertMessage({
+        from: 'term_coord',
+        to: 'term_worker',
+        subject: 'ping'
+      })
+      attestAs('term_intruder', 'tab_x:cccccccc-cccc-4ccc-8ccc-cccccccccccc')
+
+      await expect(
+        call('orchestration.reply', { id: original.id, body: 'pong', from: 'term_worker' })
+      ).rejects.toMatchObject({ code: 'consumer_fenced' })
+      // Why: rejecting after markAsRead would silently consume another pane's mail.
+      expect(db.getMessageById(original.id)?.read).toBe(0)
+    })
+
+    it('rejects an ask whose --from names another terminal', async () => {
+      setup()
+      attestAs('term_worker', workerPaneKey)
+
+      await expect(
+        call('orchestration.ask', {
+          to: 'term_coord',
+          question: 'ready?',
+          from: 'term_coord'
+        })
+      ).rejects.toMatchObject({ code: 'consumer_fenced' })
+    })
+
+    it('rejects a check that names another terminal without consuming its mail', async () => {
+      setup()
+      db.insertMessage({ from: 'term_coord', to: 'term_worker', subject: 'work' })
+      attestAs('term_intruder', 'tab_x:cccccccc-cccc-4ccc-8ccc-cccccccccccc')
+
+      await expect(call('orchestration.check', { terminal: 'term_worker' })).rejects.toMatchObject({
+        code: 'consumer_fenced'
+      })
+      expect(db.getUnreadMessages('term_worker')).toHaveLength(1)
+    })
+
+    it('keeps the declared handle when evidence is present but cannot be attested', async () => {
+      setup()
+      ctx = {
+        runtime,
+        orchestrationCompatibilityEvidence: { terminalHandle: 'term_worker' }
+      }
+      // Why: the fail-open branch — a pane that drops ORCA_AGENT_LAUNCH_TOKEN is unattestable, not rejected.
+      vi.spyOn(runtime, 'verifyOrchestrationCompatibilityCaller').mockReturnValue(null)
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+
+      const result = (await call('orchestration.send', {
+        from: 'term_coord',
+        to: `run:${activeRunId}`,
+        subject: 'unattestable'
+      })) as { message: { from_handle: string } }
+
+      expect(result.message.from_handle).toBe('term_coord')
+    })
+
+    it('leaves callers without attestation evidence on their declared handle', async () => {
+      setup()
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+
+      const result = (await call('orchestration.send', {
+        from: 'term_coord',
+        to: `run:${activeRunId}`,
+        subject: 'legacy shell'
+      })) as { message: { from_handle: string } }
+
+      expect(result.message.from_handle).toBe('term_coord')
+    })
+  })
 })
