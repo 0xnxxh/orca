@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron'
+import { UPDATER_INSTALL_COMMITTED_CHANNEL } from '../shared/updater-install-events'
 
-export const UPDATER_INSTALL_COMMITTED_CHANNEL = 'updater:installCommitted'
+export { UPDATER_INSTALL_COMMITTED_CHANNEL }
+
 
 // Why: the installer replaces app.asar while renderers are still alive, so every
 // renderer needs to know — not just the one that pressed Restart. Renderer-local
@@ -51,18 +53,6 @@ export function clearUpdaterInstallCommitted(): void {
   }
   installCommitted = false
   broadcast(false)
-}
-
-/** Seeds a window created mid-install, which would otherwise never see the broadcast. */
-export function syncUpdaterInstallCommitmentTo(win: BrowserWindow): void {
-  if (!installCommitted || win.isDestroyed()) {
-    return
-  }
-  try {
-    win.webContents.send(UPDATER_INSTALL_COMMITTED_CHANNEL, true)
-  } catch {
-    // Best effort: the renderer also seeds itself over IPC when it registers.
-  }
 }
 
 export function resetUpdaterInstallCommitmentForTest(): void {

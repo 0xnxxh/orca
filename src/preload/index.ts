@@ -1,5 +1,9 @@
 /* eslint-disable max-lines -- Why: preload is the audited renderer/Electron IPC contract; co-locating the surface eases security and type-drift review. */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import {
+  UPDATER_INSTALL_COMMITTED_CHANNEL,
+  UPDATER_IS_INSTALL_COMMITTED_CHANNEL
+} from '../shared/updater-install-events'
 import { electronAPI } from '@electron-toolkit/preload'
 import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
@@ -3037,11 +3041,11 @@ const api = {
         awaitBeforeUnloadCheckpoint
       ),
 
-    isInstallCommitted: () => ipcRenderer.invoke('updater:isInstallCommitted'),
+    isInstallCommitted: () => ipcRenderer.invoke(UPDATER_IS_INSTALL_COMMITTED_CHANNEL),
     onInstallCommitted: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, committed: boolean) => callback(committed)
-      ipcRenderer.on('updater:installCommitted', listener)
-      return () => ipcRenderer.removeListener('updater:installCommitted', listener)
+      ipcRenderer.on(UPDATER_INSTALL_COMMITTED_CHANNEL, listener)
+      return () => ipcRenderer.removeListener(UPDATER_INSTALL_COMMITTED_CHANNEL, listener)
     },
     onStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)

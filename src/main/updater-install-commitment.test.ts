@@ -19,6 +19,7 @@ vi.mock('electron', () => ({
   }
 }))
 
+const { BrowserWindow } = await import('electron')
 const {
   UPDATER_INSTALL_COMMITTED_CHANNEL,
   clearUpdaterInstallCommitted,
@@ -85,6 +86,18 @@ describe('updater install commitment', () => {
     expect(() => markUpdaterInstallCommitted()).not.toThrow()
     expect(alive.sent).toEqual([[UPDATER_INSTALL_COMMITTED_CHANNEL, true]])
     expect(isUpdaterInstallCommitted()).toBe(true)
+  })
+
+  it('survives getAllWindows itself throwing', () => {
+    // The outer boundary matters for the same reason as the inner one: this runs
+    // inside the install path.
+    const spy = vi.spyOn(BrowserWindow, 'getAllWindows').mockImplementation(() => {
+      throw new Error('electron is tearing down')
+    })
+
+    expect(() => markUpdaterInstallCommitted()).not.toThrow()
+    expect(isUpdaterInstallCommitted()).toBe(true)
+    spy.mockRestore()
   })
 
   it('does not broadcast a clear that changes nothing', () => {
