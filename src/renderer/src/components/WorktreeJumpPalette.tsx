@@ -2315,7 +2315,9 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
         'Search chats, terminals, worktrees, settings, and actions'
       )}
       overlayClassName="bg-black/55 backdrop-blur-[2px]"
-      contentClassName="top-[10%] w-[900px] max-w-[96vw] overflow-hidden rounded-xl border border-border/70 bg-background/96 shadow-[0_26px_84px_rgba(0,0,0,0.32)] backdrop-blur-xl"
+      // Why max-h + calc list height: top offset + input + filter chips + footer
+      // must stay on-screen on short windows; a bare 72vh list was clipping the chrome.
+      contentClassName="top-[min(10%,4rem)] w-[900px] max-w-[96vw] max-h-[min(90vh,calc(100vh-1.5rem))] overflow-hidden rounded-xl border border-border/70 bg-background/96 shadow-[0_26px_84px_rgba(0,0,0,0.32)] backdrop-blur-xl"
       commandProps={{
         loop: true,
         value: commandSelectedItemId,
@@ -2347,7 +2349,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
         }
       />
       <PaletteFilterChips model={filterModel} filter={filter} onFilterChange={setRawFilter} />
-      <CommandList ref={listRef} className="max-h-[min(600px,72vh)] px-2.5 pb-2.5 pt-2">
+      <CommandList
+        ref={listRef}
+        className="max-h-[min(600px,calc(100vh-14rem))] px-2.5 pb-2.5 pt-2"
+      >
         {isLoading && selectableItems.length === 0 && !showCreateAction ? (
           <PaletteState
             title={translate(
