@@ -1,3 +1,6 @@
+// Feeds the AI Vault session cache, which now persists across app versions: if a
+// change here alters `aiVaultAgentLabel` (the persisted fallback title) or the `AiVaultSession` shape, bump PARSER_REVISION in
+// src/main/ai-vault/session-parse-cache-persistence.ts.
 import type { TuiAgent } from './types'
 import type { ExecutionHostId, ExecutionHostScope } from './execution-host'
 

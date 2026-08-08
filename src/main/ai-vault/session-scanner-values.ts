@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// the title, preview or timestamp text it extracts, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { readFile } from 'node:fs/promises'

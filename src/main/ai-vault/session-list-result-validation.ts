@@ -43,7 +43,11 @@ const sessionPreviewMessageSchema = z.object({
   timestamp: z.string().nullable()
 })
 
-const aiVaultSessionSchema = z.object({
+// Exported so the persisted parse cache can reject a stale-shaped session on
+// seed instead of serving it: a `PARSER_REVISION` bump that never happened is
+// then one cold parse, not a silently wrong row (and, on a serve host, not an
+// empty session list once every row fails the same check on the client).
+export const aiVaultSessionSchema = z.object({
   id: z.string(),
   executionHostId: executionHostIdSchema,
   executionHostPlatform: nodePlatformSchema.nullable().optional(),

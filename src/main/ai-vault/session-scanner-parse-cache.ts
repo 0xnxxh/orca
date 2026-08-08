@@ -1,5 +1,3 @@
-import { createReadStream } from 'node:fs'
-import { open } from 'node:fs/promises'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import { createAntigravitySessionResumeState } from './session-scanner-antigravity-parser'
 import { parseAgentSessionFile } from './session-scanner-agent-parser'
@@ -12,15 +10,20 @@ import { createCopilotSessionResumeState } from './session-scanner-copilot-parse
 import { createCursorSessionResumeState } from './session-scanner-cursor-parser'
 import { countSubagentTranscripts } from './session-scanner-subagent-transcripts'
 import { countOmpSubagentTranscripts } from './session-scanner-omp-subagent-transcripts'
+import { consumeCompleteJsonlLines, endsWithNewlineAt } from './session-scanner-jsonl-byte-reader'
 import type { ResumableSessionParseState, SessionFileCandidate } from './session-scanner-types'
 import { refreshCachedCodexTitle } from './session-scanner-codex-cached-title'
 
-// Sized past the default recency cap (1000) plus the in-scope cap (2000) so a
-// full steady-state result set stays resident between forced rescans.
-const MAX_CACHE_ENTRIES = 4096
+// Sized to cover a whole unlimited-depth corpus, not just the default recency
+// cap: at 4096 an unlimited scan of ~14k transcripts cycled the LRU ~3.5x and
+// evicted everything it had just written, so every rescan re-parsed the full
+// 8.8 GB (reused=0). An LRU cap is a ceiling, not a preallocation — default
+// scans still hold only their ~2-3k parsed candidates.
+export const MAX_CACHE_ENTRIES = 32_768
 
-const NEWLINE_BYTE = 0x0a
-const CARRIAGE_RETURN_BYTE = 0x0d
+// The persisted snapshot stays at the old cap: growing it puts a proportionally
+// larger JSON.stringify/parse on the main thread per save and per launch.
+export const MAX_PERSISTED_CACHE_ENTRIES = 4096
 
 type ResumePoint = {
   state: ResumableSessionParseState
@@ -93,9 +96,11 @@ export function createSessionParseStats(): SessionParseStats {
 }
 
 const cache = new Map<string, SessionParseCacheEntry>()
+let loggedCapReached = false
 
 export function resetSessionParseCacheForTests(): void {
   cache.clear()
+  loggedCapReached = false
 }
 
 // Drops one entry after its file is deleted. Cleanliness, not correctness:
@@ -112,15 +117,23 @@ export function snapshotSessionParseCacheForPersistence(): [
   string,
   PersistedSessionParseCacheEntry
 ][] {
-  return [...cache].map(([path, entry]): [string, PersistedSessionParseCacheEntry] => [
-    path,
-    {
-      mtimeMs: entry.mtimeMs,
-      sizeBytes: entry.sizeBytes,
-      platform: entry.platform,
-      session: entry.session
-    }
-  ])
+  // Trim by newest file mtime, not by LRU position: a full-corpus scan walks
+  // newest→oldest, so the LRU tail holds exactly the entries least likely to be
+  // candidates next launch. Emitted mtime-ascending so seeding an over-cap file
+  // keeps its newest tail. Slice before mapping so an over-cap cache doesn't
+  // build (and discard) an object per evicted entry every save.
+  return [...cache]
+    .sort(([, left], [, right]) => left.mtimeMs - right.mtimeMs)
+    .slice(-MAX_PERSISTED_CACHE_ENTRIES)
+    .map(([path, entry]): [string, PersistedSessionParseCacheEntry] => [
+      path,
+      {
+        mtimeMs: entry.mtimeMs,
+        sizeBytes: entry.sizeBytes,
+        platform: entry.platform,
+        session: entry.session
+      }
+    ])
 }
 
 // Seeded entries carry `resume: null`: after a restart an unchanged file is a
@@ -130,8 +143,8 @@ export function seedSessionParseCache(
   entries: Iterable<[string, PersistedSessionParseCacheEntry]>
 ): void {
   const list = [...entries]
-  // Snapshot order is oldest→newest (LRU); an over-cap list keeps the newest
-  // tail rather than seeding the oldest entries and dropping the tail.
+  // Snapshot order is oldest→newest by mtime; an over-cap list (a foreign or
+  // legacy file) keeps the newest tail rather than dropping it.
   for (const [path, entry] of list.slice(Math.max(0, list.length - MAX_CACHE_ENTRIES))) {
     if (cache.size >= MAX_CACHE_ENTRIES) {
       return
@@ -151,14 +164,22 @@ export function seedSessionParseCache(
 }
 
 function storeEntry(path: string, entry: SessionParseCacheEntry): void {
+  if (!cache.has(path) && cache.size >= MAX_CACHE_ENTRIES) {
+    // Why decline rather than evict: scans sweep newest→oldest, so evicting the
+    // LRU head discards exactly the entry the next sweep reaches first — one
+    // file past the cap took reuse to 0 forever. Keeping the existing working
+    // set degrades to cap/corpus instead. Cost: transcripts created after the
+    // cache filled aren't cached until the next launch reseeds newest-first.
+    if (!loggedCapReached) {
+      loggedCapReached = true
+      console.warn(
+        `[ai-vault] session parse cache is full at its ${MAX_CACHE_ENTRIES}-entry cap; transcripts beyond it are re-parsed on every scan`
+      )
+    }
+    return
+  }
   cache.delete(path)
   cache.set(path, entry)
-  if (cache.size > MAX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next()
-    if (!oldest.done) {
-      cache.delete(oldest.value)
-    }
-  }
 }
 
 /**
@@ -296,87 +317,5 @@ async function parseResumableCandidate(args: {
     platform: args.platform,
     session: await displayState.finalize(args.platform),
     resume: { state, byteOffset: readResult.consumedThrough }
-  }
-}
-
-// A resume point is only valid if it still sits just past a line break;
-// anything else means the file was rewritten, not appended. Heuristic: a
-// grown rewrite keeping '\n' at exactly this byte would slip through, but
-// agent transcripts are append-only so that trade is accepted (worst case is
-// a stale vault row until the file is next truncated or the app restarts).
-async function endsWithNewlineAt(path: string, offset: number): Promise<boolean> {
-  const handle = await open(path, 'r')
-  try {
-    const { bytesRead, buffer } = await handle.read(Buffer.alloc(1), 0, 1, offset - 1)
-    return bytesRead === 1 && buffer[0] === NEWLINE_BYTE
-  } finally {
-    await handle.close()
-  }
-}
-
-type JsonlReadResult = {
-  consumedThrough: number
-  trailingPartialLine: string | null
-  bytesRead: number
-}
-
-// Byte-accurate replacement for readline: offsets must count bytes (not
-// UTF-8-decoded characters) so a resumed read starts exactly where the last
-// complete line ended.
-async function consumeCompleteJsonlLines(args: {
-  path: string
-  start: number
-  onLine: (line: string) => void
-}): Promise<JsonlReadResult> {
-  let consumedThrough = args.start
-  let bytesRead = 0
-  // Why a piece list: re-joining the partial line with every chunk made one
-  // oversized record (a big tool result) cost O(record^2). Joining once, when a
-  // newline finally arrives, keeps it linear.
-  let remainderParts: Buffer[] = []
-  let remainderLength = 0
-
-  const stream = createReadStream(args.path, { start: args.start })
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    bytesRead += chunk.length
-    // Why check the chunk alone: the pieces held over are all mid-line, so none
-    // of them contains a newline.
-    if (!chunk.includes(NEWLINE_BYTE)) {
-      remainderParts.push(chunk)
-      remainderLength += chunk.length
-      continue
-    }
-    const data =
-      remainderLength > 0
-        ? Buffer.concat([...remainderParts, chunk], remainderLength + chunk.length)
-        : chunk
-    remainderParts = []
-    remainderLength = 0
-    let lineStart = 0
-    let newlineIndex = data.indexOf(NEWLINE_BYTE, lineStart)
-    while (newlineIndex !== -1) {
-      let lineEnd = newlineIndex
-      if (lineEnd > lineStart && data[lineEnd - 1] === CARRIAGE_RETURN_BYTE) {
-        lineEnd--
-      }
-      args.onLine(data.toString('utf-8', lineStart, lineEnd))
-      lineStart = newlineIndex + 1
-      newlineIndex = data.indexOf(NEWLINE_BYTE, lineStart)
-    }
-    consumedThrough += lineStart
-    if (lineStart < data.length) {
-      // Copy the tail so retaining it doesn't pin the whole chunk buffer.
-      remainderParts = [Buffer.from(data.subarray(lineStart))]
-      remainderLength = data.length - lineStart
-    }
-  }
-
-  const trailingPartialLine =
-    remainderLength > 0 ? Buffer.concat(remainderParts, remainderLength).toString('utf-8') : null
-
-  return {
-    consumedThrough,
-    trailingPartialLine,
-    bytesRead
   }
 }

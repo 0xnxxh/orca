@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// the user text it unwraps, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 // Shared Grok user-turn text helpers for AI Vault (list preview + full first-prompt
 // copy). Kept out of the native-chat decoder so vault scanners stay free of that
 // dependency while matching its bootstrap / user_query rules.

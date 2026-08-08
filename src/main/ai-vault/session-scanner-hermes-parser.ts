@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// what this module emits for the same input bytes, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 import { readFile } from 'node:fs/promises'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import type { ExecutionHostId } from '../../shared/execution-host'

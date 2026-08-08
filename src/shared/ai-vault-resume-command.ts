@@ -1,3 +1,6 @@
+// Feeds the AI Vault session cache, which now persists across app versions: if a
+// change here alters the persisted `resumeCommand`, bump PARSER_REVISION in
+// src/main/ai-vault/session-parse-cache-persistence.ts.
 // Resume-command construction for Agent Session History rows: turns a scanned
 // session into the shell line that re-enters it, quoted for the target platform
 // and (when known) the live tab's shell.

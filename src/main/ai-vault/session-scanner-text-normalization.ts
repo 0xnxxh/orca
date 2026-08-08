@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// what this module emits for the same input bytes, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 const SESSION_TITLE_TEXT_LIMIT = 96
 const SESSION_PREVIEW_TEXT_LIMIT = 220
 const ELLIPSIS = '...'

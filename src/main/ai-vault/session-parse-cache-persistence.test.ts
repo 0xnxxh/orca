@@ -24,9 +24,12 @@ import {
 import { scanAiVaultSessions } from './session-scanner'
 import {
   createSessionParseStats,
+  MAX_CACHE_ENTRIES,
+  MAX_PERSISTED_CACHE_ENTRIES,
   parseAgentSessionFileCached,
   resetSessionParseCacheForTests,
   seedSessionParseCache,
+  snapshotSessionParseCacheForPersistence,
   type PersistedSessionParseCacheEntry,
   type SessionParseStats
 } from './session-scanner-parse-cache'
@@ -37,8 +40,6 @@ import type { FileWithMtime, SessionFileCandidate } from './session-scanner-type
 // Spy-wrap (real implementations still run) so the zero-disk-IO test can
 // assert the uninitialized module never touches the filesystem.
 vi.mock('node:fs/promises', { spy: true })
-
-const APP_VERSION = '1.2.3-test'
 
 let tempRoots: string[] = []
 
@@ -112,10 +113,10 @@ async function parseAndPersist(path: string): Promise<SessionParseStats> {
 
 // Clear the in-memory cache and the persistence module's memoized state, then
 // re-enable persistence against the same file — a fresh launch, same profile.
-function simulateRestart(cacheFile: string, appVersion = APP_VERSION): void {
+function simulateRestart(cacheFile: string): void {
   resetSessionParseCacheForTests()
   resetSessionParseCachePersistenceForTests()
-  initSessionParseCachePersistence({ filePath: cacheFile, appVersion })
+  initSessionParseCachePersistence({ filePath: cacheFile })
 }
 
 async function coldParseStats(path: string): Promise<SessionParseStats> {
@@ -129,7 +130,7 @@ describe('session parse cache persistence', () => {
   it('round-trips: a persisted entry is a reused hit after a restart, without reading the transcript', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'vault-state', 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
 
     const transcript = await writeTranscript(root)
     const candidate = await claudeCandidate(transcript)
@@ -161,7 +162,7 @@ describe('session parse cache persistence', () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
     await writeFile(cacheFile, 'not json {{{')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
 
     const transcript = await writeTranscript(root)
     const stats = await coldParseStats(transcript)
@@ -172,7 +173,7 @@ describe('session parse cache persistence', () => {
   it('ignores a cache file with a mismatched schemaVersion', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const transcript = await writeTranscript(root)
     await parseAndPersist(transcript)
 
@@ -186,17 +187,91 @@ describe('session parse cache persistence', () => {
     expect(stats.reused).toBe(0)
   })
 
-  it('ignores a cache file written by a different app version', async () => {
+  // The regression the PARSER_REVISION key fixes: hourly-build users paid a
+  // full cold scan per app update even though no parser had changed.
+  it('keeps a cache file written by a different app version', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const transcript = await writeTranscript(root)
     await parseAndPersist(transcript)
 
-    simulateRestart(cacheFile, '9.9.9-other')
+    // A file left by the old appVersion-keyed build, or by any other version.
+    const persisted = JSON.parse(await readFile(cacheFile, 'utf-8'))
+    persisted.appVersion = '9.9.9-other'
+    await writeFile(cacheFile, JSON.stringify(persisted))
+
+    simulateRestart(cacheFile)
+    const stats = await coldParseStats(transcript)
+    expect(stats.reused).toBe(1)
+    expect(stats.fullParses).toBe(0)
+  })
+
+  it.each([
+    ['a mismatched parserRevision', (file: Record<string, unknown>) => (file.parserRevision = 999)],
+    ['no parserRevision at all', (file: Record<string, unknown>) => delete file.parserRevision]
+  ])('ignores a cache file with %s', async (_label, corrupt) => {
+    const root = await makeTempDir()
+    const cacheFile = join(root, 'session-parse-cache.json')
+    initSessionParseCachePersistence({ filePath: cacheFile })
+    const transcript = await writeTranscript(root)
+    await parseAndPersist(transcript)
+
+    const persisted = JSON.parse(await readFile(cacheFile, 'utf-8'))
+    corrupt(persisted)
+    await writeFile(cacheFile, JSON.stringify(persisted))
+
+    simulateRestart(cacheFile)
     const stats = await coldParseStats(transcript)
     expect(stats.fullParses).toBe(1)
     expect(stats.reused).toBe(0)
+  })
+
+  // The safety net under a hand-maintained PARSER_REVISION: if a shape change
+  // ever ships without a bump, a stale row must cost one cold parse rather than
+  // reach the renderer with missing fields (or, on a serve host, be dropped
+  // wholesale by the client's zod and empty the list).
+  it.each([
+    ['a required field is missing', (s: Record<string, unknown>) => delete s.resumeCommand],
+    ['a required field has the wrong type', (s: Record<string, unknown>) => (s.messageCount = 'n')]
+  ])('re-parses a persisted session where %s', async (_label, corrupt) => {
+    const root = await makeTempDir()
+    const cacheFile = join(root, 'session-parse-cache.json')
+    initSessionParseCachePersistence({ filePath: cacheFile })
+    const transcript = await writeTranscript(root)
+    await parseAndPersist(transcript)
+
+    const persisted = JSON.parse(await readFile(cacheFile, 'utf-8'))
+    corrupt(persisted.entries[0][1].session)
+    await writeFile(cacheFile, JSON.stringify(persisted))
+
+    simulateRestart(cacheFile)
+    const stats = await coldParseStats(transcript)
+    expect(stats.fullParses).toBe(1)
+    expect(stats.reused).toBe(0)
+  })
+
+  it('drops only the stale-shaped entry and still seeds the rest of the file', async () => {
+    const root = await makeTempDir()
+    const cacheFile = join(root, 'session-parse-cache.json')
+    initSessionParseCachePersistence({ filePath: cacheFile })
+    const transcript = await writeTranscript(root)
+    await parseAndPersist(transcript)
+
+    // A neighbour entry that is structurally fine but shape-invalid must not
+    // take the whole snapshot down with it.
+    const persisted = JSON.parse(await readFile(cacheFile, 'utf-8'))
+    const [, goodEntry] = persisted.entries[0]
+    persisted.entries.unshift([
+      '/nonexistent/stale-shape.jsonl',
+      { ...goodEntry, session: { ...goodEntry.session, resumeCommand: undefined } }
+    ])
+    await writeFile(cacheFile, JSON.stringify(persisted))
+
+    simulateRestart(cacheFile)
+    const stats = await coldParseStats(transcript)
+    expect(stats.reused).toBe(1)
+    expect(stats.fullParses).toBe(0)
   })
 
   it('seeding never clobbers a live in-memory entry', async () => {
@@ -228,7 +303,7 @@ describe('session parse cache persistence', () => {
   it('falls through to a full parse when a seeded file changed while the app was closed', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const transcript = await writeTranscript(root)
     await parseAndPersist(transcript)
 
@@ -255,7 +330,12 @@ describe('session parse cache persistence', () => {
     vi.clearAllMocks()
 
     await ensureSessionParseCacheLoaded()
-    scheduleSessionParseCachePersist({ reused: 0, incremental: 2, fullParses: 5, bytesRead: 10 })
+    scheduleSessionParseCachePersist({
+      reused: 0,
+      incremental: 2,
+      fullParses: 5,
+      bytesRead: 10
+    })
     await flushSessionParseCachePersistForTests()
 
     expect(fsPromises.readFile).not.toHaveBeenCalled()
@@ -268,7 +348,7 @@ describe('session parse cache persistence', () => {
   it('collapses back-to-back schedules into one write', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const transcript = await writeTranscript(root)
     const stats = await coldParseStats(transcript)
 
@@ -286,7 +366,7 @@ describe('session parse cache persistence', () => {
     const cacheFile = join(root, 'session-parse-cache.json')
     const orphan = join(root, 'session-parse-cache-12345-99.tmp')
     await writeFile(orphan, '{"half":"written')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
 
     await ensureSessionParseCacheLoaded()
     expect(existsSync(orphan)).toBe(false)
@@ -295,7 +375,7 @@ describe('session parse cache persistence', () => {
   it('scanAiVaultSessions seeds from the persisted cache and persists after parsing', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const roots = isolatedScanRoots(root)
     const transcript = join(roots.claudeProjectsDir, 'project', 'scan-session.jsonl')
     await mkdir(join(roots.claudeProjectsDir, 'project'), { recursive: true })
@@ -336,10 +416,15 @@ describe('session parse cache persistence', () => {
     // Snapshot order is oldest→newest, so a foreign over-cap file must keep
     // its newest (last) entries; the real transcript rides at the very end.
     const fakes: [string, PersistedSessionParseCacheEntry][] = Array.from(
-      { length: 4100 },
+      { length: MAX_CACHE_ENTRIES + 4 },
       (_, index): [string, PersistedSessionParseCacheEntry] => [
         `/nonexistent/fake-${index}.jsonl`,
-        { mtimeMs: index, sizeBytes: 1, platform: process.platform, session: null }
+        {
+          mtimeMs: index,
+          sizeBytes: 1,
+          platform: process.platform,
+          session: null
+        }
       ]
     )
     seedSessionParseCache([
@@ -361,10 +446,79 @@ describe('session parse cache persistence', () => {
     expect(stats.fullParses).toBe(0)
   })
 
+  it('trims the snapshot to the newest-mtime entries, emitted mtime-ascending', async () => {
+    // Insertion order is mtime-DESCENDING here, mirroring a real scan (it walks
+    // candidates newest first). Trimming by LRU position would therefore keep
+    // the oldest files — exactly the entries least likely to be candidates next
+    // launch — so the trim has to key on mtime instead.
+    const total = MAX_PERSISTED_CACHE_ENTRIES + 100
+    seedSessionParseCache(
+      Array.from({ length: total }, (_, index): [string, PersistedSessionParseCacheEntry] => [
+        `/nonexistent/fake-${index}.jsonl`,
+        {
+          mtimeMs: total - index,
+          sizeBytes: 1,
+          platform: process.platform,
+          session: null
+        }
+      ])
+    )
+
+    const snapshot = snapshotSessionParseCacheForPersistence()
+    const mtimes = snapshot.map(([, entry]) => entry.mtimeMs)
+    expect(snapshot).toHaveLength(MAX_PERSISTED_CACHE_ENTRIES)
+    expect(mtimes).toEqual(mtimes.toSorted((left, right) => left - right))
+    expect(mtimes[0]).toBe(total - MAX_PERSISTED_CACHE_ENTRIES + 1)
+    expect(mtimes.at(-1)).toBe(total)
+  })
+
+  it('a trimmed snapshot round-trips through seeding', async () => {
+    const root = await makeTempDir()
+    const cacheFile = join(root, 'session-parse-cache.json')
+    initSessionParseCachePersistence({ filePath: cacheFile })
+    const transcript = await writeTranscript(root)
+    const candidate = await claudeCandidate(transcript)
+
+    // Parse the real transcript FIRST, then over-fill with older entries, so the
+    // transcript is newest by mtime but OLDEST by LRU position. Seeding the
+    // fakes first would leave it newest in both orders and the assertion below
+    // would still pass with the mtime sort deleted. Persist without re-parsing,
+    // since a reuse hit would move the transcript back to the LRU tail.
+    await ensureSessionParseCacheLoaded()
+    const parseStats = createSessionParseStats()
+    await parseAgentSessionFileCached(candidate, process.platform, parseStats)
+    seedSessionParseCache(
+      Array.from(
+        { length: MAX_PERSISTED_CACHE_ENTRIES + 100 },
+        (_, index): [string, PersistedSessionParseCacheEntry] => [
+          `/nonexistent/fake-${index}.jsonl`,
+          {
+            mtimeMs: index,
+            sizeBytes: 1,
+            platform: process.platform,
+            session: null
+          }
+        ]
+      )
+    )
+    scheduleSessionParseCachePersist(parseStats)
+    await flushSessionParseCachePersistForTests()
+    expect(JSON.parse(await readFile(cacheFile, 'utf-8')).entries).toHaveLength(
+      MAX_PERSISTED_CACHE_ENTRIES
+    )
+
+    simulateRestart(cacheFile)
+    await ensureSessionParseCacheLoaded()
+    const stats = createSessionParseStats()
+    await parseAgentSessionFileCached(candidate, process.platform, stats)
+    expect(stats.reused).toBe(1)
+    expect(stats.fullParses).toBe(0)
+  })
+
   it('a failing rename cleans up its temp file and keeps the previous snapshot usable', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
-    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    initSessionParseCachePersistence({ filePath: cacheFile })
     const transcript = await writeTranscript(root)
     await parseAndPersist(transcript)
     const previousSnapshot = await readFile(cacheFile, 'utf-8')
@@ -408,8 +562,7 @@ describe('session parse cache persistence', () => {
     const blocker = join(root, 'blocker')
     await writeFile(blocker, 'a file, not a directory')
     initSessionParseCachePersistence({
-      filePath: join(blocker, 'session-parse-cache.json'),
-      appVersion: APP_VERSION
+      filePath: join(blocker, 'session-parse-cache.json')
     })
     const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
 

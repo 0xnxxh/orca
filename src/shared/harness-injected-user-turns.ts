@@ -1,3 +1,6 @@
+// Feeds the AI Vault session cache, which now persists across app versions: if a
+// change here alters which turns are filtered out of persisted previews, bump PARSER_REVISION in
+// src/main/ai-vault/session-parse-cache-persistence.ts.
 // Why: agent harnesses (Claude Code and its forks) inject machinery into the
 // conversation as user-role turns — background task notifications, system
 // reminders, inter-agent messages, slash-command envelopes, local-command

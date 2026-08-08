@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// the `firstUserPrompt` it extracts, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 import { isKnownHarnessInjectedUserTurnText } from '../../shared/harness-injected-user-turns'
 import { getFirstUserPromptCaptureMode } from './session-scanner-first-user-prompt-capture'
 import { stripGrokUserQueryEnvelope } from './session-scanner-grok-user-text'

@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// the `totalTokens` it computes, bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 import type { CodexUsageSnapshot } from './session-scanner-types'
 import { asRecord } from './session-scanner-record-value'
 

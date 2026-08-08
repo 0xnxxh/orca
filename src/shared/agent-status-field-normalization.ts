@@ -1,3 +1,6 @@
+// Feeds the AI Vault session cache, which now persists across app versions: if a
+// change here alters the persisted `lastUserPrompt`, bump PARSER_REVISION in
+// src/main/ai-vault/session-parse-cache-persistence.ts.
 // ─── Agent status field normalization ───────────────────────────────────────
 // String normalizers shared by every agent-status payload field: trim/fold to
 // a single line for previews, preserve structure for multiline bodies, and

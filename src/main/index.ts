@@ -805,8 +805,7 @@ if (hasSingleInstanceLock) {
   initDataPath()
   // Why: use the canonical userData path — late app.getPath('userData') can resolve differently across restarts, defeating persistence.
   initSessionParseCachePersistence({
-    filePath: join(getCanonicalUserDataPath(), 'ai-vault', 'session-parse-cache.json'),
-    appVersion: app.getVersion()
+    filePath: join(getCanonicalUserDataPath(), 'ai-vault', 'session-parse-cache.json')
   })
   initOrcaProfilePaths()
   // Why: same timing as initDataPath — capture userData before app.setName changes it. See persistence.ts:20-28.

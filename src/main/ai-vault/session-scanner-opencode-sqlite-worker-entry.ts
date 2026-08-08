@@ -1,3 +1,6 @@
+// Parser output is cached on disk across app versions: if a change here alters
+// what the OpenCode worker emits (the sqlite module runs only through here), bump PARSER_REVISION in
+// session-parse-cache-persistence.ts or stale sessions are served from disk.
 import { parentPort } from 'node:worker_threads'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import { listOpenCodeSqliteSessions } from './session-scanner-opencode-sqlite-list'

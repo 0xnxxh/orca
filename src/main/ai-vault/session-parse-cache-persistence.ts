@@ -5,6 +5,7 @@
 // degrades to today's cold-scan behavior.
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { aiVaultSessionSchema } from './session-list-result-validation'
 import {
   seedSessionParseCache,
   snapshotSessionParseCacheForPersistence,
@@ -14,6 +15,20 @@ import {
 
 // Bump when the persisted entry layout changes; a mismatched file is discarded whole.
 const SCHEMA_VERSION = 1
+/**
+ * Bump whenever a change alters the `AiVaultSession` emitted for an unchanged
+ * transcript. Replaces an `appVersion` equality check that cost hourly-build
+ * users a cold scan per update; a mismatch discards the file whole.
+ *
+ * This docblock, not the per-module headers, is the authority: the producing
+ * closure runs well past `session-scanner-*-parser.ts` — the accumulator, the
+ * `session-scanner-values` family, the subagent counters, and `src/shared`
+ * (`resumeCommand`, `lastUserPrompt`, the fallback title label). Candidate-
+ * derived fields (`codexHome`, `agent`) count too; the reuse path returns the
+ * cached session untouched. Shape changes are caught by the schema check in
+ * `parsePersistedEntry`; same-shape value changes rely only on this constant.
+ */
+const PARSER_REVISION = 1
 // Debounce so back-to-back scans (desktop IPC + runtime RPC) collapse into one write.
 const SAVE_DEBOUNCE_MS = 1_500
 // The payload contains transcript-derived preview text; keep it user-only
@@ -23,7 +38,6 @@ const PRIVATE_FILE_MODE = 0o600
 
 type SessionParseCachePersistenceOptions = {
   filePath: string
-  appVersion: string
 }
 
 let options: SessionParseCachePersistenceOptions | null = null
@@ -99,7 +113,7 @@ async function loadPersistedEntries(current: SessionParseCachePersistenceOptions
   await sweepOrphanedTempFiles(current.filePath)
   try {
     const raw = await readFile(current.filePath, 'utf-8')
-    const entries = parsePersistedFile(JSON.parse(raw), current.appVersion)
+    const entries = parsePersistedFile(JSON.parse(raw))
     if (entries) {
       seedSessionParseCache(entries)
     }
@@ -126,17 +140,20 @@ async function sweepOrphanedTempFiles(filePath: string): Promise<void> {
   }
 }
 
-function parsePersistedFile(
-  parsed: unknown,
-  appVersion: string
-): [string, PersistedSessionParseCacheEntry][] | null {
+// A structurally sound entry whose session no longer matches the current
+// `AiVaultSession` shape: drop just this one (it becomes a cold parse) rather
+// than the whole file, since the rest of the snapshot is still usable.
+const SKIP_ENTRY = Symbol('skip-persisted-entry')
+
+function parsePersistedFile(parsed: unknown): [string, PersistedSessionParseCacheEntry][] | null {
   if (typeof parsed !== 'object' || parsed === null) {
     return null
   }
   const file = parsed as Record<string, unknown>
-  // Why: parser output shape/semantics may change between app versions, so a
-  // cross-version file is discarded — one cold scan per update is the price.
-  if (file.schemaVersion !== SCHEMA_VERSION || file.appVersion !== appVersion) {
+  // SCHEMA_VERSION guards the file layout, PARSER_REVISION the cached parser
+  // output; either mismatching (including a pre-revision file, which has no
+  // `parserRevision`) discards the file whole.
+  if (file.schemaVersion !== SCHEMA_VERSION || file.parserRevision !== PARSER_REVISION) {
     return null
   }
   if (!Array.isArray(file.entries)) {
@@ -149,12 +166,17 @@ function parsePersistedFile(
       // One malformed entry means the file can't be trusted; discard it whole.
       return null
     }
+    if (entry === SKIP_ENTRY) {
+      continue
+    }
     entries.push(entry)
   }
   return entries
 }
 
-function parsePersistedEntry(item: unknown): [string, PersistedSessionParseCacheEntry] | null {
+function parsePersistedEntry(
+  item: unknown
+): [string, PersistedSessionParseCacheEntry] | typeof SKIP_ENTRY | null {
   if (!Array.isArray(item) || item.length !== 2) {
     return null
   }
@@ -175,6 +197,13 @@ function parsePersistedEntry(item: unknown): [string, PersistedSessionParseCache
   if (entry.session !== null && typeof entry.session !== 'object') {
     return null
   }
+  // Why validate rather than cast: `PARSER_REVISION` is hand-maintained, so a
+  // shape change that shipped without a bump would otherwise reach the renderer
+  // as `undefined` fields locally, and be dropped wholesale by the client's zod
+  // on a serve host. Rejecting here downgrades a forgotten bump to a cold parse.
+  if (entry.session !== null && !aiVaultSessionSchema.safeParse(entry.session).success) {
+    return SKIP_ENTRY
+  }
   return [
     path,
     {
@@ -192,7 +221,7 @@ async function persistSnapshot(current: SessionParseCachePersistenceOptions): Pr
   try {
     const payload = JSON.stringify({
       schemaVersion: SCHEMA_VERSION,
-      appVersion: current.appVersion,
+      parserRevision: PARSER_REVISION,
       entries: snapshotSessionParseCacheForPersistence()
     })
     await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
