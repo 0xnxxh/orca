@@ -21,7 +21,7 @@ import {
   ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT,
   ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT
 } from '../../../shared/updater-renderer-events'
-import { registerUpdaterBeforeUnloadBypass } from './updater-beforeunload'
+import { registerUpdaterInstallCommitment } from './updater-install-commitment'
 import {
   isLazyChunkLoadError,
   loadLazyWithRetry,
@@ -35,16 +35,24 @@ const CORRUPT_CHUNK_ERROR = (): SyntaxError => new SyntaxError("Unexpected token
 
 type Breadcrumb = { name: string; data: Record<string, unknown> }
 
+const broadcastListeners: ((committed: boolean) => void)[] = []
+
 function installBreadcrumbSink(): Breadcrumb[] {
   const breadcrumbs: Breadcrumb[] = []
-  ;(window as unknown as { api: unknown }).api = {
-    crashReports: {
-      recordBreadcrumb: (crumb: Breadcrumb) => {
-        breadcrumbs.push(crumb)
-      }
+  const api = (window as unknown as { api: Record<string, unknown> }).api
+  api.crashReports = {
+    recordBreadcrumb: (crumb: Breadcrumb) => {
+      breadcrumbs.push(crumb)
     }
   }
   return breadcrumbs
+}
+
+/** Main is the authority: this is what every renderer, popout included, receives. */
+function broadcastInstallCommitted(committed: boolean): void {
+  for (const listener of broadcastListeners) {
+    listener(committed)
+  }
 }
 
 describe('loadLazyWithRetry during a committed update install', () => {
@@ -54,7 +62,18 @@ describe('loadLazyWithRetry during a committed update install', () => {
     window.sessionStorage.clear()
     resetLazyChunkReloadRequestsForTest()
     vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
-    unregister = registerUpdaterBeforeUnloadBypass()
+    broadcastListeners.length = 0
+    ;(window as unknown as { api: { updater: unknown } }).api = {
+      ...(window as unknown as { api?: Record<string, unknown> }).api,
+      updater: {
+        isInstallCommitted: () => Promise.resolve(false),
+        onInstallCommitted: (cb: (c: boolean) => void) => {
+          broadcastListeners.push(cb)
+          return () => undefined
+        }
+      }
+    } as never
+    unregister = registerUpdaterInstallCommitment()
   })
 
   afterEach(() => {
@@ -155,7 +174,8 @@ describe('loadLazyWithRetry during a committed update install', () => {
     // rest of the session — the bundle was never swapped.
     installBreadcrumbSink()
     commitUpdateInstall()
-    window.dispatchEvent(new Event(ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT))
+    // Only main can stand the archive down again.
+    broadcastInstallCommitted(false)
 
     await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
       retries: 0,
@@ -163,6 +183,96 @@ describe('loadLazyWithRetry during a committed update install', () => {
     }).catch(() => undefined)
 
     expect(window.location.reload).toHaveBeenCalled()
+  })
+
+  it('skips recovery in a renderer that never dispatched the local event (popout)', async () => {
+    // The dashboard popout has its own JS context and never invokes quitAndInstall,
+    // so only main's broadcast can reach it. Its chunks come from the same archive.
+    installBreadcrumbSink()
+    broadcastInstallCommitted(true)
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'agent-kanban-board'
+    }).catch(() => undefined)
+
+    expect(window.location.reload).not.toHaveBeenCalled()
+  })
+
+  it('seeds a window opened mid-install, which never saw the broadcast', async () => {
+    unregister?.()
+    ;(window as unknown as { api: Record<string, unknown> }).api = {
+      ...(window as unknown as { api: Record<string, unknown> }).api,
+      updater: {
+        isInstallCommitted: () => Promise.resolve(true),
+        onInstallCommitted: () => () => undefined
+      }
+    } as never
+    unregister = registerUpdaterInstallCommitment()
+    await Promise.resolve()
+    await Promise.resolve()
+    installBreadcrumbSink()
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'agent-map'
+    }).catch(() => undefined)
+
+    expect(window.location.reload).not.toHaveBeenCalled()
+  })
+
+  it('keeps skipping when an unrelated updater error fires mid-install', async () => {
+    // Reviewer blocker 3: the preload relay treats any updater error status as an
+    // abort. Main owns the committed state, so an unrelated failed check during the
+    // Linux revalidation window must not stand the archive back up.
+    installBreadcrumbSink()
+    broadcastInstallCommitted(true)
+    window.dispatchEvent(new Event(ORCA_UPDATER_QUIT_AND_INSTALL_ABORTED_EVENT))
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'overlay.update-card'
+    }).catch(() => undefined)
+
+    expect(window.location.reload).not.toHaveBeenCalled()
+  })
+
+  it('still serves a chunk already cached in the module map during an install', async () => {
+    // The guard sits after the retry loop on purpose: an already-evaluated module
+    // resolves from Chromium's module map with no disk read, so a panel that would
+    // have worked must keep working. Placing the guard earlier breaks this.
+    installBreadcrumbSink()
+    broadcastInstallCommitted(true)
+    let calls = 0
+    const factory = (): Promise<{ default: () => null }> => {
+      calls += 1
+      return calls === 1
+        ? Promise.reject(CORRUPT_CHUNK_ERROR())
+        : Promise.resolve({ default: () => null })
+    }
+
+    const loaded = await loadLazyWithRetry(factory, { retries: 1, baseDelayMs: 0 })
+
+    expect(calls).toBe(2)
+    expect(loaded.default).toBeTypeOf('function')
+  })
+
+  it('touches sessionStorage not at all on the skipped path', async () => {
+    installBreadcrumbSink()
+    broadcastInstallCommitted(true)
+    const getItem = vi.spyOn(window.sessionStorage, 'getItem')
+    const setItem = vi.spyOn(window.sessionStorage, 'setItem')
+    const removeItem = vi.spyOn(window.sessionStorage, 'removeItem')
+
+    await loadLazyWithRetry(() => Promise.reject(CORRUPT_CHUNK_ERROR()), {
+      retries: 0,
+      reloadKey: 'overlay.update-card'
+    }).catch(() => undefined)
+
+    // A write-then-remove leaves the key null too, so assert the path, not the key.
+    expect(setItem).not.toHaveBeenCalled()
+    expect(removeItem).not.toHaveBeenCalled()
+    expect(getItem).not.toHaveBeenCalled()
   })
 
   it('still requests recovery when no install is committed', async () => {

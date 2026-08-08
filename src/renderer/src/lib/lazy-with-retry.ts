@@ -4,7 +4,7 @@ import {
   requestLazyChunkRecoveryReload,
   type LazyChunkRecoveryReloadOutcome
 } from './lazy-chunk-recovery-reload'
-import { isUpdaterInstallCommitted } from './updater-beforeunload'
+import { isUpdaterInstallCommitted } from './updater-install-commitment'
 
 /**
  * Resilient replacement for React.lazy.

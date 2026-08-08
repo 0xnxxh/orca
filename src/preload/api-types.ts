@@ -2740,6 +2740,8 @@ export type PreloadApi = {
     onChanged: (callback: (event: RemoteWorkspaceChangedEvent) => void) => () => void
   }
   updater: {
+    isInstallCommitted: () => Promise<boolean>
+    onInstallCommitted: (callback: (committed: boolean) => void) => () => void
     getVersion: () => Promise<string>
     getStatus: () => Promise<UpdateStatus>
     check: (options?: UpdateCheckOptions) => Promise<void>

@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: this file is the central main-window IPC wiring point; splitting it during the mobile release compatibility rebase would increase release risk. */
 import { randomUUID } from 'node:crypto'
+import { isUpdaterInstallCommitted } from '../updater-install-commitment'
 
 import { app, ipcMain } from 'electron'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
@@ -544,6 +545,9 @@ export function registerUpdaterHandlers(_store: Store): void {
   ipcMain.removeHandler('updater:showLinuxPackage')
   ipcMain.removeHandler('updater:listBuilds')
 
+  ipcMain.removeHandler('updater:isInstallCommitted')
+  // Why: a window created mid-install misses the broadcast, so it seeds itself here.
+  ipcMain.handle('updater:isInstallCommitted', () => isUpdaterInstallCommitted())
   ipcMain.handle('updater:getStatus', () => getUpdateStatus())
   ipcMain.handle('updater:getVersion', () => app.getVersion())
   ipcMain.handle('updater:check', (_event, options?: UpdateCheckOptions) => {

@@ -3037,6 +3037,12 @@ const api = {
         awaitBeforeUnloadCheckpoint
       ),
 
+    isInstallCommitted: () => ipcRenderer.invoke('updater:isInstallCommitted'),
+    onInstallCommitted: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, committed: boolean) => callback(committed)
+      ipcRenderer.on('updater:installCommitted', listener)
+      return () => ipcRenderer.removeListener('updater:installCommitted', listener)
+    },
     onStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)
       ipcRenderer.on('updater:status', listener)
