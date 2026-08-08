@@ -67,6 +67,8 @@ import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import { mergeGitConfigEnvProtocol } from '../../shared/git-credential-prompt-env'
 import { PtyStartupIngress, type PtyIngressEmission } from '../../shared/pty-startup-ingress'
 import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
+import { signalPosixPtyForegroundGroup } from '../pty/posix-pty-foreground-group'
+import { readPtsName } from '../pty/node-pty-pts-name'
 import {
   createPtySlaveEchoProbe,
   readPtySlavePath
@@ -1207,11 +1209,20 @@ export class LocalPtyProvider implements IPtyProvider {
     if (!proc) {
       return
     }
-    try {
-      process.kill(proc.pid, signal)
-    } catch {
-      /* Process may already be dead */
+    const signalRootPid = (): void => {
+      try {
+        process.kill(proc.pid, signal)
+      } catch {
+        /* Process may already be dead */
+      }
     }
+    // Why only SIGWINCH: see posix-pty-foreground-group — a real resize reaches the
+    // tty's foreground group, which proc.pid is never a member of.
+    if (signal === 'SIGWINCH') {
+      signalPosixPtyForegroundGroup(proc.pid, readPtsName(proc), signal, signalRootPid)
+      return
+    }
+    signalRootPid()
   }
 
   async getCwd(id: string): Promise<string> {
