@@ -48,7 +48,7 @@ const activationMocks = vi.hoisted(() => ({
   browser: vi.fn(),
   simulator: vi.fn(),
   focusTerminalTabSurface: vi.fn(),
-  queueBrowserFocusRequest: vi.fn()
+  requestBrowserFocus: vi.fn()
 }))
 vi.mock('@/lib/workspace-tab-palette-activation', () => ({
   activateWorkspaceTabPaletteResult: activationMocks.workspace
@@ -63,8 +63,7 @@ vi.mock('@/lib/focus-terminal-tab-surface', () => ({
   focusTerminalTabSurface: activationMocks.focusTerminalTabSurface
 }))
 vi.mock('@/components/browser-pane/browser-focus', () => ({
-  ORCA_BROWSER_FOCUS_REQUEST_EVENT: 'orca:browser-focus-request',
-  queueBrowserFocusRequest: activationMocks.queueBrowserFocusRequest
+  requestBrowserFocus: activationMocks.requestBrowserFocus
 }))
 
 import TabBarCreateEntry from './TabBarCreateEntry'

@@ -82,11 +82,8 @@ export default function TabBarCreateEntry({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [switchError, setSwitchError] = useState<string | null>(null)
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null)
-  const [selectedOptionQuery, setSelectedOptionQuery] = useState(query)
-  // True while selection still tracks ranking (no arrow/click yet). Deferred tab
-  // rows can prepend a better match; re-pin only while this stays true.
-  const [selectionIsAutoDefault, setSelectionIsAutoDefault] = useState(true)
+  // null = follow ranking (deferred tabs can prepend); set on arrow keys only.
+  const [pinnedOptionId, setPinnedOptionId] = useState<string | null>(null)
   const [lastMenuOpen, setLastMenuOpen] = useState(menuOpen)
   const inputRef = useRef<HTMLInputElement>(null)
   const imeEnter = useImeEnterGestureOwnership()
@@ -173,8 +170,7 @@ export default function TabBarCreateEntry({
       setPending(false)
       setError(null)
       setSwitchError(null)
-      setSelectedOptionId(null)
-      setSelectionIsAutoDefault(true)
+      setPinnedOptionId(null)
     }
   }
 
@@ -198,31 +194,19 @@ export default function TabBarCreateEntry({
       option
     }))
   ]
-  const topOptionId = activeOptions.length > 0 ? getActiveOptionId(activeOptions[0]) : null
-  if (selectedOptionQuery !== query) {
-    setSelectedOptionQuery(query)
-    setSelectedOptionId(topOptionId)
-    setSelectionIsAutoDefault(true)
-  } else if (selectedOptionId === null && topOptionId !== null) {
-    // Why pin the top row by id: the tab search defers the query, so tab rows
-    // arrive a render later and would otherwise slide under an index-kept highlight.
-    setSelectedOptionId(topOptionId)
-    setSelectionIsAutoDefault(true)
-  } else if (selectionIsAutoDefault && topOptionId !== null && selectedOptionId !== topOptionId) {
-    // Files paint before deferred tab search; follow the new top while the user
-    // has not moved selection themselves.
-    setSelectedOptionId(topOptionId)
-  }
-  const selectedOptionIndex = selectedOptionId
-    ? activeOptions.findIndex((option) => getActiveOptionId(option) === selectedOptionId)
+  // Why pin by id (not index): deferred tab rows prepend and would steal a
+  // user-moved highlight if we kept a raw index. Null pin follows top rank.
+  const pinnedOptionIndex = pinnedOptionId
+    ? activeOptions.findIndex((option) => getActiveOptionId(option) === pinnedOptionId)
     : -1
-  const activeSelectedIndex = Math.max(selectedOptionIndex, 0)
+  const activeSelectedIndex = Math.max(pinnedOptionIndex, 0)
   const selectedActiveOption = activeOptions[activeSelectedIndex]
   const statusOption = options.find(
     (option) => option.classification.kind === 'empty' || option.classification.kind === 'blocked'
   )
   const statusMessage =
-    statusOption?.classification.kind === 'empty' || statusOption?.classification.kind === 'blocked'
+    statusOption != null &&
+    (statusOption.classification.kind === 'empty' || statusOption.classification.kind === 'blocked')
       ? statusOption.classification.message
       : omniboxPlaceholder()
 
@@ -304,8 +288,7 @@ export default function TabBarCreateEntry({
             const delta = event.key === 'ArrowDown' ? 1 : -1
             const nextIndex =
               (activeSelectedIndex + delta + activeOptions.length) % activeOptions.length
-            setSelectionIsAutoDefault(false)
-            setSelectedOptionId(getActiveOptionId(activeOptions[nextIndex]))
+            setPinnedOptionId(getActiveOptionId(activeOptions[nextIndex]))
             return
           }
           // Why: with no result rows the static create/agent items render below;
@@ -337,6 +320,7 @@ export default function TabBarCreateEntry({
             // it in this event rather than a later effect after the render commits.
             setQuery(nextQuery)
             onQueryChange?.(nextQuery)
+            setPinnedOptionId(null)
             setError(null)
             setSwitchError(null)
           }}

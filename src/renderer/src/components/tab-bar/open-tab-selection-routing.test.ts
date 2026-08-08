@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   activateBrowserPage: vi.fn(),
   activateSimulatorTab: vi.fn(),
   focusTerminalTabSurface: vi.fn(),
-  queueBrowserFocusRequest: vi.fn()
+  requestBrowserFocus: vi.fn()
 }))
 
 vi.mock('@/lib/workspace-tab-palette-activation', () => ({
@@ -24,8 +24,7 @@ vi.mock('@/lib/focus-terminal-tab-surface', () => ({
   focusTerminalTabSurface: mocks.focusTerminalTabSurface
 }))
 vi.mock('@/components/browser-pane/browser-focus', () => ({
-  ORCA_BROWSER_FOCUS_REQUEST_EVENT: 'orca:browser-focus-request',
-  queueBrowserFocusRequest: mocks.queueBrowserFocusRequest
+  requestBrowserFocus: mocks.requestBrowserFocus
 }))
 
 import { activateOpenTabSearchResult } from './open-tab-selection-routing'
@@ -122,20 +121,15 @@ describe('activateOpenTabSearchResult', () => {
       worktreeId: 'wt-1'
     })
 
-    const events: CustomEvent[] = []
-    const onFocusRequest = (event: Event): void => {
-      events.push(event as CustomEvent)
-    }
-    window.addEventListener('orca:browser-focus-request', onFocusRequest)
     if (outcome.status !== 'activated') {
       throw new Error('expected activation')
     }
     outcome.focus?.()
-    window.removeEventListener('orca:browser-focus-request', onFocusRequest)
 
-    const detail = { pageId: 'page-1', target: 'address-bar' }
-    expect(mocks.queueBrowserFocusRequest).toHaveBeenCalledWith(detail)
-    expect(events[0]?.detail).toEqual(detail)
+    expect(mocks.requestBrowserFocus).toHaveBeenCalledWith({
+      pageId: 'page-1',
+      target: 'address-bar'
+    })
   })
 
   it('leaves focus unchanged after activating a simulator tab', () => {

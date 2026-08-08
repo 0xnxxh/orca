@@ -86,7 +86,7 @@ const TITLE_SUBSTRING_TIER = 1
 // weights. See the plan's tiering decision.
 const SECONDARY_TIER = 2
 
-export function isOpenTabSearchQueryTooLarge(
+function isOpenTabSearchQueryTooLarge(
   query: string,
   maxBytes = OPEN_TAB_SEARCH_QUERY_MAX_BYTES
 ): boolean {
@@ -168,23 +168,20 @@ export function searchOpenTabs({
     return []
   }
 
+  // Single-worktree builders stamp one host on every entry; resolve once.
+  const executionHostId =
+    workspaceTabs[0]?.worktree.hostId ??
+    browserPages[0]?.worktree.hostId ??
+    simulatorTabs[0]?.worktree.hostId ??
+    LOCAL_EXECUTION_HOST_ID
+  // Why map workspace only: editor relativePath is read from the searchable entry.
   const workspaceEntriesByTabId = new Map(workspaceTabs.map((entry) => [entry.tab.id, entry]))
-  const browserEntriesByPageId = new Map(browserPages.map((entry) => [entry.page.id, entry]))
-  const simulatorEntriesByTabId = new Map(simulatorTabs.map((entry) => [entry.tab.id, entry]))
-  const entryHostId = (
-    entry: SearchableWorkspaceTab | SearchableBrowserPage | SearchableSimulatorTab | undefined
-  ): ExecutionHostId => entry?.worktree.hostId ?? LOCAL_EXECUTION_HOST_ID
 
   return [
     // Why no isCurrentTab filter: Cmd+J lists the tab you are on, and hiding it
     // made the omnibox look broken when you searched for the tab on screen.
     ...rank('workspace', searchWorkspaceTabs([...workspaceTabs], trimmed), (result) => ({
-      ...baseResult(
-        'workspace',
-        result.tabId,
-        result,
-        entryHostId(workspaceEntriesByTabId.get(result.tabId))
-      ),
+      ...baseResult('workspace', result.tabId, result, executionHostId),
       source: 'workspace',
       contentType: result.contentType,
       tabId: result.tabId,
@@ -193,24 +190,14 @@ export function searchOpenTabs({
       relativePath: getEditorRelativePath(workspaceEntriesByTabId.get(result.tabId))
     })),
     ...rank('browser', searchBrowserPages([...browserPages], trimmed), (result) => ({
-      ...baseResult(
-        'browser',
-        result.pageId,
-        result,
-        entryHostId(browserEntriesByPageId.get(result.pageId))
-      ),
+      ...baseResult('browser', result.pageId, result, executionHostId),
       source: 'browser',
       contentType: 'browser',
       pageId: result.pageId,
       workspaceId: result.workspaceId
     })),
     ...rank('simulator', searchSimulatorTabs([...simulatorTabs], trimmed), (result) => ({
-      ...baseResult(
-        'simulator',
-        result.tabId,
-        result,
-        entryHostId(simulatorEntriesByTabId.get(result.tabId))
-      ),
+      ...baseResult('simulator', result.tabId, result, executionHostId),
       source: 'simulator',
       contentType: 'simulator',
       tabId: result.tabId,
