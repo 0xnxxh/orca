@@ -110,6 +110,71 @@ describe('preload sandbox guard detection', () => {
   })
 })
 
+// Why: the case above only covers identifier prefixes, a quoted *static import statement* off
+// statement position, and member-access `require`. None of them exercise call syntax inside a
+// literal, so the guard used to fail the build on comments and ordinary strings.
+describe('preload sandbox guard lexical masking', () => {
+  it('ignores a module call quoted inside a string literal', () => {
+    expect(findPreloadSandboxViolations(`const help = "Call require('fs')"`)).toEqual([])
+  })
+
+  it('ignores a module call in a line comment, which survives an unminified chunk', () => {
+    expect(findPreloadSandboxViolations("// use require('fs')\nexport {}")).toEqual([])
+  })
+
+  it('ignores a module call in a block comment', () => {
+    expect(findPreloadSandboxViolations("/* see require('fs')\n   and import('path') */")).toEqual(
+      []
+    )
+  })
+
+  it('ignores a module call inside a template literal', () => {
+    expect(findPreloadSandboxViolations('const t = `see import("path") here`')).toEqual([])
+  })
+
+  it('ignores a fake require after an escaped quote, which naive masking would end early', () => {
+    expect(findPreloadSandboxViolations('const s = "a\\"require(\'fs\')\\"b"')).toEqual([])
+  })
+
+  it('still flags a real request inside a template interpolation', () => {
+    expect(findPreloadSandboxViolations('const t = `${require("fs")}`')).toEqual([
+      { kind: 'node-builtin', detail: 'fs' }
+    ])
+  })
+
+  it('still flags a real request nested in an interpolated object literal', () => {
+    expect(findPreloadSandboxViolations('const t = `${({ a: require("net") }).a}` + "x"')).toEqual([
+      { kind: 'node-builtin', detail: 'net' }
+    ])
+  })
+
+  it('still flags a real request on the line after a comment', () => {
+    expect(findPreloadSandboxViolations('// hi\nconst x = require("node:os")')).toEqual([
+      { kind: 'node-builtin', detail: 'node:os' }
+    ])
+  })
+
+  // Why: same line on purpose — an unterminated string already stops at a newline, so only a
+  // same-line regex can swallow the request that follows it.
+  it('still flags a real request after a regex holding an unpaired quote', () => {
+    expect(findPreloadSandboxViolations('const q = /["]/; const x = require("node:zlib")')).toEqual(
+      [{ kind: 'node-builtin', detail: 'node:zlib' }]
+    )
+  })
+
+  it('still flags a real request after a division, which is not a regex', () => {
+    expect(findPreloadSandboxViolations('const r = t / 2; const x = require("node:dns")')).toEqual([
+      { kind: 'node-builtin', detail: 'node:dns' }
+    ])
+  })
+
+  it('still flags a real static import that follows a quoted decoy', () => {
+    expect(findPreloadSandboxViolations('const d = "require(\'fs\')";\nimport "node:tty"')).toEqual(
+      [{ kind: 'node-builtin', detail: 'node:tty' }]
+    )
+  })
+})
+
 describe('preload sandbox guard assertions', () => {
   it('names every offending specifier and the supported surface', () => {
     expect(() =>
