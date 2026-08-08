@@ -11,7 +11,7 @@ preserve native Windows, WSL, SSH, folder-workspace, and mixed-version behavior.
 
 | Priority | Area                                   | Tracking                                                                                                                                                                    | Status                               | Next action                                                                                                         |
 | -------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| P0       | WSL Git status and staging latency     | [#9284](https://github.com/stablyai/orca/issues/9284), [#9768](https://github.com/stablyai/orca/issues/9768), [PR #9372](https://github.com/stablyai/orca/pull/9372)        | Open                                 | Reproduce on real WSL, benchmark current `main` against the non-login-shell approach, then revive or replace #9372. |
+| P0       | WSL Git status and staging latency     | [#9284](https://github.com/stablyai/orca/issues/9284), [#9768](https://github.com/stablyai/orca/issues/9768), [PR #13207](https://github.com/stablyai/orca/pull/13207)       | Fix PR open                          | Land the measured shell-startup fix, then investigate DrvFS routing and linked-gitdir compatibility separately.    |
 | P1       | Cross-cutting Windows/WSL measurements | [#9300](https://github.com/stablyai/orca/issues/9300), [PR #11261](https://github.com/stablyai/orca/pull/11261)                                                             | Open                                 | Establish the baseline matrix below and use interleaved comparisons for startup changes.                            |
 | P1       | Clipboard staging-directory ownership  | [#12835](https://github.com/stablyai/orca/issues/12835), [PR #12917](https://github.com/stablyai/orca/pull/12917)                                                           | Fix merged; design follow-up unfiled | Move new staging files under one Orca-owned parent so cleanup never enumerates the shared temp root.                |
 | P1       | WSL hook-relay startup reconciliation  | [#12900](https://github.com/stablyai/orca/issues/12900), [PR #13139](https://github.com/stablyai/orca/pull/13139)                                                           | Fix merged; design follow-up unfiled | Reconcile relays once from the live daemon-session inventory after the hook server starts.                          |
@@ -77,31 +77,43 @@ Environment requirements:
 | Stale endpoint        |      20 | 1,636.0 ms | 1,639.1 ms | timeout/fail-open |
 | Refreshed on reattach |      20 |    58.5 ms |    61.9 ms |             20/20 |
 
-## Next investigation: WSL Git hot path
+### WSL login-shell overhead on Git reads
 
-Start with [#9284](https://github.com/stablyai/orca/issues/9284) and the concrete one-minute staging
-report in [#9768](https://github.com/stablyai/orca/issues/9768). Existing
-[PR #9372](https://github.com/stablyai/orca/pull/9372) removes interactive login-shell startup from an
-allowlist of local read-only Git commands, but it was not benchmarked on real WSL and predates substantial
-Git-runner changes.
+- Issues [#9284](https://github.com/stablyai/orca/issues/9284) and
+  [#9768](https://github.com/stablyai/orca/issues/9768), addressed by open
+  [PR #13207](https://github.com/stablyai/orca/pull/13207).
+- WSL source-control reads repeatedly started a login shell. Slow profile scripts and banner output added
+  latency and could contaminate Git's machine-readable output.
+- The first read retains the login-shell behavior while a background per-distro probe captures Git's
+  absolute path and `PATH`. Later status, numstat, and upstream/config reads execute directly. Mutations,
+  network operations, SSH, relay, native Git, and risky profile environments stay on the existing path.
+- Real Windows 11/WSL2 ABBA results, with 3 warmups and 20 samples per natural-profile pair:
 
-Before changing production code:
+| Operation                    | Login median / p95 | Direct median / p95 |
+| ---------------------------- | -----------------: | ------------------: |
+| WSL-filesystem status        |     73.2 / 75.7 ms |      63.5 / 66.8 ms |
+| WSL-filesystem stage+refresh |  221.1 / 234.8 ms |    203.3 / 207.0 ms |
+| DrvFS status                 | 1,063.2 / 1,134.4 ms | 1,030.8 / 1,070.5 ms |
+| DrvFS stage+refresh          | 1,272.7 / 1,318.8 ms | 1,225.3 / 1,246.4 ms |
 
-1. Reproduce both repository layouts: a repo inside the WSL filesystem and a Windows-drive repo routed
-   through a WSL project runtime.
-2. Measure `git status`, numstat, upstream probes, and staging separately; record process count, median,
-   p95, and correctness.
-3. Compare the current login-shell path with a cached-login-`PATH` plus non-login execution using
-   interleaved ABBA ordering.
-4. Test a slow user profile, profile-installed Git, Git 2.25, leading global Git options, linked worktree
-   gitdirs, command-not-found fallback, credentials, signing, hooks, and concurrent first probes.
-5. Keep network, mutating, and unclassified commands conservative unless their environment contract is
-   independently proven.
-6. Decide from the results whether to rebase #9372, take only part of it, or replace it with a smaller PR.
+- With a deterministic 250 ms login-profile delay, 2 warmups and 10 samples, native status fell from
+  330.1 / 339.4 ms median / p95 to 64.5 / 67.7 ms. Every benchmark pair produced byte-identical Git
+  payloads. The profile also emitted 106 bytes of non-Git banner text per login-shell invocation.
 
-The deeper product question in #9284 remains separate: for a repo on `C:\`, should source-control reads
-follow the WSL agent runtime or run with Windows Git on the filesystem host? Do not change that policy
-without measuring behavior differences, Git configuration, hooks, credentials, and case-sensitivity.
+## Next investigation: WSL filesystem-host routing
+
+PR #13207 removes avoidable shell startup but does not address the dominant cost for repositories on
+`C:\`: Git traversing the tree through WSL's DrvFS mount. In the same fixture, Windows Git completed
+status in 22.4 ms median versus approximately 1,031 ms through WSL/DrvFS.
+
+Investigate whether read-only source-control operations should follow the filesystem host instead of the
+selected terminal runtime. First prove equivalent status semantics across Git configuration, autocrlf,
+symlinks, hooks, credentials, case behavior, worktree metadata, SSH/folder workspaces, and Git 2.25. Do
+not route mutations or network operations until their environment contract is independently established.
+
+Windows-created linked worktrees need a separate compatibility design: their `.git` files can contain a
+`C:/.../.git/worktrees/...` gitdir that WSL Git cannot resolve. Path translation must be scoped to metadata
+owned by the routed repository and must not rewrite arbitrary Git output.
 
 ## Architectural follow-ups
 
