@@ -195,8 +195,12 @@ export function resolveTerminalShortcutAction(
     !event.shiftKey &&
     event.key === 'Enter'
   ) {
-    // Why: xterm.js collapses Ctrl+Enter to a bare CR, so forward kitty CSI-u (modifier 5 = Ctrl) so the chord reaches TUIs; no Windows fallback yet (#2418).
-    return { type: 'sendInput', data: '\x1b[13;5u' }
+    // Why: xterm.js collapses Ctrl+Enter to a bare CR, so forward kitty CSI-u (modifier 5 = Ctrl)
+    // to reach TUIs — but a pane that never negotiated the protocol prints the escape verbatim
+    // into the prompt, so local ConPTY falls back to the legacy CR every emulator sends (#12462).
+    const canSendCtrlEnterCsiU =
+      isLocalWindowsConptyPane?.() !== true || isKittyKeyboardActivePane?.() === true
+    return { type: 'sendInput', data: canSendCtrlEnterCsiU ? '\x1b[13;5u' : '\r' }
   }
 
   if (

@@ -292,6 +292,34 @@ describe('resolveTerminalShortcutAction', () => {
       )
     ).toEqual({ type: 'sendInput', data: '\x1b[13;5u' })
 
+    // #12462: a local Windows ConPTY pane that never negotiated the kitty protocol
+    // printed the escape verbatim into the prompt, so it falls back to the legacy CR.
+    expect(
+      resolveTerminalShortcutAction(
+        event({ key: 'Enter', code: 'Enter', ctrlKey: true }),
+        false,
+        'false',
+        0,
+        true,
+        undefined,
+        () => true
+      )
+    ).toEqual({ type: 'sendInput', data: '\r' })
+    // ...and negotiating the protocol restores the chord on the same pane, so the
+    // fallback is scoped to panes that cannot receive it rather than to Windows.
+    expect(
+      resolveTerminalShortcutAction(
+        event({ key: 'Enter', code: 'Enter', ctrlKey: true }),
+        false,
+        'false',
+        0,
+        true,
+        undefined,
+        () => true,
+        () => true
+      )
+    ).toEqual({ type: 'sendInput', data: '\x1b[13;5u' })
+
     // Modifier combos that are NOT plain Ctrl+Enter must keep falling through.
     expect(
       resolveTerminalShortcutAction(
