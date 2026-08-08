@@ -12,6 +12,13 @@
  * Host A's shells are counted too, on host A's own container: a severed
  * transport is not proof that anything died, so they must still be there when
  * it comes back.
+ *
+ * What this spec does NOT discriminate against, and why: the blast radius of a
+ * PTY-level delivery failure. Severing a transport is the only fault reachable
+ * from outside the app, and it cannot produce a rejected delivery frame whose
+ * recovery budget then runs out — that needs a relay publishing a source header
+ * this client never installed. `src/main/ssh/ssh-relay-session-two-host-delivery-isolation.integration.test.ts`
+ * injects exactly that on the relay wire and owns that half of Journey 4.
  */
 import type { Page, TestInfo } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
