@@ -2901,6 +2901,10 @@ export type GlobalSettings = {
   showTasksButton: boolean
   /** Only toggles the sidebar shortcut; Automations stay reachable from Settings/View menu. */
   showAutomationsButton?: boolean
+  /** Deprecated: Artifacts are always available. Use showArtifactsButton for sidebar visibility. */
+  artifactsEnabled?: boolean
+  /** Only toggles the sidebar shortcut; Artifacts stay reachable from Settings. */
+  showArtifactsButton?: boolean
   /** Only toggles the sidebar shortcut; Orca Mobile stays reachable from Settings. */
   showMobileButton?: boolean
   /** Pinned workspaces show in one sidebar location by default; opt in to also show them in their natural groups. */
@@ -3371,6 +3375,7 @@ export type TopLevelView =
   | 'automations'
   | 'space'
   | 'skills'
+  | 'artifacts'
   | 'mobile'
 
 export type PersistedUIState = {
