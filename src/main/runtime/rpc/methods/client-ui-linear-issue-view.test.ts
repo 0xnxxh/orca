@@ -6,7 +6,6 @@ import {
 } from '../../../../shared/linear-issue-attribute-filter'
 import {
   defaultLinearIssueViewResumeState,
-  LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
   serializeLinearIssueViewResumeState
 } from '../../../../shared/linear-issue-view-resume-state'
 import type { OrcaRuntimeService } from '../../orca-runtime'
@@ -106,8 +105,6 @@ describe('ui.set Linear issue view resume state', () => {
         }
       }
     ],
-    // Why: the renderer caps the map through `trimToMostRecentWorkspaces` and bounds
-    // its keys, so these two limits must stay equal to the schema's or every write drops.
     [
       'an over-long workspace key',
       {
@@ -120,18 +117,6 @@ describe('ui.set Linear issue view resume state', () => {
             labelIds: []
           }
         }
-      }
-    ],
-    [
-      'more workspaces than the persisted limit',
-      {
-        ...VALID_VIEW,
-        filtersByWorkspaceId: Object.fromEntries(
-          Array.from({ length: LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES + 1 }, (_, index) => [
-            `workspace-${index}`,
-            { stateIds: [`state-${index}`], priorities: [], assignee: null, labelIds: [] }
-          ])
-        )
       }
     ]
   ])('drops only the view when it has %s', async (_label, linearIssueView) => {

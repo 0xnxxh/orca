@@ -41,11 +41,6 @@ export type JiraPreset = { id: JiraPresetId; label: string }
 export type GitHubModeButton = { id: GitHubTaskKind | 'project'; label: string }
 
 export type LinearMode = 'issues' | 'projects' | 'views' | 'in-orca'
-// Why: re-exported from the persisted-state catalogs so the view options the user
-// picks and the ones TaskResumeState/the ui.set schema accept cannot drift in TYPE.
-// The Linear catalogs below are keyed by the same constants so they cannot drift in
-// MEMBERSHIP either: a new option without a label is a typecheck error, not a value
-// that persists fine yet never renders.
 export type {
   LinearDisplayProperty,
   LinearGroupBy,
@@ -211,7 +206,6 @@ export const getLinearDisplayProperties = createLocalizedCatalog(
       labels: translate('auto.components.TaskPage.d0ca4aa1d0', 'Labels'),
       updated: translate('auto.components.TaskPage.f362667d55', 'Updated')
     }
-    // Why: catalog order is also the display-property serialization order.
     return LINEAR_DISPLAY_PROPERTIES.map((id) => ({ id, label: labels[id] }))
   }
 )

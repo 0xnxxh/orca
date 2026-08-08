@@ -1,7 +1,4 @@
-// Why: single source of truth for the Linear issue list's persisted view state.
-// The renderer's in-memory state, TaskResumeState, and the strict `ui.set` RPC
-// schema all derive from these catalogs, so none of the three can drift apart.
-// Persisted values are untrusted input: normalize before use, never assume shape.
+// Shared catalogs keep the renderer, resume state, and RPC schema aligned.
 
 import {
   boundLinearIssueAttributeFilter,
@@ -17,7 +14,6 @@ import {
 export const LINEAR_VIEW_MODES = ['list', 'board'] as const
 export const LINEAR_GROUP_BY_OPTIONS = ['none', 'status', 'assignee', 'priority', 'team'] as const
 export const LINEAR_ORDER_BY_OPTIONS = ['priority', 'updated', 'identifier'] as const
-/** Catalog order doubles as the canonical serialization order for display properties. */
 export const LINEAR_DISPLAY_PROPERTIES = [
   'state',
   'priority',
@@ -36,21 +32,15 @@ export const DEFAULT_LINEAR_VIEW_MODE: LinearViewMode = 'list'
 export const DEFAULT_LINEAR_GROUP_BY: LinearGroupBy = 'none'
 export const DEFAULT_LINEAR_ORDER_BY: LinearOrderBy = 'priority'
 
-/** Bounds the persisted map; a user works out of a handful of Linear workspaces. */
-export const LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES = 20
-
 export type LinearIssueViewResumeState = {
   viewMode: LinearViewMode
   groupBy: LinearGroupBy
   orderBy: LinearOrderBy
   displayProperties: LinearDisplayProperty[]
-  /** True once the user toggles the Team column, which disables the single-team auto-hide. */
   teamPropertyTouched: boolean
-  /** Facet ids (states, labels, users) are Linear-workspace scoped, so filters are kept per workspace. */
   filtersByWorkspaceId: Record<string, LinearIssueAttributeFilter>
 }
 
-/** Serialization input: the renderer holds display properties as a Set. */
 export type LinearIssueViewSelection = Omit<LinearIssueViewResumeState, 'displayProperties'> & {
   displayProperties: Iterable<LinearDisplayProperty>
 }
@@ -74,16 +64,6 @@ export function defaultLinearIssueViewResumeState(): LinearIssueViewResumeState 
   }
 }
 
-/** Emits catalog order so toggling a property off and back on produces an identical payload. */
-export function orderLinearDisplayProperties(
-  selected: Iterable<LinearDisplayProperty>
-): LinearDisplayProperty[] {
-  const chosen = new Set(selected)
-  return LINEAR_DISPLAY_PROPERTIES.filter((property) => chosen.has(property))
-}
-
-// Why: assigning `__proto__` on a plain object hits the inherited setter, so an
-// untrusted key of that name must never reach the record being built.
 function isSafeWorkspaceKey(key: string): boolean {
   return (
     key.length > 0 &&
@@ -97,7 +77,6 @@ function normalizeFiltersByWorkspaceId(value: unknown): Record<string, LinearIss
     return {}
   }
   const next: Record<string, LinearIssueAttributeFilter> = {}
-  const order: string[] = []
   for (const [workspaceId, filter] of Object.entries(value)) {
     if (!isSafeWorkspaceKey(workspaceId)) {
       continue
@@ -106,41 +85,16 @@ function normalizeFiltersByWorkspaceId(value: unknown): Record<string, LinearIss
     try {
       parsed = parseLinearIssueAttributeFilter(filter)
     } catch {
-      // Why: one corrupt workspace entry must not discard the other workspaces' filters.
       continue
     }
     if (isEmptyLinearIssueAttributeFilter(parsed)) {
       continue
     }
     next[workspaceId] = parsed
-    order.push(workspaceId)
-  }
-  return trimToMostRecentWorkspaces(next, order)
-}
-
-/**
- * Keeps the newest workspaces, newest last. Recency is taken from `order` rather
- * than object key order: array-index-like keys enumerate first regardless of when
- * they were inserted, so `Object.keys` would evict the entry a write just added.
- */
-function trimToMostRecentWorkspaces(
-  filters: Record<string, LinearIssueAttributeFilter>,
-  order: readonly string[]
-): Record<string, LinearIssueAttributeFilter> {
-  const kept = order.filter((workspaceId) =>
-    Object.prototype.hasOwnProperty.call(filters, workspaceId)
-  )
-  if (kept.length <= LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES) {
-    return filters
-  }
-  const next: Record<string, LinearIssueAttributeFilter> = {}
-  for (const workspaceId of kept.slice(-LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES)) {
-    next[workspaceId] = filters[workspaceId] as LinearIssueAttributeFilter
   }
   return next
 }
 
-/** Validates untrusted persisted state; returns undefined when nothing worth restoring survives. */
 export function normalizeLinearIssueViewResumeState(
   value: unknown
 ): LinearIssueViewResumeState | undefined {
@@ -157,7 +111,6 @@ export function normalizeLinearIssueViewResumeState(
   if (isMember(LINEAR_ORDER_BY_OPTIONS, value.orderBy)) {
     next.orderBy = value.orderBy
   }
-  // Why: an empty array is meaningful (every property hidden), so only a non-array falls back.
   const displayProperties: unknown = value.displayProperties
   if (Array.isArray(displayProperties)) {
     next.displayProperties = LINEAR_DISPLAY_PROPERTIES.filter((property) =>
@@ -186,44 +139,33 @@ export function isDefaultLinearIssueViewResumeState(view: LinearIssueViewResumeS
   )
 }
 
-/** Canonical persisted payload: catalog-ordered properties, canonical filters, empties omitted. */
 export function serializeLinearIssueViewResumeState(
   view: LinearIssueViewSelection
 ): LinearIssueViewResumeState {
   const filtersByWorkspaceId: Record<string, LinearIssueAttributeFilter> = {}
-  const order: string[] = []
   for (const [workspaceId, filter] of Object.entries(view.filtersByWorkspaceId)) {
     if (!isSafeWorkspaceKey(workspaceId) || isEmptyLinearIssueAttributeFilter(filter)) {
       continue
     }
-    // Why: canonicalize dedupes but does not bound; only the throwing parser does, and
-    // an over-length facet list here is rejected by `ui.set` and drops the WHOLE
-    // taskResumeState for paired clients on every subsequent write.
     const bounded = boundLinearIssueAttributeFilter(canonicalizeLinearIssueAttributeFilter(filter))
-    // Why: bounding drops over-length ids, so a filter that was non-empty above can
-    // become empty here — persisting it would break the "empties omitted" contract.
     if (isEmptyLinearIssueAttributeFilter(bounded)) {
       continue
     }
     filtersByWorkspaceId[workspaceId] = bounded
-    order.push(workspaceId)
   }
+  const selectedDisplayProperties = new Set(view.displayProperties)
   return {
     viewMode: view.viewMode,
     groupBy: view.groupBy,
     orderBy: view.orderBy,
-    displayProperties: orderLinearDisplayProperties(view.displayProperties),
+    displayProperties: LINEAR_DISPLAY_PROPERTIES.filter((property) =>
+      selectedDisplayProperties.has(property)
+    ),
     teamPropertyTouched: view.teamPropertyTouched,
-    filtersByWorkspaceId: trimToMostRecentWorkspaces(filtersByWorkspaceId, order)
+    filtersByWorkspaceId
   }
 }
 
-/**
- * The active filter is derived from the selected workspace rather than reset on
- * switch, so no effect ordering can leave workspace A's facets applied to B.
- * A null id (Linear unresolved, disconnected, or the cross-workspace "all" view)
- * yields an empty filter while leaving every persisted workspace filter intact.
- */
 export function selectLinearWorkspaceIssueFilter(
   filters: Record<string, LinearIssueAttributeFilter>,
   workspaceId: string | null
@@ -237,7 +179,6 @@ export function selectLinearWorkspaceIssueFilter(
   return filter ? canonicalizeLinearIssueAttributeFilter(filter) : emptyLinearIssueAttributeFilter()
 }
 
-/** Returns the same reference when the workspace's canonical filter is unchanged. */
 export function setLinearWorkspaceIssueFilter(
   filters: Record<string, LinearIssueAttributeFilter>,
   workspaceId: string,
@@ -257,10 +198,6 @@ export function setLinearWorkspaceIssueFilter(
   if (isEmptyLinearIssueAttributeFilter(filter)) {
     return next
   }
-  // Why: re-touching a workspace makes it the most recent, so it must be the last
-  // to be evicted — not the first, which reassigning in place would leave it.
   next[workspaceId] = canonicalizeLinearIssueAttributeFilter(filter)
-  const order = Object.keys(filters).filter((key) => key !== workspaceId)
-  order.push(workspaceId)
-  return trimToMostRecentWorkspaces(next, order)
+  return next
 }

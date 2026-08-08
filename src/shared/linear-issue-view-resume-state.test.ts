@@ -7,9 +7,7 @@ import {
 import {
   defaultLinearIssueViewResumeState,
   LINEAR_DISPLAY_PROPERTIES,
-  LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
   normalizeLinearIssueViewResumeState,
-  orderLinearDisplayProperties,
   resolveLinearIssueViewResumeState,
   selectLinearWorkspaceIssueFilter,
   serializeLinearIssueViewResumeState,
@@ -118,20 +116,6 @@ describe('normalizeLinearIssueViewResumeState', () => {
     expect(normalized?.filtersByWorkspaceId).toEqual({})
     expect(({} as Record<string, unknown>).stateIds).toBeUndefined()
   })
-
-  it('caps the persisted workspace filters', () => {
-    const filtersByWorkspaceId: Record<string, LinearIssueAttributeFilter> = {}
-    for (let index = 0; index < LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES + 3; index += 1) {
-      filtersByWorkspaceId[`workspace-${index}`] = filter({ stateIds: [`state-${index}`] })
-    }
-
-    const normalized = normalizeLinearIssueViewResumeState({ filtersByWorkspaceId })
-
-    const keys = Object.keys(normalized?.filtersByWorkspaceId ?? {})
-    expect(keys).toHaveLength(LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES)
-    // Why: writes append, so the most recently filtered workspaces are the survivors.
-    expect(keys.at(-1)).toBe(`workspace-${LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES + 2}`)
-  })
 })
 
 describe('isDefaultLinearIssueViewResumeState', () => {
@@ -188,7 +172,6 @@ describe('serializeLinearIssueViewResumeState', () => {
     })
 
     expect(serialized.displayProperties).toEqual(['state', 'updated'])
-    expect(orderLinearDisplayProperties(['labels', 'priority'])).toEqual(['priority', 'labels'])
   })
 
   it('omits empty filters and canonicalizes the rest', () => {
@@ -265,44 +248,6 @@ describe('setLinearWorkspaceIssueFilter', () => {
 
     expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-a')).toEqual(FILTER_A)
     expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-b')).toEqual(FILTER_B)
-  })
-
-  // Why: re-filtering an existing workspace used to reassign the key in place, leaving
-  // the workspace you just used at the head — first in line to be evicted.
-  it('evicts the least recently used workspace, not the one just re-filtered', () => {
-    let filters: Record<string, LinearIssueAttributeFilter> = {}
-    for (let index = 0; index < LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES; index += 1) {
-      filters = setLinearWorkspaceIssueFilter(
-        filters,
-        `workspace-${index}`,
-        filter({ stateIds: [`state-${index}`] })
-      )
-    }
-    filters = setLinearWorkspaceIssueFilter(filters, 'workspace-0', FILTER_A)
-    filters = setLinearWorkspaceIssueFilter(filters, 'workspace-fresh', FILTER_B)
-
-    expect(Object.keys(filters)).toHaveLength(LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES)
-    expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-0')).toEqual(FILTER_A)
-    expect(selectLinearWorkspaceIssueFilter(filters, 'workspace-1')).toEqual(
-      emptyLinearIssueAttributeFilter()
-    )
-  })
-
-  // Why: array-index-like keys enumerate before string keys regardless of insertion
-  // order, so key order alone would evict the entry this very write just added.
-  it('keeps an integer-like workspace key that the write just added', () => {
-    let filters: Record<string, LinearIssueAttributeFilter> = {}
-    for (let index = 0; index < LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES; index += 1) {
-      filters = setLinearWorkspaceIssueFilter(
-        filters,
-        `workspace-${index}`,
-        filter({ stateIds: [`state-${index}`] })
-      )
-    }
-
-    filters = setLinearWorkspaceIssueFilter(filters, '42', FILTER_A)
-
-    expect(selectLinearWorkspaceIssueFilter(filters, '42')).toEqual(FILTER_A)
   })
 
   it('returns the same record when the canonical filter is unchanged', () => {

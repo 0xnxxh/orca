@@ -231,7 +231,6 @@ import {
   isLinearIssueSearchActive,
   shouldClearTeamDerivedFacets,
   shouldForceLinearIssueListRead,
-  shouldPersistLinearIssueView,
   teamDerivedFacetsForPrimaryTeamChange,
   type LinearIssueListFilterRead,
   type LinearPrimaryTeamObservation
@@ -4386,9 +4385,6 @@ export default function TaskPage(): React.JSX.Element {
   const [linearIssueFiltersByWorkspaceId, setLinearIssueFiltersByWorkspaceId] = useState<
     Record<string, LinearIssueAttributeFilter>
   >(() => ({}))
-  // Why: facet ids are workspace-scoped, so the active filter is *derived* from the
-  // selected workspace — no effect resets it on switch, and an unresolved or
-  // cross-workspace ("all") selection reads as unfiltered without erasing anything.
   const linearAttributeFilterWorkspaceId =
     selectedLinearWorkspaceId && selectedLinearWorkspaceId !== 'all'
       ? selectedLinearWorkspaceId
@@ -4401,7 +4397,6 @@ export default function TaskPage(): React.JSX.Element {
       ),
     [linearAttributeFilterWorkspaceId, linearIssueFiltersByWorkspaceId]
   )
-  // Why: null until the first list read, so a restored filter isn't mistaken for a change.
   const linearAttributeFilterReadRef = useRef<LinearIssueListFilterRead | null>(null)
   const linearPrimaryTeamRef = useRef<LinearPrimaryTeamObservation | null>(null)
   const [linearViewMode, setLinearViewMode] = useState<LinearViewMode>(DEFAULT_LINEAR_VIEW_MODE)
@@ -4687,8 +4682,6 @@ export default function TaskPage(): React.JSX.Element {
     setLinearSearchInput(linearQuery)
     setAppliedLinearSearch(linearQuery)
 
-    // Why: filters are restored for every workspace at once, so hydration doesn't
-    // have to wait for — or re-run on — Linear resolving which workspace is selected.
     const linearIssueView = resolveLinearIssueViewResumeState(taskResumeState?.linearIssueView)
     setLinearViewMode(linearIssueView.viewMode)
     setLinearGroupBy(linearIssueView.groupBy)
@@ -5205,7 +5198,6 @@ export default function TaskPage(): React.JSX.Element {
 
   const applyLinearAttributeFilter = useCallback(
     (next: LinearIssueAttributeFilter) => {
-      // Why: batch filter + limit/page reset so the fetch effect never issues an old expanded-limit request for the new filter.
       if (linearAttributeFilterWorkspaceId) {
         setLinearIssueFiltersByWorkspaceId((previous) =>
           setLinearWorkspaceIssueFilter(previous, linearAttributeFilterWorkspaceId, next)
@@ -5219,8 +5211,6 @@ export default function TaskPage(): React.JSX.Element {
   )
 
   useEffect(() => {
-    // Why: linearTeamOptions falls back to teams scraped from the still-stale issue list
-    // mid-switch; only fetched teams identify the workspace the primary team belongs to.
     const nextTeamId = availableTeams.length > 0 ? (linearAttributePrimaryTeam?.id ?? null) : null
     if (!nextTeamId) {
       return
@@ -7411,15 +7401,12 @@ export default function TaskPage(): React.JSX.Element {
     setTaskResumeState({ linearQuery: appliedLinearSearch.trim() })
   }, [appliedLinearSearch, setTaskResumeState, taskResumeApplied])
 
-  // Why: watch the values rather than each setter, so effect-driven changes (the
-  // primary-team facet reset) persist too. The payload is workspace-independent,
-  // so selecting a workspace mid-startup can't write a half-restored state.
   useEffect(() => {
-    const persistReady = linearViewPersistReadyRef.current
-    if (taskResumeApplied) {
-      linearViewPersistReadyRef.current = true
+    if (!taskResumeApplied) {
+      return
     }
-    if (!shouldPersistLinearIssueView({ taskResumeApplied, persistReady })) {
+    if (!linearViewPersistReadyRef.current) {
+      linearViewPersistReadyRef.current = true
       return
     }
     setTaskResumeState({

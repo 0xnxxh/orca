@@ -3,7 +3,6 @@ import { LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH } from '../../../../shared/
 import {
   LINEAR_DISPLAY_PROPERTIES,
   LINEAR_GROUP_BY_OPTIONS,
-  LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
   LINEAR_ORDER_BY_OPTIONS,
   LINEAR_VIEW_MODES
 } from '../../../../shared/linear-issue-view-resume-state'
@@ -22,15 +21,10 @@ const LinearIssueViewResumeState = z
       .array(z.enum(LINEAR_DISPLAY_PROPERTIES))
       .max(LINEAR_DISPLAY_PROPERTIES.length),
     teamPropertyTouched: z.boolean(),
-    filtersByWorkspaceId: z
-      .record(
-        z.string().min(1).max(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH),
-        LinearIssueAttributeFilterSchema
-      )
-      .refine(
-        (filters) => Object.keys(filters).length <= LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES,
-        { message: `At most ${LINEAR_ISSUE_VIEW_MAX_PERSISTED_WORKSPACES} workspace filters` }
-      )
+    filtersByWorkspaceId: z.record(
+      z.string().min(1).max(LINEAR_ISSUE_ATTRIBUTE_FILTER_ID_MAX_LENGTH),
+      LinearIssueAttributeFilterSchema
+    )
   })
   .strict()
 

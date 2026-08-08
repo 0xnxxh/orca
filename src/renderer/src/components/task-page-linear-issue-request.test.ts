@@ -5,7 +5,6 @@ import {
   isLinearIssueSearchActive,
   shouldClearTeamDerivedFacets,
   shouldForceLinearIssueListRead,
-  shouldPersistLinearIssueView,
   teamDerivedFacetsForPrimaryTeamChange
 } from './task-page-linear-issue-request'
 import type { LinearIssueAttributeFilter } from '../../../shared/linear-issue-attribute-filter'
@@ -95,20 +94,6 @@ describe('task-page-linear-issue-request', () => {
         refreshForced: false
       })
     ).toBe(false)
-  })
-
-  it('persists the Linear view only after hydration has taken its first pass', () => {
-    expect(shouldPersistLinearIssueView({ taskResumeApplied: false, persistReady: false })).toBe(
-      false
-    )
-    // Why: the first pass after hydration carries the restored values, not a user change.
-    expect(shouldPersistLinearIssueView({ taskResumeApplied: true, persistReady: false })).toBe(
-      false
-    )
-    expect(shouldPersistLinearIssueView({ taskResumeApplied: true, persistReady: true })).toBe(true)
-    expect(shouldPersistLinearIssueView({ taskResumeApplied: false, persistReady: true })).toBe(
-      false
-    )
   })
 
   it('clears team-derived facets only when the primary team changes within one workspace', () => {
