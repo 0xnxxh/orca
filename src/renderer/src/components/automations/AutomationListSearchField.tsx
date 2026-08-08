@@ -42,7 +42,7 @@ export function AutomationListSearchField({
         )}
         placeholder={translate(
           'auto.components.automations.AutomationListSearchField.placeholder',
-          'Search by name, project, or prompt'
+          'Search...'
         )}
         aria-invalid={isTooLarge || undefined}
         aria-describedby={isTooLarge ? 'automations-list-search-too-large' : undefined}

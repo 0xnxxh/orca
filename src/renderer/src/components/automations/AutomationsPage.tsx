@@ -1,16 +1,12 @@
 /* eslint-disable max-lines -- Why: this page owns the automations list/detail
  * orchestration while the form, list, and detail presentation live in sibling files. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarClock, Plus, RefreshCw, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { filterEnabledTuiAgents, isTuiAgentEnabled } from '../../../../shared/tui-agent-selection'
-import { Button } from '@/components/ui/button'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAppStore } from '@/store'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { getLocalPreflightContext, localPreflightContextKey } from '@/lib/local-preflight-context'
-import { cn } from '@/lib/utils'
 import { getAgentCatalog } from '@/lib/agent-catalog'
 import { useRepoMap, useWorktreeMap } from '@/store/selectors'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
@@ -112,6 +108,7 @@ import { useAutomationListSearch } from './use-automation-list-search'
 import { AutomationDeleteDialog, ExternalAutomationDeleteDialog } from './AutomationDeleteDialogs'
 import { AutomationsListPanel } from './AutomationsListPanel'
 import { AutomationsDetailPane } from './AutomationsDetailPane'
+import { AutomationsPageSkeleton } from './AutomationsPageSkeleton'
 import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
 import { translate } from '@/i18n/i18n'
 
@@ -186,6 +183,8 @@ export default function AutomationsPage(): React.JSX.Element {
   const [selectedExternalKey, setSelectedExternalKey] = useState<string | null>(null)
   const [selectedExternalRunPage, setSelectedExternalRunPage] =
     useState<SelectedExternalRunPage | null>(null)
+  // Why: list is the primary surface; detail is a full-page drill-in, not a side pane.
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
   const runtimePreflightMountedRef = useRef(true)
   const runtimePreflightRequestedHostIdsRef = useRef<Set<TaskSourceContext['hostId']>>(new Set())
   const [runtimePreflightStatusByHostId, setRuntimePreflightStatusByHostId] = useState<
@@ -210,7 +209,7 @@ export default function AutomationsPage(): React.JSX.Element {
   } | null>(null)
   useContextualTour(
     'automations',
-    !createOpen && !deleteTarget && !externalDeleteTarget,
+    !isLoading && !createOpen && !deleteTarget && !externalDeleteTarget,
     'automations_open'
   )
   const [editingExternalTarget, setEditingExternalTarget] = useState<{
@@ -444,9 +443,11 @@ export default function AutomationsPage(): React.JSX.Element {
     }
     if (selectedId !== pending.automationId) {
       setSelectedId(pending.automationId)
+      setIsDetailOpen(true)
       return
     }
     if (!pending.runId) {
+      setIsDetailOpen(true)
       setActivePaneTab('overview')
       setSelectedAutomationRunPageId(null)
       setPendingAutomationRunNavigation(null)
@@ -455,6 +456,7 @@ export default function AutomationsPage(): React.JSX.Element {
     if (selectedAutomationRuns.automationId !== pending.automationId) {
       return
     }
+    setIsDetailOpen(true)
     setActivePaneTab('runs')
     const pendingRun = selectedRuns.find((run) => run.id === pending.runId)
     if (pendingRun) {
@@ -1468,6 +1470,9 @@ export default function AutomationsPage(): React.JSX.Element {
     await deleteAutomationForTarget(automation, automationHostTarget)
     if (useAppStore.getState().selectedAutomationId === automation.id) {
       selectAutomationId(null)
+      setIsDetailOpen(false)
+      setSelectedAutomationRunPageId(null)
+      setActivePaneTab('overview')
     }
     await refresh()
   }
@@ -1800,91 +1805,38 @@ export default function AutomationsPage(): React.JSX.Element {
         return
       }
 
+      // Why: detail is a full-page drill-in; Esc returns to the table before leaving Automations.
+      if (isDetailOpen) {
+        event.preventDefault()
+        setIsDetailOpen(false)
+        setSelectedAutomationRunPageId(null)
+        setSelectedExternalRunPage(null)
+        setActivePaneTab('overview')
+        return
+      }
+
       event.preventDefault()
       closeAutomationsPage()
     }
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [closeAutomationsPage, createOpen, deleteTarget, externalDeleteTarget])
+  }, [closeAutomationsPage, createOpen, deleteTarget, externalDeleteTarget, isDetailOpen])
 
   return (
-    <main className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="flex shrink-0 items-center justify-between px-5 pb-3 pt-1.5 md:px-8">
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 rounded-full"
-                onClick={closeAutomationsPage}
-                aria-label={translate(
-                  'auto.components.automations.AutomationsPage.67c7ff795b',
-                  'Close automations'
-                )}
-              >
-                <X className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              {translate('auto.components.automations.AutomationsPage.0329f9bef1', 'Close · Esc')}
-            </TooltipContent>
-          </Tooltip>
-          <div className="mx-1 h-5 w-px bg-border/50" aria-hidden />
-          <CalendarClock className="size-4 text-muted-foreground" />
-          <h1 className="text-sm font-semibold">
-            {translate('auto.components.automations.AutomationsPage.77c2778945', 'Automations')}
-          </h1>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={translate(
-                  'auto.components.automations.AutomationsPage.8d1afa8269',
-                  'Add automation'
-                )}
-                onClick={() => openCreateDialog()}
-                className="border border-border/50 bg-transparent hover:bg-muted/50"
-                data-contextual-tour-target="automations-create"
-              >
-                <Plus className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              {translate(
-                'auto.components.automations.AutomationsPage.8d1afa8269',
-                'Add automation'
-              )}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={translate(
-                  'auto.components.automations.AutomationsPage.19a6e30eae',
-                  'Refresh automations'
-                )}
-                onClick={refresh}
-                disabled={isLoading}
-                className="border border-border/50 bg-transparent hover:bg-muted/50"
-              >
-                <RefreshCw className={cn('size-4', isLoading && 'animate-spin')} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              {translate(
-                'auto.components.automations.AutomationsPage.19a6e30eae',
-                'Refresh automations'
-              )}
-            </TooltipContent>
-          </Tooltip>
-        </div>
+    <main className="relative flex h-full min-h-0 flex-col bg-background pt-5 text-foreground md:pt-6">
+      <header
+        className="flex shrink-0 items-center px-3 pb-3 md:px-5"
+        // Why: no stacked center titlebar on this page; keep the title clear of Windows/Linux window controls.
+        style={
+          {
+            paddingRight: 'max(0.75rem, var(--window-controls-width, 0px))'
+          } as React.CSSProperties
+        }
+      >
+        <h1 className="truncate text-base font-semibold leading-8">
+          {translate('auto.components.automations.AutomationsPage.77c2778945', 'Automations')}
+        </h1>
       </header>
 
       <AutomationEditorDialog
@@ -1943,40 +1895,10 @@ export default function AutomationsPage(): React.JSX.Element {
         onConfirm={() => void confirmDeleteExternalAutomation()}
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(280px,360px)_1fr] overflow-hidden border-t border-border/50">
-        <AutomationsListPanel
-          hasListItems={hasListItems}
-          hasFilteredListItems={hasFilteredListItems}
-          isListSearchActive={isListSearchActive}
-          listSearchQuery={listSearchQuery}
-          isListSearchQueryTooLarge={isListSearchQueryTooLarge}
-          onListSearchQueryChange={setListSearchQuery}
-          filteredAutomations={filteredAutomations}
-          filteredExternalAutomationEntries={filteredExternalAutomationEntries}
-          selected={selected}
-          selectedExternal={selectedExternal}
-          runs={runs}
-          relativeNow={relativeNow}
-          repoMap={repoMap}
-          worktreeMap={worktreeMap}
-          projectHostSetups={projectHostSetups}
-          sshConnectionStates={sshConnectionStates}
-          runtimeStatusByEnvironmentId={runtimeStatusByEnvironmentId}
-          automationHostTarget={automationHostTarget}
-          automationSourceHostAvailabilityById={automationSourceHostAvailabilityById}
-          externalActionKey={externalActionKey}
-          selectAutomationId={selectAutomationId}
-          selectExternalKey={selectExternalKey}
-          setActivePaneTab={setActivePaneTab}
-          runNow={(automation) => void runNow(automation)}
-          openEditDialog={(automation) => void openEditDialog(automation)}
-          toggleAutomation={(automation) => void toggleAutomation(automation)}
-          requestDeleteAutomation={requestDeleteAutomation}
-          requestExternalAction={requestExternalAction}
-          openEditExternalDialog={openEditExternalDialog}
-          openCreateDialog={openCreateDialog}
-        />
-
+      {/* Why: empty list flashes templates before data arrives; keep layout stable on first load. */}
+      {isLoading && !hasListItems ? (
+        <AutomationsPageSkeleton />
+      ) : isDetailOpen && (selected || selectedExternal) ? (
         <AutomationsDetailPane
           selected={selected}
           selectedExternal={selectedExternal}
@@ -2024,8 +1946,51 @@ export default function AutomationsPage(): React.JSX.Element {
           rerunAutomationRun={(automation, run) => void rerunAutomationRun(automation, run)}
           openRunWorkspace={openRunWorkspace}
           openAutomationRunPage={openAutomationRunPage}
+          onBackToList={() => {
+            setIsDetailOpen(false)
+            setSelectedAutomationRunPageId(null)
+            setSelectedExternalRunPage(null)
+            setActivePaneTab('overview')
+          }}
         />
-      </div>
+      ) : (
+        <AutomationsListPanel
+          hasListItems={hasListItems}
+          hasFilteredListItems={hasFilteredListItems}
+          isListSearchActive={isListSearchActive}
+          listSearchQuery={listSearchQuery}
+          isListSearchQueryTooLarge={isListSearchQueryTooLarge}
+          onListSearchQueryChange={setListSearchQuery}
+          filteredAutomations={filteredAutomations}
+          filteredExternalAutomationEntries={filteredExternalAutomationEntries}
+          selected={selected}
+          selectedExternal={selectedExternal}
+          runs={runs}
+          relativeNow={relativeNow}
+          repoMap={repoMap}
+          worktreeMap={worktreeMap}
+          projectHostSetups={projectHostSetups}
+          sshConnectionStates={sshConnectionStates}
+          runtimeStatusByEnvironmentId={runtimeStatusByEnvironmentId}
+          automationHostTarget={automationHostTarget}
+          automationSourceHostAvailabilityById={automationSourceHostAvailabilityById}
+          hostLabelById={hostLabelById}
+          externalActionKey={externalActionKey}
+          selectAutomationId={selectAutomationId}
+          selectExternalKey={selectExternalKey}
+          setActivePaneTab={setActivePaneTab}
+          runNow={(automation) => void runNow(automation)}
+          openEditDialog={(automation) => void openEditDialog(automation)}
+          toggleAutomation={(automation) => void toggleAutomation(automation)}
+          requestDeleteAutomation={requestDeleteAutomation}
+          requestExternalAction={requestExternalAction}
+          openEditExternalDialog={openEditExternalDialog}
+          openCreateDialog={openCreateDialog}
+          onOpenDetail={() => setIsDetailOpen(true)}
+          onRefresh={() => void refresh()}
+          isRefreshing={isLoading}
+        />
+      )}
     </main>
   )
 }

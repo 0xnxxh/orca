@@ -14414,7 +14414,7 @@
         "AutomationListSearchField": {
           "tooLong": "Search text is too long — list is unfiltered",
           "label": "Search automations",
-          "placeholder": "Search by name, project, or prompt",
+          "placeholder": "Search...",
           "tooLongShort": "Too long",
           "clear": "Clear search"
         }
