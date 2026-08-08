@@ -35,6 +35,34 @@ replacement architecture added beside the old one does not earn its lines.
 
 ## Proven journeys
 
+### Journey evidence not yet sufficient to promote
+
+**Journey 2 (daemon half).** `tests/e2e/daemon-restart-session-liveness.spec.ts`,
+3 tests. Two mutations each redden exactly one clause, on macOS and Linux:
+reverting three-valued `hasPty` reddens only the unknown-not-dead clause;
+widening the sole-provider fallback reddens only the stale-generation clause.
+The lead re-verified the first mutation independently. **Missing: physical WSL**,
+which the journey names explicitly. That host is now unblocked (the distro has a
+provisioned default user) and the run is outstanding.
+
+**Journey 12.** `tests/e2e/cross-version-wire/`, 13 tests against a real published
+baseline. Reverting the restore-required publication to expiry reddens 7 of 13;
+restore greens. Lead-verified. **Missing: live skew.** These are in-process wire
+tests. The original ledger named live paired-runtime and SSH skew as the gap, and
+an in-process decoder test does not close it.
+
+**Journey 4.** Sibling-pane isolation on one host reddens when
+`mux.dispose('connection_lost')` is restored. **The cross-host clause cannot be
+proven by mutation**: a mux belongs to one relay session per SSH target, so its
+dispose cannot cross a host boundary — the cross-host test stayed green under the
+mutation, which is the empirical receipt. That clause rests on
+isolation-by-construction, and saying otherwise would be a false claim.
+
+**Journey 13.** Not proven. One of ten named dimensions measured. The
+`isSupersededPtyId` fence costs roughly 14ns per call, but it was measured on
+lifted predicates in plain Node, not through real Electron IPC — that part is an
+inference, not a measurement.
+
 ### Journey 1 — Local macOS, Linux, and Windows (proven 2026-08-08)
 
 Oracle: `tests/e2e/local-terminal-restart-binding-identity.spec.ts`. Two tests —
