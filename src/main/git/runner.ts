@@ -255,6 +255,7 @@ function resolveCommand(
         '--exec',
         '/usr/bin/env',
         `PATH=${options.wslGitReadEnvironment.path}`,
+        `HOME=${options.wslGitReadEnvironment.home}`,
         ...GIT_OUTPUT_LOCALE_ENV_ARGS,
         ...(optionalLocks !== undefined ? [`GIT_OPTIONAL_LOCKS=${optionalLocks}`] : []),
         options.wslGitReadEnvironment.gitPath,
@@ -347,9 +348,7 @@ function resolveGitCommand(
       void getWslGitReadEnvironment(distro)
     }
   }
-  return resolveCommand('git', args, options.cwd, options.wslDistro, {
-    useWslLoginShell: Boolean(options.wslDistro)
-  })
+  return resolveGitCommandWithoutProbe(args, options)
 }
 
 function shouldAttemptWslDirectGit(options: GitExecOptions): boolean {
@@ -357,8 +356,9 @@ function shouldAttemptWslDirectGit(options: GitExecOptions): boolean {
     process.platform === 'win32' &&
     options.preferWslDirectGit &&
     !options.useConfiguredSshCommandForNetwork &&
-    !Object.keys(options.env ?? {}).some(
-      (key) => key.startsWith('GIT_') && key !== 'GIT_OPTIONAL_LOCKS'
+    !Object.entries(options.env ?? {}).some(
+      ([key, value]) =>
+        key.startsWith('GIT_') && key !== 'GIT_OPTIONAL_LOCKS' && value !== process.env[key]
     ) &&
     options.wslDistro
   )

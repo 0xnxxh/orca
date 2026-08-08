@@ -25,7 +25,11 @@ import {
 } from './wsl-git-read-environment'
 
 const DISTRO = 'Ubuntu'
-const LOGIN_ENVIRONMENT = { gitPath: '/home/user/bin/git', path: '/home/user/bin:/usr/bin:/bin' }
+const LOGIN_ENVIRONMENT = {
+  gitPath: '/home/user/bin/git',
+  home: '/home/user',
+  path: '/home/user/bin:/usr/bin:/bin'
+}
 
 type MockChild = EventEmitter & {
   stdout: EventEmitter
@@ -85,16 +89,52 @@ describe('WSL direct Git reads', () => {
     expect(execFileMock).toHaveBeenCalledTimes(1)
     completeProbe?.(
       null,
-      'profile banner\n\0ORCA_WSL_GIT_READ_ENV_V1\0/home/user/bin:/usr/bin\0/home/user/bin/git\0',
+      'profile banner\n\0ORCA_WSL_GIT_READ_ENV_V1\0/home/user/bin:/usr/bin\0/home/user/bin/git\0/home/user\0',
       ''
     )
 
     await expect(Promise.all([first, second])).resolves.toEqual([
-      { gitPath: '/home/user/bin/git', path: '/home/user/bin:/usr/bin' },
-      { gitPath: '/home/user/bin/git', path: '/home/user/bin:/usr/bin' }
+      { gitPath: '/home/user/bin/git', home: '/home/user', path: '/home/user/bin:/usr/bin' },
+      { gitPath: '/home/user/bin/git', home: '/home/user', path: '/home/user/bin:/usr/bin' }
     ])
     expect(execFileMock.mock.calls[0]?.[1]?.slice(3, 5)).toEqual(['sh', '-lc'])
     expect(execFileMock.mock.calls[0]?.[1]?.[5]).toContain('^GIT_')
+  })
+
+  it('retries a transient environment probe after a bounded delay', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      execFileMock.mockImplementationOnce((_command, _args, _options, callback) => {
+        const child = createMockChild()
+        queueMicrotask(() =>
+          callback?.(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), '', '')
+        )
+        return child
+      })
+
+      await expect(getWslGitReadEnvironment(DISTRO)).resolves.toBeNull()
+      await expect(getWslGitReadEnvironment(DISTRO)).resolves.toBeNull()
+      expect(execFileMock).toHaveBeenCalledTimes(1)
+
+      now += 30_000
+      execFileMock.mockImplementationOnce((_command, _args, _options, callback) => {
+        const child = createMockChild()
+        queueMicrotask(() =>
+          callback?.(
+            null,
+            `\0ORCA_WSL_GIT_READ_ENV_V1\0${LOGIN_ENVIRONMENT.path}\0${LOGIN_ENVIRONMENT.gitPath}\0${LOGIN_ENVIRONMENT.home}\0`,
+            ''
+          )
+        )
+        return child
+      })
+
+      await expect(getWslGitReadEnvironment(DISTRO)).resolves.toEqual(LOGIN_ENVIRONMENT)
+      expect(execFileMock).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   it('runs an opted-in read directly with translated cwd and arguments', async () => {
@@ -116,6 +156,7 @@ describe('WSL direct Git reads', () => {
         '--exec',
         '/usr/bin/env',
         `PATH=${LOGIN_ENVIRONMENT.path}`,
+        `HOME=${LOGIN_ENVIRONMENT.home}`,
         'LANGUAGE=en',
         'LC_ALL=en_US.UTF-8',
         'LANG=en_US.UTF-8',
@@ -154,7 +195,7 @@ describe('WSL direct Git reads', () => {
       expect(execFileMock.mock.calls[1]?.[1]?.slice(3, 5)).toEqual(['sh', '-lc'])
       completeProbe?.(
         null,
-        `\0ORCA_WSL_GIT_READ_ENV_V1\0${LOGIN_ENVIRONMENT.path}\0${LOGIN_ENVIRONMENT.gitPath}\0`,
+        `\0ORCA_WSL_GIT_READ_ENV_V1\0${LOGIN_ENVIRONMENT.path}\0${LOGIN_ENVIRONMENT.gitPath}\0${LOGIN_ENVIRONMENT.home}\0`,
         ''
       )
       await Promise.resolve()
@@ -190,6 +231,32 @@ describe('WSL direct Git reads', () => {
       })
 
       expect(execFileMock.mock.calls[0]?.[1]?.slice(3, 5)).toEqual(['sh', '-lc'])
+    })
+  })
+
+  it('ignores unchanged ambient host Git variables when selecting the direct path', async () => {
+    await withPlatform('win32', async () => {
+      const originalAskpass = process.env.GIT_ASKPASS
+      process.env.GIT_ASKPASS = String.raw`C:\host\askpass.exe`
+      try {
+        seedWslGitReadEnvironmentForTests(DISTRO, LOGIN_ENVIRONMENT)
+        succeedExecFile()
+
+        await gitExecFileAsync(['status', '--short'], {
+          cwd: String.raw`C:\repo`,
+          env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+          preferWslDirectGit: true,
+          wslDistro: DISTRO
+        })
+
+        expect(execFileMock.mock.calls[0]?.[1]).toContain('--exec')
+      } finally {
+        if (originalAskpass === undefined) {
+          delete process.env.GIT_ASKPASS
+        } else {
+          process.env.GIT_ASKPASS = originalAskpass
+        }
+      }
     })
   })
 
@@ -277,14 +344,14 @@ describe('WSL direct Git reads', () => {
         .mockImplementationOnce((_command, _args, _options, callback) => {
           const child = createMockChild()
           queueMicrotask(() =>
-            callback?.(Object.assign(new Error('exit 1'), { code: 1 }), '', 'missing ref')
+            callback?.(Object.assign(new Error('exit 128'), { code: 128 }), '', 'missing ref')
           )
           return child
         })
         .mockImplementationOnce((_command, _args, _options, callback) => {
           const child = createMockChild()
           queueMicrotask(() =>
-            callback?.(Object.assign(new Error('exit 1'), { code: 1 }), '', 'missing ref')
+            callback?.(Object.assign(new Error('exit 128'), { code: 128 }), '', 'missing ref')
           )
           return child
         })
@@ -300,7 +367,7 @@ describe('WSL direct Git reads', () => {
       }
 
       await expect(gitExecFileAsync(['rev-parse', '--verify', 'missing'], options)).rejects.toThrow(
-        'exit 1'
+        'exit 128'
       )
       await gitExecFileAsync(['status', '--short'], options)
 

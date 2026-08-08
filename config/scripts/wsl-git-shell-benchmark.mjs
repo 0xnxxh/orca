@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { posix } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 
@@ -141,7 +143,7 @@ async function main() {
     await jiti.import('../../src/shared/wsl-login-shell-command.ts')
 
   const loginProbe = buildWslLoginShellCommand(
-    `printf '\\n__ORCA_PATH__%s\\n__ORCA_GIT__%s\\n' "$PATH" "$(command -v git)"`
+    `printf '\\n__ORCA_PATH__%s\\n__ORCA_GIT__%s\\n__ORCA_HOME__%s\\n' "$PATH" "$(command -v git)" "$HOME"`
   )
   const probe = await run(
     'wsl.exe',
@@ -150,7 +152,8 @@ async function main() {
   const probeText = probe.stdout.toString('utf8')
   const loginPath = /__ORCA_PATH__(.*)/.exec(probeText)?.[1]?.trim()
   const gitPath = /__ORCA_GIT__(.*)/.exec(probeText)?.[1]?.trim()
-  if (!loginPath || !gitPath?.startsWith('/')) {
+  const loginHome = /__ORCA_HOME__(.*)/.exec(probeText)?.[1]?.trim()
+  if (!loginPath || !gitPath?.startsWith('/') || !loginHome?.startsWith('/')) {
     throw new Error(`Could not resolve login-shell Git environment: ${probeText.trim()}`)
   }
   const outputMarker = `__ORCA_GIT_OUTPUT_${process.pid}__\n`
@@ -182,6 +185,7 @@ async function main() {
         wslArgs(distro, [
           '/usr/bin/env',
           `PATH=${loginPath}`,
+          `HOME=${loginHome}`,
           'LC_ALL=C',
           'LANG=C',
           gitPath,
@@ -208,11 +212,15 @@ async function main() {
         samples[mode].push(result.elapsedMs)
         results.push(result)
       }
-      if (results[0].status !== results[1].status || !results[0].stdout.equals(results[1].stdout)) {
+      if (
+        results[0].status !== results[1].status ||
+        !results[0].stdout.equals(results[1].stdout) ||
+        !results[0].stderr.equals(results[1].stderr)
+      ) {
         throw new Error(
           `${label} correctness mismatch between ${order.join(' and ')} arms:\n` +
-            `${order[0]}=${JSON.stringify(results[0].stdout.toString('utf8'))}\n` +
-            `${order[1]}=${JSON.stringify(results[1].stdout.toString('utf8'))}`
+            `${order[0]}=${JSON.stringify({ stdout: results[0].stdout.toString('utf8'), stderr: results[0].stderr.toString('utf8') })}\n` +
+            `${order[1]}=${JSON.stringify({ stdout: results[1].stdout.toString('utf8'), stderr: results[1].stderr.toString('utf8') })}`
         )
       }
     }
@@ -232,8 +240,8 @@ async function main() {
     ).stdout
       .toString('utf8')
       .trim()
-    const fixtureName = `.orca-wsl-git-shell-benchmark-${process.pid}.txt`
-    const fixturePath = `${repo}/${fixtureName}`
+    const fixtureName = `.orca-wsl-git-shell-benchmark-${process.pid}-${randomUUID()}.txt`
+    const fixturePath = posix.join(repo, fixtureName)
     const prepareStage = async () => {
       await runGit('fast', repo, ['reset', '--quiet', '--', fixtureName])
       await run(
@@ -272,6 +280,20 @@ async function main() {
     const result = {}
     for (const [name, args] of Object.entries(operations)) {
       result[name] = await measure(`${repo}:${name}`, (mode) => runGit(mode, repo, args))
+    }
+    const created = await run(
+      'wsl.exe',
+      wslArgs(distro, [
+        '/bin/sh',
+        '-c',
+        'set -C; printf "benchmark\\n" > "$1"',
+        'orca-wsl-git-shell-benchmark',
+        fixturePath
+      ]),
+      { allowFailure: true }
+    )
+    if (created.status !== 0) {
+      throw new Error(`Could not exclusively create benchmark fixture: ${fixturePath}`)
     }
     try {
       result.stageRefresh = await measure(`${repo}:stage-refresh`, async (mode) => {
@@ -327,7 +349,10 @@ async function main() {
       preferWslDirectGit: true,
       wslDistro: distro
     })
-    if (!Buffer.from(actual.stdout).equals(expected.stdout)) {
+    if (
+      !Buffer.from(actual.stdout).equals(expected.stdout) ||
+      !Buffer.from(actual.stderr).equals(expected.stderr)
+    ) {
       throw new Error(`Production runner output mismatch for ${windowsRepo}`)
     }
     return {

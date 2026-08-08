@@ -1132,8 +1132,9 @@ describe('getStatus', () => {
     )
     const addOptions = gitExecFileAsyncMock.mock.calls.find(([args]) =>
       (args as string[]).includes('add')
-    )?.[1] as { preferWslDirectGit?: boolean }
-    expect(addOptions.preferWslDirectGit).toBeUndefined()
+    )?.[1] as { preferWslDirectGit?: boolean } | undefined
+    expect(addOptions).toBeDefined()
+    expect(addOptions?.preferWslDirectGit).toBeUndefined()
   })
 
   it('benchmarks concurrent status burst subprocess pressure', async () => {
