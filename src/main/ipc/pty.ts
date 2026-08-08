@@ -5320,7 +5320,15 @@ export function registerPtyHandlers(
         return false
       }
       try {
-        await provider.attach(ptyId)
+        const sequenceBeforeProviderAttach = runtime?.getPtyOutputSequence?.(ptyId) ?? 0
+        const attachResult = await provider.attach(ptyId)
+        if (attachResult?.providerSequence) {
+          runtime?.synchronizePtyOutputSequenceFromProvider?.(
+            ptyId,
+            attachResult.providerSequence,
+            sequenceBeforeProviderAttach
+          )
+        }
         return true
       } catch {
         return false

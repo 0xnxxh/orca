@@ -1506,6 +1506,20 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(result.snapshot).toContain('prompt$')
     })
 
+    it('returns the preserved sequence from attach-only adoption', async () => {
+      const sessionId = 'attach-sequence-handoff'
+      await adapter.spawn({ cols: 80, rows: 24, sessionId })
+      lastSubprocess._simulateData('preserved output')
+      await new Promise((r) => setTimeout(r, 50))
+
+      await expect(adapter.attach(sessionId)).resolves.toEqual({
+        providerSequence: {
+          value: 'preserved output'.length,
+          generation: 'continued'
+        }
+      })
+    })
+
     it('returns plain result for new sessionId', async () => {
       const result = await adapter.spawn({ cols: 80, rows: 24, sessionId: 'brand-new' })
       expect(result.id).toBe('brand-new')
