@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ReactI18Next from 'react-i18next'
 import type { Repo, Tab, TabGroup, TerminalTab, Worktree } from '../../../shared/types'
 import type { AgentStatusEntry, AgentStatusState } from '../../../shared/agent-status-types'
+import { makePaneKey } from '../../../shared/stable-pane-id'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
 import { emitCmdJRowIndexJump } from '@/lib/cmd-j-row-index-jump'
@@ -431,7 +432,7 @@ function makeAgentEntry(
     prompt: '',
     updatedAt: stateStartedAt,
     stateStartedAt,
-    paneKey: `${tabId}:${LEAF_ID}`,
+    paneKey: makePaneKey(tabId, LEAF_ID),
     stateHistory: []
   }
 }
@@ -772,7 +773,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     // row ranks IDLE. A deliberate second-row highlight must survive that one re-rank.
     const hydrated = makeRecentTabState({
       agentStatusByPaneKey: {
-        [`term-alpha:${LEAF_ID}`]: makeAgentEntry('term-alpha', 'blocked', Date.now())
+        [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'blocked', Date.now())
       },
       lastVisitedAtByWorktreeId: { 'wt-beta': Date.now() }
     })
@@ -795,7 +796,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     await renderPalette(
       makeRecentTabState({
         agentStatusByPaneKey: {
-          [`term-alpha:${LEAF_ID}`]: makeAgentEntry('term-alpha', 'blocked', Date.now())
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'blocked', Date.now())
         },
         lastVisitedAtByWorktreeId: { 'wt-beta': Date.now() }
       })
@@ -816,7 +817,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     await act(async () => {
       useAppStore.setState({
         agentStatusByPaneKey: {
-          [`term-alpha:${LEAF_ID}`]: makeAgentEntry('term-alpha', 'blocked', Date.now())
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'blocked', Date.now())
         }
       } as Partial<AppState>)
     })
