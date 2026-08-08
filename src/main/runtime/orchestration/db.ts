@@ -3548,6 +3548,23 @@ export class OrchestrationDb {
     this.db.prepare(`UPDATE messages SET read = 1 WHERE id IN (${placeholders})`).run(...ids)
   }
 
+  // Why: a reply that consumes the original must not be able to consume it without persisting the reply, or the answer is lost with no unread message left to retry from.
+  insertReplyAndMarkOriginalRead(
+    originalId: string,
+    reply: Parameters<OrchestrationDb['insertMessage']>[0]
+  ): MessageRow {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const inserted = this.insertMessage(reply)
+      this.markAsRead([originalId])
+      this.db.exec('COMMIT')
+      return inserted
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   // Why: use datetime('now') so delivered_at matches the space-format UTC shape of the table's other timestamps for correct ordering (§3.2).
   markAsDelivered(ids: string[]): void {
     if (ids.length === 0) {

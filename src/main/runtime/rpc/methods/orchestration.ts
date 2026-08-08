@@ -1072,9 +1072,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         }
       }
 
-      db.markAsRead([original.id])
-
-      const reply = db.insertMessage({
+      const reply = db.insertReplyAndMarkOriginalRead(original.id, {
         from: params.from ?? original.to_handle,
         to: original.from_handle,
         subject: `Re: ${original.subject}`,
@@ -1083,6 +1081,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         runId: original.run_id
       })
 
+      // Why: notify only after commit, so a woken recipient never reads a reply that rolled back.
       runtime.notifyMessageArrived(original.from_handle, reply.type)
       return { message: reply }
     }
