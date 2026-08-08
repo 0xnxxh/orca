@@ -33692,7 +33692,7 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('does not push to a restored idle pane that emits output inside the window', async () => {
+  it('holds a restored pane while it keeps emitting and delivers once it settles', async () => {
     vi.useFakeTimers()
     try {
       const runtime = new OrcaRuntimeService(store)
@@ -33713,13 +33713,152 @@ describe('OrcaRuntimeService', () => {
       runtime.notifyMessageArrived(terminal.handle, 'status')
       await Promise.resolve()
 
-      // A byte inside the window — a spinner repaint, tool output, or a human
-      // mid-keystroke. The seeded idle is historical, so this is the case the
-      // gate protects: submitting here would type into a working agent.
+      // A working agent repaints its spinner several times a second, so every
+      // window it opens loses. Measured against live Claude panes: ~340ms
+      // median between frames, 451ms worst — well inside a 2s window.
+      for (let frame = 0; frame < 16; frame += 1) {
+        await vi.advanceTimersByTimeAsync(400)
+        runtime.onPtyData('pty-1', '.', 100 + frame)
+      }
+      expect(write).not.toHaveBeenCalled()
+
+      // Releasing the gate proves the silence above was the output and not a
+      // probe that never armed: once the agent stops, the pane is deliverable.
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(write).toHaveBeenCalledWith(
+        'pty-1',
+        expect.stringContaining('You have 1 orchestration message')
+      )
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for a pane that is addressable before its leaf is bound', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const db = new InMemoryOrchestrationMessages()
+      const write = vi.fn().mockReturnValue(true)
+      setInMemoryOrchestrationMessages(runtime, db)
+      runtime.setPtyController({
+        write,
+        kill: vi.fn(),
+        getForegroundProcess: async () => 'claude'
+      })
+      syncSinglePty(runtime)
+      const [terminal] = (await runtime.listTerminals()).terminals
+
+      // A restart republishes the graph in stages, so for a moment the handle
+      // resolves while its leaf does not. Staged directly because the real
+      // window is milliseconds wide: driving it through syncWindowGraph mints a
+      // fresh handle instead of reproducing the split, and the e2e that hits it
+      // naturally only lost the race about one run in three — too thin to guard
+      // a regression with. Mail landing here used to be dropped on the
+      // unresolvable leaf, and since delivery is only attempted on arrival, the
+      // row stranded until unrelated mail happened to come in.
+      const runtimeInternals = runtime as unknown as {
+        getLiveLeafForHandle: (handle: string) => { leaf: unknown }
+      }
+      const resolveLeaf = runtimeInternals.getLiveLeafForHandle.bind(runtime)
+      let leafIsBound = false
+      const resolveSpy = vi
+        .spyOn(runtimeInternals, 'getLiveLeafForHandle')
+        .mockImplementation((handle: string) => {
+          if (!leafIsBound) {
+            throw new Error('terminal_not_live')
+          }
+          return resolveLeaf(handle)
+        })
+
+      db.insertMessage({ from: 'sender', to: terminal.handle, subject: 'arrived unbound' })
+      runtime.notifyMessageArrived(terminal.handle, 'status')
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(2_500)
+      expect(write).not.toHaveBeenCalled()
+
+      leafIsBound = true
+      await vi.advanceTimersByTimeAsync(10_000)
+      resolveSpy.mockRestore()
+
+      expect(write).toHaveBeenCalledWith(
+        'pty-1',
+        expect.stringContaining('You have 1 orchestration message')
+      )
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('abandons the window when the pane wakes during the foreground read', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const db = new InMemoryOrchestrationMessages()
+      const write = vi.fn().mockReturnValue(true)
+      const foregroundResolvers: ((process: string) => void)[] = []
+      const getForegroundProcess = vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            foregroundResolvers.push(resolve)
+          })
+      )
+      setInMemoryOrchestrationMessages(runtime, db)
+      runtime.setPtyController({ write, kill: vi.fn(), getForegroundProcess })
+      syncSinglePty(runtime)
+
+      const [terminal] = (await runtime.listTerminals()).terminals
+      runtime.seedTerminalRestoreTail('pty-1', { lastTitle: 'Codex done' })
+      db.insertMessage({ from: 'sender', to: terminal.handle, subject: 'woke mid-read' })
+
+      runtime.notifyMessageArrived(terminal.handle, 'status')
+      await Promise.resolve()
+      // The window closes quiet, so the probe commits to reading the foreground.
+      await vi.advanceTimersByTimeAsync(2_500)
+      expect(getForegroundProcess).toHaveBeenCalledTimes(1)
+
+      // Reading a foreground process is a round trip to the OS, and on a remote
+      // pane a network hop — long enough for the agent to start a turn. The
+      // window's own verdict is stale by the time the read returns.
+      runtime.onPtyData('pty-1', 'thinking...', 500)
+      foregroundResolvers[0]?.('claude')
       await vi.advanceTimersByTimeAsync(1_000)
-      runtime.onPtyData('pty-1', 'building...', 100)
+
+      expect(write).not.toHaveBeenCalled()
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads a wrapper foreground once per bounded attempt instead of re-polling it', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const db = new InMemoryOrchestrationMessages()
+      const write = vi.fn().mockReturnValue(true)
+      // `node` is a wrapper name, not an agent. The review-note path re-polls it
+      // for seconds in case it execs into one, which is wasted here: the pane
+      // was silent for the whole window, so it is not mid-launch.
+      const getForegroundProcess = vi.fn().mockResolvedValue('node')
+      setInMemoryOrchestrationMessages(runtime, db)
+      runtime.setPtyController({ write, kill: vi.fn(), getForegroundProcess })
+      syncSinglePty(runtime)
+
+      const [terminal] = (await runtime.listTerminals()).terminals
+      runtime.seedTerminalRestoreTail('pty-1', { lastTitle: 'Codex done' })
+      db.insertMessage({ from: 'sender', to: terminal.handle, subject: 'wrapper foreground' })
+
+      runtime.notifyMessageArrived(terminal.handle, 'status')
+      await Promise.resolve()
       await vi.advanceTimersByTimeAsync(30_000)
 
+      // One read per bounded attempt. The review-note helper would instead
+      // re-poll this same wrapper name every 150ms for 6.5s per attempt, which
+      // is ~45 process inspections for an answer that cannot change.
+      expect(getForegroundProcess).toHaveBeenCalledTimes(5)
       expect(write).not.toHaveBeenCalled()
       db.close()
     } finally {

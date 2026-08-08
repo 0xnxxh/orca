@@ -286,9 +286,9 @@ test.describe('orchestration push-on-idle mail delivery', () => {
 
     // No title at all yet — the pane has no live agent status, which is where a
     // resumed agent sits before it paints its prompt. This fixture's agent runs
-    // under bare `node`, which is a wrapper name rather than a recognized agent,
-    // so the quiescence path that now covers a restored pane deliberately
-    // refuses it and the first live frame is still what releases the row.
+    // under bare `node`, which is not a recognized agent, so the quiescence path
+    // that now covers a restored pane refuses this pane outright and the first
+    // live frame is still what releases the row.
     const subject = 'First live idle frame'
     const messageId = await sendMail(client, pane.handle, { subject })
     await expectStaysPending(orcaPage, userDataDir, pane, messageId)
