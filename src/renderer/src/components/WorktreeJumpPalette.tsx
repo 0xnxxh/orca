@@ -1098,7 +1098,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     if (order.length === 0) {
       // Why: tabs can arrive after the palette opens (cold start, session restore, a late tab
       // mirror). Latching an empty snapshot would leave Recent dead — and digits inert — until
-      // close+reopen, so stay unlatched; the stable empty ref keeps this a no-op re-render.
+      // close+reopen. Also clear a provisional latch: incomplete→complete fallthrough can hit empty
+      // if open tabs briefly vanish, and keeping captured would freeze an empty Recent forever.
+      recentTabOrderCapturedRef.current = false
+      recentTabOrderAttentionReadyRef.current = false
       setRecentTabOrder(EMPTY_RECENT_TAB_ORDER)
       return
     }

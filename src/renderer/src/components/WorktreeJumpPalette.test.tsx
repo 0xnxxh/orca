@@ -769,7 +769,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
 
   it('re-ranks once when terminal entities hydrate after unified tabs', async () => {
     // Why split hydration: unified tabs can land before tabsByWorktree; without a re-capture every
-    // row ranks IDLE and the blocked chat stays under focus recency until reopen.
+    // row ranks IDLE. A deliberate second-row highlight must survive that one re-rank.
     const hydrated = makeRecentTabState({
       agentStatusByPaneKey: {
         [`term-alpha:${LEAF_ID}`]: makeAgentEntry('term-alpha', 'blocked', Date.now())
@@ -778,23 +778,17 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     })
     await renderPalette({ ...hydrated, tabsByWorktree: {} })
     expect(getTabRowIds()).toEqual(['tab-beta', 'tab-alpha'])
-
+    const movedTo = `workspace-tab:${getTabRowIds()[1]}`
+    await act(async () => {
+      setCommandSelection?.(movedTo)
+    })
+    await flushEffects()
     await act(async () => {
       useAppStore.setState({ tabsByWorktree: hydrated.tabsByWorktree } as Partial<AppState>)
     })
     await flushEffects()
     expect(getTabRowIds()).toEqual(['tab-alpha', 'tab-beta'])
-
-    // Why: incomplete→complete re-rank is one-shot — later status churn still freezes positions.
-    await act(async () => {
-      useAppStore.setState({
-        agentStatusByPaneKey: {
-          [`term-beta:${LEAF_ID}`]: makeAgentEntry('term-beta', 'blocked', Date.now())
-        }
-      } as Partial<AppState>)
-    })
-    await flushEffects()
-    expect(getTabRowIds()).toEqual(['tab-alpha', 'tab-beta'])
+    expect(getCommandValue()).toBe(movedTo)
   })
 
   it('ranks a blocked agent above a more recently visited idle tab', async () => {
