@@ -29,7 +29,9 @@ describe('getPageNumbers', () => {
     expect(getPageNumbers(3, 10)).toEqual([0, 1, 2, 3, 4, 5, 'ellipsis', 9])
   })
 
-  it('clamps the window to the valid page range', () => {
+  it('drops the window entirely when the current page is out of range', () => {
+    // characterization: the window bounds cross over rather than clamping, so only
+    // the first and last pages survive.
     expect(getPageNumbers(-5, 12)).toEqual([0, 'ellipsis', 11])
     expect(getPageNumbers(100, 12)).toEqual([0, 'ellipsis', 11])
   })

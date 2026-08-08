@@ -41,6 +41,7 @@ export function scopeGitHubTaskSearch(query: string, kind: GitHubTaskKind): stri
     return trimmed
   }
   const parsed = parseTaskQuery(trimmed)
+  // Why: the issue arm still fires for quoted forms like is:"issue" that the literal regex above misses.
   const inferredKind = parsed.scope === 'pr' ? 'prs' : parsed.scope === 'issue' ? 'issues' : kind
   return `${inferredKind === 'prs' ? 'is:pr' : 'is:issue'} ${trimmed}`
 }

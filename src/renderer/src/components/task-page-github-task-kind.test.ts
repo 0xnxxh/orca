@@ -117,10 +117,15 @@ describe('scopeGitHubTaskSearch', () => {
     expect(scopeGitHubTaskSearch('is:draft', 'issues')).toBe('is:pr is:draft')
   })
 
-  it('lets a parsed issue scope override the caller kind', () => {
-    // characterization: current behavior — scope comes from parseTaskQuery, and
-    // `no:assignee` alone does not set one, so the caller kind wins.
+  it('keeps the caller kind when the parsed scope stays all', () => {
+    // `no:assignee` sets no scope, so nothing overrides the caller kind.
     expect(scopeGitHubTaskSearch('no:assignee', 'prs')).toBe('is:pr no:assignee')
+  })
+
+  it('lets a parsed issue scope override the caller kind', () => {
+    // characterization: quoting hides `is:issue` from the literal-scope regex but
+    // not from the tokenizer, so the parsed issue scope beats the prs caller kind.
+    expect(scopeGitHubTaskSearch('is:"issue"', 'prs')).toBe('is:issue is:"issue"')
   })
 
   it('re-prefixes a merged-state query with the caller kind', () => {

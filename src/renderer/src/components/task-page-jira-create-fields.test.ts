@@ -145,9 +145,9 @@ describe('buildJiraCreateFieldValue', () => {
     })
   })
 
-  it('prefers allowed values over the number and textarea branches', () => {
+  it('prefers allowed values over the number branch', () => {
     // characterization: current behavior — the allowedValues branch runs before the
-    // schema-type branches.
+    // number branch, so the draft stays a string even on a number-typed field.
     const numeric = field({ schema: { type: 'number' }, allowedValues: [{ id: 'id-1' }] })
     expect(buildJiraCreateFieldValue(numeric, '7')).toBe('7')
   })
