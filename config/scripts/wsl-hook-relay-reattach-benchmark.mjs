@@ -1,14 +1,18 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 import { createJiti } from 'jiti'
 
 const DEFAULT_SAMPLES = 20
 const PANE_KEY = 'wsl-relay-bench:11111111-1111-4111-8111-111111111111'
 const WSL_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+const TERMINAL_COLS = 80
+const TERMINAL_ROWS = 24
 
 function parseArgs(argv) {
   const options = { distro: null, samples: DEFAULT_SAMPLES }
@@ -203,6 +207,40 @@ async function invokeHook(distro, scriptPath, endpointPath) {
   return { status: result.status, elapsedMs: performance.now() - startedAt }
 }
 
+/** Captures the PTY controller that registerPtyHandlers installs; every other runtime
+ *  call the spawn path makes is a no-op so main's real lifecycle ordering still runs. */
+function createRuntimeStub() {
+  let controller = null
+  const own = {
+    setPtyController: (next) => {
+      controller = next
+    }
+  }
+  const runtime = new Proxy(own, {
+    get: (target, property) => {
+      if (property in target) {
+        return target[property]
+      }
+      return typeof property === 'string' && property !== 'then' ? () => undefined : undefined
+    },
+    has: () => true
+  })
+  return { runtime, getController: () => controller }
+}
+
+function createRendererWindowStub() {
+  const webContents = {
+    id: 1,
+    on: () => {},
+    once: () => {},
+    removeListener: () => {},
+    send: () => {},
+    isDestroyed: () => false,
+    session: { on: () => {} }
+  }
+  return { webContents, on: () => {}, once: () => {}, isDestroyed: () => false }
+}
+
 function percentile(samples, percentileValue) {
   const sorted = [...samples].sort((left, right) => left - right)
   return sorted[Math.ceil((percentileValue / 100) * sorted.length) - 1]
@@ -246,16 +284,28 @@ async function main() {
     })
   }
 
-  const jiti = createJiti(import.meta.url)
-  const [{ WslHookRelayManager }, { ensureWslHookRelayForReattach }, { codexHookService }] =
-    await Promise.all([
-      jiti.import('../../src/main/agent-hooks/wsl-hook-relay-manager.ts'),
-      jiti.import('../../src/main/agent-hooks/wsl-hook-relay-reattach.ts'),
-      jiti.import('../../src/main/codex/hook-service.ts')
-    ])
+  // Why: main's PTY graph reads app paths at import time; keep it inside a disposable directory.
+  const userDataDir = mkdtempSync(join(tmpdir(), 'orca-wsl-relay-bench-'))
+  process.env.ORCA_USER_DATA_PATH = userDataDir
+  const jiti = createJiti(import.meta.url, {
+    alias: {
+      electron: fileURLToPath(
+        new URL('./wsl-hook-relay-reattach-benchmark-electron-stub.mjs', import.meta.url)
+      )
+    }
+  })
+  // Why sequential: concurrent jiti.import calls can each instantiate the module graph, and two
+  // copies of wsl-hook-relay-manager.ts would leave pty.ts refreshing a singleton we never see.
+  const ptyIpc = await jiti.import('../../src/main/ipc/pty.ts')
+  const { WslHookRelayManager, wslHookRelayManager } = await jiti.import(
+    '../../src/main/agent-hooks/wsl-hook-relay-manager.ts'
+  )
+  const { codexHookService } = await jiti.import('../../src/main/codex/hook-service.ts')
   const { MANAGED_AGENT_HOOK_TARGETS } = await jiti.import(
     '../../src/shared/managed-agent-hook-targets.ts'
   )
+  const { toWindowsWslPath } = await jiti.import('../../src/shared/wsl-paths.ts')
+  const { FLOATING_TERMINAL_WORKTREE_ID } = await jiti.import('../../src/shared/constants.ts')
   const guestHome = (
     await run('wsl.exe', wslArgs(distro, ['/bin/sh', '-c', 'printf %s "$HOME"']))
   ).stdout.trim()
@@ -272,9 +322,44 @@ async function main() {
   ).map((target) => target.tuiAgent)
   const bundleVersion = readFileSync(versionPath, 'utf8').trim()
   const warnings = []
+  const relayRefreshes = []
   let delivered = 0
   let manager = null
   let staller = null
+
+  // Why: pty.ts refreshes through the production singleton, so route that singleton at the
+  // benchmark-scoped manager instead of calling the reattach helper from here — a removed or
+  // mislocated integration call in pty.ts must fail this benchmark.
+  wslHookRelayManager.ensureForDistro = (refreshedDistro) => {
+    relayRefreshes.push(refreshedDistro)
+    manager?.ensureForDistro(refreshedDistro)
+  }
+
+  const { runtime, getController } = createRuntimeStub()
+  ptyIpc.registerPtyHandlers(
+    createRendererWindowStub(),
+    runtime,
+    undefined,
+    () => ({}),
+    undefined,
+    undefined,
+    {}
+  )
+  const ptyController = getController()
+  if (typeof ptyController?.spawn !== 'function') {
+    throw new Error('registerPtyHandlers did not install a runtime PTY controller')
+  }
+  const survivingSessionId = `orca-wsl-relay-bench-${instanceKey}`
+  const spawnSurvivingPty = () =>
+    ptyController.spawn({
+      cols: TERMINAL_COLS,
+      rows: TERMINAL_ROWS,
+      // Why floating: without a worktree root main drops the requested cwd, and the UNC path is
+      // what makes the local provider launch this PTY inside the distro under test.
+      worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+      cwd: toWindowsWslPath(guestHome, distro),
+      sessionId: survivingSessionId
+    })
 
   const createManager = async (token) => {
     const preferredPort = await freeGuestPort(distro)
@@ -319,6 +404,12 @@ async function main() {
       ])
       return endpoint?.includes('before-restart-token') && script?.includes('--max-time')
     })
+
+    const survivingPty = await spawnSurvivingPty()
+    if (relayRefreshes.length > 0) {
+      throw new Error(`Fresh WSL spawn refreshed the relay: ${relayRefreshes.join(', ')}`)
+    }
+
     manager.disposeAll()
     manager = null
 
@@ -336,9 +427,18 @@ async function main() {
 
     delivered = 0
     manager = await createManager('after-restart-token')
-    ensureWslHookRelayForReattach({ isReattach: true, wslDistro: distro }, null, (ownedDistro) =>
-      manager.ensureForDistro(ownedDistro)
-    )
+    // Reattach the surviving WSL PTY through main's real spawn path — no direct helper call.
+    const reattachedPty = await spawnSurvivingPty()
+    if (reattachedPty.id !== survivingPty.id) {
+      throw new Error(
+        `Expected to reattach PTY ${survivingPty.id}, main spawned ${reattachedPty.id}`
+      )
+    }
+    if (relayRefreshes.length !== 1 || relayRefreshes[0] !== distro) {
+      throw new Error(
+        `PTY reattach did not refresh the relay for '${distro}': [${relayRefreshes.join(', ')}]`
+      )
+    }
     const refreshedEndpoint = await waitFor('reattached relay endpoint rewrite', async () => {
       const contents = await readGuestFile(distro, endpointPath)
       const parsed = contents ? parseEndpoint(contents) : null
@@ -362,6 +462,8 @@ async function main() {
       distro,
       endpointPath,
       endpointPortAfterReattach: refreshedEndpoint.port,
+      reattachedPtyId: reattachedPty.id,
+      relayRefreshes,
       stale,
       refreshed,
       medianSpeedup: Number((stale.medianMs / refreshed.medianMs).toFixed(1)),
@@ -383,6 +485,8 @@ async function main() {
   } finally {
     manager?.disposeAll()
     await staller?.stop()
+    ptyIpc.killAllPty()
+    rmSync(userDataDir, { recursive: true, force: true })
     for (const cleanupPath of cleanupPaths) {
       await run('wsl.exe', wslArgs(distro, ['/bin/rm', '-rf', '--', cleanupPath]), {
         allowFailure: true
