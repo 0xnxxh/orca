@@ -216,14 +216,15 @@ function createRuntimeStub() {
       controller = next
     }
   }
+  // Why no `has: () => true`: feature detection (`'x' in runtime`, typeof checks) must
+  // not claim methods exist when they are only auto-stubbed getters.
   const runtime = new Proxy(own, {
     get: (target, property) => {
       if (property in target) {
         return target[property]
       }
       return typeof property === 'string' && property !== 'then' ? () => undefined : undefined
-    },
-    has: () => true
+    }
   })
   return { runtime, getController: () => controller }
 }
@@ -285,116 +286,144 @@ async function main() {
   }
 
   // Why: main's PTY graph reads app paths at import time; keep it inside a disposable directory.
-  const userDataDir = mkdtempSync(join(tmpdir(), 'orca-wsl-relay-bench-'))
-  process.env.ORCA_USER_DATA_PATH = userDataDir
-  const jiti = createJiti(import.meta.url, {
-    alias: {
-      electron: fileURLToPath(
-        new URL('./wsl-hook-relay-reattach-benchmark-electron-stub.mjs', import.meta.url)
-      )
-    }
-  })
-  // Why sequential: concurrent jiti.import calls can each instantiate the module graph, and two
-  // copies of wsl-hook-relay-manager.ts would leave pty.ts refreshing a singleton we never see.
-  const ptyIpc = await jiti.import('../../src/main/ipc/pty.ts')
-  const { WslHookRelayManager, wslHookRelayManager } = await jiti.import(
-    '../../src/main/agent-hooks/wsl-hook-relay-manager.ts'
-  )
-  const { codexHookService } = await jiti.import('../../src/main/codex/hook-service.ts')
-  const { MANAGED_AGENT_HOOK_TARGETS } = await jiti.import(
-    '../../src/shared/managed-agent-hook-targets.ts'
-  )
-  const { toWindowsWslPath } = await jiti.import('../../src/shared/wsl-paths.ts')
-  const { FLOATING_TERMINAL_WORKTREE_ID } = await jiti.import('../../src/shared/constants.ts')
-  const guestHome = (
-    await run('wsl.exe', wslArgs(distro, ['/bin/sh', '-c', 'printf %s "$HOME"']))
-  ).stdout.trim()
-  const instanceKey = `bench-${process.pid}-${Date.now().toString(36)}`
-  const benchmarkRoot = `${guestHome}/.orca-wsl/benchmarks/${instanceKey}`
-  const scriptPath = `${benchmarkRoot}/.orca/agent-hooks/codex-hook.sh`
-  const endpointPath = `${guestHome}/.orca-wsl/agent-hooks/instance-${instanceKey}/endpoint.env`
-  const cleanupPaths = [benchmarkRoot, `${guestHome}/.orca-wsl/agent-hooks/instance-${instanceKey}`]
-  if (cleanupPaths.some((cleanupPath) => !cleanupPath.startsWith(`${guestHome}/.orca-wsl/`))) {
-    throw new Error('Refusing to use an unexpected guest cleanup path')
-  }
-  const disabledTuiAgents = MANAGED_AGENT_HOOK_TARGETS.filter(
-    (target) => target.tuiAgent !== 'codex'
-  ).map((target) => target.tuiAgent)
-  const bundleVersion = readFileSync(versionPath, 'utf8').trim()
-  const warnings = []
-  const relayRefreshes = []
-  let delivered = 0
+  let userDataDir
+  let ptyIpc
+  let cleanupPaths = []
   let manager = null
   let staller = null
-
-  // Why: pty.ts refreshes through the production singleton, so route that singleton at the
-  // benchmark-scoped manager instead of calling the reattach helper from here — a removed or
-  // mislocated integration call in pty.ts must fail this benchmark.
-  wslHookRelayManager.ensureForDistro = (refreshedDistro) => {
-    relayRefreshes.push(refreshedDistro)
-    manager?.ensureForDistro(refreshedDistro)
-  }
-
-  const { runtime, getController } = createRuntimeStub()
-  ptyIpc.registerPtyHandlers(
-    createRendererWindowStub(),
-    runtime,
-    undefined,
-    () => ({}),
-    undefined,
-    undefined,
-    {}
-  )
-  const ptyController = getController()
-  if (typeof ptyController?.spawn !== 'function') {
-    throw new Error('registerPtyHandlers did not install a runtime PTY controller')
-  }
-  const survivingSessionId = `orca-wsl-relay-bench-${instanceKey}`
-  const spawnSurvivingPty = () =>
-    ptyController.spawn({
-      cols: TERMINAL_COLS,
-      rows: TERMINAL_ROWS,
-      // Why floating: without a worktree root main drops the requested cwd, and the UNC path is
-      // what makes the local provider launch this PTY inside the distro under test.
-      worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
-      cwd: toWindowsWslPath(guestHome, distro),
-      sessionId: survivingSessionId
-    })
-
-  const createManager = async (token) => {
-    const preferredPort = await freeGuestPort(distro)
-    return new WslHookRelayManager({
-      platform: () => 'win32',
-      remoteHooksEnabled: () => true,
-      hookCoordsEnv: () => ({
-        ORCA_AGENT_HOOK_PORT: String(preferredPort),
-        ORCA_AGENT_HOOK_TOKEN: token,
-        ORCA_AGENT_HOOK_ENV: 'benchmark',
-        ORCA_AGENT_HOOK_VERSION: '1'
-      }),
-      instanceKey: () => instanceKey,
-      resolveBundle: () => ({ jsPath: bundlePath, version: bundleVersion }),
-      listDistros: async () => [distro],
-      ingest: () => {
-        delivered++
-      },
-      installHooks: async (sftp) => [
-        await codexHookService.installRemote(sftp, benchmarkRoot, {
-          codexHomeDir: `${benchmarkRoot}/codex-home`,
-          deferTrustUntilConfigToml: true
-        })
-      ],
-      managedHookSettings: () => ({
-        agentCmdOverrides: { codex: '/bin/true' },
-        disabledTuiAgents
-      }),
-      pluginSources: () => ({}),
-      warn: (message) => warnings.push(message),
-      transientRetryDelayMs: 100
-    })
-  }
-
   try {
+    userDataDir = mkdtempSync(join(tmpdir(), 'orca-wsl-relay-bench-'))
+    process.env.ORCA_USER_DATA_PATH = userDataDir
+    const jiti = createJiti(import.meta.url, {
+      alias: {
+        electron: fileURLToPath(
+          new URL('./wsl-hook-relay-reattach-benchmark-electron-stub.mjs', import.meta.url)
+        )
+      }
+    })
+    // Why sequential: concurrent jiti.import calls can each instantiate the module graph, and two
+    // copies of wsl-hook-relay-manager.ts would leave pty.ts refreshing a singleton we never see.
+    ptyIpc = await jiti.import('../../src/main/ipc/pty.ts')
+    const { WslHookRelayManager, wslHookRelayManager } = await jiti.import(
+      '../../src/main/agent-hooks/wsl-hook-relay-manager.ts'
+    )
+    const { ensureWslHookRelayForReattach } = await jiti.import(
+      '../../src/main/agent-hooks/wsl-hook-relay-reattach.ts'
+    )
+    const { codexHookService } = await jiti.import('../../src/main/codex/hook-service.ts')
+    const { MANAGED_AGENT_HOOK_TARGETS } = await jiti.import(
+      '../../src/shared/managed-agent-hook-targets.ts'
+    )
+    const { toWindowsWslPath } = await jiti.import('../../src/shared/wsl-paths.ts')
+    const { FLOATING_TERMINAL_WORKTREE_ID } = await jiti.import('../../src/shared/constants.ts')
+
+    // Why: if jiti ever returns a second manager module, our monkey-patch would miss the singleton
+    // that ensureWslHookRelayForReattach (loaded via pty.ts) closes over — fail closed now.
+    const singletonProbe = []
+    const previousEnsure = wslHookRelayManager.ensureForDistro.bind(wslHookRelayManager)
+    wslHookRelayManager.ensureForDistro = (probedDistro) => {
+      singletonProbe.push(probedDistro)
+    }
+    ensureWslHookRelayForReattach(
+      { isReattach: true, wslDistro: '__bench-singleton-probe__' },
+      null
+    )
+    wslHookRelayManager.ensureForDistro = previousEnsure
+    if (singletonProbe.length !== 1 || singletonProbe[0] !== '__bench-singleton-probe__') {
+      throw new Error(
+        'jiti duplicated the WSL hook-relay manager graph; reattach patch would not observe pty.ts'
+      )
+    }
+
+    const guestHome = (
+      await run('wsl.exe', wslArgs(distro, ['/bin/sh', '-c', 'printf %s "$HOME"']))
+    ).stdout.trim()
+    const instanceKey = `bench-${process.pid}-${Date.now().toString(36)}`
+    const benchmarkRoot = `${guestHome}/.orca-wsl/benchmarks/${instanceKey}`
+    const scriptPath = `${benchmarkRoot}/.orca/agent-hooks/codex-hook.sh`
+    const endpointPath = `${guestHome}/.orca-wsl/agent-hooks/instance-${instanceKey}/endpoint.env`
+    cleanupPaths = [benchmarkRoot, `${guestHome}/.orca-wsl/agent-hooks/instance-${instanceKey}`]
+    if (cleanupPaths.some((cleanupPath) => !cleanupPath.startsWith(`${guestHome}/.orca-wsl/`))) {
+      throw new Error('Refusing to use an unexpected guest cleanup path')
+    }
+    const disabledTuiAgents = MANAGED_AGENT_HOOK_TARGETS.filter(
+      (target) => target.tuiAgent !== 'codex'
+    ).map((target) => target.tuiAgent)
+    const bundleVersion = readFileSync(versionPath, 'utf8').trim()
+    const warnings = []
+    const relayRefreshes = []
+    let delivered = 0
+
+    // Why: pty.ts refreshes through the production singleton, so route that singleton at the
+    // benchmark-scoped manager instead of calling the reattach helper from here — a removed or
+    // mislocated integration call in pty.ts must fail this benchmark.
+    wslHookRelayManager.ensureForDistro = (refreshedDistro) => {
+      relayRefreshes.push(refreshedDistro)
+      manager?.ensureForDistro(refreshedDistro)
+    }
+
+    const { runtime, getController } = createRuntimeStub()
+    // Why hooks off: fresh WSL spawn still runs buildPtyHostEnv, which calls ensureForDistro when
+    // hooks are on. This bench isolates the reattach call site (ensureWslHookRelayForReattach),
+    // which does not gate on agentStatusHooksEnabled.
+    ptyIpc.registerPtyHandlers(
+      createRendererWindowStub(),
+      runtime,
+      undefined,
+      () => ({ agentStatusHooksEnabled: false }),
+      undefined,
+      undefined,
+      {}
+    )
+    const ptyController = getController()
+    if (typeof ptyController?.spawn !== 'function') {
+      throw new Error('registerPtyHandlers did not install a runtime PTY controller')
+    }
+    const survivingSessionId = `orca-wsl-relay-bench-${instanceKey}`
+    const spawnSurvivingPty = () =>
+      ptyController.spawn({
+        cols: TERMINAL_COLS,
+        rows: TERMINAL_ROWS,
+        // Why floating: without a worktree root main drops the requested cwd, and the UNC path is
+        // what makes the local provider launch this PTY inside the distro under test.
+        worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+        cwd: toWindowsWslPath(guestHome, distro),
+        sessionId: survivingSessionId
+      })
+
+    const createManager = async (token) => {
+      const preferredPort = await freeGuestPort(distro)
+      return new WslHookRelayManager({
+        platform: () => 'win32',
+        remoteHooksEnabled: () => true,
+        hookCoordsEnv: () => ({
+          ORCA_AGENT_HOOK_PORT: String(preferredPort),
+          ORCA_AGENT_HOOK_TOKEN: token,
+          ORCA_AGENT_HOOK_ENV: 'benchmark',
+          ORCA_AGENT_HOOK_VERSION: '1'
+        }),
+        instanceKey: () => instanceKey,
+        resolveBundle: () => ({ jsPath: bundlePath, version: bundleVersion }),
+        listDistros: async () => [distro],
+        ingest: () => {
+          delivered++
+        },
+        installHooks: async (sftp) => [
+          await codexHookService.installRemote(sftp, benchmarkRoot, {
+            codexHomeDir: `${benchmarkRoot}/codex-home`,
+            deferTrustUntilConfigToml: true
+          })
+        ],
+        managedHookSettings: () => ({
+          agentCmdOverrides: { codex: '/bin/true' },
+          disabledTuiAgents
+        }),
+        pluginSources: () => ({}),
+        warn: (message) => warnings.push(message),
+        transientRetryDelayMs: 100
+      })
+    }
+
     manager = await createManager('before-restart-token')
     manager.ensureForDistro(distro)
     await waitFor('initial relay and generated Codex hook', async () => {
@@ -428,15 +457,19 @@ async function main() {
     delivered = 0
     manager = await createManager('after-restart-token')
     // Reattach the surviving WSL PTY through main's real spawn path — no direct helper call.
+    // Why delta: only the reattach phase should record ensureForDistro; length alone can false-
+    // green if an earlier phase already refreshed (or if a future hooks-on change reintroduces it).
+    const refreshesBeforeReattach = relayRefreshes.length
     const reattachedPty = await spawnSurvivingPty()
     if (reattachedPty.id !== survivingPty.id) {
       throw new Error(
         `Expected to reattach PTY ${survivingPty.id}, main spawned ${reattachedPty.id}`
       )
     }
-    if (relayRefreshes.length !== 1 || relayRefreshes[0] !== distro) {
+    const reattachRefreshes = relayRefreshes.slice(refreshesBeforeReattach)
+    if (reattachRefreshes.length !== 1 || reattachRefreshes[0] !== distro) {
       throw new Error(
-        `PTY reattach did not refresh the relay for '${distro}': [${relayRefreshes.join(', ')}]`
+        `PTY reattach did not refresh the relay for '${distro}': before=${refreshesBeforeReattach} all=[${relayRefreshes.join(', ')}]`
       )
     }
     const refreshedEndpoint = await waitFor('reattached relay endpoint rewrite', async () => {
@@ -464,6 +497,7 @@ async function main() {
       endpointPortAfterReattach: refreshedEndpoint.port,
       reattachedPtyId: reattachedPty.id,
       relayRefreshes,
+      reattachRefreshes,
       stale,
       refreshed,
       medianSpeedup: Number((stale.medianMs / refreshed.medianMs).toFixed(1)),
@@ -485,8 +519,10 @@ async function main() {
   } finally {
     manager?.disposeAll()
     await staller?.stop()
-    ptyIpc.killAllPty()
-    rmSync(userDataDir, { recursive: true, force: true })
+    ptyIpc?.killAllPty?.()
+    if (userDataDir) {
+      rmSync(userDataDir, { recursive: true, force: true })
+    }
     for (const cleanupPath of cleanupPaths) {
       await run('wsl.exe', wslArgs(distro, ['/bin/rm', '-rf', '--', cleanupPath]), {
         allowFailure: true
