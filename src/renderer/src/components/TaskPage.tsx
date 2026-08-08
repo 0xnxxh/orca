@@ -7143,17 +7143,11 @@ export default function TaskPage(): React.JSX.Element {
     setTaskRefreshNonce((current) => current + 1)
   }, [activeGithubTaskKind, setTaskResumeState, taskSearchInput])
 
-  const handleTaskSearchChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>): void => {
-      const next = event.target.value
-      const scoped = scopeGitHubTaskSearch(next, activeGithubTaskKind)
-      setTaskSearchInput(next)
-      setActiveTaskPreset(null)
-      // Why: visible rows are keyed by appliedTaskSearch, not the draft input; hide stale rows once the draft changes the query.
-      setTasksFiltering(scoped !== appliedTaskSearch)
-    },
-    [activeGithubTaskKind, appliedTaskSearch]
-  )
+  const handleTaskSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>): void => {
+    const next = event.target.value
+    setTaskSearchInput(next)
+    setActiveTaskPreset(null)
+  }, [])
 
   const handleSetDefaultTaskPreset = useCallback(
     (presetId: TaskViewPresetId): void => {
