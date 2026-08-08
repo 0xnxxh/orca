@@ -53,7 +53,7 @@ exec /usr/bin/stat "$@"
 
   afterAll(async () => {
     if (/^\/tmp\/orca-wsl-root-race\.[A-Za-z0-9]+$/u.test(fixtureRoot)) {
-      await wsl('rm -rf -- "$1"', fixtureRoot)
+      await wsl('chmod -f 700 "$1/execute-only" 2>/dev/null; rm -rf -- "$1"', fixtureRoot)
     }
   })
 
