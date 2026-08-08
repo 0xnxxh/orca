@@ -15,7 +15,10 @@ export function useGitHubTaskSearchCommit({
   value
 }: GitHubTaskSearchCommitOptions): void {
   const onCommitRef = useRef(onCommit)
-  onCommitRef.current = onCommit
+  // Keep latest callback without restarting the idle timer when identity changes.
+  useEffect(() => {
+    onCommitRef.current = onCommit
+  }, [onCommit])
 
   useEffect(() => {
     if (!enabled) {

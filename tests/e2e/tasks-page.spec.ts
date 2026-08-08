@@ -63,7 +63,10 @@ async function openInstrumentedGitHubTasksPage(
       throw new Error('window.__store is not available')
     }
     const state = store.getState()
-    const repo = state.repos.find((candidate) => candidate.path)
+    const activeWorktree = Object.values(state.worktreesByRepo)
+      .flat()
+      .find((worktree) => worktree.id === state.activeWorktreeId)
+    const repo = state.repos.find((candidate) => candidate.id === activeWorktree?.repoId)
     if (!repo || !state.settings) {
       throw new Error('GitHub Tasks probe requires a ready repository and settings')
     }
@@ -87,6 +90,11 @@ async function openInstrumentedGitHubTasksPage(
     }
 
     store.setState({
+      repos: state.repos.map((candidate) =>
+        candidate.id === repo.id
+          ? { ...candidate, upstream: { owner: 'orca', repo: 'e2e' } }
+          : candidate
+      ),
       settings: {
         ...state.settings,
         defaultTaskSource: 'github',

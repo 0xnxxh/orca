@@ -31,11 +31,29 @@ describe('useGitHubTaskSearchCommit', () => {
     expect(onCommit).toHaveBeenCalledWith('rate')
   })
 
-  it('does not schedule a commit while disabled', () => {
+  it('cancels a pending commit when disabled', () => {
     const onCommit = vi.fn()
-    renderHook(() => useGitHubTaskSearchCommit({ enabled: false, onCommit, value: 'rate' }))
+    const view = renderHook(
+      ({ enabled }) => useGitHubTaskSearchCommit({ enabled, onCommit, value: 'rate' }),
+      { initialProps: { enabled: true } }
+    )
+
+    act(() => vi.advanceTimersByTime(400))
+    view.rerender({ enabled: false })
 
     act(() => vi.runAllTimers())
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('cancels a pending commit on unmount', () => {
+    const onCommit = vi.fn()
+    const view = renderHook(() =>
+      useGitHubTaskSearchCommit({ enabled: true, onCommit, value: 'rate' })
+    )
+
+    view.unmount()
+    act(() => vi.runAllTimers())
+
     expect(onCommit).not.toHaveBeenCalled()
   })
 })
