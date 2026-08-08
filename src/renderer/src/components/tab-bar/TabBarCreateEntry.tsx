@@ -84,6 +84,9 @@ export default function TabBarCreateEntry({
   const [switchError, setSwitchError] = useState<string | null>(null)
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null)
   const [selectedOptionQuery, setSelectedOptionQuery] = useState(query)
+  // True while selection still tracks ranking (no arrow/click yet). Deferred tab
+  // rows can prepend a better match; re-pin only while this stays true.
+  const [selectionIsAutoDefault, setSelectionIsAutoDefault] = useState(true)
   const [lastMenuOpen, setLastMenuOpen] = useState(menuOpen)
   const inputRef = useRef<HTMLInputElement>(null)
   const imeEnter = useImeEnterGestureOwnership()
@@ -171,6 +174,7 @@ export default function TabBarCreateEntry({
       setError(null)
       setSwitchError(null)
       setSelectedOptionId(null)
+      setSelectionIsAutoDefault(true)
     }
   }
 
@@ -198,9 +202,15 @@ export default function TabBarCreateEntry({
   if (selectedOptionQuery !== query) {
     setSelectedOptionQuery(query)
     setSelectedOptionId(topOptionId)
+    setSelectionIsAutoDefault(true)
   } else if (selectedOptionId === null && topOptionId !== null) {
     // Why pin the top row by id: the tab search defers the query, so tab rows
     // arrive a render later and would otherwise slide under an index-kept highlight.
+    setSelectedOptionId(topOptionId)
+    setSelectionIsAutoDefault(true)
+  } else if (selectionIsAutoDefault && topOptionId !== null && selectedOptionId !== topOptionId) {
+    // Files paint before deferred tab search; follow the new top while the user
+    // has not moved selection themselves.
     setSelectedOptionId(topOptionId)
   }
   const selectedOptionIndex = selectedOptionId
@@ -294,6 +304,7 @@ export default function TabBarCreateEntry({
             const delta = event.key === 'ArrowDown' ? 1 : -1
             const nextIndex =
               (activeSelectedIndex + delta + activeOptions.length) % activeOptions.length
+            setSelectionIsAutoDefault(false)
             setSelectedOptionId(getActiveOptionId(activeOptions[nextIndex]))
             return
           }

@@ -233,7 +233,28 @@ describe('TabBarCreateEntry tab results', () => {
     expect(rows[3]).toContain('Open file')
   })
 
-  it('keeps Enter on the row the user saw when a tab row arrives a render later', () => {
+  it('re-pins Enter to a deferred tab row that ranks above the auto-selected file', () => {
+    entryOptionsMock.options = [newFileOption]
+    tabSearchMock.resultsByQuery['add tab'] = [terminalResult()]
+    tabSearchMock.hold = ''
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    const onDidOpenEntry = vi.fn()
+    renderEntry({ onDidOpenEntry, onOpenEntry })
+
+    setQuery('add tab')
+    expect(rowTexts()).toHaveLength(1)
+
+    tabSearchMock.hold = null
+    renderEntry({ onDidOpenEntry, onOpenEntry })
+    expect(rowTexts()[0]).toContain('Switch to tab')
+    submitForm()
+
+    expect(activationMocks.workspace).toHaveBeenCalledTimes(1)
+    expect(onDidOpenEntry).toHaveBeenCalledTimes(1)
+    expect(onOpenEntry).not.toHaveBeenCalled()
+  })
+
+  it('keeps a manually chosen row when a tab row arrives a render later', () => {
     entryOptionsMock.options = [newFileOption]
     tabSearchMock.resultsByQuery['add tab'] = [terminalResult()]
     tabSearchMock.hold = ''
@@ -242,6 +263,8 @@ describe('TabBarCreateEntry tab results', () => {
 
     setQuery('add tab')
     expect(rowTexts()).toHaveLength(1)
+    // Arrow on the only row marks selection as user-owned, not auto-default.
+    pressKey(queryInput(), 'ArrowDown')
 
     tabSearchMock.hold = null
     renderEntry({ onOpenEntry })
