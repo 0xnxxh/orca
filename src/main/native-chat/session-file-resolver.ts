@@ -5,7 +5,7 @@ import { resolveNativeChatTranscriptAgent } from '../../shared/native-chat-agent
 import { walkSessionFiles } from '../ai-vault/session-scanner-discovery'
 import { OMP_SESSION_ARTIFACT_DIR_PATTERN } from '../ai-vault/session-scanner-omp-subagent-transcripts'
 import { normalizeAgentSessionsDir } from '../ai-vault/session-scanner-values'
-import { getOrcaManagedCodexHomePath } from '../codex/codex-home-paths'
+import { resolveOrcaManagedCodexHomePath } from '../codex/codex-home-paths'
 import {
   findGrokChatHistoryBySessionId,
   resolveGrokSessionsDir
@@ -28,9 +28,12 @@ function claudeProjectsDir(): string {
 // fall back to CODEX_HOME/~/.codex so a non-Orca Codex transcript still resolves.
 // Duplicates are filtered so a managed-home symlink to ~/.codex isn't scanned twice.
 // WSL roots are a separate lazy tier — see resolveCodexSessionFile.
+// Why: resolve-only, so use the path-only variant — getOrcaManagedCodexHomePath
+// mkdirSyncs, and this runs on the 500ms–5s resolve poll. Creating the runtime
+// home is launch-time work, and a missing root already walks to no matches.
 function codexSessionsDirs(): string[] {
   const candidates = [
-    join(getOrcaManagedCodexHomePath(), 'sessions'),
+    join(resolveOrcaManagedCodexHomePath(), 'sessions'),
     join(process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'), 'sessions')
   ]
   return candidates.filter((dir, index) => candidates.indexOf(dir) === index)
