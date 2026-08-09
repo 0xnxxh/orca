@@ -25783,8 +25783,11 @@ export class OrcaRuntimeService {
         })
       })
 
-      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace, activeLaunch)
-      if (migratedWorkspace !== workspace) {
+      const migrateRendererLaunchWorkspace = (): void => {
+        const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace, activeLaunch)
+        if (migratedWorkspace === workspace) {
+          return
+        }
         requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
           requestedCwd,
           workspace.path,
@@ -25794,6 +25797,7 @@ export class OrcaRuntimeService {
         worktreeId = workspace.id
         cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
       }
+      migrateRendererLaunchWorkspace()
       if (shouldActivate()) {
         this.notifier?.focusTerminal(reply.tabId, worktreeId, null)
       }
@@ -25820,8 +25824,10 @@ export class OrcaRuntimeService {
         this.ensurePtyBackedMobileSurfaceForRendererTab(worktreeId, reply.tabId)
         const surface = await this.waitForMobileTerminalSurface(worktreeId, reply.tabId, {
           timeoutMs: MOBILE_TERMINAL_SURFACE_TIMEOUT_MS,
-          signal: opts.signal
+          signal: opts.signal,
+          activeLaunch
         })
+        migrateRendererLaunchWorkspace()
         if (this.isReadyMobileTerminalSurface(surface)) {
           this.deliverPendingStartupCommandToBareRendererPty(worktreeId, reply.tabId)
           return surface
@@ -25829,8 +25835,10 @@ export class OrcaRuntimeService {
         const readySurface = await this.waitForMobileTerminalSurface(worktreeId, reply.tabId, {
           timeoutMs: MOBILE_TERMINAL_READY_FALLBACK_MS,
           requireReady: true,
-          signal: opts.signal
+          signal: opts.signal,
+          activeLaunch
         }).catch(() => null)
+        migrateRendererLaunchWorkspace()
         if (readySurface) {
           this.deliverPendingStartupCommandToBareRendererPty(worktreeId, reply.tabId)
           return readySurface
@@ -25865,6 +25873,7 @@ export class OrcaRuntimeService {
           }
         )
       } catch (error) {
+        migrateRendererLaunchWorkspace()
         // Why: publication latency (hidden renderer) can trip the surface timeout; rescue only when a live PTY backs the tab, else a ghost tab skips rollback (#7587).
         if (this.findLiveRegisteredPtyForRendererTab(worktreeId, reply.tabId)) {
           const rescued = this.ensurePtyBackedMobileSurfaceForRendererTab(worktreeId, reply.tabId)
@@ -26150,7 +26159,12 @@ export class OrcaRuntimeService {
   private waitForMobileTerminalSurface(
     worktreeId: string,
     parentTabId: string,
-    options: { timeoutMs?: number; requireReady?: boolean; signal?: AbortSignal } = {}
+    options: {
+      timeoutMs?: number
+      requireReady?: boolean
+      signal?: AbortSignal
+      activeLaunch?: ActiveTerminalWorkspaceLaunch
+    } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const timeoutMs = options.timeoutMs ?? MOBILE_TERMINAL_SURFACE_TIMEOUT_MS
     const existing = this.findMobileTerminalSurface(worktreeId, parentTabId, options)
@@ -26197,9 +26211,13 @@ export class OrcaRuntimeService {
   private findMobileTerminalSurface(
     worktreeId: string,
     parentTabId: string,
-    options: { requireReady?: boolean } = {}
+    options: {
+      requireReady?: boolean
+      activeLaunch?: ActiveTerminalWorkspaceLaunch
+    } = {}
   ): RuntimeMobileSessionCreateTerminalResult | null {
-    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
+    worktreeId =
+      options.activeLaunch?.worktreeId || this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     if (!snapshot) {
       return null

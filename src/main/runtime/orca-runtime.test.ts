@@ -33018,6 +33018,78 @@ describe('OrcaRuntimeService', () => {
     await expect(settled).resolves.toMatchObject({ ok: false })
   })
 
+  it('keeps a renderer mobile create with a reused worktree through its next rename', async () => {
+    vi.useFakeTimers()
+    try {
+      const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+      const reusedRenamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-reused-renamed`
+      const leafId = '66666666-6666-4666-8666-666666666666'
+      const closeTerminal = vi.fn()
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-reused-renamed', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+      runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: false
+      })
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+      runtime.syncWindowGraph(1, {
+        tabs: [],
+        leaves: [],
+        mobileSessionTabs: [
+          {
+            worktree: TEST_WORKTREE_ID,
+            publicationEpoch: 'renderer-reused-renamed',
+            snapshotVersion: 1,
+            activeGroupId: 'group-1',
+            activeTabId: `tab-reused-renamed::${leafId}`,
+            activeTabType: 'terminal',
+            tabs: [
+              {
+                type: 'terminal',
+                id: `tab-reused-renamed::${leafId}`,
+                parentTabId: 'tab-reused-renamed',
+                leafId,
+                title: 'Terminal',
+                isActive: true
+              }
+            ]
+          }
+        ]
+      })
+      runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, reusedRenamedWorktreeId)
+      runtime.registerPty('pty-reused-renamed', reusedRenamedWorktreeId, null, {
+        tabId: 'tab-reused-renamed',
+        leafId
+      })
+
+      await vi.advanceTimersByTimeAsync(50)
+      await expect(create).resolves.toMatchObject({
+        tab: { parentTabId: 'tab-reused-renamed', status: 'ready' }
+      })
+      expect(runtime['mobileSessionTabsByWorktree'].has(reusedRenamedWorktreeId)).toBe(true)
+      expect(runtime['mobileSessionTabsByWorktree'].has(renamedWorktreeId)).toBe(false)
+      expect(closeTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a mobile-created terminal alive when a renamed renderer never publishes the surface', async () => {
     vi.useFakeTimers()
     try {
