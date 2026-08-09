@@ -423,7 +423,8 @@ import { recordManagedHookInstallFailure } from '../agent-hooks/install-telemetr
 import {
   isWindowsAbsolutePathLike,
   isPathInsideOrEqual,
-  normalizeRuntimePathForComparison
+  normalizeRuntimePathForComparison,
+  relativePathInsideRoot
 } from '../../shared/cross-platform-path'
 import { findRuntimeWorkspaceFileOwner } from '../../shared/runtime-workspace-file-owner'
 import { resolveTerminalStartupCwd } from '../../shared/terminal-startup-cwd'
@@ -25505,11 +25506,19 @@ export class OrcaRuntimeService {
     const shouldActivate = (): boolean =>
       opts.activate !== false && (opts.shouldActivate?.() ?? true)
     const graphEpoch = this.captureReadyGraphEpoch()
-    let workspace = this.migrateTerminalWorkspaceLaunchScope(
-      await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
-    )
+    let workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    let requestedCwd = opts.cwd
+    const initialMigratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+    if (initialMigratedWorkspace !== workspace) {
+      requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
+        requestedCwd,
+        workspace.path,
+        initialMigratedWorkspace.path
+      )
+      workspace = initialMigratedWorkspace
+    }
     let worktreeId = workspace.id
-    let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
+    let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     let afterDesktopTabId: string | undefined
     if (opts.afterTabId) {
@@ -25530,9 +25539,14 @@ export class OrcaRuntimeService {
         break
       }
       // Why: trust and startup cwd are path-scoped, so a rename during launch resolution must rebase both.
+      requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
+        requestedCwd,
+        workspace.path,
+        migratedWorkspace.path
+      )
       workspace = migratedWorkspace
       worktreeId = workspace.id
-      cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
+      cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
     }
     this.assertStableReadyGraph(graphEpoch)
     if (opts.signal?.aborted) {
@@ -27654,6 +27668,30 @@ export class OrcaRuntimeService {
       id,
       path: splitWorktreeIdForFilesystem(id)?.worktreePath ?? workspace.path
     }
+  }
+
+  private rebaseTerminalWorkspaceRequestedCwd(
+    requestedCwd: string | undefined,
+    oldWorktreePath: string,
+    newWorktreePath: string
+  ): string | undefined {
+    if (!requestedCwd) {
+      return requestedCwd
+    }
+    const trimmedCwd = requestedCwd.trim()
+    const relative = relativePathInsideRoot(oldWorktreePath, trimmedCwd)
+    if (relative === null) {
+      return requestedCwd
+    }
+    if (!relative) {
+      return newWorktreePath
+    }
+    const useBackslash =
+      isWindowsAbsolutePathLike(newWorktreePath) && newWorktreePath.includes('\\')
+    const separator = useBackslash ? '\\' : '/'
+    const base = newWorktreePath.replace(/[\\/]+$/g, '')
+    const suffix = useBackslash ? relative.replace(/\//g, '\\') : relative
+    return `${base}${separator}${suffix}`
   }
 
   private async resolveTerminalWorkspaceLaunchScope(

@@ -32400,7 +32400,7 @@ describe('OrcaRuntimeService', () => {
 
     const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
       activate: false,
-      cwd: 'packages/app',
+      cwd: `${TEST_WORKTREE_PATH}/packages/app`,
       signal: abortController.signal
     })
     const settled = create.then(
