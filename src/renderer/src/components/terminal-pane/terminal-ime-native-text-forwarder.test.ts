@@ -312,6 +312,70 @@ describe('installTerminalImeNativeTextForwarder', () => {
     })
   })
 
+  describe('the kitty read is scoped to the commit', () => {
+    function installWithFlags(
+      getKittyKeyboardFlags: () => number,
+      isComposing: () => boolean = () => false
+    ): {
+      forwarder: ReturnType<typeof installTerminalImeNativeTextForwarder>
+      sendInput: ReturnType<typeof vi.fn>
+    } {
+      const sendInput = vi.fn()
+      const forwarder = installTerminalImeNativeTextForwarder({
+        terminalElement: element,
+        isComposing,
+        sendInput,
+        getKittyKeyboardFlags
+      })
+      return { forwarder, sendInput }
+    }
+
+    it('never reads the flags on a keydown, only on the commit', () => {
+      const getKittyKeyboardFlags = vi.fn(() => 8)
+      const { forwarder } = installWithFlags(getKittyKeyboardFlags)
+
+      forwarder.claimKeyEvent(keyEvent({ key: ',' }))
+      forwarder.claimKeyEvent(keyEvent({ key: ',', type: 'keypress' }))
+      expect(getKittyKeyboardFlags).not.toHaveBeenCalled()
+
+      dispatchInsertText(textarea, '，')
+      expect(getKittyKeyboardFlags).toHaveBeenCalledOnce()
+    })
+
+    it('claims the keydown under bit 3 exactly as it does without it', () => {
+      // The predicate stays structural: the protocol changes what the commit
+      // writes, never whether the keystroke is owned.
+      const { forwarder } = installWithFlags(() => 8)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+    })
+
+    it('leaves a composing keystroke to the composition path even under bit 3', () => {
+      // Scope boundary: a composing IME (Hangul, kana) is never claimed here, so
+      // its commit is not this path's to re-encode. Bit 3 fidelity for
+      // composition commits would be a change to the composition path.
+      const { forwarder, sendInput } = installWithFlags(
+        () => 8,
+        () => true
+      )
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'r' }))).toBe(false)
+      dispatchInsertText(textarea, '한')
+      expect(sendInput).not.toHaveBeenCalled()
+    })
+
+    it('writes the commit raw when the caller tracks no flags at all', () => {
+      // The preview bridge installs the forwarder with no pane to negotiate with.
+      const sendInput = vi.fn()
+      const forwarder = installTerminalImeNativeTextForwarder({
+        terminalElement: element,
+        isComposing: () => false,
+        sendInput
+      })
+      forwarder.claimKeyEvent(keyEvent({ key: ',' }))
+      dispatchInsertText(textarea, '，')
+      expect(sendInput).toHaveBeenCalledExactlyOnceWith('，')
+    })
+  })
+
   it('stops forwarding after dispose', () => {
     const { forwarder, sendInput } = install()
     forwarder.claimKeyEvent(keyEvent({ key: ',' }))
