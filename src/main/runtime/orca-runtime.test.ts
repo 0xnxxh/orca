@@ -28860,6 +28860,190 @@ describe('OrcaRuntimeService', () => {
     ).toEqual([])
   })
 
+  it('applies a headless browser close that overlaps a later worktree rename', async () => {
+    const browserClose = deferred<void>()
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const closeTab = vi.fn(() => browserClose.promise)
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => []
+    })
+    runtime.setOffscreenBrowserBackend({ createTab: vi.fn(), closeTab })
+    runtime.setNotifier({ worktreesChanged: vi.fn() } as never)
+    const sessionTabs = (worktree: string, version: number) => ({
+      worktree,
+      publicationEpoch: 'rename-headless-close-race',
+      snapshotVersion: version,
+      activeGroupId: null,
+      activeTabId: 'browser-tab',
+      activeTabType: 'browser' as const,
+      tabs: [
+        {
+          type: 'browser' as const,
+          id: 'browser-tab',
+          browserWorkspaceId: 'browser-workspace',
+          browserPageId: 'browser-page',
+          title: 'Browser',
+          url: 'about:blank',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          isActive: true
+        }
+      ]
+    })
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(TEST_WORKTREE_ID, 1)]
+    })
+
+    const close = runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'browser-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+    await vi.waitFor(() => expect(closeTab).toHaveBeenCalledWith('browser-page'))
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(renamedWorktreeId, 1)]
+    })
+    browserClose.resolve()
+
+    await expect(close).resolves.toEqual({ closed: true })
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(false)
+    expect((await runtime.listMobileSessionTabs(`id:${renamedWorktreeId}`)).tabs).toEqual([])
+  })
+
+  it('releases renderer session ownership when close acknowledgement overlaps a rename', async () => {
+    const closeAcknowledgement = deferred<void>()
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const ptyId = 'paired-close-rename-pty'
+    const closeTerminalTab = vi.fn(() => closeAcknowledgement.promise)
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [{ id: ptyId, cwd: TEST_WORKTREE_PATH, title: 'Terminal' }]
+    })
+    runtime.setNotifier({ closeTerminalTab, worktreesChanged: vi.fn() } as never)
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID, null, {
+      tabId: 'terminal-tab',
+      leafId: HEADLESS_LEAF_ID
+    })
+    runtime['ptysById'].get(ptyId)!.runtimeSessionOwned = true
+    runtime['setPairedRendererSessionOwnership'](ptyId, true)
+    const publish = (worktreeId: string): void => {
+      runtime.syncWindowGraph(1, {
+        tabs: [
+          {
+            tabId: 'terminal-tab',
+            worktreeId,
+            title: 'Terminal',
+            activeLeafId: HEADLESS_LEAF_ID,
+            layout: null
+          }
+        ],
+        leaves: [
+          {
+            tabId: 'terminal-tab',
+            worktreeId,
+            leafId: HEADLESS_LEAF_ID,
+            paneRuntimeId: 1,
+            ptyId
+          }
+        ],
+        mobileSessionTabs: [
+          {
+            worktree: worktreeId,
+            publicationEpoch: 'rename-terminal-close-race',
+            snapshotVersion: 1,
+            activeGroupId: null,
+            activeTabId: `terminal-tab::${HEADLESS_LEAF_ID}`,
+            activeTabType: 'terminal',
+            tabs: [
+              {
+                type: 'terminal',
+                id: `terminal-tab::${HEADLESS_LEAF_ID}`,
+                parentTabId: 'terminal-tab',
+                leafId: HEADLESS_LEAF_ID,
+                ptyId,
+                title: 'Terminal',
+                isActive: true
+              }
+            ]
+          }
+        ]
+      })
+    }
+    publish(TEST_WORKTREE_ID)
+
+    const close = runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'terminal-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+    await vi.waitFor(() => expect(closeTerminalTab).toHaveBeenCalledWith('terminal-tab'))
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    publish(renamedWorktreeId)
+    closeAcknowledgement.resolve()
+
+    await expect(close).resolves.toEqual({ closed: true })
+    expect(runtime['ptysById'].get(ptyId)).toMatchObject({
+      worktreeId: renamedWorktreeId,
+      runtimeSessionOwned: false
+    })
+  })
+
+  it('publishes delayed terminal materialization under the renamed worktree', async () => {
+    const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+    const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const { runtime } = makePendingAgentTabActivationRuntime({ spawn })
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `host-tab::${HEADLESS_LEAF_ID}`,
+      undefined,
+      { notifyClients: false }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    const priorSnapshot = runtime['mobileSessionTabsByWorktree'].get(TEST_WORKTREE_ID)!
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime.syncWindowGraph(0, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          ...priorSnapshot,
+          worktree: renamedWorktreeId,
+          snapshotVersion: priorSnapshot.snapshotVersion + 1
+        }
+      ]
+    })
+    spawned.resolve({ id: 'serve-materialized-pty' })
+
+    const activated = await activation
+    expect(activated).toMatchObject({ worktree: renamedWorktreeId })
+    expect(activated.tabs).toEqual([
+      expect.objectContaining({
+        id: `host-tab::${HEADLESS_LEAF_ID}`,
+        status: 'ready'
+      })
+    ])
+    expect(runtime['ptysById'].get('serve-materialized-pty')).toMatchObject({
+      worktreeId: renamedWorktreeId,
+      tabId: 'host-tab',
+      paneKey: `host-tab:${HEADLESS_LEAF_ID}`
+    })
+    expect(runtime['mobileSessionTabsByWorktree'].get(renamedWorktreeId)?.tabs).toEqual([
+      expect.objectContaining({ id: `host-tab::${HEADLESS_LEAF_ID}` })
+    ])
+  })
+
   it('materializes a plain shell when the pending tab has no launch agent', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'serve-materialized-pty' })
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(

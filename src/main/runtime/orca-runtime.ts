@@ -7314,6 +7314,7 @@ export class OrcaRuntimeService {
             // untappable; fall back to the plain-shell materialize.
           }
         }
+        worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
         try {
           const materialized = await this.createRuntimeOwnedMobileSessionTerminal(
             worktreeId,
@@ -7335,6 +7336,7 @@ export class OrcaRuntimeService {
               shouldActivate: shouldActivateHost
             }
           )
+          worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
           if (
             opts.clientNavigationId &&
             this.discardForgottenMaterializedTerminal(
@@ -7876,6 +7878,7 @@ export class OrcaRuntimeService {
         } finally {
           releasePublicationThrottle()
         }
+        worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
         const remainingSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
         const remainingTab = remainingSnapshot?.tabs.find(
           (candidate): candidate is RuntimeMobileSessionTerminalTab =>
@@ -7985,6 +7988,19 @@ export class OrcaRuntimeService {
     if (tab.browserPageId) {
       await this.offscreenBrowserBackend?.closeTab(tab.browserPageId).catch(() => {})
     }
+    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    const currentSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    const currentTab = currentSnapshot?.tabs.find(
+      (candidate): candidate is RuntimeMobileSessionBrowserTab =>
+        candidate.type === 'browser' &&
+        candidate.id === tab.id &&
+        candidate.browserPageId === tab.browserPageId
+    )
+    if (!currentSnapshot || !currentTab) {
+      return
+    }
+    snapshot = currentSnapshot
+    tab = currentTab
     const nextTabs = snapshot.tabs.filter((candidate) => candidate.id !== tab.id)
     const active = nextTabs.find((candidate) => candidate.isActive) ?? nextTabs[0] ?? null
     const nextSnapshot: RuntimeMobileSessionTabsSnapshot = {
@@ -25762,10 +25778,12 @@ export class OrcaRuntimeService {
       deferMobileSessionPublish: true,
       signal: opts.signal
     })
+    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
     const livePty = this.getLivePtyForHandle(terminal.handle)
     if (!livePty) {
       throw new Error('terminal_handle_stale')
     }
+    livePty.pty.worktreeId = worktreeId
     const parentTabId = livePty.pty.tabId ?? `pty:${livePty.pty.ptyId}`
     const leafId = parsePaneKey(livePty.pty.paneKey ?? '')?.leafId ?? randomUUID()
     const activateOnPublish = activate && (opts.shouldActivate?.() ?? true)
