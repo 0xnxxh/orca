@@ -922,7 +922,9 @@ export function useTerminalPaneLifecycle({
           ? installTerminalImeNativeTextForwarder({
               terminalElement: pane.terminal.element,
               isComposing: () => imeCompositionTracker.isActive(),
-              sendInput: (data) => pane.terminal.input(data)
+              sendInput: (data) => pane.terminal.input(data),
+              getKittyKeyboardFlags: () =>
+                paneKittyKeyboardModesRef.current.get(pane.id)?.flags ?? 0
             })
           : {
               claimKeyEvent: () => false,
