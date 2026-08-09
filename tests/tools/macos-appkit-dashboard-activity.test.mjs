@@ -17,4 +17,20 @@ describe('macOS AppKit dashboard activity fixture', () => {
     expect(script).not.toMatch(/\b(?:resizeTo|resizeBy|moveTo|moveBy)\b/)
     expect(script).not.toMatch(/\.(?:minimize|maximize|restore|setBounds|setSize|setPosition)\b/)
   })
+
+  it('hydrates and activates the fixture workspace before creating terminals', () => {
+    const script = buildDashboardActivityScript()
+
+    const fetchRepos = script.indexOf('fetchRepos()')
+    const fetchWorktrees = script.indexOf('fetchWorktrees(repo.id)')
+    const setActiveRepo = script.indexOf('setActiveRepo(repo.id)')
+    const setActiveWorktree = script.indexOf('setActiveWorktree(worktree.id)')
+    const createTab = script.indexOf('createTab(worktreeId')
+
+    expect(fetchRepos).toBeGreaterThan(-1)
+    expect(fetchWorktrees).toBeGreaterThan(fetchRepos)
+    expect(setActiveRepo).toBeGreaterThan(fetchWorktrees)
+    expect(setActiveWorktree).toBeGreaterThan(setActiveRepo)
+    expect(createTab).toBeGreaterThan(setActiveWorktree)
+  })
 })

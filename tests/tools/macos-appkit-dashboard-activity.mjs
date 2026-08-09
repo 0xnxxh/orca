@@ -4,10 +4,19 @@ export function buildDashboardActivityScript(terminalCount = APPKIT_REPRO_TERMIN
   return `(async () => {
     const store = window.__store;
     if (!store) throw new Error('window.__store unavailable');
-    const initial = store.getState();
-    const worktreeId = initial.activeWorktreeId;
-    const repoId = initial.activeRepoId;
-    if (!worktreeId || !repoId) throw new Error('No active workspace for dashboard activity');
+    await store.getState().fetchRepos();
+    const repo = store.getState().repos.find((candidate) => candidate.displayName === 'appkit-repro')
+      ?? store.getState().repos[0];
+    if (!repo) throw new Error('No repository available for dashboard activity');
+    await store.getState().fetchWorktrees(repo.id);
+    const worktree = (store.getState().worktreesByRepo[repo.id] ?? [])
+      .find((candidate) => candidate.path === repo.path)
+      ?? (store.getState().worktreesByRepo[repo.id] ?? [])[0];
+    if (!worktree) throw new Error('No worktree available for dashboard activity');
+    store.getState().setActiveRepo(repo.id);
+    store.getState().setActiveWorktree(worktree.id);
+    const repoId = repo.id;
+    const worktreeId = worktree.id;
 
     const tabIds = [];
     for (let index = 0; index < ${terminalCount}; index++) {
