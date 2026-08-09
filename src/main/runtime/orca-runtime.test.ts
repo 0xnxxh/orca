@@ -32375,6 +32375,57 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('rebases a renderer mobile create when command resolution overlaps a worktree rename', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const commandResolution = deferred<{}>()
+    const abortController = new AbortController()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setNotifier(createMobileCreateTestNotifier(vi.fn()))
+    runtime['resolveMobileSessionTerminalCommand'] = vi.fn(() => commandResolution.promise)
+    const webContents = { send: vi.fn() }
+    const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+      ipcMain.emit(
+        'terminal:tabCreateReply',
+        { sender: webContents },
+        { requestId: payload.requestId, tabId: 'tab-renamed', title: 'Terminal' }
+      )
+    })
+    webContents.send = send
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents
+    })
+
+    const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      cwd: 'packages/app',
+      signal: abortController.signal
+    })
+    const settled = create.then(
+      () => ({ ok: true as const }),
+      (error: Error) => ({ ok: false as const, error })
+    )
+    await vi.waitFor(() =>
+      expect(runtime['resolveMobileSessionTerminalCommand']).toHaveBeenCalledTimes(1)
+    )
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    commandResolution.resolve({})
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(send).toHaveBeenCalledWith(
+      'terminal:requestTabCreate',
+      expect.objectContaining({
+        worktreeId: renamedWorktreeId,
+        cwd: '/tmp/worktree-renamed/packages/app'
+      })
+    )
+
+    abortController.abort()
+    await expect(settled).resolves.toMatchObject({ ok: false })
+  })
+
   it('keeps a mobile-created terminal alive when a renamed renderer never publishes the surface', async () => {
     vi.useFakeTimers()
     try {

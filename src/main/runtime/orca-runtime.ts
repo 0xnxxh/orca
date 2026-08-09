@@ -25505,9 +25505,11 @@ export class OrcaRuntimeService {
     const shouldActivate = (): boolean =>
       opts.activate !== false && (opts.shouldActivate?.() ?? true)
     const graphEpoch = this.captureReadyGraphEpoch()
-    const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    let workspace = this.migrateTerminalWorkspaceLaunchScope(
+      await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    )
     let worktreeId = workspace.id
-    const cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
+    let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     let afterDesktopTabId: string | undefined
     if (opts.afterTabId) {
@@ -25518,7 +25520,20 @@ export class OrcaRuntimeService {
       }
       afterDesktopTabId = anchor.type === 'terminal' ? anchor.parentTabId : anchor.id
     }
-    const startupCommand = await this.resolveMobileSessionTerminalCommand(workspace, opts)
+    let startupCommand: Awaited<
+      ReturnType<OrcaRuntimeService['resolveMobileSessionTerminalCommand']>
+    >
+    while (true) {
+      startupCommand = await this.resolveMobileSessionTerminalCommand(workspace, opts)
+      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+      if (migratedWorkspace === workspace) {
+        break
+      }
+      // Why: trust and startup cwd are path-scoped, so a rename during launch resolution must rebase both.
+      workspace = migratedWorkspace
+      worktreeId = workspace.id
+      cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
+    }
     this.assertStableReadyGraph(graphEpoch)
     if (opts.signal?.aborted) {
       throw new Error('client_disconnected')
@@ -27625,6 +27640,20 @@ export class OrcaRuntimeService {
     requestedCwd?: string | null
   ): string | undefined {
     return resolveTerminalStartupCwd(workspace.path, requestedCwd)
+  }
+
+  private migrateTerminalWorkspaceLaunchScope(
+    workspace: TerminalWorkspaceLaunchScope
+  ): TerminalWorkspaceLaunchScope {
+    const id = this.clientSessionTabSelections.resolveWorktreeId(workspace.id)
+    if (id === workspace.id) {
+      return workspace
+    }
+    return {
+      ...workspace,
+      id,
+      path: splitWorktreeIdForFilesystem(id)?.worktreePath ?? workspace.path
+    }
   }
 
   private async resolveTerminalWorkspaceLaunchScope(
