@@ -28946,6 +28946,55 @@ describe('OrcaRuntimeService', () => {
     ).toEqual([])
   })
 
+  it('applies stale tab mutations to the renamed worktree identity', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const moveSessionTab = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setNotifier({ moveSessionTab, worktreesChanged: vi.fn() } as never)
+    runtime['mobileSessionTabsByWorktree'].set(TEST_WORKTREE_ID, {
+      worktree: TEST_WORKTREE_ID,
+      publicationEpoch: 'rename-tab-mutation-race',
+      snapshotVersion: 1,
+      activeGroupId: 'group-1',
+      activeTabId: 'terminal-tab::leaf-1',
+      activeTabType: 'terminal',
+      tabGroups: [{ id: 'group-1', activeTabId: 'terminal-tab', tabOrder: ['terminal-tab'] }],
+      tabs: [
+        {
+          type: 'terminal',
+          id: 'terminal-tab::leaf-1',
+          parentTabId: 'terminal-tab',
+          leafId: 'leaf-1',
+          title: 'Terminal',
+          isActive: true
+        }
+      ]
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    await runtime.moveMobileSessionTab(`id:${TEST_WORKTREE_ID}`, {
+      kind: 'reorder',
+      tabId: 'terminal-tab::leaf-1',
+      targetGroupId: 'group-1',
+      tabOrder: ['terminal-tab::leaf-1']
+    })
+    await runtime.setMobileSessionTabProps(`id:${TEST_WORKTREE_ID}`, {
+      tabId: 'terminal-tab::leaf-1',
+      isPinned: true
+    })
+
+    expect(moveSessionTab).toHaveBeenCalledWith(renamedWorktreeId, {
+      kind: 'reorder',
+      tabId: 'terminal-tab',
+      targetGroupId: 'group-1',
+      tabOrder: ['terminal-tab']
+    })
+    await expect(runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).resolves.toMatchObject({
+      worktree: renamedWorktreeId,
+      tabs: [expect.objectContaining({ id: 'terminal-tab::leaf-1', isPinned: true })]
+    })
+  })
+
   it('applies a headless browser close that overlaps a later worktree rename', async () => {
     const browserClose = deferred<void>()
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`

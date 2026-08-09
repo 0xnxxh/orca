@@ -8198,8 +8198,9 @@ export class OrcaRuntimeService {
     move: RuntimeMobileSessionTabMove
   ): Promise<RuntimeMobileSessionTabMoveResult> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId =
+    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    )
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     if (!snapshot) {
@@ -8254,8 +8255,9 @@ export class OrcaRuntimeService {
     }
   ): Promise<{ updated: true }> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId =
+    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    )
     // Why: when a renderer is authoritative (desktop host reached via shared
     // control), it owns pane geometry and republishes it — a headless write here
     // would be overwritten and could fight the renderer. Persist only headlessly.
@@ -8294,8 +8296,9 @@ export class OrcaRuntimeService {
     }
   ): Promise<{ updated: true }> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId =
+    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    )
     // Why: a renderer-authoritative host owns + republishes tab props, so a
     // headless write would be overwritten. Persist only when headless.
     if (this.getAvailableAuthoritativeWindow()) {
