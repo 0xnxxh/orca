@@ -3,6 +3,7 @@ import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared
 import {
   buildWindowsAgentHookPostCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript
 } from '../agent-hooks/installer-utils'
 import {
@@ -79,6 +80,10 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
 }
 
 export class DevinHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getDevinManagedScriptPath(), getManagedScript())
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getDevinConfigPath()
     const scriptPath = getDevinManagedScriptPath()

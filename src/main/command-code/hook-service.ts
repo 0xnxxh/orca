@@ -11,6 +11,7 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
@@ -88,6 +89,10 @@ function buildInstalledConfig(
 }
 
 export class CommandCodeHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getManagedScriptPath(), buildCommandCodeManagedScript())
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()

@@ -16,6 +16,7 @@ import {
   wrapPosixHookCommand,
   wrapWindowsCmdHookCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition,
   type HooksConfig
@@ -296,6 +297,18 @@ function removeInstalledConfig(config: HooksConfig): void {
 }
 
 export class AntigravityHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+    if (process.platform === 'win32') {
+      for (const event of ANTIGRAVITY_EVENTS) {
+        refreshManagedScriptIfPresent(
+          getWindowsWrapperScriptPath(event),
+          getWindowsWrapperScript(event.eventName)
+        )
+      }
+    }
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()

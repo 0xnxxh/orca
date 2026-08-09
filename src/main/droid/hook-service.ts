@@ -12,6 +12,7 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition,
   type HooksConfig
@@ -159,6 +160,10 @@ function buildInstalledDroidConfig(
 }
 
 export class DroidHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()

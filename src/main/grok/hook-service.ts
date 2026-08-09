@@ -11,6 +11,7 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
@@ -182,6 +183,10 @@ function buildInstalledConfig(
 }
 
 export class GrokHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()

@@ -16,6 +16,7 @@ import {
   wrapPosixHookCommand,
   wrapWindowsCmdHookCommand,
   writeHooksJson,
+  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
@@ -1021,6 +1022,10 @@ function getWslReconciliationKey(runtimeHomePath: string): string {
 }
 
 export class CodexHookService {
+  refreshManagedScripts(): void {
+    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  }
+
   private readonly wslReconciliationGeneration = new Map<string, number>()
 
   private supersedeWslReconciliation(runtimeHomePath: string | null | undefined): number {
