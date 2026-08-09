@@ -28905,6 +28905,8 @@ export class OrcaRuntimeService {
 
   /** Like {@link notifyBranchRenamed} but carries old->new worktree id so the renderer re-keys instead of treating the id change as a deletion. */
   notifyWorktreeFolderRenamed(repoId: string, oldWorktreeId: string, newWorktreeId: string): void {
+    const oldWorktreeIdentityIsReused =
+      this.terminalWorkspaceLaunchIdentityOverrides.has(oldWorktreeId)
     this.terminalWorkspaceLaunchIdentityOverrides.delete(oldWorktreeId)
     this.terminalWorkspaceLaunchIdentityOverrides.delete(newWorktreeId)
     for (const launch of this.activeTerminalWorkspaceLaunches) {
@@ -28918,8 +28920,14 @@ export class OrcaRuntimeService {
           splitWorktreeIdForFilesystem(newWorktreeId)?.worktreePath ?? launch.worktreePath
       }
     }
-    const previousWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(oldWorktreeId)
-    this.clientSessionTabSelections.migrateWorktree(oldWorktreeId, newWorktreeId)
+    const previousWorktreeId = oldWorktreeIdentityIsReused
+      ? oldWorktreeId
+      : this.clientSessionTabSelections.resolveWorktreeId(oldWorktreeId)
+    this.clientSessionTabSelections.migrateWorktree(
+      oldWorktreeId,
+      newWorktreeId,
+      !oldWorktreeIdentityIsReused
+    )
     this.terminalCreateIdempotency.migrateWorktree(oldWorktreeId, newWorktreeId)
     this.migrateRuntimeSessionWorktree(previousWorktreeId, newWorktreeId)
     this.invalidateResolvedWorktreeCache()

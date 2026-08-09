@@ -292,8 +292,8 @@ export class ClientSessionTabSelectionStore {
     }
   }
 
-  migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
-    const migration = this.worktreeAliases.migrate(oldWorktreeId, newWorktreeId)
+  migrateWorktree(oldWorktreeId: string, newWorktreeId: string, resolveOldAlias = true): void {
+    const migration = this.worktreeAliases.migrate(oldWorktreeId, newWorktreeId, resolveOldAlias)
     oldWorktreeId = migration.oldWorktreeId
     newWorktreeId = migration.newWorktreeId
     if (oldWorktreeId === newWorktreeId) {

@@ -31518,6 +31518,49 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('keeps reused worktree sessions isolated when the reused path is renamed', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const reusedRenamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-reused-renamed`
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'pty-original-lineage' })
+      .mockResolvedValueOnce({ id: 'pty-reused-lineage' })
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+
+    const original = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      clientNavigationId: 'phone-original-lineage'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    const reused = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      clientNavigationId: 'phone-reused-lineage'
+    })
+
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, reusedRenamedWorktreeId)
+
+    expect(runtime['mobileSessionTabsByWorktree'].get(renamedWorktreeId)?.tabs).toEqual([
+      expect.objectContaining({ id: original.tab.id })
+    ])
+    expect(runtime['mobileSessionTabsByWorktree'].get(reusedRenamedWorktreeId)?.tabs).toEqual([
+      expect.objectContaining({ id: reused.tab.id })
+    ])
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(false)
+    const originalSelections =
+      runtime['clientSessionTabSelections']['statesByClient'].get('phone-original-lineage')
+    const reusedSelections =
+      runtime['clientSessionTabSelections']['statesByClient'].get('phone-reused-lineage')
+    expect(originalSelections?.get(renamedWorktreeId)?.selection.activeTabId).toBe(original.tab.id)
+    expect(reusedSelections?.get(reusedRenamedWorktreeId)?.selection.activeTabId).toBe(
+      reused.tab.id
+    )
+  })
+
   it('injects mobile quick-command prompts into the host-built agent startup command', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-agent-prompt' })
     const runtime = new OrcaRuntimeService({

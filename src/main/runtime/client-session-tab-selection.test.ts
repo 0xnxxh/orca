@@ -263,6 +263,25 @@ describe('client session-tab selection', () => {
     expect(store.serialize()['device-a']?.['wt-renamed']).toBeUndefined()
   })
 
+  it('migrates a reused identity without redirecting its earlier rename lineage', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-original', 'browser-unified')
+    store.migrateWorktree('wt-1', 'wt-renamed')
+    store.activate(initial, 'device-reused', 'terminal-a::leaf-b', undefined, false)
+
+    store.migrateWorktree('wt-1', 'wt-reused-renamed', false)
+
+    expect(store.resolveWorktreeId('wt-1')).toBe('wt-renamed')
+    expect(store.resolveWorktreeId('wt-reused-renamed')).toBe('wt-reused-renamed')
+    expect(store.serialize()['device-original']?.['wt-renamed']?.activeTabId).toBe(
+      'browser-unified'
+    )
+    expect(store.serialize()['device-reused']?.['wt-reused-renamed']?.activeTabId).toBe(
+      'terminal-a::leaf-b'
+    )
+  })
+
   it('applies a delayed activation to the renamed worktree identity', () => {
     const store = new ClientSessionTabSelectionStore()
     const initial = snapshot()

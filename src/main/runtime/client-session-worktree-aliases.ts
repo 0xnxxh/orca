@@ -6,10 +6,31 @@ export class ClientSessionWorktreeAliases {
     return migrated ? this.resolve(migrated) : worktreeId
   }
 
+  private makeCanonical(worktreeId: string): void {
+    const migrated = this.migratedWorktreeIds.get(worktreeId)
+    if (!migrated) {
+      return
+    }
+    const resolved = this.resolve(migrated)
+    // Why: detaching a reused destination must not strand aliases that previously traversed it.
+    const aliases = [...this.migratedWorktreeIds.keys()].filter(
+      (alias) => alias !== worktreeId && this.resolve(alias) === resolved
+    )
+    this.migratedWorktreeIds.delete(worktreeId)
+    for (const alias of aliases) {
+      this.migratedWorktreeIds.set(alias, resolved)
+    }
+  }
+
   migrate(
     oldPublishedWorktreeId: string,
-    newWorktreeId: string
+    newWorktreeId: string,
+    resolveOldAlias = true
   ): { oldWorktreeId: string; newWorktreeId: string } {
+    if (!resolveOldAlias) {
+      this.makeCanonical(newWorktreeId)
+      return { oldWorktreeId: oldPublishedWorktreeId, newWorktreeId }
+    }
     const oldWorktreeId = this.resolve(oldPublishedWorktreeId)
     const aliases = [...this.migratedWorktreeIds.keys()].filter(
       (alias) => this.resolve(alias) === oldWorktreeId
