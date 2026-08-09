@@ -20,10 +20,11 @@ const activationIntervalMs = positiveNumber(process.env.ORCA_APPKIT_REPRO_ACTIVA
 const agentBrowserPath = path.join(projectDir, 'node_modules', '.bin', 'agent-browser')
 const mainEntry = path.join(projectDir, 'out', 'main', 'index.js')
 const sessionName = `orca-appkit-repro-${process.pid}`
-const runRoot = mkdtempSync(path.join(os.tmpdir(), 'orca-appkit-dashboard-hang-'))
-const userDataDir = path.join(runRoot, 'user-data')
-const requestedHomeDir = path.join(userDataDir, 'home')
-const fixtureRepoDir = path.join(runRoot, 'fixture-repo')
+// macOS Unix-domain sockets cap paths at 104 bytes; runner temp roots are already long.
+const runRoot = mkdtempSync('/tmp/orca-appkit-')
+const userDataDir = path.join(runRoot, 'u')
+const requestedHomeDir = path.join(userDataDir, 'h')
+const fixtureRepoDir = path.join(runRoot, 'r')
 const eventLogPath = path.join(evidenceDir, 'events.ndjson')
 const agentBrowserLogPath = path.join(evidenceDir, 'agent-browser.log')
 
