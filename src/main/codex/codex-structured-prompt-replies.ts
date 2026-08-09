@@ -23,6 +23,10 @@ export type CodexPendingPrompt = {
   threadId: string
   turnId: string | null
   codexItemId: string
+  /** What addresses this prompt. One tool item can ask more than once — a shell
+   *  bridge re-asks per command under the same `itemId` — so the request's own
+   *  `approvalId` is the identity whenever Codex sends one. */
+  promptKey: string
   /** One entry per question for a user-input request; empty for an approval. */
   questionIds: readonly string[]
   answers: Map<string, string>
@@ -84,7 +88,8 @@ export function isCodexPromptMethod(method: string): boolean {
  * became.
  */
 export class CodexPromptRegistry {
-  private readonly byCodexItemId = new Map<string, CodexPendingPrompt>()
+  private readonly byPromptKey = new Map<string, CodexPendingPrompt>()
+  /** Journal item id to prompt key. */
   private readonly journalItemIds = new Map<string, string>()
 
   /** Returns null for a request this build does not model, so the caller can
@@ -105,37 +110,38 @@ export class CodexPromptRegistry {
       threadId,
       turnId: readString(request.params, 'turnId'),
       codexItemId,
+      promptKey: readString(request.params, 'approvalId') ?? codexItemId,
       questionIds:
         request.method === CODEX_USER_INPUT_METHOD ? readQuestionIds(request.params) : [],
       answers: new Map()
     }
-    this.byCodexItemId.set(codexItemId, prompt)
+    this.byPromptKey.set(prompt.promptKey, prompt)
     return prompt
   }
 
-  /** Called by the translation module once the Codex item has a journal id. */
-  bindJournalItemId(journalItemId: string, codexItemId: string): void {
-    this.journalItemIds.set(journalItemId, codexItemId)
+  /** Called by the translation module once the prompt has a journal id. */
+  bindJournalItemId(journalItemId: string, promptKey: string): void {
+    this.journalItemIds.set(journalItemId, promptKey)
   }
 
-  /** Falls back to treating the id as a Codex item id, which is what it is
-   *  before any binding exists. */
+  /** Falls back to treating the id as a prompt key, which is what it is before
+   *  any binding exists. */
   find(journalItemId: string): CodexPendingPrompt | null {
-    const codexItemId = this.journalItemIds.get(journalItemId) ?? journalItemId
-    return this.byCodexItemId.get(codexItemId) ?? null
+    const promptKey = this.journalItemIds.get(journalItemId) ?? journalItemId
+    return this.byPromptKey.get(promptKey) ?? null
   }
 
   forget(prompt: CodexPendingPrompt): void {
-    this.byCodexItemId.delete(prompt.codexItemId)
-    for (const [journalItemId, codexItemId] of this.journalItemIds) {
-      if (codexItemId === prompt.codexItemId) {
+    this.byPromptKey.delete(prompt.promptKey)
+    for (const [journalItemId, promptKey] of this.journalItemIds) {
+      if (promptKey === prompt.promptKey) {
         this.journalItemIds.delete(journalItemId)
       }
     }
   }
 
   clear(): void {
-    this.byCodexItemId.clear()
+    this.byPromptKey.clear()
     this.journalItemIds.clear()
   }
 }

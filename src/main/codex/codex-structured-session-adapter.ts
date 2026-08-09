@@ -19,16 +19,10 @@ import {
   codexProcessIdentity,
   codexProviderHandleLink
 } from './codex-structured-owner-identity'
-import {
-  answerCodexPrompt,
-  CodexPromptRegistry,
-  receiveCodexPromptRequest
-} from './codex-structured-prompt-replies'
-import {
-  readCodexThreadId,
-  readCodexThreadPath,
-  readCodexTurnId
-} from './codex-structured-thread-facts'
+import { CodexAcquisitionWindow } from './codex-structured-acquisition-window'
+import { answerCodexPrompt, receiveCodexPromptRequest } from './codex-structured-prompt-replies'
+import { readCodexThreadId, readCodexTurnId } from './codex-structured-thread-facts'
+import { openCodexThread } from './codex-structured-thread-open'
 import {
   CODEX_USER_MESSAGE_ORDINAL,
   isCodexTurnOptionKey,
@@ -61,7 +55,10 @@ export type CodexStructuredSessionEvent =
       threadId: string
       method: string
       params: unknown
+      /** The tool item the prompt is about, which several prompts can share. */
       codexItemId: string
+      /** What answers address; distinct per prompt even when `codexItemId` is not. */
+      promptKey: string
     }
   /** The child died without the host asking it to. The lease is now stale. */
   | { type: 'ended'; sessionId: string; reason: string }
@@ -86,7 +83,9 @@ type CodexSession = {
   connection: CodexAppServerConnection
   threadId: string
   historyPath: string | null
-  prompts: CodexPromptRegistry
+  /** The registry the acquisition window opened; the session inherits it so a
+   *  prompt that arrived before publication is still answerable. */
+  prompts: CodexAcquisitionWindow['prompts']
   /** Applied to the next `turn/start`; Codex has no thread-settings write. */
   options: Map<string, string>
   turnIdWaiters: ((turnId: string) => void)[]
@@ -94,6 +93,7 @@ type CodexSession = {
 
 export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdapter {
   private readonly sessions = new Map<string, CodexSession>()
+  private readonly acquiring = new Map<string, CodexAcquisitionWindow>()
 
   constructor(private readonly deps: CodexStructuredSessionAdapterDeps) {}
 
@@ -110,70 +110,104 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     await this.closeSession(input.identity.sessionId)
     const sessionId = input.identity.sessionId
     const launch = await this.deps.resolveLaunch({ identity: input.identity })
-    const prompts = new CodexPromptRegistry()
+    const acquisition = new CodexAcquisitionWindow()
+    // Registered before the spawn, because the handshake itself can emit.
+    this.acquiring.set(sessionId, acquisition)
     const open = this.deps.openConnection ?? openCodexAppServerConnection
-    const connection = await open(
-      {
-        command: launch.command,
-        args: launch.args,
-        env: {
-          [CODEX_SPAWN_TOKEN_ENV]: input.spawnToken,
-          ...(launch.codexHome ? { CODEX_HOME: launch.codexHome } : {})
-        }
-      },
-      {
-        onNotification: (method, params) => this.handleNotification(sessionId, method, params),
-        onServerRequest: (request) => this.handleServerRequest(sessionId, request),
-        onExit: (error) => {
-          this.sessions.delete(sessionId)
-          prompts.clear()
-          this.deps.onEvent?.({ type: 'ended', sessionId, reason: error.message })
-        }
-      }
-    )
 
     try {
-      const started = await connection.request(
-        launch.resumeThreadId ? 'thread/resume' : 'thread/start',
-        launch.resumeThreadId
-          ? { threadId: launch.resumeThreadId, cwd: launch.cwd }
-          : { cwd: launch.cwd },
-        { timeoutMs: this.requestTimeoutMs }
+      const connection = await open(
+        {
+          command: launch.command,
+          args: launch.args,
+          env: {
+            [CODEX_SPAWN_TOKEN_ENV]: input.spawnToken,
+            ...(launch.codexHome ? { CODEX_HOME: launch.codexHome } : {})
+          }
+        },
+        {
+          onNotification: (method, params) =>
+            this.deliver(acquisition, sessionId, () =>
+              this.handleNotification(sessionId, method, params)
+            ),
+          onServerRequest: (request) =>
+            this.deliver(acquisition, sessionId, () =>
+              this.handleServerRequest(sessionId, request)
+            ),
+          onExit: (error) => this.handleExit(sessionId, acquisition, error)
+        }
       )
-      const threadId = readCodexThreadId(started)
-      if (!threadId) {
-        throw new Error('codex app-server did not name the thread it opened')
-      }
-      // A resume that lands on a different thread is a fork wearing a resume's
-      // name; the handle chain would record a lie.
-      if (launch.resumeThreadId && threadId !== launch.resumeThreadId) {
-        throw new Error(`codex app-server resumed ${threadId} instead of ${launch.resumeThreadId}`)
-      }
-      this.sessions.set(sessionId, {
-        connection,
-        threadId,
-        historyPath: readCodexThreadPath(started),
-        prompts,
-        options: new Map(),
-        turnIdWaiters: []
-      })
-      return {
+      acquisition.connection = connection
+      const opened = await openCodexThread(connection, launch, this.requestTimeoutMs)
+      const acquired: AgentSessionAcquisition = {
         process: await codexProcessIdentity(
           { ...input, pid: connection.pid },
           this.deps.readProcessStartTime
         ),
         link: codexProviderHandleLink({
-          threadId,
+          threadId: opened.threadId,
           resumed: launch.resumeThreadId !== null,
           fence: input.fence,
           linkId: this.deps.mintLinkId?.(),
           observedAt: this.deps.now?.() ?? Date.now()
         })
       }
+      // Publication is one step at the end: everything the caller is promised is
+      // in hand, the child is still alive, and this attempt still owns the
+      // session. A half-published session would be a live map entry in front of
+      // a child nobody can reach.
+      if (connection.closed) {
+        throw new Error(`codex app-server for session ${sessionId} exited while being acquired`)
+      }
+      if (this.acquiring.get(sessionId) !== acquisition) {
+        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
+      }
+      this.acquiring.delete(sessionId)
+      this.sessions.set(sessionId, {
+        connection,
+        threadId: opened.threadId,
+        historyPath: opened.historyPath,
+        prompts: acquisition.prompts,
+        options: new Map(),
+        turnIdWaiters: []
+      })
+      for (const event of acquisition.drain()) {
+        event()
+      }
+      return acquired
     } catch (error) {
-      await connection.close()
+      if (this.acquiring.get(sessionId) === acquisition) {
+        this.acquiring.delete(sessionId)
+      }
+      // Reap this attempt's child only. A replacement already published for the
+      // same session keeps running.
+      if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
+        await acquisition.connection?.close()
+      }
       throw error
     }
+  }
+
+  /** Buffers an event that arrived before the session was published, and drops
+   *  one from a connection this session has already replaced. */
+  private deliver(acquisition: CodexAcquisitionWindow, sessionId: string, event: () => void): void {
+    if (acquisition.buffer(event)) {
+      return
+    }
+    if (this.sessions.get(sessionId)?.connection === acquisition.connection) {
+      event()
+    }
+  }
+
+  /** Only the connection that currently owns the session may retire it, or a
+   *  superseded child's death would evict its live replacement. */
+  private handleExit(sessionId: string, acquisition: CodexAcquisitionWindow, error: Error): void {
+    acquisition.prompts.clear()
+    if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
+      return
+    }
+    this.sessions.delete(sessionId)
+    this.deps.onEvent?.({ type: 'ended', sessionId, reason: error.message })
   }
 
   private handleNotification(sessionId: string, method: string, params: unknown): void {
@@ -181,18 +215,16 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     if (!session) {
       return
     }
-    if (method === 'turn/started') {
+    // A subagent runs on its own thread over the same connection: its turns must
+    // not answer the root thread's waiter, and its events must carry the thread
+    // they actually came from.
+    const threadId = readCodexThreadId(params) ?? session.threadId
+    if (method === 'turn/started' && threadId === session.threadId) {
       const turnId = readCodexTurnId(params)
       const waiter = turnId ? session.turnIdWaiters.shift() : undefined
       waiter?.(turnId as string)
     }
-    this.deps.onEvent?.({
-      type: 'notification',
-      sessionId,
-      threadId: session.threadId,
-      method,
-      params
-    })
+    this.deps.onEvent?.({ type: 'notification', sessionId, threadId, method, params })
   }
 
   private handleServerRequest(sessionId: string, request: CodexAppServerServerRequest): void {
@@ -207,17 +239,18 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     this.deps.onEvent?.({
       type: 'prompt',
       sessionId,
-      threadId: session.threadId,
+      threadId: prompt.threadId,
       method: request.method,
       params: request.params,
-      codexItemId: prompt.codexItemId
+      codexItemId: prompt.codexItemId,
+      promptKey: prompt.promptKey
     })
   }
 
   /** Lets the translation module address a live prompt by the journal item it
-   *  became; until then the Codex item id addresses it directly. */
-  bindPromptItemId(sessionId: string, journalItemId: string, codexItemId: string): void {
-    this.sessions.get(sessionId)?.prompts.bindJournalItemId(journalItemId, codexItemId)
+   *  became; until then the prompt key addresses it directly. */
+  bindPromptItemId(sessionId: string, journalItemId: string, promptKey: string): void {
+    this.sessions.get(sessionId)?.prompts.bindJournalItemId(journalItemId, promptKey)
   }
 
   async dispatch(input: {
@@ -310,6 +343,9 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   /** Reaps one session's child. The proven handle chain is already durable, so
    *  a graceful close loses nothing. */
   async closeSession(sessionId: string): Promise<void> {
+    // An attempt still acquiring is superseded by this close: dropping its slot
+    // fails its publication check, so it reaps the child it spawned.
+    this.acquiring.delete(sessionId)
     const session = this.sessions.get(sessionId)
     if (!session) {
       return

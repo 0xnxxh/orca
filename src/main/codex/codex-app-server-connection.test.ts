@@ -310,4 +310,76 @@ describe('openCodexAppServerConnection', () => {
     expect(exits[0]).toContain('oversized')
     await connection.close()
   })
+
+  it('reports one exit for a death that arrives through two listeners', async () => {
+    const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
+    answerInitialize(child)
+    const exits: string[] = []
+    const connection = await openCodexAppServerConnection(
+      { command: 'codex', args: ['app-server'] },
+      { onExit: (error) => exits.push(error.message) },
+      spawnImpl
+    )
+
+    // The oversized line kills the child, so its own `close` lands afterwards.
+    child.stdout.write('x'.repeat(1024 * 1024 + 1))
+    child.stderr.write('killed\n')
+    await flushStreams()
+    child.emit('exit', null, 'SIGKILL')
+    child.emit('close', null, 'SIGKILL')
+
+    expect(exits).toHaveLength(1)
+    // The first cause survives; the generic exit that follows does not overwrite it.
+    expect(exits[0]).toContain('oversized')
+    await connection.close()
+  })
+
+  it('treats a broken stdin pipe as the end of the transport', async () => {
+    const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
+    answerInitialize(child)
+    const exits: string[] = []
+    const connection = await openCodexAppServerConnection(
+      { command: 'codex', args: ['app-server'] },
+      { onExit: (error) => exits.push(error.message) },
+      spawnImpl
+    )
+    child.kill.mockImplementation(() => {
+      child.emit('exit', null, 'SIGKILL')
+      return true
+    })
+
+    const inFlight = rejection(connection.request('turn/start'))
+    child.stdin.emit('error', new Error('write EPIPE'))
+
+    expect((await inFlight).message).toContain('EPIPE')
+    expect(exits).toHaveLength(1)
+    // A child nobody can write to is not a live session: the owner must see the
+    // connection as gone rather than keep issuing calls that can only time out.
+    expect(connection.closed).toBe(true)
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect((await rejection(connection.request('turn/start'))).message).toContain('EPIPE')
+    await connection.close()
+  })
+
+  it('keeps a graceful close quiet when stdin breaks during the reap', async () => {
+    const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
+    answerInitialize(child)
+    const exits: string[] = []
+    const connection = await openCodexAppServerConnection(
+      { command: 'codex', args: ['app-server'] },
+      { onExit: (error) => exits.push(error.message) },
+      spawnImpl
+    )
+    child.stdin.on('finish', () => child.stdin.emit('error', new Error('write EPIPE')))
+    child.kill.mockImplementation(() => {
+      child.emit('exit', null, 'SIGKILL')
+      return true
+    })
+
+    const inFlight = rejection(connection.request('turn/start'))
+    await connection.close()
+
+    expect((await inFlight).message).toContain('EPIPE')
+    expect(exits).toHaveLength(0)
+  })
 })

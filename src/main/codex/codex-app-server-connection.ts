@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { stderrIndicatesMissingAppServer } from './codex-app-server-capability-signal'
+import { buildCodexAppServerExitError } from './codex-app-server-exit-error'
 import { waitForProcessExitUntil } from './codex-process-exit-deadline'
 import {
   CodexAppServerTimeoutError,
@@ -113,6 +113,10 @@ export async function openCodexAppServerConnection(
   let nextRequestId = 1
   let exited = false
   let closing = false
+  /** First terminal cause, or null while the transport is still usable. Set once:
+   *  a child that dies reaches us through several listeners, and the specific
+   *  first cause is the one worth reporting. */
+  let terminalError: Error | null = null
 
   const exitPromise = new Promise<void>((resolve) => {
     child.on('exit', () => {
@@ -122,14 +126,7 @@ export async function openCodexAppServerConnection(
   })
 
   function buildExitError(cause?: Error): Error {
-    const tail = stderrTail.trim().slice(0, 400)
-    if (stderrIndicatesMissingAppServer(stderrTail)) {
-      return new CodexAppServerUnsupportedError(
-        `codex CLI does not support the app-server subcommand: ${tail}`
-      )
-    }
-    const detail = cause ? `: ${cause.message}` : tail ? `: ${tail}` : ''
-    return new Error(`codex app-server connection ended${detail}`)
+    return buildCodexAppServerExitError(stderrTail, cause)
   }
 
   function failPending(error: Error): void {
@@ -141,12 +138,17 @@ export async function openCodexAppServerConnection(
   }
 
   /** A death nobody asked for kills every in-flight call AND tells the owner,
-   *  which is the only signal the session has that its lease is now worthless. */
+   *  which is the only signal the session has that its lease is now worthless.
+   *  Once only: an oversized line kills the child and its `close` arrives after,
+   *  and a spawn failure arrives as both `error` and `close`. */
   function handleUnexpectedEnd(cause?: Error): void {
-    const error = buildExitError(cause)
-    failPending(error)
+    if (terminalError) {
+      return
+    }
+    terminalError = buildExitError(cause)
+    failPending(terminalError)
     if (!closing) {
-      handlers.onExit?.(error)
+      handlers.onExit?.(terminalError)
     }
   }
 
@@ -163,7 +165,17 @@ export async function openCodexAppServerConnection(
     stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_MAX_BYTES)
   })
   child.stdin.on('error', (error) => {
-    failPending(error)
+    // A broken pipe is terminal, not one failed write: every later request can
+    // only error or time out, so the session must learn its lease is worthless
+    // instead of staying live in front of a child nobody can reach. During a
+    // close the reap is already under way and `exited` must stay honest, or
+    // `close` would skip the kill it still owes.
+    if (closing) {
+      failPending(error)
+      return
+    }
+    killCodexAppServerProcessTree(child)
+    handleUnexpectedEnd(error)
   })
 
   function dispatchMessage(message: Record<string, unknown>): void {
@@ -243,7 +255,7 @@ export async function openCodexAppServerConnection(
   }
 
   function notify(method: string, params?: Record<string, unknown>): void {
-    if (exited) {
+    if (exited || terminalError) {
       return
     }
     try {
@@ -260,6 +272,9 @@ export async function openCodexAppServerConnection(
   ): Promise<unknown> {
     if (closing) {
       return Promise.reject(new Error(`codex app-server connection is closed (${method})`))
+    }
+    if (terminalError) {
+      return Promise.reject(terminalError)
     }
     if (exited) {
       return Promise.reject(buildExitError())
@@ -285,7 +300,7 @@ export async function openCodexAppServerConnection(
   }
 
   function writeResponse(payload: Record<string, unknown>): void {
-    if (exited || child.stdin.destroyed || !child.stdin.writable) {
+    if (exited || terminalError || child.stdin.destroyed || !child.stdin.writable) {
       return
     }
     try {
@@ -321,7 +336,7 @@ export async function openCodexAppServerConnection(
       return child.pid
     },
     get closed() {
-      return closing || exited
+      return closing || exited || terminalError !== null
     },
     request,
     notify,

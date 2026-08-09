@@ -39,7 +39,10 @@ const USER_MESSAGE: AgentJournalMessageItem = {
 
 type Route = (params: Record<string, unknown> | undefined) => unknown
 
-type FakeConnection = CodexAppServerConnection & {
+// `closed` is readonly on the real connection; the fake flips it so a test can
+// kill the child at a chosen moment.
+type FakeConnection = Omit<CodexAppServerConnection, 'closed'> & {
+  closed: boolean
   launch: CodexAppServerLaunch
   handlers: CodexAppServerConnectionHandlers
   calls: { method: string; params?: Record<string, unknown> }[]
@@ -200,6 +203,68 @@ describe('CodexStructuredSessionAdapter.acquire', () => {
     expect(codex.connections[1].closeCount).toBe(0)
   })
 
+  it('keeps the traffic Codex sends before the session is published', async () => {
+    const codex = fakeCodex()
+    const events: CodexStructuredSessionEvent[] = []
+    codex.routes['thread/start'] = () => {
+      // Codex talks as soon as the child is up, which is before the adapter has
+      // a thread id to publish the session under.
+      codex.connections[0].handlers.onNotification?.('item/started', { threadId: THREAD_ID })
+      codex.connections[0].handlers.onServerRequest?.({
+        id: 5,
+        method: 'item/commandExecution/requestApproval',
+        params: { itemId: 'codex-item-early', threadId: THREAD_ID, turnId: 'turn-1' }
+      })
+      return { thread: { id: THREAD_ID } }
+    }
+
+    const adapter = await acquired(codex, {}, events)
+
+    expect(events.map((event) => event.type)).toEqual(['notification', 'prompt'])
+    // The early approval is answerable, so Codex is not left blocked on a
+    // request that arrived a moment too soon.
+    await adapter.answerPrompt({
+      sessionId: 'session-1',
+      itemId: 'codex-item-early',
+      kind: 'approval',
+      optionId: 'accept',
+      fence: 7
+    })
+    expect(codex.connections[0].replies).toEqual([{ id: 5, result: { decision: 'accept' } }])
+  })
+
+  it('refuses to publish a session whose child died while it was being acquired', async () => {
+    const codex = fakeCodex()
+    const adapter = new CodexStructuredSessionAdapter({
+      resolveLaunch: async () => ({
+        command: 'codex',
+        args: ['app-server'],
+        cwd: '/work/repo',
+        codexHome: null,
+        resumeThreadId: null
+      }),
+      openConnection: codex.openConnection,
+      // The child dies while the acquisition is still reading its identity.
+      readProcessStartTime: async () => {
+        codex.connections[0].closed = true
+        return 1_700_000_000_000
+      }
+    })
+
+    await expect(
+      adapter.acquire({ identity: identityFor('session-1'), fence: 7, spawnToken: 'spawn-9' })
+    ).rejects.toThrow('exited while being acquired')
+    expect(codex.connections[0].closeCount).toBe(1)
+    await expect(
+      adapter.dispatch({
+        sessionId: 'session-1',
+        clientMessageId: 'client-1',
+        body: USER_MESSAGE,
+        fence: 7
+      })
+    ).rejects.toThrow('no live codex app-server')
+  })
+
   it('reports the rollout path Codex named, and null when it named none', async () => {
     const withPath = fakeCodex()
     const adapter = await acquired(withPath)
@@ -270,6 +335,38 @@ describe('CodexStructuredSessionAdapter.dispatch', () => {
     expect(outcome).toMatchObject({ state: 'accepted' })
     expect(outcome).toMatchObject({ providerIdentity: { turnId: 'turn-late' } })
     expect(events.at(-1)).toMatchObject({ type: 'notification', method: 'turn/started' })
+  })
+
+  it('does not let a child thread answer for the root thread', async () => {
+    const codex = fakeCodex()
+    const events: CodexStructuredSessionEvent[] = []
+    codex.routes['turn/start'] = () => {
+      // A subagent runs its own thread over the same connection, and its turn
+      // starts first.
+      const notify = codex.connections[0].handlers.onNotification
+      notify?.('turn/started', { threadId: 'thread-child', turn: { id: 'turn-child' } })
+      notify?.('turn/started', { threadId: THREAD_ID, turn: { id: 'turn-root' } })
+      return {}
+    }
+    const adapter = await acquired(codex, {}, events)
+
+    const outcome = await adapter.dispatch({
+      sessionId: 'session-1',
+      clientMessageId: 'client-1',
+      body: USER_MESSAGE,
+      fence: 7
+    })
+
+    expect(outcome).toEqual({
+      state: 'accepted',
+      providerIdentity: { provider: 'codex', threadId: THREAD_ID, turnId: 'turn-root', ordinal: 0 }
+    })
+    // Each event carries the thread it actually came from, so the journal can
+    // keep a subagent's turn out of the root conversation.
+    expect(events.map((event) => (event.type === 'notification' ? event.threadId : null))).toEqual([
+      'thread-child',
+      THREAD_ID
+    ])
   })
 
   it('settles unknown rather than failed when Codex never names the turn', async () => {
@@ -443,6 +540,47 @@ describe('CodexStructuredSessionAdapter prompts', () => {
     expect(codex.connections[0].replies).toHaveLength(1)
   })
 
+  it('answers each approval a tool item asks for separately', async () => {
+    const codex = fakeCodex()
+    const events: CodexStructuredSessionEvent[] = []
+    const adapter = await acquired(codex, {}, events)
+    // A shell bridge re-asks per command under one parent tool item, so only the
+    // approval id tells the two requests apart.
+    const ask = (id: number, approvalId: string): void => {
+      codex.connections[0].handlers.onServerRequest?.({
+        id,
+        method: 'item/commandExecution/requestApproval',
+        params: { itemId: 'codex-item-1', approvalId, threadId: THREAD_ID, turnId: 'turn-1' }
+      })
+    }
+
+    ask(11, 'approval-a')
+    ask(12, 'approval-b')
+    adapter.bindPromptItemId('session-1', 'journal-a', 'approval-a')
+    adapter.bindPromptItemId('session-1', 'journal-b', 'approval-b')
+    for (const [itemId, optionId] of [
+      ['journal-b', 'decline'],
+      ['journal-a', 'accept']
+    ]) {
+      await adapter.answerPrompt({
+        sessionId: 'session-1',
+        itemId,
+        kind: 'approval',
+        optionId,
+        fence: 7
+      })
+    }
+
+    expect(codex.connections[0].replies).toEqual([
+      { id: 12, result: { decision: 'decline' } },
+      { id: 11, result: { decision: 'accept' } }
+    ])
+    expect(events.map((event) => (event.type === 'prompt' ? event.promptKey : null))).toEqual([
+      'approval-a',
+      'approval-b'
+    ])
+  })
+
   it('rejects an option id that is not a Codex decision', async () => {
     const codex = fakeCodex()
     const adapter = await acquired(codex)
@@ -580,6 +718,20 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
       })
     ).rejects.toThrow('no live codex app-server')
     expect(await adapter.historyFilePath({ identity: identityFor('session-1') })).toBeNull()
+  })
+
+  it('keeps the live session when a child it already replaced dies', async () => {
+    const codex = fakeCodex()
+    const events: CodexStructuredSessionEvent[] = []
+    const adapter = await acquired(codex, {}, events)
+    await adapter.acquire({ identity: identityFor('session-1'), fence: 8, spawnToken: 'spawn-10' })
+
+    codex.connections[0].handlers.onExit?.(new Error('the superseded child died'))
+
+    expect(events.some((event) => event.type === 'ended')).toBe(false)
+    expect(await adapter.historyFilePath({ identity: identityFor('session-1') })).toBe(
+      '/rollouts/abc.jsonl'
+    )
   })
 
   it('ignores Codex traffic that arrives after the session is gone', async () => {

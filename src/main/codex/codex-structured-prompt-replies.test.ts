@@ -48,6 +48,27 @@ describe('CodexPromptRegistry', () => {
     expect(registry.register({ id: 2, method: 'account/refresh', params: {} })).toBeNull()
   })
 
+  it('keeps two prompts that share one tool item apart', () => {
+    const registry = new CodexPromptRegistry()
+    const ask = (id: number, approvalId: string): void => {
+      registry.register({
+        id,
+        method: 'item/commandExecution/requestApproval',
+        params: { itemId: 'codex-item-1', approvalId, threadId: 'thread-1' }
+      })
+    }
+
+    ask(1, 'approval-a')
+    ask(2, 'approval-b')
+
+    // The second ask must not have replaced the first, or the turn blocks on a
+    // request nobody can address any more.
+    expect(registry.find('approval-a')?.requestId).toBe(1)
+    expect(registry.find('approval-b')?.requestId).toBe(2)
+    // Nothing addresses the shared item id, because it names two live prompts.
+    expect(registry.find('codex-item-1')).toBeNull()
+  })
+
   it('addresses a prompt by its journal item id once bound, and forgets both', () => {
     const registry = new CodexPromptRegistry()
     const prompt = registry.register(userInputRequest(['q1']))
