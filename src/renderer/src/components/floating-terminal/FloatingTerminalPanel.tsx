@@ -1133,9 +1133,9 @@ export function FloatingTerminalPanel({
   const toggleMaximized = useCallback(() => {
     if (maximized) {
       const restoredState = restoreBoundsRef.current ?? {
-        committedBounds: getDefaultFloatingTerminalCommittedBounds(),
-        renderedBounds: getDefaultFloatingTerminalBounds(),
-        source: 'default' as const
+        committedBounds: committedBoundsRef.current,
+        renderedBounds: resolveFloatingTerminalPanelCommittedBounds(committedBoundsRef.current),
+        source: boundsSourceRef.current
       }
       restoreBoundsRef.current = null
       boundsSourceRef.current = restoredState.source

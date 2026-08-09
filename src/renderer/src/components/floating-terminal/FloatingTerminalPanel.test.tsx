@@ -18,6 +18,7 @@ import {
   consumeFloatingTerminalOpenMaximizedIntent,
   requestFloatingTerminalOpenMaximized
 } from '@/lib/floating-terminal'
+import { FLOATING_TERMINAL_PANEL_VIEW_STATE_STORAGE_KEY } from './floating-terminal-panel-view-state'
 import {
   clearFloatingPanelReclaimIntent,
   consumeFloatingPanelReclaimIntent
@@ -1174,6 +1175,27 @@ describe('FloatingTerminalPanel close behavior', () => {
       FLOATING_TERMINAL_PANEL_BOUNDS_STORAGE_KEY,
       expect.anything()
     )
+  })
+
+  it('restores saved normal bounds after starting maximized', async () => {
+    const savedBounds = { left: 120, top: 96, width: 760, height: 420 }
+    getMockedLocalStorage().getItem.mockImplementation((key: string) => {
+      if (key === FLOATING_TERMINAL_PANEL_BOUNDS_STORAGE_KEY) {
+        return JSON.stringify(savedBounds)
+      }
+      return key === FLOATING_TERMINAL_PANEL_VIEW_STATE_STORAGE_KEY
+        ? JSON.stringify({ open: true, maximized: true })
+        : null
+    })
+
+    let element = await renderPanel(true)
+    expect(getPanelStyleBounds(element)).toEqual(getMaximizedFloatingTerminalBounds())
+
+    const controls = findByTypeName(element, 'FloatingTerminalWindowControls')
+    ;(controls.props.onToggleMaximized as () => void)()
+    element = await renderPanel(true)
+
+    expect(getPanelStyleBounds(element)).toEqual(savedBounds)
   })
 
   it('restores committed normal bounds after maximizing from a skinny clamp', async () => {
