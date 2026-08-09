@@ -14297,7 +14297,17 @@
           "usageUnavailable": "Usage unavailable",
           "noRunUsageYet": "No run usage yet",
           "noWorkspace": "No workspace",
-          "latestSavedOutput": "Latest saved output"
+          "latestSavedOutput": "Latest saved output",
+          "backToList": "All automations",
+          "tableName": "Name",
+          "tableProject": "Project",
+          "tableStatus": "Status",
+          "tableActions": "Actions",
+          "newAutomation": "New Automation",
+          "rowActions": "Automation actions"
+        },
+        "AutomationsPageSkeleton": {
+          "loading": "Loading automations"
         },
         "CreateFromPicker": {
           "f061f49e3f": "Search repo branches...",

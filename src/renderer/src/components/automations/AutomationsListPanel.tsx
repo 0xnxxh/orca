@@ -38,8 +38,10 @@ type AutomationsListPanelProps = {
   onListSearchQueryChange: (query: string) => void
   filteredAutomations: readonly Automation[]
   filteredExternalAutomationEntries: readonly ExternalAutomationListEntry[]
-  selected: Automation | null
-  selectedExternal: ExternalAutomationListEntry | null
+  // Why: use explicit ids, not resolved detail selection (which falls back to the
+  // first row) — list highlight should only mark a user-chosen row.
+  selectedId: string | null
+  selectedExternalKey: string | null
   runs: readonly AutomationRun[]
   relativeNow: number
   repoMap: ReadonlyMap<string, Repo>
@@ -82,8 +84,8 @@ export function AutomationsListPanel({
   onListSearchQueryChange,
   filteredAutomations,
   filteredExternalAutomationEntries,
-  selected,
-  selectedExternal,
+  selectedId,
+  selectedExternalKey,
   runs,
   relativeNow,
   repoMap,
@@ -175,7 +177,7 @@ export function AutomationsListPanel({
                     )}
                     onClick={onRefresh}
                     disabled={isRefreshing}
-                    className="shrink-0 border border-border/50 bg-transparent hover:bg-muted/50"
+                    className="shrink-0 border border-border bg-background shadow-none hover:bg-muted/50"
                   >
                     <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin')} />
                   </Button>
@@ -250,8 +252,8 @@ export function AutomationsListPanel({
                 <div className="divide-y divide-border/50">
                   <AutomationListLocalRows
                     automations={filteredAutomations}
-                    selectedId={selected?.id}
-                    isSelectedLocal={selectedExternal === null}
+                    selectedId={selectedId}
+                    isSelectedLocal={selectedExternalKey === null}
                     runs={runs}
                     relativeNow={relativeNow}
                     repoMap={repoMap}
@@ -274,11 +276,12 @@ export function AutomationsListPanel({
                   />
                   <AutomationListExternalRows
                     entries={filteredExternalAutomationEntries}
-                    selectedExternalKey={selectedExternal?.key}
+                    selectedExternalKey={selectedExternalKey}
                     relativeNow={relativeNow}
                     sshConnectionStates={sshConnectionStates}
                     externalActionKey={externalActionKey}
                     onSelect={(entryKey) => {
+                      selectAutomationId(null)
                       selectExternalKey(entryKey)
                       setActivePaneTab('overview')
                       onOpenDetail()

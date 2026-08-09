@@ -1,5 +1,5 @@
 import React from 'react'
-import { MoreHorizontal, Pause, Pencil, Play, Trash2, X } from 'lucide-react'
+import { MoreHorizontal, Pause, Pencil, Play, Trash2 } from 'lucide-react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -40,6 +40,8 @@ import {
   AUTOMATIONS_TABLE_ROW_CLASS,
   AUTOMATIONS_TABLE_ROW_SELECTED_CLASS
 } from './automations-table-layout'
+import { isPortaledRowMenuClick } from './automation-list-row-interaction'
+import { AutomationListStatusCell } from './AutomationListStatusCell'
 import { translate } from '@/i18n/i18n'
 
 export function AutomationListLocalRows({
@@ -180,7 +182,14 @@ export function AutomationListLocalRows({
                 role="button"
                 tabIndex={0}
                 data-current={isSelected ? 'true' : undefined}
-                onClick={() => onSelect(automation.id)}
+                onClick={(event) => {
+                  // Why: Radix portals menus out of the row DOM, but React still
+                  // bubbles those clicks here — ignore so menu actions don't open detail.
+                  if (isPortaledRowMenuClick(event)) {
+                    return
+                  }
+                  onSelect(automation.id)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
@@ -203,7 +212,7 @@ export function AutomationListLocalRows({
                 <span className="min-w-0 truncate text-muted-foreground" title={nextRunLabel}>
                   {nextRunLabel}
                 </span>
-                <StatusCell enabled={automation.enabled} />
+                <AutomationListStatusCell enabled={automation.enabled} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
@@ -289,23 +298,6 @@ export function AutomationListLocalRows({
         )
       })}
     </>
-  )
-}
-
-function StatusCell({ enabled }: { enabled: boolean }): React.JSX.Element {
-  if (enabled) {
-    return (
-      <span className="inline-flex min-w-0 items-center gap-1 truncate text-muted-foreground">
-        <span className="size-1.5 shrink-0 rounded-full bg-foreground" />
-        {translate('auto.components.automations.AutomationDetail.eaa02014f8', 'Enabled')}
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1 truncate text-muted-foreground">
-      <X className="size-3.5 shrink-0" />
-      {translate('auto.components.automations.AutomationDetail.b09b2384fd', 'Paused')}
-    </span>
   )
 }
 

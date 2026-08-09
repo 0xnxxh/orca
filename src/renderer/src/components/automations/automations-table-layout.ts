@@ -4,8 +4,7 @@
 export const AUTOMATIONS_TABLE_GRID_CLASS =
   'grid grid-cols-[minmax(0,1.5fr)_minmax(7rem,10rem)_minmax(5rem,9rem)_minmax(10rem,1.2fr)_minmax(4.5rem,6rem)_2.5rem_2.5rem]'
 
-export const AUTOMATIONS_TABLE_CONTAINER_CLASS =
-  'rounded-md border border-border/50 bg-muted/20 shadow-sm'
+export const AUTOMATIONS_TABLE_CONTAINER_CLASS = 'rounded-md border border-border/50 bg-muted/20'
 
 export const AUTOMATIONS_TABLE_HEADER_CLASS =
   'sticky top-0 z-10 h-8 items-center gap-3 border-b border-border/50 bg-muted/25 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground'

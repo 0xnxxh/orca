@@ -104,6 +104,7 @@ import {
   isMissingExternalRunsApiError
 } from './external-automation-display'
 import { buildExternalAutomationListEntries } from './external-automation-list-entries'
+import { shouldCloseDetailForLostSelection } from './automation-detail-selection'
 import { useAutomationListSearch } from './use-automation-list-search'
 import { AutomationDeleteDialog, ExternalAutomationDeleteDialog } from './AutomationDeleteDialogs'
 import { AutomationsListPanel } from './AutomationsListPanel'
@@ -185,6 +186,10 @@ export default function AutomationsPage(): React.JSX.Element {
     useState<SelectedExternalRunPage | null>(null)
   // Why: list is the primary surface; detail is a full-page drill-in, not a side pane.
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const selectedExternalKeyRef = useRef<string | null>(null)
+  selectedExternalKeyRef.current = selectedExternalKey
+  const isDetailOpenRef = useRef(false)
+  isDetailOpenRef.current = isDetailOpen
   const runtimePreflightMountedRef = useRef(true)
   const runtimePreflightRequestedHostIdsRef = useRef<Set<TaskSourceContext['hostId']>>(new Set())
   const [runtimePreflightStatusByHostId, setRuntimePreflightStatusByHostId] = useState<
@@ -428,6 +433,11 @@ export default function AutomationsPage(): React.JSX.Element {
     const pendingAutomation = automations.find(
       (automation) => automation.id === pending.automationId
     )
+    // Why: external selection wins over local in detail resolution; clear it so
+    // pending local navigation cannot open the wrong automation.
+    if (selectedExternalKey !== null) {
+      selectExternalKey(null)
+    }
     if (!pendingAutomation) {
       // Why: stale provenance should not silently select the first automation.
       setSelectedId(pending.automationId)
@@ -477,7 +487,9 @@ export default function AutomationsPage(): React.JSX.Element {
     automationHostTargetKey,
     isLoading,
     pendingAutomationRunNavigation,
+    selectExternalKey,
     selectedAutomationRuns.automationId,
+    selectedExternalKey,
     selectedId,
     selectedRuns,
     setPendingAutomationRunNavigation,
@@ -763,6 +775,21 @@ export default function AutomationsPage(): React.JSX.Element {
       setExternalManagers(nextExternalManagers)
       if (!hasCurrentSelection && !pendingNavigation) {
         selectAutomationId(nextAutomations[0]?.id ?? null)
+        if (
+          shouldCloseDetailForLostSelection({
+            isDetailOpen: isDetailOpenRef.current,
+            hasPendingNavigation: false,
+            isSelectedAutomationInNextList: false,
+            isSelectedExternalInNextList: buildExternalAutomationListEntries(
+              nextExternalManagers
+            ).some((entry) => entry.key === selectedExternalKeyRef.current)
+          })
+        ) {
+          setIsDetailOpen(false)
+          setSelectedAutomationRunPageId(null)
+          setSelectedExternalRunPage(null)
+          setActivePaneTab('overview')
+        }
       }
     } finally {
       setIsLoading(false)
@@ -1613,6 +1640,16 @@ export default function AutomationsPage(): React.JSX.Element {
         useAppStore.getState().recordFeatureInteraction('automation-run')
       }
       await refresh()
+      // Why: full-page detail keeps selection when the deleted external was open;
+      // without this, detail can fall through to an unrelated local automation.
+      if (action === 'delete') {
+        const deletedKey = getExternalAutomationKey(manager, job)
+        if (selectedExternalKeyRef.current === deletedKey) {
+          selectExternalKey(null)
+          setIsDetailOpen(false)
+          setActivePaneTab('overview')
+        }
+      }
       toast.success(
         action === 'delete'
           ? translate(
@@ -1805,12 +1842,19 @@ export default function AutomationsPage(): React.JSX.Element {
         return
       }
 
-      // Why: detail is a full-page drill-in; Esc returns to the table before leaving Automations.
+      // Why: detail is a full-page drill-in; step out of nested run views first,
+      // then return to the table before leaving Automations.
       if (isDetailOpen) {
         event.preventDefault()
+        if (selectedExternalRunPage) {
+          setSelectedExternalRunPage(null)
+          return
+        }
+        if (selectedAutomationRunPageId) {
+          setSelectedAutomationRunPageId(null)
+          return
+        }
         setIsDetailOpen(false)
-        setSelectedAutomationRunPageId(null)
-        setSelectedExternalRunPage(null)
         setActivePaneTab('overview')
         return
       }
@@ -1821,7 +1865,15 @@ export default function AutomationsPage(): React.JSX.Element {
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [closeAutomationsPage, createOpen, deleteTarget, externalDeleteTarget, isDetailOpen])
+  }, [
+    closeAutomationsPage,
+    createOpen,
+    deleteTarget,
+    externalDeleteTarget,
+    isDetailOpen,
+    selectedAutomationRunPageId,
+    selectedExternalRunPage
+  ])
 
   return (
     <main className="relative flex h-full min-h-0 flex-col bg-background pt-5 text-foreground md:pt-6">
@@ -1963,8 +2015,8 @@ export default function AutomationsPage(): React.JSX.Element {
           onListSearchQueryChange={setListSearchQuery}
           filteredAutomations={filteredAutomations}
           filteredExternalAutomationEntries={filteredExternalAutomationEntries}
-          selected={selected}
-          selectedExternal={selectedExternal}
+          selectedId={selectedId}
+          selectedExternalKey={selectedExternalKey}
           runs={runs}
           relativeNow={relativeNow}
           repoMap={repoMap}

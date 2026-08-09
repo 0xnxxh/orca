@@ -1,9 +1,13 @@
 import React, { useRef } from 'react'
 import { Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
+
+// Why: the shared Input primitive always ships shadow-xs. Even with a class
+// override, that rim elevation still shows here — build the same box without it.
+const SEARCH_INPUT_CLASS =
+  'h-8 w-full min-w-0 appearance-none rounded-md border border-border bg-background py-1 pl-8 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 selection:bg-primary selection:text-primary-foreground focus-visible:border-ring disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive'
 
 type AutomationListSearchFieldProps = {
   query: string
@@ -32,8 +36,9 @@ export function AutomationListSearchField({
   return (
     <div className={cn('relative', className)}>
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-      <Input
+      <input
         ref={inputRef}
+        type="text"
         autoFocus
         value={query}
         aria-label={translate(
@@ -49,10 +54,9 @@ export function AutomationListSearchField({
         // Why: the page-level capture Escape handler blurs inputs; this opts out
         // so the first Escape clears the query without also losing focus.
         data-escape-clears-value={hasText ? 'true' : undefined}
-        className={cn(
-          'h-8 border-border/60 bg-background pl-8 text-xs',
-          hasText && (isTooLarge ? 'pr-20' : 'pr-7')
-        )}
+        // Why: pin no elevation — class-only shadow-none has been unreliable on this field.
+        style={{ boxShadow: 'none' }}
+        className={cn(SEARCH_INPUT_CLASS, hasText && (isTooLarge ? 'pr-20' : 'pr-7'))}
         onChange={(event) => onQueryChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || event.nativeEvent.isComposing) {
