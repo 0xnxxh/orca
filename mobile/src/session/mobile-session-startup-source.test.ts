@@ -204,6 +204,10 @@ describe('mobile session startup', () => {
       'async function handleCloseSessionTab(',
       'const bulkCloseActions'
     )
+    const closeTerminal = sliceBetween(
+      'async function handleCloseTerminal(',
+      'async function handleCloseSessionTab('
+    )
 
     expect(readyTerminalSwitch).toContain('sessionTabIntentRef.current.supersede()')
     expect(sessionTabSwitch).toContain('sessionTabIntentRef.current.supersede()')
@@ -245,6 +249,14 @@ describe('mobile session startup', () => {
     )
     expect(pendingTerminalActivation).toContain('shouldRetryAfterCutover')
     expect(closeSessionTab).toContain('sessionTabIntentRef.current.supersede()')
+    expect(closeSessionTab).toContain(
+      'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+    )
+    expect(closeSessionTab).toContain('if (response.ok && ownsRoute()) {')
+    expect(closeTerminal).toContain(
+      'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+    )
+    expect(closeTerminal).toContain('if (response.ok && ownsRoute()) {')
     expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')
   })
 

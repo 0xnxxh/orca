@@ -7,6 +7,7 @@ export class MobileSessionTabIntentTracker {
   fileTapActivationSeq = 0
   diffActivationSeq = 0
   pendingFocusKey: string | null = null
+  private routeRevision = 0
   private tabCreateRevisions: Record<MobileSessionTabCreateKind, number> = {
     terminal: 0,
     browser: 0,
@@ -27,7 +28,13 @@ export class MobileSessionTabIntentTracker {
     }
     this.hostId = hostId
     this.worktreeId = worktreeId
+    this.routeRevision += 1
     this.supersede()
+  }
+
+  captureRouteOwnership(hostId: string, worktreeId: string): () => boolean {
+    const routeRevision = this.routeRevision
+    return () => this.routeRevision === routeRevision && this.isRouteCurrent(hostId, worktreeId)
   }
 
   retryWhileCurrent(revision: number): () => boolean {

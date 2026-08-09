@@ -4090,12 +4090,13 @@ export default function SessionScreen() {
     if (!client) {
       return
     }
+    const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
 
     try {
       const response = await client.sendRequest('terminal.close', {
         terminal: target.handle
       })
-      if (response.ok) {
+      if (response.ok && ownsRoute()) {
         unsubscribeTerminal(target.handle)
         terminalRefs.current.delete(target.handle)
         initializedHandlesRef.current.delete(target.handle)
@@ -4122,6 +4123,7 @@ export default function SessionScreen() {
     if (!client) {
       return
     }
+    const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
     sessionTabIntentRef.current.supersede()
     try {
       const response = await client.sendRequest('session.tabs.close', {
@@ -4131,7 +4133,7 @@ export default function SessionScreen() {
         // the unknown field and keep their legacy behavior.
         reason: 'user'
       })
-      if (response.ok) {
+      if (response.ok && ownsRoute()) {
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal

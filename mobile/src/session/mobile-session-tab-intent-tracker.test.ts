@@ -83,4 +83,16 @@ describe('MobileSessionTabIntentTracker', () => {
     expect(tracker.pendingActivationKey({ id: 'tab-1' })).not.toBe(pendingActivationKey)
     expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(true)
   })
+
+  it('does not let a delayed route completion own a revisited route', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    tracker.setRoute('host-a', 'worktree-a')
+    const ownsFirstVisit = tracker.captureRouteOwnership('host-a', 'worktree-a')
+
+    tracker.setRoute('host-b', 'worktree-b')
+    tracker.setRoute('host-a', 'worktree-a')
+
+    expect(ownsFirstVisit()).toBe(false)
+    expect(tracker.captureRouteOwnership('host-a', 'worktree-a')()).toBe(true)
+  })
 })
