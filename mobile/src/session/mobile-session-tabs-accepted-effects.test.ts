@@ -6,6 +6,7 @@ type Tab = {
   type: 'browser' | 'markdown'
   isActive: boolean
   browserPageId?: string
+  relativePath?: string
   isDirty?: boolean
 }
 
@@ -13,8 +14,8 @@ describe('runAcceptedMobileSessionTabsEffects', () => {
   it.each(['list', 'stream'] as const)(
     'resolves pending browser focus exactly once from an accepted %s result',
     (source) => {
-      let pendingPageId: string | null = 'page-1'
-      const activateBrowserTab = vi.fn()
+      let pendingFocusKey: string | null = 'browser:page-1'
+      const activatePendingTab = vi.fn()
       const options = {
         effectiveTabs: [
           {
@@ -25,44 +26,65 @@ describe('runAcceptedMobileSessionTabsEffects', () => {
           }
         ],
         source,
-        getPendingBrowserPageId: () => pendingPageId,
-        clearPendingBrowserPageId: (pageId: string) => {
-          if (pendingPageId === pageId) {
-            pendingPageId = null
+        getPendingTabFocusKey: () => pendingFocusKey,
+        clearPendingTabFocusKey: (focusKey: string) => {
+          if (pendingFocusKey === focusKey) {
+            pendingFocusKey = null
           }
         },
-        activateBrowserTab,
+        activatePendingTab,
         markActiveMarkdownStale: vi.fn()
       }
 
       runAcceptedMobileSessionTabsEffects(options)
       runAcceptedMobileSessionTabsEffects(options)
 
-      expect(pendingPageId).toBeNull()
-      expect(activateBrowserTab).toHaveBeenCalledTimes(1)
+      expect(pendingFocusKey).toBeNull()
+      expect(activatePendingTab).toHaveBeenCalledTimes(1)
     }
   )
 
   it('does not resolve a pending browser omitted by tombstone filtering', () => {
-    const activateBrowserTab = vi.fn()
+    const activatePendingTab = vi.fn()
     runAcceptedMobileSessionTabsEffects<Tab>({
       effectiveTabs: [],
       source: 'stream',
-      getPendingBrowserPageId: () => 'page-1',
-      clearPendingBrowserPageId: vi.fn(),
-      activateBrowserTab,
+      getPendingTabFocusKey: () => 'browser:page-1',
+      clearPendingTabFocusKey: vi.fn(),
+      activatePendingTab,
       markActiveMarkdownStale: vi.fn()
     })
 
-    expect(activateBrowserTab).not.toHaveBeenCalled()
+    expect(activatePendingTab).not.toHaveBeenCalled()
+  })
+
+  it('focuses a newly created markdown tab once it is published', () => {
+    const activatePendingTab = vi.fn()
+    runAcceptedMobileSessionTabsEffects<Tab>({
+      effectiveTabs: [
+        {
+          id: 'markdown-1',
+          type: 'markdown',
+          relativePath: 'untitled.md',
+          isActive: true
+        }
+      ],
+      source: 'stream',
+      getPendingTabFocusKey: () => 'markdown:untitled.md',
+      clearPendingTabFocusKey: vi.fn(),
+      activatePendingTab,
+      markActiveMarkdownStale: vi.fn()
+    })
+
+    expect(activatePendingTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'markdown-1' }))
   })
 
   it('marks only an effective active dirty markdown stream tab stale', () => {
     const markActiveMarkdownStale = vi.fn()
     const base = {
-      getPendingBrowserPageId: () => null,
-      clearPendingBrowserPageId: vi.fn(),
-      activateBrowserTab: vi.fn(),
+      getPendingTabFocusKey: () => null,
+      clearPendingTabFocusKey: vi.fn(),
+      activatePendingTab: vi.fn(),
       markActiveMarkdownStale
     }
     const markdown: Tab = {

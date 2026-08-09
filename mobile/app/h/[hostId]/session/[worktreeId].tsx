@@ -1048,8 +1048,8 @@ export default function SessionScreen() {
   // transiently drops the tab (browser guest process swap), so focus re-binds when it returns.
   const selectedSessionTabIdRef = useRef<string | null>(null)
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
-  // Why: remember the page id to activate its session tab once it syncs (bridge auto-activate flags only webContents, not the app-level active tab).
-  const pendingBrowserFocusPageIdRef = useRef<string | null>(null)
+  // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
+  const pendingSessionTabFocusKeyRef = useRef<string | null>(null)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: route the terminal URL tap through a ref so it runs the current handleCreateBrowser closure (the memoized one may hold a null-client render).
@@ -1842,7 +1842,12 @@ export default function SessionScreen() {
 
       const snapshotActive = nextTabs.find((tab) => tab.isActive) ?? nextTabs[0] ?? null
       const pendingActiveSessionTabId = pendingActiveSessionTabIdRef.current
-      const pendingActiveTerminalHandle = pendingActiveTerminalHandleRef.current
+      const followsHost = result.navigationIntent === 'follow'
+      const pendingHandle = followsHost ? null : pendingActiveTerminalHandleRef.current
+      if (followsHost) {
+        pendingActiveTerminalHandleRef.current = null
+        pendingSessionTabFocusKeyRef.current = null
+      }
       const resolved = resolveActiveSessionTab(nextTabs, {
         pendingActiveSessionTabId,
         selectedSessionTabId: selectedSessionTabIdRef.current,
@@ -1852,23 +1857,24 @@ export default function SessionScreen() {
       let selectionSource: string = resolved.selectionSource
       if (resolved.clearPendingActiveSessionTabId) {
         const localAck =
+          !followsHost &&
           snapshotActive?.id === pendingActiveSessionTabId &&
           !confirmsMirroredTabSelection(result.publicationEpoch)
         selectionSource = localAck ? 'pending-tab-local-ack' : selectionSource
         pendingActiveSessionTabIdRef.current = localAck ? pendingActiveSessionTabId : null
       }
-      if (pendingActiveTerminalHandle) {
+      if (pendingHandle) {
         const pendingTerminalTab = nextTabs.find(
           (tab): tab is Extract<MobileSessionTab, { type: 'terminal' }> =>
-            tab.type === 'terminal' && tab.terminal === pendingActiveTerminalHandle
+            tab.type === 'terminal' && tab.terminal === pendingHandle
         )
         const pendingTerminalExists = mergedTerminalsForActive.some(
-          (terminal) => terminal.handle === pendingActiveTerminalHandle
+          (terminal) => terminal.handle === pendingHandle
         )
-        if (active?.type === 'terminal' && active.terminal === pendingActiveTerminalHandle) {
+        if (active?.type === 'terminal' && active.terminal === pendingHandle) {
           if (
             snapshotActive?.type === 'terminal' &&
-            snapshotActive.terminal === pendingActiveTerminalHandle &&
+            snapshotActive.terminal === pendingHandle &&
             !confirmsMirroredTabSelection(result.publicationEpoch)
           ) {
             selectionSource = 'pending-handle-local-ack'
@@ -1880,17 +1886,17 @@ export default function SessionScreen() {
           active = pendingTerminalTab
           selectionSource = 'pending-handle-tab'
         } else if (pendingTerminalExists) {
-          const nextActiveTabId = getActiveTabIdForHandle(nextTabs, pendingActiveTerminalHandle)
-          selectedSessionTabIdRef.current = nextActiveTabId
+          const nextActiveTabId = getActiveTabIdForHandle(nextTabs, pendingHandle)
+          selectedSessionTabIdRef.current = nextActiveTabId ?? selectedSessionTabIdRef.current
           activeSessionTabIdRef.current = nextActiveTabId
           setActiveSessionTabId(nextActiveTabId)
           activeSessionTabTypeRef.current = 'terminal'
           // Why: every other active-handle branch assigns the ref alongside the
           // state. Leaving it stale here makes `covered` resolve against the wrong
           // handle, so a native-chat rearm silently no-ops on the webview gates.
-          activeHandleRef.current = pendingActiveTerminalHandle
-          setActiveHandle(pendingActiveTerminalHandle)
-          subscribeToTerminal(pendingActiveTerminalHandle)
+          activeHandleRef.current = pendingHandle
+          setActiveHandle(pendingHandle)
+          subscribeToTerminal(pendingHandle)
           return outcome
         } else {
           pendingActiveTerminalHandleRef.current = null
@@ -2366,13 +2372,13 @@ export default function SessionScreen() {
       runAcceptedMobileSessionTabsEffects<MobileSessionTab>({
         effectiveTabs,
         source,
-        getPendingBrowserPageId: () => pendingBrowserFocusPageIdRef.current,
-        clearPendingBrowserPageId: (pageId) => {
-          if (pendingBrowserFocusPageIdRef.current === pageId) {
-            pendingBrowserFocusPageIdRef.current = null
+        getPendingTabFocusKey: () => pendingSessionTabFocusKeyRef.current,
+        clearPendingTabFocusKey: (focusKey) => {
+          if (pendingSessionTabFocusKeyRef.current === focusKey) {
+            pendingSessionTabFocusKeyRef.current = null
           }
         },
-        activateBrowserTab: (tab) => switchSessionTabRef.current?.(tab),
+        activatePendingTab: (tab) => switchSessionTabRef.current?.(tab),
         markActiveMarkdownStale: (tabId) => {
           setMarkdownDocs((prev) => {
             const current = prev.get(tabId)
@@ -2389,7 +2395,7 @@ export default function SessionScreen() {
   const hasSessionTabsRecoveryNeed = useCallback(
     () =>
       closedTabTombstonesRef.current.size > 0 ||
-      pendingBrowserFocusPageIdRef.current !== null ||
+      pendingSessionTabFocusKeyRef.current !== null ||
       // Why: a chat-covered handle that ran out of rearms and left `terminal.list`
       // was reminted by a desktop graph reload. Only a fresh tab snapshot carries
       // the replacement handle, so force one instead of holding the composer locked.
@@ -2671,8 +2677,9 @@ export default function SessionScreen() {
     activeHandleRef.current = null
     activeSessionTabTypeRef.current = null
     pendingActiveSessionTabIdRef.current = null
+    selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
-    pendingBrowserFocusPageIdRef.current = null
+    pendingSessionTabFocusKeyRef.current = null
     pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
     terminalDiagnosticsRef.current.resetRoute()
@@ -2851,6 +2858,7 @@ export default function SessionScreen() {
       )
       terminalDiagnosticsRef.current.tabSwitch('terminal', matchingTab?.id ?? '', false, handle)
       pendingActiveSessionTabIdRef.current = matchingTab?.id ?? null
+      selectedSessionTabIdRef.current = matchingTab?.id ?? selectedSessionTabIdRef.current
       pendingActiveTerminalHandleRef.current = handle
       activeSessionTabTypeRef.current = 'terminal'
       defaultTerminalHandlesToLiveInput([handle])
@@ -2868,15 +2876,13 @@ export default function SessionScreen() {
         initializedHandlesRef.current.delete(handle)
       }
       subscribeToTerminal(handle)
-      if (client) {
-        if (matchingTab) {
-          void activateMobileSessionTab(client, {
-            worktree: `id:${worktreeId}`,
-            tabId: matchingTab.id,
-            notifyClients: false,
-            navigation: 'caller'
-          }).catch(() => {})
-        }
+      if (client && matchingTab) {
+        void activateMobileSessionTab(client, {
+          worktree: `id:${worktreeId}`,
+          tabId: matchingTab.id,
+          notifyClients: false,
+          navigation: 'caller'
+        }).catch(() => {})
       }
     },
     [
@@ -2898,7 +2904,7 @@ export default function SessionScreen() {
         }
         terminalDiagnosticsRef.current.tabSwitch('terminal', tab.id, true)
         triggerSelection()
-        pendingActiveSessionTabIdRef.current = tab.id
+        pendingActiveSessionTabIdRef.current = selectedSessionTabIdRef.current = tab.id
         pendingActiveTerminalHandleRef.current = null
         activeSessionTabTypeRef.current = 'terminal'
         setActiveSessionTabId(tab.id)
@@ -2922,7 +2928,7 @@ export default function SessionScreen() {
 
       triggerSelection()
       terminalDiagnosticsRef.current.tabSwitch(tab.type, tab.id, false)
-      pendingActiveSessionTabIdRef.current = tab.id
+      pendingActiveSessionTabIdRef.current = selectedSessionTabIdRef.current = tab.id
       pendingActiveTerminalHandleRef.current = null
       activeSessionTabTypeRef.current = tab.type
       setActiveSessionTabId(tab.id)
@@ -3810,7 +3816,7 @@ export default function SessionScreen() {
           unsubscribeTerminal(prev)
           initializedHandlesRef.current.delete(prev)
         }
-        pendingActiveSessionTabIdRef.current = created.id
+        pendingActiveSessionTabIdRef.current = selectedSessionTabIdRef.current = created.id
         activeSessionTabTypeRef.current = 'terminal'
         setActiveSessionTabId(created.id)
         setSessionTabs((prev) => {
@@ -3974,6 +3980,7 @@ export default function SessionScreen() {
         if (!openResponse.ok) {
           throw new Error((openResponse as RpcFailure).error.message)
         }
+        pendingSessionTabFocusKeyRef.current = `markdown:${relativePath}`
         scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         return
       }
@@ -4023,7 +4030,7 @@ export default function SessionScreen() {
       // Focus the new browser tab once it syncs; refresh a few times since the desktop registers the tab asynchronously.
       const created = (response as RpcSuccess).result as { browserPageId?: string }
       if (created.browserPageId) {
-        pendingBrowserFocusPageIdRef.current = created.browserPageId
+        pendingSessionTabFocusKeyRef.current = `browser:${created.browserPageId}`
       }
       void fetchSessionTabs()
       scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
@@ -4144,8 +4151,11 @@ export default function SessionScreen() {
       })
       if (response.ok) {
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
-        if (tab.type === 'browser' && tab.browserPageId === pendingBrowserFocusPageIdRef.current) {
-          pendingBrowserFocusPageIdRef.current = null
+        if (
+          tab.type === 'browser' &&
+          `browser:${tab.browserPageId}` === pendingSessionTabFocusKeyRef.current
+        ) {
+          pendingSessionTabFocusKeyRef.current = null
         }
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal

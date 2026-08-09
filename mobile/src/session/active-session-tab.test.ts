@@ -53,6 +53,21 @@ describe('resolveActiveSessionTab', () => {
     expect(result.retainSelectedSessionTabId).toBe(false)
   })
 
+  it('lets explicit follow supersede an in-flight local activation', () => {
+    const result = resolveActiveSessionTab(
+      [terminalTab('agent', true), browserTab('browser', false)],
+      {
+        pendingActiveSessionTabId: 'browser',
+        selectedSessionTabId: 'browser',
+        navigationIntent: 'follow'
+      }
+    )
+
+    expect(result.activeTab?.id).toBe('agent')
+    expect(result.selectionSource).toBe('navigation-intent')
+    expect(result.clearPendingActiveSessionTabId).toBe(true)
+  })
+
   it('falls back to the snapshot but retains the pick while the selected tab is missing', () => {
     const gap = resolveActiveSessionTab([terminalTab('agent', true)], {
       pendingActiveSessionTabId: null,
@@ -105,6 +120,23 @@ describe('resolveActiveSessionTab', () => {
 
     expect(result.activeTab?.id).toBe('agent')
     expect(result.clearPendingActiveSessionTabId).toBe(true)
+  })
+
+  it('retains an optimistic pick when its pending tab is not published yet', () => {
+    const gap = resolveActiveSessionTab([terminalTab('agent', true)], {
+      pendingActiveSessionTabId: 'created',
+      selectedSessionTabId: 'created'
+    })
+
+    expect(gap.activeTab?.id).toBe('agent')
+    expect(gap.clearPendingActiveSessionTabId).toBe(true)
+    expect(gap.retainSelectedSessionTabId).toBe(true)
+
+    const restored = resolveActiveSessionTab(
+      [terminalTab('agent', true), terminalTab('created', false)],
+      { pendingActiveSessionTabId: null, selectedSessionTabId: 'created' }
+    )
+    expect(restored.activeTab?.id).toBe('created')
   })
 
   it('uses the snapshot when the device has no pick yet', () => {

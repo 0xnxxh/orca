@@ -5,34 +5,37 @@ type AcceptedSessionTab = {
   type: string
   isActive: boolean
   browserPageId?: string | null
+  relativePath?: string
   isDirty?: boolean
 }
 
 type Options<Tab extends AcceptedSessionTab> = {
   effectiveTabs: readonly Tab[]
   source: SessionTabsStreamSource
-  getPendingBrowserPageId: () => string | null
-  clearPendingBrowserPageId: (pageId: string) => void
-  activateBrowserTab: (tab: Tab) => void
+  getPendingTabFocusKey: () => string | null
+  clearPendingTabFocusKey: (focusKey: string) => void
+  activatePendingTab: (tab: Tab) => void
   markActiveMarkdownStale: (tabId: string) => void
 }
 
 export function runAcceptedMobileSessionTabsEffects<Tab extends AcceptedSessionTab>({
   effectiveTabs,
   source,
-  getPendingBrowserPageId,
-  clearPendingBrowserPageId,
-  activateBrowserTab,
+  getPendingTabFocusKey,
+  clearPendingTabFocusKey,
+  activatePendingTab,
   markActiveMarkdownStale
 }: Options<Tab>): void {
-  const pendingPageId = getPendingBrowserPageId()
-  if (pendingPageId) {
-    const browserTab = effectiveTabs.find(
-      (tab) => tab.type === 'browser' && tab.browserPageId === pendingPageId
+  const pendingFocusKey = getPendingTabFocusKey()
+  if (pendingFocusKey) {
+    const pendingTab = effectiveTabs.find(
+      (tab) =>
+        (tab.type === 'browser' && `browser:${tab.browserPageId}` === pendingFocusKey) ||
+        (tab.type === 'markdown' && `markdown:${tab.relativePath}` === pendingFocusKey)
     )
-    if (browserTab) {
-      clearPendingBrowserPageId(pendingPageId)
-      activateBrowserTab(browserTab)
+    if (pendingTab) {
+      clearPendingTabFocusKey(pendingFocusKey)
+      activatePendingTab(pendingTab)
     }
   }
   if (source !== 'stream') {

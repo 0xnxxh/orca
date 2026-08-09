@@ -242,6 +242,42 @@ export class ClientSessionTabSelectionStore {
     return this.project(snapshot, clientNavigationId)
   }
 
+  forgetTabs(clientNavigationId: string, worktreeId: string, tabIds: readonly string[]): void {
+    const statesByWorktree = this.statesByClient.get(clientNavigationId)
+    if (!statesByWorktree || tabIds.length === 0) {
+      return
+    }
+    const state = statesByWorktree.get(worktreeId)
+    if (!state) {
+      return
+    }
+    const forgotten = new Set(tabIds)
+    const activeTabId =
+      state.selection.activeTabId && forgotten.has(state.selection.activeTabId)
+        ? null
+        : state.selection.activeTabId
+    const activeTabIdByGroupId = Object.fromEntries(
+      Object.entries(state.selection.activeTabIdByGroupId).filter(
+        ([, selectedTabId]) => !forgotten.has(selectedTabId)
+      )
+    )
+    if (
+      activeTabId === state.selection.activeTabId &&
+      Object.keys(activeTabIdByGroupId).length ===
+        Object.keys(state.selection.activeTabIdByGroupId).length
+    ) {
+      return
+    }
+    statesByWorktree.set(worktreeId, {
+      selection: { ...state.selection, activeTabId, activeTabIdByGroupId },
+      revision: state.revision + 1,
+      shouldPersist: state.shouldPersist
+    })
+    if (state.shouldPersist) {
+      this.persistNow()
+    }
+  }
+
   forgetClient(clientNavigationId: string): void {
     const statesByWorktree = this.statesByClient.get(clientNavigationId)
     const hadPersistedState = [...(statesByWorktree?.values() ?? [])].some(

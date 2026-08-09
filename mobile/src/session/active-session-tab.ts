@@ -36,6 +36,15 @@ export function resolveActiveSessionTab<T extends SessionTabLike>(
 ): ResolveActiveSessionTabResult<T> {
   const snapshotActive = tabs.find((tab) => tab.isActive) ?? tabs[0] ?? null
   const pendingActiveSessionTabId = opts.pendingActiveSessionTabId
+  // Why: targeted follow is the only host action allowed to supersede phone-local intent.
+  if (opts.navigationIntent === 'follow') {
+    return {
+      activeTab: snapshotActive,
+      selectionSource: 'navigation-intent',
+      clearPendingActiveSessionTabId: pendingActiveSessionTabId !== null,
+      retainSelectedSessionTabId: false
+    }
+  }
   if (pendingActiveSessionTabId) {
     if (snapshotActive?.id === pendingActiveSessionTabId) {
       return {
@@ -57,15 +66,6 @@ export function resolveActiveSessionTab<T extends SessionTabLike>(
     }
   }
   const clearPendingActiveSessionTabId = pendingActiveSessionTabId !== null
-  // Why: 'follow' is the host explicitly navigating this device (desktop/CLI `navigation: clients|all`).
-  if (opts.navigationIntent === 'follow') {
-    return {
-      activeTab: snapshotActive,
-      selectionSource: 'navigation-intent',
-      clearPendingActiveSessionTabId,
-      retainSelectedSessionTabId: false
-    }
-  }
   if (opts.selectedSessionTabId) {
     const selectedTab = tabs.find((tab) => tab.id === opts.selectedSessionTabId) ?? null
     if (selectedTab) {

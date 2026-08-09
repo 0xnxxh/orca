@@ -7616,11 +7616,28 @@ export class OrcaRuntimeService {
         }
       }
     }
+    let closedSelectionTabIds = [tab.id]
+    const forgetClosedSelection = (): void => {
+      if (options.reason === 'user' && options.clientNavigationId) {
+        this.clientSessionTabSelections.forgetTabs(
+          options.clientNavigationId,
+          worktreeId,
+          closedSelectionTabIds
+        )
+      }
+    }
     if (tab.type === 'terminal') {
       const parentLeafCount = snapshot!.tabs.filter(
         (candidate) => candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
       ).length
       const closingWholeParent = tab.id !== tabId || parentLeafCount <= 1
+      if (closingWholeParent) {
+        closedSelectionTabIds = snapshot!.tabs.flatMap((candidate) =>
+          candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
+            ? [candidate.id, candidate.parentTabId]
+            : []
+        )
+      }
       // Why: a non-'user' reason is a client-lifecycle echo ("terminal gone"),
       // not authorization to kill. Every destructive branch below can take the
       // whole parent down, so any live PTY under the parent means the echo is a
@@ -7688,6 +7705,7 @@ export class OrcaRuntimeService {
         })
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
+        forgetClosedSelection()
         return { closed: true }
       }
       if (closingWholeParent && this.notifier?.closeTerminalTab) {
@@ -7725,6 +7743,7 @@ export class OrcaRuntimeService {
           this.store?.flushOrThrow?.()
         }
         this.clearRuntimeSessionOwnershipForMobileTab(worktreeId, snapshot!, tab.parentTabId)
+        forgetClosedSelection()
         return { closed: true }
       }
       // Why: notifier implementations without the acknowledged relay may expose
@@ -7733,11 +7752,13 @@ export class OrcaRuntimeService {
         this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
+        forgetClosedSelection()
         return { closed: true }
       }
       if (!this.notifier?.closeTerminal) {
         this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
         this.store?.flushOrThrow?.()
+        forgetClosedSelection()
         return { closed: true }
       }
       if (tab.id === tabId) {
@@ -7762,6 +7783,7 @@ export class OrcaRuntimeService {
     } else {
       this.notifier?.closeSessionTab?.(tab.id, worktreeId)
     }
+    forgetClosedSelection()
     return { closed: true }
   }
 
