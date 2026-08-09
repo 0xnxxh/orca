@@ -1,6 +1,7 @@
 export type MobileSessionTabCreateKind = 'terminal' | 'browser' | 'markdown'
 
 export class MobileSessionTabIntentTracker {
+  hostId: string | null = null
   worktreeId: string | null = null
   revision = 0
   fileTapActivationSeq = 0
@@ -34,11 +35,16 @@ export class MobileSessionTabIntentTracker {
     }
   }
 
+  isRouteCurrent(hostId: string, worktreeId: string): boolean {
+    return this.hostId === hostId && this.worktreeId === worktreeId
+  }
+
   isTabCreateCurrent(
+    hostId: string,
     worktreeId: string,
     kind: MobileSessionTabCreateKind,
     revision: number
   ): boolean {
-    return this.worktreeId === worktreeId && this.tabCreateRevisions[kind] === revision
+    return this.isRouteCurrent(hostId, worktreeId) && this.tabCreateRevisions[kind] === revision
   }
 }

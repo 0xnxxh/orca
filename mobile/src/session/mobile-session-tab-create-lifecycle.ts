@@ -31,6 +31,7 @@ export function isCreating(state: CreateState): boolean {
 
 export function bindRoute(
   tracker: MobileSessionTabIntentTracker,
+  hostId: string,
   worktreeId: string
 ): (kind: MobileSessionTabCreateKind, state: CreateState) => () => boolean {
   return (kind, state) => {
@@ -38,7 +39,7 @@ export function bindRoute(
     state[0].current = true
     state[1](true)
     state[2]('')
-    return () => tracker.isTabCreateCurrent(worktreeId, kind, revision)
+    return () => tracker.isTabCreateCurrent(hostId, worktreeId, kind, revision)
   }
 }
 

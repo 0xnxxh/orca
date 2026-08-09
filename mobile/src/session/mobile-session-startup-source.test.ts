@@ -202,9 +202,10 @@ describe('mobile session startup', () => {
     expect(applySessionTabs).toContain(
       'if (followsHost) {\n        sessionTabIntentRef.current.supersede()'
     )
+    expect(source).toContain('sessionTabIntentRef.current.hostId = hostId')
     expect(source).toContain('sessionTabIntentRef.current.worktreeId = worktreeId')
     expect(createTerminal).toContain(
-      'const sameRoute = sessionTabIntentRef.current.worktreeId === worktreeId'
+      'const sameRoute = sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)'
     )
     expect(createTerminal).toContain(
       'sameRoute && intentRevision === sessionTabIntentRef.current.revision'

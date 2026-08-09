@@ -1057,8 +1057,9 @@ export default function SessionScreen() {
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
   const sessionTabIntentRef = useRef(new MobileSessionTabIntentTracker())
+  sessionTabIntentRef.current.hostId = hostId
   sessionTabIntentRef.current.worktreeId = worktreeId
-  const startTabCreate = tabCreate.bindRoute(sessionTabIntentRef.current, worktreeId)
+  const startTabCreate = tabCreate.bindRoute(sessionTabIntentRef.current, hostId, worktreeId)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: route the terminal URL tap through a ref so it runs the current handleCreateBrowser closure (the memoized one may hold a null-client render).
@@ -3819,7 +3820,7 @@ export default function SessionScreen() {
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
-        const sameRoute = sessionTabIntentRef.current.worktreeId === worktreeId
+        const sameRoute = sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)
         const selectCreated = sameRoute && intentRevision === sessionTabIntentRef.current.revision
         if (typeof created.terminal === 'string') {
           deliverCreatedTerminalPrompt({

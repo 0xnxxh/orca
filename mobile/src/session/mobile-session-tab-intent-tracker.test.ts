@@ -21,6 +21,7 @@ describe('MobileSessionTabIntentTracker', () => {
 
   it('keeps an old route create from owning a reused route identity', () => {
     const tracker = new MobileSessionTabIntentTracker()
+    tracker.hostId = 'host-a'
     tracker.worktreeId = 'worktree-a'
     const staleCreate = tracker.beginTabCreate('terminal')
 
@@ -30,15 +31,23 @@ describe('MobileSessionTabIntentTracker', () => {
     tracker.worktreeId = 'worktree-a'
     tracker.invalidateTabCreates()
 
-    expect(tracker.isTabCreateCurrent('worktree-a', 'terminal', staleCreate)).toBe(false)
-    expect(tracker.isTabCreateCurrent('worktree-b', 'terminal', currentCreate)).toBe(false)
+    expect(tracker.isTabCreateCurrent('host-a', 'worktree-a', 'terminal', staleCreate)).toBe(false)
+    expect(tracker.isTabCreateCurrent('host-a', 'worktree-b', 'terminal', currentCreate)).toBe(
+      false
+    )
     expect(
-      tracker.isTabCreateCurrent('worktree-a', 'terminal', tracker.beginTabCreate('terminal'))
+      tracker.isTabCreateCurrent(
+        'host-a',
+        'worktree-a',
+        'terminal',
+        tracker.beginTabCreate('terminal')
+      )
     ).toBe(true)
   })
 
   it('invalidates every create kind on a route change', () => {
     const tracker = new MobileSessionTabIntentTracker()
+    tracker.hostId = 'host-a'
     tracker.worktreeId = 'worktree-a'
     const revisions = {
       terminal: tracker.beginTabCreate('terminal'),
@@ -48,8 +57,23 @@ describe('MobileSessionTabIntentTracker', () => {
 
     tracker.invalidateTabCreates()
 
-    expect(tracker.isTabCreateCurrent('worktree-a', 'terminal', revisions.terminal)).toBe(false)
-    expect(tracker.isTabCreateCurrent('worktree-a', 'browser', revisions.browser)).toBe(false)
-    expect(tracker.isTabCreateCurrent('worktree-a', 'markdown', revisions.markdown)).toBe(false)
+    expect(tracker.isTabCreateCurrent('host-a', 'worktree-a', 'terminal', revisions.terminal)).toBe(
+      false
+    )
+    expect(tracker.isTabCreateCurrent('host-a', 'worktree-a', 'browser', revisions.browser)).toBe(
+      false
+    )
+    expect(tracker.isTabCreateCurrent('host-a', 'worktree-a', 'markdown', revisions.markdown)).toBe(
+      false
+    )
+  })
+
+  it('changes route identity when only the host changes', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    tracker.hostId = 'host-a'
+    tracker.worktreeId = 'global-floating-terminal'
+
+    expect(tracker.isRouteCurrent('host-a', 'global-floating-terminal')).toBe(true)
+    expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(false)
   })
 })
