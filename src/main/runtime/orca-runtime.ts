@@ -70,6 +70,10 @@ import {
   type AgentSessionClaimSigner
 } from './agent-session-claim-identity'
 import {
+  agentSessionPtyWriteGate,
+  type AgentSessionPtyWriteAdmittance
+} from './agent-session-pty-write-gate'
+import {
   hasCompatibleAgentTitleIdentity,
   normalizeCompatibleAgentStatusEntryForOwner,
   normalizeCompatibleAgentTitleForOwner,
@@ -17242,18 +17246,24 @@ export class OrcaRuntimeService {
       suffixFailureError?: string
     } = {}
   ): Promise<void> {
+    // Why: the lease is checked before the mobile floor is reserved, so a refused send never takes
+    // a claim it will not use.
+    const admitted = agentSessionPtyWriteGate.assertAdmitted(ptyId)
     // Why: direct terminal.send can carry paste-sized text from RPC/mobile
     // clients; chunk text before PTY/ConPTY while preserving suffix separation.
     const hasText = typeof action.text === 'string' && action.text.length > 0
     const hasSuffix = action.enter || action.interrupt
     if (hasText) {
-      await this.writeTerminalInputChunks(ptyId, action.text!, options)
+      await this.writeTerminalInputChunks(ptyId, action.text!, options, admitted)
     }
     if (hasSuffix) {
       const suffix = (action.enter ? '\r' : '') + (action.interrupt ? '\x03' : '')
       if (hasText) {
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
+      // Why: the 500ms text/suffix pause is long enough for a handoff to complete, so the submit
+      // is re-checked against the fence the text was admitted under.
+      agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
       try {
         await options.beforeWrite?.(ptyId)
         options.reserveWrite?.(ptyId)
@@ -17290,11 +17300,19 @@ export class OrcaRuntimeService {
       beforeWrite?: (ptyId: string) => void | Promise<void>
       reserveWrite?: (ptyId: string) => void
       afterWrite?: (ptyId: string) => void | Promise<void>
-    } = {}
+    } = {},
+    admitted: AgentSessionPtyWriteAdmittance = { sessionId: null, runtimeFence: null }
   ): Promise<void> {
     const chunks = iterateTerminalInputChunks(text)
     let chunk = chunks.next()
+    let firstChunk = true
     while (!chunk.done) {
+      // Why: every inter-chunk yield is a window for a handoff to take the lease; the rest of a
+      // paste must not land in a session this runtime no longer owns.
+      if (!firstChunk) {
+        agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
+      }
+      firstChunk = false
       await options.beforeWrite?.(ptyId)
       options.reserveWrite?.(ptyId)
       const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
@@ -17317,12 +17335,18 @@ export class OrcaRuntimeService {
       suffixFailureError?: string
     } = {}
   ): Promise<void> {
+    const admitted = agentSessionPtyWriteGate.assertAdmitted(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
     try {
       const chunks = iterateTerminalInputChunks(pastePayload)
       let chunk = chunks.next()
+      let firstChunk = true
       while (!chunk.done) {
+        if (!firstChunk) {
+          agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
+        }
+        firstChunk = false
         await options.beforeWrite?.(ptyId)
         const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
         if (!wrote) {
@@ -17337,12 +17361,16 @@ export class OrcaRuntimeService {
       completedPaste = true
     } catch (error) {
       if (wrotePasteBytes && !completedPaste) {
+        // Why: a lease that moved mid-paste also refuses this terminator, leaving the TUI in paste
+        // mode — the incoming owner re-establishes the mode, and feeding a session we no longer own
+        // is the worse outcome.
         this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
       }
       throw error
     }
 
     await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+    agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
     try {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
