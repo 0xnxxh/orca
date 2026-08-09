@@ -30015,7 +30015,6 @@ export class OrcaRuntimeService {
         this.clientSessionTabSelections.project(removed, subscription.clientNavigationId)
       )
     }
-    this.terminalWorkspaceLaunchIdentityOverrides.delete(worktreeId)
     this.clientSessionTabSelections.forgetWorktree(worktreeId)
   }
 

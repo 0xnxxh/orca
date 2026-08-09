@@ -31496,6 +31496,28 @@ describe('OrcaRuntimeService', () => {
     expect(phoneSelections?.has(renamedWorktreeId)).toBe(false)
   })
 
+  it('keeps a reused pre-rename worktree identity after its mobile snapshot is removed', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-mobile-reused-path-removed' })
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, { activate: false })
+    runtime['mobileSessionTabsByWorktree'].delete(TEST_WORKTREE_ID)
+    runtime['notifyMobileSessionTabsRemoved'](TEST_WORKTREE_ID)
+
+    await expect(runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).resolves.toMatchObject({
+      worktree: TEST_WORKTREE_ID
+    })
+  })
+
   it('injects mobile quick-command prompts into the host-built agent startup command', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-agent-prompt' })
     const runtime = new OrcaRuntimeService({
