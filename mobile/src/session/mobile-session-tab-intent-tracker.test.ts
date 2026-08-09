@@ -70,10 +70,15 @@ describe('MobileSessionTabIntentTracker', () => {
 
   it('changes route identity when only the host changes', () => {
     const tracker = new MobileSessionTabIntentTracker()
-    tracker.hostId = 'host-a'
-    tracker.worktreeId = 'global-floating-terminal'
+    tracker.setRoute('host-a', 'global-floating-terminal')
+    const retryWhileCurrent = tracker.retryWhileCurrent(tracker.revision)
 
     expect(tracker.isRouteCurrent('host-a', 'global-floating-terminal')).toBe(true)
     expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(false)
+
+    tracker.setRoute('host-b', 'global-floating-terminal')
+
+    expect(retryWhileCurrent()).toBe(false)
+    expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(true)
   })
 })

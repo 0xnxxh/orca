@@ -1057,8 +1057,7 @@ export default function SessionScreen() {
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
   const sessionTabIntentRef = useRef(new MobileSessionTabIntentTracker())
-  sessionTabIntentRef.current.hostId = hostId
-  sessionTabIntentRef.current.worktreeId = worktreeId
+  sessionTabIntentRef.current.setRoute(hostId, worktreeId)
   const startTabCreate = tabCreate.bindRoute(sessionTabIntentRef.current, hostId, worktreeId)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)

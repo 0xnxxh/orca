@@ -21,6 +21,15 @@ export class MobileSessionTabIntentTracker {
     return this.revision
   }
 
+  setRoute(hostId: string, worktreeId: string): void {
+    if (this.isRouteCurrent(hostId, worktreeId)) {
+      return
+    }
+    this.hostId = hostId
+    this.worktreeId = worktreeId
+    this.supersede()
+  }
+
   retryWhileCurrent(revision: number): () => boolean {
     return () => this.revision === revision
   }
