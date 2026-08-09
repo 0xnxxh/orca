@@ -49,3 +49,35 @@ export function agentJournalItemKey(identity: AgentJournalItemIdentity): string 
 export function agentJournalSubmissionKey(clientMessageId: string): string {
   return agentJournalItemKey({ provider: 'orca', clientMessageId })
 }
+
+/**
+ * Inverse of {@link agentJournalItemKey}. Clients hold item KEYS, but an upsert
+ * needs the identity behind one — answering an approval re-appends the same
+ * item at the next revision. Every component is percent-encoded, and
+ * `encodeURIComponent` escapes the delimiter, so the split is unambiguous.
+ */
+export function parseAgentJournalItemKey(key: string): AgentJournalItemIdentity | null {
+  const parts = key.split(KEY_DELIMITER).map((part) => decodeURIComponent(part))
+  const [provider, ...rest] = parts
+  if (provider === 'codex' && rest.length === 3) {
+    const ordinal = Number(rest[2])
+    return Number.isSafeInteger(ordinal) && ordinal >= 0
+      ? { provider, threadId: rest[0] as string, turnId: rest[1] as string, ordinal }
+      : null
+  }
+  if (provider === 'claude' && rest.length === 2) {
+    return { provider, sessionId: rest[0] as string, uuid: rest[1] as string }
+  }
+  if (provider === 'orca' && rest.length === 1) {
+    return { provider, clientMessageId: rest[0] as string }
+  }
+  if (provider === 'legacy' && rest.length === 3) {
+    return {
+      provider,
+      agent: rest[0] as string,
+      sessionId: rest[1] as string,
+      recordId: rest[2] as string
+    }
+  }
+  return null
+}
