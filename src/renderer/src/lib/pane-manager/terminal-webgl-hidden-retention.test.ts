@@ -10,6 +10,7 @@ import {
 
 function createPane(withAddon = true): ManagedPaneInternal {
   return {
+    terminal: { blur: vi.fn() },
     webglAddon: withAddon
       ? ({ dispose: vi.fn() } as unknown as ManagedPaneInternal['webglAddon'])
       : null,
@@ -36,6 +37,7 @@ describe('terminal-webgl-hidden-retention', () => {
     suspendPaneRendering(panes, retentionFor(owner, panes))
     expect(panes.every((pane) => pane.webglAttachmentDeferred)).toBe(true)
     expect(panes.every((pane) => pane.webglAddon != null)).toBe(true)
+    expect(panes.every((pane) => vi.mocked(pane.terminal.blur).mock.calls.length === 1)).toBe(true)
     expect(retainedHiddenWebglOwnerCountForTest()).toBe(1)
   })
 
@@ -45,6 +47,7 @@ describe('terminal-webgl-hidden-retention', () => {
     suspendPaneRendering(panes)
     expect(addon?.dispose).toHaveBeenCalled()
     expect(panes[0].webglAddon).toBeNull()
+    expect(panes[0].terminal.blur).not.toHaveBeenCalled()
   })
 
   it('evicts the least-recently-hidden owner over the context cap', () => {

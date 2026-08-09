@@ -1,11 +1,9 @@
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { disposeWebgl } from './pane-webgl-renderer'
 
-// Chromium caps active WebGL contexts per page (~16, #6874); the visible
-// worktree typically holds 1-4. Retaining a few hidden contexts keeps recent
-// switch-backs on WebGL — no DOM-fallback frames whose divergent cell metrics
-// (unfloored width, letter-spacing from a mid-transition measure) flash as
-// wider/spaced-out text until reattach completes.
+// Orca raises Blink's active-context ceiling to 128, but retained contexts
+// still consume GPU memory. Six keeps recent switch-backs on WebGL without
+// letting hidden worktrees grow that cost with the mounted-pane population.
 const MAX_RETAINED_HIDDEN_WEBGL_CONTEXTS = 6
 
 type RetainedHiddenEntry = {

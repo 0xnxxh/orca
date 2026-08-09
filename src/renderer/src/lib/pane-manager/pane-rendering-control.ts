@@ -57,6 +57,10 @@ export function suspendPaneRendering(
   // Keep recent hidden worktrees on live WebGL so switch-back never presents
   // DOM-fallback frames; evicted/over-cap owners fall back to dispose.
   if (retention && tryRetainHiddenPanesWebgl(retention.owner, retention.livePanes)) {
+    // Why: retained WebGL keeps xterm's focused cursor timer alive behind the hidden surface.
+    for (const pane of suspended) {
+      pane.terminal.blur()
+    }
     return
   }
   for (const pane of suspended) {
