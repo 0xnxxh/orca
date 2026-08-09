@@ -220,6 +220,14 @@ describe('mobile session startup', () => {
       'const readFileTab = useCallback(',
       'const loadDiffComments = useCallback('
     )
+    const readMarkdownEffect = sliceBetween(
+      "activeSessionTab?.type !== 'markdown'",
+      "activeSessionTab?.type !== 'file'"
+    )
+    const readFileEffect = sliceBetween(
+      "activeSessionTab?.type !== 'file'",
+      'async function handleSend'
+    )
     const saveMarkdown = sliceBetween(
       'const saveMarkdownTab = useCallback(',
       'const consumeAcceptedSessionTabs = useCallback('
@@ -300,6 +308,9 @@ describe('mobile session startup', () => {
         'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
       )
       expect(readTab).toContain('ownsRoute()')
+    }
+    for (const readEffect of [readMarkdownEffect, readFileEffect]) {
+      expect(readEffect).toContain('activeSessionTab.id !== activeSessionTabIdRef.current')
     }
     expect(saveMarkdown).toContain(
       'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'

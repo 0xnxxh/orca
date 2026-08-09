@@ -3014,7 +3014,10 @@ export default function SessionScreen() {
   )
 
   useEffect(() => {
-    if (activeSessionTab?.type !== 'markdown') {
+    if (
+      activeSessionTab?.type !== 'markdown' ||
+      activeSessionTab.id !== activeSessionTabIdRef.current
+    ) {
       return
     }
     const doc = markdownDocs.get(activeSessionTab.id)
@@ -3024,7 +3027,10 @@ export default function SessionScreen() {
   }, [activeSessionTab, markdownDocs, readMarkdownTab])
 
   useEffect(() => {
-    if (activeSessionTab?.type !== 'file') {
+    if (
+      activeSessionTab?.type !== 'file' ||
+      activeSessionTab.id !== activeSessionTabIdRef.current
+    ) {
       return
     }
     const doc = fileDocs.get(activeSessionTab.id)
