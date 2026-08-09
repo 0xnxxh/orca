@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,16 +22,46 @@ const mainEntry = path.join(projectDir, 'out', 'main', 'index.js')
 const sessionName = `orca-appkit-repro-${process.pid}`
 const runRoot = mkdtempSync(path.join(os.tmpdir(), 'orca-appkit-dashboard-hang-'))
 const userDataDir = path.join(runRoot, 'user-data')
+const requestedHomeDir = path.join(userDataDir, 'home')
 const fixtureRepoDir = path.join(runRoot, 'fixture-repo')
 const eventLogPath = path.join(evidenceDir, 'events.ndjson')
 const agentBrowserLogPath = path.join(evidenceDir, 'agent-browser.log')
 
 mkdirSync(evidenceDir, { recursive: true })
 mkdirSync(userDataDir, { recursive: true })
+mkdirSync(requestedHomeDir, { recursive: true, mode: 0o700 })
+const isolatedHomeDir = realpathSync.native(requestedHomeDir)
+
+const E2E_RESTRICTED_ENV_KEYS = new Set([
+  'HOME',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'CODEX_HOME',
+  'ORCA_CODEX_HOME',
+  'ORCA_E2E_USER_DATA_DIR',
+  'ORCA_E2E_HOME_DIR'
+])
 
 function positiveNumber(value, fallback) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function isolatedLaunchEnvironment() {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !E2E_RESTRICTED_ENV_KEYS.has(key.toUpperCase()))
+  )
+  delete inherited.ELECTRON_RUN_AS_NODE
+  return {
+    ...inherited,
+    HOME: isolatedHomeDir,
+    USERPROFILE: isolatedHomeDir,
+    NODE_ENV: 'development',
+    ORCA_E2E_HEADFUL: '1',
+    ORCA_E2E_HOME_DIR: isolatedHomeDir,
+    ORCA_E2E_USER_DATA_DIR: userDataDir
+  }
 }
 
 function log(event, details = {}) {
@@ -210,17 +240,10 @@ async function run() {
   const cdpPort = await freePort()
   const stdoutPath = path.join(evidenceDir, 'orca.stdout.log')
   const stderrPath = path.join(evidenceDir, 'orca.stderr.log')
-  const { ELECTRON_RUN_AS_NODE: _drop, ...cleanEnv } = process.env
-  void _drop
   const app = spawn(electronPath, [`--remote-debugging-port=${cdpPort}`, mainEntry], {
     cwd: projectDir,
     detached: true,
-    env: {
-      ...cleanEnv,
-      NODE_ENV: 'development',
-      ORCA_E2E_HEADFUL: '1',
-      ORCA_E2E_USER_DATA_DIR: userDataDir
-    },
+    env: isolatedLaunchEnvironment(),
     stdio: ['ignore', 'pipe', 'pipe']
   })
   app.stdout.on('data', (chunk) => appendFileSync(stdoutPath, chunk))
