@@ -41,7 +41,6 @@ import { TerminalKittyKeyboardModeTracker } from '../../shared/terminal-kitty-ke
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   isFreshNonDoneAgentStatus,
-  normalizeAgentStatusPayload,
   pickParsedAgentStatusPayload,
   type AgentStatusIpcPayload,
   type ParsedAgentStatusPayload,
@@ -2805,23 +2804,6 @@ function getSetupRunnerCommandPlatformForLaunch(
   fallbackPlatform: 'windows' | 'posix'
 ): 'windows' | 'posix' {
   return getSetupRunnerCommandPlatformForPath(setup?.runnerScriptPath ?? '', fallbackPlatform)
-}
-
-function normalizeMobileHookStatus(
-  status: AgentStatusIpcPayload | null,
-  fresh: boolean
-): ParsedAgentStatusPayload | null {
-  if (!status || (!fresh && !status.providerSession)) {
-    return null
-  }
-  const payload = normalizeAgentStatusPayload(status)
-  if (!payload) {
-    return null
-  }
-  if (!fresh) {
-    delete payload.agentType
-  }
-  return payload
 }
 
 export class OrcaRuntimeService {
@@ -31004,26 +30986,21 @@ export class OrcaRuntimeService {
     getHookRowsForPane: (paneKey: string) => AgentStatusIpcPayload[]
   ): { agentStatus: AgentStatusEntry } | Record<string, never> {
     const paneKey = this.getMobileTerminalPaneKey(tab)
-    const providerRow = this.getHookAgentRowForPane(getHookRowsForPane(paneKey))
-    const hookStatus = this.getAgentHookStatusForMobileTab(paneKey, pty, tab)
-    const hookIsFresh =
-      hookStatus !== null && Date.now() - hookStatus.receivedAt <= AGENT_STATUS_STALE_AFTER_MS
-    const hookPayload = normalizeMobileHookStatus(hookStatus, hookIsFresh)
-    const preferHookPayload =
-      hookPayload !== null &&
-      hookIsFresh &&
-      (!retained || hookStatus!.receivedAt >= retained.updatedAt)
-    const useRetainedPayload = retained !== null && !preferHookPayload
-    const payload = useRetainedPayload ? retained.payload : hookPayload
-    const providerSession =
-      hookStatus?.providerSession &&
-      (!hookStatus.agentType || !payload?.agentType || hookStatus.agentType === payload.agentType)
-        ? hookStatus.providerSession
-        : providerRow.providerSession
-    const hookAgent = payload?.agentType ?? providerRow.agentType
-    if (!pty?.lastAgentStatus && !payload && !hookAgent && !providerSession) {
+    // Why: neither the OSC-retained row nor a title-derived status can carry a
+    // provider session — only the hook payload does, and headless serve has no
+    // renderer to publish `tab.agentStatus`. Without it mobile native chat has no
+    // transcript to address and sits on the empty state forever.
+    const hookRow = this.getHookAgentRowForPane(getHookRowsForPane(paneKey))
+    // Why: the hook row is evidence in its own right. Returning early on a missing
+    // PTY status/retained row put this check ahead of the only headless carrier, so
+    // an agent that reported its session but never emitted a recognized title got no
+    // `agentStatus` at all — exactly the hook-only case the fallback exists for.
+    if (!pty?.lastAgentStatus && !retained && !hookRow.agentType && !hookRow.providerSession) {
       return {}
     }
+    const providerSession = hookRow.providerSession
+      ? { providerSession: hookRow.providerSession }
+      : {}
     const leaf = this.leaves.get(this.getLeafKey(tab.parentTabId, tab.leafId)) ?? null
     const trackerOnlyTitle = this.getUnpersistedTrackedTitleForPty(
       pty?.ptyId ?? leaf?.ptyId ?? null
@@ -31040,13 +31017,22 @@ export class OrcaRuntimeService {
           )
         : null
     const ptyTitleClassification = classifyAgentTitle(ptyTitle)
-    const hasLiveHookSignal = payload?.interactivePrompt != null || payload?.toolName != null
-    const suppressActivity =
-      (!useRetainedPayload && !hookIsFresh) ||
-      (ptyTitle !== null && ptyTitleClassification !== 'agent' && !hasLiveHookSignal)
-    if (ptyTitle !== null && ptyTitleClassification !== 'agent') {
-      // A provider session remains addressable even after an idle shell title wins.
-      if (!hasLiveHookSignal && !providerSession) {
+    const nonAgentTitle = ptyTitle !== null && ptyTitleClassification !== 'agent'
+    if (nonAgentTitle) {
+      // Why: non-agent title = shell reclaimed the pane; suppress to clear stuck spinners (#1437), though a live hook signal survives.
+      const hasLiveHookSignal =
+        retained?.payload.interactivePrompt != null ||
+        retained?.payload.toolName != null ||
+        // Why: a pending question is never inherited across hook events (unlike
+        // `toolName`), so it proves the agent is parked on a selector right now.
+        hookRow.live?.payload.interactivePrompt != null ||
+        // Why: headless serve has no renderer to retain an OSC row, so a fresh hook
+        // agentType is the only live signal a hook-only pane can offer — and an agent
+        // that reports over HTTP need never set a title this gate would recognize.
+        // Scoped to panes with no PTY status at all, so it cannot revive a spinner:
+        // this branch publishes `done`. It only keeps the transcript addressable.
+        (!pty?.lastAgentStatus && (hookRow.agentType != null || hookRow.providerSession != null))
+      if (!hasLiveHookSignal) {
         return {}
       }
     }
@@ -31054,7 +31040,7 @@ export class OrcaRuntimeService {
     const ownerAgent =
       resolvePaneAgentOwner({
         launchAgent: tab.launchAgent ?? pty?.launchAgent ?? null,
-        hookAgent
+        hookAgent: retained?.payload.agentType ?? hookRow.agentType
       }) ??
       pty?.foregroundAgent ??
       null
@@ -31063,32 +31049,23 @@ export class OrcaRuntimeService {
       ownerAgent
     )
     // Why: OSC 9999 hook payload carries real state/prompt/agent; without preferring it, hook-only transitions never surfaced (#7970).
-    if (payload) {
-      const updatedAt = useRetainedPayload ? retained.updatedAt : hookStatus!.receivedAt
-      const stateStartedAt = useRetainedPayload
-        ? retained.stateStartedAt
-        : hookStatus!.stateStartedAt
+    const liveRow = retained ?? this.resolveHookLiveAgentRow(hookRow.live, pty, nonAgentTitle)
+    if (liveRow) {
       return {
         agentStatus: normalizeCompatibleAgentStatusEntryForOwner(
           {
-            ...(suppressActivity
-              ? {
-                  state: 'done' as const,
-                  prompt: '',
-                  ...(payload.agentType ? { agentType: payload.agentType } : {})
-                }
-              : payload),
+            ...liveRow.payload,
             paneKey,
-            updatedAt,
-            stateStartedAt,
+            updatedAt: liveRow.updatedAt,
+            stateStartedAt: liveRow.stateStartedAt,
             stateHistory: [],
-            ...(providerSession ? { providerSession } : {}),
             ...(terminalHandle ? { terminalHandle } : {}),
-            ...((pty?.worktreeId ?? retained?.worktreeId ?? hookStatus?.worktreeId)
-              ? { worktreeId: pty?.worktreeId ?? retained?.worktreeId ?? hookStatus?.worktreeId }
+            ...((pty?.worktreeId ?? liveRow.worktreeId)
+              ? { worktreeId: pty?.worktreeId ?? liveRow.worktreeId }
               : {}),
             tabId: tab.parentTabId,
-            terminalTitle
+            terminalTitle,
+            ...providerSession
           },
           ownerAgent
         )
@@ -31100,9 +31077,11 @@ export class OrcaRuntimeService {
     // Why not lastOutputAt: this state is title-derived, so it must be dated by
     // its evidence. Stamping it with the byte stream made the frame advance on
     // every output byte, so a paired client's live status could never outrank it.
-    const evidenceAt =
-      pty?.lastOscTitleEpochMs ?? providerRow.providerSessionReceivedAt ?? Date.now()
-    const agentType = ownerAgent ?? undefined
+    const evidenceAt = pty?.lastOscTitleEpochMs ?? hookRow.providerSessionReceivedAt ?? Date.now()
+    const agentType =
+      hookRow.agentType || retained?.payload.agentType || pty?.lastAgentStatus
+        ? (ownerAgent ?? undefined)
+        : undefined
     return {
       agentStatus: {
         state:
@@ -31121,9 +31100,35 @@ export class OrcaRuntimeService {
         tabId: tab.parentTabId,
         terminalTitle,
         stateHistory: [],
-        ...(providerSession ? { providerSession } : {})
+        ...providerSession
       }
     }
+  }
+
+  /** Live hook status to publish for a pane with no retained OSC row, or null when the
+   *  pane's hook evidence only proves identity.
+   *
+   *  Why the freshness rule: `pty.lastAgentStatus` is title-derived and refreshed live,
+   *  so an unconditional hook precedence would let a 29-minute-old `done` erase a pane
+   *  that is visibly working. A pending `interactivePrompt` outranks title evidence at
+   *  any age — the agent is parked on a selector until it answers — and it is also the
+   *  only signal allowed to survive the #1437 non-agent-title suppression. */
+  private resolveHookLiveAgentRow(
+    live: HookLiveAgentRow | null,
+    pty: RuntimePtyWorktreeRecord | null,
+    nonAgentTitle: boolean
+  ): HookLiveAgentRow | null {
+    if (!live) {
+      return null
+    }
+    if (live.payload.interactivePrompt != null) {
+      return live
+    }
+    // Why only this stamp: it is the sole wall-clock date on the pane's live title,
+    // so it is the only one comparable to a hook `receivedAt`. The sibling
+    // `titleUpdatedAt`/`lastOscTitleAt`/`paneTitleUpdatedAt` fields are observation
+    // sequence numbers, and comparing them here can only ever misfire.
+    return !nonAgentTitle && live.updatedAt >= (pty?.lastOscTitleEpochMs ?? 0) ? live : null
   }
 
   /** Hook-reported identity for this pane, newest wins per field.
@@ -31224,29 +31229,6 @@ export class OrcaRuntimeService {
       return null
     }
     return retained
-  }
-
-  private getAgentHookStatusForMobileTab(
-    paneKey: string,
-    pty: RuntimePtyWorktreeRecord | null,
-    tab: RuntimeMobileSessionTerminalTab
-  ): AgentStatusIpcPayload | null {
-    let result: AgentStatusIpcPayload | null = null
-    for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
-      if (
-        entry.paneKey !== paneKey ||
-        (entry.tabId && entry.tabId !== tab.parentTabId) ||
-        (pty && entry.connectionId !== pty.connectionId) ||
-        (pty?.worktreeId && entry.worktreeId && entry.worktreeId !== pty.worktreeId) ||
-        (pty?.launchToken && entry.launchToken && entry.launchToken !== pty.launchToken)
-      ) {
-        continue
-      }
-      if (!result || entry.receivedAt > result.receivedAt) {
-        result = entry
-      }
-    }
-    return result
   }
 
   private findPtyForMobileTerminalTab(

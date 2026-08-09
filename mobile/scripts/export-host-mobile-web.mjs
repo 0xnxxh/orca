@@ -17,6 +17,7 @@ const child = spawn(
       NODE_ENV: 'production',
       ORCA_EXPO_ROUTER_ROOT: 'host-web-app'
     },
+    shell: process.platform === 'win32',
     stdio: 'inherit'
   }
 )

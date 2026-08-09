@@ -5,6 +5,7 @@ import {
   trackFilesystemDirectoryEntry,
   type FilesystemDirectoryListingLimits
 } from '../shared/filesystem-directory-listing-limit'
+import { sortDirEntries } from '../shared/file-name-sort'
 
 type RelayDirectorySourceEntry = {
   name: string
@@ -61,10 +62,5 @@ export async function collectRelayFilesystemDirectoryEntries(
       isSymlink: entry.isSymbolicLink()
     })
   }
-  return entries.sort((left, right) => {
-    if (left.isDirectory !== right.isDirectory) {
-      return left.isDirectory ? -1 : 1
-    }
-    return left.name.localeCompare(right.name)
-  })
+  return sortDirEntries(entries)
 }

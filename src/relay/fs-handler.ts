@@ -46,6 +46,7 @@ import { readRelayFilesystemDirectory } from './filesystem-directory-reader'
 import type { FilesystemDirectoryListingLimits } from '../shared/filesystem-directory-listing-limit'
 import { listRelayMarkdownDocumentPaths } from './markdown-document-listing'
 import { resolveQuickOpenResultLimit } from '../shared/quick-open-listing-limits'
+import { sortDirEntries } from '../shared/file-name-sort'
 
 function readDirectoryLimitsFromParams(
   params: Record<string, unknown>
@@ -164,12 +165,7 @@ export class FsHandler {
   private sortDirectoryEntries<T extends { name: string; isDirectory: boolean }>(
     entries: T[]
   ): T[] {
-    return entries.sort((left, right) => {
-      if (left.isDirectory !== right.isDirectory) {
-        return left.isDirectory ? -1 : 1
-      }
-      return left.name.localeCompare(right.name)
-    })
+    return sortDirEntries(entries)
   }
 
   private async readFile(params: Record<string, unknown>) {

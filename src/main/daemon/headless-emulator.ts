@@ -343,11 +343,10 @@ export class HeadlessEmulator {
 
   private getModes(): TerminalModes {
     const buffer = this.terminal.buffer.active
-    const mouseTrackingMode = this.mouseModes.mouseTrackingMode
     return {
       bracketedPaste: this.terminal.modes.bracketedPasteMode,
-      mouseTracking: mouseTrackingMode !== 'none',
-      mouseTrackingMode,
+      mouseTracking: this.mouseModes.mouseTrackingMode !== 'none',
+      mouseTrackingMode: this.mouseModes.mouseTrackingMode,
       sgrMouseMode: this.mouseModes.sgrMouseMode,
       sgrMousePixelsMode: this.mouseModes.sgrMousePixelsMode,
       applicationCursor:

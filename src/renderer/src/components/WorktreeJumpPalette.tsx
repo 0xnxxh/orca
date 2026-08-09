@@ -1438,10 +1438,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const availableActionResults = useMemo(() => {
     const ctx = buildQuickActionContext()
     return actionResults.filter((action) => action.isAvailable(ctx).available)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- Store reads are the availability inputs.
   }, [
     actionResults,
     buildQuickActionContext,
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- these are the availability-determining primitives buildQuickActionContext reads from the store; listing them ensures the memo recomputes when availability actually changes, not on every render.
     activeView,
     activeWorktreeId,
     worktreesByRepo,

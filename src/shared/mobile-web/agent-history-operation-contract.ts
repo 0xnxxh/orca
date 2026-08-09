@@ -11,6 +11,7 @@ export const MOBILE_WEB_AGENT_HISTORY_AGENTS = [
   'hermes',
   'pi',
   'omp',
+  'prime-agent',
   'cursor',
   'gemini',
   'antigravity',

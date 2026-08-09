@@ -23,6 +23,7 @@ afterEach(async () => {
 
 describe('RNW mobile web packager', () => {
   it('emits a strict content-addressed package and disables Metro runtime evaluation', async () => {
+    await mkdir(path.resolve('out'), { recursive: true })
     const testRoot = await mkdtemp(path.resolve('out', 'mobile-web-rnw-packager-test-'))
     temporaryRoots.push(testRoot)
     const input = path.join(testRoot, 'input')
