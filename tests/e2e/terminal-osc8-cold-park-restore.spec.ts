@@ -15,6 +15,7 @@ import {
   waitForActivePanePtyId,
   waitForActiveTerminalManager
 } from './helpers/terminal'
+import { nodeTerminalCommand } from './terminal-node-command'
 import { waitForPtyShellEcho } from './terminal-pty-readiness'
 
 const PARKING_DELAY_MS = Number(process.env.ORCA_E2E_TERMINAL_PARKING_DELAY_MS) || 500
@@ -136,10 +137,11 @@ test('restores and opens an OSC 8 link after its terminal is cold-parked', async
 
   const label = `#${randomUUID().slice(0, 6)}`
   const url = `https://example.com/orca-osc8-${randomUUID()}`
+  const linkedOutput = `\x1b[?1049h\x1b[2J\x1b[H\x1b]8;id=cold-park;${url}\x1b\\${label}\x1b]8;;\x1b\\\n`
   await sendToTerminal(
     orcaPage,
     ptyId,
-    `printf '\\033[?1049h\\033[2J\\033[H\\033]8;id=cold-park;${url}\\033\\\\${label}\\033]8;;\\033\\\\\\n'\r`
+    `${nodeTerminalCommand(['-e', `process.stdout.write(${JSON.stringify(linkedOutput)})`])}\r`
   )
   await expect.poll(() => getTerminalContent(orcaPage, 4_000)).toContain(label)
 
