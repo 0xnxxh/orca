@@ -249,10 +249,7 @@ import {
   restoreTabSelection
 } from '../../../../src/session/mobile-session-tab-activation'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
-import {
-  getMobileSessionTabFocusKey,
-  runAcceptedMobileSessionTabsEffects
-} from '../../../../src/session/mobile-session-tabs-accepted-effects'
+import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
 import type {
   SessionTabsApplyOutcome,
   SessionTabsStreamSource
@@ -4138,6 +4135,7 @@ export default function SessionScreen() {
     if (!client) {
       return
     }
+    sessionTabIntentRef.current.supersede()
     try {
       const response = await client.sendRequest('session.tabs.close', {
         worktree: `id:${worktreeId}`,
@@ -4148,9 +4146,6 @@ export default function SessionScreen() {
       })
       if (response.ok) {
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
-        if (getMobileSessionTabFocusKey(tab) === sessionTabIntentRef.current.pendingFocusKey) {
-          sessionTabIntentRef.current.pendingFocusKey = null
-        }
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal
           unsubscribeTerminal(terminalHandle)

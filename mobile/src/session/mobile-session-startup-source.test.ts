@@ -180,6 +180,10 @@ describe('mobile session startup', () => {
       'async function handleCreateTerminal(',
       '// Quick commands spawn a fresh terminal tab'
     )
+    const closeSessionTab = sliceBetween(
+      'async function handleCloseSessionTab(',
+      'const bulkCloseActions'
+    )
 
     expect(readyTerminalSwitch).toContain('sessionTabIntentRef.current.supersede()')
     expect(sessionTabSwitch).toContain('sessionTabIntentRef.current.supersede()')
@@ -189,6 +193,7 @@ describe('mobile session startup', () => {
     expect(createTerminal).toContain(
       'const selectCreated = intentRevision === sessionTabIntentRef.current.revision'
     )
+    expect(closeSessionTab).toContain('sessionTabIntentRef.current.supersede()')
     expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')
   })
 
