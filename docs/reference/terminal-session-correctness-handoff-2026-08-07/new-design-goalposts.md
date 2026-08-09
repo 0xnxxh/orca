@@ -322,8 +322,37 @@ Per AGENTS.md. No per-file bumps either.
 | --- | --- | --- |
 | 1 | S1–S5 and S7 PROVEN, or S7 deleted on S6's evidence | **MET** — S1–S6 and S8 proven; S7 deleted on S6's evidence |
 | 2 | G1–G6 satisfied, each with evidence recorded here | **PARTIAL** — G2–G6 met; **G1 missed at +83**, accounted for above |
-| 3 | The reported failures covered by an oracle that reddens without the fix | **MET at unit level** (pane cardinality: S4's 10-reconnect clause; duplicate resume: S1/S3 classification + no-fabricated-exit clauses). E2E specs added; see below |
+| 3 | The reported failures covered by an oracle that reddens without the fix | **MET.** Pane cardinality: S4's ten-reconnect clause, plus an E2E spec driving three real reconnects against a Docker relay (passes). Duplicate resume: the classification clauses, plus an E2E spec where the **host itself** records every shell launch (passes). Writing the second one is what exposed that RC2 was still live — see below |
 | 4 | No guard shipped without a producer-side mutation proving it is reachable | **MET** — and it caught one guard that would otherwise have shipped unproven (see G5) |
+
+### Found after the goalposts were met
+
+Two defects surfaced *after* every step goalpost was proven, and both were invisible to the unit
+oracles that had already gone green. Recorded because they are the most useful evidence in this
+phase about where these oracles stop reaching.
+
+**RC2 survived S3 — found by writing the E2E test.** `7cd7fef927f`.
+The reported duplicate agent resume was not fixed. `reattachSshPtySession` maps every relay
+not-found to `SSH_SESSION_EXPIRED`, and `isProvenSshSessionGoneError` returned true for it, so the
+renderer's reattach arm still respawned. The E2E harness produced the shape directly: a stalled
+relay is superseded by a fresh one with no memory of `pty-1`, while the old shells keep running
+under the stopped process. The new relay answers not-found for a live shell.
+
+A not-found proves an exit only if the relay process that minted the pty is the one answering —
+design D3 row 2, gated on `relayInstanceId`, which step E-2 never built. `SSH_SESSION_EXPIRED` is
+not independent evidence: its only producer is that same mapping, and the token's own doc comment
+claimed "the host proved the session is gone", which it never did.
+
+So `isProvenSshSessionGoneError` returns false. This is also what makes the D1 affordance
+load-bearing rather than near-unreachable. The respawn tails are deliberately kept — the design
+preserves the grant as a conditional for E-2 — with a clause pinning that nothing reaches them.
+
+**The fold left half a fence behind — found by adversarial review.** `994733d8b1a`.
+`persistPtyBinding` writes the binding and its incarnation into the same partition, and the
+incarnation is what its CAS compares. The fold moved only `ptyIdsByLeafId`, so after upgrade the
+guard stayed in the partition nothing reads and the CAS compared `undefined` against `undefined`.
+Not data loss and not a wrong-shell bind, but a guard silently weakened by a migration is the exact
+shape this program keeps finding.
 
 ### Residuals, stated rather than closed quietly
 
