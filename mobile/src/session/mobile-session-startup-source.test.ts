@@ -134,9 +134,18 @@ describe('mobile session startup', () => {
     expect(source).toContain('pendingTerminalActivationAttemptRef.current = null')
 
     const pendingActivationEffect = sliceBetween(
-      "if (!client || connState !== 'connected' || !activePendingTerminalTab) {",
+      'const pendingTabCurrent =',
       'const showLoadingState ='
     )
+    const routeResetEffect = sliceBetween(
+      '// Why: Expo reuses this screen across worktrees; reset route state',
+      "if (connState !== 'connected') {"
+    )
+    expect(routeResetEffect).toContain('activeSessionTabIdRef.current = null')
+    expect(pendingActivationEffect).toContain(
+      'activePendingTerminalTab?.id === activeSessionTabIdRef.current'
+    )
+    expect(pendingActivationEffect).toContain('!pendingTabCurrent')
     expect(pendingActivationEffect).toContain(
       'pendingTerminalActivationAttemptRef.current === activationKey'
     )

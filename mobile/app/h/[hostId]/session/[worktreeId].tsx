@@ -2686,6 +2686,7 @@ export default function SessionScreen() {
     clearTerminalCache()
     activeHandleRef.current = null
     activeSessionTabTypeRef.current = null
+    activeSessionTabIdRef.current = null
     pendingActiveSessionTabIdRef.current = null
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
@@ -4183,10 +4184,9 @@ export default function SessionScreen() {
       : null
 
   useEffect(() => {
-    if (!client || connState !== 'connected' || !activePendingTerminalTab) {
-      if (connState !== 'connected' || !activePendingTerminalTab) {
-        pendingTerminalActivationAttemptRef.current = null
-      }
+    const pendingTabCurrent = activePendingTerminalTab?.id === activeSessionTabIdRef.current
+    if (!client || connState !== 'connected' || !activePendingTerminalTab || !pendingTabCurrent) {
+      pendingTerminalActivationAttemptRef.current = null
       return
     }
     const activationKey = sessionTabIntentRef.current.pendingActivationKey(activePendingTerminalTab)
