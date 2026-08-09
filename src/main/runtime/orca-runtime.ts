@@ -27798,12 +27798,17 @@ export class OrcaRuntimeService {
     explicitWorktreeId: string | null
   } {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(selector)
+    const pathSelector = selector.startsWith('path:')
+      ? selector.slice(5)
+      : isAbsolute(selector) || isWindowsAbsolutePathLike(selector)
+        ? selector
+        : ''
     const activeLaunch: ActiveTerminalWorkspaceLaunch = {
       worktreeId: explicitWorktreeId ?? '',
       worktreePath:
         (explicitWorktreeId
           ? splitWorktreeIdForFilesystem(explicitWorktreeId)?.worktreePath
-          : null) ?? '',
+          : null) ?? pathSelector,
       pendingRenames: []
     }
     this.activeTerminalWorkspaceLaunches.add(activeLaunch)
@@ -28906,11 +28911,16 @@ export class OrcaRuntimeService {
   /** Like {@link notifyBranchRenamed} but carries old->new worktree id so the renderer re-keys instead of treating the id change as a deletion. */
   notifyWorktreeFolderRenamed(repoId: string, oldWorktreeId: string, newWorktreeId: string): void {
     const resolvedOldWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(oldWorktreeId)
+    const oldWorktreePath = splitWorktreeIdForFilesystem(oldWorktreeId)?.worktreePath
     const oldWorktreeIdentityIsReused =
       this.terminalWorkspaceLaunchIdentityOverrides.has(oldWorktreeId) ||
       (resolvedOldWorktreeId !== oldWorktreeId &&
         [...this.activeTerminalWorkspaceLaunches].some(
-          (launch) => launch.worktreeId === oldWorktreeId
+          (launch) =>
+            launch.worktreeId === oldWorktreeId ||
+            (Boolean(launch.worktreePath) &&
+              oldWorktreePath !== undefined &&
+              runtimePathsEqual(launch.worktreePath, oldWorktreePath))
         ))
     this.terminalWorkspaceLaunchIdentityOverrides.delete(oldWorktreeId)
     this.terminalWorkspaceLaunchIdentityOverrides.delete(newWorktreeId)
