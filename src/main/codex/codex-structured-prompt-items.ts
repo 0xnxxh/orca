@@ -95,7 +95,7 @@ export type CodexQuestionItem = {
  */
 export function codexQuestionItems(input: {
   threadId: string
-  codexItemId: string
+  promptKey: string
   params: unknown
 }): CodexQuestionItem[] {
   const questions = readParams(input.params).questions
@@ -146,14 +146,16 @@ function questionOptions(
 
 /** Prompts are live-session state Codex does not persist, so they are keyed in
  *  the Orca namespace rather than by `(threadId, turnId, ordinal)`. */
+/** Keyed by the prompt, not by the tool item it is about: one shell item can
+ *  ask several times, and each ask is its own journal row to answer. */
 export function codexPromptIdentity(input: {
   threadId: string
-  codexItemId: string
+  promptKey: string
   questionId?: string
 }): AgentJournalItemIdentity {
   const suffix = input.questionId ? `:${input.questionId}` : ''
   return {
     provider: 'orca',
-    clientMessageId: `codex-prompt:${input.threadId}:${input.codexItemId}${suffix}`
+    clientMessageId: `codex-prompt:${input.threadId}:${input.promptKey}${suffix}`
   }
 }

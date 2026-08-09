@@ -7,6 +7,11 @@ import type {
   AgentSessionDispatchOutcome,
   StructuredAgentSessionAdapter
 } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
+import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
+import {
+  createCodexJournalTranslator,
+  type CodexJournalTranslator
+} from './codex-structured-journal-translation'
 import {
   isCodexAppServerRequestError,
   openCodexAppServerConnection,
@@ -23,11 +28,7 @@ import { CodexAcquisitionWindow } from './codex-structured-acquisition-window'
 import { answerCodexPrompt, receiveCodexPromptRequest } from './codex-structured-prompt-replies'
 import { readCodexThreadId, readCodexTurnId } from './codex-structured-thread-facts'
 import { openCodexThread } from './codex-structured-thread-open'
-import {
-  CODEX_USER_MESSAGE_ORDINAL,
-  isCodexTurnOptionKey,
-  startCodexTurn
-} from './codex-structured-turn-start'
+import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn-start'
 
 // The Codex half of the structured agent-session wire: one long-lived
 // `codex app-server` child per session, started or resumed under the lease the
@@ -89,6 +90,8 @@ type CodexSession = {
   /** Applied to the next `turn/start`; Codex has no thread-settings write. */
   options: Map<string, string>
   turnIdWaiters: ((turnId: string) => void)[]
+  /** Absent when the caller supplied no sink; the session then runs unjournaled. */
+  translator: CodexJournalTranslator | null
 }
 
 export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdapter {
@@ -105,6 +108,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     identity: AgentSessionJournalIdentity
     fence: number
     spawnToken: string
+    events?: StructuredAgentSessionEventSink
   }): Promise<AgentSessionAcquisition> {
     // A re-acquire at a new fence must not leave the old child writing.
     await this.closeSession(input.identity.sessionId)
@@ -113,6 +117,13 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     const acquisition = new CodexAcquisitionWindow()
     // Registered before the spawn, because the handshake itself can emit.
     this.acquiring.set(sessionId, acquisition)
+    const translator = input.events
+      ? createCodexJournalTranslator({
+          sink: input.events,
+          bindPromptItemId: (journalItemId, promptKey) =>
+            acquisition.prompts.bindJournalItemId(journalItemId, promptKey)
+        })
+      : null
     const open = this.deps.openConnection ?? openCodexAppServerConnection
 
     try {
@@ -169,7 +180,8 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         historyPath: opened.historyPath,
         prompts: acquisition.prompts,
         options: new Map(),
-        turnIdWaiters: []
+        turnIdWaiters: [],
+        translator
       })
       for (const event of acquisition.drain()) {
         event()
@@ -182,6 +194,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       // Reap this attempt's child only. A replacement already published for the
       // same session keeps running.
       if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
+        translator?.dispose()
         await acquisition.connection?.close()
       }
       throw error
@@ -203,11 +216,13 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
    *  superseded child's death would evict its live replacement. */
   private handleExit(sessionId: string, acquisition: CodexAcquisitionWindow, error: Error): void {
     acquisition.prompts.clear()
-    if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
+    const session = this.sessions.get(sessionId)
+    if (session?.connection !== acquisition.connection) {
       return
     }
     this.sessions.delete(sessionId)
-    this.deps.onEvent?.({ type: 'ended', sessionId, reason: error.message })
+    this.emit(session, { type: 'ended', sessionId, reason: error.message })
+    session.translator?.dispose()
   }
 
   private handleNotification(sessionId: string, method: string, params: unknown): void {
@@ -224,7 +239,14 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       const waiter = turnId ? session.turnIdWaiters.shift() : undefined
       waiter?.(turnId as string)
     }
-    this.deps.onEvent?.({ type: 'notification', sessionId, threadId, method, params })
+    this.emit(session, { type: 'notification', sessionId, threadId, method, params })
+  }
+
+  /** Journal first, observers second: a test tap must never see a row the
+   *  journal has not been told about. */
+  private emit(session: CodexSession, event: CodexStructuredSessionEvent): void {
+    session.translator?.handle(event)
+    this.deps.onEvent?.(event)
   }
 
   private handleServerRequest(sessionId: string, request: CodexAppServerServerRequest): void {
@@ -236,7 +258,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     if (!prompt) {
       return
     }
-    this.deps.onEvent?.({
+    this.emit(session, {
       type: 'prompt',
       sessionId,
       threadId: prompt.threadId,
@@ -259,32 +281,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     body: AgentJournalMessageItem
     fence: number
   }): Promise<AgentSessionDispatchOutcome> {
-    const session = this.session(input.sessionId)
-    let turnId: string | null
-    try {
-      turnId = await startCodexTurn(session, { ...input, timeoutMs: this.requestTimeoutMs })
-    } catch (error) {
-      // Codex answering and declining is a rejection; a timeout or a dead child
-      // is not, and the wire must not tell the user their message failed.
-      if (isCodexAppServerRequestError(error) || isCodexAppServerUnsupportedError(error)) {
-        return { state: 'rejected', reason: (error as Error).message }
-      }
-      throw error
-    }
-    return turnId === null
-      ? {
-          state: 'unknown',
-          reason: 'codex app-server started a turn it did not name in time'
-        }
-      : {
-          state: 'accepted',
-          providerIdentity: {
-            provider: 'codex',
-            threadId: session.threadId,
-            turnId,
-            ordinal: CODEX_USER_MESSAGE_ORDINAL
-          }
-        }
+    return dispatchCodexTurn(this.session(input.sessionId), input, this.requestTimeoutMs)
   }
 
   async cancelTurn(input: {
@@ -352,6 +349,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     }
     this.sessions.delete(sessionId)
     session.prompts.clear()
+    session.translator?.dispose()
     await session.connection.close()
   }
 

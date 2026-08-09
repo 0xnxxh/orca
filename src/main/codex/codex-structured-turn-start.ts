@@ -1,6 +1,11 @@
 import type { AgentJournalMessageItem } from '../../shared/agent-session-journal-types'
 import type { NativeChatBlock } from '../../shared/native-chat-types'
-import type { CodexAppServerConnection } from './codex-app-server-connection'
+import type { AgentSessionDispatchOutcome } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
+import {
+  isCodexAppServerRequestError,
+  type CodexAppServerConnection
+} from './codex-app-server-connection'
+import { isCodexAppServerUnsupportedError } from './codex-app-server-session'
 import { readCodexTurnId } from './codex-structured-thread-facts'
 
 // Starting a Codex turn and learning its id, which are not the same event:
@@ -88,4 +93,36 @@ export async function startCodexTurn(
       host.turnIdWaiters.splice(index, 1)
     }
   }
+}
+
+/**
+ * One submission's outcome as the wire must read it: accepted names the turn,
+ * rejected is Codex answering and declining, and unknown covers a turn that is
+ * real but unnameable — never a failure the user is told their message hit.
+ */
+export async function dispatchCodexTurn(
+  session: CodexTurnHost,
+  input: { clientMessageId: string; body: AgentJournalMessageItem },
+  timeoutMs: number | undefined
+): Promise<AgentSessionDispatchOutcome> {
+  let turnId: string | null
+  try {
+    turnId = await startCodexTurn(session, { ...input, timeoutMs })
+  } catch (error) {
+    if (isCodexAppServerRequestError(error) || isCodexAppServerUnsupportedError(error)) {
+      return { state: 'rejected', reason: (error as Error).message }
+    }
+    throw error
+  }
+  return turnId === null
+    ? { state: 'unknown', reason: 'codex app-server started a turn it did not name in time' }
+    : {
+        state: 'accepted',
+        providerIdentity: {
+          provider: 'codex',
+          threadId: session.threadId,
+          turnId,
+          ordinal: CODEX_USER_MESSAGE_ORDINAL
+        }
+      }
 }

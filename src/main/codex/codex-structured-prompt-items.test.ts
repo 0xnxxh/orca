@@ -82,7 +82,7 @@ describe('codex question items', () => {
   }
 
   it('makes one journal item per question, each with its own resolution', () => {
-    const items = codexQuestionItems({ threadId: THREAD_ID, codexItemId: CODEX_ITEM_ID, params })
+    const items = codexQuestionItems({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID, params })
 
     expect(items.map((item) => item.questionId)).toEqual(['q1', 'q2'])
     expect(items.map((item) => item.body.question)).toEqual(['Which branch?', 'Proceed?'])
@@ -90,7 +90,7 @@ describe('codex question items', () => {
   })
 
   it('keys each question separately so two answers cannot collide on one row', () => {
-    const items = codexQuestionItems({ threadId: THREAD_ID, codexItemId: CODEX_ITEM_ID, params })
+    const items = codexQuestionItems({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID, params })
 
     expect(items.map((item) => item.identity)).toEqual([
       { provider: 'orca', clientMessageId: 'codex-prompt:thread-abc:item-4:q1' },
@@ -99,7 +99,7 @@ describe('codex question items', () => {
   })
 
   it('names the question inside every option id, because codex replies by question', () => {
-    const items = codexQuestionItems({ threadId: THREAD_ID, codexItemId: CODEX_ITEM_ID, params })
+    const items = codexQuestionItems({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID, params })
 
     expect(items[0]?.body.options).toEqual([
       { id: encodeCodexQuestionOptionId('q1', 'main'), label: 'main' },
@@ -111,7 +111,7 @@ describe('codex question items', () => {
   it('skips a question with no id or no prompt rather than minting an unanswerable row', () => {
     const items = codexQuestionItems({
       threadId: THREAD_ID,
-      codexItemId: CODEX_ITEM_ID,
+      promptKey: CODEX_ITEM_ID,
       params: { questions: [{ question: 'no id' }, { id: 'q3' }, { id: 'q4', question: 'ok' }] }
     })
 
@@ -120,12 +120,12 @@ describe('codex question items', () => {
 
   it('returns nothing when the request carries no questions at all', () => {
     expect(
-      codexQuestionItems({ threadId: THREAD_ID, codexItemId: CODEX_ITEM_ID, params: {} })
+      codexQuestionItems({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID, params: {} })
     ).toEqual([])
   })
 
   it('keys an approval without a question id', () => {
-    expect(codexPromptIdentity({ threadId: THREAD_ID, codexItemId: CODEX_ITEM_ID })).toEqual({
+    expect(codexPromptIdentity({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID })).toEqual({
       provider: 'orca',
       clientMessageId: 'codex-prompt:thread-abc:item-4'
     })
