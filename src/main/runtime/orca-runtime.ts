@@ -25288,8 +25288,7 @@ export class OrcaRuntimeService {
     const authoritativeWorktreeId = session.worktreeId ?? inferWorktreeIdFromPtyId(session.id)
     if (
       !authoritativeWorktreeId ||
-      this.terminalCreateIdempotency.resolveCurrentWorktreeId(authoritativeWorktreeId) !==
-        worktreeId
+      !this.terminalCreateIdempotency.includesWorktreeIdentity(worktreeId, authoritativeWorktreeId)
     ) {
       // Why: a reused address or forged provider record must never adopt a PTY from another workspace.
       throw new Error('terminal_create_identity_conflict')

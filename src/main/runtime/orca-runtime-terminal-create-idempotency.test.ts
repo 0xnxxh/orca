@@ -166,9 +166,21 @@ describe('terminal create idempotency', () => {
 
     idempotency.registerWorktreeHistory('worktree-1', ['worktree-1', 'worktree-2'])
 
-    expect(idempotency.resolveCurrentWorktreeId('worktree-1')).toBe('worktree-1')
-    expect(idempotency.resolveCurrentWorktreeId('worktree-2')).toBe('worktree-1')
     expect(idempotency.resolveIdentityWorktreeId('worktree-1')).toBe('worktree-1')
+    expect(idempotency.includesWorktreeIdentity('worktree-1', 'worktree-2')).toBe(true)
+  })
+
+  it('keeps distinct rename lineages isolated when an old identity is reused', () => {
+    const idempotency = new RemoteRuntimeTerminalCreateIdempotency()
+
+    idempotency.registerWorktreeHistory('worktree-b', ['worktree-a'])
+    idempotency.registerWorktreeHistory('worktree-a', ['worktree-c'])
+    idempotency.registerWorktreeHistory('worktree-b', ['worktree-a'])
+
+    expect(idempotency.resolveIdentityWorktreeId('worktree-b')).toBe('worktree-a')
+    expect(idempotency.resolveIdentityWorktreeId('worktree-a')).toBe('worktree-c')
+    expect(idempotency.includesWorktreeIdentity('worktree-b', 'worktree-a')).toBe(true)
+    expect(idempotency.includesWorktreeIdentity('worktree-a', 'worktree-c')).toBe(true)
   })
 
   it('adopts the original PTY after a runtime-process restart without rerunning startup', async () => {

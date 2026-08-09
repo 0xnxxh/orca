@@ -1,42 +1,56 @@
 import type { RuntimeTerminalCreate } from '../../shared/runtime-types'
-import { ClientSessionWorktreeAliases } from './client-session-worktree-aliases'
 
 const DEFAULT_MAX_IN_FLIGHT_TERMINAL_CREATES = 4_096
 
 export class RemoteRuntimeTerminalCreateIdempotency {
   private readonly inFlight = new Map<string, Promise<RuntimeTerminalCreate>>()
-  private readonly worktreeAliases = new ClientSessionWorktreeAliases()
+  // Why: a historical id can be reused by another live worktree, so rename lineage cannot be a global alias.
   private readonly identityWorktreeIdByCurrentId = new Map<string, string>()
+  private readonly worktreeHistoryByCurrentId = new Map<string, ReadonlySet<string>>()
 
   constructor(private readonly maxInFlight = DEFAULT_MAX_IN_FLIGHT_TERMINAL_CREATES) {}
 
-  resolveCurrentWorktreeId(worktreeId: string): string {
-    return this.worktreeAliases.resolve(worktreeId)
+  resolveIdentityWorktreeId(worktreeId: string): string {
+    return this.identityWorktreeIdByCurrentId.get(worktreeId) ?? worktreeId
   }
 
-  resolveIdentityWorktreeId(worktreeId: string): string {
-    const currentWorktreeId = this.resolveCurrentWorktreeId(worktreeId)
-    return this.identityWorktreeIdByCurrentId.get(currentWorktreeId) ?? currentWorktreeId
+  includesWorktreeIdentity(currentWorktreeId: string, candidateWorktreeId: string): boolean {
+    return (
+      currentWorktreeId === candidateWorktreeId ||
+      this.worktreeHistoryByCurrentId.get(currentWorktreeId)?.has(candidateWorktreeId) === true
+    )
   }
 
   migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
-    const currentOldWorktreeId = this.resolveCurrentWorktreeId(oldWorktreeId)
-    const identityWorktreeId = this.resolveIdentityWorktreeId(currentOldWorktreeId)
-    const migration = this.worktreeAliases.migrate(oldWorktreeId, newWorktreeId)
-    this.identityWorktreeIdByCurrentId.delete(migration.oldWorktreeId)
-    this.identityWorktreeIdByCurrentId.delete(migration.newWorktreeId)
-    if (identityWorktreeId !== migration.newWorktreeId) {
-      this.identityWorktreeIdByCurrentId.set(migration.newWorktreeId, identityWorktreeId)
+    if (oldWorktreeId === newWorktreeId) {
+      return
     }
+    const identityWorktreeId = this.resolveIdentityWorktreeId(oldWorktreeId)
+    const history = new Set(this.worktreeHistoryByCurrentId.get(oldWorktreeId) ?? [oldWorktreeId])
+    history.add(oldWorktreeId)
+    history.add(newWorktreeId)
+    this.identityWorktreeIdByCurrentId.delete(oldWorktreeId)
+    this.identityWorktreeIdByCurrentId.delete(newWorktreeId)
+    this.worktreeHistoryByCurrentId.delete(oldWorktreeId)
+    this.worktreeHistoryByCurrentId.delete(newWorktreeId)
+    if (identityWorktreeId !== newWorktreeId) {
+      this.identityWorktreeIdByCurrentId.set(newWorktreeId, identityWorktreeId)
+    }
+    this.worktreeHistoryByCurrentId.set(newWorktreeId, history)
   }
 
   registerWorktreeHistory(worktreeId: string, priorWorktreeIds: readonly string[] = []): void {
-    const identities = [...priorWorktreeIds, worktreeId]
-    for (let index = 1; index < identities.length; index += 1) {
-      if (identities[index - 1] !== identities[index]) {
-        this.migrateWorktree(identities[index - 1], identities[index])
-      }
+    if (priorWorktreeIds.length === 0 && this.worktreeHistoryByCurrentId.has(worktreeId)) {
+      return
     }
+    const history = new Set([...priorWorktreeIds, worktreeId])
+    const identityWorktreeId = priorWorktreeIds[0] ?? worktreeId
+    if (identityWorktreeId === worktreeId) {
+      this.identityWorktreeIdByCurrentId.delete(worktreeId)
+    } else {
+      this.identityWorktreeIdByCurrentId.set(worktreeId, identityWorktreeId)
+    }
+    this.worktreeHistoryByCurrentId.set(worktreeId, history)
   }
 
   run(
