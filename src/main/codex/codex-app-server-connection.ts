@@ -1,0 +1,348 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { stderrIndicatesMissingAppServer } from './codex-app-server-capability-signal'
+import { waitForProcessExitUntil } from './codex-process-exit-deadline'
+import {
+  CodexAppServerTimeoutError,
+  CodexAppServerUnsupportedError,
+  isCodexMethodNotFoundError,
+  killCodexAppServerProcessTree
+} from './codex-app-server-session'
+
+// Why: `runCodexAppServerSession` is request-scoped — one deadline for the whole
+// session and every inbound message that is not a pending response is dropped.
+// A structured chat session needs the opposite: a child that outlives any single
+// call, per-request deadlines, and both directions of traffic, because Codex
+// asks for approvals by sending REQUESTS back and streams a turn as
+// notifications. This module owns that transport and nothing above it.
+
+/** Codex answered the call and refused it. Distinct from a timeout or a dead
+ *  child, which leave the call unsettled rather than declined. */
+export class CodexAppServerRequestError extends Error {
+  constructor(
+    readonly method: string,
+    readonly code: number | null,
+    message: string
+  ) {
+    super(message)
+    this.name = 'CodexAppServerRequestError'
+  }
+}
+
+export function isCodexAppServerRequestError(error: unknown): error is CodexAppServerRequestError {
+  return error instanceof Error && error.name === 'CodexAppServerRequestError'
+}
+
+export type CodexAppServerLaunch = {
+  command: string
+  args: string[]
+  /** Overlay on the inherited environment — the pinned CODEX_HOME lives here. */
+  env?: Record<string, string>
+  /** Keys stripped after the overlay, matching `CodexAppServerInvocation`. */
+  envToDelete?: readonly string[]
+}
+
+export type CodexAppServerServerRequest = {
+  id: number | string
+  method: string
+  params: unknown
+}
+
+export type CodexAppServerConnectionHandlers = {
+  onNotification?: (method: string, params: unknown) => void
+  /** Codex blocks the turn until this id is answered, so every request must
+   *  reach `respond` or `respondWithError` exactly once. */
+  onServerRequest?: (request: CodexAppServerServerRequest) => void
+  /** Death the caller did not ask for. Never fires after `close()`. */
+  onExit?: (error: Error) => void
+}
+
+export type CodexAppServerConnection = {
+  readonly pid: number | undefined
+  readonly closed: boolean
+  request: (
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeoutMs?: number }
+  ) => Promise<unknown>
+  notify: (method: string, params?: Record<string, unknown>) => void
+  respond: (id: number | string, result: unknown) => void
+  respondWithError: (id: number | string, code: number, message: string) => void
+  close: () => Promise<void>
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const HANDSHAKE_TIMEOUT_MS = 15_000
+const GRACEFUL_EXIT_MS = 1_500
+const FORCED_EXIT_MS = 1_000
+const STDERR_TAIL_MAX_BYTES = 8192
+const STDOUT_LINE_MAX_BYTES = 1024 * 1024
+
+type PendingRequest = {
+  method: string
+  resolve: (result: unknown) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Spawns `codex app-server`, completes the initialize handshake, and returns a
+ * connection that stays open until `close()`. Rejects — after reaping the child
+ * — when the handshake cannot complete.
+ */
+export async function openCodexAppServerConnection(
+  launch: CodexAppServerLaunch,
+  handlers: CodexAppServerConnectionHandlers = {},
+  spawnImpl: typeof spawn = spawn
+): Promise<CodexAppServerConnection> {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...launch.env }
+  for (const key of launch.envToDelete ?? []) {
+    delete childEnv[key]
+  }
+  const child = spawnImpl(launch.command, launch.args, {
+    env: childEnv,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true
+  }) as ChildProcessWithoutNullStreams
+
+  const pending = new Map<number, PendingRequest>()
+  let stderrTail = ''
+  let nextRequestId = 1
+  let exited = false
+  let closing = false
+
+  const exitPromise = new Promise<void>((resolve) => {
+    child.on('exit', () => {
+      exited = true
+      resolve()
+    })
+  })
+
+  function buildExitError(cause?: Error): Error {
+    const tail = stderrTail.trim().slice(0, 400)
+    if (stderrIndicatesMissingAppServer(stderrTail)) {
+      return new CodexAppServerUnsupportedError(
+        `codex CLI does not support the app-server subcommand: ${tail}`
+      )
+    }
+    const detail = cause ? `: ${cause.message}` : tail ? `: ${tail}` : ''
+    return new Error(`codex app-server connection ended${detail}`)
+  }
+
+  function failPending(error: Error): void {
+    for (const waiter of pending.values()) {
+      clearTimeout(waiter.timer)
+      waiter.reject(error)
+    }
+    pending.clear()
+  }
+
+  /** A death nobody asked for kills every in-flight call AND tells the owner,
+   *  which is the only signal the session has that its lease is now worthless. */
+  function handleUnexpectedEnd(cause?: Error): void {
+    const error = buildExitError(cause)
+    failPending(error)
+    if (!closing) {
+      handlers.onExit?.(error)
+    }
+  }
+
+  child.on('error', (error) => {
+    exited = true
+    handleUnexpectedEnd(error)
+  })
+  // Why: 'close' rather than 'exit' guarantees the stderr tail is complete, so
+  // an early death classifies as missing-subcommand instead of transient.
+  child.on('close', () => {
+    handleUnexpectedEnd()
+  })
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+    stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_MAX_BYTES)
+  })
+  child.stdin.on('error', (error) => {
+    failPending(error)
+  })
+
+  function dispatchMessage(message: Record<string, unknown>): void {
+    const hasMethod = typeof message.method === 'string'
+    const hasId = typeof message.id === 'number' || typeof message.id === 'string'
+    if (hasMethod && hasId) {
+      handlers.onServerRequest?.({
+        id: message.id as number | string,
+        method: message.method as string,
+        params: message.params
+      })
+      return
+    }
+    if (hasMethod) {
+      handlers.onNotification?.(message.method as string, message.params)
+      return
+    }
+    if (typeof message.id !== 'number') {
+      return
+    }
+    const waiter = pending.get(message.id)
+    if (!waiter) {
+      return
+    }
+    pending.delete(message.id)
+    clearTimeout(waiter.timer)
+    const error = message.error
+    if (isRecord(error)) {
+      const detail = typeof error.message === 'string' ? error.message : 'unknown error'
+      waiter.reject(
+        isCodexMethodNotFoundError(error)
+          ? new CodexAppServerUnsupportedError(
+              `codex app-server does not support ${waiter.method}: ${detail}`
+            )
+          : new CodexAppServerRequestError(
+              waiter.method,
+              typeof error.code === 'number' ? error.code : null,
+              `codex app-server ${waiter.method} failed: ${detail}`
+            )
+      )
+      return
+    }
+    waiter.resolve(message.result)
+  }
+
+  let stdoutBuffer = ''
+  // Why: stream decoding must retain a multibyte character split across pipe
+  // chunks, or a non-ASCII turn becomes invalid JSON.
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    stdoutBuffer += chunk
+    if (Buffer.byteLength(stdoutBuffer) > STDOUT_LINE_MAX_BYTES) {
+      child.stdout.destroy()
+      killCodexAppServerProcessTree(child)
+      handleUnexpectedEnd(new Error('codex app-server emitted an oversized JSONL line'))
+      return
+    }
+    let newlineIndex: number
+    while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+      const line = stdoutBuffer.slice(0, newlineIndex).trim()
+      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
+      if (!line) {
+        continue
+      }
+      try {
+        const parsed: unknown = JSON.parse(line)
+        if (isRecord(parsed)) {
+          dispatchMessage(parsed)
+        }
+      } catch {
+        // A line Codex did not frame as JSON is not addressed to any caller.
+      }
+    }
+  })
+
+  function sendLine(payload: Record<string, unknown>): void {
+    child.stdin.write(`${JSON.stringify(payload)}\n`)
+  }
+
+  function notify(method: string, params?: Record<string, unknown>): void {
+    if (exited) {
+      return
+    }
+    try {
+      sendLine(params === undefined ? { method } : { method, params })
+    } catch {
+      // Fire-and-forget; the next request surfaces a dead child.
+    }
+  }
+
+  function request(
+    method: string,
+    params?: Record<string, unknown>,
+    options: { timeoutMs?: number } = {}
+  ): Promise<unknown> {
+    if (closing) {
+      return Promise.reject(new Error(`codex app-server connection is closed (${method})`))
+    }
+    if (exited) {
+      return Promise.reject(buildExitError())
+    }
+    const id = nextRequestId++
+    const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    return new Promise<unknown>((resolve, reject) => {
+      // Why: per request, not per session — a chat session outlives every call,
+      // so only the individual call can carry a deadline.
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        reject(new CodexAppServerTimeoutError(`codex app-server ${method} exceeded ${timeoutMs}ms`))
+      }, timeoutMs)
+      pending.set(id, { method, resolve, reject, timer })
+      try {
+        sendLine(params === undefined ? { method, id } : { method, id, params })
+      } catch (error) {
+        pending.delete(id)
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
+  }
+
+  function writeResponse(payload: Record<string, unknown>): void {
+    if (exited || child.stdin.destroyed || !child.stdin.writable) {
+      return
+    }
+    try {
+      sendLine(payload)
+    } catch {
+      // The turn that asked is already gone with the child.
+    }
+  }
+
+  async function close(): Promise<void> {
+    if (closing) {
+      await exitPromise
+      return
+    }
+    closing = true
+    try {
+      child.stdin.end()
+    } catch {
+      // Already destroyed; the reap below still runs.
+    }
+    if (!exited) {
+      await waitForProcessExitUntil(exitPromise, GRACEFUL_EXIT_MS)
+      if (!exited) {
+        killCodexAppServerProcessTree(child)
+        await waitForProcessExitUntil(exitPromise, FORCED_EXIT_MS)
+      }
+    }
+    failPending(new Error('codex app-server connection closed'))
+  }
+
+  const connection: CodexAppServerConnection = {
+    get pid() {
+      return child.pid
+    },
+    get closed() {
+      return closing || exited
+    },
+    request,
+    notify,
+    respond: (id, result) => writeResponse({ id, result }),
+    respondWithError: (id, code, message) => writeResponse({ id, error: { code, message } }),
+    close
+  }
+
+  try {
+    await request(
+      'initialize',
+      { clientInfo: { name: 'orca_desktop', title: 'Orca', version: '0.0.0' } },
+      { timeoutMs: HANDSHAKE_TIMEOUT_MS }
+    )
+    notify('initialized')
+  } catch (error) {
+    await close()
+    throw error instanceof CodexAppServerUnsupportedError ||
+      error instanceof CodexAppServerTimeoutError
+      ? error
+      : buildExitError(error instanceof Error ? error : new Error(String(error)))
+  }
+  return connection
+}
