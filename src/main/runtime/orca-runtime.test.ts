@@ -29044,6 +29044,51 @@ describe('OrcaRuntimeService', () => {
     ])
   })
 
+  it('releases a failed pending activation after its worktree is renamed', async () => {
+    const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+    const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const { runtime } = makePendingAgentTabActivationRuntime({ spawn })
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `host-tab::${HEADLESS_LEAF_ID}`,
+      undefined,
+      { notifyClients: false, clientNavigationId: 'device-a' }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    await runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime.syncWindowGraph(0, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: renamedWorktreeId,
+          publicationEpoch: 'renamed-empty-session',
+          snapshotVersion: 1,
+          activeGroupId: null,
+          activeTabId: null,
+          activeTabType: null,
+          tabs: []
+        }
+      ]
+    })
+    spawned.reject(new Error('spawn failed'))
+    await expect(activation).rejects.toThrow('spawn failed')
+    expect(
+      runtime['clientSessionTabSelections'].isTabForgotten(
+        'device-a',
+        renamedWorktreeId,
+        'host-tab'
+      )
+    ).toBe(false)
+  })
+
   it('materializes a plain shell when the pending tab has no launch agent', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'serve-materialized-pty' })
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(

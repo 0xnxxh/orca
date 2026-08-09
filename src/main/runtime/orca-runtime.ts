@@ -7348,6 +7348,7 @@ export class OrcaRuntimeService {
             throw new Error('tab_not_found')
           }
         } catch (err) {
+          worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
           finishTabActivation()
           if (sessionId && parseAppSshPtyId(sessionId)) {
             // Why: an expired SSH reattach clears durable bindings in the store,
