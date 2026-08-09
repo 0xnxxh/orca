@@ -7286,22 +7286,29 @@ export class OrcaRuntimeService {
           group.tabOrder.includes(tab.parentTabId)
         )?.id
         const activationTabIds = [tab.id, tab.parentTabId]
-        if (opts.clientNavigationId) {
-          this.clientSessionTabSelections.beginTabActivation(
-            opts.clientNavigationId,
-            worktreeId,
-            activationTabIds
-          )
-        }
+        this.clientSessionTabSelections.beginTabActivation(
+          opts.clientNavigationId,
+          worktreeId,
+          activationTabIds
+        )
         const finishTabActivation = (): void => {
           const current = this.mobileSessionTabsByWorktree.get(worktreeId)
-          if (opts.clientNavigationId && current) {
-            this.clientSessionTabSelections.finishTabActivation(
-              opts.clientNavigationId,
-              this.toMobileSessionTabsResult(current),
-              activationTabIds
-            )
-          }
+          const currentResult = current
+            ? this.toMobileSessionTabsResult(current)
+            : {
+                worktree: worktreeId,
+                publicationEpoch: 'none',
+                snapshotVersion: 0,
+                activeGroupId: null,
+                activeTabId: null,
+                activeTabType: null,
+                tabs: []
+              }
+          this.clientSessionTabSelections.finishTabActivation(
+            opts.clientNavigationId,
+            currentResult,
+            activationTabIds
+          )
         }
         // Why: a pending agent tab may exist without its startup command ever
         // having been delivered (the create's renderer stalled, #7587), so a

@@ -81,15 +81,11 @@ export class ClientSessionTabClosureTracker {
   private statesByClient = new Map<string, Map<string, ClientSessionTabClosureState>>()
   // Why: tab destruction is global, including for clients first seen after the close settles.
   private forgottenTabIdsByWorktree = new Map<string, ReadonlySet<string>>()
+  // Why: unattributed host activations can also finish after a mobile close.
+  private pendingActivationCountsByWorktree = new Map<string, Map<string, number>>()
 
   private getPendingActivationTabIds(worktreeId: string): ReadonlySet<string> {
-    const pendingTabIds = new Set<string>()
-    for (const statesByWorktree of this.statesByClient.values()) {
-      for (const tabId of statesByWorktree.get(worktreeId)?.pendingActivationCounts.keys() ?? []) {
-        pendingTabIds.add(tabId)
-      }
-    }
-    return pendingTabIds
+    return new Set(this.pendingActivationCountsByWorktree.get(worktreeId)?.keys() ?? [])
   }
 
   private getState(
@@ -190,7 +186,20 @@ export class ClientSessionTabClosureTracker {
     }
   }
 
-  beginActivation(clientNavigationId: string, worktreeId: string, tabIds: readonly string[]): void {
+  beginActivation(
+    clientNavigationId: string | undefined,
+    worktreeId: string,
+    tabIds: readonly string[]
+  ): void {
+    const pendingCounts =
+      this.pendingActivationCountsByWorktree.get(worktreeId) ?? new Map<string, number>()
+    for (const tabId of new Set(tabIds)) {
+      pendingCounts.set(tabId, (pendingCounts.get(tabId) ?? 0) + 1)
+    }
+    this.pendingActivationCountsByWorktree.set(worktreeId, pendingCounts)
+    if (!clientNavigationId) {
+      return
+    }
     const state = this.getState(clientNavigationId, worktreeId, true)!
     for (const tabId of new Set(tabIds)) {
       state.pendingActivationCounts.set(tabId, (state.pendingActivationCounts.get(tabId) ?? 0) + 1)
@@ -198,23 +207,41 @@ export class ClientSessionTabClosureTracker {
   }
 
   finishActivation(
-    clientNavigationId: string,
-    snapshot: RuntimeMobileSessionTabsResult,
+    clientNavigationId: string | undefined,
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsResult | undefined,
     tabIds: readonly string[]
   ): void {
-    const state = this.getState(clientNavigationId, snapshot.worktree)
-    if (!state) {
-      return
-    }
+    const pendingCounts = this.pendingActivationCountsByWorktree.get(worktreeId)
     for (const tabId of new Set(tabIds)) {
-      const count = state.pendingActivationCounts.get(tabId) ?? 0
+      const count = pendingCounts?.get(tabId) ?? 0
       if (count <= 1) {
-        state.pendingActivationCounts.delete(tabId)
+        pendingCounts?.delete(tabId)
       } else {
-        state.pendingActivationCounts.set(tabId, count - 1)
+        pendingCounts?.set(tabId, count - 1)
       }
     }
-    this.project(snapshot, clientNavigationId)
+    if (pendingCounts?.size === 0) {
+      this.pendingActivationCountsByWorktree.delete(worktreeId)
+    }
+    if (clientNavigationId) {
+      const state = this.getState(clientNavigationId, worktreeId)
+      if (state) {
+        for (const tabId of new Set(tabIds)) {
+          const count = state.pendingActivationCounts.get(tabId) ?? 0
+          if (count <= 1) {
+            state.pendingActivationCounts.delete(tabId)
+          } else {
+            state.pendingActivationCounts.set(tabId, count - 1)
+          }
+        }
+      }
+    }
+    if (snapshot) {
+      this.project(snapshot, clientNavigationId)
+    } else if (clientNavigationId) {
+      this.pruneState(clientNavigationId, worktreeId)
+    }
   }
 
   isForgotten(clientNavigationId: string | undefined, worktreeId: string, tabId: string): boolean {
@@ -239,6 +266,17 @@ export class ClientSessionTabClosureTracker {
         ])
       )
       this.forgottenTabIdsByWorktree.delete(oldWorktreeId)
+    }
+    const oldPendingActivationCounts = this.pendingActivationCountsByWorktree.get(oldWorktreeId)
+    if (oldPendingActivationCounts) {
+      const pendingActivationCounts = new Map(
+        this.pendingActivationCountsByWorktree.get(newWorktreeId)
+      )
+      for (const [tabId, count] of oldPendingActivationCounts) {
+        pendingActivationCounts.set(tabId, (pendingActivationCounts.get(tabId) ?? 0) + count)
+      }
+      this.pendingActivationCountsByWorktree.set(newWorktreeId, pendingActivationCounts)
+      this.pendingActivationCountsByWorktree.delete(oldWorktreeId)
     }
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
       const oldState = statesByWorktree.get(oldWorktreeId)

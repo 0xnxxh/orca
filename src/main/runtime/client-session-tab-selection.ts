@@ -42,10 +42,7 @@ function emptyClientSessionTabSelection(): ClientSessionTabSelection {
 }
 
 function topLevelTabId(tab: RuntimeMobileSessionClientTab): string {
-  if (tab.type === 'terminal') {
-    return tab.parentTabId
-  }
-  return tab.id
+  return tab.type === 'terminal' ? tab.parentTabId : tab.id
 }
 
 export class ClientSessionTabSelectionStore {
@@ -261,7 +258,7 @@ export class ClientSessionTabSelectionStore {
   }
 
   beginTabActivation(
-    clientNavigationId: string,
+    clientNavigationId: string | undefined,
     worktreeId: string,
     tabIds: readonly string[]
   ): void {
@@ -269,13 +266,14 @@ export class ClientSessionTabSelectionStore {
   }
 
   finishTabActivation(
-    clientNavigationId: string,
+    clientNavigationId: string | undefined,
     snapshot: RuntimeMobileSessionTabsResult,
     tabIds: readonly string[]
   ): void {
     const worktreeId = this.resolveWorktreeId(snapshot.worktree)
     this.tabClosures.finishActivation(
       clientNavigationId,
+      worktreeId,
       worktreeId === snapshot.worktree ? snapshot : { ...snapshot, worktree: worktreeId },
       tabIds
     )

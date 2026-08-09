@@ -28626,7 +28626,7 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
   })
 
-  it('discards an unattributed pending activation after a client closes the tab', async () => {
+  it('discards an unattributed pending activation after close and an intervening list', async () => {
     const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
     const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
     const { runtime, kill } = makePendingAgentTabActivationRuntime({ spawn })
@@ -28642,6 +28642,8 @@ describe('OrcaRuntimeService', () => {
       reason: 'user',
       clientNavigationId: 'device-a'
     })
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
 
     spawned.resolve({ id: 'serve-materialized-pty' })
     await expect(activation).rejects.toThrow('tab_not_found')
