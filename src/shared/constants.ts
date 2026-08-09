@@ -278,6 +278,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     showTasksButton: true,
     showAutomationsButton: true,
     artifactsEnabled: true,
+    artifactSharingEnabled: false,
     showArtifactsButton: false,
     showMobileButton: true,
     showPinnedWorktreesInGroups: false,

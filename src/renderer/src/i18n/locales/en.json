@@ -10434,7 +10434,15 @@
           "openArtifactsDescriptionV2": "Preview, copy, and manage links shared through your account.",
           "signInTitle": "Sign in to share artifacts",
           "signInDescription": "Use your Orca account to upload artifacts and manage their public links.",
-          "signInAgain": "Sign in again"
+          "signInAgain": "Sign in again",
+          "enableStepTitle": "Allow publishing first",
+          "enableStepWebDescription": "Open Settings → Artifacts in the Orca desktop app on the host device and turn publishing on. Until then every share fails with artifact_sharing_disabled.",
+          "enableStepDescription": "Turn on “Allow publishing public artifact links” above. Until then every share fails with artifact_sharing_disabled.",
+          "allowPublishing": "Allow publishing public artifact links",
+          "allowPublishingWebDescription": "Desktop only. This capability is granted on the device running Orca — open Settings → Artifacts there to change it. Shown read-only here so it matches what that device enforces.",
+          "allowPublishingDescription": "Off by default. When on, anything running on this device — your agents and the orca CLI — can upload HTML and Markdown files to your Orca account and mint links anyone with the URL can open. Turning it off does not delete existing links — remove those from Artifacts.",
+          "howToDescriptionDisabled": "Publishing is off, so nothing on this device can create a public link yet. Allow it first, then ask your agent to share an HTML or Markdown file.",
+          "allowPublishingSearchDescription": "Let agents and the orca CLI upload files to your Orca account and mint public links."
         },
         "orcaAccount": {
           "connected": "Connected",
@@ -14954,6 +14962,9 @@
           "moreAvailable": "More artifacts are available",
           "moreAvailableCopy": "Load the next page to continue.",
           "loadMoreFailed": "Could not load more artifacts.",
+          "publishingOff": "Publishing is turned off",
+          "publishingOffCopy": "Nothing on this device can create a public artifact link yet. Allow publishing in Settings → Artifacts, then ask your agent to share an HTML or Markdown file.",
+          "openArtifactsSettings": "Open Settings → Artifacts",
           "loadedCountMore": "{{count}} loaded · more available",
           "loadedCount": "{{count}} shared",
           "retry": "Retry",
