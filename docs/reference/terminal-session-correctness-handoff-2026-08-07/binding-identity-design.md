@@ -207,3 +207,47 @@ change. Neither is justified by evidence today. Recorded rather than hidden.
    2 -> 19 -> 20 was.
 4. Durable intent-to-kill, since kill is the reclamation path for orphaned leases
    and a one-shot renderer broadcast should not be its only chance.
+
+---
+
+# Duplicate agent resume: why I did not add the fix I recommended
+
+Adoption item 1 was a typed end-reason recorded at end time — `detached` (the
+user quit; not a resume candidate) versus `terminal-exited` (it died under the
+agent; resumable) — on the grounds that a boolean `ended` cannot express the
+difference, which is why systems keep resuming things they should not.
+
+I went to implement it and stopped, because the codebase already contains that
+idea three times over.
+
+`SleepingAgentSessionRecord` (`src/shared/agent-session-resume.ts`) carries:
+
+- `origin?: 'worktree-sleep' | 'quit' | 'live'` — added so worktree activation
+  would not launch a tab that a warm reattach had already restored (#5232);
+- `restoreOnTabOpenOnly?: boolean` — added so a mobile wake would not background
+  mount every slept tab and respawn the workspace the user just slept (#11598);
+- `automaticResumeBlockedBy?: 'legacy-orchestration-worker'` — added so a
+  relaunch could not race a durable orchestration assignment.
+
+Three fields, three incidents, one defect: something resumed that should not
+have. They are consulted at 22 non-test sites. A fourth flag — however well
+typed — is the fifth containment cycle, which is the failure pattern this
+program exists to break.
+
+The peer designs that do not have this bug do not have a better flag. They have
+a different shape:
+
+1. **Nothing resumes automatically.** Resume is a button. On click it resumes
+   into a _brand-new terminal id_, re-points the pane, then kills the old
+   terminal — so two live agents for one pane never exist even transiently.
+2. **Two-agents-in-one-terminal is unrepresentable.** The terminal id is the
+   agent binding's primary key with a cascade to the session row, and live reads
+   inner-join on the session being active — so a dead terminal's agent cannot
+   appear in a read no matter how the terminal died.
+
+Neither is a 30-line change here, and (1) is a product decision about whether
+automatic resume stays a feature. That belongs to the user, not to me.
+
+What is safe to say: the next duplicate-resume incident should not be answered
+with a fourth predicate on this record. The record already proves that approach
+does not converge.
