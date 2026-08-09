@@ -315,6 +315,29 @@ describe('STA-3077 step P: the fold never synthesizes a pair that was never writ
     ).toBeUndefined()
   })
 
+  // Case 7 of the fold matrix, and the one two independent reviewers both landed on. A moving
+  // binding with NO incarnation of its own must not inherit local's leftover: (arriving pty,
+  // unrelated incarnation) is a pair no writer produced, and persistPtyBinding's CAS compares both,
+  // so it would refuse this pane's next legitimate update.
+  it('does not pair a moving binding with a local incarnation when it has none of its own', async () => {
+    const paneKey = `${TAB}:${LEAF}`
+    const localSession = paneSession('pty-1') as unknown as {
+      terminalLayoutsByTabId: Record<string, { ptyIdsByLeafId: Record<string, string> }>
+      terminalPtyIncarnationsByPaneKey: Record<string, string>
+    }
+    localSession.terminalLayoutsByTabId[TAB]!.ptyIdsByLeafId = {}
+    localSession.terminalPtyIncarnationsByPaneKey = { [paneKey]: 'inc-orphaned' }
+    const store = await createStore({
+      workspaceSession: localSession,
+      // The ssh partition carries the binding but never an incarnation for it.
+      workspaceSessionsByHostId: { [SSH_PARTITION]: paneSession('pty-9') }
+    })
+
+    const local = store.getWorkspaceSession()
+    expect(local.terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(appPtyId('pty-9'))
+    expect(local.terminalPtyIncarnationsByPaneKey?.[paneKey]).toBeUndefined()
+  })
+
   // A local incarnation with no local binding is a leftover, not a fence. When the ssh binding is
   // the one that survives, its own incarnation must come with it and outrank that leftover —
   // otherwise the surviving pty is fenced by a value never written beside it.
