@@ -50,7 +50,21 @@ on:
       - 'tests/e2e/helpers/computer-cli-driver.ts'
       - 'tests/e2e/helpers/computer-driver.ts'
       - 'tests/e2e/vitest.config.ts'
+      - 'tests/tools/macos-appkit-dashboard-hang-repro.mjs'
+      - 'tests/tools/macos-appkit-dashboard-mobile-session.mjs'
+      - 'tests/tools/macos-appkit-dashboard-mobile-session.test.mjs'
   workflow_dispatch:
+    inputs:
+      appkit_dashboard_hang_repro:
+        description: 'Run the isolated macOS 26 dashboard/mobile AppKit hang reproduction'
+        required: false
+        default: false
+        type: boolean
+      appkit_repro_minutes:
+        description: 'Minutes to keep the dashboard/mobile reproduction topology alive'
+        required: false
+        default: '30'
+        type: string
   schedule:
     - cron: '0 6 * * *'
 
@@ -172,10 +186,45 @@ jobs:
       - name: Swift tests and signed universal helper verification
         run: pnpm verify:computer-native
 
+  macos-appkit-dashboard-hang-repro:
+    if: github.event_name == 'workflow_dispatch' && inputs.appkit_dashboard_hang_repro == true
+    runs-on: macos-26-arm64
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:electron-vite
+      - name: Validate mobile Home protocol fixture
+        run: >-
+          pnpm vitest run --config config/vitest.config.ts
+          tests/tools/macos-appkit-dashboard-mobile-session.test.mjs
+      - name: Reproduce dashboard/mobile AppKit hang with Electron CDP
+        env:
+          ORCA_APPKIT_REPRO_MINUTES: ${{ inputs.appkit_repro_minutes }}
+          ORCA_APPKIT_REPRO_EVIDENCE_DIR: artifacts/macos-appkit-dashboard-hang-repro
+        run: node tests/tools/macos-appkit-dashboard-hang-repro.mjs
+      - name: Upload AppKit hang evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-appkit-dashboard-hang-repro-${{ github.run_attempt }}
+          path: artifacts/macos-appkit-dashboard-hang-repro
+          if-no-files-found: error
+
   mac:
     # macOS Accessibility and Screen Recording require user-granted TCC entries.
     # Keep this on manual/scheduled permission-bearing runners instead of PR CI.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.appkit_dashboard_hang_repro != true)
     runs-on: macos-15
     env:
       ORCA_COMPUTER_E2E: '1'
@@ -195,7 +244,7 @@ jobs:
       - run: pnpm test:e2e:computer --reporter=verbose tests/e2e/computer-mac.e2e.ts tests/e2e/computer-mac-safari.e2e.ts
 
   linux:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.appkit_dashboard_hang_repro != true)
     runs-on: ubuntu-22.04
     env:
       ORCA_COMPUTER_E2E: '1'
@@ -222,7 +271,7 @@ jobs:
       - run: xvfb-run --auto-servernum dbus-run-session -- pnpm test:e2e:computer --reporter=verbose tests/e2e/computer-linux.e2e.ts
 
   windows:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.appkit_dashboard_hang_repro != true)
     runs-on: windows-latest
     env:
       ORCA_COMPUTER_E2E: '1'

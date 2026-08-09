@@ -151,6 +151,36 @@ describe('computer-use e2e workflow', () => {
     )
   })
 
+  it('runs the dashboard/mobile AppKit repro only for its manual dispatch', () => {
+    const workflow = parse(
+      readFileSync(join(projectDir, '.github/workflows/computer-e2e.yml'), 'utf8')
+    )
+    const input = workflow.on.workflow_dispatch.inputs.appkit_dashboard_hang_repro
+    const job = workflow.jobs['macos-appkit-dashboard-hang-repro']
+    const runs = job.steps.map((step) => step.run).filter((run) => typeof run === 'string')
+    const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v6')
+    const artifact = job.steps.find((step) => step.uses === 'actions/upload-artifact@v7')
+
+    expect(input).toMatchObject({ default: false, type: 'boolean' })
+    expect(job.if).toContain('inputs.appkit_dashboard_hang_repro == true')
+    expect(job['runs-on']).toBe('macos-26-arm64')
+    expect(checkout.with['persist-credentials']).toBe(false)
+    expect(runs).toContain('pnpm build:electron-vite')
+    expect(runs.join('\n')).toContain('macos-appkit-dashboard-mobile-session.test.mjs')
+    expect(runs).toContain('node tests/tools/macos-appkit-dashboard-hang-repro.mjs')
+    expect(artifact.if).toBe('always()')
+    expect(workflow.on.pull_request.paths).toEqual(
+      expect.arrayContaining([
+        'tests/tools/macos-appkit-dashboard-hang-repro.mjs',
+        'tests/tools/macos-appkit-dashboard-mobile-session.mjs',
+        'tests/tools/macos-appkit-dashboard-mobile-session.test.mjs'
+      ])
+    )
+    for (const jobName of ['mac', 'linux', 'windows']) {
+      expect(workflow.jobs[jobName].if).toContain('inputs.appkit_dashboard_hang_repro != true')
+    }
+  })
+
   it('runs deterministic macOS owner-loss benchmark cleanup coverage', () => {
     const benchmark = readFileSync(
       join(projectDir, 'config/scripts/macos-computer-helper-owner-loss-benchmark.mjs'),
