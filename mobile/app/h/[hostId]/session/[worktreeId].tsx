@@ -1970,14 +1970,15 @@ export default function SessionScreen() {
         return
       }
       const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
+      const ownsRead = sessionTabIntentRef.current.beginDocumentRead(tab.id)
       setMarkdownDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
       try {
         const doc = await readMobileMarkdownTab(client, worktreeId, tab, ownsRoute)
-        if (doc && ownsRoute()) {
+        if (doc && ownsRoute() && ownsRead()) {
           setMarkdownDocs((prev) => new Map(prev).set(tab.id, doc))
         }
       } catch {
-        if (!ownsRoute()) {
+        if (!ownsRoute() || !ownsRead()) {
           return
         }
         setMarkdownDocs((prev) =>
@@ -1997,6 +1998,7 @@ export default function SessionScreen() {
         return
       }
       const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
+      const ownsRead = sessionTabIntentRef.current.beginDocumentRead(tab.id)
       setFileDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
       try {
         const doc = await resolveMobileFileTabDoc(client, {
@@ -2004,11 +2006,11 @@ export default function SessionScreen() {
           relativePath: tab.relativePath,
           diffSource: tab.diffSource
         })
-        if (ownsRoute()) {
+        if (ownsRoute() && ownsRead()) {
           setFileDocs((prev) => new Map(prev).set(tab.id, doc))
         }
       } catch (err) {
-        if (!ownsRoute()) {
+        if (!ownsRoute() || !ownsRead()) {
           return
         }
         const message = err instanceof Error ? err.message : ''

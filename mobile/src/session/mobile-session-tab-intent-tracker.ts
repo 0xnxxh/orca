@@ -8,6 +8,8 @@ export class MobileSessionTabIntentTracker {
   diffActivationSeq = 0
   pendingFocusKey: string | null = null
   private routeRevision = 0
+  private documentReadRevision = 0
+  private documentReadRevisionsByTabId = new Map<string, number>()
   private tabCreateRevisions: Record<MobileSessionTabCreateKind, number> = {
     terminal: 0,
     browser: 0,
@@ -29,6 +31,7 @@ export class MobileSessionTabIntentTracker {
     this.hostId = hostId
     this.worktreeId = worktreeId
     this.routeRevision += 1
+    this.documentReadRevisionsByTabId.clear()
     this.supersede()
   }
 
@@ -43,6 +46,18 @@ export class MobileSessionTabIntentTracker {
 
   pendingActivationKey(tab: { id: string; leafId?: string }): string {
     return JSON.stringify([this.hostId, this.worktreeId, tab.id, tab.leafId ?? ''])
+  }
+
+  beginDocumentRead(tabId: string): () => boolean {
+    const revision = ++this.documentReadRevision
+    this.documentReadRevisionsByTabId.set(tabId, revision)
+    return () => {
+      const isCurrent = this.documentReadRevisionsByTabId.get(tabId) === revision
+      if (isCurrent) {
+        this.documentReadRevisionsByTabId.delete(tabId)
+      }
+      return isCurrent
+    }
   }
 
   beginTabCreate(kind: MobileSessionTabCreateKind): number {

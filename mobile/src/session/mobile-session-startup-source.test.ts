@@ -307,7 +307,11 @@ describe('mobile session startup', () => {
       expect(readTab).toContain(
         'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
       )
+      expect(readTab).toContain(
+        'const ownsRead = sessionTabIntentRef.current.beginDocumentRead(tab.id)'
+      )
       expect(readTab).toContain('ownsRoute()')
+      expect(readTab).toContain('ownsRead()')
     }
     for (const readEffect of [readMarkdownEffect, readFileEffect]) {
       expect(readEffect).toContain('activeSessionTab.id !== activeSessionTabIdRef.current')

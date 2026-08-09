@@ -95,4 +95,28 @@ describe('MobileSessionTabIntentTracker', () => {
     expect(ownsFirstVisit()).toBe(false)
     expect(tracker.captureRouteOwnership('host-a', 'worktree-a')()).toBe(true)
   })
+
+  it('supersedes an older document read without cancelling other tabs', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    const firstA = tracker.beginDocumentRead('tab-a')
+    const firstB = tracker.beginDocumentRead('tab-b')
+
+    const secondA = tracker.beginDocumentRead('tab-a')
+
+    expect(firstA()).toBe(false)
+    expect(secondA()).toBe(true)
+    expect(firstB()).toBe(true)
+  })
+
+  it('invalidates document reads on route reuse', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    tracker.setRoute('host-a', 'worktree-a')
+    const stale = tracker.beginDocumentRead('tab-a')
+
+    tracker.setRoute('host-b', 'worktree-b')
+    tracker.setRoute('host-a', 'worktree-a')
+
+    expect(stale()).toBe(false)
+    expect(tracker.beginDocumentRead('tab-a')()).toBe(true)
+  })
 })
