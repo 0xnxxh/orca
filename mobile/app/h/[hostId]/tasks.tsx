@@ -135,6 +135,7 @@ import {
 } from '../../../src/tasks/mobile-task-providers'
 import { hasSettledHostRepoList } from '../../../src/tasks/host-repo-list'
 import { useHostRepoList } from '../../../src/tasks/use-host-repo-list'
+import { isHostedTaskRepo, reconcileRepoSelection } from '../../../src/tasks/hosted-repo-selection'
 import {
   extractLinearIssueReadItems,
   type LinearMobileIssue
@@ -1119,22 +1120,6 @@ async function mapWithConcurrency<T, R>(
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()))
   return results
-}
-
-function isHostedTaskRepo(repo: RepoSummary): boolean {
-  return repo.kind !== 'folder'
-}
-
-function reconcileRepoSelection(
-  repos: RepoSummary[],
-  persisted: string[] | null | undefined
-): Set<string> {
-  if (!persisted || persisted.length === 0) {
-    return new Set()
-  }
-  const availableIds = new Set(repos.filter(isHostedTaskRepo).map((repo) => repo.id))
-  const selected = persisted.filter((id) => availableIds.has(id))
-  return selected.length === 0 ? new Set() : new Set(selected)
 }
 
 function createLinearTask(issue: LinearIssue): TaskItem {
