@@ -1,0 +1,132 @@
+// #13137: live xterm query replies (color-scheme 997) must use the same
+// ECHO-safe delivery as startup color replies so cooked prompts stay clean.
+import { describe, expect, it, vi } from 'vitest'
+import { PtyStartupIngress, type PtyIngressEmission } from './pty-startup-ingress'
+import type {
+  PtySlaveEchoProbe,
+  PtySlaveLineDisciplineEcho
+} from './pty-slave-line-discipline-echo'
+import { mode2031SequenceFor } from './terminal-color-scheme-protocol'
+import { needsCookedEchoSafeQueryReply } from './terminal-query-reply'
+
+const COLOR_SCHEME_REPLY = mode2031SequenceFor('dark')
+// Why: CSI replies only project ECHOCTL caret form — OSC-rewrite is identity and
+// would re-arm an ESC-led projection. OSC replies keep both.
+const POSIX_CSI_COOKED_ECHO = (reply: string): string => reply.replaceAll('\x1b', '^[')
+const OSC_COLOR_REPLY = '\x1b]11;rgb:00/00/00\x07'
+const POSIX_OSC_COOKED_ECHOES = [
+  (reply: string): string => reply.replaceAll('\x1b', '^['),
+  (reply: string): string => reply.replaceAll('\x1b]', '\x07').replaceAll('\x1b\\', '')
+]
+
+function scriptedEchoProbe(...states: PtySlaveLineDisciplineEcho[]) {
+  let index = 0
+  const probe: PtySlaveEchoProbe & { calls: number } = Object.assign(
+    async () => {
+      probe.calls += 1
+      return states[Math.min(index++, states.length - 1)] ?? 'unknown'
+    },
+    { calls: 0 }
+  )
+  return probe
+}
+
+function visible(emissions: readonly PtyIngressEmission[]): string {
+  return emissions.map((emission) => emission.data).join('')
+}
+
+describe('PtyStartupIngress live query replies (#13137)', () => {
+  it('classifies the real mode-2031 reply as cooked-echo-risk', () => {
+    expect(COLOR_SCHEME_REPLY).toBe('\x1b[?997;1n')
+    expect(needsCookedEchoSafeQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    expect(needsCookedEchoSafeQueryReply(mode2031SequenceFor('light'))).toBe(true)
+  })
+
+  it('swallows a live color-scheme DSR caret echo after query authority closes', () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const emissions: PtyIngressEmission[] = []
+    let ingress!: PtyStartupIngress
+    ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      write: (data) => {
+        writes.push(data)
+        // Kernel ECHOCTL projection of the master write (the #13137 paint).
+        ingress.accept(POSIX_CSI_COOKED_ECHO(data))
+      },
+      onEmission: (emission) => emissions.push(emission)
+    })
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    vi.advanceTimersByTime(0)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    // Echo swallowed — no `^[ [?997;1n` / visible `997;1n` on the emission path.
+    expect(visible(emissions)).toBe('')
+    expect(visible(emissions)).not.toContain('997;1n')
+    expect(visible(emissions)).not.toContain(COLOR_SCHEME_REPLY)
+
+    ingress.accept('Ok to proceed? (y) ')
+    expect(visible(emissions)).toBe('Ok to proceed? (y) ')
+    expect(visible(emissions)).not.toContain('997')
+    // Single write only — delivery must not re-send on success.
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+    vi.useRealTimers()
+  })
+
+  it('swallows OSC color reply echoes under both POSIX projections', () => {
+    vi.useFakeTimers()
+    for (const echoOf of POSIX_OSC_COOKED_ECHOES) {
+      const writes: string[] = []
+      const emissions: PtyIngressEmission[] = []
+      let ingress!: PtyStartupIngress
+      ingress = new PtyStartupIngress({
+        ownerBackend: 'posix-pty',
+        write: (data) => {
+          writes.push(data)
+          ingress.accept(echoOf(data))
+        },
+        onEmission: (emission) => emissions.push(emission)
+      })
+
+      expect(ingress.answerLiveQueryReply(OSC_COLOR_REPLY)).toBe(true)
+      vi.advanceTimersByTime(0)
+      expect(writes).toEqual([OSC_COLOR_REPLY])
+      expect(visible(emissions)).toBe('')
+      ingress.drainAndClose()
+    }
+    vi.useRealTimers()
+  })
+
+  it('defers a live query reply while the slave is still echoing', async () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const probe = scriptedEchoProbe('echoing', 'echoing', 'quiet')
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      echoProbe: probe,
+      write: (data) => writes.push(data),
+      onEmission: () => {}
+    })
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(writes).toEqual([])
+    await vi.advanceTimersByTimeAsync(20)
+    expect(writes).toEqual([])
+    await vi.advanceTimersByTimeAsync(20)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    expect(probe.calls).toBe(3)
+    // Still a single write after quiet — no doubled successful path.
+    await vi.advanceTimersByTimeAsync(200)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+  })
+
+  it('does not route ordinary keystrokes through the echo-safe reply path', () => {
+    expect(needsCookedEchoSafeQueryReply('y')).toBe(false)
+    expect(needsCookedEchoSafeQueryReply('yes\r')).toBe(false)
+    expect(needsCookedEchoSafeQueryReply('\x1b[A')).toBe(false)
+    expect(needsCookedEchoSafeQueryReply('\x1b[3;1R')).toBe(false)
+  })
+})
