@@ -3753,6 +3753,12 @@ const api = {
       ipcRenderer.on('ui:appMenuPaste', listener)
       return () => ipcRenderer.removeListener('ui:appMenuPaste', listener)
     },
+    onAppMenuSelectionAction: (callback: (action: 'copy' | 'select-all') => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, action: 'copy' | 'select-all'): void =>
+        callback(action)
+      ipcRenderer.on('ui:appMenuSelectionAction', listener)
+      return () => ipcRenderer.removeListener('ui:appMenuSelectionAction', listener)
+    },
     onEditableContextPaste: (
       callback: (data: { plainTextOnly: boolean }) => void
     ): (() => void) => {
@@ -4065,6 +4071,9 @@ const api = {
       ipcRenderer.send('ui:performNativePaste', {
         mode: options?.mode === 'paste-and-match-style' ? 'paste-and-match-style' : 'paste'
       })
+    },
+    performNativeSelectionAction: (action: 'copy' | 'select-all'): void => {
+      ipcRenderer.send('ui:performNativeSelectionAction', action)
     },
     writeClipboardFile: (
       args:

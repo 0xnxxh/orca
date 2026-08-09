@@ -3229,6 +3229,7 @@ export type PreloadApi = {
     onDictationKeyDown: (callback: () => void) => () => void
     onExportPdfRequested: (callback: () => void) => () => void
     onAppMenuPaste: (callback: () => void) => () => void
+    onAppMenuSelectionAction: (callback: (action: 'copy' | 'select-all') => void) => () => void
     onEditableContextPaste: (callback: (data: { plainTextOnly: boolean }) => void) => () => void
     onActivateWorktree: (
       callback: (data: {
@@ -3343,6 +3344,7 @@ export type PreloadApi = {
     writeSelectionClipboardText: (text: string) => Promise<void>
     writeClipboardImage: (dataUrl: string) => Promise<void>
     performNativePaste: (options?: { mode?: 'paste' | 'paste-and-match-style' }) => void
+    performNativeSelectionAction: (action: 'copy' | 'select-all') => void
     writeClipboardFile: (
       args:
         | {

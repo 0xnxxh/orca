@@ -2696,8 +2696,12 @@ function createWebUiApi(): NonNullable<Partial<PreloadApi>['ui']> {
     performNativePaste: () => {
       document.execCommand?.('paste')
     },
+    performNativeSelectionAction: (action) => {
+      document.execCommand?.(action === 'copy' ? 'copy' : 'selectAll')
+    },
     onExportPdfRequested: () => noopUnsubscribe,
     onAppMenuPaste: () => noopUnsubscribe,
+    onAppMenuSelectionAction: () => noopUnsubscribe,
     onEditableContextPaste: () => noopUnsubscribe,
     getZoomLevel: () => zoomLevel,
     setZoomLevel: (level) => {

@@ -91,7 +91,9 @@
     "openWorktreePalette": "Open Worktree Palette",
     "window": "Window",
     "help": "Help",
-    "paste": "Paste"
+    "paste": "Paste",
+    "copy": "Copy",
+    "selectAll": "Select All"
   },
   "tray": {
     "openOrca": "Open Orca",
@@ -2817,6 +2819,7 @@
             "ec85df5914": "Quick Commands",
             "0a917b591a": "Paste",
             "f3eeb1de13": "Copy",
+            "selectAll": "Select All",
             "c2f0b72b8d": "Insert",
             "925f49f210": "Expand Pane",
             "df766809e0": "Collapse Pane",
