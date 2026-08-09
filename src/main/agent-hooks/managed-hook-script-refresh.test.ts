@@ -92,12 +92,16 @@ describe('refreshManagedScriptIfPresent', () => {
       expect(await refreshManagedScriptIfPresent(present, 'fresh')).toBe(true)
       expect(readFileSync(present, 'utf8')).toBe('fresh')
 
-      chmodSync(present, 0o600)
+      if (process.platform !== 'win32') {
+        chmodSync(present, 0o600)
+      }
       const fixedTime = new Date(1_000)
       utimesSync(present, fixedTime, fixedTime)
       expect(await refreshManagedScriptIfPresent(present, 'fresh')).toBe(true)
       expect(statSync(present).mtimeMs).toBe(fixedTime.getTime())
-      expect(statSync(present).mode & 0o777).toBe(0o755)
+      if (process.platform !== 'win32') {
+        expect(statSync(present).mode & 0o777).toBe(0o755)
+      }
 
       const missing = join(dir, 'missing.cmd')
       expect(await refreshManagedScriptIfPresent(missing, 'fresh')).toBe(false)
