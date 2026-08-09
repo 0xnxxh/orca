@@ -8,6 +8,10 @@ import {
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
+import {
+  releaseHiddenWebglRetention,
+  tryRetainHiddenPanesWebgl
+} from './terminal-webgl-hidden-retention'
 
 export function setPaneGpuRenderingState(
   panes: Map<number, ManagedPaneInternal>,
@@ -42,14 +46,31 @@ export function markPaneComplexScriptOutput(
   }
 }
 
-export function suspendPaneRendering(panes: Iterable<ManagedPaneInternal>): void {
-  for (const pane of panes) {
+export function suspendPaneRendering(
+  panes: Iterable<ManagedPaneInternal>,
+  retention?: { owner: object; livePanes: () => Iterable<ManagedPaneInternal> }
+): void {
+  const suspended = Array.from(panes)
+  for (const pane of suspended) {
     pane.webglAttachmentDeferred = true
+  }
+  // Keep recent hidden worktrees on live WebGL so switch-back never presents
+  // DOM-fallback frames; evicted/over-cap owners fall back to dispose.
+  if (retention && tryRetainHiddenPanesWebgl(retention.owner, retention.livePanes)) {
+    return
+  }
+  for (const pane of suspended) {
     disposeWebgl(pane)
   }
 }
 
-export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void {
+export function resumePaneRendering(
+  panes: Iterable<ManagedPaneInternal>,
+  retentionOwner?: object
+): void {
+  if (retentionOwner) {
+    releaseHiddenWebglRetention(retentionOwner)
+  }
   for (const pane of panes) {
     // Why: resume (worktree foreground, window wake) is the WebGL retry
     // boundary — Chromium may have restored the GPU process since a context
