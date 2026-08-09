@@ -157,6 +157,7 @@ describe('computer-use e2e workflow', () => {
     )
     const input = workflow.on.workflow_dispatch.inputs.appkit_dashboard_hang_repro
     const runnerInput = workflow.on.workflow_dispatch.inputs.appkit_repro_runner
+    const sourceCommitInput = workflow.on.workflow_dispatch.inputs.appkit_repro_source_commit
     const job = workflow.jobs['macos-appkit-dashboard-hang-repro']
     const runs = job.steps.map((step) => step.run).filter((run) => typeof run === 'string')
     const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v6')
@@ -170,14 +171,19 @@ describe('computer-use e2e workflow', () => {
       type: 'choice'
     })
     expect(job['runs-on']).toBe('${{ inputs.appkit_repro_runner }}')
+    expect(sourceCommitInput).toMatchObject({ default: '', type: 'string' })
     expect(checkout.with['persist-credentials']).toBe(false)
+    expect(runs.join('\n')).toContain('git checkout --detach "$SOURCE_COMMIT"')
     expect(runs).toContain('pnpm build:electron-vite')
+    expect(runs.join('\n')).toContain('macos-appkit-dashboard-activity.test.mjs')
     expect(runs.join('\n')).toContain('macos-appkit-dashboard-mobile-session.test.mjs')
     expect(runs).toContain('node tests/tools/macos-appkit-dashboard-hang-repro.mjs')
     expect(artifact.if).toBe('always()')
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         'tests/tools/macos-appkit-dashboard-hang-repro.mjs',
+        'tests/tools/macos-appkit-dashboard-activity.mjs',
+        'tests/tools/macos-appkit-dashboard-activity.test.mjs',
         'tests/tools/macos-appkit-dashboard-mobile-session.mjs',
         'tests/tools/macos-appkit-dashboard-mobile-session.test.mjs'
       ])

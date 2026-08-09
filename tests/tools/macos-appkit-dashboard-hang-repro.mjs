@@ -7,10 +7,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import electronPath from 'electron'
+import { buildDashboardActivityScript } from './macos-appkit-dashboard-activity.mjs'
 import { MobileHomeSession } from './macos-appkit-dashboard-mobile-session.mjs'
 
 const execFileAsync = promisify(execFile)
 const projectDir = path.resolve(import.meta.dirname, '../..')
+const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+  cwd: projectDir,
+  encoding: 'utf8'
+}).trim()
 const evidenceDir = path.resolve(
   process.env.ORCA_APPKIT_REPRO_EVIDENCE_DIR ??
     path.join(projectDir, 'artifacts', 'macos-appkit-dashboard-hang-repro')
@@ -255,6 +260,7 @@ async function run() {
     cdpPort,
     durationMinutes,
     activationIntervalMs,
+    sourceCommit,
     macos: os.release(),
     arch: os.arch()
   })
@@ -285,6 +291,8 @@ async function run() {
     mobile = new MobileHomeSession(pairingUrl, log)
     await mobile.connect()
     await mobile.startHomeTraffic()
+    const activity = await rendererEval(buildDashboardActivityScript(), 60_000)
+    log('dashboard_terminal_activity_started', { activity })
     log('faithful_topology_ready', {
       mainTab: tabs.mainId,
       popoutTab: tabs.popoutId,
@@ -339,6 +347,7 @@ async function run() {
       failure,
       durationMinutes,
       activationIntervalMs,
+      sourceCommit,
       pid: app.pid,
       runRoot,
       evidenceDir
