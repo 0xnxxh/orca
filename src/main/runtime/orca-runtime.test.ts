@@ -28995,6 +28995,66 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('applies stale markdown reads and saves to the renamed worktree identity', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const readMobileMarkdownTab = vi.fn(async () => ({
+      content: '# note',
+      version: 'version-1'
+    }))
+    const saveMobileMarkdownTab = vi.fn(async () => ({
+      saved: true as const,
+      version: 'version-2'
+    }))
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setNotifier({
+      readMobileMarkdownTab,
+      saveMobileMarkdownTab,
+      worktreesChanged: vi.fn()
+    } as never)
+    runtime['mobileSessionTabsByWorktree'].set(TEST_WORKTREE_ID, {
+      worktree: TEST_WORKTREE_ID,
+      publicationEpoch: 'rename-markdown-race',
+      snapshotVersion: 1,
+      activeGroupId: null,
+      activeTabId: 'markdown-tab',
+      activeTabType: 'markdown',
+      tabs: [
+        {
+          type: 'markdown',
+          id: 'markdown-tab',
+          title: 'Note',
+          filePath: '/tmp/note.md',
+          relativePath: 'note.md',
+          language: 'markdown',
+          mode: 'edit',
+          isDirty: false,
+          isActive: true,
+          sourceFileId: 'source-file',
+          sourceFilePath: '/tmp/note.md',
+          sourceRelativePath: 'note.md',
+          documentVersion: 'version-1'
+        }
+      ]
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    await runtime.readMobileMarkdownTab(`id:${TEST_WORKTREE_ID}`, 'markdown-tab')
+    await runtime.saveMobileMarkdownTab(
+      `id:${TEST_WORKTREE_ID}`,
+      'markdown-tab',
+      'version-1',
+      '# updated'
+    )
+
+    expect(readMobileMarkdownTab).toHaveBeenCalledWith(renamedWorktreeId, 'markdown-tab')
+    expect(saveMobileMarkdownTab).toHaveBeenCalledWith(
+      renamedWorktreeId,
+      'markdown-tab',
+      'version-1',
+      '# updated'
+    )
+  })
+
   it('applies a headless browser close that overlaps a later worktree rename', async () => {
     const browserClose = deferred<void>()
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`

@@ -29770,9 +29770,10 @@ export class OrcaRuntimeService {
     worktreeSelector: string,
     tabId: string
   ): Promise<string> {
-    const worktreeId =
+    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
       this.getValidatedExplicitWorktreeIdSelector(worktreeSelector) ??
-      (await this.resolveWorktreeSelector(worktreeSelector)).id
+        (await this.resolveWorktreeSelector(worktreeSelector)).id
+    )
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const tab = snapshot?.tabs.find(
       (candidate): candidate is RuntimeMobileSessionMarkdownTab =>
