@@ -10,6 +10,7 @@ import {
 import { safeFit, safeFitAndThen } from './pane-fit'
 import { setPaneFitWebglAttachHook } from './pane-fit-webgl-attach-signal'
 import { repairPaneWebglCanvasDprMismatch } from './terminal-canvas-dpr-repair'
+import { repairPaneDomLetterSpacingMismatch } from './terminal-dom-letter-spacing-repair'
 
 export const ENABLE_WEBGL_RENDERER = true
 let suggestedRendererType: 'dom' | undefined
@@ -199,6 +200,9 @@ setPaneFitWebglAttachHook((pane) => {
   // safe moment to catch a canvas whose backing store still reflects a
   // devicePixelRatio from before a hidden-time display change.
   repairPaneWebglCanvasDprMismatch(pane)
+  // Same boundary for a DOM-rendered pane whose grid letter-spacing shows a
+  // poisoned char-size measure (spaced-out small glyphs until re-measured).
+  repairPaneDomLetterSpacingMismatch(pane)
 })
 
 export function attachWebgl(pane: ManagedPaneInternal): void {
