@@ -470,6 +470,49 @@ the `echo hi; rm -rf x` hazard by disarming per-pane state that is keyed per-tab
 G6 is therefore not promotable, and its blocking clauses are structural rather
 than arithmetic.
 
+### The input quarantine is load-bearing, not superseded (2026-08-08)
+
+G6's clause lists "no superseded quarantine ... remains reachable" and
+`terminal-input-quarantine.ts` was assumed to be one. It is not, and the
+evidence is direct.
+
+**The hazard is live.** Disabling the single call site in `pty-connection.ts`
+and running the pane's own oracle reproduces it verbatim, lead-verified:
+
+    AssertionError: expected "vi.fn()" to not be called with arguments:
+      [ 'cho hi; rm -rf x' ]
+
+Deleting the module without a replacement re-opens `rm -rf` execution.
+
+**Contract property B was costed by building it, not estimated.** Threading the
+incarnation to the renderer compiles at **+26 production LOC**, and completing it
+(publishing an incarnation from `resolveTerminalPane`, plus a new exported reader
+for the module-private `ptyIncarnationById` map) is about **+33**. The
+cross-remount state the comparison needs must outlive the destroyed pane, so it
+becomes a module of roughly the size of the one being deleted — the two in-tree
+precedents are 88 and 86 lines. Adding a renderer-side identity comparison would
+also worsen G6's already-failing "one identity comparison" clause. Floor: about
+**+140 production LOC to delete 88**.
+
+**And the route is not uniformly available.** `RuntimeTerminalCreate` and
+`RuntimeTerminalResolvePane` carry no `incarnationId`; remote connect results are
+built without one; and the transport latches `resolvePaneUnavailable` when a host
+answers `method_not_found`. Mixed client/host versions are the normal state, and
+an optional field does not make an old host publish it. So a paired client reads
+_unknown_ — which under this program's own governing rule is not proof of "same
+shell". Requiring proof makes every remote reattach surface unresolved; not
+requiring it needs a fallback, and the only correct fallback is this quarantine.
+Either way the module stays reachable.
+
+`endpointReplaced` is also routine rather than rare — a daemon death remounts
+every live pane — so property B would convert each into a manual per-pane
+reconnect, which is the coverage deletion G6 explicitly prohibits.
+
+**Consequence:** this clause of G6 cannot be closed by deletion. Either the
+clause is amended to recognise the module as load-bearing, or the program accepts
+a net-positive change to replace it with something weaker on remote hosts. That
+is a user decision (call it D5), not one to assume.
+
 ## G7 — No regression and reviewable comprehensive change
 
 **Current status: not started.**
