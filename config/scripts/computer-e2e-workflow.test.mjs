@@ -173,6 +173,7 @@ describe('computer-use e2e workflow', () => {
     expect(job['runs-on']).toBe('${{ inputs.appkit_repro_runner }}')
     expect(sourceCommitInput).toMatchObject({ default: '', type: 'string' })
     expect(checkout.with['persist-credentials']).toBe(false)
+    expect(runs.join('\n')).toContain('git fetch --no-tags --depth=1 origin "$SOURCE_COMMIT"')
     expect(runs.join('\n')).toContain('git checkout --detach "$SOURCE_COMMIT"')
     expect(runs).toContain('pnpm build:electron-vite')
     expect(runs.join('\n')).toContain('macos-appkit-dashboard-activity.test.mjs')

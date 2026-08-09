@@ -223,6 +223,7 @@ jobs:
           harness_dir="$RUNNER_TEMP/orca-appkit-repro-harness"
           mkdir -p "$harness_dir"
           cp tests/tools/macos-appkit-dashboard-*.mjs "$harness_dir/"
+          git fetch --no-tags --depth=1 origin "$SOURCE_COMMIT"
           git checkout --detach "$SOURCE_COMMIT"
           cp "$harness_dir"/*.mjs tests/tools/
       - uses: actions/setup-node@v6
