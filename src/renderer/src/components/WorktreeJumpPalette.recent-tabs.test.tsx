@@ -621,7 +621,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     expect(getTabRowIds()).toContain('tab-alpha')
   })
 
-  it('keeps the current tab in recent when its agent is freshly done', async () => {
+  it('excludes the current tab when its agent is merely done', async () => {
     await renderPalette(
       makeRecentTabState({
         activeWorktreeId: 'wt-alpha',
@@ -635,6 +635,21 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
       })
     )
 
+    // Why: a completion you watched land needs no row — `done` outlives the unread auto-ack by the
+    // whole 30m staleness window, so the slot goes to a workspace off screen instead.
+    expect(getTabRowIds()).toEqual(['tab-beta'])
+  })
+
+  it('still lists a non-current tab whose agent is done', async () => {
+    await renderPalette(
+      makeRecentTabState({
+        agentStatusByPaneKey: {
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'done', Date.now())
+        }
+      })
+    )
+
+    // Why: `done` only stops earning *entry* for the tab on screen — elsewhere it is still news.
     expect(getTabRowIds()).toContain('tab-alpha')
   })
 
@@ -771,6 +786,37 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     expect(getTabRowIds()).toContain('tab-alpha')
     expect(testContainer.textContent).toContain('Alpha chat')
     expect(testContainer.querySelector('[title="Working"]')).not.toBeNull()
+  })
+
+  it('keeps a frozen current row listed when its agent finishes mid-open', async () => {
+    await renderPalette(
+      makeRecentTabState({
+        activeWorktreeId: 'wt-alpha',
+        activeTabType: 'terminal',
+        activeTabId: 'term-alpha',
+        activeTabIdByWorktree: { 'wt-alpha': 'term-alpha' },
+        activeTabTypeByWorktree: { 'wt-alpha': 'terminal' },
+        agentStatusByPaneKey: {
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'working', Date.now())
+        }
+      })
+    )
+
+    expect(getTabRowIds()).toContain('tab-alpha')
+
+    await act(async () => {
+      useAppStore.setState({
+        agentStatusByPaneKey: {
+          [makePaneKey('term-alpha', LEAF_ID)]: makeAgentEntry('term-alpha', 'done', Date.now())
+        }
+      } as Partial<AppState>)
+    })
+    await flushEffects()
+
+    // Why: `done` gates entry, not rendering — a row already in the frozen order keeps its slot and
+    // flips to the completed check rather than blanking under the cursor.
+    expect(getTabRowIds()).toContain('tab-alpha')
+    expect(testContainer.querySelector('[title="Done"]')).not.toBeNull()
   })
 
   it('activates the row a digit chord addresses while open', async () => {
