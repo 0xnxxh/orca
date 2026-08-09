@@ -5,6 +5,7 @@ import type {
   AgentStatusState,
   AgentType
 } from './agent-status-types'
+import type { AgentSessionPtyWriteRefusal } from './agent-session-pty-write-admission'
 import type {
   BaseRefSearchResult,
   BrowserCookieImportResult,
@@ -605,6 +606,11 @@ export type RuntimeTerminalSend = {
   accepted: boolean
   bytesWritten: number
   refusedReason?: 'no-agent' | 'permission'
+  /**
+   * Present only when a durable agent-session lease refused the write. Additive and optional: an
+   * old client sees the `accepted: false` it already handles and ignores this field.
+   */
+  agentSessionRefusal?: AgentSessionPtyWriteRefusal
 }
 
 export type RuntimeTerminalAgentStatusState = 'working' | 'permission' | 'idle' | null
