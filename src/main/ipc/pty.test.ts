@@ -17143,10 +17143,12 @@ describe('registerPtyHandlers', () => {
     } as never)
     registerPtyHandlers(mainWindow as never)
 
-    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, sessionId: 'pty-wsl' })
-
-    expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04')
-    ensureForDistro.mockRestore()
+    try {
+      await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, sessionId: 'pty-wsl' })
+      expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04')
+    } finally {
+      ensureForDistro.mockRestore()
+    }
   })
 
   posixOnlyIt(

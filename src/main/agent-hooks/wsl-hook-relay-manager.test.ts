@@ -405,11 +405,61 @@ describe('WslHookRelayManager', () => {
     expect(deps.installHooks).toHaveBeenCalledTimes(1)
     expect(manager.getGuestEndpointFilePath('Ubuntu')).toBeNull()
 
-    // Re-enabling must work without an app restart — disposeAll stayed non-permanent.
+    // Re-enabling puts the relay back without waiting for the next WSL spawn.
     settings.agentStatusHooksEnabled = true
-    manager.ensureForDistro('Ubuntu')
+    manager.resumeStoppedRelays()
     await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(2))
     manager.disposeAll()
+  })
+
+  it('does not resume a relay whose distro the user shut down while hooks were off', async () => {
+    const settings = { agentStatusHooksEnabled: true }
+    const isDistroRunning = vi.fn(async () => true)
+    const { manager, deps } = createManager({
+      isDistroRunning,
+      managedHookSettings: () => settings
+    })
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(1))
+
+    settings.agentStatusHooksEnabled = false
+    manager.disposeAll({ permanent: false })
+    settings.agentStatusHooksEnabled = true
+    // Why: resuming through `wsl -d` would boot the VM the user shut down, and no agent inside it
+    // is waiting on status — the next WSL terminal re-ensures anyway.
+    isDistroRunning.mockResolvedValue(false)
+    manager.resumeStoppedRelays()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    // A second resume must not retry a distro already consumed by the first.
+    isDistroRunning.mockResolvedValue(true)
+    manager.resumeStoppedRelays()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+  })
+
+  it('abandons a launch that was still in flight when hooks were switched off', async () => {
+    let failSentinel: ((error: unknown) => void) | undefined
+    const { manager, deps } = createManager({
+      waitForSentinel: vi.fn(
+        () =>
+          new Promise<MultiplexerTransport>((_resolve, reject) => {
+            failSentinel = reject
+          })
+      )
+    })
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(1))
+
+    manager.disposeAll({ permanent: false })
+    // The teardown's child kill reaches the in-flight launch as a startup failure; its retry and
+    // guest-install paths must not run, or the user would get an untracked relay after opting out.
+    failSentinel?.(startupError(1))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.runInstall).not.toHaveBeenCalled()
   })
 
   it('requires WSL fs-bridge home coordinates before exposing an endpoint path', () => {
