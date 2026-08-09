@@ -45,6 +45,18 @@ function requireHost(ctx: RpcContext): StructuredAgentSessionHost {
   return host
 }
 
+/** Attach is the only way a session comes into being, so it is the only call
+ *  that builds the host. Every other method addresses a session that must
+ *  already be attached, and correctly reports absent when none is. */
+async function ensureHostInstalled(ctx: RpcContext): Promise<void> {
+  // Gated first: a client that cannot read structured sessions must not be able
+  // to make the host exist, which is an observable side effect of the surface.
+  if (!supportsStructuredSessions(ctx) || getStructuredAgentSessionHost()) {
+    return
+  }
+  await ctx.runtime.ensureStructuredAgentSessionHost()
+}
+
 /** Mirrors the existing agent-session host-authority derivation so one client
  *  gets one operation namespace across both surfaces. */
 function callerFor(ctx: RpcContext): StructuredAgentSessionCaller {
@@ -68,13 +80,17 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
       if (params.envelope.expectedRuntimeFence !== null) {
         throw new Error('agent_session_operation_invalid')
       }
+      await ensureHostInstalled(ctx)
       return requireHost(ctx).attach(callerFor(ctx), params)
     }
   }),
   defineMethod({
     name: 'agentSession.ensure',
     params: AttachParams,
-    handler: async (params, ctx) => requireHost(ctx).attach(callerFor(ctx), params)
+    handler: async (params, ctx) => {
+      await ensureHostInstalled(ctx)
+      return requireHost(ctx).attach(callerFor(ctx), params)
+    }
   }),
   defineMethod({
     name: 'agentSession.send',

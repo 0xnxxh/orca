@@ -69,6 +69,8 @@ import {
   createEphemeralAgentSessionClaimSigner,
   type AgentSessionClaimSigner
 } from './agent-session-claim-identity'
+import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
+import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import {
   agentSessionPtyWriteGate,
   type AgentSessionPtyWriteAdmittance
@@ -9147,6 +9149,24 @@ export class OrcaRuntimeService {
     this.gitCommands.getRuntimeGitRemoteFileUrl.bind(this.gitCommands)
   getRuntimeGitRemoteCommitUrl: RuntimeGitCommands['getRuntimeGitRemoteCommitUrl'] =
     this.gitCommands.getRuntimeGitRemoteCommitUrl.bind(this.gitCommands)
+
+  /**
+   * Installs the structured agent-session host on first use. Lazy for the same
+   * reason the orchestration DB is: the profile's user-data path is not final
+   * until the app is ready, and a runtime nobody drives a chat session on
+   * should never open the record store.
+   */
+  async ensureStructuredAgentSessionHost(): Promise<void> {
+    await installStructuredAgentSessionHost({
+      stateDirectory: getProfileUserDataPath(),
+      hostId: LOCAL_EXECUTION_HOST_ID,
+      claimKeyId: this.agentSessionClaimSigner.keyId,
+      // Resolves folder workspaces as well as git worktrees, so a chat session
+      // in a plain folder lands in the folder rather than failing to resolve.
+      resolveWorkspacePath: async (workspaceId) =>
+        (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path
+    })
+  }
 
   private async resolveRuntimeGitTarget(worktreeSelector: string): Promise<{
     worktree: ResolvedWorktree
