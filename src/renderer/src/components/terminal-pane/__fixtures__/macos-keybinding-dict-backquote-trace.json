@@ -1,7 +1,7 @@
 {
   "recordedFrom": "issue #11170, probe page in Chromium on macOS (reporter's hardware, Korean input source active)",
   "platform": "macos",
-  "note": "The `remapped` case is the reporter's verbatim capture: keydown and keypress both still carry the layout character, and only charCode and the input event's data carry the substituted one. The two negative cases are DERIVED from the same capture by removing the substitution, not separately recorded - see the fixture note on each. No beforeinput record exists in the capture; none is invented here.",
+  "note": "Exactly one case is recorded: `remapped`, the reporter's verbatim capture, where keydown and keypress both still carry the layout character and only charCode and the input event's data carry the substituted one. Every other case is DERIVED from it by changing one thing - the layout character, or the substitution's presence - and is marked `recorded: false` with its own note saying what was changed and why. Do not read the four derived cases as independent captures. No beforeinput record exists in the capture; none is invented here.",
   "cases": [
     {
       "name": "remapped",
