@@ -4004,11 +4004,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
       // Why: a released leaf's agent session belongs to the canonical row now; leaving the record here
       // would cold-restore the same provider session on a pane that no longer owns its PTY.
-      const releasedPaneKeys = new Set(
+      const releasedPaneKeys = new Set<string>(
         [...releasedPtyIdsByTabId].flatMap(([tabId, releasedPtyIds]) =>
-          collectReleasedLeafIds(session.terminalLayoutsByTabId[tabId], releasedPtyIds).map(
-            (leafId) => `${tabId}:${leafId}`
-          )
+          collectReleasedLeafIds(session.terminalLayoutsByTabId[tabId], releasedPtyIds)
+            // Why: persisted ptyIdsByLeafId keys are unvalidated strings, and makePaneKey throws on non-UUIDs.
+            .filter(isTerminalLeafId)
+            .map((leafId) => makePaneKey(tabId, leafId))
         )
       )
       if (releasedPaneKeys.size > 0) {
