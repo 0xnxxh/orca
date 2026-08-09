@@ -7278,7 +7278,7 @@ export class Store {
         continue
       }
       const host: WorkspaceSessionState | undefined = partitions[hostId]
-      const movedPaneKeys: string[] = []
+      const incarnations = host?.terminalPtyIncarnationsByPaneKey
       for (const [tabId, layout] of Object.entries(host?.terminalLayoutsByTabId ?? {})) {
         const bindings = layout.ptyIdsByLeafId
         if (!bindings || Object.keys(bindings).length === 0) {
@@ -7291,32 +7291,33 @@ export class Store {
           continue
         }
         const localBindings = localLayout.ptyIdsByLeafId ?? {}
-        // The incarnation follows the WINNING binding, so a leaf contributes one only when the
-        // moved pty is the one that ends up bound — either local had none, or both name the same
-        // pty. Where local wins with a DIFFERENT pty, this partition's incarnation belongs to the
-        // binding that lost: pairing it with local's pty would synthesize a pair that was never
-        // written, and the CAS would then refuse the pane's next legitimate update.
-        movedPaneKeys.push(
-          ...Object.keys(bindings)
-            .filter((leafId) => !localBindings[leafId] || localBindings[leafId] === bindings[leafId])
-            .map((leafId) => `${tabId}:${leafId}`)
-        )
+        // An incarnation is the other half of its binding's fence, so it follows that binding and
+        // never outlives it. Every binding here is about to be cleared, so every incarnation here
+        // is resolved in the same pass — one of three ways, by which pty ends up bound.
+        for (const [leafId, ptyId] of Object.entries(bindings)) {
+          const paneKey = `${tabId}:${leafId}`
+          const incarnationId = incarnations?.[paneKey]
+          const localPtyId = localBindings[leafId]
+          if (incarnationId && !localPtyId) {
+            // This binding moves, so its incarnation moves with it and outranks any local value:
+            // a local incarnation with no binding is a leftover, not a fence.
+            local.terminalPtyIncarnationsByPaneKey ??= {}
+            local.terminalPtyIncarnationsByPaneKey[paneKey] = incarnationId
+          } else if (incarnationId && localPtyId === ptyId) {
+            // Same shell from both sides; keep whichever fence local already holds.
+            local.terminalPtyIncarnationsByPaneKey ??= {}
+            local.terminalPtyIncarnationsByPaneKey[paneKey] ??= incarnationId
+          }
+          // The remaining case is local winning with a DIFFERENT pty. This incarnation belongs to
+          // the binding that just lost, so it is dropped rather than moved: pairing it with local's
+          // pty would synthesize a pair no writer produced, and leaving it here would orphan it
+          // from a binding that no longer exists.
+          if (incarnationId) {
+            delete incarnations![paneKey]
+          }
+        }
         localLayout.ptyIdsByLeafId = { ...bindings, ...localBindings }
         layout.ptyIdsByLeafId = {}
-        changed = true
-      }
-      // The incarnation is the other half of the same fence, so it moves with its binding and only
-      // with its binding: `persistPtyBinding` writes both into one partition, and separating them
-      // in either direction leaves a CAS comparing against a guard that is somewhere else.
-      const incarnations = host?.terminalPtyIncarnationsByPaneKey
-      for (const paneKey of movedPaneKeys) {
-        const incarnationId = incarnations?.[paneKey]
-        if (!incarnationId) {
-          continue
-        }
-        local.terminalPtyIncarnationsByPaneKey ??= {}
-        local.terminalPtyIncarnationsByPaneKey[paneKey] ??= incarnationId
-        delete incarnations[paneKey]
         changed = true
       }
     }

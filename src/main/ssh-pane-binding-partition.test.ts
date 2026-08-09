@@ -308,6 +308,36 @@ describe('STA-3077 step P: the fold never synthesizes a pair that was never writ
     const local = store.getWorkspaceSession()
     expect(local.terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(appPtyId('pty-2'))
     expect(local.terminalPtyIncarnationsByPaneKey?.[`${TAB}:${LEAF}`]).not.toBe('inc-pty-1')
+    // Not merely "not copied" — the losing binding is cleared, so leaving its incarnation here
+    // would strand a fence with nothing to fence.
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).terminalPtyIncarnationsByPaneKey?.[`${TAB}:${LEAF}`]
+    ).toBeUndefined()
+  })
+
+  // A local incarnation with no local binding is a leftover, not a fence. When the ssh binding is
+  // the one that survives, its own incarnation must come with it and outrank that leftover —
+  // otherwise the surviving pty is fenced by a value never written beside it.
+  it('lets a moving binding overwrite a local incarnation that fences nothing', async () => {
+    const paneKey = `${TAB}:${LEAF}`
+    const sshSession = paneSession('pty-1') as unknown as {
+      terminalPtyIncarnationsByPaneKey: Record<string, string>
+    }
+    sshSession.terminalPtyIncarnationsByPaneKey = { [paneKey]: 'inc-pty-1' }
+    const localSession = paneSession('pty-1') as unknown as {
+      terminalLayoutsByTabId: Record<string, { ptyIdsByLeafId: Record<string, string> }>
+      terminalPtyIncarnationsByPaneKey: Record<string, string>
+    }
+    localSession.terminalLayoutsByTabId[TAB]!.ptyIdsByLeafId = {}
+    localSession.terminalPtyIncarnationsByPaneKey = { [paneKey]: 'inc-orphaned' }
+    const store = await createStore({
+      workspaceSession: localSession,
+      workspaceSessionsByHostId: { [SSH_PARTITION]: sshSession }
+    })
+
+    const local = store.getWorkspaceSession()
+    expect(local.terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(appPtyId('pty-1'))
+    expect(local.terminalPtyIncarnationsByPaneKey?.[paneKey]).toBe('inc-pty-1')
   })
 })
 
