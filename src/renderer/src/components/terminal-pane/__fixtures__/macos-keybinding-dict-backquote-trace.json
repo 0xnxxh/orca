@@ -44,6 +44,46 @@
       ]
     },
     {
+      "name": "remapped-other-korean-layout",
+      "note": "DERIVED, not separately recorded: the `remapped` capture with the layout character changed to the one 세벌식 최종 puts on the same physical key. Korean layouts disagree about that position - 두벌식 and 세벌식 390 give U+20A9, 세벌식 최종 gives an asterisk - so one dict entry has to survive either. Honouring the substitution by listing characters can only cover the ones someone remembered to list.",
+      "recorded": false,
+      "expectedPty": "`",
+      "dom": [
+        {
+          "type": "keydown",
+          "key": "*",
+          "code": "Backquote",
+          "keyCode": 192,
+          "isComposing": false,
+          "value": ""
+        },
+        {
+          "type": "keypress",
+          "key": "*",
+          "code": "Backquote",
+          "keyCode": 96,
+          "charCode": 96,
+          "isComposing": false,
+          "value": ""
+        },
+        {
+          "type": "input",
+          "data": "`",
+          "inputType": "insertText",
+          "isComposing": false,
+          "value": "`"
+        },
+        {
+          "type": "keyup",
+          "key": "*",
+          "code": "Backquote",
+          "keyCode": 192,
+          "isComposing": false,
+          "value": "`"
+        }
+      ]
+    },
+    {
       "name": "no-remap-korean",
       "note": "DERIVED, not separately recorded: the `remapped` capture with the dict substitution removed, so the layout's own character is what the text system commits. charCode and input.data become U+20A9 to match keydown.key. This is the paired negative - the same physical key with no remap in play must still deliver the layout character.",
       "recorded": false,
