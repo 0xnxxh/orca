@@ -2751,6 +2751,7 @@ export class OrcaRuntimeService {
     {
       result: Promise<RuntimeMobileSessionCreateTerminalResult>
       activationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
+      workspaceLaunch: ActiveTerminalWorkspaceLaunch
     }
   >()
   private readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
@@ -25586,7 +25587,8 @@ export class OrcaRuntimeService {
               activeLaunch,
               explicitWorktreeId
             ),
-            activationIntents
+            activationIntents,
+            workspaceLaunch: activeLaunch
           }
           this.mobileTerminalCreateByMutationId.set(mutationKey, run)
           const drop = (): void => {
@@ -25601,7 +25603,22 @@ export class OrcaRuntimeService {
           }, drop)
         }
         clientActivationIntents = run.activationIntents
+        const inheritRunWorkspaceLaunch = (): void => {
+          if (
+            run.workspaceLaunch === activeLaunch ||
+            activeLaunch.worktreeId ||
+            !run.workspaceLaunch.worktreeId
+          ) {
+            return
+          }
+          // Why: a path/name retry shares the create but still needs its resolved rename lineage.
+          activeLaunch.worktreeId = run.workspaceLaunch.worktreeId
+          activeLaunch.worktreePath = run.workspaceLaunch.worktreePath
+          activeLaunch.pendingRenames.length = 0
+        }
+        inheritRunWorkspaceLaunch()
         result = await run.result
+        inheritRunWorkspaceLaunch()
       }
       if (select) {
         const worktreeId =

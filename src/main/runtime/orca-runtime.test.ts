@@ -32461,6 +32461,80 @@ describe('OrcaRuntimeService', () => {
     expect(retried).toBe(first)
   })
 
+  it('keeps a path-selected mobile create retry bound through a worktree rename', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const created = {
+      tab: { id: 'tab-path-retry' },
+      publicationEpoch: 'path-retry',
+      snapshotVersion: 1
+    } as Awaited<ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>>
+    const createResult = deferred<typeof created>()
+    const runtime = new OrcaRuntimeService(store)
+    runtime['runCreateMobileSessionTerminal'] = vi.fn(async (_selector, _opts, activeLaunch) => {
+      activeLaunch!.worktreeId = TEST_WORKTREE_ID
+      activeLaunch!.worktreePath = TEST_WORKTREE_PATH
+      return await createResult.promise
+    })
+    runtime['getMobileSessionTabsForWorktree'] = vi.fn(
+      (worktree) => ({ worktree, tabs: [] }) as never
+    )
+    runtime['applyMobileSessionTabNavigation'] = vi.fn()
+    runtime['resolveWorktreeSelector'] = vi.fn(async () => {
+      throw new Error('worktree_not_found')
+    })
+
+    const first = runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      clientMutationId: 'mutation-path-rename'
+    })
+    await vi.waitFor(() => expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledOnce())
+    const retry = runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      clientMutationId: 'mutation-path-rename'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    createResult.resolve(created)
+
+    await expect(first).resolves.toBe(created)
+    await expect(retry).resolves.toBe(created)
+    expect(runtime['resolveWorktreeSelector']).not.toHaveBeenCalled()
+    expect(runtime['applyMobileSessionTabNavigation']).toHaveBeenCalledTimes(2)
+  })
+
+  it('binds a retained path-selected mobile create retry before its next rename', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const created = {
+      tab: { id: 'tab-retained-path-retry' },
+      publicationEpoch: 'retained-path-retry',
+      snapshotVersion: 1
+    } as Awaited<ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>>
+    const runtime = new OrcaRuntimeService(store)
+    runtime['runCreateMobileSessionTerminal'] = vi.fn(async (_selector, _opts, activeLaunch) => {
+      activeLaunch!.worktreeId = TEST_WORKTREE_ID
+      activeLaunch!.worktreePath = TEST_WORKTREE_PATH
+      return created
+    })
+    runtime['getMobileSessionTabsForWorktree'] = vi.fn(
+      (worktree) => ({ worktree, tabs: [] }) as never
+    )
+    runtime['applyMobileSessionTabNavigation'] = vi.fn()
+    runtime['resolveWorktreeSelector'] = vi.fn(async () => {
+      throw new Error('worktree_not_found')
+    })
+
+    await runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      clientMutationId: 'mutation-retained-path-rename'
+    })
+    const retry = runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      clientMutationId: 'mutation-retained-path-rename'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    await expect(retry).resolves.toBe(created)
+    expect(runtime['resolveWorktreeSelector']).not.toHaveBeenCalled()
+    expect(vi.mocked(runtime['applyMobileSessionTabNavigation']).mock.lastCall?.[0]).toMatchObject({
+      worktree: renamedWorktreeId
+    })
+  })
+
   it('does not dedupe a mobile create in a reused pre-rename worktree path', async () => {
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const runtime = new OrcaRuntimeService(store)
