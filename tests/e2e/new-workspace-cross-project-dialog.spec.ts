@@ -5,8 +5,9 @@ import path from 'node:path'
 import { test, expect } from './helpers/orca-app'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 
-const LONG_REPOSITORY_NAME = 'cross-project-dialog-long-repository-name'
+const LONG_REPOSITORY_NAME = 'cross-project-dialog-long-repository-name'.repeat(3)
 const LONG_REPOSITORY_SLUG = LONG_REPOSITORY_NAME
+const CURRENT_REPOSITORY_NAME = 'current-project-name'.repeat(3)
 
 function runGit(repositoryPath: string, args: string[]): void {
   execFileSync('git', args, { cwd: repositoryPath, stdio: 'pipe' })
@@ -45,6 +46,30 @@ test('keeps long repository names inside the cross-project confirmation dialog',
       }
       return repository.id
     }, secondRepositoryPath)
+
+    const currentRepositoryId = await orcaPage.evaluate(() => {
+      const store = window.__store
+      const activeWorktreeId = store?.getState().activeWorktreeId
+      if (!store || !activeWorktreeId) {
+        throw new Error('active repository is unavailable')
+      }
+      const entry = Object.entries(store.getState().worktreesByRepo).find(([, worktrees]) =>
+        worktrees.some((worktree) => worktree.id === activeWorktreeId)
+      )
+      if (!entry) {
+        throw new Error('active repository could not be resolved')
+      }
+      return entry[0]
+    })
+    await orcaPage.evaluate(
+      async ({ repositoryId, displayName }) => {
+        const store = window.__store
+        if (!store || !(await store.getState().updateRepo(repositoryId, { displayName }))) {
+          throw new Error('failed to update the current repository name')
+        }
+      },
+      { repositoryId: currentRepositoryId, displayName: CURRENT_REPOSITORY_NAME }
+    )
 
     await electronApp.evaluate(
       ({ ipcMain }, { repositoryId, repositorySlug }) => {

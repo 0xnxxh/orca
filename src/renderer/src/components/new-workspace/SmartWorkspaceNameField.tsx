@@ -2065,10 +2065,10 @@ export default function SmartWorkspaceNameField({
         open={crossRepoPrompt !== null}
         onOpenChange={(next) => !next && dismissCrossRepoPrompt()}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="min-w-0 sm:max-w-md">
+          <DialogHeader className="min-w-0">
             <DialogTitle>{crossRepoSwitchTitle}</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words">
               {translate(
                 'auto.components.new.workspace.SmartWorkspaceNameField.ad188067ae',
                 'The GitHub URL points to'
@@ -2077,7 +2077,7 @@ export default function SmartWorkspaceNameField({
               {crossRepoSwitchDescriptionSuffix}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="sm:flex-wrap">
+          <DialogFooter className="min-w-0 sm:flex-wrap">
             <Button variant="outline" onClick={dismissCrossRepoPrompt}>
               {translate(
                 'auto.components.new.workspace.SmartWorkspaceNameField.6859e2896c',
