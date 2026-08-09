@@ -548,6 +548,9 @@ function App(): React.JSX.Element {
   const historyBackShortcutLabel = useShortcutLabel('worktree.history.back')
   const historyForwardShortcutLabel = useShortcutLabel('worktree.history.forward')
   const floatingTerminalEnabled = useAppStore((s) => s.settings?.floatingTerminalEnabled === true)
+  // Why tracked separately: the flag reads false while settings are still loading, and a
+  // false read at boot must not be treated as the user disabling the feature.
+  const floatingTerminalSettingsHydrated = useAppStore((s) => s.settings !== undefined)
   const floatingTerminalTriggerLocation = useAppStore(
     (s) => s.settings?.floatingTerminalTriggerLocation ?? 'floating-button'
   )
@@ -671,10 +674,13 @@ function App(): React.JSX.Element {
   }, [floatingTerminalEnabled, setFloatingTerminalOpenWithFocus])
 
   useEffect(() => {
-    if (!floatingTerminalEnabled) {
+    // Why the hydration gate: this effect fires on every boot while settings are still
+    // undefined, and closing there discards the restored open state before the real flag
+    // value arrives. Only a hydrated flag-off is an actual disable.
+    if (floatingTerminalSettingsHydrated && !floatingTerminalEnabled) {
       setFloatingTerminalOpenWithFocus(false)
     }
-  }, [floatingTerminalEnabled, setFloatingTerminalOpenWithFocus])
+  }, [floatingTerminalSettingsHydrated, floatingTerminalEnabled, setFloatingTerminalOpenWithFocus])
 
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
