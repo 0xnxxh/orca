@@ -2789,7 +2789,7 @@ export default function MobileTasksScreen({
 
   // Why: Expo reuses this screen for the next host, so an effect reset runs a
   // render too late and the previous host's rows show under the new one. The
-  // repo list resets itself; these are the other client-scoped caches.
+  // repo list resets itself; these are the other adapter-scoped caches.
   const [boundReadOperations, setBoundReadOperations] = useState(taskReadOperations)
   if (boundReadOperations !== taskReadOperations) {
     setBoundReadOperations(taskReadOperations)
@@ -3394,7 +3394,7 @@ export default function MobileTasksScreen({
           return
         }
         // Why: project mode fetches no work items, but its rows are matched against
-        // the repo list, so it must not return before loadRepos() has run.
+        // the repo list, so it must not return before that request settles.
         if (provider === 'github' && githubMode === 'project') {
           setItems([])
           return

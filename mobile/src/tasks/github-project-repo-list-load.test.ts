@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-/** Wiring assertions only. The repo-list behaviour itself (caching, client
+/** Wiring assertions only. The repo-list behaviour itself (caching, adapter
  *  scoping, stale responses, retry) is covered behaviourally in
  *  host-repo-list.test.ts and use-host-repo-list.test.tsx. What cannot be
  *  reached from there is how this 15k-line route consumes the resource, so
@@ -102,8 +102,8 @@ describe('mobile GitHub Project readiness and refresh', () => {
 
   // Regression: Expo reuses this screen for the next host, so an effect-based
   // reset runs a render too late and the previous host's rows show through.
-  it('clears the other client-scoped caches during render', () => {
-    const body = block('if (boundClient !== client) {', '\n  }')
+  it('clears the other adapter-scoped caches during render', () => {
+    const body = block('if (boundReadOperations !== taskReadOperations) {', '\n  }')
     expect(body).toContain('setItems([])')
     expect(body).toContain('setGithubRepoSlugCache({})')
     expect(body, 'a ref write here would leak from an abandoned render').not.toContain('.current =')
@@ -111,8 +111,8 @@ describe('mobile GitHub Project readiness and refresh', () => {
 
   // ...and the ref half belongs in the commit phase, for the same reason.
   it('resets the selection-hydration ref in the commit phase', () => {
-    expect(block('clientRef.current = client', '}, [client])')).toContain(
-      'repoSelectionHydratedRef.current = false'
+    expect(source).toContain(
+      'useLayoutEffect(() => {\n    repoSelectionHydratedRef.current = false\n  }, [taskReadOperations])'
     )
   })
 })
