@@ -130,4 +130,39 @@ describe('ArtifactsSettingsPane', () => {
     await user.click(openButton)
     expect(mocks.openArtifactsPage).toHaveBeenCalledOnce()
   })
+
+  it('shows the publish capability off by default and explains what granting it does', () => {
+    render(<ArtifactsSettingsPane settings={getDefaultSettings('/tmp')} updateSettings={vi.fn()} />)
+
+    expect(
+      screen.getByRole('switch', { name: 'Allow agents to publish artifacts' })
+    ).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByText(/mint links anyone with the URL can open/)).toBeInTheDocument()
+    expect(screen.getByText(/does not delete existing links/)).toBeInTheDocument()
+  })
+
+  it('grants and revokes the publish capability through the toggle', async () => {
+    const user = userEvent.setup()
+    const updateSettings = vi.fn()
+    const { rerender } = render(
+      <ArtifactsSettingsPane
+        settings={{ ...getDefaultSettings('/tmp'), artifactSharingEnabled: false }}
+        updateSettings={updateSettings}
+      />
+    )
+
+    await user.click(screen.getByRole('switch', { name: 'Allow agents to publish artifacts' }))
+    expect(updateSettings).toHaveBeenCalledWith({ artifactSharingEnabled: true })
+
+    rerender(
+      <ArtifactsSettingsPane
+        settings={{ ...getDefaultSettings('/tmp'), artifactSharingEnabled: true }}
+        updateSettings={updateSettings}
+      />
+    )
+    const toggle = screen.getByRole('switch', { name: 'Allow agents to publish artifacts' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await user.click(toggle)
+    expect(updateSettings).toHaveBeenLastCalledWith({ artifactSharingEnabled: false })
+  })
 })

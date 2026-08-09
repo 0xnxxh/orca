@@ -4,6 +4,26 @@ import { translateSearchKeyword } from './settings-search-keywords'
 
 export const getArtifactsSettingsSearchEntries = createLocalizedCatalog(() => [
   {
+    title: translate(
+      'auto.components.settings.artifacts.allowAgentPublishing',
+      'Allow agents to publish artifacts'
+    ),
+    description: translate(
+      'auto.components.settings.artifacts.allowAgentPublishingSearchDescription',
+      'Let agents upload files to your Orca account and mint public links.'
+    ),
+    keywords: [
+      ...translateSearchKeyword('auto.components.settings.artifacts.keywordArtifacts', 'artifacts'),
+      ...translateSearchKeyword('auto.components.settings.artifacts.keywordShare', 'share'),
+      ...translateSearchKeyword('auto.components.settings.artifacts.keywordPublish', 'publish'),
+      ...translateSearchKeyword('auto.components.settings.artifacts.keywordPublic', 'public'),
+      ...translateSearchKeyword(
+        'auto.components.settings.artifacts.keywordPermission',
+        'permission'
+      )
+    ]
+  },
+  {
     title: translate('auto.components.settings.artifacts.showButton', 'Show Artifacts Button'),
     description: translate(
       'auto.components.settings.artifacts.showButtonDescription',

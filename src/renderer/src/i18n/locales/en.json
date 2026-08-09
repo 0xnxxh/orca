@@ -10443,7 +10443,10 @@
           "openArtifactsDescriptionV2": "Preview, copy, and manage links shared through your account.",
           "signInTitle": "Sign in to share artifacts",
           "signInDescription": "Use your Orca account to upload artifacts and manage their public links.",
-          "signInAgain": "Sign in again"
+          "signInAgain": "Sign in again",
+          "allowAgentPublishing": "Allow agents to publish artifacts",
+          "allowAgentPublishingDescription": "Off by default. When on, agents running on this device can upload HTML and Markdown files to your Orca account and mint links anyone with the URL can open. Turning it off does not delete existing links — remove those from Artifacts.",
+          "allowAgentPublishingSearchDescription": "Let agents upload files to your Orca account and mint public links."
         },
         "orcaAccount": {
           "connected": "Connected",

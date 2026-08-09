@@ -29,6 +29,20 @@ export function ArtifactsSettingsPane({
   return (
     <div className="divide-y divide-border">
       <SettingsSwitchRow
+        label={translate(
+          'auto.components.settings.artifacts.allowAgentPublishing',
+          'Allow agents to publish artifacts'
+        )}
+        description={translate(
+          'auto.components.settings.artifacts.allowAgentPublishingDescription',
+          'Off by default. When on, agents running on this device can upload HTML and Markdown files to your Orca account and mint links anyone with the URL can open. Turning it off does not delete existing links — remove those from Artifacts.'
+        )}
+        checked={settings.artifactSharingEnabled === true}
+        onChange={() =>
+          void updateSettings({ artifactSharingEnabled: !settings.artifactSharingEnabled })
+        }
+      />
+      <SettingsSwitchRow
         label={translate('auto.components.settings.artifacts.showButton', 'Show Artifacts Button')}
         description={translate(
           'auto.components.settings.artifacts.showButtonDescription',
