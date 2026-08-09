@@ -3835,9 +3835,9 @@ export default function SessionScreen() {
           })
         }
         if (!selectCreated) {
-          const restoreTabId =
+          const getRestoreTabId = (): string | null =>
             selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null
-          restoreTabSelection(client, `id:${worktreeId}`, () => restoreTabId)
+          restoreTabSelection(client, `id:${worktreeId}`, getRestoreTabId)
           scheduleDelayedAction(() => void fetchSessionTabs(), 500)
           return
         }

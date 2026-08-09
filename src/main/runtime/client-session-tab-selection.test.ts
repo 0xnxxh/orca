@@ -232,6 +232,21 @@ describe('client session-tab selection', () => {
     expect(stale.activeTabId).toBe('terminal-a::leaf-a')
   })
 
+  it('keeps migrated state when the retired pre-rename snapshot is removed', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-a', 'browser-unified')
+    store.forgetTabs('device-a', 'wt-1', ['terminal-a', 'terminal-a::leaf-a'])
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    store.forgetWorktree('wt-1')
+
+    const stale = store.project({ ...initial, worktree: 'wt-renamed' }, 'device-a')
+    expect(stale.activeTabId).toBe('browser-unified')
+    expect(stale.tabs.some((tab) => tab.type === 'terminal')).toBe(false)
+    expect(store.serialize()['device-a']?.['wt-renamed']?.activeTabId).toBe('browser-unified')
+  })
+
   it('does not persist topology-only projections from unrelated worktrees', () => {
     const persisted: PersistedMobileClientTabSelections[] = []
     const store = new ClientSessionTabSelectionStore()

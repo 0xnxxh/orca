@@ -311,7 +311,7 @@ export class ClientSessionTabSelectionStore {
   }
 
   forgetWorktree(worktreeId: string): void {
-    worktreeId = this.resolveWorktreeId(worktreeId)
+    // Why: renderer retires the old snapshot after rename; only remove the exact published identity.
     let changed = false
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
       const state = statesByWorktree.get(worktreeId)
