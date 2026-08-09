@@ -232,10 +232,10 @@ export class ClientSessionTabSelectionStore {
       }
       const statesByWorktree = this.statesByClient.get(id)
       const state = statesByWorktree?.get(worktreeId)
+      const closed = this.tabClosures.forgetTabs(id, worktreeId, state?.selection, tabIds)
       if (!statesByWorktree || !state) {
         continue
       }
-      const closed = this.tabClosures.forgetTabs(id, worktreeId, state.selection, tabIds)
       if (!closed.selectionChanged && !closed.closureChanged) {
         continue
       }

@@ -130,12 +130,16 @@ export class ClientSessionTabClosureTracker {
   forgetTabs(
     clientNavigationId: string,
     worktreeId: string,
-    selection: ClientSessionTabSelection,
+    selection: ClientSessionTabSelection | undefined,
     tabIds: readonly string[]
   ): ReturnType<typeof forgetClosedClientSessionTabs> & { closureChanged: boolean } {
     const state = this.getState(clientNavigationId, worktreeId, true)!
     const previousClosureSize = state.forgottenTabIds.size
-    const closed = forgetClosedClientSessionTabs(selection, state.forgottenTabIds, tabIds)
+    const closed = forgetClosedClientSessionTabs(
+      selection ?? { activeTabId: null, activeGroupId: null, activeTabIdByGroupId: {} },
+      state.forgottenTabIds,
+      tabIds
+    )
     state.forgottenTabIds = closed.closedTabIds
     return { ...closed, closureChanged: closed.closedTabIds.size !== previousClosureSize }
   }

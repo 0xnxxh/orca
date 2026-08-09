@@ -431,6 +431,19 @@ describe('client session-tab selection', () => {
     expect(activated.activeTabId).toBe('terminal-a::leaf-b')
   })
 
+  it('blocks a new client delayed activation of the tab being closed', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    const closureIntent = store.captureTabClosureIntent('device-a')
+    const delayedActivation = store.beginActivationIntent('device-b')
+
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'], closureIntent)
+    const activated = store.activate(full, 'device-b', 'browser-unified', delayedActivation)
+
+    expect(activated.activeTabId).toBe('terminal-a::leaf-a')
+    expect(activated.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+  })
+
   it('retains a close tombstone until an in-flight activation settles after disconnect', () => {
     const store = new ClientSessionTabSelectionStore()
     const full = snapshot()
