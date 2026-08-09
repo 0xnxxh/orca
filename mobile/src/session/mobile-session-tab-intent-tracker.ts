@@ -10,6 +10,8 @@ export class MobileSessionTabIntentTracker {
   private routeRevision = 0
   private documentReadRevision = 0
   private documentReadRevisionsByTabId = new Map<string, number>()
+  private markdownSaveRevision = 0
+  private markdownSaveRevisionsByTabId = new Map<string, number>()
   private tabCreateRevisions: Record<MobileSessionTabCreateKind, number> = {
     terminal: 0,
     browser: 0,
@@ -32,6 +34,7 @@ export class MobileSessionTabIntentTracker {
     this.worktreeId = worktreeId
     this.routeRevision += 1
     this.documentReadRevisionsByTabId.clear()
+    this.markdownSaveRevisionsByTabId.clear()
     this.supersede()
   }
 
@@ -57,6 +60,19 @@ export class MobileSessionTabIntentTracker {
         this.documentReadRevisionsByTabId.delete(tabId)
       }
       return isCurrent
+    }
+  }
+
+  beginMarkdownSave(tabId: string): () => boolean {
+    const revision = ++this.markdownSaveRevision
+    this.markdownSaveRevisionsByTabId.set(tabId, revision)
+    return () => this.markdownSaveRevisionsByTabId.get(tabId) === revision
+  }
+
+  invalidateDocumentOperations(tabIds: Iterable<string>): void {
+    for (const tabId of tabIds) {
+      this.documentReadRevisionsByTabId.delete(tabId)
+      this.markdownSaveRevisionsByTabId.delete(tabId)
     }
   }
 

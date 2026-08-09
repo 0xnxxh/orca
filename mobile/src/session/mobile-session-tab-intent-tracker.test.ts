@@ -112,11 +112,29 @@ describe('MobileSessionTabIntentTracker', () => {
     const tracker = new MobileSessionTabIntentTracker()
     tracker.setRoute('host-a', 'worktree-a')
     const stale = tracker.beginDocumentRead('tab-a')
+    const staleSave = tracker.beginMarkdownSave('tab-a')
 
     tracker.setRoute('host-b', 'worktree-b')
     tracker.setRoute('host-a', 'worktree-a')
 
     expect(stale()).toBe(false)
+    expect(staleSave()).toBe(false)
     expect(tracker.beginDocumentRead('tab-a')()).toBe(true)
+  })
+
+  it('invalidates retired document operations without cancelling other tabs', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    const retiredRead = tracker.beginDocumentRead('tab-a')
+    const retainedRead = tracker.beginDocumentRead('tab-b')
+    const retiredSave = tracker.beginMarkdownSave('tab-a')
+    const retainedSave = tracker.beginMarkdownSave('tab-b')
+
+    tracker.invalidateDocumentOperations(['tab-a'])
+
+    expect(retiredRead()).toBe(false)
+    expect(retiredSave()).toBe(false)
+    expect(retainedRead()).toBe(true)
+    expect(retainedSave()).toBe(true)
+    expect(tracker.beginMarkdownSave('tab-a')()).toBe(true)
   })
 })

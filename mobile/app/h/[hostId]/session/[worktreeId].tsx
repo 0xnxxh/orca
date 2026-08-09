@@ -200,6 +200,7 @@ import { openMobileTerminalFileTap } from '../../../../src/session/mobile-termin
 import { deliverCreatedTerminalPrompt } from '../../../../src/session/created-terminal-prompt-delivery'
 import * as tabCreate from '../../../../src/session/mobile-session-tab-create-lifecycle'
 import { MobileSessionTabIntentTracker } from '../../../../src/session/mobile-session-tab-intent-tracker'
+import documentTabs from '../../../../src/session/mobile-session-document-reconciliation'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
   acceptSessionSnapshot,
@@ -1062,7 +1063,6 @@ export default function SessionScreen() {
   const handleCreateBrowserRef = useRef<((rawUrl?: string) => Promise<boolean>) | null>(null)
 
   const initialSessionAutoCreateRef = useRef(createInitialSessionAutoCreateState())
-  const markdownSaveSeqRef = useRef<Map<string, number>>(new Map())
   const markdownSaveInFlightRef = useRef<Set<string>>(new Set())
   const subscribeSeqRef = useRef<Map<string, number>>(new Map())
   // Why: post-RPC refresh timers capture this screen and must not survive route reuse or unmount.
@@ -1815,25 +1815,18 @@ export default function SessionScreen() {
         closedTabTombstonesRef.current,
         Date.now()
       )
-      const presentTabIds = new Set(nextTabs.map((tab) => tab.id))
-      const orphanedDraftTabs: MobileSessionTab[] = []
-      const currentMarkdownDocs = markdownDocsRef.current
-      const currentSessionTabs = sessionTabsRef.current
-      for (const [tabId, doc] of currentMarkdownDocs) {
-        if (doc.status !== 'ready' || !doc.isDirty || presentTabIds.has(tabId)) {
-          continue
-        }
-        const draftTab = currentSessionTabs.find(
-          (tab): tab is Extract<MobileSessionTab, { type: 'markdown' }> =>
-            tab.type === 'markdown' && tab.id === tabId
-        )
-        if (draftTab) {
-          // Why: mobile edits live on the phone until Save; if the desktop tab vanishes, keep drafts reachable for copy/discard.
-          orphanedDraftTabs.push({ ...draftTab, isActive: tabId === activeSessionTabIdRef.current })
-        }
-      }
-      if (orphanedDraftTabs.length > 0) {
-        nextTabs = [...orphanedDraftTabs, ...nextTabs]
+      const documents = documentTabs.reconcile({
+        currentTabs: sessionTabsRef.current,
+        nextTabs,
+        markdownDocs: markdownDocsRef.current,
+        activeTabId: activeSessionTabIdRef.current
+      })
+      nextTabs = documents.tabs
+      const retiredDocumentTabIds = documents.retiredTabIds
+      if (retiredDocumentTabIds.size > 0) {
+        sessionTabIntentRef.current.invalidateDocumentOperations(retiredDocumentTabIds)
+        setMarkdownDocs((prev) => documentTabs.omitRetired(prev, retiredDocumentTabIds))
+        setFileDocs((prev) => documentTabs.omitRetired(prev, retiredDocumentTabIds))
       }
       sessionTabsRef.current = nextTabs
       initialSessionAutoCreateRef.current.sawSessionTabs ||= nextTabs.length > 0
@@ -2285,8 +2278,7 @@ export default function SessionScreen() {
         return
       }
       markdownSaveInFlightRef.current.add(tab.id)
-      const saveSeq = (markdownSaveSeqRef.current.get(tab.id) ?? 0) + 1
-      markdownSaveSeqRef.current.set(tab.id, saveSeq)
+      const ownsSave = sessionTabIntentRef.current.beginMarkdownSave(tab.id)
       setMarkdownDocs((prev) => {
         const existing = prev.get(tab.id)
         if (existing?.status !== 'ready') {
@@ -2309,7 +2301,7 @@ export default function SessionScreen() {
           version: string
           isDirty: false
         }
-        if (!ownsRoute() || markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
+        if (!ownsRoute() || !ownsSave()) {
           return
         }
         setMarkdownDocs((prev) =>
@@ -2322,11 +2314,10 @@ export default function SessionScreen() {
             editable: true
           })
         )
-        markdownSaveSeqRef.current.delete(tab.id)
         triggerSuccess()
         showToast('Saved')
       } catch (error) {
-        if (!ownsRoute() || markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
+        if (!ownsRoute() || !ownsSave()) {
           return
         }
         triggerError()
@@ -2675,7 +2666,6 @@ export default function SessionScreen() {
     setDiscardMarkdownTarget(null)
     setLeaveDrafts(null)
     setRenameTarget(null)
-    markdownSaveSeqRef.current.clear()
     markdownSaveInFlightRef.current.clear()
     tabCreate.resetRoute(sessionTabIntentRef.current, createStates)
     pendingTerminalActivationAttemptRef.current = null
@@ -4135,6 +4125,12 @@ export default function SessionScreen() {
       })
       if (response.ok && ownsRoute()) {
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
+        if (tab.type === 'markdown' || tab.type === 'file') {
+          sessionTabIntentRef.current.invalidateDocumentOperations([tab.id])
+          const retiredTabIds = new Set([tab.id])
+          setMarkdownDocs((prev) => documentTabs.omitRetired(prev, retiredTabIds))
+          setFileDocs((prev) => documentTabs.omitRetired(prev, retiredTabIds))
+        }
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal
           unsubscribeTerminal(terminalHandle)

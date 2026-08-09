@@ -254,6 +254,9 @@ describe('mobile session startup', () => {
     expect(applySessionTabs).toContain(
       'if (followsHost) {\n        sessionTabIntentRef.current.supersede()'
     )
+    expect(applySessionTabs).toContain(
+      'sessionTabIntentRef.current.invalidateDocumentOperations(retiredDocumentTabIds)'
+    )
     expect(source).toContain('sessionTabIntentRef.current.setRoute(hostId, worktreeId)')
     expect(createTerminal).toContain(
       'const sameRoute = sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)'
@@ -289,6 +292,9 @@ describe('mobile session startup', () => {
       'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
     )
     expect(closeSessionTab).toContain('if (response.ok && ownsRoute()) {')
+    expect(closeSessionTab).toContain(
+      'sessionTabIntentRef.current.invalidateDocumentOperations([tab.id])'
+    )
     expect(closeTerminal).toContain(
       'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
     )
@@ -319,7 +325,11 @@ describe('mobile session startup', () => {
     expect(saveMarkdown).toContain(
       'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
     )
+    expect(saveMarkdown).toContain(
+      'const ownsSave = sessionTabIntentRef.current.beginMarkdownSave(tab.id)'
+    )
     expect(saveMarkdown).toContain('if (!ownsRoute() ||')
+    expect(saveMarkdown).toContain('!ownsSave()')
     for (const tabAction of [browserNavigation, renameTerminal]) {
       expect(tabAction).toContain(
         'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
