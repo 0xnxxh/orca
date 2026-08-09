@@ -1,3 +1,4 @@
+import type { ExecutionHostId } from '../../../shared/execution-host'
 import type { Tab, TabGroup, Worktree } from '../../../shared/types'
 import { isClipboardTextByteLengthOverLimit } from '../../../shared/clipboard-text'
 import { resolveWorktreeDisplayName } from './worktree-default-display-name'
@@ -13,6 +14,8 @@ export type SearchableSimulatorTab = {
 }
 
 export type SimulatorPaletteSearchResult = {
+  /** Worktree ids collide across hosts; activation must not resolve by id alone. */
+  executionHostId?: ExecutionHostId
   tabId: string
   worktreeId: string
   groupId: string
@@ -197,6 +200,7 @@ export function searchSimulatorTabs(
     // Why: a cleared display name leaves this undefined at runtime; findRange would throw.
     const worktreeName = resolveWorktreeDisplayName(entry.worktree)
     const baseResult = {
+      executionHostId: entry.worktree.hostId,
       tabId: entry.tab.id,
       worktreeId: entry.worktree.id,
       groupId: entry.tab.groupId,

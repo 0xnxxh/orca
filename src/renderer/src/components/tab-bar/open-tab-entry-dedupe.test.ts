@@ -76,7 +76,9 @@ describe('dropFileEntriesCoveredByTabResults', () => {
 
   it('never lets a terminal, browser or simulator result suppress a file entry', () => {
     const results: OpenTabSearchResult[] = [
-      { ...editorTab(null), contentType: 'terminal' },
+      // Non-null path on purpose: the fold must turn on contentType, not on a
+      // path the engine happens to leave empty for non-editor tabs.
+      { ...editorTab('src/zebra.ts'), contentType: 'terminal' },
       {
         executionHostId: 'local',
         source: 'browser',

@@ -21,9 +21,9 @@ export function dropFileEntriesCoveredByTabResults(
   const foldCase = worktreePath !== null && isCaseInsensitiveRuntimeRoot(worktreePath)
   const openPaths = new Set<string>()
   for (const result of tabResults) {
-    // Only editor-backed results carry a path; terminal, browser and simulator
-    // rows must never suppress a file entry.
-    if (result.source === 'workspace' && result.relativePath) {
+    // Only an open editor is the same destination as the file row; terminal,
+    // diff, review, browser and simulator rows must never suppress it.
+    if (result.source === 'workspace' && result.contentType === 'editor' && result.relativePath) {
       openPaths.add(comparisonKey(result.relativePath, foldCase))
     }
   }
