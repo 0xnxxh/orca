@@ -33,7 +33,6 @@ import { useOpenTabSearch } from './use-open-tab-search'
 import type { TuiAgent } from '../../../../shared/types'
 import { translate } from '@/i18n/i18n'
 import { getRendererAppPlatform } from '@/lib/renderer-app-platform'
-import { useImeEnterGestureOwnership } from '@/lib/ime-composition-keyboard-event'
 import { useAppStore } from '@/store'
 
 // Leads with tabs: the omnibox now jumps to open tabs before it creates anything.
@@ -86,7 +85,6 @@ export default function TabBarCreateEntry({
   const [pinnedOptionId, setPinnedOptionId] = useState<string | null>(null)
   const [lastMenuOpen, setLastMenuOpen] = useState(menuOpen)
   const inputRef = useRef<HTMLInputElement>(null)
-  const imeEnter = useImeEnterGestureOwnership()
   const fileList = useRuntimeFileListForWorktree({ enabled: menuOpen, worktreeId })
   const tabSearch = useOpenTabSearch({ enabled: menuOpen, query, worktreeId })
   // Why gate on the query: the search defers, so its rows can still describe an
@@ -287,14 +285,7 @@ export default function TabBarCreateEntry({
         event.preventDefault()
         submitOption()
       }}
-      onCompositionStart={() => imeEnter.setComposing(true)}
-      onCompositionEnd={() => imeEnter.setComposing(false)}
       onKeyDown={(event) => {
-        if (imeEnter.ownsKeyDown(event)) {
-          event.preventDefault()
-          event.stopPropagation()
-          return
-        }
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           if (activeOptions.length > 0) {
             event.preventDefault()
@@ -320,8 +311,6 @@ export default function TabBarCreateEntry({
           event.stopPropagation()
         }
       }}
-      onKeyUp={imeEnter.onKeyUp}
-      onBlur={imeEnter.reset}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="-mx-1 flex items-center px-3">
