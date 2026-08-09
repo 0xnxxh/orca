@@ -24,6 +24,11 @@ export type { ClientSessionTabSelection } from './client-session-tab-activation'
 export type { ClientSessionTabActivationIntent } from './client-session-tab-activation-intent'
 export { projectClientSessionTabSelection } from './client-session-tab-projection'
 
+export type ClientSessionTabClosureIntent = ReadonlyMap<
+  string,
+  ClientSessionTabActivationIntent | undefined
+>
+
 type StoredClientSessionTabSelection = {
   selection: ClientSessionTabSelection
   revision: number
@@ -176,7 +181,23 @@ export class ClientSessionTabSelectionStore {
     return this.project(snapshot, clientNavigationId)
   }
 
-  forgetTabs(clientNavigationId: string, worktreeId: string, tabIds: readonly string[]): void {
+  captureTabClosureIntent(clientNavigationId: string): ClientSessionTabClosureIntent {
+    const clientNavigationIds = new Set([
+      ...this.statesByClient.keys(),
+      ...this.activationIntents.clientIds(),
+      clientNavigationId
+    ])
+    return new Map(
+      [...clientNavigationIds].map((id) => [id, this.activationIntents.current(id)] as const)
+    )
+  }
+
+  forgetTabs(
+    clientNavigationId: string,
+    worktreeId: string,
+    tabIds: readonly string[],
+    closureIntent?: ClientSessionTabClosureIntent
+  ): void {
     if (tabIds.length === 0) {
       return
     }
@@ -185,11 +206,16 @@ export class ClientSessionTabSelectionStore {
     const clientNavigationIds = new Set([
       ...this.statesByClient.keys(),
       ...this.activationIntents.clientIds(),
+      ...(closureIntent?.keys() ?? []),
       clientNavigationId
     ])
     let persistedSelectionChanged = false
     for (const id of clientNavigationIds) {
-      this.beginActivationIntent(id)
+      if (closureIntent === undefined) {
+        this.beginActivationIntent(id)
+      } else if (closureIntent.has(id)) {
+        this.activationIntents.supersedeIfCurrent(id, closureIntent.get(id))
+      }
       const statesByWorktree = this.statesByClient.get(id)
       const state = statesByWorktree?.get(worktreeId)
       if (!statesByWorktree || !state) {

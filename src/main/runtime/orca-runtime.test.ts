@@ -28623,6 +28623,119 @@ describe('OrcaRuntimeService', () => {
     expect(host.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
   })
 
+  it('keeps a newer client activation ahead of an older delayed close completion', async () => {
+    const activationInventory = deferred<[]>()
+    const closeRelay = deferred<void>()
+    const leafIds = {
+      a: '11111111-1111-4111-8111-111111111111',
+      b: '22222222-2222-4222-8222-222222222222',
+      c: '33333333-3333-4333-8333-333333333333'
+    }
+    const ptyIds = { a: 'pty-a', b: 'pty-b', c: 'pty-c' }
+    let inventoryCall = 0
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: vi.fn(() => {
+        inventoryCall += 1
+        return inventoryCall === 3 ? activationInventory.promise : Promise.resolve([])
+      })
+    })
+    for (const key of ['a', 'b', 'c'] as const) {
+      runtime.registerPty(ptyIds[key], TEST_WORKTREE_ID, null, {
+        tabId: `tab-${key}`,
+        leafId: leafIds[key]
+      })
+    }
+    const mobileTabs = (keys: readonly ('a' | 'b' | 'c')[], version: number) => ({
+      worktree: TEST_WORKTREE_ID,
+      publicationEpoch: 'close-activation-race',
+      snapshotVersion: version,
+      activeGroupId: 'group-1',
+      activeTabId: `tab-${keys[0]}::${leafIds[keys[0]]}`,
+      activeTabType: 'terminal' as const,
+      tabGroups: [
+        {
+          id: 'group-1',
+          activeTabId: `tab-${keys[0]}`,
+          tabOrder: keys.map((key) => `tab-${key}`)
+        }
+      ],
+      tabs: keys.map((key, index) => ({
+        type: 'terminal' as const,
+        id: `tab-${key}::${leafIds[key]}`,
+        parentTabId: `tab-${key}`,
+        leafId: leafIds[key],
+        ptyId: ptyIds[key],
+        title: `Terminal ${key}`,
+        isActive: index === 0
+      }))
+    })
+    const graphTabs = (keys: readonly ('a' | 'b' | 'c')[]) =>
+      keys.map((key) => ({
+        tabId: `tab-${key}`,
+        worktreeId: TEST_WORKTREE_ID,
+        title: `Terminal ${key}`,
+        activeLeafId: leafIds[key],
+        layout: null
+      }))
+    const graphLeaves = (keys: readonly ('a' | 'b' | 'c')[]) =>
+      keys.map((key, index) => ({
+        tabId: `tab-${key}`,
+        worktreeId: TEST_WORKTREE_ID,
+        leafId: leafIds[key],
+        paneRuntimeId: index + 1,
+        ptyId: ptyIds[key]
+      }))
+    const publish = (keys: readonly ('a' | 'b' | 'c')[], version: number): void => {
+      runtime.syncWindowGraph(1, {
+        tabs: graphTabs(keys),
+        leaves: graphLeaves(keys),
+        mobileSessionTabs: [mobileTabs(keys, version)]
+      })
+    }
+    const closeTerminalTab = vi.fn(async () => {
+      await closeRelay.promise
+      publish(['b', 'c'], 2)
+    })
+    runtime.setNotifier({ closeTerminalTab } as never)
+    runtime.attachWindow(1)
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, send: vi.fn(), setBackgroundThrottling: vi.fn() }
+    })
+    publish(['a', 'b', 'c'], 1)
+    await runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `tab-c::${leafIds.c}`,
+      undefined,
+      { navigation: 'caller', clientNavigationId: 'device-a' }
+    )
+
+    const close = runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'tab-a', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+    await vi.waitFor(() => expect(closeTerminalTab).toHaveBeenCalledWith('tab-a'))
+    const activate = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `tab-b::${leafIds.b}`,
+      undefined,
+      { navigation: 'caller', clientNavigationId: 'device-a' }
+    )
+    await vi.waitFor(() => expect(inventoryCall).toBe(3))
+    closeRelay.resolve()
+    await close
+    activationInventory.resolve([])
+    await activate
+
+    expect(
+      (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')).activeTabId
+    ).toBe(`tab-b::${leafIds.b}`)
+  })
+
   it('materializes a plain shell when the pending tab has no launch agent', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'serve-materialized-pty' })
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(

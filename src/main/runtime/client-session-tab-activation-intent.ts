@@ -19,6 +19,21 @@ export class ClientSessionTabActivationIntentTracker {
     return true
   }
 
+  current(clientNavigationId: string): ClientSessionTabActivationIntent | undefined {
+    return this.intentByClient.get(clientNavigationId)
+  }
+
+  supersedeIfCurrent(
+    clientNavigationId: string,
+    intent: ClientSessionTabActivationIntent | undefined
+  ): boolean {
+    if (this.intentByClient.get(clientNavigationId) !== intent) {
+      return false
+    }
+    this.begin(clientNavigationId)
+    return true
+  }
+
   clientIds(): IterableIterator<string> {
     return this.intentByClient.keys()
   }

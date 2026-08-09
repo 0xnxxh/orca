@@ -7691,6 +7691,10 @@ export class OrcaRuntimeService {
       clientNavigationId?: string
     } = {}
   ): Promise<RuntimeMobileSessionTabCloseResult> {
+    const closureIntent =
+      options.reason === 'user' && options.clientNavigationId
+        ? this.clientSessionTabSelections.captureTabClosureIntent(options.clientNavigationId)
+        : undefined
     const graphEpoch = options.clientNavigationId ? this.captureReadyGraphEpoch() : null
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
@@ -7761,7 +7765,8 @@ export class OrcaRuntimeService {
         this.clientSessionTabSelections.forgetTabs(
           options.clientNavigationId,
           worktreeId,
-          closedSelectionTabIds
+          closedSelectionTabIds,
+          closureIntent
         )
       }
     }
