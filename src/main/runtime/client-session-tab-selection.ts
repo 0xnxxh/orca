@@ -7,7 +7,12 @@ import {
   activateClientSessionTabSelection,
   type ClientSessionTabSelection
 } from './client-session-tab-activation'
+import {
+  ClientSessionTabActivationIntentTracker,
+  type ClientSessionTabActivationIntent
+} from './client-session-tab-activation-intent'
 import { ClientSessionTabClosureTracker } from './client-session-tab-closure'
+import { projectClientSessionTabSelection } from './client-session-tab-projection'
 import { normalizePersistedMobileClientTabSelections } from './client-session-tab-selection-persistence'
 
 export {
@@ -15,6 +20,9 @@ export {
   deriveClientSessionTabSelection
 } from './client-session-tab-activation'
 export type { ClientSessionTabSelection } from './client-session-tab-activation'
+
+export type { ClientSessionTabActivationIntent } from './client-session-tab-activation-intent'
+export { projectClientSessionTabSelection } from './client-session-tab-projection'
 
 type StoredClientSessionTabSelection = {
   selection: ClientSessionTabSelection
@@ -34,71 +42,9 @@ function topLevelTabId(tab: RuntimeMobileSessionClientTab): string {
   return tab.id
 }
 
-function findTabByTopLevelId(
-  snapshot: RuntimeMobileSessionTabsResult,
-  topLevelId: string | null | undefined
-): RuntimeMobileSessionClientTab | null {
-  if (!topLevelId) {
-    return null
-  }
-  return snapshot.tabs.find((tab) => topLevelTabId(tab) === topLevelId) ?? null
-}
-
-export function projectClientSessionTabSelection(
-  snapshot: RuntimeMobileSessionTabsResult,
-  selection: ClientSessionTabSelection
-): { snapshot: RuntimeMobileSessionTabsResult; selection: ClientSessionTabSelection } {
-  const selectedGroup = snapshot.tabGroups?.find((group) => group.id === selection.activeGroupId)
-  // Why: preserve the client's leaf and group choices before falling back to shared snapshot order.
-  const activeTab =
-    snapshot.tabs.find((tab) => tab.id === selection.activeTabId) ??
-    findTabByTopLevelId(
-      snapshot,
-      selectedGroup ? selection.activeTabIdByGroupId[selectedGroup.id] : null
-    ) ??
-    findTabByTopLevelId(snapshot, selectedGroup?.tabOrder[0]) ??
-    snapshot.tabs[0] ??
-    null
-  const activeTopLevelTabId = activeTab ? topLevelTabId(activeTab) : null
-  const activeTabIdByGroupId: Record<string, string> = {}
-  const tabGroups = snapshot.tabGroups?.map((group) => {
-    const selected = selection.activeTabIdByGroupId[group.id]
-    const activeTabId =
-      (selected && group.tabOrder.includes(selected) ? selected : null) ?? group.tabOrder[0] ?? null
-    if (activeTabId) {
-      activeTabIdByGroupId[group.id] = activeTabId
-    }
-    return { ...group, activeTabId }
-  })
-  const activeGroupId =
-    tabGroups?.find((group) =>
-      activeTopLevelTabId ? group.tabOrder.includes(activeTopLevelTabId) : false
-    )?.id ??
-    (selection.activeGroupId && tabGroups?.some((group) => group.id === selection.activeGroupId)
-      ? selection.activeGroupId
-      : null) ??
-    tabGroups?.[0]?.id ??
-    null
-  const nextSelection: ClientSessionTabSelection = {
-    activeTabId: activeTab?.id ?? null,
-    activeGroupId,
-    activeTabIdByGroupId
-  }
-  return {
-    selection: nextSelection,
-    snapshot: {
-      ...snapshot,
-      activeGroupId,
-      activeTabId: activeTab?.id ?? null,
-      activeTabType: activeTab?.type ?? null,
-      ...(tabGroups ? { tabGroups } : {}),
-      tabs: snapshot.tabs.map((tab) => ({ ...tab, isActive: tab.id === activeTab?.id }))
-    }
-  }
-}
-
 export class ClientSessionTabSelectionStore {
   private statesByClient = new Map<string, Map<string, StoredClientSessionTabSelection>>()
+  private activationIntents = new ClientSessionTabActivationIntentTracker()
   private tabClosures = new ClientSessionTabClosureTracker()
   private persistListener: ((state: PersistedMobileClientTabSelections) => void) | null = null
 
@@ -199,8 +145,12 @@ export class ClientSessionTabSelectionStore {
   activate(
     snapshot: RuntimeMobileSessionTabsResult,
     clientNavigationId: string,
-    activeTabId: string
+    activeTabId: string,
+    activationIntent?: ClientSessionTabActivationIntent
   ): RuntimeMobileSessionTabsResult {
+    if (!this.activationIntents.claim(clientNavigationId, activationIntent)) {
+      return this.project(snapshot, clientNavigationId)
+    }
     const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
     const state = statesByWorktree.get(snapshot.worktree) ?? {
       selection: emptyClientSessionTabSelection(),
@@ -232,9 +182,14 @@ export class ClientSessionTabSelectionStore {
     }
     this.tabClosures.forgetPendingActivations(worktreeId, tabIds)
     // Why: tab destruction is global even though each device owns its selection.
-    const clientNavigationIds = new Set([...this.statesByClient.keys(), clientNavigationId])
+    const clientNavigationIds = new Set([
+      ...this.statesByClient.keys(),
+      ...this.activationIntents.clientIds(),
+      clientNavigationId
+    ])
     let persistedSelectionChanged = false
     for (const id of clientNavigationIds) {
+      this.beginActivationIntent(id)
       const statesByWorktree = this.statesByClient.get(id)
       const state = statesByWorktree?.get(worktreeId)
       if (!statesByWorktree || !state) {
@@ -260,6 +215,10 @@ export class ClientSessionTabSelectionStore {
     return this.tabClosures.isForgotten(clientNavigationId, worktreeId, tabId)
   }
 
+  beginActivationIntent(clientNavigationId: string): ClientSessionTabActivationIntent {
+    return this.activationIntents.begin(clientNavigationId)
+  }
+
   beginTabActivation(
     clientNavigationId: string,
     worktreeId: string,
@@ -282,6 +241,7 @@ export class ClientSessionTabSelectionStore {
       (state) => state.shouldPersist
     )
     this.tabClosures.forgetClient(clientNavigationId)
+    this.activationIntents.forgetClient(clientNavigationId)
     if (this.statesByClient.delete(clientNavigationId) && hadPersistedState) {
       this.persistNow()
     }

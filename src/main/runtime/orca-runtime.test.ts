@@ -28381,7 +28381,11 @@ describe('OrcaRuntimeService', () => {
   >
 
   function makePendingAgentTabActivationRuntime(
-    opts: { disabledTuiAgents?: string[]; spawn?: Mock<RuntimePtySpawn> } = {}
+    opts: {
+      disabledTuiAgents?: string[]
+      includeSecondTab?: boolean
+      spawn?: Mock<RuntimePtySpawn>
+    } = {}
   ): {
     runtime: OrcaRuntimeService
     spawn: Mock<RuntimePtySpawn>
@@ -28404,11 +28408,32 @@ describe('OrcaRuntimeService', () => {
               sortOrder: 0,
               createdAt: 1,
               launchAgent: 'claude'
-            }
+            },
+            ...(opts.includeSecondTab
+              ? [
+                  {
+                    id: 'other-tab',
+                    ptyId: 'serve-other-dead-pty',
+                    worktreeId: TEST_WORKTREE_ID,
+                    title: 'Terminal 2',
+                    customTitle: null,
+                    color: null,
+                    sortOrder: 1,
+                    createdAt: 2
+                  }
+                ]
+              : [])
           ]
         },
         terminalLayoutsByTabId: {
-          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: 'serve-dead-pty' })
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: 'serve-dead-pty' }),
+          ...(opts.includeSecondTab
+            ? {
+                'other-tab': makeHeadlessTerminalLayout({
+                  [HEADLESS_SECOND_LEAF_ID]: 'serve-other-dead-pty'
+                })
+              }
+            : {})
         }
       })
     )
@@ -28492,6 +28517,47 @@ describe('OrcaRuntimeService', () => {
     expect(kill).toHaveBeenCalledWith('serve-materialized-pty')
     expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
     expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
+  })
+
+  it('keeps a newer client activation ahead of an older delayed materialization', async () => {
+    const firstSpawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+    const spawn = vi.fn<RuntimePtySpawn>((options) =>
+      options.tabId === 'host-tab'
+        ? firstSpawned.promise
+        : Promise.resolve({ id: 'other-materialized-pty' })
+    )
+    const { runtime } = makePendingAgentTabActivationRuntime({
+      includeSecondTab: true,
+      spawn
+    })
+    const listed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+    expect(listed.tabs.map((tab) => tab.id)).toContain(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
+    runtime.onMobileSessionTabsChanged(() => {}, 'device-b')
+
+    const first = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `host-tab::${HEADLESS_LEAF_ID}`,
+      undefined,
+      { navigation: 'all', clientNavigationId: 'device-a' }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    const second = await runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `other-tab::${HEADLESS_SECOND_LEAF_ID}`,
+      undefined,
+      { navigation: 'all', clientNavigationId: 'device-a' }
+    )
+    expect(second.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
+
+    firstSpawned.resolve({ id: 'serve-materialized-pty' })
+    const firstResult = await first
+    expect(firstResult.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
+
+    const settled = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+    expect(settled.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
+    const otherClient = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
+    expect(otherClient.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
   })
 
   it('materializes a plain shell when the pending tab has no launch agent', async () => {

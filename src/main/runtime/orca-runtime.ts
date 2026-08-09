@@ -522,7 +522,8 @@ import {
   activateClientSessionTabSelection,
   ClientSessionTabSelectionStore,
   deriveClientSessionTabSelection,
-  projectClientSessionTabSelection
+  projectClientSessionTabSelection,
+  type ClientSessionTabActivationIntent
 } from './client-session-tab-selection'
 import type {
   PtyProviderBufferSnapshot,
@@ -7216,6 +7217,23 @@ export class OrcaRuntimeService {
   ): Promise<RuntimeMobileSessionTabsResult> {
     const navigation = opts.navigation ?? (opts.notifyClients === false ? 'caller' : 'all')
     const targetsHost = navigationTargetsHost(navigation)
+    // Why: intent order is request arrival, not delayed materialization completion.
+    const activationClientIds = new Set(
+      navigationTargetsClients(navigation)
+        ? [...this.mobileSessionTabListeners]
+            .map((subscription) => subscription.clientNavigationId)
+            .filter((id): id is string => Boolean(id))
+        : []
+    )
+    if (opts.clientNavigationId) {
+      activationClientIds.add(opts.clientNavigationId)
+    }
+    const clientActivationIntents = new Map(
+      [...activationClientIds].map((id) => [
+        id,
+        this.clientSessionTabSelections.beginActivationIntent(id)
+      ])
+    )
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
@@ -7342,7 +7360,8 @@ export class OrcaRuntimeService {
           this.getMobileSessionTabsForWorktree(worktreeId),
           tab.id,
           navigation,
-          opts.clientNavigationId
+          opts.clientNavigationId,
+          clientActivationIntents
         )
       }
       const callerSnapshot = this.getMobileSessionTabsForWorktree(
@@ -7373,7 +7392,8 @@ export class OrcaRuntimeService {
         this.getMobileSessionTabsForWorktree(worktreeId),
         targetTab.id,
         navigation,
-        opts.clientNavigationId
+        opts.clientNavigationId,
+        clientActivationIntents
       )
     } else if (tab.type === 'browser') {
       // Why: browser mobile tabs are renderer-owned unified tabs; focusing the
@@ -7390,7 +7410,8 @@ export class OrcaRuntimeService {
       this.getMobileSessionTabsForWorktree(worktreeId),
       tab.id,
       navigation,
-      opts.clientNavigationId
+      opts.clientNavigationId,
+      clientActivationIntents
     )
   }
 
@@ -7398,7 +7419,8 @@ export class OrcaRuntimeService {
     snapshot: RuntimeMobileSessionTabsResult,
     activeTabId: string,
     navigation: RuntimeNavigationTarget,
-    clientNavigationId?: string
+    clientNavigationId?: string,
+    clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent> = new Map()
   ): RuntimeMobileSessionTabsResult {
     let callerSnapshot: RuntimeMobileSessionTabsResult | null = null
     if (navigationTargetsClients(navigation)) {
@@ -7412,7 +7434,16 @@ export class OrcaRuntimeService {
         ids.add(clientNavigationId)
       }
       for (const id of ids) {
-        const projected = this.clientSessionTabSelections.activate(snapshot, id, activeTabId)
+        const activationIntent = clientActivationIntents.get(id)
+        if (!activationIntent) {
+          continue
+        }
+        const projected = this.clientSessionTabSelections.activate(
+          snapshot,
+          id,
+          activeTabId,
+          activationIntent
+        )
         this.emitMobileSessionTabsSnapshotToClient(projected, id, true)
         if (id === clientNavigationId) {
           callerSnapshot = projected
@@ -7423,7 +7454,8 @@ export class OrcaRuntimeService {
       callerSnapshot = this.clientSessionTabSelections.activate(
         snapshot,
         clientNavigationId,
-        activeTabId
+        activeTabId,
+        clientActivationIntents.get(clientNavigationId)
       )
       this.emitMobileSessionTabsSnapshotToClient(callerSnapshot, clientNavigationId)
     }
