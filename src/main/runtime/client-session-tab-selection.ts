@@ -14,6 +14,7 @@ import {
 import { ClientSessionTabClosureTracker } from './client-session-tab-closure'
 import { projectClientSessionTabSelection } from './client-session-tab-projection'
 import { normalizePersistedMobileClientTabSelections } from './client-session-tab-selection-persistence'
+import { ClientSessionWorktreeAliases } from './client-session-worktree-aliases'
 
 export {
   activateClientSessionTabSelection,
@@ -50,7 +51,7 @@ function topLevelTabId(tab: RuntimeMobileSessionClientTab): string {
 export class ClientSessionTabSelectionStore {
   private statesByClient = new Map<string, Map<string, StoredClientSessionTabSelection>>()
   // Why: delayed tab operations still carry pre-rename identities.
-  private migratedWorktreeIds = new Map<string, string>()
+  private worktreeAliases = new ClientSessionWorktreeAliases()
   private activationIntents = new ClientSessionTabActivationIntentTracker()
   private tabClosures = new ClientSessionTabClosureTracker()
   private persistListener: ((state: PersistedMobileClientTabSelections) => void) | null = null
@@ -107,8 +108,7 @@ export class ClientSessionTabSelectionStore {
   }
 
   private resolveWorktreeId(worktreeId: string): string {
-    const migrated = this.migratedWorktreeIds.get(worktreeId)
-    return migrated ? this.resolveWorktreeId(migrated) : worktreeId
+    return this.worktreeAliases.resolve(worktreeId)
   }
 
   project(
@@ -160,7 +160,9 @@ export class ClientSessionTabSelectionStore {
     activeTabId: string,
     activationIntent?: ClientSessionTabActivationIntent
   ): RuntimeMobileSessionTabsResult {
-    if (!this.activationIntents.claim(clientNavigationId, activationIntent)) {
+    const activeTab = snapshot.tabs.find((tab) => tab.id === activeTabId)
+    const activationTabIds = activeTab ? [activeTabId, topLevelTabId(activeTab)] : [activeTabId]
+    if (!this.activationIntents.claim(clientNavigationId, activationIntent, activationTabIds)) {
       return this.project(snapshot, clientNavigationId)
     }
     const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
@@ -169,7 +171,6 @@ export class ClientSessionTabSelectionStore {
       revision: 0,
       shouldPersist: false
     }
-    const activeTab = snapshot.tabs.find((tab) => tab.id === activeTabId)
     // Why: a delayed activation can finish after close; absence must retire the tombstone first.
     if (
       !activeTab ||
@@ -220,9 +221,10 @@ export class ClientSessionTabSelectionStore {
     let persistedSelectionChanged = false
     for (const id of clientNavigationIds) {
       if (closureIntent === undefined) {
-        this.beginActivationIntent(id)
+        const currentIntent = this.activationIntents.current(id)
+        this.activationIntents.invalidateIfCurrent(id, currentIntent, tabIds)
       } else if (closureIntent.has(id)) {
-        this.activationIntents.supersedeIfCurrent(id, closureIntent.get(id))
+        this.activationIntents.invalidateIfCurrent(id, closureIntent.get(id), tabIds)
       }
       const statesByWorktree = this.statesByClient.get(id)
       const state = statesByWorktree?.get(worktreeId)
@@ -288,12 +290,12 @@ export class ClientSessionTabSelectionStore {
   }
 
   migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
-    oldWorktreeId = this.resolveWorktreeId(oldWorktreeId)
-    newWorktreeId = this.resolveWorktreeId(newWorktreeId)
+    const migration = this.worktreeAliases.migrate(oldWorktreeId, newWorktreeId)
+    oldWorktreeId = migration.oldWorktreeId
+    newWorktreeId = migration.newWorktreeId
     if (oldWorktreeId === newWorktreeId) {
       return
     }
-    this.migratedWorktreeIds.set(oldWorktreeId, newWorktreeId)
     this.tabClosures.migrateWorktree(oldWorktreeId, newWorktreeId)
     let changed = false
     for (const statesByWorktree of this.statesByClient.values()) {

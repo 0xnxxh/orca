@@ -247,6 +247,22 @@ describe('client session-tab selection', () => {
     expect(store.serialize()['device-a']?.['wt-renamed']?.activeTabId).toBe('browser-unified')
   })
 
+  it('moves selection and close intent when a worktree returns to an earlier identity', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-a', 'browser-unified')
+    store.forgetTabs('device-a', 'wt-1', ['terminal-a', 'terminal-a::leaf-a'])
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    store.migrateWorktree('wt-renamed', 'wt-1')
+
+    const projected = store.project(initial, 'device-a')
+    expect(projected.activeTabId).toBe('browser-unified')
+    expect(projected.tabs.some((tab) => tab.type === 'terminal')).toBe(false)
+    expect(store.serialize()['device-a']?.['wt-1']?.activeTabId).toBe('browser-unified')
+    expect(store.serialize()['device-a']?.['wt-renamed']).toBeUndefined()
+  })
+
   it('does not persist topology-only projections from unrelated worktrees', () => {
     const persisted: PersistedMobileClientTabSelections[] = []
     const store = new ClientSessionTabSelectionStore()
@@ -384,6 +400,20 @@ describe('client session-tab selection', () => {
     expect(store.project(full, 'device-a').tabs.some((tab) => tab.id === 'browser-unified')).toBe(
       false
     )
+  })
+
+  it('does not cancel another client delayed activation of a surviving tab on close', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    store.activate(full, 'device-a', 'browser-unified')
+    store.activate(full, 'device-b', 'terminal-a::leaf-a')
+    const delayedActivation = store.beginActivationIntent('device-b')
+    const closureIntent = store.captureTabClosureIntent('device-a')
+
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'], closureIntent)
+    const activated = store.activate(full, 'device-b', 'terminal-a::leaf-b', delayedActivation)
+
+    expect(activated.activeTabId).toBe('terminal-a::leaf-b')
   })
 
   it('retains a close tombstone until an in-flight activation settles after disconnect', () => {
