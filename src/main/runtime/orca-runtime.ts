@@ -25226,7 +25226,10 @@ export class OrcaRuntimeService {
       }
       return await run(worktreeSelector, undefined)
     }
-    const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    const workspace = await this.resolveTerminalCreateWorkspaceLaunchScope(
+      worktreeSelector,
+      reconcileExisting
+    )
     const canonicalWorktreeSelector = `id:${workspace.id}`
     this.terminalCreateIdempotency.registerWorktreeHistory(workspace.id, workspace.priorWorktreeIds)
     const identityWorktreeId = this.terminalCreateIdempotency.resolveIdentityWorktreeId(
@@ -27709,6 +27712,44 @@ export class OrcaRuntimeService {
     return `${base}${separator}${suffix}`
   }
 
+  private terminalWorkspaceLaunchScopeForWorktree(
+    worktree: ResolvedWorktree
+  ): TerminalWorkspaceLaunchScope {
+    return {
+      id: worktree.id,
+      path: worktree.path,
+      connectionId: this.store?.getRepo(worktree.repoId)?.connectionId ?? null,
+      repo: this.store?.getRepo(worktree.repoId) ?? null,
+      folderWorkspace: null,
+      priorWorktreeIds: worktree.priorWorktreeIds ?? []
+    }
+  }
+
+  private async resolveTerminalCreateWorkspaceLaunchScope(
+    selector: string,
+    reconcileExisting: boolean
+  ): Promise<TerminalWorkspaceLaunchScope> {
+    const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(selector)
+    if (
+      !reconcileExisting ||
+      !explicitWorktreeId ||
+      !splitWorktreeIdForFilesystem(explicitWorktreeId)
+    ) {
+      return await this.resolveTerminalWorkspaceLaunchScope(selector)
+    }
+    const candidates = (await this.listResolvedWorktrees()).filter(
+      (worktree) =>
+        worktree.id === explicitWorktreeId ||
+        worktree.priorWorktreeIds?.includes(explicitWorktreeId) === true
+    )
+    if (candidates.length > 1) {
+      throw new Error('terminal_create_identity_conflict')
+    }
+    return candidates[0]
+      ? this.terminalWorkspaceLaunchScopeForWorktree(candidates[0])
+      : await this.resolveTerminalWorkspaceLaunchScope(selector)
+  }
+
   private async resolveTerminalWorkspaceLaunchScope(
     selector: string
   ): Promise<TerminalWorkspaceLaunchScope> {
@@ -27736,15 +27777,7 @@ export class OrcaRuntimeService {
     const parsed = parseWorkspaceKey(workspaceSelector)
     const worktreeSelector = parsed?.type === 'worktree' ? `id:${parsed.worktreeId}` : selector
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
-    const repo = this.store?.getRepo(worktree.repoId) ?? null
-    return {
-      id: worktree.id,
-      path: worktree.path,
-      connectionId: repo?.connectionId ?? null,
-      repo,
-      folderWorkspace: null,
-      priorWorktreeIds: worktree.priorWorktreeIds ?? []
-    }
+    return this.terminalWorkspaceLaunchScopeForWorktree(worktree)
   }
 
   private buildTerminalWorkspaceEnv(

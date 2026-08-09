@@ -183,6 +183,53 @@ describe('terminal create idempotency', () => {
     expect(idempotency.includesWorktreeIdentity('worktree-a', 'worktree-c')).toBe(true)
   })
 
+  it('resolves an identical response-lost retry through persisted rename history', async () => {
+    const runtime = Object.create(OrcaRuntimeService.prototype) as OrcaRuntimeService
+    Object.assign(runtime, {
+      store: { getRepo: vi.fn(() => ({ id: 'repo-1', connectionId: null })) },
+      listResolvedWorktrees: vi.fn(async () => [
+        {
+          id: 'repo-1::/workspace/renamed',
+          path: '/workspace/renamed',
+          repoId: 'repo-1',
+          priorWorktreeIds: ['repo-1::/workspace/original']
+        }
+      ])
+    })
+
+    await expect(
+      runtime['resolveTerminalCreateWorkspaceLaunchScope']('id:repo-1::/workspace/original', true)
+    ).resolves.toMatchObject({
+      id: 'repo-1::/workspace/renamed',
+      priorWorktreeIds: ['repo-1::/workspace/original']
+    })
+  })
+
+  it('rejects a response-lost retry when its old identity belongs to two live lineages', async () => {
+    const runtime = Object.create(OrcaRuntimeService.prototype) as OrcaRuntimeService
+    Object.assign(runtime, {
+      store: { getRepo: vi.fn(() => ({ id: 'repo-1', connectionId: null })) },
+      listResolvedWorktrees: vi.fn(async () => [
+        {
+          id: 'repo-1::/workspace/original',
+          path: '/workspace/original',
+          repoId: 'repo-1',
+          priorWorktreeIds: []
+        },
+        {
+          id: 'repo-1::/workspace/renamed',
+          path: '/workspace/renamed',
+          repoId: 'repo-1',
+          priorWorktreeIds: ['repo-1::/workspace/original']
+        }
+      ])
+    })
+
+    await expect(
+      runtime['resolveTerminalCreateWorkspaceLaunchScope']('id:repo-1::/workspace/original', true)
+    ).rejects.toThrow('terminal_create_identity_conflict')
+  })
+
   it('adopts the original PTY after a runtime-process restart without rerunning startup', async () => {
     const liveSessions: PtyProcessInfo[] = []
     const firstRuntime = createRuntimeForDedupe(vi.fn(async () => liveSessions)).runtime
