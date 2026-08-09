@@ -259,18 +259,6 @@ export function hookDefinitionHasManagedCommand(
   )
 }
 
-// Why: a CLI that falls off PATH freezes its last-installed script while the agent's
-// user-wide config keeps invoking it (#11549 aftermath). The script file is Orca-owned,
-// so an existing one is proof of a prior install and safe to bring current; a missing one
-// stays missing — creating it is install()'s job, behind the CLI presence gate.
-export function refreshManagedScriptIfPresent(scriptPath: string, content: string): boolean {
-  if (!existsSync(scriptPath)) {
-    return false
-  }
-  writeManagedScript(scriptPath, content)
-  return true
-}
-
 // Why: temp+rename so concurrent writers can't leave a torn script for an in-flight /bin/sh to source.
 export function writeManagedScript(scriptPath: string, content: string): void {
   const dir = dirname(scriptPath)

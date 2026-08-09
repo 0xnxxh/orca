@@ -12,11 +12,11 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
-  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition,
   type HooksConfig
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readHooksJsonRemote,
   writeHooksJsonRemote,
@@ -160,8 +160,8 @@ function buildInstalledDroidConfig(
 }
 
 export class DroidHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {

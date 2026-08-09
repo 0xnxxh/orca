@@ -11,10 +11,10 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
-  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readHooksJsonRemote,
   writeHooksJsonRemote,
@@ -89,8 +89,8 @@ function buildInstalledConfig(
 }
 
 export class CommandCodeHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getManagedScriptPath(), buildCommandCodeManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getManagedScriptPath(), buildCommandCodeManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {

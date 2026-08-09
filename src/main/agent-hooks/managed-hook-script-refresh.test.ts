@@ -4,11 +4,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   existsSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -51,18 +54,18 @@ vi.mock('os', async (importOriginal) => {
   }
 })
 
-import { refreshManagedScriptIfPresent } from './installer-utils'
+import { refreshManagedScriptIfPresent } from './managed-hook-script-refresh'
 import {
   MANAGED_AGENT_HOOK_INSTALLERS,
   MANAGED_AGENT_HOOK_SCRIPT_REFRESHERS
 } from './managed-agent-hook-registry'
 import { ClaudeHookService } from '../claude/hook-service'
 
-function withPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => T | Promise<T>): Promise<T> {
   const original = Object.getOwnPropertyDescriptor(process, 'platform')
   Object.defineProperty(process, 'platform', { configurable: true, value: platform })
   try {
-    return run()
+    return await run()
   } finally {
     if (original) {
       Object.defineProperty(process, 'platform', original)
@@ -81,16 +84,23 @@ const STALE_WINDOWS_HOOK = [
 ].join('\r\n')
 
 describe('refreshManagedScriptIfPresent', () => {
-  it('rewrites an existing script and refuses to create a missing one', () => {
+  it('rewrites an existing script and refuses to create a missing one', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'orca-hook-refresh-unit-'))
     try {
       const present = join(dir, 'present.cmd')
       writeFileSync(present, 'stale')
-      expect(refreshManagedScriptIfPresent(present, 'fresh')).toBe(true)
+      expect(await refreshManagedScriptIfPresent(present, 'fresh')).toBe(true)
       expect(readFileSync(present, 'utf8')).toBe('fresh')
 
+      chmodSync(present, 0o600)
+      const fixedTime = new Date(1_000)
+      utimesSync(present, fixedTime, fixedTime)
+      expect(await refreshManagedScriptIfPresent(present, 'fresh')).toBe(true)
+      expect(statSync(present).mtimeMs).toBe(fixedTime.getTime())
+      expect(statSync(present).mode & 0o777).toBe(0o755)
+
       const missing = join(dir, 'missing.cmd')
-      expect(refreshManagedScriptIfPresent(missing, 'fresh')).toBe(false)
+      expect(await refreshManagedScriptIfPresent(missing, 'fresh')).toBe(false)
       expect(existsSync(missing)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -99,7 +109,7 @@ describe('refreshManagedScriptIfPresent', () => {
 })
 
 describe('managed hook script refresh', () => {
-  it('brings a stale leaking script current without touching agent config', () => {
+  it('brings a stale leaking script current without touching agent config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orca-hook-refresh-'))
     homedirMock.mockReturnValue(home)
     try {
@@ -109,7 +119,7 @@ describe('managed hook script refresh', () => {
       mkdirSync(hooksDir, { recursive: true })
       writeFileSync(join(hooksDir, 'claude-hook.cmd'), STALE_WINDOWS_HOOK)
 
-      withPlatform('win32', () => new ClaudeHookService().refreshManagedScripts())
+      await withPlatform('win32', () => new ClaudeHookService().refreshManagedScripts())
 
       const refreshed = readFileSync(join(hooksDir, 'claude-hook.cmd'), 'utf8')
       expect(refreshed).toContain('if "%ORCA_AGENT_HOOK_PORT%"=="" exit /b 0')
@@ -124,7 +134,7 @@ describe('managed hook script refresh', () => {
     }
   })
 
-  it('covers every shared launcher script with a refresher', () => {
+  it('covers every shared launcher script with a refresher', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orca-hook-refresh-coverage-'))
     homedirMock.mockReturnValue(home)
     const previousGrokHome = process.env.GROK_HOME
@@ -132,7 +142,7 @@ describe('managed hook script refresh', () => {
     delete process.env.GROK_HOME
     delete process.env.KIMI_CODE_HOME
     try {
-      withPlatform('win32', () => {
+      await withPlatform('win32', () => {
         for (const [, install] of MANAGED_AGENT_HOOK_INSTALLERS) {
           install()
         }
@@ -173,13 +183,13 @@ describe('managed hook script refresh', () => {
     }
   })
 
-  it('creates nothing anywhere when no managed scripts exist', () => {
+  it('creates nothing anywhere when no managed scripts exist', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orca-hook-refresh-empty-'))
     homedirMock.mockReturnValue(home)
     try {
-      withPlatform('win32', () => {
+      await withPlatform('win32', async () => {
         for (const [agent, refresh] of MANAGED_AGENT_HOOK_SCRIPT_REFRESHERS) {
-          expect(() => refresh(), `${agent} refresh on empty home`).not.toThrow()
+          await expect(refresh(), `${agent} refresh on empty home`).resolves.toBeUndefined()
         }
       })
       // Why: a refresh pass on a machine with no prior installs must be a strict no-op.

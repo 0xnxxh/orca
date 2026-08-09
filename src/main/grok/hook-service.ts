@@ -11,10 +11,10 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
-  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readHooksJsonRemote,
   writeHooksJsonRemote,
@@ -183,8 +183,8 @@ function buildInstalledConfig(
 }
 
 export class GrokHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {

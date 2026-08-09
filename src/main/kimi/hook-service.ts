@@ -16,9 +16,9 @@ import {
   createManagedCommandMatcher,
   getSharedManagedScriptPath,
   wrapPosixHookCommand,
-  refreshManagedScriptIfPresent,
   writeManagedScript
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readTextFileRemote,
   writeManagedScriptRemote,
@@ -156,8 +156,8 @@ function buildStatus(present: Set<string>, configPath: string): AgentHookInstall
 }
 
 export class KimiHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {

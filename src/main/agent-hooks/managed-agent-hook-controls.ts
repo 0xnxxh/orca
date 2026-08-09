@@ -92,14 +92,14 @@ function runInstaller(
 // Orca's script, but the presence gate below then skips install() forever, freezing the
 // script at whatever Orca generated last. Existing scripts are Orca-owned, so bring them
 // current before any gating; creating new ones remains install()'s presence-gated job.
-function refreshExistingManagedScripts(options: InstallOptions): void {
+async function refreshExistingManagedScripts(options: InstallOptions): Promise<void> {
   const allowed = options.agents ? new Set(options.agents) : null
   for (const [agent, refresh] of MANAGED_AGENT_HOOK_SCRIPT_REFRESHERS) {
     if (allowed !== null && !allowed.has(agent)) {
       continue
     }
     try {
-      refresh()
+      await refresh()
     } catch (error) {
       console.error(`[agent-hooks] Failed to refresh ${agent} managed script:`, error)
     }
@@ -110,7 +110,7 @@ export async function installManagedAgentHooks(
   settings: ManagedHookSettings = null,
   options: InstallOptions = {}
 ): Promise<AgentHookInstallStatus[]> {
-  refreshExistingManagedScripts(options)
+  await refreshExistingManagedScripts(options)
   const installers = selectedInstallers(options)
   const disabled = new Set(normalizeDisabledTuiAgents(settings?.disabledTuiAgents))
   const enabledInstallers = installers.filter(([agent]) => !disabled.has(agent))

@@ -16,7 +16,7 @@ import { kimiHookService } from '../kimi/hook-service'
 import { openClaudeHookService } from '../openclaude/hook-service'
 
 export type ManagedAgentHookInstaller = readonly [HookInstallAgent, () => AgentHookInstallStatus]
-export type ManagedAgentHookScriptRefresher = readonly [HookInstallAgent, () => void]
+export type ManagedAgentHookScriptRefresher = readonly [HookInstallAgent, () => Promise<void>]
 export type ManagedAgentHookRemover = readonly [HookInstallAgent, () => AgentHookInstallStatus]
 export type ManagedAgentHookStatusReader = readonly [HookInstallAgent, () => AgentHookInstallStatus]
 

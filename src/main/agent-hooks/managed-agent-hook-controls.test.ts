@@ -57,6 +57,8 @@ describe('managed agent hook controls', () => {
     mocks.installCodex.mockReturnValue(status('codex', 'installed'))
     mocks.removeClaude.mockReturnValue(status('claude', 'not_installed'))
     mocks.removeCodex.mockReturnValue(status('codex', 'not_installed'))
+    mocks.refreshClaude.mockResolvedValue(undefined)
+    mocks.refreshCodex.mockResolvedValue(undefined)
   })
 
   it('installs only agents with positively detected CLIs', async () => {
@@ -103,10 +105,30 @@ describe('managed agent hook controls', () => {
     expect(mocks.refreshCodex).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps installing when a script refresh throws', async () => {
-    mocks.refreshClaude.mockImplementation(() => {
-      throw new Error('disk full')
+  it('awaits each script refresh before probing for CLIs', async () => {
+    let releaseRefresh: (() => void) | undefined
+    mocks.refreshClaude.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRefresh = resolve
+        })
+    )
+    mocks.detect.mockResolvedValue({
+      claude: { state: 'missing' },
+      codex: { state: 'missing' }
     })
+
+    const install = installManagedAgentHooks({ agentCmdOverrides: {} })
+    await Promise.resolve()
+
+    expect(mocks.detect).not.toHaveBeenCalled()
+    releaseRefresh?.()
+    await install
+    expect(mocks.detect).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps installing when a script refresh throws', async () => {
+    mocks.refreshClaude.mockRejectedValue(new Error('disk full'))
     mocks.detect.mockResolvedValue({
       claude: { state: 'found' },
       codex: { state: 'found' }

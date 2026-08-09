@@ -3,9 +3,9 @@ import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared
 import {
   buildWindowsAgentHookPostCommand,
   writeHooksJson,
-  refreshManagedScriptIfPresent,
   writeManagedScript
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readTextFileRemote,
   writeHooksJsonRemote,
@@ -80,8 +80,8 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
 }
 
 export class DevinHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getDevinManagedScriptPath(), getManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getDevinManagedScriptPath(), getManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {

@@ -12,10 +12,10 @@ import {
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
-  refreshManagedScriptIfPresent,
   writeManagedScript,
   type HookDefinition
 } from '../agent-hooks/installer-utils'
+import { refreshManagedScriptIfPresent } from '../agent-hooks/managed-hook-script-refresh'
 import {
   readHooksJsonRemote,
   writeHooksJsonRemote,
@@ -102,8 +102,8 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
 }
 
 export class CursorHookService {
-  refreshManagedScripts(): void {
-    refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
+  async refreshManagedScripts(): Promise<void> {
+    await refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
   }
 
   getStatus(): AgentHookInstallStatus {
