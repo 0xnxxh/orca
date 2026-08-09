@@ -1,36 +1,29 @@
 /**
  * Headless end-to-end coverage for Japanese and Chinese terminal input.
  *
- * Two shapes are covered, and the second is the one the whole suite used to be blind to:
+ * Three shapes are covered, and the second is the one the whole suite used to be blind to:
  *
  *  1. Phrase-level composition — a Japanese preedit that grows to several characters and converts
- *     to kanji, asserted on the overlay's real geometry rather than on the bytes it later emits.
+ *     to kanji, and a pinyin preedit that spends most of its life as multi-letter romanisation.
+ *     Both are asserted on the overlay's real geometry rather than on the bytes they later emit.
  *  2. Committed text that arrives with **no composition session at all**. Full-width punctuation
  *     (`，` `。` `、`) and full-width digits are typed as a single keystroke that the input source
  *     rewrites; there is no compositionstart/update/end around them. Every IME test in the repo
  *     was composition-session-shaped, so this shape was invisible to the suite by construction —
- *     which is how `，` reaching the shell as an ASCII `,` shipped to users.
+ *     which is how `，` reaching the shell as an ASCII `,` shipped to users. This is the macOS
+ *     shape, and the tests for it pin the macOS ownership policy.
+ *  3. The same full-width punctuation arriving **inside** a composition session, which is how the
+ *     Windows and Linux frameworks deliver it. Same user-facing guarantee, different ordering.
  *
- * The assertion for shape 2 is deliberately "the ASCII byte never appears" rather than "the
+ * The assertion for shapes 2 and 3 is deliberately "the ASCII byte never appears" rather than "the
  * substitution was applied": the correct design never manufactures the ASCII byte in the first
  * place, so pinning its absence stays true under a forwarder rewrite as well as under a
  * structural one.
  */
-import type { CDPSession, Page, TestInfo } from '@stablyai/playwright-test'
+import type { CDPSession } from '@stablyai/playwright-test'
 import { expect, test } from './helpers/orca-app'
-import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
-import {
-  focusActiveTerminalInput,
-  sendToTerminal,
-  waitForActivePanePtyId,
-  waitForActiveTerminalManager
-} from './helpers/terminal'
-import {
-  attachTerminalImeBoundaryEvidence,
-  disposeTerminalImeBoundaryProbe,
-  installTerminalImeBoundaryProbe,
-  readTerminalImeBoundaryTrace
-} from './terminal-ime-boundary-probe'
+import { closeTerminalImePaneArena, openTerminalImePaneArena } from './terminal-ime-pane-arena'
+import { readTerminalImeBoundaryTrace } from './terminal-ime-boundary-probe'
 import {
   commitImeText,
   dispatchImeProcessKey,
@@ -47,9 +40,7 @@ import {
   waitForTerminalImeBytes
 } from './terminal-ime-byte-reader'
 import { expectPreeditHidden, expectPreeditRendered } from './terminal-ime-preedit-overlay-probe'
-
-const MAC_IME_POLICY_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/146 Safari/537.36'
+import { applyImePlatformPolicy, type ImePlatformPolicy } from './terminal-ime-platform-policy'
 
 /** Frames a Japanese IME shows while typing にほんご and converting it to 日本語. */
 const JAPANESE_FRAMES = ['に', 'にほ', 'にほん', 'にほんご', '日本語'] as const
@@ -124,75 +115,35 @@ const SUBSTITUTION_SHAPES: readonly {
 ]
 
 /**
- * The keydown bypass that owns single-keystroke IME commits only installs when the renderer reports
- * macOS, and the ASCII downgrade is a macOS-only failure mode: Windows and Linux frameworks claim
- * the same keystroke as VK_PROCESSKEY, so their version of the defect is a drop rather than a
- * downgrade. Overriding the UA is how the repo already exercises Windows- and Linux-gated IME
- * policy from any runner, and it is what lets this run on the Linux CI shards.
+ * The two substitution shapes above are macOS-only, and deliberately so: the keydown bypass that
+ * owns single-keystroke IME commits installs only when the renderer reports macOS, because only
+ * the macOS text system delivers a substituted glyph with the plain layout key still on the
+ * keydown. Windows and Linux frameworks claim the same keystroke as VK_PROCESSKEY and route the
+ * glyph through a composition session instead, which the separate composition-session test below
+ * covers. Running the macOS shapes under a Linux policy would assert a sequence no Linux input
+ * framework produces.
  */
-async function reloadWithMacImePolicy(page: Page): Promise<void> {
-  await page.addInitScript((userAgent) => {
-    Object.defineProperty(navigator, 'userAgent', {
-      get: () => userAgent,
-      configurable: true
-    })
-  }, MAC_IME_POLICY_USER_AGENT)
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.waitForFunction(() => Boolean(window.__store), null, {
-    timeout: 30_000
-  })
-}
-
-type CjkTerminalArena = {
-  page: Page
-  session: CDPSession
-  ptyId: string
-}
-
-async function openTerminalArena(page: Page): Promise<{ ptyId: string; session: CDPSession }> {
-  await waitForSessionReady(page)
-  await waitForActiveWorktree(page)
-  await ensureTerminalVisible(page)
-  await waitForActiveTerminalManager(page, 30_000)
-  const ptyId = await waitForActivePanePtyId(page)
-  const session = await page.context().newCDPSession(page)
-  return { ptyId, session }
-}
-
-async function teardownTerminalArena(
-  arena: CjkTerminalArena,
-  testInfo: TestInfo,
-  evidenceName: string,
-  interrupt: boolean
-): Promise<void> {
-  await attachTerminalImeBoundaryEvidence(arena.page, testInfo, evidenceName).catch(() => undefined)
-  await disposeTerminalImeBoundaryProbe(arena.page).catch(() => undefined)
-  await arena.session.detach().catch(() => undefined)
-  if (interrupt) {
-    await sendToTerminal(arena.page, arena.ptyId, '\x03').catch(() => undefined)
-  }
-}
+const FULL_WIDTH_SESSION_PUNCTUATION = [
+  { key: ',', code: 'Comma', keyCode: 188, glyph: '，', ascii: ',' },
+  { key: '.', code: 'Period', keyCode: 190, glyph: '。', ascii: '.' }
+] as const
 
 test.describe('Terminal CJK IME committed text', () => {
   test('shows a growing Japanese phrase preedit and commits the converted kanji', async ({
     orcaPage,
     testRepoPath
   }, testInfo) => {
-    const { ptyId, session } = await openTerminalArena(orcaPage)
-    const arena: CjkTerminalArena = { page: orcaPage, session, ptyId }
+    const arena = await openTerminalImePaneArena(orcaPage)
     const reader = createTerminalImeByteReader(testRepoPath, 1)
     let completed = false
     try {
-      await startTerminalImeByteReader(orcaPage, ptyId, reader)
-      await focusActiveTerminalInput(orcaPage)
-      await installTerminalImeBoundaryProbe(orcaPage)
-
+      await startTerminalImeByteReader(orcaPage, arena.ptyId, reader)
       await expectPreeditHidden(orcaPage, 'before composing')
-      await dispatchImeProcessKey(session, { key: 'Process', code: 'KeyN' })
+      await dispatchImeProcessKey(arena.session, { key: 'Process', code: 'KeyN' })
 
       const widthByFrame = new Map<string, number>()
       for (const frame of JAPANESE_FRAMES) {
-        await setImeComposition(session, frame)
+        await setImeComposition(arena.session, frame)
         const sample = await expectPreeditRendered(orcaPage, frame, `composing ${frame}`)
         widthByFrame.set(frame, sample.rect.width)
       }
@@ -201,15 +152,15 @@ test.describe('Terminal CJK IME committed text', () => {
       expect(widthByFrame.get('にほんご')!).toBeGreaterThan(widthByFrame.get('に')!)
       expect(widthByFrame.get('日本語')!).toBeGreaterThan(widthByFrame.get('に')!)
 
-      await commitImeText(session, '日本語')
+      await commitImeText(arena.session, '日本語')
       await expectPreeditHidden(orcaPage, 'after committing 日本語')
-      await dispatchPlainEnter(session)
+      await dispatchPlainEnter(arena.session)
 
       const received = await waitForTerminalImeBytes(orcaPage, reader)
       expect(received).toEqual([Buffer.from('日本語\n').toString('hex')])
       completed = true
     } finally {
-      await teardownTerminalArena(arena, testInfo, 'japanese-phrase-preedit', !completed)
+      await closeTerminalImePaneArena(arena, testInfo, 'japanese-phrase-preedit', !completed)
       removeTerminalImeByteReader(reader)
     }
   })
@@ -220,22 +171,18 @@ test.describe('Terminal CJK IME committed text', () => {
         orcaPage,
         testRepoPath
       }, testInfo) => {
-        await reloadWithMacImePolicy(orcaPage)
-        const { ptyId, session } = await openTerminalArena(orcaPage)
-        const arena: CjkTerminalArena = { page: orcaPage, session, ptyId }
+        await applyImePlatformPolicy(orcaPage, 'mac')
+        const arena = await openTerminalImePaneArena(orcaPage)
         const reader = createTerminalImeByteReader(testRepoPath, 1)
         const expected = group.keystrokes.map((keystroke) => keystroke.glyph).join('')
         let completed = false
         try {
-          await startTerminalImeByteReader(orcaPage, ptyId, reader)
-          await focusActiveTerminalInput(orcaPage)
-          await installTerminalImeBoundaryProbe(orcaPage)
-
+          await startTerminalImeByteReader(orcaPage, arena.ptyId, reader)
           for (const keystroke of group.keystrokes) {
-            await shape.dispatch(session, keystroke)
+            await shape.dispatch(arena.session, keystroke)
             await orcaPage.waitForTimeout(60)
           }
-          await dispatchPlainEnter(session)
+          await dispatchPlainEnter(arena.session)
 
           const sent = (await readTerminalImeBoundaryTrace(orcaPage)).onData.join('')
           for (const keystroke of group.keystrokes) {
@@ -250,7 +197,7 @@ test.describe('Terminal CJK IME committed text', () => {
           expect(received).toEqual([Buffer.from(`${expected}\n`).toString('hex')])
           completed = true
         } finally {
-          await teardownTerminalArena(
+          await closeTerminalImePaneArena(
             arena,
             testInfo,
             `full-width-${group.label}-${shape.slug}`,
@@ -266,35 +213,39 @@ test.describe('Terminal CJK IME committed text', () => {
     orcaPage,
     testRepoPath
   }, testInfo) => {
-    await reloadWithMacImePolicy(orcaPage)
-    const { ptyId, session } = await openTerminalArena(orcaPage)
-    const arena: CjkTerminalArena = { page: orcaPage, session, ptyId }
+    await applyImePlatformPolicy(orcaPage, 'mac')
+    const arena = await openTerminalImePaneArena(orcaPage)
     const reader = createTerminalImeByteReader(testRepoPath, 1)
     let completed = false
     try {
-      await startTerminalImeByteReader(orcaPage, ptyId, reader)
-      await focusActiveTerminalInput(orcaPage)
-      await installTerminalImeBoundaryProbe(orcaPage)
-
-      await dispatchImeProcessKey(session, { key: 'Process', code: 'KeyN' })
+      await startTerminalImeByteReader(orcaPage, arena.ptyId, reader)
+      await dispatchImeProcessKey(arena.session, { key: 'Process', code: 'KeyN' })
+      const widthByFrame = new Map<string, number>()
       for (const frame of ['n', 'ni', 'niha', 'nihao', '你好']) {
-        await setImeComposition(session, frame)
-        await expectPreeditRendered(orcaPage, frame, `composing ${frame}`)
+        await setImeComposition(arena.session, frame)
+        const sample = await expectPreeditRendered(orcaPage, frame, `composing ${frame}`)
+        widthByFrame.set(frame, sample.rect.width)
       }
-      await commitImeText(session, '你好')
+      // Pinyin spends most of its life as a multi-letter romanisation before any Chinese appears,
+      // so an overlay pinned to a single cell shows the user only the first letter of what they
+      // typed. Width is the only property that catches that; text content looks correct.
+      expect(widthByFrame.get('nihao')!).toBeGreaterThan(widthByFrame.get('n')!)
+      expect(widthByFrame.get('你好')!).toBeGreaterThan(widthByFrame.get('n')!)
+
+      await commitImeText(arena.session, '你好')
       await expectPreeditHidden(orcaPage, 'after committing 你好')
 
       // The distinct risk here is the adjacency, not the substitution: the stop arrives with no
       // composition session immediately after one closed, so a tracker that still believes a
       // composition is open swallows it. Dispatched in the glyph-carrying shape so this stays a
       // test of the transition rather than a second copy of the known-broken case above.
-      await dispatchImeRewrittenPrintableKey(session, {
+      await dispatchImeRewrittenPrintableKey(arena.session, {
         key: '。',
         code: 'Period',
         keyCode: 190
       })
       await orcaPage.waitForTimeout(60)
-      await dispatchPlainEnter(session)
+      await dispatchPlainEnter(arena.session)
 
       const trace = await readTerminalImeBoundaryTrace(orcaPage)
       expect(trace.onData.join('')).toBe('你好。\r')
@@ -303,8 +254,59 @@ test.describe('Terminal CJK IME committed text', () => {
       expect(received).toEqual([Buffer.from('你好。\n').toString('hex')])
       completed = true
     } finally {
-      await teardownTerminalArena(arena, testInfo, 'pinyin-with-full-width-stop', !completed)
+      await closeTerminalImePaneArena(arena, testInfo, 'pinyin-with-full-width-stop', !completed)
       removeTerminalImeByteReader(reader)
     }
   })
+
+  for (const policy of ['windows', 'linux'] as const satisfies readonly ImePlatformPolicy[]) {
+    test(`sends full-width punctuation committed through a composition session on ${policy}`, async ({
+      orcaPage,
+      testRepoPath
+    }, testInfo) => {
+      // SYNTHESISED, and the reason is worth stating: the recorded corpus contains no Windows or
+      // Linux capture of full-width punctuation, only of Hangul and pinyin. What is not synthesised
+      // is the shape — on these platforms the framework claims the punctuation key as
+      // VK_PROCESSKEY and routes the substituted glyph through a real composition arena.session, which is
+      // what `Input.imeSetComposition` opens, rather than through the macOS insertText path the
+      // tests above cover. The ASCII form is asserted absent rather than the substitution asserted
+      // present, so this stays true of any design that never manufactures the ASCII byte.
+      await applyImePlatformPolicy(orcaPage, policy)
+      const arena = await openTerminalImePaneArena(orcaPage)
+      const reader = createTerminalImeByteReader(testRepoPath, 1)
+      const expected = FULL_WIDTH_SESSION_PUNCTUATION.map((entry) => entry.glyph).join('')
+      let completed = false
+      try {
+        await startTerminalImeByteReader(orcaPage, arena.ptyId, reader)
+        for (const entry of FULL_WIDTH_SESSION_PUNCTUATION) {
+          await dispatchImeProcessKey(arena.session, { key: 'Process', code: entry.code })
+          await setImeComposition(arena.session, entry.glyph)
+          await expectPreeditRendered(orcaPage, entry.glyph, `composing ${entry.glyph}`)
+          await commitImeText(arena.session, entry.glyph)
+          await expectPreeditHidden(orcaPage, `after committing ${entry.glyph}`)
+        }
+        await dispatchPlainEnter(arena.session)
+
+        const sent = (await readTerminalImeBoundaryTrace(orcaPage)).onData.join('')
+        for (const entry of FULL_WIDTH_SESSION_PUNCTUATION) {
+          expect(sent, `${entry.glyph} reached the PTY as ASCII ${entry.ascii}`).not.toContain(
+            entry.ascii
+          )
+        }
+        expect(sent).toBe(`${expected}\r`)
+
+        const received = await waitForTerminalImeBytes(orcaPage, reader)
+        expect(received).toEqual([Buffer.from(`${expected}\n`).toString('hex')])
+        completed = true
+      } finally {
+        await closeTerminalImePaneArena(
+          arena,
+          testInfo,
+          `full-width-punctuation-session-${policy}`,
+          !completed
+        )
+        removeTerminalImeByteReader(reader)
+      }
+    })
+  }
 })
