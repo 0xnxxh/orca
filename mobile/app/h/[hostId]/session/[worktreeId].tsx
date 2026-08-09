@@ -197,10 +197,8 @@ import { MobileTerminalInputActions } from '../../../../src/session/MobileTermin
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
 import { openMobileTerminalFileTap } from '../../../../src/session/mobile-terminal-file-tap-open'
-import {
-  deliverCreatedTerminalPrompt,
-  reportTerminalCreateError
-} from '../../../../src/session/created-terminal-prompt-delivery'
+import { deliverCreatedTerminalPrompt } from '../../../../src/session/created-terminal-prompt-delivery'
+import * as tabCreate from '../../../../src/session/mobile-terminal-create-lifecycle'
 import { MobileSessionTabIntentTracker } from '../../../../src/session/mobile-session-tab-intent-tracker'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
@@ -958,6 +956,7 @@ export default function SessionScreen() {
   const [creatingBrowser, setCreatingBrowser] = useState(false)
   const [creatingMarkdown, setCreatingMarkdown] = useState(false)
   const [createError, setCreateError] = useState('')
+  const terminalCreateState = [creatingTerminalRef, setCreating, setCreateError] as const
   const [createWarningState, setCreateWarningState] = useState(() =>
     createMobileSessionCreateWarningState(initialCreateWarning)
   )
@@ -2687,7 +2686,7 @@ export default function SessionScreen() {
     pendingActiveSessionTabIdRef.current = null
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
-    sessionTabIntentRef.current.supersede()
+    tabCreate.resetRoute(sessionTabIntentRef.current, terminalCreateState)
     pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
     terminalDiagnosticsRef.current.resetRoute()
@@ -3793,6 +3792,10 @@ export default function SessionScreen() {
       return
     }
     const intentRevision = sessionTabIntentRef.current.supersede()
+    const createRevision = sessionTabIntentRef.current.beginTerminalCreate()
+    const ownsCreate = () =>
+      sessionTabIntentRef.current.isTerminalCreateCurrent(worktreeId, createRevision)
+    const errorFeedback = [setCreateError, triggerError, showToast] as const
     creatingTerminalRef.current = true
     setCreating(true)
     setCreateError('')
@@ -3830,6 +3833,7 @@ export default function SessionScreen() {
             successToast: options?.successToast,
             errorToast: options?.errorToast,
             onDelivered: options?.onPromptSent,
+            shouldReport: ownsCreate,
             onSuccess: triggerSuccess,
             onError: triggerError,
             showToast
@@ -3894,13 +3898,12 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        reportTerminalCreateError(options?.errorToast, setCreateError, triggerError, showToast)
+        tabCreate.reportError(options?.errorToast, ownsCreate, errorFeedback)
       }
     } catch {
-      reportTerminalCreateError(options?.errorToast, setCreateError, triggerError, showToast)
+      tabCreate.reportError(options?.errorToast, ownsCreate, errorFeedback)
     } finally {
-      creatingTerminalRef.current = false
-      setCreating(false)
+      tabCreate.finish(ownsCreate, terminalCreateState)
     }
   }
 

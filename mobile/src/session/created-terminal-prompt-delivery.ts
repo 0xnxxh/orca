@@ -11,23 +11,10 @@ type CreatedTerminalPromptDeliveryOptions = {
   successToast?: string
   errorToast?: string
   onDelivered?: () => void
+  shouldReport?: () => boolean
   onSuccess: () => void
   onError: () => void
   showToast: (message: string, durationMs?: number) => void
-}
-
-export function reportTerminalCreateError(
-  errorToast: string | undefined,
-  setCreateError: (message: string) => void,
-  onError: () => void,
-  showToast: (message: string, durationMs?: number) => void
-): void {
-  const message = errorToast ?? 'Failed to create terminal'
-  setCreateError(message)
-  if (errorToast) {
-    onError()
-    showToast(message, 1800)
-  }
 }
 
 export function deliverCreatedTerminalPrompt({
@@ -39,12 +26,13 @@ export function deliverCreatedTerminalPrompt({
   successToast,
   errorToast,
   onDelivered,
+  shouldReport = () => true,
   onSuccess,
   onError,
   showToast
 }: CreatedTerminalPromptDeliveryOptions): void {
   if (!text?.trim()) {
-    if (successToast) {
+    if (successToast && shouldReport()) {
       onSuccess()
       showToast(successToast)
     }
@@ -63,11 +51,16 @@ export function deliverCreatedTerminalPrompt({
       if (result.send?.accepted === false) {
         throw new Error('Terminal input is locked by another client.')
       }
-      onSuccess()
-      showToast(successToast ?? 'Notes sent')
       onDelivered?.()
+      if (shouldReport()) {
+        onSuccess()
+        showToast(successToast ?? 'Notes sent')
+      }
     })
     .catch((error) => {
+      if (!shouldReport()) {
+        return
+      }
       onError()
       showToast(
         errorToast ?? (error instanceof Error ? error.message : "Couldn't send notes"),

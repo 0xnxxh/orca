@@ -18,4 +18,20 @@ describe('MobileSessionTabIntentTracker', () => {
     expect(tracker.pendingFocusKey).toBeNull()
     expect(retryWhileFirstIsCurrent()).toBe(false)
   })
+
+  it('keeps an old route create from owning a reused route identity', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    tracker.worktreeId = 'worktree-a'
+    const staleCreate = tracker.beginTerminalCreate()
+
+    tracker.worktreeId = 'worktree-b'
+    tracker.invalidateTerminalCreate()
+    const currentCreate = tracker.beginTerminalCreate()
+    tracker.worktreeId = 'worktree-a'
+    tracker.invalidateTerminalCreate()
+
+    expect(tracker.isTerminalCreateCurrent('worktree-a', staleCreate)).toBe(false)
+    expect(tracker.isTerminalCreateCurrent('worktree-b', currentCreate)).toBe(false)
+    expect(tracker.isTerminalCreateCurrent('worktree-a', tracker.beginTerminalCreate())).toBe(true)
+  })
 })
