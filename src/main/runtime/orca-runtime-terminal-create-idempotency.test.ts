@@ -10,15 +10,19 @@ type CreateRun = (
   preAllocatedHandle: string | undefined
 ) => Promise<RuntimeTerminalCreate>
 
-function createRuntimeForDedupe(listProcesses = vi.fn(async (): Promise<PtyProcessInfo[]> => [])) {
+function createRuntimeForDedupe(
+  listProcesses = vi.fn(async (): Promise<PtyProcessInfo[]> => []),
+  priorWorktreeIdsByCurrentId: Readonly<Record<string, readonly string[]>> = {}
+) {
   const handleByPtyId = new Map<string, string>()
   const runtime = Object.create(OrcaRuntimeService.prototype) as OrcaRuntimeService
   Object.assign(runtime, {
     terminalCreateIdempotency: new RemoteRuntimeTerminalCreateIdempotency(),
     ptyController: { listProcesses },
-    resolveTerminalWorkspaceLaunchScope: vi.fn(async (selector: string) => ({
-      id: selector.startsWith('id:') ? selector.slice(3) : selector
-    })),
+    resolveTerminalWorkspaceLaunchScope: vi.fn(async (selector: string) => {
+      const id = selector.startsWith('id:') ? selector.slice(3) : selector
+      return { id, priorWorktreeIds: priorWorktreeIdsByCurrentId[id] ?? [] }
+    }),
     adoptControllerTerminalHandle: vi.fn((ptyId: string, handle: string) => {
       handleByPtyId.set(ptyId, handle)
     }),
@@ -83,6 +87,88 @@ describe('terminal create idempotency', () => {
       createdTerminal(stableHandle ?? 'missing')
     ])
     expect(listProcesses).not.toHaveBeenCalled()
+  })
+
+  it('shares an in-flight create after its worktree is renamed', async () => {
+    const { runtime } = createRuntimeForDedupe()
+    let resolveCreate: (value: RuntimeTerminalCreate) => void = () => {}
+    const pending = new Promise<RuntimeTerminalCreate>((resolve) => {
+      resolveCreate = resolve
+    })
+    const create = vi.fn<CreateRun>(() => pending)
+
+    const first = runtime.dedupeTerminalCreate(
+      'device-a',
+      'id:worktree-1',
+      'mutation-1',
+      false,
+      create
+    )
+    runtime['terminalCreateIdempotency'].migrateWorktree('worktree-1', 'worktree-renamed')
+    const retry = runtime.dedupeTerminalCreate(
+      'device-a',
+      'id:worktree-renamed',
+      'mutation-1',
+      false,
+      create
+    )
+    await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    const stableHandle = create.mock.calls[0][1]
+    resolveCreate(createdTerminal(stableHandle ?? 'missing', 'worktree-renamed'))
+
+    await expect(Promise.all([first, retry])).resolves.toEqual([
+      createdTerminal(stableHandle ?? 'missing', 'worktree-renamed'),
+      createdTerminal(stableHandle ?? 'missing', 'worktree-renamed')
+    ])
+    expect(stableHandle).toBe(
+      deriveRemoteRuntimeTerminalCreateHandle('device-a', 'worktree-1', 'mutation-1')
+    )
+  })
+
+  it('reconciles a response-lost create whose provider retains the pre-rename identity', async () => {
+    const originalHandle = deriveRemoteRuntimeTerminalCreateHandle(
+      'device-a',
+      'worktree-1',
+      'mutation-1'
+    )
+    const { runtime } = createRuntimeForDedupe(
+      vi.fn(async () => [
+        {
+          id: 'worktree-1@@created-session',
+          cwd: '/workspace',
+          title: 'pwsh',
+          worktreeId: 'worktree-1',
+          terminalHandle: originalHandle
+        }
+      ]),
+      { 'worktree-renamed': ['worktree-1'] }
+    )
+    const retrySpawn = vi.fn<CreateRun>()
+
+    const recovered = await runtime.dedupeTerminalCreate(
+      'device-a',
+      'id:worktree-renamed',
+      'mutation-1',
+      true,
+      retrySpawn
+    )
+
+    expect(recovered).toMatchObject({
+      handle: originalHandle,
+      ptyId: 'worktree-1@@created-session',
+      worktreeId: 'worktree-renamed'
+    })
+    expect(retrySpawn).not.toHaveBeenCalled()
+  })
+
+  it('restores the current identity when a rename reuses the original worktree id', () => {
+    const idempotency = new RemoteRuntimeTerminalCreateIdempotency()
+
+    idempotency.registerWorktreeHistory('worktree-1', ['worktree-1', 'worktree-2'])
+
+    expect(idempotency.resolveCurrentWorktreeId('worktree-1')).toBe('worktree-1')
+    expect(idempotency.resolveCurrentWorktreeId('worktree-2')).toBe('worktree-1')
+    expect(idempotency.resolveIdentityWorktreeId('worktree-1')).toBe('worktree-1')
   })
 
   it('adopts the original PTY after a runtime-process restart without rerunning startup', async () => {

@@ -2482,6 +2482,7 @@ type TerminalWorkspaceLaunchScope = {
   connectionId: string | null
   repo: Repo | null
   folderWorkspace: FolderWorkspace | null
+  priorWorktreeIds: readonly string[]
 }
 
 type WorktreeLineageInput = {
@@ -25227,9 +25228,13 @@ export class OrcaRuntimeService {
     }
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
     const canonicalWorktreeSelector = `id:${workspace.id}`
+    this.terminalCreateIdempotency.registerWorktreeHistory(workspace.id, workspace.priorWorktreeIds)
+    const identityWorktreeId = this.terminalCreateIdempotency.resolveIdentityWorktreeId(
+      workspace.id
+    )
     const preAllocatedHandle = deriveRemoteRuntimeTerminalCreateHandle(
       clientIdentity,
-      workspace.id,
+      identityWorktreeId,
       clientMutationId
     )
     return this.terminalCreateIdempotency.run(
@@ -25281,7 +25286,11 @@ export class OrcaRuntimeService {
     }
     const session = matches[0]
     const authoritativeWorktreeId = session.worktreeId ?? inferWorktreeIdFromPtyId(session.id)
-    if (authoritativeWorktreeId !== worktreeId) {
+    if (
+      !authoritativeWorktreeId ||
+      this.terminalCreateIdempotency.resolveCurrentWorktreeId(authoritativeWorktreeId) !==
+        worktreeId
+    ) {
       // Why: a reused address or forged provider record must never adopt a PTY from another workspace.
       throw new Error('terminal_create_identity_conflict')
     }
@@ -27634,7 +27643,8 @@ export class OrcaRuntimeService {
       path: workspace.folderPath,
       connectionId: this.resolveFolderWorkspaceConnectionId(workspace),
       repo: null,
-      folderWorkspace: workspace
+      folderWorkspace: workspace,
+      priorWorktreeIds: []
     }
   }
 
@@ -27713,7 +27723,8 @@ export class OrcaRuntimeService {
         path: homedir(),
         connectionId: null,
         repo: null,
-        folderWorkspace: null
+        folderWorkspace: null,
+        priorWorktreeIds: []
       }
     }
 
@@ -27732,7 +27743,8 @@ export class OrcaRuntimeService {
       path: worktree.path,
       connectionId: repo?.connectionId ?? null,
       repo,
-      folderWorkspace: null
+      folderWorkspace: null,
+      priorWorktreeIds: worktree.priorWorktreeIds ?? []
     }
   }
 
@@ -28667,6 +28679,7 @@ export class OrcaRuntimeService {
   notifyWorktreeFolderRenamed(repoId: string, oldWorktreeId: string, newWorktreeId: string): void {
     const previousWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(oldWorktreeId)
     this.clientSessionTabSelections.migrateWorktree(oldWorktreeId, newWorktreeId)
+    this.terminalCreateIdempotency.migrateWorktree(oldWorktreeId, newWorktreeId)
     this.migrateRuntimeSessionWorktree(previousWorktreeId, newWorktreeId)
     this.invalidateResolvedWorktreeCache()
     this.invalidateWorktreeScanCacheForRepo(repoId)
