@@ -167,9 +167,16 @@ export function advanceTerminalTopologyRevision(
  */
 export function findTerminalTabIdForLeaf(
   session: WorkspaceSessionState | undefined,
+  worktreeId: string,
   leafId: string
 ): string | undefined {
+  // Only a tab that still exists counts: a layout entry outlives the tab it described, and binding
+  // a live shell to a deleted tab would register a pane under a ghost and can resurface it.
+  const liveTabIds = new Set((session?.tabsByWorktree?.[worktreeId] ?? []).map((tab) => tab.id))
   for (const [tabId, layout] of Object.entries(session?.terminalLayoutsByTabId ?? {})) {
+    if (!liveTabIds.has(tabId)) {
+      continue
+    }
     const leafIds = new Set<string>()
     collectLeafIds(layout.root, leafIds)
     if (leafIds.has(leafId)) {

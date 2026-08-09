@@ -285,18 +285,19 @@ describe('STA-3077 step F: live-layout tab resolution is reattach-only', () => {
   // a new tab and spawning into it inside that window would otherwise resolve back to the tab the
   // pane just left, writing the durable binding and the fence under one tab while the lease and
   // the runtime registration use the other — the split-coordinate defect step F exists to remove.
-  it('opts into stale-tab resolution only from the reattach bind', async () => {
+  it('resolves the live tab only on the reattach bind, never on a spawn', async () => {
     const { readFileSync } = await import('node:fs')
     const relay = readFileSync('src/main/ssh/ssh-relay-session.ts', 'utf-8')
     const ipc = readFileSync('src/main/ipc/pty.ts', 'utf-8')
 
-    expect(relay).toContain('tabIdMayBeStale: true')
-    // Every spawn-side bindPaneShell call must leave the flag unset.
-    const spawnBinds = ipc.split('bindPaneShell({').slice(1)
-    expect(spawnBinds.length).toBeGreaterThan(0)
-    for (const call of spawnBinds) {
-      expect(call.slice(0, call.indexOf('})'))).not.toContain('tabIdMayBeStale')
-    }
+    // The reattach holds a tabId frozen in a lease, so it must resolve the live one first.
+    expect(relay).toContain('resolvePaneShellTabId(')
+    // Resolving BEFORE the durable write is what keeps a thrown write from losing the answer and
+    // registering the pane in the graph under the tab it left.
+    expect(relay.indexOf('resolvePaneShellTabId(')).toBeLessThan(relay.indexOf('bindPaneShell({'))
+    // Spawn callers hold the fresh tabId; none of them may consult the debounced layout.
+    expect(ipc).toContain('bindPaneShell({')
+    expect(ipc.split('bindPaneShell({').slice(1).join('')).not.toContain('resolvePaneShellTabId')
   })
 })
 

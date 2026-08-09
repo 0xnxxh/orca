@@ -290,6 +290,27 @@ describe('STA-3077 step P: the fold carries the whole fence', () => {
   })
 })
 
+describe('STA-3077 step P: the fold never synthesizes a pair that was never written', () => {
+  // The two partitions can name DIFFERENT ptys for one leaf — that divergence is the defect being
+  // migrated. Local wins the binding, so the losing partition's incarnation must not follow it:
+  // (local pty, superseded incarnation) is a pair no writer ever produced, and persistPtyBinding's
+  // CAS compares both, so it would refuse the pane's next legitimate update.
+  it('leaves the superseded incarnation behind when local wins with a different pty', async () => {
+    const sshSession = paneSession('pty-1') as unknown as {
+      terminalPtyIncarnationsByPaneKey: Record<string, string>
+    }
+    sshSession.terminalPtyIncarnationsByPaneKey = { [`${TAB}:${LEAF}`]: 'inc-pty-1' }
+    const store = await createStore({
+      workspaceSession: paneSession('pty-2'),
+      workspaceSessionsByHostId: { [SSH_PARTITION]: sshSession }
+    })
+
+    const local = store.getWorkspaceSession()
+    expect(local.terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(appPtyId('pty-2'))
+    expect(local.terminalPtyIncarnationsByPaneKey?.[`${TAB}:${LEAF}`]).not.toBe('inc-pty-1')
+  })
+})
+
 describe('STA-3077 step P: every production caller names that one home', () => {
   const summarize = (source: string): string => source.replace(/\s+/g, ' ').trim().slice(0, 90)
 

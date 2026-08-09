@@ -7290,9 +7290,19 @@ export class Store {
           // to fold. Clearing here would delete the only record of the binding.
           continue
         }
-        localLayout.ptyIdsByLeafId = { ...bindings, ...localLayout.ptyIdsByLeafId }
+        const localBindings = localLayout.ptyIdsByLeafId ?? {}
+        // The incarnation follows the WINNING binding, so a leaf contributes one only when the
+        // moved pty is the one that ends up bound — either local had none, or both name the same
+        // pty. Where local wins with a DIFFERENT pty, this partition's incarnation belongs to the
+        // binding that lost: pairing it with local's pty would synthesize a pair that was never
+        // written, and the CAS would then refuse the pane's next legitimate update.
+        movedPaneKeys.push(
+          ...Object.keys(bindings)
+            .filter((leafId) => !localBindings[leafId] || localBindings[leafId] === bindings[leafId])
+            .map((leafId) => `${tabId}:${leafId}`)
+        )
+        localLayout.ptyIdsByLeafId = { ...bindings, ...localBindings }
         layout.ptyIdsByLeafId = {}
-        movedPaneKeys.push(...Object.keys(bindings).map((leafId) => `${tabId}:${leafId}`))
         changed = true
       }
       // The incarnation is the other half of the same fence, so it moves with its binding and only

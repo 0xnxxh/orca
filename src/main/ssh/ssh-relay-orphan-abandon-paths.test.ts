@@ -69,6 +69,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  resolvePaneShellTabId: vi.fn(() => undefined),
   registerSshPtyProvider: vi.fn(),
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn(),

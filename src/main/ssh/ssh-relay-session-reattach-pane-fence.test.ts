@@ -151,9 +151,12 @@ function makeMainWindow() {
   return { isDestroyed: () => false, isVisible: () => true, isMinimized: () => false, webContents }
 }
 
-/** A live layout in which `leafId` sits in `tabId` — the tab the pane is in RIGHT NOW. */
+/** A live layout in which `leafId` sits in `tabId` — the tab the pane is in RIGHT NOW.
+ *  The tab must also exist in `tabsByWorktree`: resolution ignores a layout whose tab is gone, so
+ *  a fixture without one would resolve nothing and the clause would pass for the wrong reason. */
 function sessionWithLeafInTab(tabId: string, leafId: string) {
   return {
+    tabsByWorktree: { 'worktree-1': [{ id: tabId, worktreeId: 'worktree-1' }] },
     terminalLayoutsByTabId: {
       [tabId]: { root: { type: 'leaf' as const, leafId }, ptyIdsByLeafId: {} }
     }

@@ -537,6 +537,25 @@ function rememberPaneKeyForPty(ptyId: string, paneKey: unknown): string | null {
  * the fence use the live one splits the pane across two tabs, and the graph half then ensures a
  * mobile surface for the tab the pane left.
  */
+/**
+ * The tab a leaf lives in *now*. Callers whose own `tabId` is fresh (spawn) must not use this — the
+ * persisted layout is the stale side inside the renderer's publish debounce. Callers holding a
+ * tabId frozen in a durable lease (reattach) must, because the pane may have been moved since.
+ *
+ * Resolved separately from `bindPaneShell` so a thrown durable write cannot lose the answer and
+ * leave the runtime graph registered under the tab the pane left.
+ */
+export function resolvePaneShellTabId(
+  store: Pick<Store, 'getWorkspaceSession'> | undefined,
+  worktreeId: string,
+  leafId: string
+): string | undefined {
+  if (typeof store?.getWorkspaceSession !== 'function') {
+    return undefined
+  }
+  return findTerminalTabIdForLeaf(store.getWorkspaceSession(), worktreeId, leafId)
+}
+
 export function bindPaneShell(args: {
   store: Pick<Store, 'persistPtyBinding' | 'getWorkspaceSession'> | undefined
   worktreeId: string
@@ -546,16 +565,8 @@ export function bindPaneShell(args: {
   incarnationId?: string
   startupCwd?: string
   mayCreate?: boolean
-  /** The supplied `tabId` came from a durable lease and may name a tab the pane has since left, so
-   *  the live layout outranks it. Spawn callers must NOT set this: their tabId is the fresh truth
-   *  and the persisted layout is the stale side inside the renderer's publish debounce. */
-  tabIdMayBeStale?: boolean
 }): { bound: boolean; tabId: string } {
-  const session =
-    args.tabIdMayBeStale && typeof args.store?.getWorkspaceSession === 'function'
-      ? args.store.getWorkspaceSession()
-      : undefined
-  const tabId = findTerminalTabIdForLeaf(session, args.leafId) ?? args.tabId
+  const tabId = args.tabId
   const bound = args.store?.persistPtyBinding({
     worktreeId: args.worktreeId,
     tabId,

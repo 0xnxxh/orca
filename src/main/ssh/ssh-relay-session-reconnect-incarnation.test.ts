@@ -101,6 +101,7 @@ vi.mock('../providers/ssh-git-provider', () => ({
   SshGitProvider: class MockSshGitProvider {}
 }))
 vi.mock('../ipc/pty', () => ({
+  resolvePaneShellTabId: vi.fn(() => undefined),
   // Step F: the single pane->shell bind producer the relay now calls.
   bindPaneShell: vi.fn(() => true),
   registerSshPtyProvider: vi.fn(),
@@ -448,9 +449,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       leafId: INCARNATION_LEAF_ID,
       ptyId: APP_PTY_ID,
       incarnationId,
-      mayCreate: false,
-      // The lease's tabId is the frozen side on reattach, so the live layout outranks it.
-      tabIdMayBeStale: true
+      mayCreate: false
     })
     expect(vi.mocked(bindPaneShell).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(mockStore.markSshRemotePtyLeasesAttachedAsync).mock.invocationCallOrder[0]!

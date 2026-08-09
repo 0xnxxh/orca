@@ -33,6 +33,7 @@ import { _internals as openCodeInternals } from '../opencode/hook-service'
 import { getPiAgentStatusExtensionSource } from '../pi/agent-status-extension-source'
 import {
   bindPaneShell,
+  resolvePaneShellTabId,
   registerSshPtyProvider,
   unregisterSshPtyProvider,
   getSshPtyProvider,
@@ -2461,18 +2462,21 @@ export class SshRelaySession {
       // Why bind before registering: `mayCreate: false` refuses when the pane is
       // gone, and registering first would surface a pane the user never opened.
       // A thrown write is unknown, not a refusal, so it must not detach anything.
+      // The lease's tabId was frozen when it was written and the pane may have moved since, so the
+      // live layout outranks it. Resolved before the write, so a throw cannot lose it and leave the
+      // graph registered under the tab the pane left.
+      const tabId =
+        resolvePaneShellTabId(this.store, lease.worktreeId, lease.leafId) ?? lease.tabId
       let bind: { bound: boolean; tabId: string } | null = null
       try {
         bind = bindPaneShell({
           store: this.store,
           worktreeId: lease.worktreeId,
-          tabId: lease.tabId,
+          tabId,
           leafId: lease.leafId,
           ptyId: appPtyId,
           incarnationId,
-          mayCreate: false,
-          // The lease's tabId was frozen when it was written; the pane may have been moved since.
-          tabIdMayBeStale: true
+          mayCreate: false
         })
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
@@ -2488,7 +2492,7 @@ export class SshRelaySession {
       // The tab the bind resolved, not the lease's frozen one — a moved pane must not be recorded
       // in the graph under the tab it left while its record and fence name the tab it is in.
       this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
-        tabId: bind?.tabId ?? lease.tabId,
+        tabId,
         leafId: lease.leafId,
         incarnationId
       })
