@@ -1,4 +1,5 @@
 import type { IDisposable } from '@xterm/xterm'
+import { encodeImeCommitAsKittyReport } from './terminal-ime-kitty-commit-encoding'
 
 // Why: a plain printable keydown never produces terminal bytes. Bytes for
 // printable characters come only from the `input` event, which on macOS *is*
@@ -13,6 +14,7 @@ import type { IDisposable } from '@xterm/xterm'
 type ClaimedKeyPress = {
   key: string
   code?: string
+  shiftKey: boolean
 }
 
 export type ImeNativeTextKeyEvent = {
@@ -22,6 +24,7 @@ export type ImeNativeTextKeyEvent = {
   metaKey: boolean
   ctrlKey: boolean
   altKey: boolean
+  shiftKey?: boolean
   isComposing?: boolean
 }
 
@@ -82,6 +85,12 @@ export function installTerminalImeNativeTextForwarder(args: {
   terminalElement: HTMLElement | null | undefined
   isComposing: () => boolean
   sendInput: (data: string) => void
+  /**
+   * The pane's negotiated kitty flags. Read once per commit, never on the
+   * keydown — `claimKeyEvent` stays structural and protocol-blind so the hot
+   * path keeps no kitty state. Absent means no pane to negotiate with.
+   */
+  getKittyKeyboardFlags?: () => number
 }): TerminalImeNativeTextForwarder {
   if (!args.terminalElement) {
     return {
@@ -114,7 +123,7 @@ export function installTerminalImeNativeTextForwarder(args: {
       // never arrived (the input source swallowed the key) — no timer needed.
       pendingForward = true
       forwardedPressBytes = false
-      claimedPress = { key: event.key, code: event.code }
+      claimedPress = { key: event.key, code: event.code, shiftKey: event.shiftKey === true }
       return true
     }
     if (!claimedPress) {
@@ -161,7 +170,11 @@ export function installTerminalImeNativeTextForwarder(args: {
       return
     }
     if (event.data) {
-      args.sendInput(event.data)
+      const kittyReport = encodeImeCommitAsKittyReport(
+        claimedPress,
+        args.getKittyKeyboardFlags?.() ?? 0
+      )
+      args.sendInput(kittyReport ?? event.data)
       forwardedPressBytes = true
     }
     event.stopImmediatePropagation()
