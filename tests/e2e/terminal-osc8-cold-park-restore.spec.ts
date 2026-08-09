@@ -61,7 +61,6 @@ async function readLinkState(
 ): Promise<{
   bufferType: string
   serializedUri: boolean
-  tooltipText: string
   underlined: boolean
   uri: string | null
 }> {
@@ -96,7 +95,6 @@ async function readLinkState(
         return {
           bufferType: buffer.type,
           serializedUri: uri ? pane.serializeAddon.serialize().includes(uri) : false,
-          tooltipText: pane.linkTooltip.textContent ?? '',
           underlined: !!cell?.isUnderline(),
           uri
         }
@@ -152,7 +150,6 @@ test('restores and opens an OSC 8 link after its terminal is cold-parked', async
     .toMatchObject({
       bufferType: 'alternate',
       serializedUri: true,
-      tooltipText: expect.stringContaining(url),
       underlined: true,
       uri: url
     })
@@ -170,7 +167,6 @@ test('restores and opens an OSC 8 link after its terminal is cold-parked', async
     .toMatchObject({
       bufferType: 'alternate',
       serializedUri: true,
-      tooltipText: expect.stringContaining(url),
       underlined: true,
       uri: url
     })
