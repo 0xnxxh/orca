@@ -6174,7 +6174,10 @@
           "5567191a6e": "Browse",
           "0e9fc0eadc": "Workspace Directory",
           "e2955d9ccb": "Configure where new workspaces are created.",
-          "7511097c5d": "Workspace"
+          "7511097c5d": "Workspace",
+          "31e300af1c": "Ask Before Deleting Artifacts",
+          "fb29a73a17": "Show a confirmation dialog before deleting a shared artifact and breaking its public link.",
+          "bf46474e33": "Show a confirmation before deleting a shared artifact. Anyone holding its public link loses access."
         },
         "GhosttyImportModal": {
           "9d3e56ca36": "Apply Changes",
@@ -7589,10 +7592,7 @@
             "fastDescription": "Extra multiplier while scrolling with a modifier key.",
             "tui": "TUI",
             "tuiDescription": "Discrete wheel reports for full-screen terminal apps."
-          },
-          "fc01559dad": "Korean Won (₩) to Backquote (`)",
-          "f1f43e38f3": "Controls whether pressing the Korean Won (₩) key sends a backquote (`) instead when a Korean input source is active.",
-          "7f535117e5": "Pressing the Korean Won (₩) key sends a backquote (`) instead when a Korean input source is active."
+          }
         },
         "TerminalSettingsPreview": {
           "a63953a48a": "Preview {{value0}} theme",
@@ -9217,13 +9217,6 @@
             "9c35f56625": "yen",
             "063914c486": "Controls whether pressing the JIS Yen (¥) key sends a backslash (\\) instead.",
             "694b8764ac": "JIS Yen (¥) to Backslash (\\)",
-            "5ba707eec2": "won",
-            "d243131b1a": "backquote",
-            "2a22983b81": "backtick",
-            "8f64dd7dc4": "korean",
-            "84ae68de79": "hangul",
-            "91cae143ad": "korea",
-            "b26f68a00c": "markdown",
             "fae142a354": "readline",
             "b3b94cfcb5": "international",
             "dd4f6cb541": "german",
@@ -9326,9 +9319,7 @@
               "title": "Theme Mode",
               "keyword_target": "target",
               "keyword_editing": "editing"
-            },
-            "d6756003bf": "Korean Won (₩) to Backquote (`)",
-            "3595f8b54c": "Controls whether pressing the Korean Won (₩) key sends a backquote (`) instead when a Korean input source is active."
+            }
           },
           "windows": {
             "search": {
@@ -14478,7 +14469,16 @@
       "confirmation": {
         "dialog": {
           "8490e5d36a": "Confirm",
-          "56f5c60e0c": "Cancel"
+          "56f5c60e0c": "Cancel",
+          "92bac3217e": "Don't ask again"
+        },
+        "skip": {
+          "saved": "We'll skip this confirmation next time.",
+          "savedDescription": "You can change this in Settings.",
+          "openSettings": "Open Settings",
+          "preference": {
+            "0b0cb6e3f9": "Could not save the confirmation preference."
+          }
         }
       },
       "jira": {
@@ -14964,7 +14964,15 @@
           "loadMoreFailed": "Could not load more artifacts.",
           "publishingOff": "Publishing is turned off",
           "publishingOffCopy": "Nothing on this device can create a public artifact link yet. Allow publishing in Settings → Artifacts, then ask your agent to share an HTML or Markdown file.",
-          "openArtifactsSettings": "Open Settings → Artifacts"
+          "openArtifactsSettings": "Open Settings → Artifacts",
+          "loadedCountMore": "{{count}} loaded · more available",
+          "loadedCount": "{{count}} shared",
+          "retry": "Retry",
+          "reconnectHeading": "Sign in to Orca again",
+          "reconnectCopy": "Sign in again to view and manage the artifacts shared through your account.",
+          "signInAgainAction": "Sign in again",
+          "unconfiguredCopy": "Orca account sign-in is not configured on this machine yet.",
+          "openAccountSettings": "Open account settings"
         },
         "copySuccess": "Artifact link copied",
         "copyFailed": "Could not copy artifact link",
@@ -14976,7 +14984,20 @@
         "actions": "Artifact actions",
         "ArtifactCollection": {
           "loadMore": "Load more"
-        }
+        },
+        "ArtifactDetailHeader": {
+          "publicLink": "Anyone with this link can view it"
+        },
+        "ArtifactListPane": {
+          "search": "Search artifacts",
+          "listLabel": "Shared artifacts",
+          "noMatches": "No matches"
+        },
+        "updatedAt": "Updated {{when}}",
+        "updatedRecently": "recently",
+        "expiryUnknown": "Expiry unknown",
+        "expired": "Link expired",
+        "expires": "Link expires {{when}}"
       }
     },
     "i18n": {
