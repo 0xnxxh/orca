@@ -2077,27 +2077,38 @@ export default function SmartWorkspaceNameField({
               {crossRepoSwitchDescriptionSuffix}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="sm:flex-wrap">
             <Button variant="outline" onClick={dismissCrossRepoPrompt}>
               {translate(
                 'auto.components.new.workspace.SmartWorkspaceNameField.6859e2896c',
                 'Cancel'
               )}
             </Button>
-            <Button variant="outline" onClick={() => void handleUseCurrentRepo()}>
-              {translate(
-                'auto.components.new.workspace.SmartWorkspaceNameField.eadf877af5',
-                'Keep'
-              )}{' '}
-              {selectedRepo?.displayName ?? crossRepoSwitchFallbackLabel}
+            <Button
+              variant="outline"
+              className="min-w-0 max-w-full"
+              onClick={() => void handleUseCurrentRepo()}
+            >
+              <span className="min-w-0 truncate">
+                {translate(
+                  'auto.components.new.workspace.SmartWorkspaceNameField.eadf877af5',
+                  'Keep'
+                )}{' '}
+                {selectedRepo?.displayName ?? crossRepoSwitchFallbackLabel}
+              </span>
             </Button>
             {crossRepoPrompt?.matchingRepo ? (
-              <Button onClick={() => void acceptGitHubLink(crossRepoPrompt.matchingRepo!)}>
-                {translate(
-                  'auto.components.new.workspace.SmartWorkspaceNameField.a76fcb4fa0',
-                  'Switch to'
-                )}{' '}
-                {crossRepoPrompt.matchingRepo.displayName}
+              <Button
+                className="min-w-0 max-w-full"
+                onClick={() => void acceptGitHubLink(crossRepoPrompt.matchingRepo!)}
+              >
+                <span className="min-w-0 truncate">
+                  {translate(
+                    'auto.components.new.workspace.SmartWorkspaceNameField.a76fcb4fa0',
+                    'Switch to'
+                  )}{' '}
+                  {crossRepoPrompt.matchingRepo.displayName}
+                </span>
               </Button>
             ) : allowCrossRepoProjectAdd ? (
               <Button onClick={() => void handleAddMatchingRepo()}>
