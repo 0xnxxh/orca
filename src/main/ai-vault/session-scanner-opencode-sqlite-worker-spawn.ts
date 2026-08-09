@@ -10,21 +10,6 @@ import { OpenCodeSqliteWorkerClient } from './session-scanner-opencode-sqlite-wo
 // scanner call sites depend only on the two routing functions below.
 
 function resolveWorkerEntryPath(): string {
-  let app: { isPackaged: boolean } | null = null
-  try {
-    app = require('electron').app ?? null
-  } catch {
-    app = null
-  }
-  if (app?.isPackaged) {
-    return join(
-      process.resourcesPath,
-      'app.asar',
-      'out',
-      'main',
-      'session-scanner-opencode-sqlite-worker-entry.js'
-    )
-  }
   return join(__dirname, 'session-scanner-opencode-sqlite-worker-entry.js')
 }
 
