@@ -107,7 +107,7 @@ export class ClientSessionTabSelectionStore {
     return statesByWorktree
   }
 
-  private resolveWorktreeId(worktreeId: string): string {
+  resolveWorktreeId(worktreeId: string): string {
     return this.worktreeAliases.resolve(worktreeId)
   }
 

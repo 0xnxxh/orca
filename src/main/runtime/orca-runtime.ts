@@ -7231,10 +7231,12 @@ export class OrcaRuntimeService {
       opts.clientNavigationId
     )
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId =
-      explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    let worktreeId = explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords(worktreeId)
+    // Why: inventory can overlap a rename that rekeys the authoritative snapshot.
+    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const directTab = snapshot?.tabs.find((candidate) => candidate.id === tabId)
     const tab = leafId
@@ -7697,11 +7699,17 @@ export class OrcaRuntimeService {
         : undefined
     const graphEpoch = options.clientNavigationId ? this.captureReadyGraphEpoch() : null
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId =
-      explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    let worktreeId = explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const observedPtyIds = await this.refreshMobileSessionPtyRecords()
-    if (graphEpoch !== null) {
+    const resolvedWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    const renamedUserClose =
+      resolvedWorktreeId !== worktreeId &&
+      (options.reason === undefined || options.reason === 'user')
+    worktreeId = resolvedWorktreeId
+    // Why: an acknowledged rename permits a current-snapshot relookup; unrelated graph churn stays fenced.
+    if (graphEpoch !== null && !renamedUserClose) {
       this.assertStableReadyGraph(graphEpoch)
     }
     this.restoreLivePairedRendererSessionOwnedMobileTerminals(worktreeId)
@@ -25387,9 +25395,10 @@ export class OrcaRuntimeService {
       result = await run.result
     }
     if (select) {
-      const worktreeId =
+      let worktreeId =
         this.getValidatedExplicitWorktreeIdSelector(worktreeSelector) ??
         (await this.resolveWorktreeSelector(worktreeSelector)).id
+      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
       this.applyMobileSessionTabNavigation(
         this.getMobileSessionTabsForWorktree(worktreeId),
         result.tab.id,

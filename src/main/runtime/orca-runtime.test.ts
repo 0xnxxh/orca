@@ -28736,6 +28736,130 @@ describe('OrcaRuntimeService', () => {
     ).toBe(`tab-b::${leafIds.b}`)
   })
 
+  it('applies delayed activation after a rename rekeys the renderer snapshot', async () => {
+    const inventory = deferred<[]>()
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const focusEditorTab = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: vi.fn(() => inventory.promise)
+    })
+    runtime.setNotifier({ focusEditorTab, worktreesChanged: vi.fn() } as never)
+    const sessionTabs = (worktree: string, version: number) => ({
+      worktree,
+      publicationEpoch: 'rename-activation-race',
+      snapshotVersion: version,
+      activeGroupId: null,
+      activeTabId: 'browser-tab',
+      activeTabType: 'browser' as const,
+      tabs: [
+        {
+          type: 'browser' as const,
+          id: 'browser-tab',
+          browserWorkspaceId: 'browser-workspace',
+          browserPageId: 'browser-page',
+          title: 'Browser',
+          url: 'about:blank',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          isActive: true
+        }
+      ]
+    })
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(TEST_WORKTREE_ID, 1)]
+    })
+
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      'browser-tab',
+      undefined,
+      { navigation: 'host' }
+    )
+    await vi.waitFor(() =>
+      expect(runtime['pendingMobileSessionPtyInventoryRefresh']).not.toBeNull()
+    )
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(renamedWorktreeId, 1)]
+    })
+    inventory.resolve([])
+
+    await expect(activation).resolves.toMatchObject({ worktree: renamedWorktreeId })
+    expect(focusEditorTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
+  })
+
+  it('applies delayed close after a rename rekeys the renderer snapshot', async () => {
+    const inventory = deferred<[]>()
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const closeSessionTab = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: vi.fn(() => inventory.promise)
+    })
+    runtime.setNotifier({ closeSessionTab, worktreesChanged: vi.fn() } as never)
+    const sessionTabs = (worktree: string, version: number) => ({
+      worktree,
+      publicationEpoch: 'rename-close-race',
+      snapshotVersion: version,
+      activeGroupId: null,
+      activeTabId: 'browser-tab',
+      activeTabType: 'browser' as const,
+      tabs: [
+        {
+          type: 'browser' as const,
+          id: 'browser-tab',
+          browserWorkspaceId: 'browser-workspace',
+          browserPageId: 'browser-page',
+          title: 'Browser',
+          url: 'about:blank',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          isActive: true
+        }
+      ]
+    })
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(TEST_WORKTREE_ID, 1)]
+    })
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+
+    const close = runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'browser-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+    await vi.waitFor(() =>
+      expect(runtime['pendingMobileSessionPtyInventoryRefresh']).not.toBeNull()
+    )
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(renamedWorktreeId, 1)]
+    })
+    inventory.resolve([])
+
+    await expect(close).resolves.toEqual({ closed: true })
+    expect(closeSessionTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
+    expect(
+      (await runtime.listMobileSessionTabs(`id:${renamedWorktreeId}`, 'device-a')).tabs
+    ).toEqual([])
+  })
+
   it('materializes a plain shell when the pending tab has no launch agent', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'serve-materialized-pty' })
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
