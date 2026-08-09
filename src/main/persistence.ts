@@ -7284,9 +7284,12 @@ export class Store {
           continue
         }
         const localLayout = local.terminalLayoutsByTabId?.[tabId]
-        if (localLayout) {
-          localLayout.ptyIdsByLeafId = { ...bindings, ...localLayout.ptyIdsByLeafId }
+        if (!localLayout) {
+          // No local layout owns this tab, so there is no second home to disagree with and nothing
+          // to fold. Clearing here would delete the only record of the binding.
+          continue
         }
+        localLayout.ptyIdsByLeafId = { ...bindings, ...localLayout.ptyIdsByLeafId }
         layout.ptyIdsByLeafId = {}
         changed = true
       }

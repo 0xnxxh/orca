@@ -239,6 +239,7 @@ async function spawnThenReattachPane(leafId: string, currentTabId?: string) {
     listeners.get('pty:write')!({ sender: mainWindow.webContents }, { id, data: 'x' })
   }
   return {
+    runtime,
     paneKey: makePaneKey(currentTabId ?? TAB_ID, leafId),
     predecessorPtyId,
     reattachedPtyId: `ssh:${TARGET}@@${reattachedRelayPtyId}`,
@@ -305,6 +306,15 @@ describe('a relay reattach binds the pane through the same producer as spawn', (
     expect(pane.paneKey).toBe(makePaneKey('tab-moved-to', leafId))
     expect(getPtyIdForPaneKey(pane.paneKey)).toBe(pane.reattachedPtyId)
     expect(getPtyIdForPaneKey(makePaneKey(TAB_ID, leafId))).not.toBe(pane.reattachedPtyId)
+    // The runtime graph must land on the SAME tab as the record and the fence. Registering under
+    // the lease's frozen tabId would split the pane across two tabs and ensure a mobile surface
+    // for the one it left.
+    expect(pane.runtime.registerPty).toHaveBeenCalledWith(
+      pane.reattachedPtyId,
+      'worktree-1',
+      TARGET,
+      expect.objectContaining({ tabId: 'tab-moved-to', leafId })
+    )
   })
 
   // Guards the clause above from a fence that simply refuses everything.

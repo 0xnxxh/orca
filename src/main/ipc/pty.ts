@@ -529,8 +529,13 @@ function rememberPaneKeyForPty(ptyId: string, paneKey: unknown): string | null {
  * tab holding the leaf *now* (a stored tabId names the tab a moved pane left). Splitting these let
  * the superseded-PTY fence sit inert on reattach, the path it was built for.
  *
- * Returns false when a durable pane refuses. A throw is unknown rather than a refusal, so it
+ * `bound` is false when a durable pane refuses. A throw is unknown rather than a refusal, so it
  * propagates — only the caller that created the shell should clean it up.
+ *
+ * `tabId` is the resolved tab, returned so a caller that also registers the pane with the runtime
+ * graph uses the SAME coordinate. Registering under the lease's frozen tabId while the record and
+ * the fence use the live one splits the pane across two tabs, and the graph half then ensures a
+ * mobile surface for the tab the pane left.
  */
 export function bindPaneShell(args: {
   store: Pick<Store, 'persistPtyBinding' | 'getWorkspaceSession'> | undefined
@@ -541,7 +546,7 @@ export function bindPaneShell(args: {
   incarnationId?: string
   startupCwd?: string
   mayCreate?: boolean
-}): boolean {
+}): { bound: boolean; tabId: string } {
   const session =
     typeof args.store?.getWorkspaceSession === 'function'
       ? args.store.getWorkspaceSession()
@@ -557,10 +562,10 @@ export function bindPaneShell(args: {
     ...(args.mayCreate === false ? { mayCreate: false } : {})
   })
   if (bound === false) {
-    return false
+    return { bound: false, tabId }
   }
   rememberPaneKeyForPty(args.ptyId, makePaneKey(tabId, args.leafId))
-  return true
+  return { bound: true, tabId }
 }
 
 function cleanupPendingPaneSerializersForSender(ownerWebContentsId: number): void {

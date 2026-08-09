@@ -2461,9 +2461,9 @@ export class SshRelaySession {
       // Why bind before registering: `mayCreate: false` refuses when the pane is
       // gone, and registering first would surface a pane the user never opened.
       // A thrown write is unknown, not a refusal, so it must not detach anything.
-      let bound: boolean | null = null
+      let bind: { bound: boolean; tabId: string } | null = null
       try {
-        bound = bindPaneShell({
+        bind = bindPaneShell({
           store: this.store,
           worktreeId: lease.worktreeId,
           tabId: lease.tabId,
@@ -2475,7 +2475,7 @@ export class SshRelaySession {
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
       }
-      if (bound === false) {
+      if (bind?.bound === false) {
         // Unresolved, not dead: the remote shell keeps running and stays
         // reattachable once a durable pane names it again.
         console.info(
@@ -2483,8 +2483,10 @@ export class SshRelaySession {
         )
         return
       }
+      // The tab the bind resolved, not the lease's frozen one — a moved pane must not be recorded
+      // in the graph under the tab it left while its record and fence name the tab it is in.
       this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
-        tabId: lease.tabId,
+        tabId: bind?.tabId ?? lease.tabId,
         leafId: lease.leafId,
         incarnationId
       })

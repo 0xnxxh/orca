@@ -251,6 +251,21 @@ describe('STA-3077 step P: the pane binding has one home', () => {
   })
 })
 
+describe('STA-3077 step P: the fold never destroys a binding it cannot move', () => {
+  // A tab that exists only in the ssh partition has no second home to disagree with, so there is
+  // nothing to fold. Clearing it anyway would delete the only record that pane was ever bound.
+  it('leaves an ssh-only tab binding intact', async () => {
+    const store = await createStore({
+      workspaceSession: { ...getDefaultWorkspaceSession(), terminalLayoutsByTabId: {} },
+      workspaceSessionsByHostId: { [SSH_PARTITION]: paneSession('pty-1') }
+    })
+
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]
+    ).toBe(appPtyId('pty-1'))
+  })
+})
+
 describe('STA-3077 step P: the fold carries the whole fence', () => {
   // `persistPtyBinding` writes the binding and its incarnation into the SAME partition, and the
   // incarnation is what its CAS compares. Folding only the binding would move the guard's subject

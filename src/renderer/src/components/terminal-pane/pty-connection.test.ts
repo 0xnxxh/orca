@@ -19,6 +19,10 @@ import { resolveWindowsShiftEnterEncodingForPane } from './terminal-windows-shif
 import type * as UseNotificationDispatchModule from './use-notification-dispatch'
 import { getEagerPtyBufferHandle } from './pty-dispatcher'
 import type { AgentType } from '../../../../shared/agent-status-types'
+import {
+  isResumableTuiAgent,
+  normalizeAgentProviderSession
+} from '../../../../shared/agent-session-resume'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { toAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import type { SshConnectionState } from '../../../../shared/ssh-types'
@@ -9343,6 +9347,80 @@ describe('connectPanePty', () => {
     ).toBeDefined()
     expect(deps.clearTabPtyId).not.toHaveBeenCalled()
     expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+  })
+
+  // The banner's second action must start a NEW shell. The automatic respawn it replaced passed the
+  // cold-restore startup, which carries the agent's providerSession — correct when it only ran on
+  // proof the shell was gone, but here the shell is probably alive, so resuming would put a second
+  // agent process on one transcript. That is the very defect this pane exists to prevent.
+  it('starts a fresh shell rather than resuming the agent when the user starts a new terminal', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    const spawnOptions: Record<string, unknown>[] = []
+    transport.connect.mockImplementation(async (options: { sessionId?: string }) => {
+      if (options.sessionId) {
+        throw new Error('PTY "tab-pty" not found')
+      }
+      spawnOptions.push(options)
+      return { id: 'fresh-pty' }
+    })
+    transportFactoryQueue.push(transport)
+
+    // Fixture pin: with no resumable agent + provider session seeded, the resume builder returns
+    // null early and both branches spawn identically — every clause below would pass vacuously.
+    const paneKey = makePaneKey('tab-1', LEAF_1)
+    const providerSession = { key: 'session_id', id: 'codex-session-1' }
+    expect(isResumableTuiAgent('codex')).toBe(true)
+    expect(normalizeAgentProviderSession(providerSession)).not.toBeNull()
+    mockStoreState = {
+      ...mockStoreState,
+      settings: { ...mockStoreState.settings, agentCmdOverrides: {} },
+      agentStatusByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          state: 'working',
+          prompt: 'finish the task',
+          agentType: 'codex',
+          providerSession,
+          updatedAt: 1,
+          stateStartedAt: 1,
+          stateHistory: []
+        }
+      }
+    } as StoreState
+
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(30)
+
+    const published = onPtyRecoveryState.mock.calls.find(
+      ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+    )?.[1]?.unreachablePane
+    expect(published).toBeDefined()
+
+    onPtyRecoveryState.mockClear()
+    published!.onStartNewTerminal()
+    await flushAsyncTicks(30)
+
+    // Nothing else retracts the card, so the action must clear it or it sits over a live shell.
+    expect(onPtyRecoveryState).toHaveBeenCalledWith(pane.id, null)
+    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'tab-pty')
+    // The resume path claims the launch config before spawning; a fresh shell has none to claim.
+    expect(mockStoreState.registerAgentLaunchConfig).not.toHaveBeenCalled()
+    expect(spawnOptions).toHaveLength(1)
+    // No `codex resume <session>` argv, and none of the resume metadata main keys off it.
+    expect(spawnOptions[0]).not.toHaveProperty('command')
+    expect(spawnOptions[0]).not.toHaveProperty('resumeProviderSession')
+    expect(spawnOptions[0]).not.toHaveProperty('launchAgent')
+    expect(spawnOptions[0]).not.toHaveProperty('launchConfig')
   })
 
   it('keeps ?25h in the live agent reattach reset when the snapshot leaves the cursor visible', async () => {

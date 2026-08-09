@@ -5097,28 +5097,40 @@ export function connectPanePty(
      * explicit actions instead of leaving it frozen behind a raw error toast — the user decides,
      * because nothing here knows whether the shell died.
      */
-    const publishUnreachablePane = (
-      sessionId: string,
-      coldRestoreStartup?: ColdRestoreAgentResumeStartup | null
-    ): void => {
+    const publishUnreachablePane = (sessionId: string): void => {
+      // Both actions clear the banner before acting: nothing else retracts it. The app-SSH
+      // transport does not publish recovery states, so a card left up would sit over a live shell
+      // with armed buttons.
+      const clearBanner = (): void => deps.onPtyRecoveryStateRef?.current?.(pane.id, null)
       deps.onPtyRecoveryStateRef?.current?.(pane.id, {
         phase: 'disconnected',
         epoch: 0,
         attempt: 0,
         unreachablePane: {
           onRetry: () => {
+            clearBanner()
+            // Why the generation and instance: a recovery declined by the cooldown only schedules
+            // a deferred retry when it can identify the generation to remount. Without them a
+            // second click inside the window is refused silently, which on a surface whose whole
+            // purpose is to let the user act reads as a dead button.
             void requestTerminalPaneRecovery({
               tabId: deps.tabId,
               ptyId: sessionId,
-              reason: 'restore-blocked'
+              reason: 'restore-blocked',
+              terminalRecoveryGeneration,
+              terminalRecoveryInstanceId: terminalRecoveryInstance.id
             })
           },
           onStartNewTerminal: () => {
+            clearBanner()
             deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
             deps.clearTabPtyId(deps.tabId, sessionId)
-            startFreshColdRestoreAgentResume(coldRestoreStartup, {
-              forceBlankRestoredViewport: true
-            })
+            // A NEW shell, not a resumed one. The old automatic respawn passed the cold-restore
+            // startup, which carries the agent's providerSession — correct then, because it only
+            // ran on proof the shell was gone. Here the shell is probably still alive, so resuming
+            // would put a second agent process on one transcript: the exact defect this pane
+            // exists to prevent. `null` starts fresh, which is also what the button says.
+            startFreshSpawn(null, { forceBlankRestoredViewport: true })
           }
         }
       })
@@ -8865,7 +8877,7 @@ export function connectPanePty(
                 // else leaves the shell running, because respawning with the
                 // restored id resumes the same agent session a second time.
                 if (!isProvenSshSessionGoneError(err)) {
-                  publishUnreachablePane(pendingSessionId, coldRestoreStartup)
+                  publishUnreachablePane(pendingSessionId)
                   return
                 }
                 deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
@@ -9112,7 +9124,7 @@ export function connectPanePty(
           // leaves the shell running, and respawning there resumes the same
           // agent session a second time into one transcript.
           if (!isProvenSshSessionGoneError(err)) {
-            publishUnreachablePane(deferredReattachSessionId, coldRestoreStartup)
+            publishUnreachablePane(deferredReattachSessionId)
             return
           }
           deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
