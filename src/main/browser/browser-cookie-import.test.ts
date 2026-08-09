@@ -473,6 +473,12 @@ describe('importCookiesFromBrowser Chromium', () => {
     ]).close()
 
     const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    execFileSyncMock.mockImplementation((command: string) => {
+      if (command === 'defaults') {
+        return '120.0.6099.71\n'
+      }
+      throw new Error(`Unexpected command: ${command}`)
+    })
     try {
       expect(existsSync(`${sourceCookiesPath}-wal`)).toBe(true)
       const sourceFilesBefore = ['', '-wal', '-shm'].map((suffix) =>
@@ -493,6 +499,7 @@ describe('importCookiesFromBrowser Chromium', () => {
         })
       )
       expect(execFileSyncMock.mock.calls.some(([command]) => command === 'security')).toBe(false)
+      expect(execFileSyncMock.mock.calls.some(([command]) => command === 'defaults')).toBe(false)
       expect(copyFileSyncMock.mock.calls.some(([source]) => source === sourceCookiesPath)).toBe(
         true
       )
