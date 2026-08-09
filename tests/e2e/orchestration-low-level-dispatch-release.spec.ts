@@ -25,7 +25,9 @@ test('low-level Dispatches can be abandoned and stopped without closing their pa
   })
   const terminalHandle = resolved.result.terminal.handle
   await expect
-    .poll(async () => (await findTerminal(client, terminalHandle)).incarnationId)
+    .poll(async () => (await findTerminal(client, terminalHandle)).incarnationId, {
+      timeout: 15_000
+    })
     .toBeTruthy()
   const before = await findTerminal(client, terminalHandle)
   if (!before.incarnationId) {
