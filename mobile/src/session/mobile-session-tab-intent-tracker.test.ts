@@ -22,16 +22,34 @@ describe('MobileSessionTabIntentTracker', () => {
   it('keeps an old route create from owning a reused route identity', () => {
     const tracker = new MobileSessionTabIntentTracker()
     tracker.worktreeId = 'worktree-a'
-    const staleCreate = tracker.beginTerminalCreate()
+    const staleCreate = tracker.beginTabCreate('terminal')
 
     tracker.worktreeId = 'worktree-b'
-    tracker.invalidateTerminalCreate()
-    const currentCreate = tracker.beginTerminalCreate()
+    tracker.invalidateTabCreates()
+    const currentCreate = tracker.beginTabCreate('terminal')
     tracker.worktreeId = 'worktree-a'
-    tracker.invalidateTerminalCreate()
+    tracker.invalidateTabCreates()
 
-    expect(tracker.isTerminalCreateCurrent('worktree-a', staleCreate)).toBe(false)
-    expect(tracker.isTerminalCreateCurrent('worktree-b', currentCreate)).toBe(false)
-    expect(tracker.isTerminalCreateCurrent('worktree-a', tracker.beginTerminalCreate())).toBe(true)
+    expect(tracker.isTabCreateCurrent('worktree-a', 'terminal', staleCreate)).toBe(false)
+    expect(tracker.isTabCreateCurrent('worktree-b', 'terminal', currentCreate)).toBe(false)
+    expect(
+      tracker.isTabCreateCurrent('worktree-a', 'terminal', tracker.beginTabCreate('terminal'))
+    ).toBe(true)
+  })
+
+  it('invalidates every create kind on a route change', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    tracker.worktreeId = 'worktree-a'
+    const revisions = {
+      terminal: tracker.beginTabCreate('terminal'),
+      browser: tracker.beginTabCreate('browser'),
+      markdown: tracker.beginTabCreate('markdown')
+    }
+
+    tracker.invalidateTabCreates()
+
+    expect(tracker.isTabCreateCurrent('worktree-a', 'terminal', revisions.terminal)).toBe(false)
+    expect(tracker.isTabCreateCurrent('worktree-a', 'browser', revisions.browser)).toBe(false)
+    expect(tracker.isTabCreateCurrent('worktree-a', 'markdown', revisions.markdown)).toBe(false)
   })
 })

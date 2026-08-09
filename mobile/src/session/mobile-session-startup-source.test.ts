@@ -180,6 +180,14 @@ describe('mobile session startup', () => {
       'async function handleCreateTerminal(',
       '// Quick commands spawn a fresh terminal tab'
     )
+    const createMarkdown = sliceBetween(
+      'async function handleCreateMarkdownNote()',
+      'async function handleCreateBrowser('
+    )
+    const createBrowser = sliceBetween(
+      'async function handleCreateBrowser(',
+      '// Keep the ref at the latest handleCreateBrowser'
+    )
     const pendingTerminalActivation = sliceBetween(
       '// Why: a server-owned tab can be active but still pending',
       'const showLoadingState'
@@ -208,6 +216,12 @@ describe('mobile session startup', () => {
     expect(createTerminal).toContain(
       'restoreTabSelection(client, `id:${worktreeId}`, getRestoreTabId)'
     )
+    for (const delayedCreate of [createMarkdown, createBrowser]) {
+      expect(delayedCreate).toContain('const ownsCreate = startTabCreate(')
+      expect(delayedCreate).toContain('if (ownsCreate()) {')
+      expect(delayedCreate).toContain('tabCreate.reportCaughtError(')
+      expect(delayedCreate).toContain('tabCreate.finish(ownsCreate,')
+    }
     expect(pendingTerminalActivation).toContain(
       'sessionTabIntentRef.current.revision !== intentRevision'
     )

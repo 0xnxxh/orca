@@ -198,7 +198,7 @@ import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-d
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
 import { openMobileTerminalFileTap } from '../../../../src/session/mobile-terminal-file-tap-open'
 import { deliverCreatedTerminalPrompt } from '../../../../src/session/created-terminal-prompt-delivery'
-import * as tabCreate from '../../../../src/session/mobile-terminal-create-lifecycle'
+import * as tabCreate from '../../../../src/session/mobile-session-tab-create-lifecycle'
 import { MobileSessionTabIntentTracker } from '../../../../src/session/mobile-session-tab-intent-tracker'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
@@ -953,10 +953,11 @@ export default function SessionScreen() {
   const [creating, setCreating] = useState(false)
   // Why: React state isn't a synchronous lock; this ref blocks a double-tap's second create in the same tick before `creating` re-renders.
   const creatingTerminalRef = useRef(false)
-  const [creatingBrowser, setCreatingBrowser] = useState(false)
-  const [creatingMarkdown, setCreatingMarkdown] = useState(false)
   const [createError, setCreateError] = useState('')
   const terminalCreateState = [creatingTerminalRef, setCreating, setCreateError] as const
+  const [creatingBrowser, browserCreateState] = tabCreate.useCreateState(setCreateError)
+  const [creatingMarkdown, markdownCreateState] = tabCreate.useCreateState(setCreateError)
+  const createStates = [terminalCreateState, browserCreateState, markdownCreateState] as const
   const [createWarningState, setCreateWarningState] = useState(() =>
     createMobileSessionCreateWarningState(initialCreateWarning)
   )
@@ -1057,6 +1058,7 @@ export default function SessionScreen() {
   // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
   const sessionTabIntentRef = useRef(new MobileSessionTabIntentTracker())
   sessionTabIntentRef.current.worktreeId = worktreeId
+  const startTabCreate = tabCreate.bindRoute(sessionTabIntentRef.current, worktreeId)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: route the terminal URL tap through a ref so it runs the current handleCreateBrowser closure (the memoized one may hold a null-client render).
@@ -1197,6 +1199,7 @@ export default function SessionScreen() {
     },
     [clearToastHideTimer]
   )
+  const caughtCreateErrorFeedback = [setCreateError, showToast] as const
   const nativeChatScopeKey = mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId)
   const nativeChatSendError = useMobileNativeChatSendError({
     scopeKey: nativeChatScopeKey,
@@ -2686,7 +2689,7 @@ export default function SessionScreen() {
     pendingActiveSessionTabIdRef.current = null
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
-    tabCreate.resetRoute(sessionTabIntentRef.current, terminalCreateState)
+    tabCreate.resetRoute(sessionTabIntentRef.current, createStates)
     pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
     terminalDiagnosticsRef.current.resetRoute()
@@ -3792,13 +3795,8 @@ export default function SessionScreen() {
       return
     }
     const intentRevision = sessionTabIntentRef.current.supersede()
-    const createRevision = sessionTabIntentRef.current.beginTerminalCreate()
-    const ownsCreate = () =>
-      sessionTabIntentRef.current.isTerminalCreateCurrent(worktreeId, createRevision)
+    const ownsCreate = startTabCreate('terminal', terminalCreateState)
     const errorFeedback = [setCreateError, triggerError, showToast] as const
-    creatingTerminalRef.current = true
-    setCreating(true)
-    setCreateError('')
     // Why: idempotency key so a transport retry (reconnect replay) resolves to the same terminal, not a duplicate; kept compact (no worktree id) for the schema length cap.
     const clientMutationId = `mobile-create:${Date.now().toString(36)}-${Math.random()
       .toString(36)
@@ -3933,16 +3931,12 @@ export default function SessionScreen() {
     })
     return true
   }
-
   async function handleCreateMarkdownNote() {
-    if (!client || creatingMarkdown) {
+    if (!client || tabCreate.isCreating(markdownCreateState)) {
       return
     }
     const intentRevision = sessionTabIntentRef.current.supersede()
-
-    setCreatingMarkdown(true)
-    setCreateError('')
-
+    const ownsCreate = startTabCreate('markdown', markdownCreateState)
     try {
       const worktree = `id:${worktreeId}`
       const mutationOwnership = await captureMobileFileMutationOwnership(client, worktree)
@@ -3960,7 +3954,6 @@ export default function SessionScreen() {
           }
           throw new Error(message || 'Failed to create markdown note')
         }
-
         const openResponse = await client.sendRequest(
           'files.open',
           { worktree, relativePath },
@@ -3969,24 +3962,24 @@ export default function SessionScreen() {
         if (!openResponse.ok) {
           throw new Error((openResponse as RpcFailure).error.message)
         }
-        if (intentRevision === sessionTabIntentRef.current.revision) {
-          sessionTabIntentRef.current.pendingFocusKey = `markdown:${relativePath}`
+        if (ownsCreate()) {
+          if (intentRevision === sessionTabIntentRef.current.revision) {
+            sessionTabIntentRef.current.pendingFocusKey = `markdown:${relativePath}`
+          }
+          scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         }
-        scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         return
       }
       throw new Error('Unable to create untitled markdown note')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create markdown note'
-      setCreateError(message)
-      showToast(message, 1800)
+      tabCreate.reportCaughtError(err, 'markdown', ownsCreate, caughtCreateErrorFeedback)
     } finally {
-      setCreatingMarkdown(false)
+      tabCreate.finish(ownsCreate, markdownCreateState)
     }
   }
 
   async function handleCreateBrowser(rawUrl = 'about:blank'): Promise<boolean> {
-    if (!client || creatingBrowser) {
+    if (!client || tabCreate.isCreating(browserCreateState)) {
       return false
     }
     // Why: read via ref so a tap before the capability probe resolves (or a stale callback) still sees the live value.
@@ -4002,9 +3995,7 @@ export default function SessionScreen() {
       return false
     }
     const intentRevision = sessionTabIntentRef.current.supersede()
-
-    setCreatingBrowser(true)
-    setCreateError('')
+    const ownsCreate = startTabCreate('browser', browserCreateState)
     try {
       const response = await client.sendRequest(
         'browser.tabCreate',
@@ -4021,25 +4012,25 @@ export default function SessionScreen() {
       }
       // Focus the new browser tab once it syncs; refresh a few times since the desktop registers the tab asynchronously.
       const created = (response as RpcSuccess).result as { browserPageId?: string }
-      if (created.browserPageId && intentRevision === sessionTabIntentRef.current.revision) {
-        sessionTabIntentRef.current.pendingFocusKey = `browser:${created.browserPageId}`
+      if (ownsCreate()) {
+        if (created.browserPageId && intentRevision === sessionTabIntentRef.current.revision) {
+          sessionTabIntentRef.current.pendingFocusKey = `browser:${created.browserPageId}`
+        }
+        void fetchSessionTabs()
+        scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
+        scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 1200)
+        return true
       }
-      void fetchSessionTabs()
-      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
-      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 1200)
-      return true
+      return false
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create browser'
-      setCreateError(message)
-      showToast(message, 1800)
+      tabCreate.reportCaughtError(err, 'browser', ownsCreate, caughtCreateErrorFeedback)
       return false
     } finally {
-      setCreatingBrowser(false)
+      tabCreate.finish(ownsCreate, browserCreateState)
     }
   }
   // Keep the ref at the latest handleCreateBrowser so a terminal URL tap always runs the current closure.
   handleCreateBrowserRef.current = handleCreateBrowser
-
   async function handleBrowserNavigationCommand(
     tab: Extract<MobileSessionTab, { type: 'browser' }>,
     method: 'browser.back' | 'browser.forward' | 'browser.reload'

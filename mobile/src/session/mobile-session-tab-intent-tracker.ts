@@ -1,10 +1,16 @@
+export type MobileSessionTabCreateKind = 'terminal' | 'browser' | 'markdown'
+
 export class MobileSessionTabIntentTracker {
   worktreeId: string | null = null
   revision = 0
   fileTapActivationSeq = 0
   diffActivationSeq = 0
   pendingFocusKey: string | null = null
-  private terminalCreateRevision = 0
+  private tabCreateRevisions: Record<MobileSessionTabCreateKind, number> = {
+    terminal: 0,
+    browser: 0,
+    markdown: 0
+  }
 
   supersede(): number {
     this.revision += 1
@@ -18,15 +24,21 @@ export class MobileSessionTabIntentTracker {
     return () => this.revision === revision
   }
 
-  beginTerminalCreate(): number {
-    return ++this.terminalCreateRevision
+  beginTabCreate(kind: MobileSessionTabCreateKind): number {
+    return ++this.tabCreateRevisions[kind]
   }
 
-  invalidateTerminalCreate(): void {
-    this.terminalCreateRevision += 1
+  invalidateTabCreates(): void {
+    for (const kind of Object.keys(this.tabCreateRevisions) as MobileSessionTabCreateKind[]) {
+      this.tabCreateRevisions[kind] += 1
+    }
   }
 
-  isTerminalCreateCurrent(worktreeId: string, revision: number): boolean {
-    return this.worktreeId === worktreeId && this.terminalCreateRevision === revision
+  isTabCreateCurrent(
+    worktreeId: string,
+    kind: MobileSessionTabCreateKind,
+    revision: number
+  ): boolean {
+    return this.worktreeId === worktreeId && this.tabCreateRevisions[kind] === revision
   }
 }
