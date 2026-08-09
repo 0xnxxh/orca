@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   requestStablePaneFit: vi.fn(),
   clearPaneFitContinuationRetry: vi.fn(),
   resumePendingFitScrollRestoreAfterFit: vi.fn(),
-  flushDeferredPaneMetricOptionsIfMeasurable: vi.fn(() => false)
+  flushDeferredPaneMetricOptionsIfMeasurable: vi.fn(() => false),
+  repairPaneDomLetterSpacingMismatch: vi.fn(() => false)
 }))
 
 vi.mock('./pane-fit', () => ({
@@ -28,6 +29,9 @@ vi.mock('./pane-fit-continuation-retry', () => ({
 }))
 vi.mock('./pane-scroll', () => ({
   resumePendingFitScrollRestoreAfterFit: mocks.resumePendingFitScrollRestoreAfterFit
+}))
+vi.mock('./terminal-dom-letter-spacing-repair', () => ({
+  repairPaneDomLetterSpacingMismatch: mocks.repairPaneDomLetterSpacingMismatch
 }))
 
 type RevealTestPane = ManagedPane & { lastFitClientSize?: { width: number; height: number } }
@@ -134,6 +138,8 @@ describe('fitRevealedPane routing', () => {
 
     expect(mocks.safeFit).not.toHaveBeenCalled()
     expect(mocks.requestStablePaneFit).not.toHaveBeenCalled()
+    expect(mocks.repairPaneDomLetterSpacingMismatch).toHaveBeenCalledOnce()
+    expect(mocks.repairPaneDomLetterSpacingMismatch).toHaveBeenCalledWith(pane)
     // Parked replay/reattach continuations still get released.
     expect(mocks.flushPendingSafeFitContinuations).toHaveBeenCalledTimes(1)
     expect(mocks.clearPaneFitContinuationRetry).toHaveBeenCalledTimes(1)

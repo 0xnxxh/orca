@@ -9,6 +9,7 @@ import {
 import { requestStablePaneFit } from './pane-fit-resize-observer'
 import { clearPaneFitContinuationRetry } from './pane-fit-continuation-retry'
 import { resumePendingFitScrollRestoreAfterFit } from './pane-scroll'
+import { repairPaneDomLetterSpacingMismatch } from './terminal-dom-letter-spacing-repair'
 
 // Why: a real resize changes the element's pixels; a metric-only wobble does not.
 // No baseline / unmeasurable counts as changed so a first reveal still fits.
@@ -65,6 +66,7 @@ export function fitRevealedPane(pane: ManagedPane): void {
   // Why first: the checks below can both say "nothing to do" and return without
   // fitting, stranding metric options parked while the pane was unmeasurable.
   const flushed = flushDeferredPaneMetricOptionsIfMeasurable(pane)
+  repairPaneDomLetterSpacingMismatch(pane)
   if (paneFitClientSizeChanged(pane)) {
     safeFit(pane)
     return
