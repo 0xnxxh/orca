@@ -10,6 +10,7 @@ import {
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
+import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
 import { extractLastOsc7Uri, extractOscScanTail } from '../daemon/osc7-uri-extraction'
@@ -126,6 +127,8 @@ import type {
   ArtifactListOptions,
   ArtifactListPage,
   ArtifactListItem,
+  ArtifactPublishedLink,
+  ArtifactPublishResult,
   ArtifactWriteRequest
 } from '../../shared/artifacts'
 import type { ArtifactCloudService } from '../artifacts/artifact-cloud-service'
@@ -1140,6 +1143,7 @@ type RuntimeStore = {
     minimaxGroupId?: GlobalSettings['minimaxGroupId']
     minimaxUsageModels?: GlobalSettings['minimaxUsageModels']
     prBotAuthorOverrides?: GlobalSettings['prBotAuthorOverrides']
+    artifactSharingEnabled?: GlobalSettings['artifactSharingEnabled']
     terminalQuickCommands?: GlobalSettings['terminalQuickCommands']
     gitlabProjects?: GlobalSettings['gitlabProjects']
     mobileAutoRestoreFitMs?: number | null
@@ -3567,6 +3571,9 @@ export class OrcaRuntimeService {
     | 'minimaxGroupId'
     | 'minimaxUsageModels'
     | 'prBotAuthorOverrides'
+    // Read-only on purpose: clients preflight the publish capability here, but SettingsUpdate
+    // still omits the key so no RPC caller can grant it to itself.
+    | 'artifactSharingEnabled'
   > {
     if (!this.store?.getSettings) {
       throw new Error('runtime_unavailable')
@@ -3589,7 +3596,8 @@ export class OrcaRuntimeService {
       compactWorktreeCards: settings.compactWorktreeCards === true,
       minimaxGroupId: settings.minimaxGroupId ?? '',
       minimaxUsageModels: settings.minimaxUsageModels ?? 'general',
-      prBotAuthorOverrides: settings.prBotAuthorOverrides ?? []
+      prBotAuthorOverrides: settings.prBotAuthorOverrides ?? [],
+      artifactSharingEnabled: isArtifactSharingEnabled(settings)
     }
   }
 
@@ -4638,8 +4646,20 @@ export class OrcaRuntimeService {
     return this.requireArtifactService().list(options)
   }
 
+  getPublishedArtifactLink(
+    request: ArtifactCloudOptions & { sourceKey: string }
+  ): Promise<ArtifactCloudOperation<ArtifactPublishedLink | null>> {
+    return this.requireArtifactService().getPublishedLink(request)
+  }
+
   shareArtifact(request: ArtifactWriteRequest): Promise<ArtifactCloudOperation<ArtifactListItem>> {
     return this.requireArtifactService().share(request)
+  }
+
+  publishArtifact(
+    request: ArtifactWriteRequest
+  ): Promise<ArtifactCloudOperation<ArtifactPublishResult>> {
+    return this.requireArtifactService().publish(request)
   }
 
   updateArtifact(request: ArtifactWriteRequest): Promise<ArtifactCloudOperation<ArtifactListItem>> {
