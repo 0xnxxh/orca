@@ -168,9 +168,7 @@ describe('mobile session startup', () => {
     )
 
     expect(readyTerminalSwitch).not.toContain('focusMobileTerminal(client, handle)')
-    expect(readyTerminalSwitch).toContain('activateMobileSessionTab(client,')
-    expect(readyTerminalSwitch).toContain('notifyClients: false')
-    expect(readyTerminalSwitch).toContain("navigation: 'caller'")
+    expect(readyTerminalSwitch).toContain('activateTab(matchingTab.id, intentRevision)')
   })
 
   it('lets a newer tab intent supersede delayed created-tab focus', () => {
@@ -209,6 +207,10 @@ describe('mobile session startup', () => {
 
     expect(readyTerminalSwitch).toContain('sessionTabIntentRef.current.supersede()')
     expect(sessionTabSwitch).toContain('sessionTabIntentRef.current.supersede()')
+    expect(sessionTabSwitch.match(/activateTab\(tab.id, intentRevision\)/g)).toHaveLength(2)
+    expect(source).toContain(
+      'shouldRetryAfterCutover: sessionTabIntentRef.current.retryWhileCurrent'
+    )
     expect(applySessionTabs).toContain(
       'if (followsHost) {\n        sessionTabIntentRef.current.supersede()'
     )
@@ -249,7 +251,7 @@ describe('mobile session startup', () => {
   it('keeps background and pending session-tab activation local to the phone', () => {
     const activationRequests = source.split('activateMobileSessionTab(client,').slice(1)
 
-    expect(activationRequests).toHaveLength(4)
+    expect(activationRequests).toHaveLength(2)
     for (const request of activationRequests) {
       expect(request.slice(0, request.indexOf('})'))).toContain('notifyClients: false')
       expect(request.slice(0, request.indexOf('})'))).toContain("navigation: 'caller'")

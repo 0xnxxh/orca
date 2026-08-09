@@ -2859,11 +2859,27 @@ export default function SessionScreen() {
     }, [])
   )
 
+  const activateTab = useCallback(
+    (tabId: string, intentRevision: number) => {
+      if (!client) {
+        return
+      }
+      void activateMobileSessionTab(client, {
+        worktree: `id:${worktreeId}`,
+        tabId,
+        notifyClients: false,
+        navigation: 'caller',
+        shouldRetryAfterCutover: sessionTabIntentRef.current.retryWhileCurrent(intentRevision)
+      }).catch(() => {})
+    },
+    [client, worktreeId]
+  )
+
   // Why: unsubscribe restores old dims (clears phone-fit banner); resubscribe phone-fits the new one.
   const switchTab = useCallback(
     (handle: string) => {
       triggerSelection()
-      sessionTabIntentRef.current.supersede()
+      const intentRevision = sessionTabIntentRef.current.supersede()
       const matchingTab = sessionTabs.find(
         (tab): tab is Extract<MobileSessionTab, { type: 'terminal' }> =>
           tab.type === 'terminal' && tab.terminal === handle
@@ -2888,33 +2904,27 @@ export default function SessionScreen() {
         initializedHandlesRef.current.delete(handle)
       }
       subscribeToTerminal(handle)
-      if (client && matchingTab) {
-        void activateMobileSessionTab(client, {
-          worktree: `id:${worktreeId}`,
-          tabId: matchingTab.id,
-          notifyClients: false,
-          navigation: 'caller'
-        }).catch(() => {})
+      if (matchingTab) {
+        activateTab(matchingTab.id, intentRevision)
       }
     },
     [
-      client,
+      activateTab,
       defaultTerminalHandlesToLiveInput,
       sessionTabs,
       subscribeToTerminal,
-      unsubscribeTerminal,
-      worktreeId
+      unsubscribeTerminal
     ]
   )
 
   const switchSessionTab = useCallback(
     (tab: MobileSessionTab) => {
-      sessionTabIntentRef.current.supersede()
       if (tab.type === 'terminal') {
         if (typeof tab.terminal === 'string') {
           switchTab(tab.terminal)
           return
         }
+        const intentRevision = sessionTabIntentRef.current.supersede()
         terminalDiagnosticsRef.current.tabSwitch('terminal', tab.id, true)
         triggerSelection()
         pendingActiveSessionTabIdRef.current = selectedSessionTabIdRef.current = tab.id
@@ -2928,17 +2938,11 @@ export default function SessionScreen() {
         }
         activeHandleRef.current = null
         setActiveHandle(null)
-        if (client) {
-          void activateMobileSessionTab(client, {
-            worktree: `id:${worktreeId}`,
-            tabId: tab.id,
-            notifyClients: false,
-            navigation: 'caller'
-          }).catch(() => {})
-        }
+        activateTab(tab.id, intentRevision)
         return
       }
 
+      const intentRevision = sessionTabIntentRef.current.supersede()
       triggerSelection()
       terminalDiagnosticsRef.current.tabSwitch(tab.type, tab.id, false)
       pendingActiveSessionTabIdRef.current = selectedSessionTabIdRef.current = tab.id
@@ -2952,14 +2956,7 @@ export default function SessionScreen() {
       }
       activeHandleRef.current = null
       setActiveHandle(null)
-      if (client) {
-        void activateMobileSessionTab(client, {
-          worktree: `id:${worktreeId}`,
-          tabId: tab.id,
-          notifyClients: false,
-          navigation: 'caller'
-        }).catch(() => {})
-      }
+      activateTab(tab.id, intentRevision)
       if (tab.type === 'browser') {
         return
       }
@@ -2974,7 +2971,7 @@ export default function SessionScreen() {
       // Why: tab list lacks a reliable version for desktop clean saves; re-read on revisit unless the phone has a draft.
       void readMarkdownTab(tab)
     },
-    [client, markdownDocs, readFileTab, readMarkdownTab, switchTab, unsubscribeTerminal, worktreeId]
+    [activateTab, markdownDocs, readFileTab, readMarkdownTab, switchTab, unsubscribeTerminal]
   )
   // Ref to latest switchSessionTab so fetchSessionTabs can activate a synced browser tab without a dependency cycle.
   switchSessionTabRef.current = switchSessionTab
