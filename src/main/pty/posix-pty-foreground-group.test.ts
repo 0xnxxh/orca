@@ -137,12 +137,16 @@ describe('process table lookup', () => {
       })
 
       expect(execFileSyncMock).toHaveBeenCalled()
+      let timeoutBudget = 0
       for (const call of execFileSyncMock.mock.calls) {
         const args = call[1] as string[]
+        const options = call[2] as { timeout: number }
         const pidArg = args[args.indexOf('-p') + 1]
         expect(pidArg).toMatch(/^\d+$/)
         expect(args.filter((arg) => arg === '-p')).toHaveLength(1)
+        timeoutBudget += options.timeout
       }
+      expect(timeoutBudget).toBeLessThanOrEqual(250)
     } finally {
       kill.mockRestore()
     }

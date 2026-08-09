@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 
-const PROCESS_TABLE_TIMEOUT_MS = 250
+const PROCESS_TABLE_LOOKUP_TIMEOUT_MS = 250
+const PROCESS_TABLE_QUERY_TIMEOUT_MS = PROCESS_TABLE_LOOKUP_TIMEOUT_MS / 2
 const PROCESS_TABLE_MAX_BYTES = 64 * 1024
 
 export type PosixPtyForegroundGroupDeps = {
@@ -27,7 +28,7 @@ function hasUsableTty(tty: string): boolean {
 function runPs(pid: number): string {
   return execFileSync('ps', ['-p', String(pid), '-o', 'pid=,tpgid=,tty='], {
     encoding: 'utf8',
-    timeout: PROCESS_TABLE_TIMEOUT_MS,
+    timeout: PROCESS_TABLE_QUERY_TIMEOUT_MS,
     maxBuffer: PROCESS_TABLE_MAX_BYTES
   })
 }
