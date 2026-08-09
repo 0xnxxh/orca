@@ -25623,9 +25623,13 @@ export class OrcaRuntimeService {
           const hostActivationIntent = select
             ? this.beginMobileSessionHostTabActivationIntent(navigation)
             : undefined
+          // Why: retry reconciliation may have advanced the launch past an obsolete selector.
+          const launchWorktreeSelector = activeLaunch.worktreeId
+            ? `id:${activeLaunch.worktreeId}`
+            : worktreeSelector
           run = {
             result: this.runCreateMobileSessionTerminal(
-              worktreeSelector,
+              launchWorktreeSelector,
               buildRunOpts(hostActivationIntent),
               activeLaunch,
               explicitWorktreeId
