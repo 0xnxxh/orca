@@ -194,11 +194,16 @@ describe('mobile session startup', () => {
     expect(applySessionTabs).toContain(
       'if (followsHost) {\n        sessionTabIntentRef.current.supersede()'
     )
+    expect(source).toContain('sessionTabIntentRef.current.worktreeId = worktreeId')
     expect(createTerminal).toContain(
-      'const selectCreated = intentRevision === sessionTabIntentRef.current.revision'
+      'const sameRoute = sessionTabIntentRef.current.worktreeId === worktreeId'
     )
     expect(createTerminal).toContain(
-      'const getRestoreTabId = (): string | null =>\n            selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null'
+      'sameRoute && intentRevision === sessionTabIntentRef.current.revision'
+    )
+    expect(createTerminal).toContain('if (sameRoute) {')
+    expect(createTerminal).toContain(
+      'const getRestoreTabId = (): string | null =>\n              selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null'
     )
     expect(createTerminal).toContain(
       'restoreTabSelection(client, `id:${worktreeId}`, getRestoreTabId)'

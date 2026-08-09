@@ -1,4 +1,5 @@
 export class MobileSessionTabIntentTracker {
+  worktreeId: string | null = null
   revision = 0
   fileTapActivationSeq = 0
   diffActivationSeq = 0

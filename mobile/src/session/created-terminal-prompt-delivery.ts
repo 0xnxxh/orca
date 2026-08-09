@@ -16,6 +16,20 @@ type CreatedTerminalPromptDeliveryOptions = {
   showToast: (message: string, durationMs?: number) => void
 }
 
+export function reportTerminalCreateError(
+  errorToast: string | undefined,
+  setCreateError: (message: string) => void,
+  onError: () => void,
+  showToast: (message: string, durationMs?: number) => void
+): void {
+  const message = errorToast ?? 'Failed to create terminal'
+  setCreateError(message)
+  if (errorToast) {
+    onError()
+    showToast(message, 1800)
+  }
+}
+
 export function deliverCreatedTerminalPrompt({
   client,
   terminal,

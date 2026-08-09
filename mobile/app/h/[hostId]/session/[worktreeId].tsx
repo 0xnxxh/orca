@@ -197,7 +197,10 @@ import { MobileTerminalInputActions } from '../../../../src/session/MobileTermin
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
 import { openMobileTerminalFileTap } from '../../../../src/session/mobile-terminal-file-tap-open'
-import { deliverCreatedTerminalPrompt } from '../../../../src/session/created-terminal-prompt-delivery'
+import {
+  deliverCreatedTerminalPrompt,
+  reportTerminalCreateError
+} from '../../../../src/session/created-terminal-prompt-delivery'
 import { MobileSessionTabIntentTracker } from '../../../../src/session/mobile-session-tab-intent-tracker'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
@@ -1049,12 +1052,12 @@ export default function SessionScreen() {
   const activeHandleRef = useRef<string | null>(null)
   const activeSessionTabTypeRef = useRef<MobileSessionTabType | null>(null)
   const pendingActiveSessionTabIdRef = useRef<string | null>(null)
-  // Why: this device's own tab pick. Unlike activeSessionTabId it survives a snapshot that
-  // transiently drops the tab (browser guest process swap), so focus re-binds when it returns.
+  // Why: retain this device's pick through transient browser guest swaps.
   const selectedSessionTabIdRef = useRef<string | null>(null)
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
   const sessionTabIntentRef = useRef(new MobileSessionTabIntentTracker())
+  sessionTabIntentRef.current.worktreeId = worktreeId
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: route the terminal URL tap through a ref so it runs the current handleCreateBrowser closure (the memoized one may hold a null-client render).
@@ -3791,15 +3794,12 @@ export default function SessionScreen() {
     }
     const intentRevision = sessionTabIntentRef.current.supersede()
     creatingTerminalRef.current = true
-
     setCreating(true)
     setCreateError('')
-
     // Why: idempotency key so a transport retry (reconnect replay) resolves to the same terminal, not a duplicate; kept compact (no worktree id) for the schema length cap.
     const clientMutationId = `mobile-create:${Date.now().toString(36)}-${Math.random()
       .toString(36)
       .slice(2, 10)}`
-
     try {
       const response = await client.sendRequest('session.tabs.createTerminal', {
         worktree: `id:${worktreeId}`,
@@ -3818,7 +3818,8 @@ export default function SessionScreen() {
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
-        const selectCreated = intentRevision === sessionTabIntentRef.current.revision
+        const sameRoute = sessionTabIntentRef.current.worktreeId === worktreeId
+        const selectCreated = sameRoute && intentRevision === sessionTabIntentRef.current.revision
         if (typeof created.terminal === 'string') {
           deliverCreatedTerminalPrompt({
             client,
@@ -3835,10 +3836,12 @@ export default function SessionScreen() {
           })
         }
         if (!selectCreated) {
-          const getRestoreTabId = (): string | null =>
-            selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null
-          restoreTabSelection(client, `id:${worktreeId}`, getRestoreTabId)
-          scheduleDelayedAction(() => void fetchSessionTabs(), 500)
+          if (sameRoute) {
+            const getRestoreTabId = (): string | null =>
+              selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null
+            restoreTabSelection(client, `id:${worktreeId}`, getRestoreTabId)
+            scheduleDelayedAction(() => void fetchSessionTabs(), 500)
+          }
           return
         }
         // Why: unsubscribe the old terminal so the server restores its desktop dims; otherwise its restore timer is never set.
@@ -3891,20 +3894,10 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        const message = options?.errorToast ?? 'Failed to create terminal'
-        setCreateError(message)
-        if (options?.errorToast) {
-          triggerError()
-          showToast(message, 1800)
-        }
+        reportTerminalCreateError(options?.errorToast, setCreateError, triggerError, showToast)
       }
     } catch {
-      const message = options?.errorToast ?? 'Failed to create terminal'
-      setCreateError(message)
-      if (options?.errorToast) {
-        triggerError()
-        showToast(message, 1800)
-      }
+      reportTerminalCreateError(options?.errorToast, setCreateError, triggerError, showToast)
     } finally {
       creatingTerminalRef.current = false
       setCreating(false)
