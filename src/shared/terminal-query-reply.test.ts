@@ -1,6 +1,10 @@
 import { Terminal } from '@xterm/headless'
 import { describe, expect, it } from 'vitest'
-import { isTerminalQueryReply, needsCookedEchoSafeQueryReply } from './terminal-query-reply'
+import {
+  extractOnlyCookedEchoSafeQueryReplies,
+  isTerminalQueryReply,
+  needsCookedEchoSafeQueryReply
+} from './terminal-query-reply'
 
 describe('isTerminalQueryReply', () => {
   it('matches synthetic query replies that must be sent immediately', () => {
@@ -76,6 +80,13 @@ describe('isTerminalQueryReply', () => {
     // Ordinary input must never take the echo-safe reply path.
     expect(needsCookedEchoSafeQueryReply('y')).toBe(false)
     expect(needsCookedEchoSafeQueryReply('\x1b[A')).toBe(false)
+    // Dual-answerer coalesced payload is not a single reply — use extract.
+    expect(needsCookedEchoSafeQueryReply('\x1b[?997;1n\x1b[?997;1n')).toBe(false)
+    expect(extractOnlyCookedEchoSafeQueryReplies('\x1b[?997;1n\x1b[?997;1n')).toEqual([
+      '\x1b[?997;1n',
+      '\x1b[?997;1n'
+    ])
+    expect(extractOnlyCookedEchoSafeQueryReplies('\x1b[?997;1ny')).toBe(null)
   })
 
   it('does NOT match ordinary typed input or navigation sequences', () => {

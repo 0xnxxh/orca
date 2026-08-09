@@ -7,7 +7,10 @@ import type {
   PtySlaveLineDisciplineEcho
 } from './pty-slave-line-discipline-echo'
 import { mode2031SequenceFor } from './terminal-color-scheme-protocol'
-import { needsCookedEchoSafeQueryReply } from './terminal-query-reply'
+import {
+  extractOnlyCookedEchoSafeQueryReplies,
+  needsCookedEchoSafeQueryReply
+} from './terminal-query-reply'
 
 const COLOR_SCHEME_REPLY = mode2031SequenceFor('dark')
 // Why: CSI replies only project ECHOCTL caret form — OSC-rewrite is identity and
@@ -128,5 +131,37 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     expect(needsCookedEchoSafeQueryReply('yes\r')).toBe(false)
     expect(needsCookedEchoSafeQueryReply('\x1b[A')).toBe(false)
     expect(needsCookedEchoSafeQueryReply('\x1b[3;1R')).toBe(false)
+  })
+
+  it('swallows a pre-coalesced dual ?997 payload on the host write path', () => {
+    // Defense in depth: even if something concatenates before the host, extract
+    // + delivery must still accept and echo-strip without raw fallthrough.
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const emissions: PtyIngressEmission[] = []
+    let ingress!: PtyStartupIngress
+    ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      write: (data) => {
+        writes.push(data)
+        ingress.accept(POSIX_CSI_COOKED_ECHO(data))
+      },
+      onEmission: (emission) => emissions.push(emission)
+    })
+
+    const coalesced = COLOR_SCHEME_REPLY + COLOR_SCHEME_REPLY
+    expect(needsCookedEchoSafeQueryReply(coalesced)).toBe(false)
+    expect(extractOnlyCookedEchoSafeQueryReplies(coalesced)).toEqual([
+      COLOR_SCHEME_REPLY,
+      COLOR_SCHEME_REPLY
+    ])
+    expect(ingress.answerLiveQueryReply(coalesced)).toBe(true)
+    vi.advanceTimersByTime(0)
+    // Second identical reply is deduped while the first is in-flight.
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    expect(visible(emissions)).toBe('')
+    expect(visible(emissions)).not.toContain('997')
+    ingress.drainAndClose()
+    vi.useRealTimers()
   })
 })

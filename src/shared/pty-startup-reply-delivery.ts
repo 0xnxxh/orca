@@ -71,7 +71,11 @@ const ECHO_POLL_INTERVAL_MS = 20
 // this plus STTY_TIMEOUT_MS — still inside the startup deadline that reset() enforces.
 const ECHO_POLL_BUDGET_MS = 200
 
-type ExpectedEcho = { projections: readonly string[]; remainingBytes: number }
+type ExpectedEcho = {
+  reply: string
+  projections: readonly string[]
+  remainingBytes: number
+}
 type PendingWrite = { reply: string; onFailed: (() => void) | undefined }
 
 /** Only a POSIX tty both echoes the reply and still delivers a deferred write. */
@@ -207,6 +211,15 @@ export class PtyStartupReplyDelivery {
     if (this.closed) {
       return false
     }
+    // Why: dual answerers (xterm onData + mode-2031 scan) enqueue the same
+    // `?997;1n` twice. A second write would paint under ECHO and double stdin;
+    // treat an in-flight identical reply as already accepted (#13137).
+    if (
+      this.pendingWrites.some((pending) => pending.reply === reply) ||
+      this.expectedEchoes.some((expected) => expected.reply === reply)
+    ) {
+      return true
+    }
     if (!defersWrite(this.ownerBackend)) {
       // Why: ConPTY answers the query itself unless Orca beats it in this turn.
       return this.writeReply(reply)
@@ -336,7 +349,9 @@ export class PtyStartupReplyDelivery {
     const projections = replyEchoProjections(reply, this.ownerBackend, kernelEchoImpossible)
     // Why: register before write because node-pty can synchronously re-enter onData.
     const expected: ExpectedEcho | null =
-      projections.length > 0 ? { projections, remainingBytes: ECHO_SEARCH_BUDGET_BYTES } : null
+      projections.length > 0
+        ? { reply, projections, remainingBytes: ECHO_SEARCH_BUDGET_BYTES }
+        : null
     if (expected) {
       this.expectedEchoes.push(expected)
     }

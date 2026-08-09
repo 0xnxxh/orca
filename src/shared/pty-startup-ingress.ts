@@ -6,6 +6,7 @@ import {
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 import type { PtyOwnerBackend } from './pty-owner-backend'
 import { PtyStartupReplyDelivery } from './pty-startup-reply-delivery'
+import { answerEachCookedEchoSafeQueryReply } from './terminal-query-reply'
 import {
   combinePtyIngressSourceSpans,
   slicePtyIngressSourceSpan,
@@ -92,16 +93,11 @@ export class PtyStartupIngress {
     return this.rawHighWater
   }
 
-  /**
-   * Live emulator query replies (xterm onData CPR/DSR/DA/OSC/color-scheme 997).
-   * Uses the same ECHO-safe write + echo strip as startup color replies so cooked
-   * prompts (e.g. `npx` confirm) never show `997;1n` junk (#13137 / #12112 family).
-   */
+  // Live xterm replies (color-scheme 997 / OSC); single or dual-answerer coalesced (#13137).
   answerLiveQueryReply(reply: string): boolean {
-    if (this.closed || reply.length === 0) {
-      return false
-    }
-    return this.delivery.answer(reply)
+    return !this.closed && reply.length > 0
+      ? answerEachCookedEchoSafeQueryReply(reply, (part) => this.delivery.answer(part))
+      : false
   }
 
   drainAndClose(): number {

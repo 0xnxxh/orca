@@ -18,7 +18,7 @@ import {
   type PtyIngressEmission,
   type PtyStartupIngressIntent
 } from '../../shared/pty-startup-ingress'
-import { needsCookedEchoSafeQueryReply } from '../../shared/terminal-query-reply'
+import { extractOnlyCookedEchoSafeQueryReplies } from '../../shared/terminal-query-reply'
 import type {
   PendingOutputRecord,
   SessionState,
@@ -234,8 +234,12 @@ export class Session {
     }
 
     // Why: daemon-hosted POSIX PTYs hit the same cooked-prompt 997 leak as local
-    // provider writes; share the ingress echo-safe path (#13137).
-    if (needsCookedEchoSafeQueryReply(data) && this.startupIngress.answerLiveQueryReply(data)) {
+    // provider writes (including dual-answerer coalesced payloads); share the
+    // ingress echo-safe path (#13137).
+    if (
+      extractOnlyCookedEchoSafeQueryReplies(data) &&
+      this.startupIngress.answerLiveQueryReply(data)
+    ) {
       return
     }
 
