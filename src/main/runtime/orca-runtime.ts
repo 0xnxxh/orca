@@ -489,11 +489,16 @@ import {
   configureAiVaultSessionSources,
   listAiVaultSessions
 } from '../ai-vault/cached-session-list'
+import { resolveLocalAiVaultSessionTitles } from '../ai-vault/session-title-resolver'
 import {
   readAiVaultSessionIdentity,
   resolveAiVaultSessionLiveness
 } from '../ai-vault/session-liveness'
 import type { AiVaultAgent, AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
+import type {
+  AiVaultSessionTitleRequest,
+  AiVaultSessionTitlesResult
+} from '../../shared/ai-vault-session-title'
 import type { AiVaultSessionLiveness } from '../../shared/ai-vault-session-deletion'
 import type {
   AiVaultPrepareSessionResumeArgs,
@@ -4976,6 +4981,13 @@ export class OrcaRuntimeService {
   // cache so the desktop panel and the mobile screen never double-scan.
   listAiVaultSessions(args?: AiVaultListArgs): Promise<AiVaultListResult> {
     return listAiVaultSessions(args)
+  }
+
+  resolveAiVaultSessionTitles(
+    requests: AiVaultSessionTitleRequest[],
+    signal?: AbortSignal
+  ): Promise<AiVaultSessionTitlesResult> {
+    return resolveLocalAiVaultSessionTitles(requests, signal)
   }
 
   async getAiVaultSessionLiveness(target: {
