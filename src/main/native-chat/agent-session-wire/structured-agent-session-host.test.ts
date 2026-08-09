@@ -238,6 +238,18 @@ describe('attach', () => {
     })
   })
 
+  it('refuses a provider handle that belongs to a different provider', async () => {
+    const params = attachParams({
+      providerHandle: { kind: 'claude', sessionId: 'claude-session', leafUuid: null }
+    })
+
+    expect(await host.attach(CALLER, params)).toMatchObject({
+      ok: false,
+      refusal: { code: 'agent_session_operation_invalid' }
+    })
+    expect(store.getRecord(SESSION)).toBeNull()
+  })
+
   it('refuses a second create against a live session', async () => {
     await attach()
     expect(await host.attach(CALLER, attachParams())).toMatchObject({ ok: false })
@@ -248,6 +260,99 @@ describe('attach', () => {
     await host.attach(CALLER, params)
     const retry = await host.attach(CALLER, params)
     expect(retry).toMatchObject({ ok: true, replayed: true })
+  })
+
+  it('reuses the persisted spawn token when acquisition is retried', async () => {
+    const spawnTokens: string[] = []
+    const acquire = vi
+      .fn<StructuredAgentSessionAdapter['acquire']>()
+      .mockImplementationOnce(async ({ spawnToken }) => {
+        spawnTokens.push(spawnToken)
+        throw new Error('reply lost')
+      })
+      .mockImplementation(async ({ fence, spawnToken }) => {
+        spawnTokens.push(spawnToken)
+        return {
+          process: {
+            hostId: 'local',
+            pid: 4242,
+            processStartTimeMs: 1_700_000_000_000,
+            spawnToken
+          },
+          link: {
+            linkId: `link-${fence}`,
+            handle: { provider: 'codex', threadId: THREAD },
+            origin: 'created',
+            mintedAtFence: fence,
+            observedAt: NOW
+          }
+        }
+      })
+    let token = 0
+    host = new StructuredAgentSessionHost({
+      store,
+      adapter: { ...adapter(), acquire },
+      journalRoot: root,
+      claimKeyId: 'key-1',
+      mintSpawnToken: () => `spawn-${++token}`,
+      now: () => NOW
+    })
+    const params = attachParams()
+
+    await expect(host.attach(CALLER, params)).rejects.toThrow('reply lost')
+    expect(await host.attach(CALLER, params)).toMatchObject({ ok: true, replayed: true })
+    expect(spawnTokens).toEqual(['spawn-1', 'spawn-1'])
+  })
+
+  it('finishes proof when a retry finds the process identity already committed', async () => {
+    const acquire = vi
+      .fn<StructuredAgentSessionAdapter['acquire']>()
+      .mockImplementationOnce(async ({ fence, spawnToken }) => ({
+        process: {
+          hostId: 'local',
+          pid: 4242,
+          processStartTimeMs: 1_700_000_000_000,
+          spawnToken
+        },
+        link: {
+          linkId: 'stale-link',
+          handle: { provider: 'codex', threadId: THREAD },
+          origin: 'created',
+          mintedAtFence: fence + 1,
+          observedAt: NOW
+        }
+      }))
+      .mockImplementation(async ({ fence, spawnToken }) => ({
+        process: {
+          hostId: 'local',
+          pid: 4242,
+          processStartTimeMs: 1_700_000_000_000,
+          spawnToken
+        },
+        link: {
+          linkId: `link-${fence}`,
+          handle: { provider: 'codex', threadId: THREAD },
+          origin: 'created',
+          mintedAtFence: fence,
+          observedAt: NOW
+        }
+      }))
+    host = new StructuredAgentSessionHost({
+      store,
+      adapter: { ...adapter(), acquire },
+      journalRoot: root,
+      claimKeyId: 'key-1',
+      mintSpawnToken: () => 'spawn-a',
+      now: () => NOW
+    })
+    const params = attachParams()
+
+    await expect(host.attach(CALLER, params)).rejects.toThrow(
+      'agent_session_provider_handle_stale_fence'
+    )
+    expect(await host.attach(CALLER, params)).toMatchObject({ ok: true, replayed: true })
+    expect(acquire).toHaveBeenCalledTimes(2)
+    expect(store.getRecord(SESSION)?.lease.claimStatus).toBe('live')
   })
 })
 
@@ -429,6 +534,37 @@ describe('respondToPrompt', () => {
     expect(answerPrompt).not.toHaveBeenCalled()
   })
 
+  it("does not turn a recorded refusal into another client's successful answer", async () => {
+    const prompt = await seedApproval()
+    await attach()
+    const rejectedFields = {
+      itemId: prompt.itemId,
+      expectedRevision: prompt.revision,
+      optionId: 'deny'
+    }
+    const rejected = {
+      envelope: envelope('agentSession.respondTo:approval', rejectedFields),
+      kind: 'approval' as const,
+      ...rejectedFields
+    }
+    await host.respondToPrompt(CALLER, rejected)
+
+    const acceptedFields = { ...rejectedFields, optionId: 'allow' }
+    await host.respondToPrompt(
+      { callerKey: 'client-2' },
+      {
+        envelope: envelope('agentSession.respondTo:approval', acceptedFields),
+        kind: 'approval',
+        ...acceptedFields
+      }
+    )
+
+    expect(await host.respondToPrompt(CALLER, rejected)).toMatchObject({
+      ok: false,
+      refusal: { code: 'agent_session_operation_invalid' }
+    })
+  })
+
   it('keeps the answer and reports it undelivered when the provider callback throws', async () => {
     const prompt = await seedApproval()
     await attach()
@@ -461,6 +597,23 @@ describe('setOption', () => {
     expect(setOption).toHaveBeenCalledTimes(1)
     const page = host.history({ sessionId: SESSION, direction: 'tail' })
     expect(page.ok && page.page.items).toHaveLength(0)
+  })
+
+  it('does not turn an unknown provider outcome into a successful replay', async () => {
+    await attach()
+    setOption.mockRejectedValueOnce(new Error('reply lost'))
+    const fields = { key: 'model', value: 'gpt-5' }
+    const params = {
+      envelope: envelope('agentSession.setOption', fields),
+      ...fields
+    }
+
+    await expect(host.setOption(CALLER, params)).rejects.toThrow('reply lost')
+    expect(await host.setOption(CALLER, params)).toMatchObject({
+      ok: false,
+      refusal: { code: 'agent_session_operation_unknown' }
+    })
+    expect(setOption).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -589,6 +742,33 @@ describe('subscribe', () => {
     expect(events.some((event) => event.type === 'snapshot')).toBe(false)
   })
 
+  it('drops a failed transport without aborting the mutation or other subscribers', async () => {
+    await attach()
+    const events: AgentSessionSubscribeEvent[] = []
+    host.subscribe({
+      id: 'dead-sub',
+      sessionId: SESSION,
+      emit: () => {
+        throw new Error('socket closed')
+      }
+    })
+    host.subscribe({
+      id: 'live-sub',
+      sessionId: SESSION,
+      emit: (event) => events.push(event)
+    })
+    const body = message('survive subscriber failure')
+
+    const result = await host.send(CALLER, {
+      envelope: envelope('agentSession.send', { body }),
+      body
+    })
+
+    expect(result).toMatchObject({ ok: true, value: { submission: { dispatchState: 'accepted' } } })
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(events.some((event) => event.type === 'batch')).toBe(true)
+  })
+
   it('resets a subscriber whose epoch is gone', async () => {
     await attach()
     const events: AgentSessionSubscribeEvent[] = []
@@ -598,6 +778,28 @@ describe('subscribe', () => {
       emit: (event) => events.push(event),
       cursor: { epoch: 'epoch-from-a-previous-life', sequence: 3 }
     })
-    expect(events[0]).toMatchObject({ type: 'reset', reset: 'epoch_changed' })
+    expect(events[0]).toMatchObject({ type: 'reset', reset: 'epoch_changed', fence: 1 })
+  })
+
+  it('publishes the replacement fence when the owner generation changes', async () => {
+    const record = await attach()
+    const events: AgentSessionSubscribeEvent[] = []
+    host.subscribe({
+      id: 'sub-4',
+      sessionId: SESSION,
+      emit: (event) => events.push(event)
+    })
+    const released = await store.evictProvenDeadOwner({
+      sessionId: SESSION,
+      expectedFence: record?.lease.runtimeFence ?? 1,
+      probe: { outcome: 'pid-absent' },
+      now: NOW
+    })
+
+    const replacement = await host.attach(CALLER, ensureParams(released.lease.runtimeFence))
+    if (!replacement.ok) {
+      throw new Error(`expected replacement owner, got ${replacement.refusal.code}`)
+    }
+    expect(events.at(-1)).toMatchObject({ type: 'snapshot', fence: replacement.fence })
   })
 })

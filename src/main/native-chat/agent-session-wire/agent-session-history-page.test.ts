@@ -123,6 +123,23 @@ describe('readAgentSessionHistory', () => {
     expect(page.page.window.nextCursor.sequence).toBeGreaterThan(cursor.sequence)
   })
 
+  it('carries tombstones in a forward catch-up page', async () => {
+    await appendItems(1)
+    const cursor = journal.cursor()
+    await journal.appendTombstone(item(1), { fence: 1 })
+
+    const page = readAgentSessionHistory(journal, {
+      sessionId: 'session-1',
+      direction: 'after',
+      cursor
+    })
+    if (!page.ok) {
+      throw new Error(`expected a page, got reset ${page.reset}`)
+    }
+    expect(page.page.items).toHaveLength(0)
+    expect(page.page.removedItemIds).toEqual(['codex:thread-1:turn-1:1'])
+  })
+
   it('reports a forward read with no cursor as cursor_ahead rather than serving the tail', async () => {
     await appendItems(1)
     expect(

@@ -55,13 +55,6 @@ const ProviderHandle = z.discriminatedUnion('kind', [
       sessionId: Identifier('Invalid provider session id'),
       leafUuid: Identifier('Invalid leaf uuid').nullable()
     })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('opaque'),
-      agent: Identifier('Invalid agent'),
-      value: Identifier('Invalid provider handle')
-    })
     .strict()
 ])
 

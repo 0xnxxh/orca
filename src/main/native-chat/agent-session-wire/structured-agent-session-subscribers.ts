@@ -19,6 +19,7 @@ type Subscriber = {
   sessionId: string
   emit: AgentSessionSubscriberEmit
   cursor: AgentJournalCursor
+  fence: number
 }
 
 export class AgentSessionSubscribers {
@@ -39,7 +40,8 @@ export class AgentSessionSubscribers {
       id: input.id,
       sessionId: input.sessionId,
       emit: input.emit,
-      cursor: input.cursor ?? { epoch: snapshot.cursor.epoch, sequence: 0 }
+      cursor: input.cursor ?? { epoch: snapshot.cursor.epoch, sequence: 0 },
+      fence: input.fence
     }
     const session = this.bySession.get(input.sessionId) ?? new Map<string, Subscriber>()
     session.set(input.id, subscriber)
@@ -48,7 +50,7 @@ export class AgentSessionSubscribers {
     if (input.cursor) {
       this.deliver(subscriber, input.journal)
     } else {
-      subscriber.emit({
+      this.emit(subscriber, {
         type: 'snapshot',
         sessionId: input.sessionId,
         snapshot,
@@ -65,11 +67,12 @@ export class AgentSessionSubscribers {
     if (!session || !subscriber) {
       return
     }
-    session.delete(id)
-    if (session.size === 0) {
-      this.bySession.delete(sessionId)
+    this.drop(subscriber)
+    try {
+      subscriber.emit({ type: 'end' })
+    } catch {
+      // The transport is already gone; teardown must remain idempotent.
     }
-    subscriber.emit({ type: 'end' })
   }
 
   /** Fan out whatever each subscriber has not yet seen. */
@@ -81,11 +84,26 @@ export class AgentSessionSubscribers {
 
   /** Force every subscriber back to a clean snapshot — recovery, epoch
    *  rollover, an unreadable schema. */
-  reset(sessionId: string, journal: AgentSessionJournal, reason: AgentJournalResetReason): void {
+  reset(
+    sessionId: string,
+    journal: AgentSessionJournal,
+    reason: AgentJournalResetReason,
+    fence: number
+  ): void {
     const snapshot = journal.snapshot()
     for (const subscriber of this.subscribers(sessionId)) {
-      subscriber.emit({ type: 'reset', sessionId, reset: reason, snapshot })
+      this.emit(subscriber, { type: 'reset', sessionId, reset: reason, snapshot, fence })
       subscriber.cursor = snapshot.cursor
+      subscriber.fence = fence
+    }
+  }
+
+  snapshot(sessionId: string, journal: AgentSessionJournal, fence: number): void {
+    const snapshot = journal.snapshot()
+    for (const subscriber of this.subscribers(sessionId)) {
+      this.emit(subscriber, { type: 'snapshot', sessionId, snapshot, fence })
+      subscriber.cursor = snapshot.cursor
+      subscriber.fence = fence
     }
   }
 
@@ -97,11 +115,12 @@ export class AgentSessionSubscribers {
     const since = journal.readSince(subscriber.cursor)
     const snapshot = journal.snapshot()
     if (!since.ok) {
-      subscriber.emit({
+      this.emit(subscriber, {
         type: 'reset',
         sessionId: subscriber.sessionId,
         reset: since.reset,
-        snapshot
+        snapshot,
+        fence: subscriber.fence
       })
       subscriber.cursor = snapshot.cursor
       return
@@ -115,16 +134,39 @@ export class AgentSessionSubscribers {
       afterSequence: subscriber.cursor.sequence
     })
     if (!projected.ok) {
-      subscriber.emit({
+      this.emit(subscriber, {
         type: 'reset',
         sessionId: subscriber.sessionId,
         reset: projected.reset,
-        snapshot
+        snapshot,
+        fence: subscriber.fence
       })
       subscriber.cursor = snapshot.cursor
       return
     }
-    subscriber.emit({ type: 'batch', sessionId: subscriber.sessionId, batch: projected.batch })
+    this.emit(subscriber, {
+      type: 'batch',
+      sessionId: subscriber.sessionId,
+      batch: projected.batch
+    })
     subscriber.cursor = projected.batch.cursor
+  }
+
+  /** A dead transport cannot be allowed to turn a durable mutation into an
+   *  unknown outcome or poison every later publication. */
+  private emit(subscriber: Subscriber, event: AgentSessionSubscribeEvent): void {
+    try {
+      subscriber.emit(event)
+    } catch {
+      this.drop(subscriber)
+    }
+  }
+
+  private drop(subscriber: Subscriber): void {
+    const session = this.bySession.get(subscriber.sessionId)
+    session?.delete(subscriber.id)
+    if (session?.size === 0) {
+      this.bySession.delete(subscriber.sessionId)
+    }
   }
 }

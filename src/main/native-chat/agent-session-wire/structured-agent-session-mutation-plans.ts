@@ -7,6 +7,7 @@
 // which is exactly right when the crash landed before the journal write.
 
 import type { AgentJournalMessageItem } from '../../../shared/agent-session-journal-types'
+import type { AgentSessionOperationOutcome } from '../../../shared/agent-session-operation-ledger'
 import type {
   AgentSessionCancelResult,
   AgentSessionMutationEnvelope,
@@ -27,7 +28,7 @@ export type MutationPlan<TValue> = {
   method: string
   fields: Record<string, unknown>
   run: (ctx: AgentSessionTurnContext) => Promise<TurnOutcome<TValue>>
-  replay: (ctx: AgentSessionTurnContext) => TValue | null
+  replay: (ctx: AgentSessionTurnContext, outcome: AgentSessionOperationOutcome) => TValue | null
 }
 
 export function sendPlan(params: {
@@ -108,6 +109,9 @@ export function setOptionPlan(params: {
     method: 'agentSession.setOption',
     fields: { key: params.key, value: params.value },
     run: (ctx) => performSetOption(ctx, params),
-    replay: () => ({ key: params.key, value: params.value })
+    // A pending row may have crashed before the adapter call. Reapplying the
+    // same assignment is safe; only a settled success can be answered directly.
+    replay: (_ctx, outcome) =>
+      outcome.status === 'succeeded' ? { key: params.key, value: params.value } : null
   }
 }

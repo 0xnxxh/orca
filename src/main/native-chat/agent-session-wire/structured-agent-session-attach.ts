@@ -50,7 +50,7 @@ export type AgentSessionAttachParams = {
   agent: AgentType
   accountHome: AgentSessionAccountHome
   runtimeKind: AgentSessionOwnerRuntimeKind
-  providerHandle: AgentSessionProviderHandle
+  providerHandle: Exclude<AgentSessionProviderHandle, { kind: 'opaque' }>
 }
 
 /** Host-supplied half of the reservation. */
@@ -81,6 +81,15 @@ export function attachFingerprintFields(params: AgentSessionAttachParams): Recor
 export function admitAttachOrRefuse(
   params: AgentSessionAttachParams
 ): { ok: true; fingerprint: string } | { ok: false; refusal: AgentSessionWireRefusal } {
+  if (params.providerHandle.kind !== params.provider) {
+    return {
+      ok: false,
+      refusal: {
+        code: 'agent_session_operation_invalid',
+        message: `A ${params.provider} session requires a ${params.provider} provider handle.`
+      }
+    }
+  }
   const fingerprint = computeAgentSessionPayloadFingerprint({
     method: 'agentSession.attach',
     sessionId: params.envelope.sessionId,

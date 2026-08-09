@@ -45,11 +45,13 @@ import {
   setOptionPlan,
   type MutationPlan
 } from './structured-agent-session-mutation-plans'
+import { runSettledAgentSessionMutation } from './structured-agent-session-operation-settlement'
+import { resolveAgentSessionReplayOutcome } from './structured-agent-session-replay-outcome'
 import {
   AgentSessionSubscribers,
   type AgentSessionSubscriberEmit
 } from './structured-agent-session-subscribers'
-import type { AgentSessionTurnContext, TurnOutcome } from './structured-agent-session-turns'
+import type { AgentSessionTurnContext } from './structured-agent-session-turns'
 
 export type StructuredAgentSessionCaller = {
   /** Stable per-client identity; scopes the operation ledger and records who
@@ -68,7 +70,11 @@ export type StructuredAgentSessionHostDeps = {
   now?: () => number
 }
 
-type SessionState = { journal: AgentSessionJournal; params: AgentSessionAttachParams }
+type SessionState = {
+  journal: AgentSessionJournal
+  params: AgentSessionAttachParams
+  fence: number
+}
 
 function refuse(refusal: AgentSessionWireRefusal): { ok: false; refusal: AgentSessionWireRefusal } {
   return { ok: false, refusal }
@@ -93,9 +99,7 @@ export class StructuredAgentSessionHost {
     })
   }
 
-  private now(): number {
-    return this.deps.now?.() ?? Date.now()
-  }
+  private now = (): number => this.deps.now?.() ?? Date.now()
 
   hasSession(sessionId: string): boolean {
     return this.sessions.has(sessionId)
@@ -140,9 +144,13 @@ export class StructuredAgentSessionHost {
         params,
         now: () => this.now(),
         onAttached: (attached) => {
-          this.sessions.set(sessionId, { journal: attached.journal, params })
+          const fence = this.deps.store.getRecord(sessionId)?.lease.runtimeFence ?? 0
+          const previousFence = this.sessions.get(sessionId)?.fence
+          this.sessions.set(sessionId, { journal: attached.journal, params, fence })
           if (attached.recovery) {
-            this.subscribers.reset(sessionId, attached.journal, attached.recovery.reset)
+            this.subscribers.reset(sessionId, attached.journal, attached.recovery.reset, fence)
+          } else if (previousFence !== undefined && previousFence !== fence) {
+            this.subscribers.snapshot(sessionId, attached.journal, fence)
           } else {
             this.subscribers.publish(sessionId, attached.journal)
           }
@@ -254,9 +262,22 @@ export class StructuredAgentSessionHost {
     const fence = record.lease.runtimeFence
     const ctx = this.contextFor(caller, session, envelope.sessionId, fence)
     if (admission.decision === 'replay') {
-      const recorded = plan.replay(ctx)
-      if (recorded) {
-        return { ok: true, replayed: true, fence, cursor: ctx.journal.cursor(), value: recorded }
+      const replay = resolveAgentSessionReplayOutcome({
+        operationId: envelope.clientOperationId,
+        outcome: admission.row.outcome,
+        reconstruct: () => plan.replay(ctx, admission.row.outcome)
+      })
+      if (replay.decision === 'refuse') {
+        return refuse(replay.refusal)
+      }
+      if (replay.decision === 'replay') {
+        return {
+          ok: true,
+          replayed: true,
+          fence,
+          cursor: ctx.journal.cursor(),
+          value: replay.value
+        }
       }
       // Nothing durable landed, so this id is about to run for the first time.
       // A refused call leaves its ledger row behind, and replaying past the
@@ -273,7 +294,13 @@ export class StructuredAgentSessionHost {
       }
     }
 
-    const outcome = await this.finish(caller, envelope, plan, ctx)
+    const outcome = await runSettledAgentSessionMutation({
+      store: this.deps.store,
+      callerKey: caller.callerKey,
+      envelope,
+      plan,
+      context: ctx
+    })
     return outcome.ok
       ? { ok: true, replayed: false, fence, cursor: ctx.journal.cursor(), value: outcome.value }
       : refuse(outcome.refusal)
@@ -293,36 +320,6 @@ export class StructuredAgentSessionHost {
       resolvedBy: caller.callerKey,
       publish: () => this.subscribers.publish(sessionId, session.journal),
       now: () => this.now()
-    }
-  }
-
-  /** Runs the effect and settles its ledger row, including on a throw — a row
-   *  left `pending` would replay as unresolvable forever. */
-  private async finish<TValue>(
-    caller: StructuredAgentSessionCaller,
-    envelope: AgentSessionMutationEnvelope,
-    plan: MutationPlan<TValue>,
-    ctx: AgentSessionTurnContext
-  ): Promise<TurnOutcome<TValue>> {
-    const settle = (
-      outcome: Parameters<AgentSessionRecordStore['recordOperationOutcome']>[0]['outcome']
-    ) =>
-      this.deps.store.recordOperationOutcome({
-        callerKey: caller.callerKey,
-        operationId: envelope.clientOperationId,
-        outcome
-      })
-    try {
-      const outcome = await plan.run(ctx)
-      await settle(
-        outcome.ok
-          ? { status: 'succeeded', sessionId: envelope.sessionId }
-          : { status: 'failed', code: outcome.refusal.code }
-      )
-      return outcome
-    } catch (error) {
-      await settle({ status: 'unknown' })
-      throw error
     }
   }
 

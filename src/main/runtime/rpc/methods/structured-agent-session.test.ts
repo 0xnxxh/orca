@@ -232,6 +232,13 @@ describe('parameter validation', () => {
     )
   })
 
+  it('rejects a journal-only opaque provider handle', async () => {
+    await rejects(
+      'agentSession.create',
+      attachParams({ providerHandle: { kind: 'opaque', agent: 'codex', value: 'thread-1' } })
+    )
+  })
+
   it('requires a sha256 fingerprint and a positive fence', async () => {
     await rejects(
       'agentSession.send',

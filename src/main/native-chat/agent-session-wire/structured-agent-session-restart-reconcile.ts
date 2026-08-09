@@ -9,9 +9,8 @@ import type { AgentSessionWireRefusal } from '../../../shared/agent-session-wire
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import { classifyStoreFailure } from './structured-agent-session-attach'
 
-/** Adjudicates the loaded leases once per host, on the first attach. Answers
- *  with the refusal that attach owes its caller, or null once the leases are
- *  settled. */
+/** Adjudicates leases loaded by this process or refreshed from another writer.
+ *  Answers with the refusal attach owes its caller, or null once settled. */
 export function createRestartReconciler(deps: {
   store: AgentSessionRecordStore
   probe: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
@@ -19,15 +18,15 @@ export function createRestartReconciler(deps: {
 }): (sessionId: string) => Promise<AgentSessionWireRefusal | null> {
   let pending: Promise<void> | null = null
   return async (sessionId) => {
+    if (!deps.store.listRecords().some((record) => record.lease.unreconciled)) {
+      return null
+    }
     if (!pending) {
       const run = deps.store
         .reconcileOnRestart({ probe: deps.probe, now: deps.now() })
         .then(() => undefined)
-      // A failed adjudication must not be remembered as done, or one unlucky
-      // startup would strand every persisted session for this host's lifetime.
-      pending = run.catch((error: unknown) => {
+      pending = run.finally(() => {
         pending = null
-        throw error
       })
     }
     try {

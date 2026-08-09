@@ -37,6 +37,8 @@ export type AgentSessionHistoryPage = {
   epoch: string
   direction: AgentSessionHistoryDirection
   items: AgentJournalRenderItem[]
+  /** Populated by `after` reads so a disconnected client can apply tombstones. */
+  removedItemIds: string[]
   /** Submissions overlapping this page, so an unconfirmed bubble renders with
    *  its dispatch state instead of as a plain message. */
   submissions: AgentJournalSubmission[]
@@ -75,6 +77,7 @@ export type AgentSessionSubscribeEvent =
       sessionId: string
       reset: AgentJournalResetReason
       snapshot: AgentJournalSnapshot
+      fence: number
     }
   | { type: 'end' }
 
@@ -103,6 +106,7 @@ export const AGENT_SESSION_WIRE_REFUSAL_CODES = [
   'agent_session_operation_expired',
   'agent_session_operation_capacity',
   'agent_session_operation_invalid',
+  'agent_session_operation_unknown',
   'agent_session_item_revision_stale',
   'agent_session_already_resolved',
   'agent_session_identity_required',

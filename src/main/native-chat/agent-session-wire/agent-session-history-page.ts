@@ -102,6 +102,7 @@ function readForward(
       snapshot,
       direction: 'after',
       items: projected.batch.items,
+      removedItemIds: projected.batch.removedItemIds,
       // Reading after a position means there is something before it.
       hasOlder: cursor.sequence > 0,
       hasNewer: since.rows.length > rows.length,
@@ -115,6 +116,7 @@ function buildPage(input: {
   snapshot: AgentJournalSnapshot
   direction: AgentSessionHistoryDirection
   items: AgentJournalRenderItem[]
+  removedItemIds?: string[]
   hasOlder: boolean
   hasNewer: boolean
   fallbackCursor: AgentJournalCursor
@@ -129,6 +131,7 @@ function buildPage(input: {
     epoch,
     direction: input.direction,
     items: input.items,
+    removedItemIds: input.removedItemIds ?? [],
     submissions: input.snapshot.submissions.filter((submission) =>
       pageItemIds.has(agentJournalSubmissionKey(submission.clientMessageId))
     ),

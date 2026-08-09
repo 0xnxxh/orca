@@ -5,10 +5,12 @@
 // the decisions that must not be client-supplied — the spawn token, the claim
 // key, the owner probe — and passes them in.
 
+import { isDeepStrictEqual } from 'node:util'
 import type {
   AgentSessionAttachResult,
   AgentSessionMutationResult
 } from '../../../shared/agent-session-wire'
+import { agentSessionLeaseAdmitsWriter } from '../../../shared/agent-session-lease-adjudication'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import {
   admitAttachOrRefuse,
@@ -62,7 +64,7 @@ export async function performAttach(
     )
     record = reserved.record
     replayed = reserved.disposition === 'replayed'
-    if (record.lease.ownerProcess === null) {
+    if (!agentSessionLeaseAdmitsWriter(record.lease)) {
       record = await acquireOwner(input, record)
     }
   } catch (error) {
@@ -107,17 +109,26 @@ async function acquireOwner(
   record: AgentSessionRecord
 ): Promise<AgentSessionRecord> {
   const fence = record.lease.runtimeFence
+  const spawnToken = record.lease.reservedSpawnToken
+  if (!spawnToken) {
+    throw new Error('agent_session_ownership_unknown')
+  }
   const acquired = await input.adapter.acquire({
     identity: journalIdentityFor(record.sessionId, input.params),
     fence,
-    spawnToken: input.authority.spawnToken
+    // Retries must recover the original reservation, not mint a second child.
+    spawnToken
   })
-  await input.store.commitProcessIdentity({
-    sessionId: record.sessionId,
-    fence,
-    process: acquired.process,
-    now: input.now()
-  })
+  if (record.lease.ownerProcess === null) {
+    await input.store.commitProcessIdentity({
+      sessionId: record.sessionId,
+      fence,
+      process: acquired.process,
+      now: input.now()
+    })
+  } else if (!isDeepStrictEqual(record.lease.ownerProcess, acquired.process)) {
+    throw new Error('agent_session_ownership_unknown')
+  }
   return input.store.proveOwner({
     sessionId: record.sessionId,
     fence,
