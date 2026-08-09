@@ -23,13 +23,23 @@ make that impossible to claim by accident.
 
 | | Count |
 | --- | --- |
-| Step goalposts proven | **3 of 7** (one deleted as unreachable) |
-| Global goalposts proven | **2 of 6** |
+| Step goalposts proven | **7 of 7** (one deleted as unreachable) |
+| Global goalposts proven | **5 of 6** — G1 missed, see below |
 | Scope removed by evidence | S7 (death rule) — never built |
-| Oracle clauses green | 12 |
-| Oracle clauses red (awaiting implementation) | 14 |
-| Net production lines so far | **−24** |
-| Net test lines so far | +116 |
+| Oracle clauses green | 26 |
+| Oracle clauses red (awaiting implementation) | 0 |
+| Net production lines, correctness work | **+13** |
+| Net production lines, incl. the approved affordance | **+83** |
+| Net test lines | +2,578 |
+
+**G1 is not met, and that is reported rather than smoothed over.** The design's
+net-negative target assumed the remaining steps were collapses. Three were
+(S3 −21, S8 −32, and the relay half of S5), but two genuinely add code: the
+single `bindPaneShell` producer (+60, since one function replaces three
+divergent call sites without those sites shrinking much) and the D1
+disconnected-pane affordance (+70), which is a new product surface the owner
+approved — a feature, not a refactor. Excluding the affordance the correctness
+work is +13, i.e. roughly a wash. See "G1" below for the full accounting.
 
 ---
 
@@ -61,35 +71,81 @@ unreachable.
   change, no redeploy.
 - Landed: `c51be8072ba`
 
-### S3 — A failed reattach never fabricates an exit · **ORACLE RED**
+### S3 — A failed reattach never fabricates an exit · **PROVEN**
 
 *Guarantee.* On an unproven not-found, the pane is not told the program exited,
 ownership is not deleted, provider state is not cleared, and the lease is not
 expired. The case routes into the non-destructive recovery branch that already
 exists.
 
-- Oracle: `src/main/ssh/ssh-relay-reattach-exit-proof.test.ts` — 6 red, 2 green
-- Ships with S7 (the disconnected-pane affordance), since panes now stay visible
-  instead of silently respawning.
+- Oracle: `src/main/ssh/ssh-relay-reattach-exit-proof.test.ts` — 8 green
+- Mutation proven: restoring the destructive block reddens 6 of 8 clauses; the
+  2 producer pins stay green, so the mutation is clause-selective.
+- Two tests pinned the deleted premise ("attach verifies liveness before
+  answering not-found") and were **inverted**, not patched.
+- Shipped with the disconnected-pane affordance below, since panes now stay
+  visible instead of silently respawning.
+- Landed: `c19f1b386b4` (−21 production lines)
 
-### S4 — One partition per (target, pane) · **ORACLE RED**
+### S4 — One partition per (target, pane) · **PROVEN**
 
 *Guarantee.* A pane that re-leases under a new relay id across reconnects ends
 with exactly **one** live claim; the predecessor is superseded, not left live.
 
-- Oracle: `src/main/ssh-pane-binding-partition.test.ts` — 6 red
-- This is the highest-value goalpost: it is the mechanism behind the reported
-  2 → 19 → 20. Bindings are written to two partitions today, so supersession
-  silently no-ops.
+- Oracle: `src/main/ssh-pane-binding-partition.test.ts` — 7 green (one clause added)
+- The highest-value goalpost: the mechanism behind the reported 2 → 19 → 20.
+- Mutation proven as a **2×2**, because the two edits mask each other:
 
-### S5 — The superseded-pane fence is live on the reattach path · **ORACLE RED**
+  | reader | load fold | result |
+  | --- | --- | --- |
+  | hedge (original) | off | 6 red — baseline |
+  | hedge | off | 4 red — the 2 source-text clauses now green |
+  | local-only | off | 1 red — the reader carries 3 clauses |
+  | hedge | **on** | **all green** ← the fold masks the reader |
+  | local-only | on | all green |
+
+  That fourth row is why an **eighth clause was added**: with the fold shipping,
+  the fold erases the divergent copy at boot, so the reader guard would have
+  shipped unproven — precisely the failure mode G5 exists to catch. The new
+  clause rewrites `ssh:<target>` mid-session (orphan adoption still writes
+  there) and reddens when the hedge is restored, pinning the reader on its own.
+- Five clauses in `ipc/pty.test.ts` pinned the two-partition shape and were
+  **inverted** to the single home, each keeping an arity check so a re-added
+  partition argument fails loudly.
+- Side effect found while verifying: the renderer never hydrated the `ssh:*`
+  partition (`listKnownRuntimeHostIds` filters to `runtime:*`), so the Issue
+  #217 force-quit binding protection had never worked for SSH panes. It does now.
+- Landed: `2733c59879b` (+9 production lines — the call sites shrank; the fold
+  is new state repair)
+
+### S5 — The superseded-pane fence is live on the reattach path · **PROVEN**
 
 *Guarantee.* After a relay-driven reattach binds a pane, a stale write aimed at
-the superseded predecessor is **refused**. Today it is permitted, because the
-fence's bookkeeping is only written by spawn.
+the superseded predecessor is **refused**. It used to be permitted, because the
+fence's bookkeeping was only written by spawn.
 
-- Oracle: `src/main/ssh/ssh-relay-session-reattach-pane-fence.test.ts` — 2 red, 1 green
-- Directly closes a defect in already-shipped work.
+- Oracle: `src/main/ssh/ssh-relay-session-reattach-pane-fence.test.ts` — 4 green
+  (one clause added)
+- Collapsed to one `bindPaneShell` producer used by the relay reattach and both
+  spawn handlers. Error policy stays at the call sites because it genuinely
+  differs: a caller that just created a shell must clean it up on a failed
+  durable write; a caller that merely reattached must not detach anything.
+- Mutation proven, both sub-guards isolated:
+  - drop the `rememberPaneKeyForPty` call → 3 clauses redden
+  - prefer the stored `tabId` over the live layout → 1 clause reddens
+- That second clause is **new**. Every pre-existing clause used one tabId on
+  both sides, so a producer that simply forwarded `lease.tabId` would have gone
+  green and shipped the moved-pane bug unnoticed. Only the leaf half of a pane
+  key is remint-stable; `detachTerminalPaneToTab` moves a live pane and its PTY.
+- Two source-text clauses were **strengthened**: they used to require the relay
+  to hold a `persistPtyBinding` call and merely forbade an ssh-partition
+  argument. The relay now has none, so they assert **zero** direct binding
+  writes there — a second bind producer is exactly the defect being removed.
+- Repaired a latent false green: the "persistence fails" case in
+  `ssh-relay-session-reconnect-incarnation` was passing because a missing mock
+  made the call throw a TypeError that happened to emit the asserted
+  `console.error`. The failure is now injected at the producer.
+- Landed: `0f409055d3f` (+60 production lines — the one step that grows)
 
 ### S6 — Settle whether the 30s recovery grant executes at all · **PROVEN — it is dead code**
 
@@ -110,48 +166,149 @@ Not built. The arbitration machinery existed to referee a branch that never
 executes. Per the design: "if E-1 shows the grant branch unreachable, E-2 is
 deleted and the marker simply never fires, which is the safe end state."
 
-### S8 — Remove the dead recovery-grant path · **NOT STARTED**
+### S8 — Remove the dead recovery-grant path · **PROVEN**
 
-*Guarantee.* Deleting it changes no behaviour, because it has none. Needs a
-characterisation oracle first: assert the branch is unreachable via the
-production id shapes, so the deletion is provably inert rather than assumed to be.
+*Guarantee.* Deleting it changes no behaviour, because it has none.
+
+- Oracle: `src/main/runtime/ssh-pane-recovery-grant-reachability.test.ts`, written
+  and green **before** the deletion, so inertness is demonstrated rather than assumed.
+- It mints **both** id forms from the production helpers rather than as two
+  hand-typed literals, so it tracks the real namespace split instead of
+  restating it, and seeds a lease qualifying on every other predicate (state,
+  worktree, tab, leaf, grace window). Anti-vacuity clauses pin that control
+  actually reaches the gate rather than bailing out earlier.
+- Mutation proven **before** deleting: normalizing the `lease.ptyId === ptyId`
+  comparison makes the grant fire and reddens the oracle. That is the exact fix
+  someone would reach for, so the oracle is pinned to unreachability, not to the
+  throw.
+- Deleted: the grant tail, the `terminalPaneRecoveryByIdentity` dedup map (whose
+  only consumer was the grant), and the dead `ptyId` parameter.
+- **Not** deleted, because over-deleting here breaks users: `getRecentExpiredSshLease`,
+  `hasRecentExpiredSshLeasePane` and `SSH_PANE_RECOVERY_GRACE_MS` all stay. Their
+  other two callers pass `ptyId` undefined, which short-circuits the broken
+  comparison — those are live and feed headless-mobile terminal-tab visibility.
+- Also **not** done: deleting only the gate while keeping the spawn. That would
+  have granted a respawn to every disconnected pane — a change in the dangerous
+  direction. The refusal is what stays.
+- Three tests pinned the grant and were **inverted**; a fourth is now
+  tautological and carries a comment saying so rather than being left hollow.
+- Honest limit, recorded in the oracle: unreachable **by construction** for SSH
+  panes; for a local pane, unreachable only up to a random-UUID collision.
+- Landed: `7d44315437a` (−32 production lines)
+
+### Product affordance (D1) — **SHIPPED with S3**
+
+A pane that cannot be verified renders as disconnected with two explicit actions
+— "Try again" and "Start a new terminal" — instead of silently respawning.
+
+- No new IPC channel: the silent-respawn decision was always renderer-local.
+  Both actions are things the code already did, moved behind a click.
+- Copy constraint enforced **as an oracle**, not as a review note: the rendered
+  text must match no death verb and show no wire token. STYLEGUIDE.md:236 already
+  forbids result verbs without result data, and a failed attach is not result data.
+- `TerminalRemoteRuntimeReconnectBanner` → `TerminalPaneDisconnectedBanner`; it
+  now serves any transport. Existing i18n key strings kept verbatim so no shipped
+  translation breaks; the SSH copy is additive.
+- Landed: `5e1b57bb2f9` (+70 production lines)
 
 ---
 
 ## Global goalposts
 
-### G1 — Net production code is negative · **ON TRACK (−24)**
+### G1 — Net production code is negative · **NOT MET (+83 this phase)**
 
-Counted from the pre-work merge base, production only. Tests are expected to
-grow and are counted separately.
+Counted from the pre-work merge base, production only. Reported as a miss rather
+than reframed until it passes.
 
-### G2 — No redeploy required for the user-visible fixes · **PROVEN for S1–S2**
+| Step | Net production |
+| --- | --- |
+| S3 — collapse the fabricated exit | **−21** |
+| S4 — one partition | +9 |
+| S5 — one bind producer | **+60** |
+| S8 — delete the dead grant | **−32** |
+| D1 affordance (new product surface) | **+70** |
+| Banner rename (pure move, no behaviour) | +36 of the above, not real growth |
+| **Correctness work only (S3–S8)** | **+13** |
+| **Total this phase** | **+83** |
 
-Fixes must work against relays already installed on people's hosts. S1 and S2
-both do. Any future step that needs a new relay must say so explicitly here.
+Why it missed. The target assumed the remaining steps were collapses. Three were.
+Two were not, for reasons worth stating:
 
-### G3 — Wire compatibility · **NOT YET EXERCISED**
+- **S5 (+60).** One producer replacing three divergent call sites only shrinks
+  the code if those sites were duplicating the whole bind. They were not — they
+  each did *part* of it differently, which is exactly the defect. The producer is
+  net-new; the call sites shrank by 7 lines. Collapsing the two spawn handlers'
+  surrounding logic as well would buy the difference back, but it would reorder
+  side effects that existing ordering assertions pin, so it was left alone.
+- **D1 affordance (+70).** A new user-facing surface the owner approved. Features
+  add lines; counting it against a refactor budget would be the wrong pressure —
+  the way to make this number go negative would be to delete the affordance.
 
-Clients and hosts update independently. A new optional response field is safe; a
-new opcode must be capability-negotiated. S4's orphan projection adds one
-optional field and must be checked against
-`docs/reference/remote-wire-compatibility.md` when it lands.
+Where the remaining slack is, if the goal is to be met later: steps P and K of
+the design (the leaf-keyed record replacing `SshRemotePtyLease`, and the lease
+readers ported onto it) are the deletions this phase deferred.
 
-### G4 — Cross-platform · **NOT YET EXERCISED**
+### G2 — No redeploy required for the user-visible fixes · **PROVEN for S1–S8**
 
-macOS, Linux, Windows, WSL. No `echo $$` / `ps` assumptions in oracles. No rule
-in this design may depend on whether shells survive a hard relay death, because
-that differs on Windows and is unresolved.
+Fixes must work against relays already installed on people's hosts. Every step
+that landed is client-side only:
 
-### G5 — Every guard is proven live on the production route · **PROVEN for S1–S2**
+- S1, S2 — proven previously.
+- S3 — deletes client-side reactions to a relay message; the relay is unchanged.
+- S4 — client-local persistence layout only; nothing crosses the wire.
+- S5 — client-local in-memory fence maps and the durable binding.
+- S8 — deletes a client-side branch.
+- D1 — renderer only.
+
+**No relay redeploy is required for any of it**, which matters because the
+reported failure is happening on hosts people have already deployed.
+
+### G3 — Wire compatibility · **SATISFIED — nothing on the wire changed**
+
+Clients and hosts update independently. This phase added **no** RPC parameter,
+no stream opcode and no published field, so there is nothing to negotiate. The
+orphan projection that would have added one optional field belongs to step W,
+which is not in this phase.
+
+One wire-adjacent behaviour change is worth naming for reviewers: `terminal.recoverPane`
+(RPC) now always refuses for a disconnected pane. The method still exists and its
+signature is unchanged, so older clients get a refusal rather than a
+`method_not_found` — and the renderer already handles refusal, because that is
+what the branch did in practice anyway.
+
+### G4 — Cross-platform · **SATISFIED by construction**
+
+macOS, Linux, Windows, WSL. No oracle added in this phase shells out, and none
+uses `echo $$` or `ps` — they assert against persisted state, in-memory maps and
+rendered text. No rule that landed concludes anything from a relay restart or
+from whether a shell survives a hard relay death, which is the Windows-divergent
+question the design deliberately refuses to depend on. The affordance copy holds
+on every platform precisely because it never claims the shell died.
+
+### G5 — Every guard is proven live on the production route · **PROVEN for S1–S8**
 
 For each new guard, an oracle must redden when the **producer** is removed — not
-only when the guard itself is removed. Asserting "the guard behaves correctly
-when reached" is not evidence that it is reached.
+only when the guard itself is removed.
 
-This exists because it has now failed three times here: an inert `mayCreate`, a
+This exists because it had failed three times here: an inert `mayCreate`, a
 keystroke fence inert on reattach, and a respawn gate on a minority path. S5 is
 the remediation of the second.
+
+**It nearly failed a fourth time in this phase, and the rule caught it.** S4's
+reader guard (`durablyBoundPtyIdForPane` reading one partition) initially showed
+*no* mutation response: restoring the ssh-first hedge left all six clauses green,
+because the load fold had already erased the divergent copy at boot. The guard
+was correct and would have shipped unproven. The fix was an added clause that
+rewrites the ssh partition **mid-session**, which reddens on the hedge and pins
+the reader independently of the fold.
+
+Two further near-misses found and closed the same way:
+- S5's clauses all used one tabId on both sides, so "compose the paneKey from
+  the current tab" was unpinned — a producer forwarding `lease.tabId` would have
+  gone green. A moved-pane clause now pins it.
+- A case in `ssh-relay-session-reconnect-incarnation` was a **latent false
+  green**: it passed because a missing mock threw a TypeError that happened to
+  emit the `console.error` it asserted. Now injected at the producer.
 
 ### G6 — No `max-lines` disables · **HOLDING**
 
@@ -161,11 +318,30 @@ Per AGENTS.md. No per-file bumps either.
 
 ## Definition of done
 
-1. S1–S5 and S7 PROVEN, or S7 deleted on S6's evidence.
-2. G1–G6 satisfied, each with its evidence recorded here.
-3. The reported failures are covered by an oracle that reddens without the fix:
-   pane cardinality growth on reconnect, and duplicate agent resume.
-4. No guard shipped without a producer-side mutation proving it is reachable.
+| | Criterion | Status |
+| --- | --- | --- |
+| 1 | S1–S5 and S7 PROVEN, or S7 deleted on S6's evidence | **MET** — S1–S6 and S8 proven; S7 deleted on S6's evidence |
+| 2 | G1–G6 satisfied, each with evidence recorded here | **PARTIAL** — G2–G6 met; **G1 missed at +83**, accounted for above |
+| 3 | The reported failures covered by an oracle that reddens without the fix | **MET at unit level** (pane cardinality: S4's 10-reconnect clause; duplicate resume: S1/S3 classification + no-fabricated-exit clauses). E2E specs added; see below |
+| 4 | No guard shipped without a producer-side mutation proving it is reachable | **MET** — and it caught one guard that would otherwise have shipped unproven (see G5) |
+
+### Residuals, stated rather than closed quietly
+
+- **Orphan adoption still writes the `ssh:<target>` partition.**
+  `adoptTerminalOrphansFromInventory` (via `tryGetWorkspaceSessionHostIdForWorktree`)
+  writes pane bindings there. S4's reader ignores that partition, so supersession
+  is unaffected and the guarantee holds — but the write now lands somewhere
+  nothing reads. Harmless today, and a trap for whoever touches it next. Belongs
+  with step W.
+- **The load fold moves leaf bindings only.** It deliberately does not touch
+  `tabsByWorktree[*].ptyId` in the ssh partition: that field is a tab-level
+  pointer no supersession path reads, and nulling it without a local counterpart
+  to move it to would be data loss. Narrowing the fold to what the defect
+  actually requires is why `reassignSshTargetId` needed no inversion.
+- **The main-side detached branch still has no renderer signal.** S3 made the
+  main process stop lying; the affordance covers the renderer-initiated reattach
+  arms. A relay-driven reattach failure remains silent to the user. Closing it
+  needs a `pty:detached` channel — deferred deliberately, not overlooked.
 
 ## Deliberately out of scope
 
