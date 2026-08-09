@@ -210,11 +210,11 @@ import { cn } from '@/lib/utils'
 import {
   getLinkedWorkItemSuggestedName,
   getLinkedWorkItemWorkspaceName,
-  getTaskPresetQuery,
   PER_REPO_FETCH_LIMIT,
   CROSS_REPO_DISPLAY_LIMIT
 } from '@/lib/new-workspace'
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
+import { getTaskPresetQuery } from '../../../shared/task-preset-query'
 import { buildLinearIssueLinkedWorkItem } from '@/lib/linear-linked-work-item'
 import {
   readLinearBoardIssueDragData,
@@ -10029,6 +10029,7 @@ export default function TaskPage(): React.JSX.Element {
                       const attachedWorkspaceLabel = attachedWorkspace
                         ? getGithubWorkItemWorkspaceAttachmentLabel(attachedWorkspace)
                         : null
+                      const prDelta = item.type === 'pr' ? formatPRDelta(item) : null
                       const githubTaskIdPill = (
                         <span
                           // Why: no fill — a muted wash on the pill stacks on the
@@ -10132,10 +10133,10 @@ export default function TaskPage(): React.JSX.Element {
                                   </span>
                                 </>
                               ) : null}
-                              {item.type === 'pr' && formatPRDelta(item) ? (
+                              {prDelta ? (
                                 <span className="inline-flex items-center gap-1">
                                   <Files className="size-3" />
-                                  {formatPRDelta(item)}
+                                  {prDelta}
                                 </span>
                               ) : null}
                               {attachedWorkspaceLabel ? (

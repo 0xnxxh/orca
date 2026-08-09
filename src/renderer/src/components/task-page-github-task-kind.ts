@@ -1,4 +1,4 @@
-import { getTaskPresetQuery } from '@/lib/new-workspace'
+import { getTaskPresetQuery } from '../../../shared/task-preset-query'
 import { parseTaskQuery } from '../../../shared/task-query'
 import type { TaskViewPresetId } from '../../../shared/types'
 import type { GitHubTaskKind } from '@/components/task-page-localized-options'
