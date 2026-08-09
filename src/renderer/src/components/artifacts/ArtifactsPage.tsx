@@ -14,11 +14,17 @@ const LOCAL_RUNTIME = { kind: 'local' } as const
 
 export default function ArtifactsPage(): React.JSX.Element {
   const closePage = useAppStore((state) => state.closeArtifactsPage)
+  const openSettingsTarget = useAppStore((state) => state.openSettingsTarget)
+  const settings = useAppStore((state) => state.settings)
   const authStatus = useAppStore((state) => state.orcaProfileAuthStatus)
   const connecting = useAppStore((state) => state.orcaProfileConnecting)
   const connect = useAppStore((state) => state.connectCurrentOrcaProfile)
   const refreshAuth = useAppStore((state) => state.refreshCurrentOrcaProfileAuth)
+  const openSettingsPage = useAppStore((state) => state.openSettingsPage)
   const confirm = useConfirmationDialog()
+  // Why: publishing is off by default, so "ask your agent to share" is a dead end until the
+  // capability is granted. Only claim that once settings have actually loaded.
+  const publishingBlocked = settings ? settings.artifactSharingEnabled !== true : false
   const [deleting, setDeleting] = useState<{ identity: string; slug: string } | null>(null)
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
   const signedIn = authStatus?.state === 'connected'
@@ -206,22 +212,49 @@ export default function ArtifactsPage(): React.JSX.Element {
                       'auto.components.artifacts.ArtifactsPage.moreAvailable',
                       'More artifacts are available'
                     )
-                  : translate(
-                      'auto.components.artifacts.ArtifactsPage.empty',
-                      'No shared artifacts'
-                    )}
+                  : publishingBlocked
+                    ? translate(
+                        'auto.components.artifacts.ArtifactsPage.publishingOff',
+                        'Publishing is turned off'
+                      )
+                    : translate(
+                        'auto.components.artifacts.ArtifactsPage.empty',
+                        'No shared artifacts'
+                      )}
               </h2>
-              <p className="text-xs text-muted-foreground">
+              <p className="max-w-sm text-xs leading-5 text-muted-foreground">
                 {nextCursor
                   ? translate(
                       'auto.components.artifacts.ArtifactsPage.moreAvailableCopy',
                       'Load the next page to continue.'
                     )
-                  : translate(
-                      'auto.components.artifacts.ArtifactsPage.emptyCopy',
-                      'Ask your agent to share an HTML or Markdown file, and it will appear here.'
-                    )}
+                  : publishingBlocked
+                    ? translate(
+                        'auto.components.artifacts.ArtifactsPage.publishingOffCopy',
+                        'Nothing on this device can create a public artifact link yet. Allow publishing in Settings → Artifacts, then ask your agent to share an HTML or Markdown file.'
+                      )
+                    : translate(
+                        'auto.components.artifacts.ArtifactsPage.emptyCopy',
+                        'Ask your agent to share an HTML or Markdown file, and it will appear here.'
+                      )}
               </p>
+              {!nextCursor && publishingBlocked ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => {
+                    openSettingsTarget({ pane: 'artifacts', repoId: null })
+                    openSettingsPage()
+                  }}
+                >
+                  {translate(
+                    'auto.components.artifacts.ArtifactsPage.openArtifactsSettings',
+                    'Open Settings → Artifacts'
+                  )}
+                </Button>
+              ) : null}
               {nextCursor ? (
                 <Button
                   type="button"

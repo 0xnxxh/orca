@@ -22,6 +22,7 @@ import {
 import { saveOrcaCloudSession } from '../orca-profiles/profile-cloud-session-store'
 import {
   ARTIFACT_SHARING_DISABLED_CODE,
+  ARTIFACT_SHARING_DISABLED_MESSAGE,
   isArtifactSharingEnabled
 } from '../../shared/artifact-sharing-gate'
 import { getDefaultSettings } from '../../shared/constants'
@@ -345,7 +346,7 @@ describe('ArtifactCloudService publish capability gate', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(service.share({ ...writeRequest, authToken: 'token-a' })).rejects.toThrow(
-      /Artifact sharing is off/
+      ARTIFACT_SHARING_DISABLED_MESSAGE
     )
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -355,7 +356,7 @@ describe('ArtifactCloudService publish capability gate', () => {
     const { service } = await setup(sharing)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(createResponse()))
 
-    await expect(service.share(writeRequest)).rejects.toThrow(/Artifact sharing is off/)
+    await expect(service.share(writeRequest)).rejects.toThrow(ARTIFACT_SHARING_DISABLED_MESSAGE)
     sharing.value = true
     await expect(service.update(writeRequest)).rejects.toThrow(/has not been shared/)
   })
@@ -394,7 +395,7 @@ describe('ArtifactCloudService publish capability gate', () => {
     await service.share(writeRequest)
     sharing.value = false
     await expect(service.share({ ...writeRequest, sourceKey: '/repo/other.html' })).rejects.toThrow(
-      /Artifact sharing is off/
+      ARTIFACT_SHARING_DISABLED_MESSAGE
     )
     expect(fetchMock).toHaveBeenCalledOnce()
   })

@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   } as Record<string, unknown>,
   closePage: vi.fn(),
   connect: vi.fn(),
+  openSettingsPage: vi.fn(),
+  openSettingsTarget: vi.fn(),
+  settings: { artifactSharingEnabled: true } as Record<string, unknown> | null,
   confirm: vi.fn(),
   refreshAuth: vi.fn(),
   rpc: vi.fn(),
@@ -56,7 +59,10 @@ function storeState(): Record<string, unknown> {
     connectCurrentOrcaProfile: mocks.connect,
     orcaProfileAuthStatus: mocks.authStatus,
     orcaProfileConnecting: false,
-    refreshCurrentOrcaProfileAuth: mocks.refreshAuth
+    refreshCurrentOrcaProfileAuth: mocks.refreshAuth,
+    settings: mocks.settings,
+    openSettingsPage: mocks.openSettingsPage,
+    openSettingsTarget: mocks.openSettingsTarget
   }
 }
 
@@ -71,8 +77,11 @@ describe('ArtifactsPage', () => {
       configured: true,
       state: 'connected'
     }
+    mocks.settings = { artifactSharingEnabled: true }
     mocks.closePage.mockReset()
     mocks.connect.mockReset()
+    mocks.openSettingsPage.mockReset()
+    mocks.openSettingsTarget.mockReset()
     mocks.confirm.mockReset()
     mocks.refreshAuth.mockReset()
     mocks.rpc.mockReset()
@@ -185,6 +194,36 @@ describe('ArtifactsPage', () => {
       screen.getByText('Ask your agent to share an HTML or Markdown file, and it will appear here.')
     ).toBeInTheDocument()
     expect(screen.queryByText(/orca artifacts share/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Open Settings → Artifacts' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('sends the user to Settings instead of an agent when publishing is off', async () => {
+    mocks.settings = { artifactSharingEnabled: false }
+    mocks.rpc.mockResolvedValue({ status: 'ok', value: { artifacts: [] } })
+    render(<ArtifactsPage />)
+
+    await screen.findByText('Publishing is turned off')
+    expect(screen.getByText(/Allow publishing in Settings → Artifacts/)).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'Ask your agent to share an HTML or Markdown file, and it will appear here.'
+      )
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings → Artifacts' }))
+    expect(mocks.openSettingsTarget).toHaveBeenCalledWith({ pane: 'artifacts', repoId: null })
+    expect(mocks.openSettingsPage).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the neutral empty state until settings have loaded', async () => {
+    mocks.settings = null
+    mocks.rpc.mockResolvedValue({ status: 'ok', value: { artifacts: [] } })
+    render(<ArtifactsPage />)
+
+    await screen.findByText('No shared artifacts')
+    expect(screen.queryByText('Publishing is turned off')).not.toBeInTheDocument()
   })
 
   it('loads each cursor once and appends the next artifact page', async () => {
