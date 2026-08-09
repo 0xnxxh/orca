@@ -31966,6 +31966,26 @@ describe('OrcaRuntimeService', () => {
     expect(retried).toBe(first)
   })
 
+  it('dedupes a response-lost mobile terminal create retried after a worktree rename', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    const created = {} as Awaited<ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>>
+    runtime['runCreateMobileSessionTerminal'] = vi.fn(async () => created)
+
+    const first = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-lost-during-rename'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    const retried = await runtime.createMobileSessionTerminal(`id:${renamedWorktreeId}`, {
+      activate: false,
+      clientMutationId: 'mutation-lost-during-rename'
+    })
+
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledTimes(1)
+    expect(retried).toBe(first)
+  })
+
   it('does not dedupe mobile terminal creates across worktrees with the same clientMutationId', async () => {
     const otherWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-b`
     vi.mocked(listWorktrees).mockResolvedValue([

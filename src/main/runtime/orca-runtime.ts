@@ -25430,7 +25430,11 @@ export class OrcaRuntimeService {
       )
     } else {
       // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
-      const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${worktreeSelector}\0${mutationId}`
+      const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
+      const mutationWorktreeKey = explicitWorktreeId
+        ? this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)
+        : worktreeSelector
+      const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${mutationWorktreeKey}\0${mutationId}`
       // Why: a retried create (double-tap, reconnect replay) with the same
       // idempotency key must return the in-flight operation instead of spawning a
       // duplicate terminal. Successes are kept briefly so a retry whose response
@@ -25453,8 +25457,10 @@ export class OrcaRuntimeService {
         }
         this.mobileTerminalCreateByMutationId.set(mutationKey, run)
         const drop = (): void => {
-          if (this.mobileTerminalCreateByMutationId.get(mutationKey) === run) {
-            this.mobileTerminalCreateByMutationId.delete(mutationKey)
+          for (const [key, candidate] of this.mobileTerminalCreateByMutationId) {
+            if (candidate === run) {
+              this.mobileTerminalCreateByMutationId.delete(key)
+            }
           }
         }
         void run.result.then(() => {
@@ -28692,6 +28698,17 @@ export class OrcaRuntimeService {
         )
         this.pendingMobileTerminalCreatesByKey.delete(key)
       }
+    }
+    for (const [key, run] of [...this.mobileTerminalCreateByMutationId]) {
+      const [clientNavigationId, worktreeId, mutationId] = key.split('\0')
+      if (worktreeId !== oldWorktreeId || !clientNavigationId || !mutationId) {
+        continue
+      }
+      this.mobileTerminalCreateByMutationId.set(
+        `${clientNavigationId}\0${newWorktreeId}\0${mutationId}`,
+        run
+      )
+      this.mobileTerminalCreateByMutationId.delete(key)
     }
     this.mobileSessionTabsNotifyCoalescer.cancel(oldWorktreeId)
     if (snapshot) {
