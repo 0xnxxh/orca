@@ -32701,6 +32701,56 @@ describe('OrcaRuntimeService', () => {
     expect(second).toBe(reused)
   })
 
+  it('dedupes concurrent mobile creates after an original worktree id is reused', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const reconciliation = deferred<void>()
+    const runtime = new OrcaRuntimeService(store)
+    const original = { snapshotVersion: 1 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    const reused = { snapshotVersion: 2 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    runtime['runCreateMobileSessionTerminal'] = vi
+      .fn()
+      .mockResolvedValueOnce(original)
+      .mockResolvedValue(reused)
+
+    await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-id'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime['resolveRetriedMobileTerminalWorkspaceLaunchScope'] = vi.fn(async () => {
+      await reconciliation.promise
+      return {
+        id: TEST_WORKTREE_ID,
+        path: TEST_WORKTREE_PATH,
+        connectionId: null,
+        repo: null,
+        folderWorkspace: null,
+        priorWorktreeIds: []
+      }
+    })
+
+    const first = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-id'
+    })
+    const second = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-id'
+    })
+    await vi.waitFor(() =>
+      expect(runtime['resolveRetriedMobileTerminalWorkspaceLaunchScope']).toHaveBeenCalledTimes(2)
+    )
+    reconciliation.resolve()
+
+    await expect(first).resolves.toBe(reused)
+    await expect(second).resolves.toBe(reused)
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledTimes(2)
+  })
+
   it('does not dedupe a path-selected mobile create after the path is reused', async () => {
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const runtime = new OrcaRuntimeService(store)
@@ -32735,6 +32785,60 @@ describe('OrcaRuntimeService', () => {
 
     expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledTimes(2)
     expect(second).toBe(reused)
+  })
+
+  it('dedupes concurrent path-selected mobile creates after the path is reused', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const reconciliation = deferred<void>()
+    const runtime = new OrcaRuntimeService(store)
+    const original = { snapshotVersion: 1 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    const reused = { snapshotVersion: 2 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    runtime['runCreateMobileSessionTerminal'] = vi
+      .fn()
+      .mockImplementationOnce(async (_selector, _opts, activeLaunch) => {
+        activeLaunch!.worktreeId = TEST_WORKTREE_ID
+        activeLaunch!.worktreePath = TEST_WORKTREE_PATH
+        return original
+      })
+      .mockResolvedValue(reused)
+
+    await runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-path'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime['resolveTerminalWorkspaceLaunchScope'] = vi.fn(async () => {
+      await reconciliation.promise
+      return {
+        id: TEST_WORKTREE_ID,
+        path: TEST_WORKTREE_PATH,
+        connectionId: null,
+        repo: null,
+        folderWorkspace: null,
+        priorWorktreeIds: []
+      }
+    })
+
+    const first = runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-path'
+    })
+    const second = runtime.createMobileSessionTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      activate: false,
+      clientMutationId: 'mutation-concurrent-reused-path'
+    })
+    await vi.waitFor(() =>
+      expect(runtime['resolveTerminalWorkspaceLaunchScope']).toHaveBeenCalledTimes(2)
+    )
+    reconciliation.resolve()
+
+    await expect(first).resolves.toBe(reused)
+    await expect(second).resolves.toBe(reused)
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledTimes(2)
   })
 
   it('does not dedupe mobile terminal creates across worktrees with the same clientMutationId', async () => {

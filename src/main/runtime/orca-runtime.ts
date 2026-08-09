@@ -25585,11 +25585,10 @@ export class OrcaRuntimeService {
             explicitWorktreeId
           )
           this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
-          if (activeLaunch.worktreeId !== explicitWorktreeId) {
-            mutationWorktreeKey = activeLaunch.worktreeId
-            mutationKey = `${clientMutationScope}\0${mutationWorktreeKey}\0${mutationId}`
-            run = this.mobileTerminalCreateByMutationId.get(mutationKey)
-          }
+          // Why: reconciliation yields, so a same-key caller may have claimed this live identity.
+          mutationWorktreeKey = activeLaunch.worktreeId
+          mutationKey = `${clientMutationScope}\0${mutationWorktreeKey}\0${mutationId}`
+          run = this.mobileTerminalCreateByMutationId.get(mutationKey)
         }
         if (
           run &&
@@ -25613,7 +25612,10 @@ export class OrcaRuntimeService {
             currentSelectorWorktreeId &&
             currentSelectorWorktreeId !== run.workspaceLaunch.worktreeId
           ) {
-            run = undefined
+            // Why: reclassification yields, so claim the live identity instead of the stale path key.
+            mutationWorktreeKey = currentSelectorWorktreeId
+            mutationKey = `${clientMutationScope}\0${mutationWorktreeKey}\0${mutationId}`
+            run = this.mobileTerminalCreateByMutationId.get(mutationKey)
           }
         }
         if (!run) {
