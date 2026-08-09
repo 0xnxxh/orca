@@ -1,14 +1,13 @@
 // @vitest-environment happy-dom
-// Replays a recorded Windows/WSL 2-Set Korean capture and asserts the preedit stayed visible.
+// Replays a recorded Windows/WSL 2-Set Korean capture and asserts the preedit stayed visible for
+// every composition update the IME actually emitted — 37 of them across 11 balanced sessions.
 //
-// The capture contains the ordering that hides it: three compositionupdates that resume a
-// composition with no second compositionstart. xterm adds `.active` only in compositionstart and
-// removes it in compositionend, so those three updates were written into a hidden overlay and the
-// user composed blind. Committed syllables still landed, which is why byte-level assertions never
-// saw it.
-//
-// This is the recorded counterpart to terminal-ime-xterm-resumed-preedit-visibility.test.ts: that
-// one pins the shape synthetically, this one proves it against events a real IME actually emitted.
+// It does NOT cover the resume-without-compositionstart ordering, and an earlier version of this
+// file wrongly claimed it did. The capture logs each event twice (a dispatch record and a batched
+// next-frame re-log); replaying both fabricates updates that appear to land after a session ended.
+// Filtered to dispatch records the capture holds zero resumes. The fixture is now filtered, so this
+// asserts real emissions only. The resume ordering is pinned synthetically in
+// terminal-ime-xterm-resumed-preedit-visibility.test.ts, which says so.
 import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import trace from './__fixtures__/windows-wsl-hangul-resumed-preedit-trace.json'
@@ -58,7 +57,7 @@ function buildEvent(recorded: RecordedEvent): Event {
   return composition
 }
 
-describe('Windows/WSL Korean — preedit the IME resumes without a compositionstart', () => {
+describe('Windows/WSL Korean — recorded composition updates keep the preedit visible', () => {
   beforeEach(() => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       measureText: () => ({ width: 10 })
@@ -70,7 +69,7 @@ describe('Windows/WSL Korean — preedit the IME resumes without a compositionst
     document.body.replaceChildren()
   })
 
-  it('keeps every resumed preedit visible', async () => {
+  it('keeps the preedit visible for every recorded update', async () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const terminal = new Terminal()
@@ -83,6 +82,7 @@ describe('Windows/WSL Korean — preedit the IME resumes without a compositionst
     const events = trace.dom as RecordedEvent[]
     let compositionOpen = false
     const resumed: { data: string; shown: boolean }[] = []
+    const shown: { data: string; visible: boolean }[] = []
 
     for (const recorded of events) {
       if (recorded.type === 'keydown' || recorded.type === 'keyup') {
@@ -100,19 +100,22 @@ describe('Windows/WSL Korean — preedit the IME resumes without a compositionst
         compositionOpen = true
       } else if (recorded.type === 'compositionend') {
         compositionOpen = false
-      } else if (recorded.type === 'compositionupdate' && recorded.data && !compositionOpen) {
+      } else if (recorded.type === 'compositionupdate' && recorded.data) {
         const view = terminal.element?.querySelector('.composition-view')
-        resumed.push({
-          data: recorded.data,
-          shown: view?.classList.contains('active') === true
-        })
+        const active = view?.classList.contains('active') === true
+        shown.push({ data: recorded.data, visible: active })
+        if (!compositionOpen) {
+          resumed.push({ data: recorded.data, shown: active })
+        }
       }
     }
     terminal.dispose()
 
-    // The capture holds exactly three; if it ever holds none the fixture has been replaced and this
-    // assertion would pass while covering nothing.
-    expect(resumed).toHaveLength(3)
-    expect(resumed.filter((sample) => !sample.shown)).toEqual([])
+    // Guards against a fixture that silently stops covering anything.
+    expect(shown).toHaveLength(37)
+    expect(shown.filter((sample) => !sample.visible)).toEqual([])
+    // The real capture never resumes a composition without a start; if it ever appears to, the
+    // fixture has picked up the batched re-log again.
+    expect(resumed).toEqual([])
   })
 })
