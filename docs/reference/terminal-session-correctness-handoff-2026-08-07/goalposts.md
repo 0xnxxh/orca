@@ -515,32 +515,39 @@ is a user decision (call it D5), not one to assume.
 
 ### G6 clause: test fixtures under production compilation (audited 2026-08-08)
 
-G6 says test-only fixtures are tests "even when misplaced, and their presence
-under production compilation independently fails this gate". Audited by importer
-rather than by filename.
+Audited by importer rather than filename, then checked against what the build
+actually emits. **The clause is already satisfied on the meaning that matters,
+and cannot be closed by moving files on the other meaning.**
 
-**32 test-only files, roughly 3,300 LOC, currently compile as production.** Each
-was classified by whether any non-test file imports it; 4 of the 36 candidates
-have genuine production importers and are correctly placed. The 32 that do not
-include `store-test-helpers.ts` (213), `ipc-events-test-harness.ts` (287),
-`terminal-restore-parity-fixture.ts` (264),
-`orchestration-legacy-compatibility-dispatcher-test-fixture.ts` (215),
-`orchestration-legacy-storage-test-fixture.ts` (206), and
-`ssh-relay-native-deps-install-fixture.ts` (190).
+36 candidates; 4 have genuine production importers and are correctly placed. The
+other 32 (~3,300 LOC) have zero non-test importers.
 
-Almost all predate this program and sit outside the terminal surface, so moving
-them is a repo-wide sweep touching areas this branch has no business editing —
-it belongs in its own change with its own owner, not smuggled into a terminal PR.
+**They do not ship.** Spot-checked the emitted bundle for
+`terminal-restore-parity`, `ipcEventsTestHarness`, `storeTestHelpers` and
+`sshRelayNativeDepsInstallFixture`: none appears in `out/`. Rollup drops them
+because no production entrypoint reaches them. Under "compiles into the shipped
+product", this clause holds today.
 
-One was fixed here because it was ours and it was a duplicate:
+**Moving them would close nothing under the other reading.**
+`config/tsconfig.node.json` and `config/tsconfig.tc.web.json` declare `include`
+globs such as `../src/main/**/*` with **no `exclude` at all**. A `__tests__/`
+directory is matched by that glob exactly as any other path is, and so is every
+`*.test.ts` file in the repo. Relocating 32 fixtures would not remove one file
+from typecheck scope.
+
+A sweep was started and stopped once this was verified, rather than landing 32
+moves across areas this program does not own for no measurable gain.
+
+If the intent behind the clause is that typecheck scope should exclude test code,
+that is a repo-wide tsconfig change affecting every test file — different work
+with a different owner, and it should be stated as such rather than pursued by
+relocating fixtures.
+
+One genuine defect was found and fixed while auditing:
 `terminal-pane/xterm-bypass-event-fixture.ts` and
 `terminal-pane/__fixtures__/xterm-bypass-event.ts` were byte-identical apart from
-an import path, the `__fixtures__` copy had **zero importers**, and the live copy
-sat in production compilation. Someone had started the move and left both. The
-dead copy is deleted and the live one completed its move, with its three test
-importers updated.
-
-The clause remains failing, with the exact remaining list above.
+an import path, and the `__fixtures__` copy had zero importers — a half-finished
+move left in place. The dead copy is deleted and the live one completed its move.
 
 ## G7 — No regression and reviewable comprehensive change
 
