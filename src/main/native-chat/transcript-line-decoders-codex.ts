@@ -25,7 +25,7 @@ export function decodeCodexTranscriptLine(
   const payload = asRecord(record.payload)
   if (!payload) {
     const id = extractString(record.id) ?? fallbackId
-    return codexUnwrappedResponseItem(record, id)
+    return codexUnwrappedResponseItem(record, id, parseTimestamp(record.timestamp))
   }
   const timestamp = parseTimestamp(record.timestamp)
   const baseId = extractString(payload.id) ?? fallbackId
@@ -41,16 +41,15 @@ export function decodeCodexTranscriptLine(
 
 function codexUnwrappedResponseItem(
   record: Record<string, unknown>,
-  id: string
+  id: string,
+  timestamp: number | null
 ): NativeChatMessage | null {
   if (record.type !== 'message') {
-    return codexResponseItem(record, id, null)
+    return codexResponseItem(record, id, timestamp)
   }
   const role = record.role === 'assistant' ? 'assistant' : record.role === 'user' ? 'user' : null
   const blocks = codexTurnItemBlocks(record.content)
-  return role && blocks.length > 0
-    ? { id, role, blocks, timestamp: null, source: 'transcript' }
-    : null
+  return role && blocks.length > 0 ? { id, role, blocks, timestamp, source: 'transcript' } : null
 }
 
 function codexResponseItem(
@@ -59,12 +58,15 @@ function codexResponseItem(
   timestamp: number | null
 ): NativeChatMessage | null {
   if (payload.type === 'message') {
+    const role =
+      payload.role === 'assistant' ? 'assistant' : payload.role === 'user' ? 'user' : null
+    if (!role) {
+      return null
+    }
     const blocks = claudeContentBlocks(payload.content)
     if (blocks.length === 0) {
       return null
     }
-    const role =
-      payload.role === 'assistant' ? 'assistant' : payload.role === 'user' ? 'user' : 'system'
     return { id, role, blocks, timestamp, source: 'transcript' }
   }
   if (payload.type === 'reasoning') {
