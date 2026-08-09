@@ -513,6 +513,35 @@ clause is amended to recognise the module as load-bearing, or the program accept
 a net-positive change to replace it with something weaker on remote hosts. That
 is a user decision (call it D5), not one to assume.
 
+### G6 clause: test fixtures under production compilation (audited 2026-08-08)
+
+G6 says test-only fixtures are tests "even when misplaced, and their presence
+under production compilation independently fails this gate". Audited by importer
+rather than by filename.
+
+**32 test-only files, roughly 3,300 LOC, currently compile as production.** Each
+was classified by whether any non-test file imports it; 4 of the 36 candidates
+have genuine production importers and are correctly placed. The 32 that do not
+include `store-test-helpers.ts` (213), `ipc-events-test-harness.ts` (287),
+`terminal-restore-parity-fixture.ts` (264),
+`orchestration-legacy-compatibility-dispatcher-test-fixture.ts` (215),
+`orchestration-legacy-storage-test-fixture.ts` (206), and
+`ssh-relay-native-deps-install-fixture.ts` (190).
+
+Almost all predate this program and sit outside the terminal surface, so moving
+them is a repo-wide sweep touching areas this branch has no business editing —
+it belongs in its own change with its own owner, not smuggled into a terminal PR.
+
+One was fixed here because it was ours and it was a duplicate:
+`terminal-pane/xterm-bypass-event-fixture.ts` and
+`terminal-pane/__fixtures__/xterm-bypass-event.ts` were byte-identical apart from
+an import path, the `__fixtures__` copy had **zero importers**, and the live copy
+sat in production compilation. Someone had started the move and left both. The
+dead copy is deleted and the live one completed its move, with its three test
+importers updated.
+
+The clause remains failing, with the exact remaining list above.
+
 ## G7 — No regression and reviewable comprehensive change
 
 **Current status: not started.**
