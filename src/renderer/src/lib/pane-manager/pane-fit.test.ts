@@ -302,6 +302,31 @@ describe('safeFitAndThen unmeasurable-pane retry', () => {
     expect(second).toHaveBeenCalledTimes(1)
   })
 
+  it('does not let a stale handle cancel its deferred replacement', () => {
+    // Why: stream replacement can park under the same key before the superseded owner cancels.
+    const pane = createPane({ rect: { width: 0, height: 0 } })
+    pane.setDisplay('none')
+    const first = vi.fn()
+    const second = vi.fn()
+
+    const staleHandle = safeFitAndThen(pane, 'reattach-pty-resize', first, {
+      retryIfUnmeasurable: true,
+      deferIfHidden: true
+    })
+    safeFitAndThen(pane, 'reattach-pty-resize', second, {
+      retryIfUnmeasurable: true,
+      deferIfHidden: true
+    })
+    staleHandle.cancel()
+
+    pane.setDisplay('block')
+    pane.setRect({ width: 800, height: 600 })
+    safeFit(pane)
+
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledTimes(1)
+  })
+
   it('drops a display:none pane continuation when the pane is torn down before reveal', async () => {
     const { cancelPendingSafeFitContinuations } = await import('./pane-fit')
     const pane = createPane({ rect: { width: 0, height: 0 } })

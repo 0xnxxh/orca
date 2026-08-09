@@ -156,7 +156,7 @@ export function cancelPendingSafeFitContinuation(
   pending: PendingSafeFitContinuation
 ): void {
   settlePendingSafeFitContinuation(pane, operationKey, pending, false)
-  // Why also the bucket: callers cancel to stop the work, and a deferred entry is the same
-  // work waiting for a box — a stream-generation bump must invalidate both.
-  clearDeferredFitContinuation(pane, operationKey)
+  // Why identity-gated: a stale handle may cancel after a replacement with the same key parks;
+  // it must invalidate its own deferred work without deleting the newer grid push.
+  clearDeferredFitContinuation(pane, operationKey, pending)
 }

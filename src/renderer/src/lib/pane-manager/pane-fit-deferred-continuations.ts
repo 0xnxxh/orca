@@ -56,9 +56,16 @@ export function clearDeferredFitContinuations(pane: ManagedPane): void {
 
 // Why: a caller re-registering or cancelling one operation must not leave that operation's
 // older deferred twin armed — it would fire alongside the new one on the next fit.
-export function clearDeferredFitContinuation(pane: ManagedPane, operationKey: string): void {
+export function clearDeferredFitContinuation(
+  pane: ManagedPane,
+  operationKey: string,
+  expected?: DeferredFitContinuation
+): void {
   const deferred = deferredByTerminal.get(pane.terminal)
   if (!deferred) {
+    return
+  }
+  if (expected && deferred.get(operationKey) !== expected) {
     return
   }
   deferred.delete(operationKey)
