@@ -333,16 +333,19 @@ describe('Session', () => {
   describe('shell readiness gating', () => {
     // Why: the renderer's DA1 reply would be queued here, and a shell that withholds its
     // first prompt until DA1 is answered never emits the marker that would release it.
-    it('answers DA1 past the pre-ready queue while ordinary input still waits', async () => {
+    it('answers DA1 once without forwarding it to a renderer', () => {
       createSession({ shellReadySupported: true })
-      session.write('queued\n')
-      expect(subprocess.written).toEqual([])
+      const onData = vi.fn((d: string) => d === '\x1b[0c' && session.write('\x1b[?1;2c'))
+      session.attachClient({ onData, onExit: () => {} })
 
       subprocess.simulateData('\x1b[0c')
-      await vi.advanceTimersByTimeAsync(1)
 
+      expect(onData).toHaveBeenCalledWith('', '\x1b[0c'.length, true, '\x1b[0c'.length)
+      expect(session.takePendingOutput(false)?.records).toEqual([])
+      expect(session.getSnapshot()?.outputSequence).toBe('\x1b[0c'.length)
+      subprocess.simulateData('\x1b]777;orca-shell-ready\x07prompt')
+      vi.advanceTimersByTime(30)
       expect(subprocess.written).toEqual(['\x1b[?1;2c'])
-      expect(session.shellState).toBe('pending')
     })
 
     // Why: regression guard for "claude claude" double-echo. The marker fires

@@ -2,7 +2,8 @@
 import { HeadlessEmulator } from './headless-emulator'
 import {
   installDeviceAttributesResponder,
-  STARTUP_DA1_RESPONSE
+  STARTUP_DA1_RESPONSE,
+  StartupDeviceAttributesQueryFilter
 } from './startup-device-attributes-responder'
 import { isValidPtySize, normalizePtySize } from './daemon-pty-size'
 import { PostReadyFlushGate } from './post-ready-flush-gate'
@@ -121,6 +122,7 @@ export class Session {
   private attachedClients: AttachedClient[] = []
   private preReadyStdinQueue: string[] = []
   private releaseStartupDeviceAttributesResponder: (() => void) | null = null
+  private startupDeviceAttributesQueryFilter: StartupDeviceAttributesQueryFilter | null = null
   private shellReadyScanState: ShellReadyScanState | null = null
   private shellReadyTimer: ReturnType<typeof setTimeout> | null = null
   private killTimer: ReturnType<typeof setTimeout> | null = null
@@ -175,6 +177,7 @@ export class Session {
         response: STARTUP_DA1_RESPONSE,
         reply: (data) => this.subprocess.write(data)
       })
+      this.startupDeviceAttributesQueryFilter = new StartupDeviceAttributesQueryFilter()
       this.shellReadyTimer = setTimeout(() => {
         this.onShellReadyTimeout()
       }, opts.shellReadyTimeoutMs ?? SHELL_READY_TIMEOUT_MS)
@@ -636,26 +639,34 @@ export class Session {
       return
     }
 
+    let releaseStartupDeviceAttributes = false
     if (this._shellState === 'pending' && this.shellReadyScanState) {
       const scanned = scanForShellReady(this.shellReadyScanState, data)
       data = scanned.output
       if (scanned.matched) {
         this.transitionToReady(scanned.postMarkerBytesObserved)
+        releaseStartupDeviceAttributes = true
       }
     } else {
       this.postReadyFlushGate.notifyData()
     }
 
     this.startupIngress.accept(data)
+    if (releaseStartupDeviceAttributes) {
+      this.releaseStartupDeviceAttributes()
+    }
   }
 
   private emitSubprocessOutput(emission: PtyIngressEmission): void {
-    const { data } = emission
+    let { data } = emission
     const rawLength = emission.rawEndSeq - emission.rawStartSeq
     // Why: absolute raw count (daemon stream thinning can drop bytes) lets a snapshot cover the gaps while the renderer dedups the tail.
     this.outputSequence += rawLength
     if (data.length > 0) {
       this.emulator.write(data)
+      data = this.startupDeviceAttributesQueryFilter?.accept(data) ?? data
+    }
+    if (data.length > 0) {
       this.recordPendingOutput({ kind: 'output', data })
     }
 
@@ -675,6 +686,7 @@ export class Session {
       return
     }
 
+    this.releaseStartupDeviceAttributes()
     this.releaseHeldShellReadyBytes()
     this.startupIngress.drainAndClose()
     this._exitCode = code
@@ -724,12 +736,20 @@ export class Session {
   private releaseStartupDeviceAttributes(): void {
     this.releaseStartupDeviceAttributesResponder?.()
     this.releaseStartupDeviceAttributesResponder = null
+    const pending = this.startupDeviceAttributesQueryFilter?.release() ?? ''
+    this.startupDeviceAttributesQueryFilter = null
+    if (pending.length === 0) {
+      return
+    }
+    this.recordPendingOutput({ kind: 'output', data: pending })
+    for (const client of this.attachedClients) {
+      client.onData(pending, 0, true, this.outputSequence)
+    }
   }
 
   private transitionToReady(postMarkerBytesObserved = false): void {
     this._shellState = 'ready'
     this.shellReadyScanState = null
-    this.releaseStartupDeviceAttributes()
     if (this.shellReadyTimer) {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
