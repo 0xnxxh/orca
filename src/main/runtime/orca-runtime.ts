@@ -27737,7 +27737,14 @@ export class OrcaRuntimeService {
     ) {
       return await this.resolveTerminalWorkspaceLaunchScope(selector)
     }
-    const candidates = (await this.listResolvedWorktrees()).filter(
+    let worktreeGeneration: number
+    let worktrees: ResolvedWorktree[]
+    do {
+      worktreeGeneration = this.resolvedWorktreeGeneration
+      worktrees = await this.listResolvedWorktrees()
+      // Why: a rename can invalidate an in-flight scan after it captured the retired path.
+    } while (worktreeGeneration !== this.resolvedWorktreeGeneration)
+    const candidates = worktrees.filter(
       (worktree) =>
         worktree.id === explicitWorktreeId ||
         worktree.priorWorktreeIds?.includes(explicitWorktreeId) === true

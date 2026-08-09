@@ -230,6 +230,48 @@ describe('terminal create idempotency', () => {
     ).rejects.toThrow('terminal_create_identity_conflict')
   })
 
+  it('rebases a response-lost retry when rename overlaps its worktree scan', async () => {
+    let resolveWorktrees: (worktrees: unknown[]) => void = () => {}
+    const staleWorktrees = new Promise<unknown[]>((resolve) => {
+      resolveWorktrees = resolve
+    })
+    const runtime = Object.create(OrcaRuntimeService.prototype) as OrcaRuntimeService
+    Object.assign(runtime, {
+      resolvedWorktreeGeneration: 0,
+      store: { getRepo: vi.fn(() => ({ id: 'repo-1', connectionId: null })) },
+      listResolvedWorktrees: vi
+        .fn()
+        .mockReturnValueOnce(staleWorktrees)
+        .mockResolvedValueOnce([
+          {
+            id: 'repo-1::/workspace/renamed',
+            path: '/workspace/renamed',
+            repoId: 'repo-1',
+            priorWorktreeIds: ['repo-1::/workspace/original']
+          }
+        ])
+    })
+
+    const resolving = runtime['resolveTerminalCreateWorkspaceLaunchScope'](
+      'id:repo-1::/workspace/original',
+      true
+    )
+    runtime['resolvedWorktreeGeneration'] = 1
+    resolveWorktrees([
+      {
+        id: 'repo-1::/workspace/original',
+        path: '/workspace/original',
+        repoId: 'repo-1',
+        priorWorktreeIds: []
+      }
+    ])
+
+    await expect(resolving).resolves.toMatchObject({
+      id: 'repo-1::/workspace/renamed',
+      path: '/workspace/renamed'
+    })
+  })
+
   it('adopts the original PTY after a runtime-process restart without rerunning startup', async () => {
     const liveSessions: PtyProcessInfo[] = []
     const firstRuntime = createRuntimeForDedupe(vi.fn(async () => liveSessions)).runtime
