@@ -24,6 +24,7 @@ import {
 } from './structured-agent-session-attach'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
+import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 
 export type AttachFlowInput = {
   store: AgentSessionRecordStore
@@ -37,6 +38,9 @@ export type AttachFlowInput = {
    *  sees the result, so no client can send against a session the host has not
    *  finished publishing. */
   onAttached: (attached: AttachedJournal) => void
+  /** Handed to the adapter so it can journal what the provider streams. The
+   *  host owns it and binds it to the journal inside `onAttached`. */
+  eventSink?: StructuredAgentSessionEventSink
 }
 
 export async function performAttach(
@@ -117,7 +121,8 @@ async function acquireOwner(
     identity: journalIdentityFor(record.sessionId, input.params),
     fence,
     // Retries must recover the original reservation, not mint a second child.
-    spawnToken
+    spawnToken,
+    ...(input.eventSink ? { events: input.eventSink } : {})
   })
   if (record.lease.ownerProcess === null) {
     await input.store.commitProcessIdentity({

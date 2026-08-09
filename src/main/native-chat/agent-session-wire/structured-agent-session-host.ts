@@ -14,11 +14,6 @@ import type {
 } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
-import {
-  admitAgentSessionMutation,
-  agentSessionFingerprintConflict,
-  computeAgentSessionPayloadFingerprint
-} from '../../../shared/agent-session-mutation-envelope'
 import type {
   AgentSessionAttachResult,
   AgentSessionCancelResult,
@@ -37,6 +32,15 @@ import { readAgentSessionHistory } from './agent-session-history-page'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
 import { performAttach } from './structured-agent-session-attach-flow'
+import {
+  createDeferredStructuredAgentSessionEventSink,
+  type DeferredStructuredAgentSessionEventSink
+} from './structured-agent-session-event-sink'
+import {
+  admitAndRunAgentSessionMutation,
+  AGENT_SESSION_NOT_ATTACHED,
+  refuseAgentSessionMutation
+} from './structured-agent-session-mutation-admission'
 import { createRestartReconciler } from './structured-agent-session-restart-reconcile'
 import {
   cancelPlan,
@@ -45,13 +49,10 @@ import {
   setOptionPlan,
   type MutationPlan
 } from './structured-agent-session-mutation-plans'
-import { runSettledAgentSessionMutation } from './structured-agent-session-operation-settlement'
-import { resolveAgentSessionReplayOutcome } from './structured-agent-session-replay-outcome'
 import {
   AgentSessionSubscribers,
   type AgentSessionSubscriberEmit
 } from './structured-agent-session-subscribers'
-import type { AgentSessionTurnContext } from './structured-agent-session-turns'
 
 export type StructuredAgentSessionCaller = {
   /** Stable per-client identity; scopes the operation ledger and records who
@@ -68,6 +69,10 @@ export type StructuredAgentSessionHostDeps = {
   probeOwner?: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
   mintSpawnToken?: () => string
   now?: () => number
+  /** A journal append the provider streamed that could not be written. Unset
+   *  drops it: the alternative is throwing inside the provider's notification
+   *  callback, which would take the connection down over one lost row. */
+  onEventSinkError?: (input: { sessionId: string; error: unknown }) => void
 }
 
 type SessionState = {
@@ -76,19 +81,11 @@ type SessionState = {
   fence: number
 }
 
-function refuse(refusal: AgentSessionWireRefusal): { ok: false; refusal: AgentSessionWireRefusal } {
-  return { ok: false, refusal }
-}
-
-const NO_SESSION: AgentSessionWireRefusal = {
-  code: 'agent_session_ownership_unknown',
-  message: 'This host holds no attached session by that id.'
-}
-
 export class StructuredAgentSessionHost {
   private readonly sessions = new Map<string, SessionState>()
   private readonly subscribers = new AgentSessionSubscribers()
   private readonly chains = new Map<string, Promise<unknown>>()
+  private readonly eventSinks = new Map<string, DeferredStructuredAgentSessionEventSink>()
   private readonly reconcileLeases: (sessionId: string) => Promise<AgentSessionWireRefusal | null>
 
   constructor(private readonly deps: StructuredAgentSessionHostDeps) {
@@ -128,12 +125,14 @@ export class StructuredAgentSessionHost {
       const sessionId = params.envelope.sessionId
       const unreconciled = await this.reconcileLeases(sessionId)
       if (unreconciled) {
-        return refuse(unreconciled)
+        return refuseAgentSessionMutation(unreconciled)
       }
-      return performAttach({
+      const eventSink = this.eventSinkFor(sessionId)
+      const attached = await performAttach({
         store: this.deps.store,
         adapter: this.deps.adapter,
         journalRoot: this.deps.journalRoot,
+        eventSink: eventSink.sink,
         authority: {
           spawnToken: this.deps.mintSpawnToken?.() ?? randomUUID(),
           claimKeyId: this.deps.claimKeyId,
@@ -154,9 +153,44 @@ export class StructuredAgentSessionHost {
           } else {
             this.subscribers.publish(sessionId, attached.journal)
           }
+          // Bound last: everything the provider streamed while the journal was
+          // opening lands after the attach result the client is about to read,
+          // never interleaved with it.
+          eventSink.bind({
+            journal: attached.journal,
+            fence,
+            publish: () => this.subscribers.publish(sessionId, attached.journal)
+          })
         }
       })
+      // A refused attach that never reached a journal leaves the sink holding
+      // writes nothing will ever drain.
+      if (!attached.ok && !this.sessions.has(sessionId)) {
+        eventSink.close()
+        this.eventSinks.delete(sessionId)
+      }
+      return attached
     })
+  }
+
+  /** Settles every row the provider streamed. Callers that must read the
+   *  journal immediately after provider activity await this first. */
+  flushStreamedEvents(sessionId: string): Promise<void> {
+    return this.eventSinks.get(sessionId)?.drained() ?? Promise.resolve()
+  }
+
+  /** One sink per session, rebound on every attach. A single identity lets an
+   *  adapter hold it across a re-acquire without noticing the new journal. */
+  private eventSinkFor(sessionId: string): DeferredStructuredAgentSessionEventSink {
+    const existing = this.eventSinks.get(sessionId)
+    if (existing) {
+      return existing
+    }
+    const created = createDeferredStructuredAgentSessionEventSink({
+      onError: (error) => this.deps.onEventSinkError?.({ sessionId, error })
+    })
+    this.eventSinks.set(sessionId, created)
+    return created
   }
 
   /**
@@ -222,105 +256,18 @@ export class StructuredAgentSessionHost {
     envelope: AgentSessionMutationEnvelope,
     plan: MutationPlan<TValue>
   ): Promise<AgentSessionMutationResult<TValue>> {
-    return this.serialize(envelope.sessionId, () => this.runMutation(caller, envelope, plan))
-  }
-
-  private async runMutation<TValue>(
-    caller: StructuredAgentSessionCaller,
-    envelope: AgentSessionMutationEnvelope,
-    plan: MutationPlan<TValue>
-  ): Promise<AgentSessionMutationResult<TValue>> {
-    const session = this.sessions.get(envelope.sessionId)
-    const record = this.deps.store.getRecord(envelope.sessionId)
-    if (!session || !record) {
-      return refuse(NO_SESSION)
-    }
-    const hostFingerprint = computeAgentSessionPayloadFingerprint({
-      method: plan.method,
-      sessionId: envelope.sessionId,
-      fields: plan.fields
-    })
-    const conflict = agentSessionFingerprintConflict(envelope, hostFingerprint)
-    if (conflict) {
-      return refuse(conflict)
-    }
-    const admission = admitAgentSessionMutation({
-      envelope,
-      hostFingerprint,
-      ledger: await this.deps.store.admitOperation({
+    return this.serialize(envelope.sessionId, () =>
+      admitAndRunAgentSessionMutation({
+        store: this.deps.store,
+        adapter: this.deps.adapter,
         callerKey: caller.callerKey,
-        operationId: envelope.clientOperationId,
-        fingerprint: hostFingerprint,
-        now: this.now()
-      }),
-      lease: record.lease
-    })
-    if (admission.decision === 'refused') {
-      return refuse(admission.refusal)
-    }
-
-    const fence = record.lease.runtimeFence
-    const ctx = this.contextFor(caller, session, envelope.sessionId, fence)
-    if (admission.decision === 'replay') {
-      const replay = resolveAgentSessionReplayOutcome({
-        operationId: envelope.clientOperationId,
-        outcome: admission.row.outcome,
-        reconstruct: () => plan.replay(ctx, admission.row.outcome)
-      })
-      if (replay.decision === 'refuse') {
-        return refuse(replay.refusal)
-      }
-      if (replay.decision === 'replay') {
-        return {
-          ok: true,
-          replayed: true,
-          fence,
-          cursor: ctx.journal.cursor(),
-          value: replay.value
-        }
-      }
-      // Nothing durable landed, so this id is about to run for the first time.
-      // A refused call leaves its ledger row behind, and replaying past the
-      // lease and the fence would let a resend act under an owner that has since
-      // changed — so a first run pays the full admission price either way.
-      const rerun = admitAgentSessionMutation({
         envelope,
-        hostFingerprint,
-        ledger: { decision: 'admit', row: admission.row },
-        lease: record.lease
+        plan,
+        journal: this.sessions.get(envelope.sessionId)?.journal,
+        publish: (journal) => this.subscribers.publish(envelope.sessionId, journal),
+        now: () => this.now()
       })
-      if (rerun.decision === 'refused') {
-        return refuse(rerun.refusal)
-      }
-    }
-
-    const outcome = await runSettledAgentSessionMutation({
-      store: this.deps.store,
-      callerKey: caller.callerKey,
-      envelope,
-      plan,
-      context: ctx
-    })
-    return outcome.ok
-      ? { ok: true, replayed: false, fence, cursor: ctx.journal.cursor(), value: outcome.value }
-      : refuse(outcome.refusal)
-  }
-
-  private contextFor(
-    caller: StructuredAgentSessionCaller,
-    session: SessionState,
-    sessionId: string,
-    fence: number
-  ): AgentSessionTurnContext {
-    return {
-      sessionId,
-      journal: session.journal,
-      fence,
-      adapter: this.deps.adapter,
-      resolvedBy: caller.callerKey,
-      publish: () => this.subscribers.publish(sessionId, session.journal),
-      now: () => this.now()
-    }
+    )
   }
 
   /**
@@ -350,7 +297,7 @@ export class StructuredAgentSessionHost {
   private requireSession(sessionId: string): SessionState {
     const session = this.sessions.get(sessionId)
     if (!session) {
-      throw new Error(NO_SESSION.code)
+      throw new Error(AGENT_SESSION_NOT_ATTACHED.code)
     }
     return session
   }

@@ -13,6 +13,7 @@ import type {
 } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionProviderHandleLink } from '../../../shared/agent-session-provider-handle'
 import type { AgentSessionProcessIdentity } from '../../../shared/agent-session-record'
+import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 
 /** What a reservation turns into once something is actually running under it:
  *  the process the host can probe, and the provider handle it was minted with. */
@@ -36,6 +37,11 @@ export type StructuredAgentSessionAdapter = {
     identity: AgentSessionJournalIdentity
     fence: number
     spawnToken: string
+    /** Where to write everything the provider streams. Handed over here, not
+     *  returned, because a provider starts streaming inside this call — before
+     *  the journal exists. The sink buffers until it does. Optional so an
+     *  adapter that only answers calls needs no journal at all. */
+    events?: StructuredAgentSessionEventSink
   }): Promise<AgentSessionAcquisition>
   dispatch(input: {
     sessionId: string
