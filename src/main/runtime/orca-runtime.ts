@@ -25573,6 +25573,31 @@ export class OrcaRuntimeService {
         // was lost in transit reuses the created terminal; failures are dropped
         // immediately so a retry can start a fresh create.
         let run = this.mobileTerminalCreateByMutationId.get(mutationKey)
+        if (
+          run &&
+          !activeLaunch.worktreeId &&
+          run.workspaceLaunch.worktreeId &&
+          (!activeLaunch.worktreePath ||
+            !runtimePathsEqual(activeLaunch.worktreePath, run.workspaceLaunch.worktreePath))
+        ) {
+          let currentSelectorWorktreeId: string | null = null
+          try {
+            const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+            this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
+            currentSelectorWorktreeId = activeLaunch.worktreeId
+          } catch (error) {
+            if (!(error instanceof Error && error.message === 'selector_not_found')) {
+              throw error
+            }
+          }
+          // Why: a historical path/name can be reassigned while the retained result still exists.
+          if (
+            currentSelectorWorktreeId &&
+            currentSelectorWorktreeId !== run.workspaceLaunch.worktreeId
+          ) {
+            run = undefined
+          }
+        }
         if (!run) {
           const activationIntents = select
             ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
@@ -29062,6 +29087,12 @@ export class OrcaRuntimeService {
       }
     }
     for (const [key, run] of [...this.mobileTerminalCreateByMutationId]) {
+      if (run.workspaceLaunch.worktreeId === oldWorktreeId) {
+        run.workspaceLaunch.worktreeId = newWorktreeId
+        run.workspaceLaunch.worktreePath =
+          splitWorktreeIdForFilesystem(newWorktreeId)?.worktreePath ??
+          run.workspaceLaunch.worktreePath
+      }
       const [clientNavigationId, worktreeId, mutationId] = key.split('\0')
       if (worktreeId !== oldWorktreeId || !clientNavigationId || !mutationId) {
         continue
