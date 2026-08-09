@@ -25203,77 +25203,127 @@ export class OrcaRuntimeService {
 
     this.assertGraphReady()
     const win = rendererWindow ?? this.getAuthoritativeWindow()
-    // Why: mirrors browserTabCreate — when no worktree is specified, pass
-    // undefined so the renderer uses its current active worktree.
-    const workspace = worktreeSelector
-      ? await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    return await this.createRendererBackedTerminal(worktreeSelector, opts, presentation, win)
+  }
+
+  private async createRendererBackedTerminal(
+    worktreeSelector: string | undefined,
+    opts: TerminalCreateOptions,
+    presentation: RuntimeTerminalPresentation | undefined,
+    win: BrowserWindow
+  ): Promise<RuntimeTerminalCreate> {
+    const launch = worktreeSelector
+      ? this.beginActiveTerminalWorkspaceLaunch(worktreeSelector)
       : null
-    const launchOpts = workspace
-      ? await this.resolveAgentTerminalCreateOptions(workspace, opts)
-      : opts
-    const worktreeId = workspace?.id
-    const cwd = workspace
-      ? this.resolveWorkspaceTerminalStartupCwd(workspace, launchOpts.cwd)
-      : launchOpts.cwd
-    const requestId = randomUUID()
-
-    // Why: terminal creation is a renderer-side Zustand store operation (like
-    // browser tab creation). The main process sends a request, the renderer
-    // creates the tab and replies with the tabId so we can resolve the handle.
-    const reply = await new Promise<{ tabId: string; title: string }>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        ipcMain.removeListener('terminal:tabCreateReply', handler)
-        reject(new Error('Terminal creation timed out'))
-      }, 10_000)
-
-      const handler = (
-        event: Electron.IpcMainEvent,
-        r: { requestId: string; tabId?: string; title?: string; error?: string }
-      ): void => {
-        if (event.sender !== win.webContents || r.requestId !== requestId) {
-          return
+    try {
+      // Why: mirrors browserTabCreate — when no worktree is specified, pass
+      // undefined so the renderer uses its current active worktree.
+      let workspace = worktreeSelector
+        ? await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+        : null
+      if (workspace && launch) {
+        this.bindActiveTerminalWorkspaceLaunch(
+          launch.activeLaunch,
+          launch.explicitWorktreeId,
+          workspace
+        )
+      }
+      let requestedCwd = opts.cwd
+      const migrateLaunchWorkspace = (): boolean => {
+        if (!workspace || !launch) {
+          return false
         }
-        clearTimeout(timer)
-        ipcMain.removeListener('terminal:tabCreateReply', handler)
-        if (r.error) {
-          reject(new Error(r.error))
-        } else {
-          resolve({ tabId: r.tabId!, title: r.title ?? launchOpts.title ?? '' })
+        const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(
+          workspace,
+          launch.activeLaunch
+        )
+        if (migratedWorkspace === workspace) {
+          return false
+        }
+        requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
+          requestedCwd,
+          workspace.path,
+          migratedWorkspace.path
+        )
+        workspace = migratedWorkspace
+        return true
+      }
+      let launchOpts = opts
+      if (workspace) {
+        while (true) {
+          launchOpts = await this.resolveAgentTerminalCreateOptions(workspace, opts)
+          if (!migrateLaunchWorkspace()) {
+            break
+          }
         }
       }
-      ipcMain.on('terminal:tabCreateReply', handler)
-      win.webContents.send('terminal:requestTabCreate', {
-        requestId,
-        worktreeId,
-        command: launchOpts.command,
-        cwd,
-        ...(launchOpts.env ? { env: launchOpts.env } : {}),
-        ...(launchOpts.launchConfig ? { launchConfig: launchOpts.launchConfig } : {}),
-        ...(launchOpts.resumeProviderSession
-          ? { resumeProviderSession: launchOpts.resumeProviderSession }
-          : {}),
-        ...(launchOpts.launchToken ? { launchToken: launchOpts.launchToken } : {}),
-        ...(launchOpts.launchAgent ? { launchAgent: launchOpts.launchAgent } : {}),
-        ...(launchOpts.viewMode ? { viewMode: launchOpts.viewMode } : {}),
-        startupCommandDelivery: launchOpts.startupCommandDelivery,
-        title: launchOpts.title,
-        activate: presentation === 'focused',
-        ...(presentation ? { presentation } : {}),
-        ...ownerSurfacing(opts.surfaceOwner !== false)
-      })
-    })
+      const worktreeId = workspace?.id
+      const cwd = workspace
+        ? this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
+        : requestedCwd
+      const requestId = randomUUID()
 
-    // Why: the renderer created the tab immediately, but the graph sync that
-    // populates this.leaves may not have arrived yet. Wait for the leaf to
-    // appear so we can return a valid handle the caller can use right away.
-    const handle = await this.waitForTerminalHandle(reply.tabId)
-    return {
-      handle,
-      tabId: reply.tabId,
-      worktreeId: worktreeId ?? '',
-      title: reply.title,
-      ...this.getPtyExecutionHostMetadata(this.handles.get(handle)?.ptyId ?? null),
-      surface: 'visible'
+      const reply = await new Promise<{ tabId: string; title: string }>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          ipcMain.removeListener('terminal:tabCreateReply', handler)
+          reject(new Error('Terminal creation timed out'))
+        }, 10_000)
+
+        const handler = (
+          event: Electron.IpcMainEvent,
+          r: { requestId: string; tabId?: string; title?: string; error?: string }
+        ): void => {
+          if (event.sender !== win.webContents || r.requestId !== requestId) {
+            return
+          }
+          clearTimeout(timer)
+          ipcMain.removeListener('terminal:tabCreateReply', handler)
+          if (r.error) {
+            reject(new Error(r.error))
+          } else {
+            resolve({ tabId: r.tabId!, title: r.title ?? launchOpts.title ?? '' })
+          }
+        }
+        ipcMain.on('terminal:tabCreateReply', handler)
+        win.webContents.send('terminal:requestTabCreate', {
+          requestId,
+          worktreeId,
+          command: launchOpts.command,
+          cwd,
+          ...(launchOpts.env ? { env: launchOpts.env } : {}),
+          ...(launchOpts.launchConfig ? { launchConfig: launchOpts.launchConfig } : {}),
+          ...(launchOpts.resumeProviderSession
+            ? { resumeProviderSession: launchOpts.resumeProviderSession }
+            : {}),
+          ...(launchOpts.launchToken ? { launchToken: launchOpts.launchToken } : {}),
+          ...(launchOpts.launchAgent ? { launchAgent: launchOpts.launchAgent } : {}),
+          ...(launchOpts.viewMode ? { viewMode: launchOpts.viewMode } : {}),
+          startupCommandDelivery: launchOpts.startupCommandDelivery,
+          title: launchOpts.title,
+          activate: presentation === 'focused',
+          ...(presentation ? { presentation } : {}),
+          ...ownerSurfacing(opts.surfaceOwner !== false)
+        })
+      })
+
+      migrateLaunchWorkspace()
+      // Why: the renderer created the tab immediately, but the graph sync that
+      // populates this.leaves may not have arrived yet. Wait for the leaf to
+      // appear so we can return a valid handle the caller can use right away.
+      const handle = await this.waitForTerminalHandle(reply.tabId)
+      migrateLaunchWorkspace()
+      return {
+        handle,
+        tabId: reply.tabId,
+        worktreeId: workspace?.id ?? worktreeId ?? '',
+        title: reply.title,
+        ...this.getPtyExecutionHostMetadata(this.handles.get(handle)?.ptyId ?? null),
+        surface: 'visible'
+      }
+    } finally {
+      if (launch) {
+        this.activeTerminalWorkspaceLaunches.delete(launch.activeLaunch)
+      }
     }
   }
 

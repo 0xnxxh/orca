@@ -13824,6 +13824,76 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  it('rebases a renderer terminal when rename overlaps workspace resolution', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    const webContents = { send: vi.fn() }
+    webContents.send.mockImplementation(
+      (_channel: string, payload: { requestId: string; worktreeId: string }) => {
+        runtime.syncWindowGraph(1, {
+          tabs: [
+            {
+              tabId: 'tab-renderer-renamed',
+              worktreeId: payload.worktreeId,
+              title: 'Renderer Terminal',
+              activeLeafId: 'pane:1',
+              layout: null
+            }
+          ],
+          leaves: [
+            {
+              tabId: 'tab-renderer-renamed',
+              worktreeId: payload.worktreeId,
+              leafId: 'pane:1',
+              paneRuntimeId: 1,
+              ptyId: 'pty-renderer-renamed',
+              paneTitle: null
+            }
+          ]
+        })
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          {
+            requestId: payload.requestId,
+            tabId: 'tab-renderer-renamed',
+            title: 'Renderer Terminal'
+          }
+        )
+      }
+    )
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents
+    })
+    const originalWorktree = (await runtime['listResolvedWorktrees']()).find(
+      (worktree) => worktree.id === TEST_WORKTREE_ID
+    )!
+    const initialScan = deferred<(typeof originalWorktree)[]>()
+    runtime['listResolvedWorktrees'] = vi
+      .fn()
+      .mockReturnValueOnce(initialScan.promise)
+      .mockResolvedValueOnce([
+        { ...originalWorktree, id: renamedWorktreeId, path: '/tmp/worktree-renamed' }
+      ])
+
+    const create = runtime.createTerminal(`id:${TEST_WORKTREE_ID}`, {
+      cwd: TEST_WORKTREE_PATH,
+      rendererBacked: true
+    })
+    await vi.waitFor(() => expect(runtime['listResolvedWorktrees']).toHaveBeenCalledOnce())
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    initialScan.resolve([originalWorktree])
+
+    await expect(create).resolves.toMatchObject({ worktreeId: renamedWorktreeId })
+    expect(webContents.send).toHaveBeenCalledWith(
+      'terminal:requestTabCreate',
+      expect.objectContaining({ cwd: '/tmp/worktree-renamed', worktreeId: renamedWorktreeId })
+    )
+  })
+
   it('does not redirect a terminal created in a reused pre-rename worktree path', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-reused-path' })
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
