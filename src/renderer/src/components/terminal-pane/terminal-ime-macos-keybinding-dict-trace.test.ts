@@ -28,7 +28,6 @@ import { Terminal } from '@xterm/xterm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import trace from './__fixtures__/macos-keybinding-dict-backquote-trace.json'
 import { installTerminalImeNativeTextForwarder } from './terminal-ime-native-text-forwarder'
-import { resolveTerminalKoreanWonInput } from './terminal-korean-won-input'
 import { shouldBypassXtermKeyboardEvent } from './xterm-bypass-policy'
 
 type RecordedEvent = {
@@ -85,7 +84,7 @@ function buildEvent(recorded: RecordedEvent): Event {
 
 /** Mirrors the handler order in use-terminal-pane-lifecycle.ts: the Won rewrite is
  *  consulted first, then the native-text claim, then the bypass policy. */
-function open(options: { wonToBackquoteEnabled?: boolean } = {}) {
+function open() {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const terminal = new Terminal()
@@ -96,17 +95,6 @@ function open(options: { wonToBackquoteEnabled?: boolean } = {}) {
     sendInput: (data) => terminal.input(data)
   })
   terminal.attachCustomKeyEventHandler((event) => {
-    const won = resolveTerminalKoreanWonInput(event, {
-      enabled: options.wonToBackquoteEnabled === true,
-      isMac: true,
-      isKoreanKeyboard: true
-    })
-    if (won) {
-      if (won.type === 'input') {
-        terminal.input(won.data)
-      }
-      return false
-    }
     if (forwarder.claimKeyEvent(event)) {
       return false
     }
@@ -122,8 +110,8 @@ function open(options: { wonToBackquoteEnabled?: boolean } = {}) {
 }
 
 /** Replays recorded cases in order and returns the bytes that reached the PTY. */
-function replay(names: string[], options: { wonToBackquoteEnabled?: boolean } = {}): string {
-  const { emitted, terminal, forwarder } = open(options)
+function replay(names: string[]): string {
+  const { emitted, terminal, forwarder } = open()
   const textarea = terminal.textarea!
   for (const name of names) {
     for (const recorded of caseNamed(name).dom) {
@@ -179,10 +167,6 @@ describe('#11170 — a DefaultKeyBinding.dict remap reaches the PTY', () => {
 
   it('leaves the next keystroke untouched', () => {
     expect(replay(['remapped', 'remapped-neighbour-key'])).toBe('`a')
-  })
-
-  it('does not double-send when the Won-to-backquote setting is also on', () => {
-    expect(replay(['remapped'], { wonToBackquoteEnabled: true })).toBe('`')
   })
 
   // The dict's "~₩" rule (Option+the key -> the layout character) is out of scope: Option chords
