@@ -180,6 +180,10 @@ describe('mobile session startup', () => {
       'async function handleCreateTerminal(',
       '// Quick commands spawn a fresh terminal tab'
     )
+    const pendingTerminalActivation = sliceBetween(
+      '// Why: a server-owned tab can be active but still pending',
+      'const showLoadingState'
+    )
     const closeSessionTab = sliceBetween(
       'async function handleCloseSessionTab(',
       'const bulkCloseActions'
@@ -192,6 +196,10 @@ describe('mobile session startup', () => {
     )
     expect(createTerminal).toContain(
       'const selectCreated = intentRevision === sessionTabIntentRef.current.revision'
+    )
+    expect(createTerminal).toContain('sessionTabsRef.current[0]?.id ?? null')
+    expect(pendingTerminalActivation).toContain(
+      'sessionTabIntentRef.current.revision !== intentRevision'
     )
     expect(closeSessionTab).toContain('sessionTabIntentRef.current.supersede()')
     expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')

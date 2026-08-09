@@ -316,6 +316,21 @@ describe('client session-tab selection', () => {
     expect(store.project(full, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
   })
 
+  it('does not let a delayed activation revive a closed tab from a pre-close snapshot', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    store.activate(full, 'device-a', 'browser-unified')
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    const staleActivation = store.activate(full, 'device-a', 'browser-unified')
+
+    expect(staleActivation.activeTabId).toBe('terminal-a::leaf-a')
+    expect(staleActivation.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+    expect(store.project(full, 'device-a').tabs.some((tab) => tab.id === 'browser-unified')).toBe(
+      false
+    )
+  })
+
   it('forgets leaf and group picks when a whole split terminal tab closes', () => {
     const store = new ClientSessionTabSelectionStore()
     store.activate(snapshot(), 'device-a', 'terminal-a::leaf-b')

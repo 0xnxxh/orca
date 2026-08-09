@@ -3835,7 +3835,9 @@ export default function SessionScreen() {
           })
         }
         if (!selectCreated) {
-          restoreTabSelection(client, `id:${worktreeId}`, selectedSessionTabIdRef.current)
+          const restoreTabId =
+            selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null
+          restoreTabSelection(client, `id:${worktreeId}`, restoreTabId)
           scheduleDelayedAction(() => void fetchSessionTabs(), 500)
           return
         }
@@ -4206,6 +4208,7 @@ export default function SessionScreen() {
     }
     // Why: a server-owned tab can be active but still pending; activation is the RPC that materializes its PTY handle.
     pendingTerminalActivationAttemptRef.current = activationKey
+    const intentRevision = sessionTabIntentRef.current.revision
     void activateMobileSessionTab(client, {
       worktree: `id:${worktreeId}`,
       tabId: activePendingTerminalTab.id,
@@ -4218,6 +4221,12 @@ export default function SessionScreen() {
           if (pendingTerminalActivationAttemptRef.current === activationKey) {
             pendingTerminalActivationAttemptRef.current = null
           }
+          return
+        }
+        if (
+          pendingTerminalActivationAttemptRef.current !== activationKey ||
+          sessionTabIntentRef.current.revision !== intentRevision
+        ) {
           return
         }
         applySessionTabs((response as RpcSuccess).result as SessionTabsResult)

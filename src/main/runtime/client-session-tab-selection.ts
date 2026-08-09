@@ -224,13 +224,19 @@ export class ClientSessionTabSelectionStore {
       shouldPersist: false,
       forgottenTabIds: new Set<string>()
     }
-    const nextSelection = activateClientSessionTabSelection(snapshot, state.selection, activeTabId)
     const activeTab = snapshot.tabs.find((tab) => tab.id === activeTabId)
+    // Why: a delayed activation can finish after close; absence must retire the tombstone first.
+    if (
+      !activeTab ||
+      state.forgottenTabIds.has(activeTabId) ||
+      state.forgottenTabIds.has(topLevelTabId(activeTab))
+    ) {
+      return this.project(snapshot, clientNavigationId)
+    }
+    const nextSelection = activateClientSessionTabSelection(snapshot, state.selection, activeTabId)
     const forgottenTabIds = new Set(state.forgottenTabIds)
     forgottenTabIds.delete(activeTabId)
-    if (activeTab) {
-      forgottenTabIds.delete(topLevelTabId(activeTab))
-    }
+    forgottenTabIds.delete(topLevelTabId(activeTab))
     statesByWorktree.set(snapshot.worktree, {
       selection: nextSelection,
       revision: state.revision + 1,
