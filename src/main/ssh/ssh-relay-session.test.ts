@@ -648,7 +648,11 @@ describe('SshRelaySession', () => {
     expect(mockStore.markSshRemotePtyLeasesAttachedAsync).not.toHaveBeenCalled()
   })
 
-  it('invalidates and broadcasts remote PTYs that cannot reattach after relay reconnect', async () => {
+  // INVERTED for STA-3077 step E-0. This case previously asserted that a PTY the relay reports as
+  // not-found is invalidated and broadcast as an exit. A not-found is not proof of death, so the
+  // broadcast was a fabricated one; what must still hold is that the healthy sibling reattaches and
+  // the unproven one is left alone rather than written off.
+  it('leaves an unreattachable remote PTY alone while its sibling reattaches', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
@@ -670,12 +674,9 @@ describe('SshRelaySession', () => {
 
     expect(mockAttach).toHaveBeenCalledWith('pty-stale')
     expect(mockAttach).toHaveBeenCalledWith('pty-live')
-    expect(clearProviderPtyState).toHaveBeenCalledWith('ssh:target-1@@pty-stale')
-    expect(deletePtyOwnership).toHaveBeenCalledWith('ssh:target-1@@pty-stale')
-    expect(mockWindow.webContents.send).toHaveBeenCalledWith('pty:exit', {
-      id: 'ssh:target-1@@pty-stale',
-      code: -1
-    })
+    expect(clearProviderPtyState).not.toHaveBeenCalledWith('ssh:target-1@@pty-stale')
+    expect(deletePtyOwnership).not.toHaveBeenCalledWith('ssh:target-1@@pty-stale')
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:exit', expect.anything())
   })
 
   it('retries transient reattach failure without tearing down provider registration', async () => {

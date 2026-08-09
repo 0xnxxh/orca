@@ -11,7 +11,7 @@ import { SshPtyProvider } from '../providers/ssh-pty-provider'
 import type { SshPtyAttachResult } from '../providers/ssh-pty-session-reattach'
 import type { SshPtyDataCallback, SshPtyExitCallback } from '../providers/ssh-pty-provider-contract'
 import type { SshPtyRecoveryActivationLease } from '../providers/ssh-pty-notification-routing'
-import { isSshPtyIdentityMismatchError, isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
+import { isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
 import { toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { SshFilesystemProvider } from '../providers/ssh-filesystem-provider'
 import { isMethodNotFoundError } from './ssh-filesystem-stream-reader'
@@ -2418,7 +2418,7 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
-      this.handlePtyReattachFailure(ptyId, appPtyId, pendingReattach, error)
+      this.handlePtyReattachFailure(ptyId, pendingReattach, error)
     } finally {
       recoveryActivationLease?.retire()
       sourceActivationLease?.rollback()
@@ -2561,40 +2561,19 @@ export class SshRelaySession {
 
   private handlePtyReattachFailure(
     ptyId: string,
-    appPtyId: string,
     pending: PendingPtyReattach,
     error: unknown
   ): void {
-    if (!isSshPtyNotFoundError(error)) {
-      pending.restoreRequired = 'reattachAttemptsExhausted'
-      this.wakeRecovery(pending)
-      console.warn(
-        `[ssh-relay-session] Leaving PTY ${ptyId} detached for ${this.targetId} after bounded reattach attempts failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-      return
-    }
-    if (isSshPtyIdentityMismatchError(error)) {
-      console.warn(
-        `[ssh-relay-session] Ignoring stale PTY ${ptyId} for ${this.targetId} after relay identity mismatch: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-      return
-    }
+    // No attach failure proves the shell exited — not even a not-found, which the relay also
+    // returns when it merely cannot hand this id back. Only an exit the relay observed on a live
+    // stream may report one, so every failure leaves the pane detached and recoverable.
+    pending.restoreRequired = 'reattachAttemptsExhausted'
+    this.wakeRecovery(pending)
     console.warn(
-      `[ssh-relay-session] Dropping stale PTY ${ptyId} for ${this.targetId} after relay reattach failed: ${
+      `[ssh-relay-session] Leaving PTY ${ptyId} detached for ${this.targetId} after reattach failed: ${
         error instanceof Error ? error.message : String(error)
       }`
     )
-    clearProviderPtyState(appPtyId)
-    deletePtyOwnership(appPtyId)
-    this.store.markSshRemotePtyLease(this.targetId, ptyId, 'expired')
-    const win = this.getMainWindow()
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('pty:exit', { id: appPtyId, code: -1 })
-    }
   }
 
   private async sourceRecoveryRequest(

@@ -246,7 +246,8 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     const recovery = reattachKnownPty.mock.calls[0]?.[0]
     expect(recovery?.ptyId).toBe('pty-bad')
     expect(Array.from(recovery?.activeLeaseByPtyId.keys() ?? [])).toEqual(['pty-bad'])
-    expect(Array.from(recovery?.expectedIdentityByPtyId.keys() ?? [])).toEqual([])
+    // The sibling `expectedIdentityByPtyId` clause is gone with the map itself (STA-3077 step A):
+    // reattach no longer carries pane identity at all, which subsumes "carries none for this pty".
     expect(recovery?.targetedDeliveryRecovery).toBe('fresh-activation')
     expect(deps.mockStore.markSshRemotePtyLeasesAttachedAsync).toHaveBeenCalledWith('target-1', [
       'pty-bad'
@@ -356,7 +357,8 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
       internals.reattachRejectedPty('pty-bad', mux, 23, 'confirm-existing')
     ).resolves.toBe(true)
 
-    expect(attachForReconnect).toHaveBeenCalledWith('pty-bad', undefined, checkpoint)
+    // Two args since step A dropped the expected-identity parameter from the attach call.
+    expect(attachForReconnect).toHaveBeenCalledWith('pty-bad', checkpoint)
     expect(commit).toHaveBeenCalledOnce()
     expect(mux.dispose).not.toHaveBeenCalled()
   })
