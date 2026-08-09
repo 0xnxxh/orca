@@ -213,10 +213,7 @@ import {
   useInitialSessionTerminalAutoCreate,
   useWorktreeSessionTabsLoaded
 } from '../../../../src/session/use-initial-session-terminal-autocreate'
-import {
-  buildMarkdownDiskFallbackDoc,
-  shouldReadMarkdownFromDiskAfterReadTabFailure
-} from '../../../../src/session/mobile-markdown-disk-fallback'
+import { readMobileMarkdownTab } from '../../../../src/session/mobile-markdown-tab-read'
 import { MobileHtmlPreview } from '../../../../src/components/MobileHtmlPreview'
 import { MobileDictationSetupSheet } from '../../../../src/components/MobileDictationSetupSheet'
 import {
@@ -1692,24 +1689,35 @@ export default function SessionScreen() {
   )
 
   const lastKnownTerminalCountRef = useRef(0)
-  const fetchTerminalsInFlightRef = useRef(false)
+  const fetchTerminalsInFlightRef = useRef<{
+    client: RpcClient
+    token: symbol
+    ownsRoute: () => boolean
+  } | null>(null)
 
   const fetchTerminals = useCallback(
     async (opts: { allowEmptyLoaded?: boolean } = {}) => {
-      if (!client) {
+      if (!client || !sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {
         return
       }
-      if (fetchTerminalsInFlightRef.current) {
+      if (
+        fetchTerminalsInFlightRef.current?.client === client &&
+        fetchTerminalsInFlightRef.current.ownsRoute()
+      ) {
         return
       }
-      fetchTerminalsInFlightRef.current = true
+      const requestToken = Symbol('terminal-list')
+      const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
+      const ownsRequest = (): boolean =>
+        fetchTerminalsInFlightRef.current?.token === requestToken && ownsRoute()
+      fetchTerminalsInFlightRef.current = { client, token: requestToken, ownsRoute }
       const allowEmptyLoaded = opts.allowEmptyLoaded ?? true
 
       try {
         const response = await client.sendRequest('terminal.list', {
           worktree: `id:${worktreeId}`
         })
-        if (response.ok) {
+        if (response.ok && ownsRequest()) {
           const result = (response as RpcSuccess).result as { terminals: Terminal[] }
           if (result.terminals.length === 0 && !allowEmptyLoaded) {
             return
@@ -1776,11 +1784,14 @@ export default function SessionScreen() {
       } catch {
         // Failed to list terminals
       } finally {
-        fetchTerminalsInFlightRef.current = false
+        if (fetchTerminalsInFlightRef.current?.token === requestToken) {
+          fetchTerminalsInFlightRef.current = null
+        }
       }
     },
     [
       client,
+      hostId,
       worktreeId,
       clearTerminalLiveInputDefault,
       defaultTerminalHandlesToLiveInput,
@@ -1955,64 +1966,20 @@ export default function SessionScreen() {
 
   const readMarkdownTab = useCallback(
     async (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
-      if (!client) {
+      if (!client || !sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {
         return
       }
+      const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
       setMarkdownDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
       try {
-        const response = await client.sendRequest('markdown.readTab', {
-          worktree: `id:${worktreeId}`,
-          tabId: tab.id
-        })
-        if (response.ok) {
-          const result = (response as RpcSuccess).result as {
-            content: string
-            version: string
-            isDirty: boolean
-            editable?: boolean
-            readOnlyReason?: string
-          }
-          setMarkdownDocs((prev) =>
-            new Map(prev).set(tab.id, {
-              status: 'ready',
-              content: result.content,
-              localContent: result.content,
-              baseVersion: result.version,
-              isDirty: false,
-              editable: result.editable === true,
-              stale: result.isDirty,
-              readOnlyReason: result.readOnlyReason
-            })
-          )
+        const doc = await readMobileMarkdownTab(client, worktreeId, tab, ownsRoute)
+        if (doc && ownsRoute()) {
+          setMarkdownDocs((prev) => new Map(prev).set(tab.id, doc))
+        }
+      } catch {
+        if (!ownsRoute()) {
           return
         }
-        if (!shouldReadMarkdownFromDiskAfterReadTabFailure(response as RpcFailure)) {
-          throw new Error((response as RpcFailure).error.message)
-        }
-        // Why: a headless host fails markdown.readTab (renderer_unavailable); fall back to the on-disk file for read-only render.
-        const fallback = await client.sendRequest('files.read', {
-          worktree: `id:${worktreeId}`,
-          relativePath: tab.relativePath
-        })
-        if (!fallback.ok) {
-          throw new Error('Unable to read markdown')
-        }
-        const fileResult = (fallback as RpcSuccess).result as {
-          content: string
-          truncated: boolean
-          byteLength: number
-        }
-        setMarkdownDocs((prev) =>
-          new Map(prev).set(
-            tab.id,
-            buildMarkdownDiskFallbackDoc({
-              content: fileResult.content,
-              truncated: fileResult.truncated,
-              tabIsDirty: tab.isDirty
-            })
-          )
-        )
-      } catch {
         setMarkdownDocs((prev) =>
           new Map(prev).set(tab.id, {
             status: 'error',
@@ -2021,14 +1988,15 @@ export default function SessionScreen() {
         )
       }
     },
-    [client, worktreeId]
+    [client, hostId, worktreeId]
   )
 
   const readFileTab = useCallback(
     async (tab: Extract<MobileSessionTab, { type: 'file' }>) => {
-      if (!client) {
+      if (!client || !sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {
         return
       }
+      const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
       setFileDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
       try {
         const doc = await resolveMobileFileTabDoc(client, {
@@ -2036,8 +2004,13 @@ export default function SessionScreen() {
           relativePath: tab.relativePath,
           diffSource: tab.diffSource
         })
-        setFileDocs((prev) => new Map(prev).set(tab.id, doc))
+        if (ownsRoute()) {
+          setFileDocs((prev) => new Map(prev).set(tab.id, doc))
+        }
       } catch (err) {
+        if (!ownsRoute()) {
+          return
+        }
         const message = err instanceof Error ? err.message : ''
         const previewMessage =
           message === 'binary_file'
@@ -2055,7 +2028,7 @@ export default function SessionScreen() {
         )
       }
     },
-    [client, worktreeId]
+    [client, hostId, worktreeId]
   )
 
   const loadDiffComments = useCallback(async (): Promise<void> => {
@@ -2298,9 +2271,10 @@ export default function SessionScreen() {
 
   const saveMarkdownTab = useCallback(
     async (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
-      if (!client) {
+      if (!client || !sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {
         return
       }
+      const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
       const current = markdownDocs.get(tab.id)
       if (current?.status !== 'ready' || current.saving || !current.editable) {
         return
@@ -2333,7 +2307,7 @@ export default function SessionScreen() {
           version: string
           isDirty: false
         }
-        if (markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
+        if (!ownsRoute() || markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
           return
         }
         setMarkdownDocs((prev) =>
@@ -2350,11 +2324,11 @@ export default function SessionScreen() {
         triggerSuccess()
         showToast('Saved')
       } catch (error) {
-        triggerError()
-        const message = error instanceof Error ? error.message : 'Save failed'
-        if (markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
+        if (!ownsRoute() || markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
           return
         }
+        triggerError()
+        const message = error instanceof Error ? error.message : 'Save failed'
         setMarkdownDocs((prev) => {
           const existing = prev.get(tab.id)
           if (existing?.status !== 'ready') {
@@ -2367,10 +2341,12 @@ export default function SessionScreen() {
           })
         })
       } finally {
-        markdownSaveInFlightRef.current.delete(tab.id)
+        if (ownsRoute()) {
+          markdownSaveInFlightRef.current.delete(tab.id)
+        }
       }
     },
-    [client, markdownDocs, showToast, worktreeId]
+    [client, hostId, markdownDocs, showToast, worktreeId]
   )
 
   const consumeAcceptedSessionTabs = useCallback(
@@ -2690,6 +2666,15 @@ export default function SessionScreen() {
     pendingActiveSessionTabIdRef.current = null
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
+    setActionTarget(null)
+    setMarkdownActionTarget(null)
+    setFileActionTarget(null)
+    setBrowserActionTarget(null)
+    setDiscardMarkdownTarget(null)
+    setLeaveDrafts(null)
+    setRenameTarget(null)
+    markdownSaveSeqRef.current.clear()
+    markdownSaveInFlightRef.current.clear()
     tabCreate.resetRoute(sessionTabIntentRef.current, createStates)
     pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
@@ -4037,6 +4022,7 @@ export default function SessionScreen() {
       showToast('Browser page is not available yet.', 1500)
       return
     }
+    const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
     try {
       const response = await client.sendRequest(
         method,
@@ -4049,8 +4035,13 @@ export default function SessionScreen() {
       if (!response.ok) {
         throw new Error((response as RpcFailure).error.message)
       }
-      scheduleDelayedAction(() => void fetchSessionTabs(), 250)
+      if (ownsRoute()) {
+        scheduleDelayedAction(() => void fetchSessionTabs(), 250)
+      }
     } catch (err) {
+      if (!ownsRoute()) {
+        return
+      }
       const message = err instanceof Error ? err.message : 'Browser command failed'
       showToast(message, 1600)
     }
@@ -4061,6 +4052,7 @@ export default function SessionScreen() {
       return
     }
     const target = renameTarget
+    const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)
     setRenameTarget(null)
 
     try {
@@ -4069,7 +4061,7 @@ export default function SessionScreen() {
         terminal: target.handle,
         title
       })
-      if (response.ok) {
+      if (response.ok && ownsRoute()) {
         setTerminals((prev) => {
           const next = prev.map((terminal) =>
             terminal.handle === target.handle

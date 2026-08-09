@@ -208,6 +208,34 @@ describe('mobile session startup', () => {
       'async function handleCloseTerminal(',
       'async function handleCloseSessionTab('
     )
+    const fetchTerminals = sliceBetween(
+      'const fetchTerminals = useCallback(',
+      'const applySessionTabs = useCallback('
+    )
+    const readMarkdown = sliceBetween(
+      'const readMarkdownTab = useCallback(',
+      'const readFileTab = useCallback('
+    )
+    const readFile = sliceBetween(
+      'const readFileTab = useCallback(',
+      'const loadDiffComments = useCallback('
+    )
+    const saveMarkdown = sliceBetween(
+      'const saveMarkdownTab = useCallback(',
+      'const consumeAcceptedSessionTabs = useCallback('
+    )
+    const routeReset = sliceBetween(
+      '// Why: Expo reuses this screen across worktrees; reset route state',
+      "if (connState !== 'connected') {"
+    )
+    const browserNavigation = sliceBetween(
+      'async function handleBrowserNavigationCommand(',
+      'async function handleRenameTerminal('
+    )
+    const renameTerminal = sliceBetween(
+      'async function handleRenameTerminal(',
+      'async function handleCloseTerminal('
+    )
 
     expect(readyTerminalSwitch).toContain('sessionTabIntentRef.current.supersede()')
     expect(sessionTabSwitch).toContain('sessionTabIntentRef.current.supersede()')
@@ -257,6 +285,42 @@ describe('mobile session startup', () => {
       'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
     )
     expect(closeTerminal).toContain('if (response.ok && ownsRoute()) {')
+    expect(fetchTerminals).toContain(
+      '!sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)'
+    )
+    expect(fetchTerminals).toContain(
+      'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+    )
+    expect(fetchTerminals).toContain('if (response.ok && ownsRequest()) {')
+    expect(fetchTerminals).toContain(
+      'if (fetchTerminalsInFlightRef.current?.token === requestToken) {'
+    )
+    for (const readTab of [readMarkdown, readFile]) {
+      expect(readTab).toContain(
+        'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+      )
+      expect(readTab).toContain('ownsRoute()')
+    }
+    expect(saveMarkdown).toContain(
+      'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+    )
+    expect(saveMarkdown).toContain('if (!ownsRoute() ||')
+    for (const tabAction of [browserNavigation, renameTerminal]) {
+      expect(tabAction).toContain(
+        'const ownsRoute = sessionTabIntentRef.current.captureRouteOwnership(hostId, worktreeId)'
+      )
+      expect(tabAction).toContain('ownsRoute()')
+    }
+    for (const resetTarget of [
+      'setActionTarget(null)',
+      'setMarkdownActionTarget(null)',
+      'setFileActionTarget(null)',
+      'setBrowserActionTarget(null)',
+      'setDiscardMarkdownTarget(null)',
+      'setRenameTarget(null)'
+    ]) {
+      expect(routeReset).toContain(resetTarget)
+    }
     expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')
   })
 
