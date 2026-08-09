@@ -127,6 +127,8 @@ import type {
   ArtifactListOptions,
   ArtifactListPage,
   ArtifactListItem,
+  ArtifactPublishedLink,
+  ArtifactPublishResult,
   ArtifactWriteRequest
 } from '../../shared/artifacts'
 import type { ArtifactCloudService } from '../artifacts/artifact-cloud-service'
@@ -4660,8 +4662,20 @@ export class OrcaRuntimeService {
     return this.requireArtifactService().list(options)
   }
 
+  getPublishedArtifactLink(
+    request: ArtifactCloudOptions & { sourceKey: string }
+  ): Promise<ArtifactCloudOperation<ArtifactPublishedLink | null>> {
+    return this.requireArtifactService().getPublishedLink(request)
+  }
+
   shareArtifact(request: ArtifactWriteRequest): Promise<ArtifactCloudOperation<ArtifactListItem>> {
     return this.requireArtifactService().share(request)
+  }
+
+  publishArtifact(
+    request: ArtifactWriteRequest
+  ): Promise<ArtifactCloudOperation<ArtifactPublishResult>> {
+    return this.requireArtifactService().publish(request)
   }
 
   updateArtifact(request: ArtifactWriteRequest): Promise<ArtifactCloudOperation<ArtifactListItem>> {
