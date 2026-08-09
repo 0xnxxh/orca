@@ -227,30 +227,31 @@ export class ClientSessionTabSelectionStore {
   }
 
   forgetTabs(clientNavigationId: string, worktreeId: string, tabIds: readonly string[]): void {
+    if (tabIds.length === 0) {
+      return
+    }
     this.tabClosures.forgetPendingActivations(worktreeId, tabIds)
-    const statesByWorktree = this.statesByClient.get(clientNavigationId)
-    if (!statesByWorktree || tabIds.length === 0) {
-      return
+    // Why: tab destruction is global even though each device owns its selection.
+    const clientNavigationIds = new Set([...this.statesByClient.keys(), clientNavigationId])
+    let persistedSelectionChanged = false
+    for (const id of clientNavigationIds) {
+      const statesByWorktree = this.statesByClient.get(id)
+      const state = statesByWorktree?.get(worktreeId)
+      if (!statesByWorktree || !state) {
+        continue
+      }
+      const closed = this.tabClosures.forgetTabs(id, worktreeId, state.selection, tabIds)
+      if (!closed.selectionChanged && !closed.closureChanged) {
+        continue
+      }
+      statesByWorktree.set(worktreeId, {
+        selection: closed.selection,
+        revision: state.revision + 1,
+        shouldPersist: state.shouldPersist
+      })
+      persistedSelectionChanged ||= state.shouldPersist && closed.selectionChanged
     }
-    const state = statesByWorktree.get(worktreeId)
-    if (!state) {
-      return
-    }
-    const closed = this.tabClosures.forgetTabs(
-      clientNavigationId,
-      worktreeId,
-      state.selection,
-      tabIds
-    )
-    if (!closed.selectionChanged && !closed.closureChanged) {
-      return
-    }
-    statesByWorktree.set(worktreeId, {
-      selection: closed.selection,
-      revision: state.revision + 1,
-      shouldPersist: state.shouldPersist
-    })
-    if (state.shouldPersist && closed.selectionChanged) {
+    if (persistedSelectionChanged) {
       this.persistNow()
     }
   }

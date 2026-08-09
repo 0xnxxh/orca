@@ -316,6 +316,20 @@ describe('client session-tab selection', () => {
     expect(store.project(full, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
   })
 
+  it('forgets a globally closed tab for every client selection', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    store.activate(full, 'device-a', 'browser-unified')
+    store.activate(full, 'device-b', 'terminal-a::leaf-b')
+
+    store.forgetTabs('device-b', 'wt-1', ['browser-unified'])
+
+    expect(store.serialize()['device-a']?.['wt-1']?.activeTabId).toBeNull()
+    const staleForA = store.project(full, 'device-a')
+    expect(staleForA.activeTabId).toBe('terminal-a::leaf-a')
+    expect(staleForA.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+  })
+
   it('does not let a delayed activation revive a closed tab from a pre-close snapshot', () => {
     const store = new ClientSessionTabSelectionStore()
     const full = snapshot()
