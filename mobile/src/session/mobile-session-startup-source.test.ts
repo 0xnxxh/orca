@@ -140,6 +140,7 @@ describe('mobile session startup', () => {
     expect(pendingActivationEffect).toContain(
       'pendingTerminalActivationAttemptRef.current === activationKey'
     )
+    expect(pendingActivationEffect).toContain('sessionTabIntentRef.current.pendingActivationKey(')
     expect(pendingActivationEffect).toContain('activateMobileSessionTab(client,')
     expect(pendingActivationEffect).toContain('tabId: activePendingTerminalTab.id')
     expect(pendingActivationEffect).toContain('leafId: activePendingTerminalTab.leafId')
@@ -224,6 +225,9 @@ describe('mobile session startup', () => {
     }
     expect(pendingTerminalActivation).toContain(
       'sessionTabIntentRef.current.revision !== intentRevision'
+    )
+    expect(pendingTerminalActivation).toContain(
+      'if (sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {'
     )
     expect(pendingTerminalActivation).toContain(
       'restoreTabSelection(client, `id:${worktreeId}`, () => selectedSessionTabIdRef.current)'

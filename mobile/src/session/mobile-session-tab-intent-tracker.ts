@@ -34,6 +34,10 @@ export class MobileSessionTabIntentTracker {
     return () => this.revision === revision
   }
 
+  pendingActivationKey(tab: { id: string; leafId?: string }): string {
+    return JSON.stringify([this.hostId, this.worktreeId, tab.id, tab.leafId ?? ''])
+  }
+
   beginTabCreate(kind: MobileSessionTabCreateKind): number {
     return ++this.tabCreateRevisions[kind]
   }

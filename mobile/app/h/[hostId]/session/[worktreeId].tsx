@@ -4189,7 +4189,7 @@ export default function SessionScreen() {
       }
       return
     }
-    const activationKey = `${worktreeId}:${activePendingTerminalTab.id}:${activePendingTerminalTab.leafId ?? ''}`
+    const activationKey = sessionTabIntentRef.current.pendingActivationKey(activePendingTerminalTab)
     if (pendingTerminalActivationAttemptRef.current === activationKey) {
       return
     }
@@ -4215,7 +4215,9 @@ export default function SessionScreen() {
           pendingTerminalActivationAttemptRef.current !== activationKey ||
           sessionTabIntentRef.current.revision !== intentRevision
         ) {
-          restoreTabSelection(client, `id:${worktreeId}`, () => selectedSessionTabIdRef.current)
+          if (sessionTabIntentRef.current.isRouteCurrent(hostId, worktreeId)) {
+            restoreTabSelection(client, `id:${worktreeId}`, () => selectedSessionTabIdRef.current)
+          }
           return
         }
         applySessionTabs((response as RpcSuccess).result as SessionTabsResult)
@@ -4233,6 +4235,7 @@ export default function SessionScreen() {
     client,
     connState,
     fetchSessionTabs,
+    hostId,
     scheduleDelayedAction,
     worktreeId
   ])

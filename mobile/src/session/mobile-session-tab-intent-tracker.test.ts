@@ -72,6 +72,7 @@ describe('MobileSessionTabIntentTracker', () => {
     const tracker = new MobileSessionTabIntentTracker()
     tracker.setRoute('host-a', 'global-floating-terminal')
     const retryWhileCurrent = tracker.retryWhileCurrent(tracker.revision)
+    const pendingActivationKey = tracker.pendingActivationKey({ id: 'tab-1' })
 
     expect(tracker.isRouteCurrent('host-a', 'global-floating-terminal')).toBe(true)
     expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(false)
@@ -79,6 +80,7 @@ describe('MobileSessionTabIntentTracker', () => {
     tracker.setRoute('host-b', 'global-floating-terminal')
 
     expect(retryWhileCurrent()).toBe(false)
+    expect(tracker.pendingActivationKey({ id: 'tab-1' })).not.toBe(pendingActivationKey)
     expect(tracker.isRouteCurrent('host-b', 'global-floating-terminal')).toBe(true)
   })
 })
