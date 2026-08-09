@@ -4,8 +4,8 @@ import React from 'react'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Automation } from '../../../../shared/automations-types'
 import type {
+  Automation,
   ExternalAutomationJob,
   ExternalAutomationManager
 } from '../../../../shared/automations-types'
