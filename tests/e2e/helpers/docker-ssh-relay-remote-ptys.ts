@@ -8,6 +8,8 @@ export type DockerSshRelayRemotePty = {
   pid: number
   relayPid: number
   pts: string
+  /** Kernel start time in clock ticks since boot; a recycled pid cannot match it. */
+  startTicks: number
   paneKey: string | null
   tabId: string | null
   worktreeId: string | null
@@ -37,6 +39,12 @@ for proc in /proc/[0-9]*; do
   [ -n "$matched" ] || continue
   pts="$(readlink "$proc/fd/0" 2>/dev/null)"
   case "$pts" in /dev/pts/*) ;; *) continue ;; esac
+  # Field 22 of /proc/pid/stat, addressed past the parenthesised comm so a name
+  # with spaces cannot shift the columns.
+  stat_line="$(cat "$proc/stat" 2>/dev/null)" || continue
+  [ -n "$stat_line" ] || continue
+  start="$(printf '%s' "\${stat_line##*) }" | awk '{print $20}')"
+  [ -n "$start" ] || continue
   pane=; tab=; worktree=
   [ -r "$proc/environ" ] || continue
   while IFS= read -r -d '' entry; do
@@ -46,7 +54,7 @@ for proc in /proc/[0-9]*; do
       ORCA_WORKTREE_ID=*) worktree="\${entry#ORCA_WORKTREE_ID=}" ;;
     esac
   done < "$proc/environ" || continue
-  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "\${proc##*/}" "$ppid" "$pts" "\${pane:--}" "\${tab:--}" "\${worktree:--}"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "\${proc##*/}" "$ppid" "$pts" "$start" "\${pane:--}" "\${tab:--}" "\${worktree:--}"
 done
 # Why: a shell that exits a proc scan should not fail the census. /proc entries
 # vanish mid-scan, and the last one that does would otherwise leave a non-zero
@@ -69,18 +77,26 @@ export function readDockerSshRelayRemotePtys(
   return output
     .split('\n')
     .map((line) => {
-      const [rawPid, rawRelayPid, pts, paneKey, tabId, worktreeId] = line.split('\t')
+      const [rawPid, rawRelayPid, pts, rawStartTicks, paneKey, tabId, worktreeId] = line.split('\t')
       const pid = Number(rawPid)
       const relayPid = Number(rawRelayPid)
+      const startTicks = Number(rawStartTicks)
       // Why: a vanished /proc entry must throw so expect.poll retries rather
       // than folding a half-read row into the census as pid 0.
-      if (!Number.isInteger(pid) || !Number.isInteger(relayPid) || !pts?.startsWith('/dev/pts/')) {
+      if (
+        !Number.isInteger(pid) ||
+        !Number.isInteger(relayPid) ||
+        !Number.isInteger(startTicks) ||
+        rawStartTicks === '' ||
+        !pts?.startsWith('/dev/pts/')
+      ) {
         throw new Error(`Unexpected Docker SSH relay remote PTY row: ${line}`)
       }
       return {
         pid,
         relayPid,
         pts,
+        startTicks,
         paneKey: optional(paneKey),
         tabId: optional(tabId),
         worktreeId: optional(worktreeId)
@@ -125,6 +141,9 @@ export function countDockerSshRelayRemoteStreamWriters(
 
 export function describeDockerSshRelayRemotePtys(ptys: DockerSshRelayRemotePty[]): string {
   return ptys
-    .map((pty) => `${pty.pid}@${pty.relayPid} ${pty.pts} pane=${pty.paneKey ?? '-'}`)
+    .map(
+      (pty) =>
+        `${pty.pid}@${pty.relayPid} ${pty.pts} start=${pty.startTicks} pane=${pty.paneKey ?? '-'}`
+    )
     .join(', ')
 }

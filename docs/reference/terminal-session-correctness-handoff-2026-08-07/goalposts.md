@@ -58,10 +58,85 @@ dispose cannot cross a host boundary — the cross-host test stayed green under 
 mutation, which is the empirical receipt. That clause rests on
 isolation-by-construction, and saying otherwise would be a false claim.
 
+**Journey 6.** `tests/e2e/ssh-maxsessions-remote-pid-binding-identity.spec.ts`,
+4 tests against a real Docker OpenSSH container configured `MaxSessions 1`, the
+cap read back from `sshd -T` inside each test. Three of the four clauses
+discriminate, clause-selectively, in single runs (the spec is not `serial`, so a
+red test never reports the others as "did not run"):
+
+- dropping `mayCreate: false` from the reattach binding write reddens only the
+  authority-reconnect test, with the unowned leaf grafted into the `local`
+  partition;
+- marking leases `terminated` instead of `detached` in `beginShutdownDetach`
+  reddens only the two restart tests, with a cold-spawned shell beside the
+  surviving one.
+
+**Missing: the transport-disconnect clause does not discriminate.** Four guard
+removals were tried and it stayed green under all of them, including publishing
+`SSH_SESSION_EXPIRED` in place of `SSH_SOURCE_RESTORE_REQUIRED` and making
+`isProvenSshSessionGoneError` return true for every error. A sever that leaves
+the detached relay holding its delivery record reattaches through the checkpoint
+path, so no reattach failure is ever classified and the respawn-requires-proof
+guards are off that path. Inducing `restoreRequired` needs a lost or mismatched
+delivery record, which this fault does not produce. That clause is therefore a
+forward guard and cannot promote the row. Also missing: only Docker-on-macOS was
+run; the explicit-close/proven-teardown retirement clause is not covered.
+
 **Journey 13.** Not proven. One of ten named dimensions measured. The
 `isSupersededPtyId` fence costs roughly 14ns per call, but it was measured on
 lifted predicates in plain Node, not through real Electron IPC — that part is an
 inference, not a measurement.
+
+### Correction: Journey 12's cross-version tests exercise a route production does not have
+
+Recorded earlier that the cross-version suite "confirms the new
+`SSH_SOURCE_RESTORE_REQUIRED` token mutates nothing on an old client." That
+claim is withdrawn.
+
+An attempt to build a LIVE two-process skew oracle established that the token
+never crosses a version boundary at all. It is minted in main
+(`src/main/providers/ssh-pty-provider.ts:110`) and consumed in the same app's
+renderer (`pty-connection.ts:8833`, `:9080`) over Electron IPC — always one
+version. The only cross-version terminal boundary, paired client to HUB runtime,
+goes through `remote-runtime-pty-transport.ts`, whose sole respawn trigger is
+`SSH_SESSION_EXPIRED` (line 1481), and whose reattach never reaches
+`SshPtyProvider.spawn`.
+
+The in-process suite injects the token into `terminal.resolvePane`, which is a
+pure lookup and not a route production takes. So those 13 tests are a decoder
+guard, not evidence about old clients.
+
+Two consequences, both good: the wire-compatibility risk this branch was thought
+to introduce **does not exist**, because there is no version boundary for the new
+token to cross. And Journey 12 needs a different oracle entirely — one aimed at a
+boundary that is genuinely cross-version.
+
+### Journey 6 — evidence, and why it is not promotable
+
+`tests/e2e/ssh-maxsessions-remote-pid-binding-identity.spec.ts`, 4 tests, each
+with its own container and Electron profile, against real OpenSSH with
+`MaxSessions 1` read back from `sshd -T` rather than assumed. Remote pids are
+read on the container two independent ways and must agree, each carrying its
+kernel start time.
+
+Two mutations discriminate and are disjoint: removing `mayCreate: false` reddens
+only the reconnect clause; marking leases `terminated` instead of `detached` at
+quit reddens only the two restart clauses.
+
+**Not promotable:** the "same remote PID and exact binding survive a transport
+disconnect" clause is a forward guard. Four separate guard removals left it
+green. It asserts a real property, but nothing shipped is load-bearing for it,
+so it cannot be claimed as proof of this branch's work.
+
+### Journey 3 — evidence, and why it is not promotable
+
+`tests/e2e/ssh-lazy-discovery-skipped-host-restart.spec.ts`, 3 tests, two real
+containers, sampling sshd's own accept log and live session census 20+ times over
+22 seconds with the in-use host as a positive control.
+
+**Not promotable:** no mutation reddens clause 3 alone. The genuine cross-host
+lease-scoping guard is load-bearing, but removing it breaks the sibling host
+during setup, so the failure carries no clause information.
 
 ### Journey 2 — Daemon and physical WSL (proven 2026-08-08)
 
