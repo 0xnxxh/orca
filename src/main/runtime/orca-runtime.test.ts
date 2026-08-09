@@ -31452,7 +31452,7 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
-  it('does not redirect a headless mobile create in a reused pre-rename worktree path', async () => {
+  it('keeps headless mobile tab activation in a reused pre-rename worktree path', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-mobile-reused-path' })
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const runtime = new OrcaRuntimeService(store)
@@ -31483,6 +31483,15 @@ describe('OrcaRuntimeService', () => {
     })
     const phoneSelections =
       runtime['clientSessionTabSelections']['statesByClient'].get('phone-reused-path')
+    expect(phoneSelections?.get(TEST_WORKTREE_ID)?.selection.activeTabId).toBe(created.tab.id)
+    expect(phoneSelections?.has(renamedWorktreeId)).toBe(false)
+
+    await expect(
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, created.tab.id, undefined, {
+        clientNavigationId: 'phone-reused-path',
+        navigation: 'caller'
+      })
+    ).resolves.toMatchObject({ worktree: TEST_WORKTREE_ID, activeTabId: created.tab.id })
     expect(phoneSelections?.get(TEST_WORKTREE_ID)?.selection.activeTabId).toBe(created.tab.id)
     expect(phoneSelections?.has(renamedWorktreeId)).toBe(false)
   })

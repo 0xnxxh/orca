@@ -7274,11 +7274,11 @@ export class OrcaRuntimeService {
     )
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     let worktreeId = explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords(worktreeId)
     // Why: inventory can overlap a rename that rekeys the authoritative snapshot.
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const directTab = snapshot?.tabs.find((candidate) => candidate.id === tabId)
     const tab = leafId
@@ -7371,7 +7371,7 @@ export class OrcaRuntimeService {
             // untappable; fall back to the plain-shell materialize.
           }
         }
-        worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+        worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
         try {
           const materialized = await this.createRuntimeOwnedMobileSessionTerminal(
             worktreeId,
@@ -7393,7 +7393,7 @@ export class OrcaRuntimeService {
               shouldActivate: shouldActivateHost
             }
           )
-          worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+          worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
           if (
             this.discardForgottenMaterializedTerminal(
               worktreeId,
@@ -7404,7 +7404,7 @@ export class OrcaRuntimeService {
             throw new Error('tab_not_found')
           }
         } catch (err) {
-          worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+          worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
           finishTabActivation()
           if (sessionId && parseAppSshPtyId(sessionId)) {
             // Why: an expired SSH reattach clears durable bindings in the store,
@@ -7419,7 +7419,8 @@ export class OrcaRuntimeService {
           tab.id,
           navigation,
           opts.clientNavigationId,
-          clientActivationIntents
+          clientActivationIntents,
+          this.shouldResolveTerminalWorkspaceLaunchAlias(worktreeId)
         )
       }
       const callerSnapshot = this.getMobileSessionTabsForWorktree(
@@ -7451,7 +7452,8 @@ export class OrcaRuntimeService {
         targetTab.id,
         navigation,
         opts.clientNavigationId,
-        clientActivationIntents
+        clientActivationIntents,
+        this.shouldResolveTerminalWorkspaceLaunchAlias(worktreeId)
       )
     } else if (tab.type === 'browser') {
       // Why: browser mobile tabs are renderer-owned unified tabs; focusing the
@@ -7469,7 +7471,8 @@ export class OrcaRuntimeService {
       tab.id,
       navigation,
       opts.clientNavigationId,
-      clientActivationIntents
+      clientActivationIntents,
+      this.shouldResolveTerminalWorkspaceLaunchAlias(worktreeId)
     )
   }
 
@@ -7762,10 +7765,10 @@ export class OrcaRuntimeService {
     const graphEpoch = options.clientNavigationId ? this.captureReadyGraphEpoch() : null
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     let worktreeId = explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const observedPtyIds = await this.refreshMobileSessionPtyRecords()
-    const resolvedWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    const resolvedWorktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const renamedUserClose =
       resolvedWorktreeId !== worktreeId &&
       (options.reason === undefined || options.reason === 'user')
@@ -7941,7 +7944,7 @@ export class OrcaRuntimeService {
         } finally {
           releasePublicationThrottle()
         }
-        worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+        worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
         const remainingSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
         const remainingTab = remainingSnapshot?.tabs.find(
           (candidate): candidate is RuntimeMobileSessionTerminalTab =>
@@ -8051,7 +8054,7 @@ export class OrcaRuntimeService {
     if (tab.browserPageId) {
       await this.offscreenBrowserBackend?.closeTab(tab.browserPageId).catch(() => {})
     }
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const currentSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const currentTab = currentSnapshot?.tabs.find(
       (candidate): candidate is RuntimeMobileSessionBrowserTab =>
@@ -8212,7 +8215,7 @@ export class OrcaRuntimeService {
     move: RuntimeMobileSessionTabMove
   ): Promise<RuntimeMobileSessionTabMoveResult> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
+    const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     )
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
@@ -8269,7 +8272,7 @@ export class OrcaRuntimeService {
     }
   ): Promise<{ updated: true }> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
+    const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     )
     // Why: when a renderer is authoritative (desktop host reached via shared
@@ -8310,7 +8313,7 @@ export class OrcaRuntimeService {
     }
   ): Promise<{ updated: true }> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
+    const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     )
     // Why: a renderer-authoritative host owns + republishes tab props, so a
@@ -9392,7 +9395,7 @@ export class OrcaRuntimeService {
   ): void {
     const resolveWorktreeAlias = binding?.canonicalWorktreeId !== true
     if (resolveWorktreeAlias) {
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+      worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     }
     this.assertPtyDidNotExitBeforeRegistration(ptyId, binding?.incarnationId)
     // Why: record the renderer pane identity at spawn time so a stalled graph
@@ -25947,7 +25950,7 @@ export class OrcaRuntimeService {
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     if (!opts.activeLaunch) {
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+      worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     }
     let workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
     let requestedCwd = opts.cwd
@@ -27848,6 +27851,13 @@ export class OrcaRuntimeService {
     return this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
   }
 
+  private shouldResolveTerminalWorkspaceLaunchAlias(worktreeId: string): boolean {
+    return (
+      this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId) ===
+      this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    )
+  }
+
   private migrateTerminalWorkspaceLaunchScope(
     workspace: TerminalWorkspaceLaunchScope,
     activeLaunch?: ActiveTerminalWorkspaceLaunch
@@ -29023,7 +29033,7 @@ export class OrcaRuntimeService {
     resolveWorktreeAlias = true
   ): RuntimePtyWorktreeRecord {
     if (resolveWorktreeAlias) {
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+      worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     }
     let pty = this.ptysById.get(ptyId)
     if (!pty) {
@@ -30105,7 +30115,7 @@ export class OrcaRuntimeService {
     worktreeSelector: string,
     tabId: string
   ): Promise<string> {
-    const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(
+    const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(
       this.getValidatedExplicitWorktreeIdSelector(worktreeSelector) ??
         (await this.resolveWorktreeSelector(worktreeSelector)).id
     )
