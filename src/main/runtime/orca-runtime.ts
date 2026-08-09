@@ -2485,6 +2485,12 @@ type TerminalWorkspaceLaunchScope = {
   priorWorktreeIds: readonly string[]
 }
 
+type ActiveTerminalWorkspaceLaunch = {
+  worktreeId: string
+  worktreePath: string
+  pendingRenames: { oldWorktreeId: string; newWorktreeId: string }[]
+}
+
 type WorktreeLineageInput = {
   parentWorkspace?: string
   envParentWorkspace?: string
@@ -2748,6 +2754,7 @@ export class OrcaRuntimeService {
     }
   >()
   private readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
+  private readonly activeTerminalWorkspaceLaunches = new Set<ActiveTerminalWorkspaceLaunch>()
   // Why: concurrent clients sleeping one host workspace must share one physical teardown.
   private terminalSleepByWorktreeId = new Map<string, Promise<RuntimeWorktreeTerminalSleepResult>>()
   private terminalMutationTailByWorktreeId = new Map<string, Promise<void>>()
@@ -9370,10 +9377,18 @@ export class OrcaRuntimeService {
     ptyId: string,
     worktreeId: string,
     connectionId: string | null = null,
-    binding?: { tabId: string; leafId: string; incarnationId?: PtyIncarnationId },
+    binding?: {
+      tabId: string
+      leafId: string
+      incarnationId?: PtyIncarnationId
+      canonicalWorktreeId?: true
+    },
     isWsl?: boolean
   ): void {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    const resolveWorktreeAlias = binding?.canonicalWorktreeId !== true
+    if (resolveWorktreeAlias) {
+      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    }
     this.assertPtyDidNotExitBeforeRegistration(ptyId, binding?.incarnationId)
     // Why: record the renderer pane identity at spawn time so a stalled graph
     // sync can't hide that a live PTY already backs a pending mobile create.
@@ -9381,16 +9396,21 @@ export class OrcaRuntimeService {
       binding && isValidTerminalTabId(binding.tabId) && isTerminalLeafId(binding.leafId)
         ? makePaneKey(binding.tabId, binding.leafId)
         : null
-    this.recordPtyWorktree(ptyId, worktreeId, {
-      connected: true,
-      connectionId,
-      ...(binding && this.pendingMobileTerminalCreatesByKey.has(`${worktreeId}::${binding.tabId}`)
-        ? { runtimeSessionOwned: true }
-        : {}),
-      ...(isWsl !== undefined ? { isWsl } : {}),
-      ...(binding && paneKey ? { tabId: binding.tabId, paneKey } : {}),
-      ...(binding?.incarnationId ? { incarnationId: binding.incarnationId } : {})
-    })
+    this.recordPtyWorktree(
+      ptyId,
+      worktreeId,
+      {
+        connected: true,
+        connectionId,
+        ...(binding && this.pendingMobileTerminalCreatesByKey.has(`${worktreeId}::${binding.tabId}`)
+          ? { runtimeSessionOwned: true }
+          : {}),
+        ...(isWsl !== undefined ? { isWsl } : {}),
+        ...(binding && paneKey ? { tabId: binding.tabId, paneKey } : {}),
+        ...(binding?.incarnationId ? { incarnationId: binding.incarnationId } : {})
+      },
+      resolveWorktreeAlias
+    )
     const pendingIncarnation = this.pendingPtyRegistrationIncarnations.get(ptyId)
     if (
       pendingIncarnation === null ||
@@ -24809,8 +24829,46 @@ export class OrcaRuntimeService {
       if (!this.ptyController?.spawn) {
         throw new Error('runtime_unavailable')
       }
-      let workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
-      const launchOpts = await this.resolveAgentTerminalCreateOptions(workspace, opts)
+      const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
+      const activeLaunch: ActiveTerminalWorkspaceLaunch = {
+        worktreeId: explicitWorktreeId ?? '',
+        worktreePath:
+          (explicitWorktreeId
+            ? splitWorktreeIdForFilesystem(explicitWorktreeId)?.worktreePath
+            : null) ?? '',
+        pendingRenames: []
+      }
+      this.activeTerminalWorkspaceLaunches.add(activeLaunch)
+      let workspace: TerminalWorkspaceLaunchScope
+      try {
+        workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+      } catch (error) {
+        this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
+        throw error
+      }
+      if (!explicitWorktreeId) {
+        activeLaunch.worktreeId = workspace.id
+        activeLaunch.worktreePath = workspace.path
+        for (const rename of activeLaunch.pendingRenames) {
+          if (activeLaunch.worktreeId === rename.oldWorktreeId) {
+            activeLaunch.worktreeId = rename.newWorktreeId
+            activeLaunch.worktreePath =
+              splitWorktreeIdForFilesystem(activeLaunch.worktreeId)?.worktreePath ??
+              activeLaunch.worktreePath
+          }
+        }
+        activeLaunch.pendingRenames.length = 0
+      } else if (activeLaunch.worktreeId === explicitWorktreeId) {
+        activeLaunch.worktreeId = workspace.id
+        activeLaunch.worktreePath = workspace.path
+      }
+      let launchOpts: TerminalCreateOptions
+      try {
+        launchOpts = await this.resolveAgentTerminalCreateOptions(workspace, opts)
+      } catch (error) {
+        this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
+        throw error
+      }
       let ptySpawnCommitReported = false
       const reportPtySpawnCommitted = (): void => {
         if (ptySpawnCommitReported) {
@@ -24821,7 +24879,7 @@ export class OrcaRuntimeService {
       }
       let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, launchOpts.cwd) ?? workspace.path
       const migrateLaunchWorkspace = (): boolean => {
-        const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+        const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace, activeLaunch)
         if (migratedWorkspace === workspace) {
           return false
         }
@@ -24848,12 +24906,18 @@ export class OrcaRuntimeService {
       let tabId = canAdoptPaneIdentity ? (hintedTabId as string) : randomUUID()
       let leafId = canAdoptPaneIdentity ? (launchOpts.leafId as string) : randomUUID()
       let paneKey = makePaneKey(tabId, leafId)
-      const claimedStablePaneCreate = this.ptyController.claimStablePaneCreate?.({
-        worktreeId: workspace.id,
-        connectionId: workspace.connectionId,
-        tabId,
-        leafId
-      })
+      let claimedStablePaneCreate: (() => void) | undefined
+      try {
+        claimedStablePaneCreate = this.ptyController.claimStablePaneCreate?.({
+          worktreeId: workspace.id,
+          connectionId: workspace.connectionId,
+          tabId,
+          leafId
+        })
+      } catch (error) {
+        this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
+        throw error
+      }
       let stablePaneCreateReleased = false
       const releaseStablePaneCreate = (): void => {
         if (stablePaneCreateReleased) {
@@ -25059,6 +25123,7 @@ export class OrcaRuntimeService {
         this.registerPty(result.id, workspace.id, workspace.connectionId, {
           tabId,
           leafId,
+          canonicalWorktreeId: true,
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
         })
         const pty = this.getOrCreatePtyWorktreeRecord(result.id)
@@ -25147,6 +25212,7 @@ export class OrcaRuntimeService {
         }
       } finally {
         releaseStablePaneCreate()
+        this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
       }
     }
 
@@ -27691,16 +27757,21 @@ export class OrcaRuntimeService {
   }
 
   private migrateTerminalWorkspaceLaunchScope(
-    workspace: TerminalWorkspaceLaunchScope
+    workspace: TerminalWorkspaceLaunchScope,
+    activeLaunch?: ActiveTerminalWorkspaceLaunch
   ): TerminalWorkspaceLaunchScope {
-    const id = this.clientSessionTabSelections.resolveWorktreeId(workspace.id)
+    const id =
+      activeLaunch?.worktreeId ?? this.clientSessionTabSelections.resolveWorktreeId(workspace.id)
     if (id === workspace.id) {
       return workspace
     }
     return {
       ...workspace,
       id,
-      path: splitWorktreeIdForFilesystem(id)?.worktreePath ?? workspace.path
+      path:
+        activeLaunch?.worktreePath ??
+        splitWorktreeIdForFilesystem(id)?.worktreePath ??
+        workspace.path
     }
   }
 
@@ -28732,6 +28803,17 @@ export class OrcaRuntimeService {
 
   /** Like {@link notifyBranchRenamed} but carries old->new worktree id so the renderer re-keys instead of treating the id change as a deletion. */
   notifyWorktreeFolderRenamed(repoId: string, oldWorktreeId: string, newWorktreeId: string): void {
+    for (const launch of this.activeTerminalWorkspaceLaunches) {
+      if (!launch.worktreeId) {
+        launch.pendingRenames.push({ oldWorktreeId, newWorktreeId })
+        continue
+      }
+      if (launch.worktreeId === oldWorktreeId) {
+        launch.worktreeId = newWorktreeId
+        launch.worktreePath =
+          splitWorktreeIdForFilesystem(newWorktreeId)?.worktreePath ?? launch.worktreePath
+      }
+    }
     const previousWorktreeId = this.clientSessionTabSelections.resolveWorktreeId(oldWorktreeId)
     this.clientSessionTabSelections.migrateWorktree(oldWorktreeId, newWorktreeId)
     this.terminalCreateIdempotency.migrateWorktree(oldWorktreeId, newWorktreeId)
@@ -28843,9 +28925,12 @@ export class OrcaRuntimeService {
         | 'wslDistro'
         | 'incarnationId'
       >
-    > = {}
+    > = {},
+    resolveWorktreeAlias = true
   ): RuntimePtyWorktreeRecord {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    if (resolveWorktreeAlias) {
+      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    }
     let pty = this.ptysById.get(ptyId)
     if (!pty) {
       const titleObservedAt = state.title ? this.nextTitleObservationSequence() : null

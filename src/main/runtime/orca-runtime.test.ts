@@ -13791,6 +13791,67 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  it('rebases a background terminal when rename overlaps workspace resolution', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-renamed-during-resolution' })
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    const originalWorktree = (await runtime['listResolvedWorktrees']()).find(
+      (worktree) => worktree.id === TEST_WORKTREE_ID
+    )!
+    const initialScan = deferred<(typeof originalWorktree)[]>()
+    runtime['listResolvedWorktrees'] = vi
+      .fn()
+      .mockReturnValueOnce(initialScan.promise)
+      .mockResolvedValueOnce([
+        { ...originalWorktree, id: renamedWorktreeId, path: '/tmp/worktree-renamed' }
+      ])
+
+    const create = runtime.createTerminal(`id:${TEST_WORKTREE_ID}`)
+    await vi.waitFor(() => expect(runtime['listResolvedWorktrees']).toHaveBeenCalledOnce())
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    initialScan.resolve([originalWorktree])
+
+    await expect(create).resolves.toMatchObject({ worktreeId: renamedWorktreeId })
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/tmp/worktree-renamed', worktreeId: renamedWorktreeId })
+    )
+  })
+
+  it('does not redirect a terminal created in a reused pre-rename worktree path', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-reused-path' })
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    const originalWorktree = (await runtime['listResolvedWorktrees']()).find(
+      (worktree) => worktree.id === TEST_WORKTREE_ID
+    )!
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime['listResolvedWorktrees'] = vi.fn(async () => [originalWorktree])
+
+    await expect(runtime.createTerminal(`id:${TEST_WORKTREE_ID}`)).resolves.toMatchObject({
+      worktreeId: TEST_WORKTREE_ID
+    })
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: TEST_WORKTREE_PATH, worktreeId: TEST_WORKTREE_ID })
+    )
+    expect(runtime['ptysById'].get('pty-reused-path')?.worktreeId).toBe(TEST_WORKTREE_ID)
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(true)
+    expect(runtime['mobileSessionTabsByWorktree'].has(renamedWorktreeId)).toBe(false)
+    expect(runtime['activeTerminalWorkspaceLaunches']).toHaveLength(0)
+  })
+
   it('keeps ordinary desktop background terminal persistence opt-in', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-bg' })
     const runtime = new OrcaRuntimeService(store)
