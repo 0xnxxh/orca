@@ -2738,7 +2738,10 @@ export class OrcaRuntimeService {
   // same clientMutationId returns the in-flight operation instead of duplicating.
   private mobileTerminalCreateByMutationId = new Map<
     string,
-    Promise<RuntimeMobileSessionCreateTerminalResult>
+    {
+      result: Promise<RuntimeMobileSessionCreateTerminalResult>
+      activationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
+    }
   >()
   private readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
   // Why: concurrent clients sleeping one host workspace must share one physical teardown.
@@ -7217,22 +7220,9 @@ export class OrcaRuntimeService {
   ): Promise<RuntimeMobileSessionTabsResult> {
     const navigation = opts.navigation ?? (opts.notifyClients === false ? 'caller' : 'all')
     const targetsHost = navigationTargetsHost(navigation)
-    // Why: intent order is request arrival, not delayed materialization completion.
-    const activationClientIds = new Set(
-      navigationTargetsClients(navigation)
-        ? [...this.mobileSessionTabListeners]
-            .map((subscription) => subscription.clientNavigationId)
-            .filter((id): id is string => Boolean(id))
-        : []
-    )
-    if (opts.clientNavigationId) {
-      activationClientIds.add(opts.clientNavigationId)
-    }
-    const clientActivationIntents = new Map(
-      [...activationClientIds].map((id) => [
-        id,
-        this.clientSessionTabSelections.beginActivationIntent(id)
-      ])
+    const clientActivationIntents = this.beginMobileSessionTabNavigation(
+      navigation,
+      opts.clientNavigationId
     )
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
@@ -7471,6 +7461,26 @@ export class OrcaRuntimeService {
       return projectClientSessionTabSelection(snapshot, selection).snapshot
     }
     return snapshot
+  }
+
+  private beginMobileSessionTabNavigation(
+    navigation: RuntimeNavigationTarget,
+    clientNavigationId?: string
+  ): ReadonlyMap<string, ClientSessionTabActivationIntent> {
+    // Why: intent order is request arrival, not delayed operation completion.
+    const clientIds = new Set(
+      navigationTargetsClients(navigation)
+        ? [...this.mobileSessionTabListeners]
+            .map((subscription) => subscription.clientNavigationId)
+            .filter((id): id is string => Boolean(id))
+        : []
+    )
+    if (clientNavigationId) {
+      clientIds.add(clientNavigationId)
+    }
+    return new Map(
+      [...clientIds].map((id) => [id, this.clientSessionTabSelections.beginActivationIntent(id)])
+    )
   }
 
   private discardForgottenMaterializedTerminal(
@@ -25300,7 +25310,11 @@ export class OrcaRuntimeService {
     }
     const mutationId = opts.clientMutationId
     let result: RuntimeMobileSessionCreateTerminalResult
+    let clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
     if (!mutationId) {
+      clientActivationIntents = select
+        ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
+        : new Map()
       result = await this.runCreateMobileSessionTerminal(worktreeSelector, runOpts)
     } else {
       // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
@@ -25310,20 +25324,27 @@ export class OrcaRuntimeService {
       // duplicate terminal. Successes are kept briefly so a retry whose response
       // was lost in transit reuses the created terminal; failures are dropped
       // immediately so a retry can start a fresh create.
-      const inflight = this.mobileTerminalCreateByMutationId.get(mutationKey)
-      const run = inflight ?? this.runCreateMobileSessionTerminal(worktreeSelector, runOpts)
-      if (!inflight) {
+      let run = this.mobileTerminalCreateByMutationId.get(mutationKey)
+      if (!run) {
+        const activationIntents = select
+          ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
+          : new Map()
+        run = {
+          result: this.runCreateMobileSessionTerminal(worktreeSelector, runOpts),
+          activationIntents
+        }
         this.mobileTerminalCreateByMutationId.set(mutationKey, run)
         const drop = (): void => {
           if (this.mobileTerminalCreateByMutationId.get(mutationKey) === run) {
             this.mobileTerminalCreateByMutationId.delete(mutationKey)
           }
         }
-        void run.then(() => {
+        void run.result.then(() => {
           setTimeout(drop, MOBILE_TERMINAL_CREATE_RESULT_TTL_MS).unref?.()
         }, drop)
       }
-      result = await run
+      clientActivationIntents = run.activationIntents
+      result = await run.result
     }
     if (select) {
       const worktreeId =
@@ -25333,7 +25354,8 @@ export class OrcaRuntimeService {
         this.getMobileSessionTabsForWorktree(worktreeId),
         result.tab.id,
         navigation,
-        opts.clientNavigationId
+        opts.clientNavigationId,
+        clientActivationIntents
       )
     }
     return result

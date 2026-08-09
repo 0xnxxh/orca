@@ -25899,6 +25899,54 @@ describe('OrcaRuntimeService', () => {
     ).toBe(hostTerminal.tab.id)
   })
 
+  it.each(['caller', 'all'] as const)(
+    'keeps a newer caller activation ahead of a delayed retried %s create',
+    async (navigation) => {
+      const created = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+      let spawnIndex = 0
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn(() => {
+          spawnIndex += 1
+          return spawnIndex === 1 ? Promise.resolve({ id: 'pty-existing' }) : created.promise
+        }),
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+      const existing = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`)
+      await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+      await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
+      runtime.onMobileSessionTabsChanged(() => {}, 'device-b')
+
+      const createOptions = {
+        clientNavigationId: 'device-a',
+        navigation,
+        clientMutationId: 'delayed-create'
+      }
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, createOptions)
+      await vi.waitFor(() => expect(spawnIndex).toBe(2))
+      await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, existing.tab.id, undefined, {
+        clientNavigationId: 'device-a',
+        navigation: 'caller'
+      })
+      const retriedCreate = runtime.createMobileSessionTerminal(
+        `id:${TEST_WORKTREE_ID}`,
+        createOptions
+      )
+      created.resolve({ id: 'pty-created' })
+      const [createdTerminal] = await Promise.all([create, retriedCreate])
+
+      expect(
+        (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')).activeTabId
+      ).toBe(existing.tab.id)
+      expect(
+        (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')).activeTabId
+      ).toBe(navigation === 'all' ? createdTerminal.tab.id : existing.tab.id)
+    }
+  )
+
   it('scopes terminal-create idempotency to the paired caller', async () => {
     let spawnIndex = 0
     const runtime = new OrcaRuntimeService(store)
