@@ -2755,6 +2755,8 @@ export class OrcaRuntimeService {
   >()
   private readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
   private readonly activeTerminalWorkspaceLaunches = new Set<ActiveTerminalWorkspaceLaunch>()
+  // Why: a live worktree can reuse an aliased historical path as its own identity again.
+  private readonly terminalWorkspaceLaunchIdentityOverrides = new Set<string>()
   // Why: concurrent clients sleeping one host workspace must share one physical teardown.
   private terminalSleepByWorktreeId = new Map<string, Promise<RuntimeWorktreeTerminalSleepResult>>()
   private terminalMutationTailByWorktreeId = new Map<string, Promise<void>>()
@@ -5406,17 +5408,17 @@ export class OrcaRuntimeService {
     graph = {
       ...graph,
       tabs: graph.tabs.map((tab) => {
-        const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(tab.worktreeId)
+        const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(tab.worktreeId)
         return worktreeId === tab.worktreeId ? tab : { ...tab, worktreeId }
       }),
       leaves: graph.leaves.map((leaf) => {
-        const worktreeId = this.clientSessionTabSelections.resolveWorktreeId(leaf.worktreeId)
+        const worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(leaf.worktreeId)
         return worktreeId === leaf.worktreeId ? leaf : { ...leaf, worktreeId }
       }),
       ...(graph.mobileSessionTabs
         ? {
             mobileSessionTabs: graph.mobileSessionTabs.map((snapshot) => {
-              const worktree = this.clientSessionTabSelections.resolveWorktreeId(snapshot.worktree)
+              const worktree = this.resolveTerminalWorkspaceLaunchWorktreeId(snapshot.worktree)
               return worktree === snapshot.worktree ? snapshot : { ...snapshot, worktree }
             })
           }
@@ -5424,7 +5426,7 @@ export class OrcaRuntimeService {
       ...(graph.unchangedMobileSessionWorktrees
         ? {
             unchangedMobileSessionWorktrees: graph.unchangedMobileSessionWorktrees.map(
-              (worktreeId) => this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+              (worktreeId) => this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
             )
           }
         : {})
@@ -5668,26 +5670,26 @@ export class OrcaRuntimeService {
   ): Promise<RuntimeMobileSessionTabsResult> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     if (explicitWorktreeId) {
-      let worktreeId = this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)
+      let worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(explicitWorktreeId)
       this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
         allowAttachedWindow: true,
         onlyRuntimeOwnedTerminals: true
       })
       this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
       await this.refreshMobileSessionPtyRecords(worktreeId)
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+      worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
       this.restoreLivePairedRendererSessionOwnedMobileTerminals(worktreeId)
       return this.getMobileSessionTabsForWorktree(worktreeId, clientNavigationId)
     }
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
-    let worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktree.id)
+    let worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktree.id)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
       allowAttachedWindow: true,
       onlyRuntimeOwnedTerminals: true
     })
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords()
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     this.restoreLivePairedRendererSessionOwnedMobileTerminals(worktreeId)
     return this.getMobileSessionTabsForWorktree(worktreeId, clientNavigationId)
   }
@@ -7476,7 +7478,8 @@ export class OrcaRuntimeService {
     activeTabId: string,
     navigation: RuntimeNavigationTarget,
     clientNavigationId?: string,
-    clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent> = new Map()
+    clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent> = new Map(),
+    resolveWorktreeAlias = true
   ): RuntimeMobileSessionTabsResult {
     let callerSnapshot: RuntimeMobileSessionTabsResult | null = null
     if (navigationTargetsClients(navigation)) {
@@ -7498,7 +7501,8 @@ export class OrcaRuntimeService {
           snapshot,
           id,
           activeTabId,
-          activationIntent
+          activationIntent,
+          resolveWorktreeAlias
         )
         this.emitMobileSessionTabsSnapshotToClient(projected, id, true)
         if (id === clientNavigationId) {
@@ -7511,7 +7515,8 @@ export class OrcaRuntimeService {
         snapshot,
         clientNavigationId,
         activeTabId,
-        clientActivationIntents.get(clientNavigationId)
+        clientActivationIntents.get(clientNavigationId),
+        resolveWorktreeAlias
       )
       this.emitMobileSessionTabsSnapshotToClient(callerSnapshot, clientNavigationId)
     }
@@ -24829,16 +24834,8 @@ export class OrcaRuntimeService {
       if (!this.ptyController?.spawn) {
         throw new Error('runtime_unavailable')
       }
-      const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-      const activeLaunch: ActiveTerminalWorkspaceLaunch = {
-        worktreeId: explicitWorktreeId ?? '',
-        worktreePath:
-          (explicitWorktreeId
-            ? splitWorktreeIdForFilesystem(explicitWorktreeId)?.worktreePath
-            : null) ?? '',
-        pendingRenames: []
-      }
-      this.activeTerminalWorkspaceLaunches.add(activeLaunch)
+      const { activeLaunch, explicitWorktreeId } =
+        this.beginActiveTerminalWorkspaceLaunch(worktreeSelector)
       let workspace: TerminalWorkspaceLaunchScope
       try {
         workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
@@ -24846,22 +24843,7 @@ export class OrcaRuntimeService {
         this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
         throw error
       }
-      if (!explicitWorktreeId) {
-        activeLaunch.worktreeId = workspace.id
-        activeLaunch.worktreePath = workspace.path
-        for (const rename of activeLaunch.pendingRenames) {
-          if (activeLaunch.worktreeId === rename.oldWorktreeId) {
-            activeLaunch.worktreeId = rename.newWorktreeId
-            activeLaunch.worktreePath =
-              splitWorktreeIdForFilesystem(activeLaunch.worktreeId)?.worktreePath ??
-              activeLaunch.worktreePath
-          }
-        }
-        activeLaunch.pendingRenames.length = 0
-      } else if (activeLaunch.worktreeId === explicitWorktreeId) {
-        activeLaunch.worktreeId = workspace.id
-        activeLaunch.worktreePath = workspace.path
-      }
+      this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
       let launchOpts: TerminalCreateOptions
       try {
         launchOpts = await this.resolveAgentTerminalCreateOptions(workspace, opts)
@@ -25500,83 +25482,92 @@ export class OrcaRuntimeService {
       signal?: AbortSignal
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
-    const navigation = opts.navigation ?? 'all'
-    const select = opts.select ?? opts.activate !== false
-    const buildRunOpts = (hostActivationIntent: symbol | undefined) => ({
-      ...opts,
-      activate: select && navigationTargetsHost(navigation),
-      shouldActivate: () => this.isMobileSessionHostTabActivationIntentCurrent(hostActivationIntent)
-    })
-    const mutationId = opts.clientMutationId
-    let result: RuntimeMobileSessionCreateTerminalResult
-    let clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
-    if (!mutationId) {
-      clientActivationIntents = select
-        ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
-        : new Map()
-      const hostActivationIntent = select
-        ? this.beginMobileSessionHostTabActivationIntent(navigation)
-        : undefined
-      result = await this.runCreateMobileSessionTerminal(
-        worktreeSelector,
-        buildRunOpts(hostActivationIntent)
-      )
-    } else {
-      // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
-      const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
-      const mutationWorktreeKey = explicitWorktreeId
-        ? this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)
-        : worktreeSelector
-      const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${mutationWorktreeKey}\0${mutationId}`
-      // Why: a retried create (double-tap, reconnect replay) with the same
-      // idempotency key must return the in-flight operation instead of spawning a
-      // duplicate terminal. Successes are kept briefly so a retry whose response
-      // was lost in transit reuses the created terminal; failures are dropped
-      // immediately so a retry can start a fresh create.
-      let run = this.mobileTerminalCreateByMutationId.get(mutationKey)
-      if (!run) {
-        const activationIntents = select
+    const { activeLaunch, explicitWorktreeId } =
+      this.beginActiveTerminalWorkspaceLaunch(worktreeSelector)
+    try {
+      const navigation = opts.navigation ?? 'all'
+      const select = opts.select ?? opts.activate !== false
+      const buildRunOpts = (hostActivationIntent: symbol | undefined) => ({
+        ...opts,
+        activate: select && navigationTargetsHost(navigation),
+        shouldActivate: () =>
+          this.isMobileSessionHostTabActivationIntentCurrent(hostActivationIntent)
+      })
+      const mutationId = opts.clientMutationId
+      let result: RuntimeMobileSessionCreateTerminalResult
+      let clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
+      if (!mutationId) {
+        clientActivationIntents = select
           ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
           : new Map()
         const hostActivationIntent = select
           ? this.beginMobileSessionHostTabActivationIntent(navigation)
           : undefined
-        run = {
-          result: this.runCreateMobileSessionTerminal(
-            worktreeSelector,
-            buildRunOpts(hostActivationIntent)
-          ),
-          activationIntents
-        }
-        this.mobileTerminalCreateByMutationId.set(mutationKey, run)
-        const drop = (): void => {
-          for (const [key, candidate] of this.mobileTerminalCreateByMutationId) {
-            if (candidate === run) {
-              this.mobileTerminalCreateByMutationId.delete(key)
+        result = await this.runCreateMobileSessionTerminal(
+          worktreeSelector,
+          buildRunOpts(hostActivationIntent),
+          activeLaunch,
+          explicitWorktreeId
+        )
+      } else {
+        // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
+        const mutationWorktreeKey = explicitWorktreeId ?? worktreeSelector
+        const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${mutationWorktreeKey}\0${mutationId}`
+        // Why: a retried create (double-tap, reconnect replay) with the same
+        // idempotency key must return the in-flight operation instead of spawning a
+        // duplicate terminal. Successes are kept briefly so a retry whose response
+        // was lost in transit reuses the created terminal; failures are dropped
+        // immediately so a retry can start a fresh create.
+        let run = this.mobileTerminalCreateByMutationId.get(mutationKey)
+        if (!run) {
+          const activationIntents = select
+            ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
+            : new Map()
+          const hostActivationIntent = select
+            ? this.beginMobileSessionHostTabActivationIntent(navigation)
+            : undefined
+          run = {
+            result: this.runCreateMobileSessionTerminal(
+              worktreeSelector,
+              buildRunOpts(hostActivationIntent),
+              activeLaunch,
+              explicitWorktreeId
+            ),
+            activationIntents
+          }
+          this.mobileTerminalCreateByMutationId.set(mutationKey, run)
+          const drop = (): void => {
+            for (const [key, candidate] of this.mobileTerminalCreateByMutationId) {
+              if (candidate === run) {
+                this.mobileTerminalCreateByMutationId.delete(key)
+              }
             }
           }
+          void run.result.then(() => {
+            setTimeout(drop, MOBILE_TERMINAL_CREATE_RESULT_TTL_MS).unref?.()
+          }, drop)
         }
-        void run.result.then(() => {
-          setTimeout(drop, MOBILE_TERMINAL_CREATE_RESULT_TTL_MS).unref?.()
-        }, drop)
+        clientActivationIntents = run.activationIntents
+        result = await run.result
       }
-      clientActivationIntents = run.activationIntents
-      result = await run.result
+      if (select) {
+        const worktreeId =
+          activeLaunch.worktreeId ||
+          explicitWorktreeId ||
+          (await this.resolveWorktreeSelector(worktreeSelector)).id
+        this.applyMobileSessionTabNavigation(
+          this.getMobileSessionTabsForWorktree(worktreeId, undefined, false),
+          result.tab.id,
+          navigation,
+          opts.clientNavigationId,
+          clientActivationIntents,
+          false
+        )
+      }
+      return result
+    } finally {
+      this.activeTerminalWorkspaceLaunches.delete(activeLaunch)
     }
-    if (select) {
-      let worktreeId =
-        this.getValidatedExplicitWorktreeIdSelector(worktreeSelector) ??
-        (await this.resolveWorktreeSelector(worktreeSelector)).id
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
-      this.applyMobileSessionTabNavigation(
-        this.getMobileSessionTabsForWorktree(worktreeId),
-        result.tab.id,
-        navigation,
-        opts.clientNavigationId,
-        clientActivationIntents
-      )
-    }
-    return result
   }
 
   private async runCreateMobileSessionTerminal(
@@ -25599,15 +25590,23 @@ export class OrcaRuntimeService {
       clientNavigationId?: string
       clientMutationId?: string
       signal?: AbortSignal
-    } = {}
+    } = {},
+    activeLaunch?: ActiveTerminalWorkspaceLaunch,
+    explicitWorktreeId: string | null = null
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const pairedCreate = Boolean(opts.clientNavigationId)
     const shouldActivate = (): boolean =>
       opts.activate !== false && (opts.shouldActivate?.() ?? true)
     const graphEpoch = this.captureReadyGraphEpoch()
     let workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+    if (activeLaunch) {
+      this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
+    }
     let requestedCwd = opts.cwd
-    const initialMigratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+    const initialMigratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(
+      workspace,
+      activeLaunch
+    )
     if (initialMigratedWorkspace !== workspace) {
       requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
         requestedCwd,
@@ -25633,7 +25632,7 @@ export class OrcaRuntimeService {
     >
     while (true) {
       startupCommand = await this.resolveMobileSessionTerminalCommand(workspace, opts)
-      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace, activeLaunch)
       if (migratedWorkspace === workspace) {
         break
       }
@@ -25668,7 +25667,8 @@ export class OrcaRuntimeService {
           targetGroupId: opts.targetGroupId,
           launchConfig: startupCommand.launchConfig,
           shouldActivate,
-          signal: opts.signal
+          signal: opts.signal,
+          activeLaunch
         }
       )
     }
@@ -25730,7 +25730,17 @@ export class OrcaRuntimeService {
         })
       })
 
-      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace, activeLaunch)
+      if (migratedWorkspace !== workspace) {
+        requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
+          requestedCwd,
+          workspace.path,
+          migratedWorkspace.path
+        )
+        workspace = migratedWorkspace
+        worktreeId = workspace.id
+        cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
+      }
       if (shouldActivate()) {
         this.notifier?.focusTerminal(reply.tabId, worktreeId, null)
       }
@@ -25797,7 +25807,8 @@ export class OrcaRuntimeService {
             targetGroupId: opts.targetGroupId,
             launchConfig: startupCommand.launchConfig,
             shouldActivate,
-            signal: opts.signal
+            signal: opts.signal,
+            activeLaunch
           }
         )
       } catch (error) {
@@ -25932,11 +25943,32 @@ export class OrcaRuntimeService {
       launchConfig?: SleepingAgentLaunchConfig
       shouldActivate?: () => boolean
       signal?: AbortSignal
+      activeLaunch?: ActiveTerminalWorkspaceLaunch
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
-    const workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
-    const cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, opts.cwd)
+    if (!opts.activeLaunch) {
+      worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    }
+    let workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
+    let requestedCwd = opts.cwd
+    const migrateLaunchWorkspace = (): void => {
+      const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(
+        workspace,
+        opts.activeLaunch
+      )
+      if (migratedWorkspace === workspace) {
+        return
+      }
+      requestedCwd = this.rebaseTerminalWorkspaceRequestedCwd(
+        requestedCwd,
+        workspace.path,
+        migratedWorkspace.path
+      )
+      workspace = migratedWorkspace
+      worktreeId = workspace.id
+    }
+    migrateLaunchWorkspace()
+    let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
     // Why: SshPtyProvider treats sessionId as a relay reattach; only synthesize local serve ids so SSH fresh terminals still call pty.spawn.
     const stableSessionId =
       opts.identity?.sessionId ?? (workspace.connectionId ? undefined : `serve-${randomUUID()}`)
@@ -25966,7 +25998,9 @@ export class OrcaRuntimeService {
       deferMobileSessionPublish: true,
       signal: opts.signal
     })
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    migrateLaunchWorkspace()
+    worktreeId = opts.activeLaunch?.worktreeId || terminal.worktreeId
+    cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, requestedCwd)
     const livePty = this.getLivePtyForHandle(terminal.handle)
     if (!livePty) {
       throw new Error('terminal_handle_stale')
@@ -26112,7 +26146,7 @@ export class OrcaRuntimeService {
     parentTabId: string,
     options: { requireReady?: boolean } = {}
   ): RuntimeMobileSessionCreateTerminalResult | null {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     if (!snapshot) {
       return null
@@ -26139,7 +26173,7 @@ export class OrcaRuntimeService {
     worktreeId: string,
     ptyId: string
   ): RuntimeMobileSessionCreateTerminalResult | null {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const tab = snapshot?.tabs.find(
       (candidate) =>
@@ -26157,7 +26191,7 @@ export class OrcaRuntimeService {
     worktreeId: string,
     tabId: string
   ): RuntimeMobileSessionCreateTerminalResult | null {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const pending = this.pendingMobileTerminalCreatesByKey.get(`${worktreeId}::${tabId}`)
     if (!pending) {
       return null
@@ -26264,7 +26298,7 @@ export class OrcaRuntimeService {
     worktreeId: string,
     tabId: string
   ): RuntimePtyWorktreeRecord | null {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     for (const pty of this.ptysById.values()) {
       if (
         pty.worktreeId === worktreeId &&
@@ -26280,7 +26314,7 @@ export class OrcaRuntimeService {
 
   // Why: looser rollback guard than findLiveRegisteredPtyForRendererTab — a shell without a registered pane key is still a real terminal the timeout must not kill (#7718).
   private hasLiveShellForRendererTab(worktreeId: string, tabId: string): boolean {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     for (const pty of this.ptysById.values()) {
       if (pty.worktreeId === worktreeId && pty.tabId === tabId && pty.connected) {
         return true
@@ -26307,7 +26341,7 @@ export class OrcaRuntimeService {
   // missing record on the locally registered live PTY proves the launch never
   // ran; type it into the shell like the create would have.
   private deliverPendingStartupCommandToBareRendererPty(worktreeId: string, tabId: string): void {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
     const pending = this.pendingMobileTerminalCreatesByKey.get(`${worktreeId}::${tabId}`)
     const command = pending?.startupCommand
     if (!command) {
@@ -27756,6 +27790,64 @@ export class OrcaRuntimeService {
     return resolveTerminalStartupCwd(workspace.path, requestedCwd)
   }
 
+  private beginActiveTerminalWorkspaceLaunch(selector: string): {
+    activeLaunch: ActiveTerminalWorkspaceLaunch
+    explicitWorktreeId: string | null
+  } {
+    const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(selector)
+    const activeLaunch: ActiveTerminalWorkspaceLaunch = {
+      worktreeId: explicitWorktreeId ?? '',
+      worktreePath:
+        (explicitWorktreeId
+          ? splitWorktreeIdForFilesystem(explicitWorktreeId)?.worktreePath
+          : null) ?? '',
+      pendingRenames: []
+    }
+    this.activeTerminalWorkspaceLaunches.add(activeLaunch)
+    return { activeLaunch, explicitWorktreeId }
+  }
+
+  private bindActiveTerminalWorkspaceLaunch(
+    activeLaunch: ActiveTerminalWorkspaceLaunch,
+    explicitWorktreeId: string | null,
+    workspace: TerminalWorkspaceLaunchScope
+  ): void {
+    if (!explicitWorktreeId) {
+      activeLaunch.worktreeId = workspace.id
+      activeLaunch.worktreePath = workspace.path
+      for (const rename of activeLaunch.pendingRenames) {
+        if (activeLaunch.worktreeId === rename.oldWorktreeId) {
+          activeLaunch.worktreeId = rename.newWorktreeId
+          activeLaunch.worktreePath =
+            splitWorktreeIdForFilesystem(activeLaunch.worktreeId)?.worktreePath ??
+            activeLaunch.worktreePath
+        }
+      }
+      activeLaunch.pendingRenames.length = 0
+    } else if (activeLaunch.worktreeId === explicitWorktreeId) {
+      activeLaunch.worktreeId = workspace.id
+      activeLaunch.worktreePath = workspace.path
+    }
+    if (
+      activeLaunch.worktreeId === workspace.id &&
+      this.clientSessionTabSelections.resolveWorktreeId(workspace.id) !== workspace.id
+    ) {
+      this.terminalWorkspaceLaunchIdentityOverrides.add(workspace.id)
+    }
+  }
+
+  private resolveTerminalWorkspaceLaunchWorktreeId(worktreeId: string): string {
+    if (this.terminalWorkspaceLaunchIdentityOverrides.has(worktreeId)) {
+      return worktreeId
+    }
+    for (const launch of this.activeTerminalWorkspaceLaunches) {
+      if (launch.worktreeId === worktreeId) {
+        return worktreeId
+      }
+    }
+    return this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+  }
+
   private migrateTerminalWorkspaceLaunchScope(
     workspace: TerminalWorkspaceLaunchScope,
     activeLaunch?: ActiveTerminalWorkspaceLaunch
@@ -28803,6 +28895,8 @@ export class OrcaRuntimeService {
 
   /** Like {@link notifyBranchRenamed} but carries old->new worktree id so the renderer re-keys instead of treating the id change as a deletion. */
   notifyWorktreeFolderRenamed(repoId: string, oldWorktreeId: string, newWorktreeId: string): void {
+    this.terminalWorkspaceLaunchIdentityOverrides.delete(oldWorktreeId)
+    this.terminalWorkspaceLaunchIdentityOverrides.delete(newWorktreeId)
     for (const launch of this.activeTerminalWorkspaceLaunches) {
       if (!launch.worktreeId) {
         launch.pendingRenames.push({ oldWorktreeId, newWorktreeId })
@@ -29911,6 +30005,7 @@ export class OrcaRuntimeService {
         this.clientSessionTabSelections.project(removed, subscription.clientNavigationId)
       )
     }
+    this.terminalWorkspaceLaunchIdentityOverrides.delete(worktreeId)
     this.clientSessionTabSelections.forgetWorktree(worktreeId)
   }
 
@@ -29967,9 +30062,12 @@ export class OrcaRuntimeService {
 
   private getMobileSessionTabsForWorktree(
     worktreeId: string,
-    clientNavigationId?: string
+    clientNavigationId?: string,
+    resolveWorktreeAlias = true
   ): RuntimeMobileSessionTabsResult {
-    worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
+    if (resolveWorktreeAlias) {
+      worktreeId = this.resolveTerminalWorkspaceLaunchWorktreeId(worktreeId)
+    }
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     if (!snapshot) {
       return this.clientSessionTabSelections.project(

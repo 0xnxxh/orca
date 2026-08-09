@@ -31452,6 +31452,41 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  it('does not redirect a headless mobile create in a reused pre-rename worktree path', async () => {
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-mobile-reused-path' })
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    const created = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      clientNavigationId: 'phone-reused-path'
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      })
+    )
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(true)
+    expect(runtime['mobileSessionTabsByWorktree'].has(renamedWorktreeId)).toBe(false)
+    await expect(runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).resolves.toMatchObject({
+      worktree: TEST_WORKTREE_ID,
+      tabs: [expect.objectContaining({ id: created.tab.id })]
+    })
+    const phoneSelections =
+      runtime['clientSessionTabSelections']['statesByClient'].get('phone-reused-path')
+    expect(phoneSelections?.get(TEST_WORKTREE_ID)?.selection.activeTabId).toBe(created.tab.id)
+    expect(phoneSelections?.has(renamedWorktreeId)).toBe(false)
+  })
+
   it('injects mobile quick-command prompts into the host-built agent startup command', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-agent-prompt' })
     const runtime = new OrcaRuntimeService({
@@ -32109,6 +32144,34 @@ describe('OrcaRuntimeService', () => {
     expect(retried).toBe(first)
   })
 
+  it('does not dedupe a mobile create in a reused pre-rename worktree path', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    const original = { snapshotVersion: 1 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    const reused = { snapshotVersion: 2 } as Awaited<
+      ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>
+    >
+    runtime['runCreateMobileSessionTerminal'] = vi
+      .fn()
+      .mockResolvedValueOnce(original)
+      .mockResolvedValueOnce(reused)
+
+    await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-reused-path'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    const second = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-reused-path'
+    })
+
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledTimes(2)
+    expect(second).toBe(reused)
+  })
+
   it('does not dedupe mobile terminal creates across worktrees with the same clientMutationId', async () => {
     const otherWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-b`
     vi.mocked(listWorktrees).mockResolvedValue([
@@ -32564,6 +32627,75 @@ describe('OrcaRuntimeService', () => {
         cwd: '/tmp/worktree-renamed/packages/app'
       })
     )
+
+    abortController.abort()
+    await expect(settled).resolves.toMatchObject({ ok: false })
+  })
+
+  it('does not redirect a renderer mobile create in a reused pre-rename worktree path', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const abortController = new AbortController()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setNotifier(createMobileCreateTestNotifier(vi.fn()))
+    const webContents = { send: vi.fn() }
+    const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+      ipcMain.emit(
+        'terminal:tabCreateReply',
+        { sender: webContents },
+        { requestId: payload.requestId, tabId: 'tab-reused-path', title: 'Terminal' }
+      )
+    })
+    webContents.send = send
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+
+    const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      signal: abortController.signal
+    })
+    const settled = create.then(
+      () => ({ ok: true as const }),
+      (error: Error) => ({ ok: false as const, error })
+    )
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(send).toHaveBeenCalledWith(
+      'terminal:requestTabCreate',
+      expect.objectContaining({
+        worktreeId: TEST_WORKTREE_ID
+      })
+    )
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'renderer-reused-path',
+          snapshotVersion: 1,
+          activeGroupId: 'group-1',
+          activeTabId: 'tab-reused-path::leaf-reused-path',
+          activeTabType: 'terminal',
+          tabs: [
+            {
+              type: 'terminal',
+              id: 'tab-reused-path::leaf-reused-path',
+              parentTabId: 'tab-reused-path',
+              leafId: 'leaf-reused-path',
+              title: 'Terminal',
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(true)
+    expect(runtime['mobileSessionTabsByWorktree'].has(renamedWorktreeId)).toBe(false)
 
     abortController.abort()
     await expect(settled).resolves.toMatchObject({ ok: false })

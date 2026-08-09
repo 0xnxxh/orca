@@ -155,9 +155,10 @@ export class ClientSessionTabSelectionStore {
     snapshot: RuntimeMobileSessionTabsResult,
     clientNavigationId: string,
     activeTabId: string,
-    activationIntent?: ClientSessionTabActivationIntent
+    activationIntent?: ClientSessionTabActivationIntent,
+    resolveAlias = true
   ): RuntimeMobileSessionTabsResult {
-    const worktreeId = this.resolveWorktreeId(snapshot.worktree)
+    const worktreeId = resolveAlias ? this.resolveWorktreeId(snapshot.worktree) : snapshot.worktree
     if (worktreeId !== snapshot.worktree) {
       snapshot = { ...snapshot, worktree: worktreeId }
     }
