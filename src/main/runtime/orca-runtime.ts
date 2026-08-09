@@ -485,12 +485,7 @@ import {
   configureAiVaultSessionSources,
   listAiVaultSessions
 } from '../ai-vault/cached-session-list'
-import {
-  readAiVaultSessionIdentity,
-  resolveAiVaultSessionLiveness
-} from '../ai-vault/session-liveness'
-import type { AiVaultAgent, AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
-import type { AiVaultSessionLiveness } from '../../shared/ai-vault-session-deletion'
+import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
 import type {
   AiVaultPrepareSessionResumeArgs,
   AiVaultPrepareSessionResumeResult
@@ -4955,74 +4950,6 @@ export class OrcaRuntimeService {
   // cache so the desktop panel and the mobile screen never double-scan.
   listAiVaultSessions(args?: AiVaultListArgs): Promise<AiVaultListResult> {
     return listAiVaultSessions(args)
-  }
-
-  async getAiVaultSessionLiveness(target: {
-    agent: AiVaultAgent
-    sessionId: string | undefined
-    filePath: string
-  }): Promise<AiVaultSessionLiveness> {
-    const provider = this.getLocalProviderFn?.()
-    if (!provider || !this.getAgentProviderSessionSnapshotFn) {
-      return 'unknown'
-    }
-    const identity = await readAiVaultSessionIdentity(target)
-    if (identity.outcome !== 'found') {
-      return 'unknown'
-    }
-    const deadlineMs = Date.now() + 3_000
-    return await resolveAiVaultSessionLiveness(
-      {
-        agent: target.agent,
-        sessionId: identity.sessionId
-      },
-      {
-        deadlineMs,
-        listProcesses: async () => {
-          const result = await withTimeoutResult(
-            provider.listProcesses({ deadlineMs }),
-            Math.max(1, deadlineMs - Date.now())
-          )
-          if (!result.ok) {
-            throw new Error('agent_session_ownership_unknown')
-          }
-          return result.value
-        },
-        getStatusSnapshot: this.getAgentProviderSessionSnapshotFn,
-        inspectForegroundProcess: async (ptyId) => {
-          const result = await withTimeoutResult(
-            provider.getForegroundProcess(ptyId),
-            Math.max(1, deadlineMs - Date.now())
-          )
-          return result.ok
-            ? { available: true, process: result.value }
-            : { available: false, process: null }
-        },
-        getStatusPtyId: (status) => {
-          if (status.terminalHandle) {
-            const live = this.getLivePtyForHandle(status.terminalHandle)
-            if (live) {
-              return live.pty.ptyId
-            }
-            for (const [ptyId, handle] of this.handleByPtyId) {
-              if (handle === status.terminalHandle) {
-                return ptyId
-              }
-            }
-          }
-          return this.getPtyRecordForPaneKey(status.paneKey)?.ptyId ?? null
-        },
-        getAgentHint: (process) => {
-          const pty = this.ptysById.get(process.id)
-          const runtimeHint = pty?.foregroundAgent ?? pty?.launchAgent
-          if (runtimeHint) {
-            return runtimeHint
-          }
-          const ownerAgents = new Set(process.agentSessionOwners?.map((owner) => owner.claim.agent))
-          return ownerAgents.size === 1 ? ([...ownerAgents][0] ?? null) : null
-        }
-      }
-    )
   }
 
   prepareAiVaultSessionResume(
