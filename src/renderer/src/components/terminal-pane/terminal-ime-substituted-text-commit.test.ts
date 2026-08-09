@@ -187,4 +187,13 @@ describe('input-source text substitution reaches the terminal', () => {
   it('sends the substitution with kitty disambiguate reporting negotiated', () => {
     expect(type([COMMA], 1)).toBe('，')
   })
+
+  // Pins a deliberate hole rather than a desired behaviour. Flag 8 asks for every printable key as
+  // an escape code, and this path sends the committed text raw instead — a mature native terminal
+  // makes the same trade, preferring correct characters to protocol fidelity. Recorded here so the
+  // choice is visible: if this ever needs closing, gate on flag 8 alone, never on "kitty active",
+  // which would disable the substitution for every pane that negotiates anything.
+  it('sends the substitution raw even when kitty asks for all keys as escape codes', () => {
+    expect(type([COMMA], 8)).toBe('，')
+  })
 })
