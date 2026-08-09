@@ -43,7 +43,7 @@ export function TerminalPaneDisconnectedBanner({
   const body = sshPane
     ? translate(
         'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.sshPaneBody',
-        'Orca cannot reach this terminal right now. The shell may still be running on the host, so starting a new one leaves it alone.'
+        'Orca cannot reach this terminal right now. Its shell may still be running, so starting a new one leaves it alone.'
       )
     : retrying
       ? translate(
