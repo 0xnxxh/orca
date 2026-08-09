@@ -4311,6 +4311,47 @@ export function connectPanePty(
     },
     forwardResize: forwardPtyResize
   })
+  // Why built here and not inside handleReattachResult: a hidden pane parks this until it is
+  // revealed, and a closure created in that scope would pin the whole reattach payload
+  // (snapshot/replay/coldRestore bytes) for as long as the pane stays hidden. Taking the
+  // generation and pty id by value keeps only connection-level state alive.
+  const createReattachGridPush = (
+    attemptGeneration: number,
+    reattachPtyId: string
+  ): { shouldContinue: () => boolean; continuation: () => void } => {
+    const isCurrent = (): boolean =>
+      !disposed &&
+      attemptGeneration === transportStreamGeneration &&
+      transport.getPtyId() === reattachPtyId
+    return {
+      shouldContinue: isCurrent,
+      continuation: () => {
+        if (!isCurrent()) {
+          return
+        }
+        // Why re-checked at fire time: the caller's pre-check cannot see a mobile takeover that
+        // lands while the pane waits for a box, and transport.resize here bypasses
+        // forwardPtyResize's own suppression.
+        if (shouldSuppressDesktopPtyResize()) {
+          return
+        }
+        const reattachCols = pane.terminal.cols
+        const reattachRows = pane.terminal.rows
+        if (reattachCols > 0 && reattachRows > 0) {
+          transport.resize(reattachCols, reattachRows)
+        }
+        // Why: POSIX only sends SIGWINCH on an actual dimension change; signal explicitly so restored TUIs repaint at the correct cursor after replay.
+        if (!isRemoteRuntimePtyId(reattachPtyId)) {
+          window.api.pty.signal(reattachPtyId, 'SIGWINCH')
+        }
+        // Why here: a deferred reveal resolves the fit handle as incomplete, so an awaited
+        // reassertion at the call site would never run for that path.
+        if (deps.isVisibleRef.current) {
+          ptySizeReassertion.request({ fit: false })
+        }
+      }
+    }
+  }
   let pendingForegroundGridDriftCheckRaf: number | null = null
   let lastForegroundGridDriftCheckAt = Number.NEGATIVE_INFINITY
   const readProposedTerminalGrid = (): { cols: number; rows: number } | null => {
@@ -8484,37 +8525,24 @@ export function connectPanePty(
           return
         }
         if (!getFitOverrideForPty(reattachPtyId)) {
-          const fit = safeFitAndThen(
-            pane,
-            'reattach-pty-resize',
-            () => {
-              if (!isCurrentReattachPayload() || transport.getPtyId() !== reattachPtyId) {
-                return
-              }
-              const reattachCols = pane.terminal.cols
-              const reattachRows = pane.terminal.rows
-              if (reattachCols > 0 && reattachRows > 0) {
-                transport.resize(reattachCols, reattachRows)
-              }
-              // Why: POSIX only sends SIGWINCH on an actual dimension change; signal explicitly so restored TUIs repaint at the correct cursor after replay.
-              if (!isRemoteRuntimePtyId(reattachPtyId)) {
-                window.api.pty.signal(reattachPtyId, 'SIGWINCH')
-              }
-            },
-            { shouldContinue: isCurrentReattachPayload, retryIfUnmeasurable: true }
-          )
+          const gridPush = createReattachGridPush(attemptGeneration, reattachPtyId)
+          const fit = safeFitAndThen(pane, 'reattach-pty-resize', gridPush.continuation, {
+            shouldContinue: gridPush.shouldContinue,
+            retryIfUnmeasurable: true,
+            // Why only this caller: a restored floating workspace is display:none until the
+            // user opens it, so dropping the grid push strands the PTY at the replay grid.
+            deferIfHidden: true
+          })
           pendingReattachFit = fit
-          let fitCompleted = false
           try {
-            fitCompleted = await fit.completion
+            // Why: reattach resize is fire-and-forget, so the continuation itself requests the
+            // applied-grid verification — it is the only point reached by both the immediate
+            // and the deferred-until-revealed path.
+            await fit.completion
           } finally {
             if (pendingReattachFit === fit) {
               pendingReattachFit = null
             }
-          }
-          if (fitCompleted && isCurrentReattachPayload() && deps.isVisibleRef.current) {
-            // Why: reattach resize is fire-and-forget; verify the provider's applied grid while this reveal still owns the visible pane.
-            ptySizeReassertion.request({ fit: false })
           }
         } else if (isCurrentReattachPayload() && !isRemoteRuntimePtyId(reattachPtyId)) {
           window.api.pty.signal(reattachPtyId, 'SIGWINCH')
