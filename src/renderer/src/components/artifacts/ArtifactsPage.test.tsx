@@ -18,7 +18,10 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   refreshAuth: vi.fn(),
   rpc: vi.fn(),
-  settings: { skipDeleteArtifactConfirm: false } as Record<string, unknown>,
+  settings: {
+    artifactSharingEnabled: true,
+    skipDeleteArtifactConfirm: false
+  } as Record<string, unknown> | null,
   updateSettings: vi.fn(),
   openSettingsPage: vi.fn(),
   openSettingsTarget: vi.fn(),
@@ -84,7 +87,7 @@ describe('ArtifactsPage', () => {
     mocks.confirm.mockReset()
     mocks.refreshAuth.mockReset()
     mocks.rpc.mockReset()
-    mocks.settings = { skipDeleteArtifactConfirm: false }
+    mocks.settings = { artifactSharingEnabled: true, skipDeleteArtifactConfirm: false }
     mocks.updateSettings.mockReset().mockResolvedValue(undefined)
     mocks.openSettingsPage.mockReset()
     mocks.openSettingsTarget.mockReset()
@@ -198,6 +201,36 @@ describe('ArtifactsPage', () => {
       screen.getByText('Ask your agent to share an HTML or Markdown file, and it will appear here.')
     ).toBeInTheDocument()
     expect(screen.queryByText(/orca artifacts share/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Open Settings → Artifacts' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('sends the user to Settings instead of an agent when publishing is off', async () => {
+    mocks.settings = { artifactSharingEnabled: false }
+    mocks.rpc.mockResolvedValue({ status: 'ok', value: { artifacts: [] } })
+    render(<ArtifactsPage />)
+
+    await screen.findByText('Publishing is turned off')
+    expect(screen.getByText(/Allow publishing in Settings → Artifacts/)).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'Ask your agent to share an HTML or Markdown file, and it will appear here.'
+      )
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings → Artifacts' }))
+    expect(mocks.openSettingsTarget).toHaveBeenCalledWith({ pane: 'artifacts', repoId: null })
+    expect(mocks.openSettingsPage).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the neutral empty state until settings have loaded', async () => {
+    mocks.settings = null
+    mocks.rpc.mockResolvedValue({ status: 'ok', value: { artifacts: [] } })
+    render(<ArtifactsPage />)
+
+    await screen.findByText('No shared artifacts')
+    expect(screen.queryByText('Publishing is turned off')).not.toBeInTheDocument()
   })
 
   it('loads each cursor once and appends the next artifact page', async () => {
