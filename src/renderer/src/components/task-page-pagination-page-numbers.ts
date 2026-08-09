@@ -1,4 +1,3 @@
-// Builds the page-number array with ellipsis gaps: first, last, and a window around the current page.
 export function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
   if (total <= 9) {
     return Array.from({ length: total }, (_, i) => i)
