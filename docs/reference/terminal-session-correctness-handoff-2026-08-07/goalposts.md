@@ -409,8 +409,10 @@ an explicit user decision recorded before more implementation begins.
 
 G6 is proven only when:
 
-- aggregate program-attributable production source net LOC is **less than
-  zero** against the frozen baseline;
+- aggregate program-attributable production source net LOC is **minimised and
+  every net addition justified** against the frozen baseline — see decision D1
+  under "Recorded user decisions", which replaced the original strict
+  inequality once the assumed deletion budget was shown not to exist;
 - every program-attributable prerequisite merged after the baseline and every
   stacked PR is included, even if a later rebase places it in `main`;
 - overlapping changes are recomputed from the frozen baseline to the final tree
@@ -438,6 +440,35 @@ and build-time code that enforces a shipped artifact invariant are production;
 test-only runners and fixtures are tests even when misplaced, and their presence
 under production compilation independently fails this gate. Publish the final
 file-by-file classification so the count cannot be moved between buckets.
+
+### G6 clause assessment (2026-08-08)
+
+Checked against the current branch rather than assumed:
+
+| Clause                                                                                                                                                      | State                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| aggregate net production LOC minimised and justified (D1)                                                                                                   | +228, each addition justified in its commit; 201 LOC deleted after verifying unreachability from all 20 build entrypoints                                                     |
+| every new production module reachable from a real entrypoint                                                                                                | holds — no new unreachable module was added                                                                                                                                   |
+| no test fixture under production compilation                                                                                                                | not audited on this branch                                                                                                                                                    |
+| one identity comparison / transition / exact-op client / admission path / delivery state machine                                                            | **fails** — several remain, and this is the clause the rejected binding proposal would have made worse by adding a second identity comparison beside `resolveStablePaneOwner` |
+| no re-export shim or one-type module for layering                                                                                                           | holds for this branch's additions                                                                                                                                             |
+| **no superseded quarantine, sliding-window, retry-verdict, reconciliation, duplicate cursor, receipt ledger, legacy writer, or migration bridge reachable** | **fails** — `terminal-input-quarantine.ts` is imported by `pty-connection.ts:98` and `terminal-pane-recovery.ts:6`                                                            |
+| independent reachability and duplicate-state-machine audit clean                                                                                            | not run                                                                                                                                                                       |
+
+On the quarantine specifically: it is **not** subsumed by the superseded-PTY
+fence, and claiming otherwise would be wrong. The fence refuses writes aimed at
+a stale ptyId. The quarantine guards the user's _subsequent_ typing — the tail
+of a half-typed line — landing on the successor shell under its current and
+correct ptyId, which the fence never sees.
+
+Deleting it therefore requires contract property B: a _different_ shell surfaces
+unresolved and never silently receives the pane, at which point there is no
+mangled tail to suppress. That is a behaviour change to the recovery path, not a
+deletion, and an earlier attempt to shortcut it was rejected for reintroducing
+the `echo hi; rm -rf x` hazard by disarming per-pane state that is keyed per-tab.
+
+G6 is therefore not promotable, and its blocking clauses are structural rather
+than arithmetic.
 
 ## G7 — No regression and reviewable comprehensive change
 
