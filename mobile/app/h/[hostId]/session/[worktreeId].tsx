@@ -1828,6 +1828,9 @@ export default function SessionScreen() {
         setMarkdownDocs((prev) => documentTabs.omitRetired(prev, retiredDocumentTabIds))
         setFileDocs((prev) => documentTabs.omitRetired(prev, retiredDocumentTabIds))
       }
+      sessionTabIntentRef.current.invalidateDocumentReads(documents.changedReadTabIds)
+      setMarkdownDocs((prev) => documentTabs.reconcileChanged(prev, documents.changedReadTabIds))
+      setFileDocs((prev) => documentTabs.omitRetired(prev, documents.changedReadTabIds))
       sessionTabsRef.current = nextTabs
       initialSessionAutoCreateRef.current.sawSessionTabs ||= nextTabs.length > 0
       // Why: subscribe snapshots often repeat identical payloads; skip re-set to avoid a subscription teardown/replay loop.

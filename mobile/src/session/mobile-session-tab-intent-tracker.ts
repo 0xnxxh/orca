@@ -76,6 +76,12 @@ export class MobileSessionTabIntentTracker {
     }
   }
 
+  invalidateDocumentReads(tabIds: Iterable<string>): void {
+    for (const tabId of tabIds) {
+      this.documentReadRevisionsByTabId.delete(tabId)
+    }
+  }
+
   beginTabCreate(kind: MobileSessionTabCreateKind): number {
     return ++this.tabCreateRevisions[kind]
   }

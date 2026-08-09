@@ -137,4 +137,15 @@ describe('MobileSessionTabIntentTracker', () => {
     expect(retainedSave()).toBe(true)
     expect(tracker.beginMarkdownSave('tab-a')()).toBe(true)
   })
+
+  it('invalidates changed document reads without cancelling saves', () => {
+    const tracker = new MobileSessionTabIntentTracker()
+    const staleRead = tracker.beginDocumentRead('tab-a')
+    const currentSave = tracker.beginMarkdownSave('tab-a')
+
+    tracker.invalidateDocumentReads(['tab-a'])
+
+    expect(staleRead()).toBe(false)
+    expect(currentSave()).toBe(true)
+  })
 })
