@@ -4227,6 +4227,7 @@ export default function SessionScreen() {
           pendingTerminalActivationAttemptRef.current !== activationKey ||
           sessionTabIntentRef.current.revision !== intentRevision
         ) {
+          restoreTabSelection(client, `id:${worktreeId}`, selectedSessionTabIdRef.current)
           return
         }
         applySessionTabs((response as RpcSuccess).result as SessionTabsResult)

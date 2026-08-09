@@ -7281,20 +7281,35 @@ export class OrcaRuntimeService {
           }
         }
         try {
-          await this.createRuntimeOwnedMobileSessionTerminal(worktreeId, targetsHost, undefined, {
-            identity: {
-              tabId: tab.parentTabId,
-              leafId: tab.leafId,
-              sessionId
-            },
-            cwd: tab.startupCwd,
-            command: agentStartup.command,
-            env: agentStartup.env,
-            startupCommandDelivery: agentStartup.startupCommandDelivery,
-            launchConfig: agentStartup.launchConfig,
-            launchAgent: tab.launchAgent,
-            targetGroupId
-          })
+          const materialized = await this.createRuntimeOwnedMobileSessionTerminal(
+            worktreeId,
+            targetsHost,
+            undefined,
+            {
+              identity: {
+                tabId: tab.parentTabId,
+                leafId: tab.leafId,
+                sessionId
+              },
+              cwd: tab.startupCwd,
+              command: agentStartup.command,
+              env: agentStartup.env,
+              startupCommandDelivery: agentStartup.startupCommandDelivery,
+              launchConfig: agentStartup.launchConfig,
+              launchAgent: tab.launchAgent,
+              targetGroupId
+            }
+          )
+          if (
+            opts.clientNavigationId &&
+            this.discardForgottenMaterializedTerminal(
+              worktreeId,
+              opts.clientNavigationId,
+              materialized.tab
+            )
+          ) {
+            throw new Error('tab_not_found')
+          }
         } catch (err) {
           if (sessionId && parseAppSshPtyId(sessionId)) {
             // Why: an expired SSH reattach clears durable bindings in the store,
@@ -7404,6 +7419,46 @@ export class OrcaRuntimeService {
       return projectClientSessionTabSelection(snapshot, selection).snapshot
     }
     return snapshot
+  }
+
+  private discardForgottenMaterializedTerminal(
+    worktreeId: string,
+    clientNavigationId: string,
+    tab: RuntimeMobileSessionTerminalTab
+  ): boolean {
+    const forgottenParent = this.clientSessionTabSelections.isTabForgotten(
+      clientNavigationId,
+      worktreeId,
+      tab.parentTabId
+    )
+    const forgottenLeaf = this.clientSessionTabSelections.isTabForgotten(
+      clientNavigationId,
+      worktreeId,
+      tab.id
+    )
+    if (!forgottenParent && !forgottenLeaf) {
+      return false
+    }
+    const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    const materializedTab = snapshot?.tabs.find(
+      (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+        candidate.type === 'terminal' && candidate.id === tab.id
+    )
+    if (snapshot && materializedTab) {
+      if (forgottenParent) {
+        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot, materializedTab, {
+          allowMissingPersistedTab: true
+        })
+        this.notifyRendererOfHeadlessTerminalClose(materializedTab.parentTabId)
+        this.store?.flushOrThrow?.()
+      } else {
+        const livePty = this.findPtyForMobileTerminalTab(worktreeId, materializedTab)
+        if (livePty) {
+          this.ptyController?.kill(livePty.ptyId)
+        }
+      }
+    }
+    return true
   }
 
   private shouldMaterializeHeadlessMobileSessionTab(

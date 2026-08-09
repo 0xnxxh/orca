@@ -271,6 +271,13 @@ export class ClientSessionTabSelectionStore {
     }
   }
 
+  isTabForgotten(clientNavigationId: string, worktreeId: string, tabId: string): boolean {
+    return (
+      this.statesByClient.get(clientNavigationId)?.get(worktreeId)?.forgottenTabIds.has(tabId) ===
+      true
+    )
+  }
+
   forgetClient(clientNavigationId: string): void {
     const statesByWorktree = this.statesByClient.get(clientNavigationId)
     const hadPersistedState = [...(statesByWorktree?.values() ?? [])].some(

@@ -201,6 +201,9 @@ describe('mobile session startup', () => {
     expect(pendingTerminalActivation).toContain(
       'sessionTabIntentRef.current.revision !== intentRevision'
     )
+    expect(pendingTerminalActivation).toContain(
+      'restoreTabSelection(client, `id:${worktreeId}`, selectedSessionTabIdRef.current)'
+    )
     expect(closeSessionTab).toContain('sessionTabIntentRef.current.supersede()')
     expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')
   })

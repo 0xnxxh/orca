@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Why: runtime behavior is stateful and cross-cutting, so these tests stay in one file to preserve the end-to-end invariants around handles, waits, and graph sync. */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type * as GitUsernameModule from '../git/git-username'
 import { performance } from 'node:perf_hooks'
 import { EventEmitter } from 'node:events'
@@ -28376,12 +28376,21 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
-  function makePendingAgentTabActivationRuntime(opts: { disabledTuiAgents?: string[] } = {}): {
+  type RuntimePtySpawn = NonNullable<
+    NonNullable<Parameters<OrcaRuntimeService['setPtyController']>[0]>['spawn']
+  >
+
+  function makePendingAgentTabActivationRuntime(
+    opts: { disabledTuiAgents?: string[]; spawn?: Mock<RuntimePtySpawn> } = {}
+  ): {
     runtime: OrcaRuntimeService
-    spawn: ReturnType<typeof vi.fn>
+    spawn: Mock<RuntimePtySpawn>
+    getSession: () => WorkspaceSessionState
+    kill: ReturnType<typeof vi.fn>
   } {
-    const spawn = vi.fn().mockResolvedValue({ id: 'serve-materialized-pty' })
-    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+    const spawn =
+      opts.spawn ?? vi.fn<RuntimePtySpawn>().mockResolvedValue({ id: 'serve-materialized-pty' })
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal({
         tabsByWorktree: {
           [TEST_WORKTREE_ID]: [
@@ -28410,15 +28419,16 @@ describe('OrcaRuntimeService', () => {
         disabledTuiAgents: opts.disabledTuiAgents ?? []
       })
     } as never)
+    const kill = vi.fn(() => true)
     runtime.setPtyController({
       spawn,
       write: () => true,
-      kill: () => true,
+      kill,
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
     runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
-    return { runtime, spawn }
+    return { runtime, spawn, getSession, kill }
   }
 
   it('launches the pending agent when mobile activation materializes an agent tab', async () => {
@@ -28453,6 +28463,32 @@ describe('OrcaRuntimeService', () => {
       launchAgent: 'claude',
       status: 'ready'
     })
+  })
+
+  it('discards a pending terminal materialized after the caller closed it', async () => {
+    const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+    const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
+    const { runtime, getSession, kill } = makePendingAgentTabActivationRuntime({ spawn })
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `host-tab::${HEADLESS_LEAF_ID}`,
+      undefined,
+      { notifyClients: false, clientNavigationId: 'device-a' }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    await runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+
+    spawned.resolve({ id: 'serve-materialized-pty' })
+    await expect(activation).rejects.toThrow('tab_not_found')
+
+    expect(kill).toHaveBeenCalledWith('serve-materialized-pty')
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+    expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
   })
 
   it('materializes a plain shell when the pending tab has no launch agent', async () => {
