@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from 'vitest'
-import { isPortaledRowMenuClick } from './automation-list-row-interaction'
+import { isPortaledRowMenuClick, isRowActivationKey } from './automation-list-row-interaction'
 
 describe('isPortaledRowMenuClick', () => {
   it('detects clicks whose target is outside the row DOM', () => {
@@ -31,5 +31,24 @@ describe('isPortaledRowMenuClick', () => {
         currentTarget: row
       })
     ).toBe(false)
+  })
+})
+
+describe('isRowActivationKey', () => {
+  it('accepts Enter and Space on the row itself', () => {
+    const row = document.createElement('div')
+
+    expect(isRowActivationKey({ key: 'Enter', target: row, currentTarget: row })).toBe(true)
+    expect(isRowActivationKey({ key: ' ', target: row, currentTarget: row })).toBe(true)
+    expect(isRowActivationKey({ key: 'a', target: row, currentTarget: row })).toBe(false)
+  })
+
+  it('ignores keys pressed on a nested control', () => {
+    const row = document.createElement('div')
+    const trigger = document.createElement('button')
+    row.append(trigger)
+
+    expect(isRowActivationKey({ key: 'Enter', target: trigger, currentTarget: row })).toBe(false)
+    expect(isRowActivationKey({ key: ' ', target: trigger, currentTarget: row })).toBe(false)
   })
 })

@@ -175,6 +175,21 @@ describe('Automation list row selection', () => {
     expect(onSelect).toHaveBeenCalledWith('automation-1')
   })
 
+  it('opens the actions menu on keyboard activation without selecting the row', async () => {
+    // The row handles Enter/Space for its own activation. Those keys bubble
+    // from the actions trigger too, so an unguarded row handler would
+    // preventDefault the button's native activation and open detail instead.
+    const onSelect = vi.fn()
+    renderLocalRows({ onSelect })
+    const user = userEvent.setup()
+
+    screen.getByRole('button', { name: 'Automation actions' }).focus()
+    await user.keyboard('{Enter}')
+
+    expect(await screen.findByRole('menuitem', { name: 'Delete' })).toBeTruthy()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
   it('does not open external detail when a quick-action menu item is chosen', async () => {
     const onSelect = vi.fn()
     const onRequestAction = vi.fn()

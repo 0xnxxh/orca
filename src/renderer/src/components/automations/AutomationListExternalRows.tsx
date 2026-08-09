@@ -35,7 +35,7 @@ import {
   AUTOMATIONS_TABLE_ROW_CLASS,
   AUTOMATIONS_TABLE_ROW_SELECTED_CLASS
 } from './automations-table-layout'
-import { isPortaledRowMenuClick } from './automation-list-row-interaction'
+import { isPortaledRowMenuClick, isRowActivationKey } from './automation-list-row-interaction'
 import { AutomationListStatusCell } from './AutomationListStatusCell'
 import { translate } from '@/i18n/i18n'
 
@@ -102,10 +102,11 @@ export function AutomationListExternalRows({
                   onSelect(entry.key)
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    onSelect(entry.key)
+                  if (!isRowActivationKey(event)) {
+                    return
                   }
+                  event.preventDefault()
+                  onSelect(entry.key)
                 }}
                 className={cn(
                   AUTOMATIONS_TABLE_GRID_CLASS,
