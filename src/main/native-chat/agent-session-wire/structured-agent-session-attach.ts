@@ -1,0 +1,188 @@
+// Attach: reserve the session record, then open its journal.
+//
+// `create` and `ensure` are the same transition with a different starting
+// point — a null expected fence means "no session exists yet". Both go through
+// the record store's compare-and-swap, which also owns the idempotency row, so
+// a retried attach replays instead of reserving a second owner.
+
+import type { AgentType } from '../../../shared/agent-status-types'
+import type {
+  AgentSessionJournalIdentity,
+  AgentSessionProviderHandle
+} from '../../../shared/agent-session-journal-types'
+import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
+import type { AgentSessionHandleProvider } from '../../../shared/agent-session-provider-handle'
+import type {
+  AgentSessionAccountHome,
+  AgentSessionExecutionLocation,
+  AgentSessionOwnerRuntimeKind,
+  AgentSessionRecord
+} from '../../../shared/agent-session-record'
+import {
+  AGENT_SESSION_WIRE_REFUSAL_CODES,
+  type AgentSessionMutationEnvelope,
+  type AgentSessionWireRefusal,
+  type AgentSessionWireRefusalCode
+} from '../../../shared/agent-session-wire'
+import {
+  agentSessionFingerprintConflict,
+  computeAgentSessionPayloadFingerprint
+} from '../../../shared/agent-session-mutation-envelope'
+import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
+import { journalDirectoryFor } from '../agent-session-journal/journal-paths'
+import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
+import {
+  openAgentSessionJournalWithRecovery,
+  type AgentSessionJournalRecovery
+} from './agent-session-journal-recovery'
+import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
+
+/**
+ * Everything a client may declare about the session it wants. Deliberately no
+ * spawn token, claim key, or owner probe: those are host observations, and a
+ * client that could assert "the previous owner is dead" could steal a live
+ * session. The host fills them in.
+ */
+export type AgentSessionAttachParams = {
+  envelope: AgentSessionMutationEnvelope
+  location: AgentSessionExecutionLocation
+  provider: AgentSessionHandleProvider
+  agent: AgentType
+  accountHome: AgentSessionAccountHome
+  runtimeKind: AgentSessionOwnerRuntimeKind
+  providerHandle: AgentSessionProviderHandle
+}
+
+/** Host-supplied half of the reservation. */
+export type AgentSessionAttachAuthority = {
+  spawnToken: string
+  claimKeyId: string
+  handoffOperationId: string | null
+  probe: AgentSessionOwnerProbe
+}
+
+/** The fields that define WHICH session this call would attach to. Deliberately
+ *  excludes the spawn token and the probe: those differ between a first attempt
+ *  and its retry, and a retry must replay rather than conflict. */
+export function attachFingerprintFields(params: AgentSessionAttachParams): Record<string, unknown> {
+  return {
+    location: params.location,
+    provider: params.provider,
+    agent: params.agent,
+    accountHome: params.accountHome,
+    runtimeKind: params.runtimeKind,
+    providerHandle: params.providerHandle,
+    expectedRuntimeFence: params.envelope.expectedRuntimeFence
+  }
+}
+
+/** Recomputes the fingerprint the client declared and refuses a mismatch before
+ *  anything reaches the store. */
+export function admitAttachOrRefuse(
+  params: AgentSessionAttachParams
+): { ok: true; fingerprint: string } | { ok: false; refusal: AgentSessionWireRefusal } {
+  const fingerprint = computeAgentSessionPayloadFingerprint({
+    method: 'agentSession.attach',
+    sessionId: params.envelope.sessionId,
+    fields: attachFingerprintFields(params)
+  })
+  const conflict = agentSessionFingerprintConflict(params.envelope, fingerprint)
+  return conflict ? { ok: false, refusal: conflict } : { ok: true, fingerprint }
+}
+
+export function journalIdentityFor(
+  sessionId: string,
+  params: AgentSessionAttachParams
+): AgentSessionJournalIdentity {
+  return {
+    sessionId,
+    workspaceId: params.location.workspaceId,
+    hostId: params.location.executionHostId,
+    agent: params.agent,
+    providerHandle: params.providerHandle
+  }
+}
+
+export type AttachedJournal = {
+  journal: AgentSessionJournal
+  recovery: AgentSessionJournalRecovery | null
+  /** Submissions the crash boundary settled as `unknown` on this open. */
+  unconfirmedClientMessageIds: string[]
+}
+
+/**
+ * Open the session's journal, recovering it when the stored one is unusable,
+ * and settle every submission left in flight by a previous process. Orca never
+ * re-sends those; they surface as delivery unconfirmed.
+ */
+export async function attachJournal(input: {
+  record: AgentSessionRecord
+  params: AgentSessionAttachParams
+  journalRoot: string
+  adapter: StructuredAgentSessionAdapter
+}): Promise<AttachedJournal> {
+  const identity = journalIdentityFor(input.record.sessionId, input.params)
+  const fence = input.record.lease.runtimeFence
+  const historyFilePath = input.adapter.historyFilePath
+    ? await input.adapter.historyFilePath({ identity })
+    : null
+  const opened = await openAgentSessionJournalWithRecovery({
+    identity,
+    journalDir: journalDirectoryFor(input.journalRoot, {
+      workspaceId: identity.workspaceId,
+      sessionId: identity.sessionId
+    }),
+    fence,
+    historyFilePath
+  })
+  return {
+    ...opened,
+    unconfirmedClientMessageIds: await opened.journal.markPendingSubmissionsUnknown(fence)
+  }
+}
+
+export function reserveRequestFor(input: {
+  sessionId: string
+  params: AgentSessionAttachParams
+  authority: AgentSessionAttachAuthority
+  callerKey: string
+  fingerprint: string
+  now: number
+}): Parameters<AgentSessionRecordStore['reserveOwner']>[0] {
+  const { params, authority } = input
+  return {
+    sessionId: input.sessionId,
+    location: params.location,
+    provider: params.provider,
+    accountHome: params.accountHome,
+    runtimeKind: params.runtimeKind,
+    expectedFence: params.envelope.expectedRuntimeFence,
+    spawnToken: authority.spawnToken,
+    claimKeyId: authority.claimKeyId,
+    handoffOperationId: authority.handoffOperationId,
+    probe: authority.probe,
+    operation: {
+      callerKey: input.callerKey,
+      operationId: params.envelope.clientOperationId,
+      fingerprint: input.fingerprint
+    },
+    now: input.now
+  }
+}
+
+/** The store signals refusals by throwing the refusal code. Anything not in the
+ *  known set is a defect, not a client error, and is rethrown. */
+export function classifyStoreFailure(
+  error: unknown,
+  currentFence: number | null
+): AgentSessionWireRefusal {
+  const code = error instanceof Error ? error.message : String(error)
+  if (!(AGENT_SESSION_WIRE_REFUSAL_CODES as readonly string[]).includes(code)) {
+    throw error
+  }
+  return {
+    code: code as AgentSessionWireRefusalCode,
+    message: `The session store refused this call: ${code}.`,
+    ...(code === 'agent_session_checkpoint_stale' && currentFence !== null ? { currentFence } : {})
+  }
+}

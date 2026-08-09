@@ -12,9 +12,14 @@
 import {
   pruneAgentSessionOperationRows,
   agentSessionOperationKey,
+  type AgentSessionOperationDecision,
   type AgentSessionOperationOutcome,
   type AgentSessionOperationRow
 } from '../../shared/agent-session-operation-ledger'
+import {
+  admitAgentSessionOperationRow,
+  type AgentSessionOperationAdmission
+} from './agent-session-operation-admission'
 import type { AgentSessionOwnerProbe } from '../../shared/agent-session-lease-adjudication'
 import { classifyObservedAgentSessionSpawnToken } from '../../shared/agent-session-lease-adjudication'
 import type { AgentSessionProviderHandleLink } from '../../shared/agent-session-provider-handle'
@@ -273,6 +278,17 @@ export class AgentSessionRecordStore {
       }
       this.state.operations = pruneAgentSessionOperationRows(this.state.operations, args.now)
       return reconciled
+    })
+  }
+
+  /** Admits one non-reservation mutation through the durable ledger. */
+  async admitOperation(
+    args: AgentSessionOperationAdmission
+  ): Promise<AgentSessionOperationDecision> {
+    return this.transact(() => {
+      const admitted = admitAgentSessionOperationRow(this.state.operations, args)
+      this.state.operations = admitted.rows
+      return admitted.decision
     })
   }
 
