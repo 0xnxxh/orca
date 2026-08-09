@@ -294,6 +294,28 @@ describe('client session-tab selection', () => {
     expect(store.project(full, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
   })
 
+  it('does not restore a closed tab from a stale pre-close snapshot', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    store.activate(full, 'device-a', 'browser-unified')
+
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    const stale = store.project(full, 'device-a')
+    expect(stale.activeTabId).toBe('terminal-a::leaf-a')
+    expect(stale.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+
+    const withoutBrowser = {
+      ...full,
+      activeTabId: 'terminal-a::leaf-a',
+      activeTabType: 'terminal' as const,
+      tabGroups: full.tabGroups?.slice(0, 1),
+      tabs: full.tabs.filter((tab) => tab.id !== 'browser-unified')
+    }
+    store.project(withoutBrowser, 'device-a')
+    expect(store.project(full, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
+  })
+
   it('forgets leaf and group picks when a whole split terminal tab closes', () => {
     const store = new ClientSessionTabSelectionStore()
     store.activate(snapshot(), 'device-a', 'terminal-a::leaf-b')
@@ -305,6 +327,9 @@ describe('client session-tab selection', () => {
       activeGroupId: 'group-left',
       activeTabIdByGroupId: { 'group-right': 'browser-unified' }
     })
+    const stale = store.project(snapshot(), 'device-a')
+    expect(stale.activeTabId).toBe('browser-unified')
+    expect(stale.tabs.some((tab) => tab.type === 'terminal')).toBe(false)
   })
 
   it('drops malformed persisted payloads instead of hydrating them', () => {

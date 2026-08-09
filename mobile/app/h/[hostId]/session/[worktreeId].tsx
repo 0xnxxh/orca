@@ -197,6 +197,8 @@ import { MobileTerminalInputActions } from '../../../../src/session/MobileTermin
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
 import { openMobileTerminalFileTap } from '../../../../src/session/mobile-terminal-file-tap-open'
+import { deliverCreatedTerminalPrompt } from '../../../../src/session/created-terminal-prompt-delivery'
+import { MobileSessionTabIntentTracker } from '../../../../src/session/mobile-session-tab-intent-tracker'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
   acceptSessionSnapshot,
@@ -242,9 +244,15 @@ import {
   readTerminalViewportDims,
   runTerminalViewportFitPass
 } from '../../../../src/session/mobile-terminal-viewport-resubscribe'
-import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
+import {
+  activateMobileSessionTab,
+  restoreTabSelection
+} from '../../../../src/session/mobile-session-tab-activation'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
-import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
+import {
+  getMobileSessionTabFocusKey,
+  runAcceptedMobileSessionTabsEffects
+} from '../../../../src/session/mobile-session-tabs-accepted-effects'
 import type {
   SessionTabsApplyOutcome,
   SessionTabsStreamSource
@@ -1049,7 +1057,7 @@ export default function SessionScreen() {
   const selectedSessionTabIdRef = useRef<string | null>(null)
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: created browser/markdown tabs sync later, so retain a stable key until their session tab arrives.
-  const pendingSessionTabFocusKeyRef = useRef<string | null>(null)
+  const sessionTabIntentRef = useRef(new MobileSessionTabIntentTracker())
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
   const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: route the terminal URL tap through a ref so it runs the current handleCreateBrowser closure (the memoized one may hold a null-client render).
@@ -1845,8 +1853,8 @@ export default function SessionScreen() {
       const followsHost = result.navigationIntent === 'follow'
       const pendingHandle = followsHost ? null : pendingActiveTerminalHandleRef.current
       if (followsHost) {
+        sessionTabIntentRef.current.supersede()
         pendingActiveTerminalHandleRef.current = null
-        pendingSessionTabFocusKeyRef.current = null
       }
       const resolved = resolveActiveSessionTab(nextTabs, {
         pendingActiveSessionTabId,
@@ -2372,10 +2380,10 @@ export default function SessionScreen() {
       runAcceptedMobileSessionTabsEffects<MobileSessionTab>({
         effectiveTabs,
         source,
-        getPendingTabFocusKey: () => pendingSessionTabFocusKeyRef.current,
+        getPendingTabFocusKey: () => sessionTabIntentRef.current.pendingFocusKey,
         clearPendingTabFocusKey: (focusKey) => {
-          if (pendingSessionTabFocusKeyRef.current === focusKey) {
-            pendingSessionTabFocusKeyRef.current = null
+          if (sessionTabIntentRef.current.pendingFocusKey === focusKey) {
+            sessionTabIntentRef.current.pendingFocusKey = null
           }
         },
         activatePendingTab: (tab) => switchSessionTabRef.current?.(tab),
@@ -2395,7 +2403,7 @@ export default function SessionScreen() {
   const hasSessionTabsRecoveryNeed = useCallback(
     () =>
       closedTabTombstonesRef.current.size > 0 ||
-      pendingSessionTabFocusKeyRef.current !== null ||
+      sessionTabIntentRef.current.pendingFocusKey !== null ||
       // Why: a chat-covered handle that ran out of rearms and left `terminal.list`
       // was reminted by a desktop graph reload. Only a fresh tab snapshot carries
       // the replacement handle, so force one instead of holding the composer locked.
@@ -2679,7 +2687,7 @@ export default function SessionScreen() {
     pendingActiveSessionTabIdRef.current = null
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
-    pendingSessionTabFocusKeyRef.current = null
+    sessionTabIntentRef.current.supersede()
     pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
     terminalDiagnosticsRef.current.resetRoute()
@@ -2852,6 +2860,7 @@ export default function SessionScreen() {
   const switchTab = useCallback(
     (handle: string) => {
       triggerSelection()
+      sessionTabIntentRef.current.supersede()
       const matchingTab = sessionTabs.find(
         (tab): tab is Extract<MobileSessionTab, { type: 'terminal' }> =>
           tab.type === 'terminal' && tab.terminal === handle
@@ -2897,6 +2906,7 @@ export default function SessionScreen() {
 
   const switchSessionTab = useCallback(
     (tab: MobileSessionTab) => {
+      sessionTabIntentRef.current.supersede()
       if (tab.type === 'terminal') {
         if (typeof tab.terminal === 'string') {
           switchTab(tab.terminal)
@@ -3202,13 +3212,12 @@ export default function SessionScreen() {
   }, [])
 
   // Tap a terminal file path → resolve on host, open as file tab (mirrors desktop Cmd/Ctrl-click); silent on a miss.
-  const handleFileTapActivationSeqRef = useRef(0)
   const handleFileTap = useCallback(
     (handle: string, pathText: string, line: number | null, column: number | null) => {
       if (handle !== activeHandleRef.current || !client) {
         return
       }
-      const activationSeq = ++handleFileTapActivationSeqRef.current
+      const activationSeq = sessionTabIntentRef.current.supersede()
       openMobileTerminalFileTap<MobileSessionTab>({
         client,
         hostId,
@@ -3228,7 +3237,7 @@ export default function SessionScreen() {
         getActivationState: (activated) => ({
           activated,
           activationSeq,
-          latestActivationSeq: handleFileTapActivationSeqRef.current,
+          latestActivationSeq: sessionTabIntentRef.current.fileTapActivationSeq,
           sourceTerminalHandle: handle,
           activeTerminalHandle: activeHandleRef.current,
           activeTabType: activeSessionTabTypeRef.current
@@ -3240,15 +3249,16 @@ export default function SessionScreen() {
     [client, fetchSessionTabs, hostId, routeWorktreeName, router, scheduleDelayedAction, worktreeId]
   )
 
-  const handleOpenedFileDiffActivationSeqRef = useRef(0)
   // Capture active tab at tap time; reading it after openDiff would misread a mid-RPC switch and let the retry steal focus.
   const fileOpenStartActiveTabIdRef = useRef<string | null>(null)
+  const fileOpenStartActivationSeqRef = useRef(0)
   const handleFileOpenStart = useCallback(() => {
+    fileOpenStartActivationSeqRef.current = sessionTabIntentRef.current.supersede()
     fileOpenStartActiveTabIdRef.current = activeSessionTabIdRef.current
   }, [])
   const handleOpenedFileDiff = useCallback(
     (relativePath: string) => {
-      const activationSeq = ++handleOpenedFileDiffActivationSeqRef.current
+      const activationSeq = fileOpenStartActivationSeqRef.current
       const activeTabIdAtTap = fileOpenStartActiveTabIdRef.current
 
       let activated = false
@@ -3263,7 +3273,7 @@ export default function SessionScreen() {
           getActivationState: () => ({
             activated,
             activationSeq,
-            latestActivationSeq: handleOpenedFileDiffActivationSeqRef.current
+            latestActivationSeq: sessionTabIntentRef.current.diffActivationSeq
           }),
           switchSessionTab: (tab) => switchSessionTabRef.current?.(tab)
         })
@@ -3782,6 +3792,7 @@ export default function SessionScreen() {
     if (!client || creatingTerminalRef.current) {
       return
     }
+    const intentRevision = sessionTabIntentRef.current.supersede()
     creatingTerminalRef.current = true
 
     setCreating(true)
@@ -3810,6 +3821,27 @@ export default function SessionScreen() {
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
+        const selectCreated = intentRevision === sessionTabIntentRef.current.revision
+        if (typeof created.terminal === 'string') {
+          deliverCreatedTerminalPrompt({
+            client,
+            terminal: created.terminal,
+            text: options?.initialPrompt,
+            enter: options?.enter,
+            deviceToken: deviceTokenRef.current,
+            successToast: options?.successToast,
+            errorToast: options?.errorToast,
+            onDelivered: options?.onPromptSent,
+            onSuccess: triggerSuccess,
+            onError: triggerError,
+            showToast
+          })
+        }
+        if (!selectCreated) {
+          restoreTabSelection(client, `id:${worktreeId}`, selectedSessionTabIdRef.current)
+          scheduleDelayedAction(() => void fetchSessionTabs(), 500)
+          return
+        }
         // Why: unsubscribe the old terminal so the server restores its desktop dims; otherwise its restore timer is never set.
         const prev = activeHandleRef.current
         if (prev) {
@@ -3823,7 +3855,7 @@ export default function SessionScreen() {
           if (prev.some((tab) => tab.id === created.id)) {
             return prev
           }
-          return [...prev, { ...created, isActive: true }]
+          return [...prev, { ...created, isActive: selectCreated }]
         })
         if (typeof created.terminal === 'string') {
           const createdHandle = created.terminal
@@ -3852,45 +3884,6 @@ export default function SessionScreen() {
             return next
           })
           subscribeToTerminal(createdHandle)
-          if (options?.initialPrompt?.trim()) {
-            void client
-              .sendRequest(
-                'terminal.send',
-                buildTerminalSendParams({
-                  terminal: createdHandle,
-                  text: options.initialPrompt,
-                  enter: options.enter !== false,
-                  deviceToken: deviceTokenRef.current
-                })
-              )
-              .then((sendResponse) => {
-                if (!sendResponse.ok) {
-                  throw new Error(
-                    (sendResponse as RpcFailure).error.message || 'Failed to send notes'
-                  )
-                }
-                const result = (sendResponse as RpcSuccess).result as {
-                  send?: { accepted?: boolean }
-                }
-                if (result.send?.accepted === false) {
-                  throw new Error('Terminal input is locked by another client.')
-                }
-                triggerSuccess()
-                showToast(options.successToast ?? 'Notes sent')
-                options.onPromptSent?.()
-              })
-              .catch((err) => {
-                triggerError()
-                showToast(
-                  options.errorToast ??
-                    (err instanceof Error ? err.message : "Couldn't send notes"),
-                  1800
-                )
-              })
-          } else if (options?.successToast) {
-            triggerSuccess()
-            showToast(options.successToast)
-          }
         } else {
           // Why: a prior pending handle must not outlive a create that returned no terminal; web-ready subscribe gates on this ref.
           pendingActiveTerminalHandleRef.current = null
@@ -3950,6 +3943,7 @@ export default function SessionScreen() {
     if (!client || creatingMarkdown) {
       return
     }
+    const intentRevision = sessionTabIntentRef.current.supersede()
 
     setCreatingMarkdown(true)
     setCreateError('')
@@ -3980,7 +3974,9 @@ export default function SessionScreen() {
         if (!openResponse.ok) {
           throw new Error((openResponse as RpcFailure).error.message)
         }
-        pendingSessionTabFocusKeyRef.current = `markdown:${relativePath}`
+        if (intentRevision === sessionTabIntentRef.current.revision) {
+          sessionTabIntentRef.current.pendingFocusKey = `markdown:${relativePath}`
+        }
         scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         return
       }
@@ -4010,6 +4006,7 @@ export default function SessionScreen() {
       showToast(message, 1400)
       return false
     }
+    const intentRevision = sessionTabIntentRef.current.supersede()
 
     setCreatingBrowser(true)
     setCreateError('')
@@ -4029,8 +4026,8 @@ export default function SessionScreen() {
       }
       // Focus the new browser tab once it syncs; refresh a few times since the desktop registers the tab asynchronously.
       const created = (response as RpcSuccess).result as { browserPageId?: string }
-      if (created.browserPageId) {
-        pendingSessionTabFocusKeyRef.current = `browser:${created.browserPageId}`
+      if (created.browserPageId && intentRevision === sessionTabIntentRef.current.revision) {
+        sessionTabIntentRef.current.pendingFocusKey = `browser:${created.browserPageId}`
       }
       void fetchSessionTabs()
       scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
@@ -4151,11 +4148,8 @@ export default function SessionScreen() {
       })
       if (response.ok) {
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
-        if (
-          tab.type === 'browser' &&
-          `browser:${tab.browserPageId}` === pendingSessionTabFocusKeyRef.current
-        ) {
-          pendingSessionTabFocusKeyRef.current = null
+        if (getMobileSessionTabFocusKey(tab) === sessionTabIntentRef.current.pendingFocusKey) {
+          sessionTabIntentRef.current.pendingFocusKey = null
         }
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal

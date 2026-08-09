@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcResponse } from '../transport/types'
-import { activateMobileSessionTab, focusMobileTerminal } from './mobile-session-tab-activation'
+import {
+  activateMobileSessionTab,
+  focusMobileTerminal,
+  restoreTabSelection
+} from './mobile-session-tab-activation'
 
 function success(): RpcResponse {
   return { id: 'rpc-1', ok: true, result: {}, _meta: { runtimeId: 'runtime-1' } }
@@ -79,5 +83,20 @@ describe('mobile session tab activation', () => {
       })
     ).rejects.toBeInstanceOf(LogicalClientCutoverError)
     expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores a newer selection after a delayed create completes', () => {
+    const sendRequest = vi.fn<RpcClient['sendRequest']>().mockResolvedValue(success())
+    const client = clientWith(sendRequest)
+
+    restoreTabSelection(client, 'id:worktree-1', 'tab-1')
+    restoreTabSelection(client, 'id:worktree-1', null)
+
+    expect(sendRequest).toHaveBeenCalledExactlyOnceWith('session.tabs.activate', {
+      worktree: 'id:worktree-1',
+      tabId: 'tab-1',
+      notifyClients: false,
+      navigation: 'caller'
+    })
   })
 })

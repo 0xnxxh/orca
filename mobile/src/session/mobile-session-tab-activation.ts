@@ -89,3 +89,19 @@ export function activateMobileSessionTab(
     params.tabId
   )
 }
+
+// Why: a delayed create selected the caller on the host; restore the newer follow/tap that won.
+export function restoreTabSelection(
+  client: ActivationClient,
+  worktree: string,
+  tabId: string | null
+): void {
+  if (tabId) {
+    void activateMobileSessionTab(client, {
+      worktree,
+      tabId,
+      notifyClients: false,
+      navigation: 'caller'
+    }).catch(() => {})
+  }
+}

@@ -18,6 +18,13 @@ type Options<Tab extends AcceptedSessionTab> = {
   markActiveMarkdownStale: (tabId: string) => void
 }
 
+export function getMobileSessionTabFocusKey(tab: AcceptedSessionTab): string | null {
+  if (tab.type === 'browser') {
+    return `browser:${tab.browserPageId}`
+  }
+  return tab.type === 'markdown' ? `markdown:${tab.relativePath}` : null
+}
+
 export function runAcceptedMobileSessionTabsEffects<Tab extends AcceptedSessionTab>({
   effectiveTabs,
   source,
@@ -29,9 +36,7 @@ export function runAcceptedMobileSessionTabsEffects<Tab extends AcceptedSessionT
   const pendingFocusKey = getPendingTabFocusKey()
   if (pendingFocusKey) {
     const pendingTab = effectiveTabs.find(
-      (tab) =>
-        (tab.type === 'browser' && `browser:${tab.browserPageId}` === pendingFocusKey) ||
-        (tab.type === 'markdown' && `markdown:${tab.relativePath}` === pendingFocusKey)
+      (tab) => getMobileSessionTabFocusKey(tab) === pendingFocusKey
     )
     if (pendingTab) {
       clearPendingTabFocusKey(pendingFocusKey)

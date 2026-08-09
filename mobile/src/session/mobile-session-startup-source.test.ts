@@ -163,6 +163,35 @@ describe('mobile session startup', () => {
     expect(readyTerminalSwitch).toContain("navigation: 'caller'")
   })
 
+  it('lets a newer tab intent supersede delayed created-tab focus', () => {
+    const readyTerminalSwitch = sliceBetween(
+      'const switchTab = useCallback(',
+      'const switchSessionTab = useCallback('
+    )
+    const sessionTabSwitch = sliceBetween(
+      'const switchSessionTab = useCallback(',
+      '// Ref to latest switchSessionTab'
+    )
+    const applySessionTabs = sliceBetween(
+      'const applySessionTabs = useCallback(',
+      'const readMarkdownTab = useCallback('
+    )
+    const createTerminal = sliceBetween(
+      'async function handleCreateTerminal(',
+      '// Quick commands spawn a fresh terminal tab'
+    )
+
+    expect(readyTerminalSwitch).toContain('sessionTabIntentRef.current.supersede()')
+    expect(sessionTabSwitch).toContain('sessionTabIntentRef.current.supersede()')
+    expect(applySessionTabs).toContain(
+      'if (followsHost) {\n        sessionTabIntentRef.current.supersede()'
+    )
+    expect(createTerminal).toContain(
+      'const selectCreated = intentRevision === sessionTabIntentRef.current.revision'
+    )
+    expect(source).toContain('intentRevision === sessionTabIntentRef.current.revision')
+  })
+
   it('keeps background and pending session-tab activation local to the phone', () => {
     const activationRequests = source.split('activateMobileSessionTab(client,').slice(1)
 
