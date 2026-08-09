@@ -85,8 +85,6 @@ const SUBSTITUTION_GROUPS = [
 const SUBSTITUTION_SHAPES: readonly {
   name: string
   slug: string
-  knownBroken: boolean
-  knownBrokenReason: string
   dispatch: (session: CDPSession, keystroke: SubstitutedKeystroke) => Promise<void>
 }[] = [
   {
@@ -95,8 +93,6 @@ const SUBSTITUTION_SHAPES: readonly {
     // guards the frameworks that do rewrite `key`; it is not the regression guard.
     name: 'the keydown already carries the substituted glyph',
     slug: 'rewritten-keydown',
-    knownBroken: false,
-    knownBrokenReason: '',
     dispatch: (session, keystroke) =>
       dispatchImeRewrittenPrintableKey(session, {
         key: keystroke.glyph,
@@ -105,7 +101,7 @@ const SUBSTITUTION_SHAPES: readonly {
       })
   },
   {
-    // Red on `main`, by design — this is the acceptance criterion, not a flake.
+    // The regression guard. Red on `main`, green from the structural-forwarder layer down.
     //
     // The keydown carries the plain Latin `,` and the `，` exists only in the following `input`
     // event, so anything that produces bytes from the keydown emits the ASCII form and destroys
@@ -115,15 +111,13 @@ const SUBSTITUTION_SHAPES: readonly {
     // and the preload API surface is frozen so no spec can stub it — meaning correctness here is
     // not expressible as a test until the gate goes away.
     //
-    // Closed by the structural rule in the re-land design: bytes for printable characters come
-    // only from the `input` event, decided on the event's own shape with no input-source read.
-    // When that lands, this test starts passing and Playwright fails the run until the
-    // `test.fail()` marker below is deleted.
+    // Closed by the structural rule one layer below: bytes for printable characters come only from
+    // the `input` event, decided on the event's own shape with no input-source read. Verified on
+    // real macOS hardware — with an Apple pinyin source selected, the pty receives ef bc 8c e3 80 82
+    // (，。) where main sends ASCII. Note main can pass this by luck: an input source whose id
+    // happens to contain an allowlist term, such as Sogou's, satisfies the old gate.
     name: 'the keydown still carries the ASCII layout key',
     slug: 'substituted-insert-text',
-    knownBroken: true,
-    knownBrokenReason:
-      'the keydown-side bypass is gated on a macOS input-source allowlist, so the ASCII form wins on every host that cannot satisfy it',
     dispatch: (session, keystroke) =>
       dispatchImeSubstitutedTextKey(session, keystroke, keystroke.glyph)
   }
@@ -222,11 +216,10 @@ test.describe('Terminal CJK IME committed text', () => {
 
   for (const shape of SUBSTITUTION_SHAPES) {
     for (const group of SUBSTITUTION_GROUPS) {
-      test(`sends full-width ${group.label} and never their ASCII form when ${shape.name}${shape.knownBroken ? ' @ime-known-broken' : ''}`, async ({
+      test(`sends full-width ${group.label} and never their ASCII form when ${shape.name}`, async ({
         orcaPage,
         testRepoPath
       }, testInfo) => {
-        test.fail(shape.knownBroken, shape.knownBrokenReason)
         await reloadWithMacImePolicy(orcaPage)
         const { ptyId, session } = await openTerminalArena(orcaPage)
         const arena: CjkTerminalArena = { page: orcaPage, session, ptyId }
