@@ -31,7 +31,7 @@ import {
 import { hostedAdversarialFileExecutionEvidence } from '../../scripts/hosted-webview-adversarial-files.mjs'
 
 const execFileAsync = promisify(execFile)
-const fixtures: Array<Awaited<ReturnType<typeof createHostedAdversarialRepositoryFixture>>> = []
+const fixtures: Awaited<ReturnType<typeof createHostedAdversarialRepositoryFixture>>[] = []
 const androidHarnessSource = readFileSync(
   new URL('../../scripts/run-hosted-android-source-control-review-e2e.mjs', import.meta.url),
   'utf8'

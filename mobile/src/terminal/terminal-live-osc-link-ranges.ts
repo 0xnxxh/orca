@@ -94,11 +94,7 @@ export function createTerminalLiveOscLinkTracker() {
       return completed
     },
     trimLeadingRow() {
-      if (active && active.row > 0) {
-        active = { ...active, row: active.row - 1 }
-      } else {
-        active = null
-      }
+      active = active && active.row > 0 ? { ...active, row: active.row - 1 } : null
     },
     reset() {
       active = null
