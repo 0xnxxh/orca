@@ -24809,7 +24809,7 @@ export class OrcaRuntimeService {
       if (!this.ptyController?.spawn) {
         throw new Error('runtime_unavailable')
       }
-      const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+      let workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
       const launchOpts = await this.resolveAgentTerminalCreateOptions(workspace, opts)
       let ptySpawnCommitReported = false
       const reportPtySpawnCommitted = (): void => {
@@ -24819,8 +24819,18 @@ export class OrcaRuntimeService {
         ptySpawnCommitReported = true
         launchOpts.onPtySpawnCommitted?.()
       }
-      const cwd =
-        this.resolveWorkspaceTerminalStartupCwd(workspace, launchOpts.cwd) ?? workspace.path
+      let cwd = this.resolveWorkspaceTerminalStartupCwd(workspace, launchOpts.cwd) ?? workspace.path
+      const migrateLaunchWorkspace = (): boolean => {
+        const migratedWorkspace = this.migrateTerminalWorkspaceLaunchScope(workspace)
+        if (migratedWorkspace === workspace) {
+          return false
+        }
+        cwd =
+          this.rebaseTerminalWorkspaceRequestedCwd(cwd, workspace.path, migratedWorkspace.path) ??
+          migratedWorkspace.path
+        workspace = migratedWorkspace
+        return true
+      }
       let preAllocatedHandle =
         launchOpts.preAllocatedHandle ?? this.createPreAllocatedTerminalHandle()
       // Why: mint tabId in main before spawn so paneKey is known at PTY env
@@ -24951,6 +24961,10 @@ export class OrcaRuntimeService {
         if (launchOpts.signal?.aborted) {
           throw new Error('client_disconnected')
         }
+        if (migrateLaunchWorkspace()) {
+          // Why: the old path may no longer exist; restart preflight before granting the provider a spawn.
+          return await this.createTerminal(`id:${workspace.id}`, { ...opts, cwd })
+        }
         const persistHostSessionBinding =
           launchOpts.persistHostSessionBinding ||
           launchOpts.surfaceOwner === false ||
@@ -25016,6 +25030,7 @@ export class OrcaRuntimeService {
         if (!result.stablePaneOwner) {
           reportPtySpawnCommitted()
         }
+        migrateLaunchWorkspace()
         const adoptedStablePane = Boolean(result.stablePaneOwner)
         if (result.agentSessionEnsure) {
           const canonicalSurface = result.agentSessionEnsure.owner.surface
@@ -25114,6 +25129,7 @@ export class OrcaRuntimeService {
         } else if (presentation !== 'background') {
           warning = createTerminalRevealWarning(handle)
         }
+        migrateLaunchWorkspace()
         return {
           handle,
           tabId,
