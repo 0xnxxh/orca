@@ -128,8 +128,6 @@ import {
 } from '../../../../shared/terminal-mode-reset-profiles'
 import { buildFreshShellViewportBlankingSequence } from './terminal-restored-viewport'
 import { createShellReadyMarkerScanState, scanForShellReadyMarker } from './shell-ready-marker-scan'
-import { shouldUseShellReadyStartupDelivery } from '../../../../shared/codex-startup-delivery'
-import { resolveSetupAgentSequenceLaunchCommand } from '../../../../shared/setup-agent-sequencing'
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import {
   INITIAL_MODE_2031_REPLY_SCAN_STATE,
@@ -3810,7 +3808,9 @@ export function connectPanePty(
     command: shouldDeliverStartupViaTerminalPaste ? undefined : paneStartup?.command,
     startupCommandDelivery: shouldDeliverStartupViaTerminalPaste
       ? undefined
-      : paneStartup?.startupCommandDelivery,
+      : connectionId && paneStartup?.command
+        ? 'shell-ready'
+        : paneStartup?.startupCommandDelivery,
     connectionId,
     executionHostId,
     worktreeId: deps.worktreeId,
@@ -4794,21 +4794,31 @@ export function connectPanePty(
           ? { command: paneStartup.command }
           : null
         : null
-    const startupShellReadyCommandHint = resolveSetupAgentSequenceLaunchCommand(
-      paneStartup?.env ?? {},
-      paneStartup?.command
-    )
+    // Why: every renderer-delivered SSH command needs the relay's readiness marker;
+    // the existing fallback preserves shells that cannot emit it.
     const shouldWaitForSshShellReady =
       Boolean(connectionId) &&
-      shouldUseShellReadyStartupDelivery({
-        command: startupShellReadyCommandHint,
-        startupCommandDelivery: paneStartup?.startupCommandDelivery
-      }) &&
+      Boolean(pendingStartupCommand) &&
       !shouldDeliverStartupViaTerminalPaste
-    const sshShellReadyMarkerScan = shouldWaitForSshShellReady
+    let sshShellReadyMarkerScan = shouldWaitForSshShellReady
       ? createShellReadyMarkerScanState()
       : null
     let sshStartupShellReady = !shouldWaitForSshShellReady
+    const armSshStartupShellReady = (): void => {
+      if (!connectionId || !pendingStartupCommand || shouldDeliverStartupViaTerminalPaste) {
+        return
+      }
+      if (startupInjectTimer !== null) {
+        clearTimeout(startupInjectTimer)
+        startupInjectTimer = null
+      }
+      if (sshShellReadyFallbackTimer !== null) {
+        clearTimeout(sshShellReadyFallbackTimer)
+        sshShellReadyFallbackTimer = null
+      }
+      sshShellReadyMarkerScan = createShellReadyMarkerScanState()
+      sshStartupShellReady = false
+    }
     const markSshStartupShellReady = (): void => {
       if (sshStartupShellReady) {
         return
@@ -5121,7 +5131,8 @@ export function connectPanePty(
       return transport.sendInput('\r')
     }
     const schedulePendingStartupCommandDelivery = (): void => {
-      if (!pendingStartupCommand) {
+      const startup = pendingStartupCommand
+      if (!startup) {
         return
       }
       if (!sshStartupShellReady) {
@@ -5142,8 +5153,7 @@ export function connectPanePty(
       startupInjectTimer = setTimeout(() => {
         startupInjectTimer = null
         void (async () => {
-          const startup = pendingStartupCommand
-          if (!startup || disposed) {
+          if (pendingStartupCommand !== startup || disposed) {
             return
           }
           if (shouldDeliverStartupViaTerminalPaste) {
@@ -5242,6 +5252,7 @@ export function connectPanePty(
         // must still submit the resume command to the fresh remote shell.
         pendingStartupCommand = { command: startupOverride.command }
       }
+      armSshStartupShellReady()
       const coldRestoreOverride =
         startupOverride && 'launchConfig' in startupOverride
           ? (startupOverride as ColdRestoreAgentResumeStartup)
@@ -5264,6 +5275,9 @@ export function connectPanePty(
         cols,
         rows,
         ...(startupOverride?.command ? { command: startupOverride.command } : {}),
+        ...(connectionId && startupOverride?.command
+          ? { startupCommandDelivery: 'shell-ready' as const }
+          : {}),
         ...(startupOverride?.env
           ? { env: mergeStartupEnvWithPaneIdentity(startupOverride.env) }
           : {}),
