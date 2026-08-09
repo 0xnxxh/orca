@@ -549,8 +549,9 @@ function App(): React.JSX.Element {
   const historyForwardShortcutLabel = useShortcutLabel('worktree.history.forward')
   const floatingTerminalEnabled = useAppStore((s) => s.settings?.floatingTerminalEnabled === true)
   // Why tracked separately: the flag reads false while settings are still loading, and a
-  // false read at boot must not be treated as the user disabling the feature.
-  const floatingTerminalSettingsHydrated = useAppStore((s) => s.settings !== undefined)
+  // false read at boot must not be treated as the user disabling the feature. The store
+  // initializes `settings` to null (not undefined) - fetchSettings replaces it atomically.
+  const floatingTerminalSettingsHydrated = useAppStore((s) => s.settings != null)
   const floatingTerminalTriggerLocation = useAppStore(
     (s) => s.settings?.floatingTerminalTriggerLocation ?? 'floating-button'
   )
