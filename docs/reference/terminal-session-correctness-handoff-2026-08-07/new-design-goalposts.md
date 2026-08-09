@@ -23,8 +23,9 @@ make that impossible to claim by accident.
 
 | | Count |
 | --- | --- |
-| Step goalposts proven | **2 of 7** |
+| Step goalposts proven | **3 of 7** (one deleted as unreachable) |
 | Global goalposts proven | **2 of 6** |
+| Scope removed by evidence | S7 (death rule) — never built |
 | Oracle clauses green | 12 |
 | Oracle clauses red (awaiting implementation) | 14 |
 | Net production lines so far | **−24** |
@@ -90,20 +91,30 @@ fence's bookkeeping is only written by spawn.
 - Oracle: `src/main/ssh/ssh-relay-session-reattach-pane-fence.test.ts` — 2 red, 1 green
 - Directly closes a defect in already-shipped work.
 
-### S6 — Settle whether the 30s recovery grant executes at all · **IN PROGRESS**
+### S6 — Settle whether the 30s recovery grant executes at all · **PROVEN — it is dead code**
 
-*Guarantee.* Either a production-shaped oracle shows the grant executing, or it
-is shown unreachable and **S7 is deleted rather than built**.
+*Result.* It cannot execute for a real SSH pane. Verified personally:
 
-- Two reviewers independently read it as unreachable for a real SSH pane; the
-  covering test seeds a shape production cannot produce.
-- Scope-deciding: a dead branch means less code, not more.
+- The lease stores a **relay-native** pty id, normalized on write
+  (`persistence.ts:7184`, comment: "app ids are global").
+- The caller passes the **app-form** id (`orca-runtime.ts:16478` ← `toAppSshPtyId`).
+- The comparison is raw `lease.ptyId === ptyId` (`orca-runtime.ts:6310`) with no
+  normalization, so the two forms can never be equal.
+- The branch is also unreachable for a local pane, since it requires an SSH lease.
+- Its covering test seeds both sides as the same literal with a null
+  connectionId — a shape production cannot produce.
 
-### S7 — The death rule · **BLOCKED on S6**
+### S7 — The death rule · **DELETED on S6's evidence**
 
-*Guarantee.* A replacement shell starts only on proof: an observed exit, or the
-same relay process that minted the shell reporting it gone. Everything else
-leaves the shell running.
+Not built. The arbitration machinery existed to referee a branch that never
+executes. Per the design: "if E-1 shows the grant branch unreachable, E-2 is
+deleted and the marker simply never fires, which is the safe end state."
+
+### S8 — Remove the dead recovery-grant path · **NOT STARTED**
+
+*Guarantee.* Deleting it changes no behaviour, because it has none. Needs a
+characterisation oracle first: assert the branch is unreachable via the
+production id shapes, so the deletion is provably inert rather than assumed to be.
 
 ---
 
