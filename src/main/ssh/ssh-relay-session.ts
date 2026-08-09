@@ -100,8 +100,6 @@ import {
   SSH_AI_VAULT_LIST_SESSIONS_TIMEOUT_MS,
   type SshAiVaultRelayListParams
 } from '../../shared/ssh-ai-vault-relay'
-import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
-import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import {
   openSshPtyConsumerSession,
   type OpenSshPtyConsumerSessionOptions,
@@ -187,27 +185,7 @@ type RemoteCliBridgeEnv = {
   pathDelimiter?: ':' | ';'
 }
 
-type ExpectedPtyIdentity = { paneKey?: string; tabId?: string }
 type TargetedDeliveryRecovery = 'confirm-existing' | 'fresh-activation'
-
-function expectedIdentityForLease(lease: {
-  tabId?: string
-  leafId?: string
-}): ExpectedPtyIdentity | null {
-  if (typeof lease.tabId !== 'string' || lease.tabId.length === 0) {
-    return null
-  }
-  const paneKey =
-    isValidTerminalTabId(lease.tabId) &&
-    typeof lease.leafId === 'string' &&
-    isTerminalLeafId(lease.leafId)
-      ? makePaneKey(lease.tabId, lease.leafId)
-      : undefined
-  return {
-    ...(paneKey ? { paneKey } : {}),
-    tabId: lease.tabId
-  }
-}
 
 function parseRecoveryComplete(params: Record<string, unknown>): PtySourceRecoveryComplete | null {
   if (
@@ -1919,15 +1897,11 @@ export class SshRelaySession {
     const activeLeaseByPtyId = activeLease
       ? new Map<string, SshPtyLease>([[relayPtyId, activeLease]])
       : new Map<string, SshPtyLease>()
-    const expectedIdentity = activeLease ? expectedIdentityForLease(activeLease) : undefined
     const attachedLeaseIds = new Set<string>()
     await this.reattachKnownPty({
       ptyProvider,
       ptyId: relayPtyId,
       activeLeaseByPtyId,
-      expectedIdentityByPtyId: expectedIdentity
-        ? new Map([[relayPtyId, expectedIdentity]])
-        : new Map(),
       attachedLeaseIds,
       mux,
       providerGeneration,
@@ -2198,15 +2172,6 @@ export class SshRelaySession {
       .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
     const activeLeaseByPtyId = new Map(activeLeases.map((lease) => [lease.ptyId, lease]))
     const leasedPtyIds = activeLeases.map((lease) => lease.ptyId)
-    // Why: pass pane identity so the relay can reject cross-generation id collisions; tabId falls back for pre-leafId leases.
-    const expectedIdentityByPtyId = new Map(
-      activeLeases
-        .map((lease): [string, ExpectedPtyIdentity] | null => {
-          const expected = expectedIdentityForLease(lease)
-          return expected ? [lease.ptyId, expected] : null
-        })
-        .filter((entry): entry is [string, ExpectedPtyIdentity] => entry !== null)
-    )
     const attachedLeaseIds = new Set<string>()
     // Why: after app restart ptyOwnership is empty, but durable SSH leases still describe grace-window survivors.
     const ptyIds = Array.from(
@@ -2234,7 +2199,6 @@ export class SshRelaySession {
             ptyProvider,
             ptyId,
             activeLeaseByPtyId,
-            expectedIdentityByPtyId,
             attachedLeaseIds,
             mux,
             providerGeneration,
@@ -2267,7 +2231,6 @@ export class SshRelaySession {
     ptyProvider: SshPtyProvider
     ptyId: string
     activeLeaseByPtyId: Map<string, SshPtyLease>
-    expectedIdentityByPtyId: Map<string, ExpectedPtyIdentity>
     attachedLeaseIds: Set<string>
     mux: SshChannelMultiplexer
     providerGeneration: number
@@ -2278,7 +2241,6 @@ export class SshRelaySession {
       ptyProvider,
       ptyId,
       activeLeaseByPtyId,
-      expectedIdentityByPtyId,
       attachedLeaseIds,
       mux,
       providerGeneration,
@@ -2309,7 +2271,6 @@ export class SshRelaySession {
       const attachResult = await this.attachPtyWithRetry(
         ptyProvider,
         ptyId,
-        expectedIdentityByPtyId.get(ptyId),
         recoveryRequest,
         shouldContinue
       )
@@ -2533,7 +2494,6 @@ export class SshRelaySession {
   private async attachPtyWithRetry(
     ptyProvider: SshPtyProvider,
     ptyId: string,
-    expectedIdentity: ExpectedPtyIdentity | undefined,
     recoveryRequest: PtySourceRecoveryRequest | undefined,
     shouldContinue: () => boolean
   ): Promise<SshPtyAttachResult> {
@@ -2543,12 +2503,7 @@ export class SshRelaySession {
         throw lastError ?? new Error('PTY reattach attempt is no longer current')
       }
       try {
-        return await this.attachPtyWithDeadline(
-          ptyProvider,
-          ptyId,
-          expectedIdentity,
-          recoveryRequest
-        )
+        return await this.attachPtyWithDeadline(ptyProvider, ptyId, recoveryRequest)
       } catch (error) {
         lastError = error
         if (!shouldContinue() || isSshPtyNotFoundError(error) || attempt === 1) {
@@ -2563,7 +2518,6 @@ export class SshRelaySession {
   private async attachPtyWithDeadline(
     ptyProvider: SshPtyProvider,
     ptyId: string,
-    expectedIdentity: ExpectedPtyIdentity | undefined,
     recoveryRequest: PtySourceRecoveryRequest | undefined
   ): Promise<SshPtyAttachResult> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -2578,13 +2532,9 @@ export class SshRelaySession {
       timer.unref?.()
     })
     try {
-      const attach = expectedIdentity
-        ? recoveryRequest
-          ? ptyProvider.attachForReconnect(ptyId, expectedIdentity, recoveryRequest)
-          : ptyProvider.attachForReconnect(ptyId, expectedIdentity)
-        : recoveryRequest
-          ? ptyProvider.attachForReconnect(ptyId, undefined, recoveryRequest)
-          : ptyProvider.attachForReconnect(ptyId)
+      const attach = recoveryRequest
+        ? ptyProvider.attachForReconnect(ptyId, recoveryRequest)
+        : ptyProvider.attachForReconnect(ptyId)
       const guardedAttach = attach.then((result) => {
         if (timedOut) {
           result.sourceActivationLease?.rollback()

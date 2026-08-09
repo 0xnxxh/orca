@@ -639,7 +639,9 @@ describe('SshPtyProvider', () => {
       })
     })
 
-    it('reattaches with explicit pane identity when hook env was stripped', async () => {
+    // Pane identity is deliberately no longer sent: the relay's copy is frozen
+    // at spawn, so moving a pane to another tab made it refuse a live shell.
+    it('reattaches without asking the relay to police pane identity', async () => {
       mux.request.mockResolvedValue({ replay: 'buffered-output' })
 
       await provider.spawn({
@@ -654,9 +656,7 @@ describe('SshPtyProvider', () => {
         id: 'pty-old',
         cols: 80,
         rows: 24,
-        suppressReplayNotification: true,
-        expectedPaneKey: 'tab-a:leaf-a',
-        expectedTabId: 'tab-a'
+        suppressReplayNotification: true
       })
     })
 
@@ -736,28 +736,6 @@ describe('SshPtyProvider', () => {
 
     await expect(provider.attachForReconnect(scopedPty1)).rejects.toThrow(
       'Invalid SSH PTY attach incarnation'
-    )
-  })
-
-  it('attachForReconnect forwards expected identity when provided', async () => {
-    await provider.attachForReconnect(scopedPty1, {
-      paneKey: 'tab-a:leaf-a',
-      tabId: 'tab-a'
-    })
-
-    expectRequest(
-      mux.request,
-      'pty.attach',
-      {
-        id: 'pty-1',
-        suppressReplayNotification: true,
-        expectedPaneKey: 'tab-a:leaf-a',
-        expectedTabId: 'tab-a'
-      },
-      expect.objectContaining({
-        timeoutMs: 10_000,
-        beforeResolve: expect.any(Function)
-      })
     )
   })
 

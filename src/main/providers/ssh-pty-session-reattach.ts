@@ -185,9 +185,11 @@ export async function reattachSshPtySession(args: {
   const relaySessionId = toRelaySshPtyId(args.connectionId, args.sessionId)
   console.warn(`[ssh-pty] spawn() called with sessionId=${args.sessionId}, attempting pty.attach`)
   try {
-    // Why: expected pane identity prevents a reused relay id from attaching the wrong shell.
-    const expectedPaneKey = args.options.paneKey ?? args.options.env?.ORCA_PANE_KEY
-    const expectedTabId = args.options.tabId ?? args.options.env?.ORCA_TAB_ID
+    // Why no expected pane identity: the relay froze it at spawn, so moving a
+    // pane to another tab made it refuse a live shell — and refuse by saying
+    // "not found", which read as death. It never caught what it was for either:
+    // a relay restart recycling this id for a new shell leaves pane and tab
+    // matching. Recycling is caught by the incarnation the attach returns.
     const attachResult = await requestSshPtyAttach({
       mux: args.mux,
       relayPtyId: relaySessionId,
@@ -195,9 +197,7 @@ export async function reattachSshPtySession(args: {
         id: relaySessionId,
         cols: args.options.cols,
         rows: args.options.rows,
-        suppressReplayNotification: true,
-        ...(expectedPaneKey ? { expectedPaneKey } : {}),
-        ...(expectedTabId ? { expectedTabId } : {})
+        suppressReplayNotification: true
       },
       installSourceActivation: args.installSourceActivation,
       rememberPtyIncarnation: args.rememberPtyIncarnation

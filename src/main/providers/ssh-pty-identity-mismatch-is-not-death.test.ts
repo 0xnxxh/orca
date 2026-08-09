@@ -99,3 +99,43 @@ describe('a genuine absence is still a death', () => {
     expect(error.message).not.toContain(SSH_PTY_IDENTITY_MISMATCH_ERROR)
   })
 })
+
+// The relay only compares identity fields present on BOTH sides ("absent
+// identity stays permissive", relay/pty-handler.ts). So not sending them stops
+// every relay version from rejecting a moved pane — including relays already
+// deployed on people's hosts, with no wire change and no redeploy.
+//
+// Nothing is lost: the check existed to catch a relay restart recycling pty-N
+// for a new shell, and in exactly that case the pane and tab both still match,
+// so it accepted the wrong shell anyway.
+describe('reattach does not ask the relay to police pane identity', () => {
+  async function attachParams(): Promise<Record<string, unknown>> {
+    const request = vi.fn().mockRejectedValue(new Error('boom'))
+    try {
+      await reattachSshPtySession({
+        mux: { request, notify: vi.fn() } as never,
+        connectionId: CONNECTION_ID,
+        sessionId: RELAY_PTY_ID,
+        options: {
+          cols: 80,
+          rows: 24,
+          paneKey: 'tab-new:leaf-1',
+          tabId: 'tab-new',
+          env: { ORCA_PANE_KEY: 'tab-old:leaf-1', ORCA_TAB_ID: 'tab-old' }
+        } as never
+      })
+    } catch {
+      // the attach failure is not what this clause is about
+    }
+    const call = request.mock.calls.at(0)
+    return (call?.[1] ?? call?.[0] ?? {}) as Record<string, unknown>
+  }
+
+  it('sends no expected pane key', async () => {
+    expect(await attachParams()).not.toHaveProperty('expectedPaneKey')
+  })
+
+  it('sends no expected tab id', async () => {
+    expect(await attachParams()).not.toHaveProperty('expectedTabId')
+  })
+})

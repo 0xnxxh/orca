@@ -182,19 +182,16 @@ export class SshPtyProvider implements IPtyProvider {
 
   async attachForReconnect(
     id: string,
-    expected?: { paneKey?: string; tabId?: string },
     sourceRecovery?: PtySourceRecoveryRequest
   ): Promise<SshPtyAttachResult> {
     // Why: reconnect owns replay delivery so stale/duplicate attach results can
-    // be filtered before they reach the renderer. The expected identity lets the
-    // relay reject a cross-generation id collision instead of reattaching this
-    // lease to a different pane's freshly spawned PTY.
+    // be filtered before they reach the renderer. Pane identity is deliberately
+    // not sent — see reattachSshPtySession; the relay's copy is frozen at spawn,
+    // so it rejected panes that had merely moved tabs.
     const params = {
       id: this.toRelayPtyId(id),
       suppressReplayNotification: true,
-      ...(sourceRecovery ? { sourceRecovery } : {}),
-      ...(expected?.paneKey ? { expectedPaneKey: expected.paneKey } : {}),
-      ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
+      ...(sourceRecovery ? { sourceRecovery } : {})
     }
     const relayPtyId = this.toRelayPtyId(id)
     return await requestSshPtyAttach({

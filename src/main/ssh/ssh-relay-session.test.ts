@@ -531,26 +531,10 @@ describe('SshRelaySession', () => {
     )
   })
 
-  it('forwards a lease tab identity to reattach so a reset relay cannot cross-wire it', async () => {
-    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const { getSshPtyProvider } = await import('../ipc/pty')
-    const mockAttach = vi.fn().mockResolvedValue(undefined)
-    vi.mocked(getSshPtyProvider).mockReturnValue({
-      attachForReconnect: mockAttach,
-      dispose: vi.fn()
-    } as unknown as ReturnType<typeof getSshPtyProvider>)
-    vi.mocked(getPtyIdsForConnection).mockReturnValue([])
-    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
-      { targetId: 'target-1', ptyId: 'pty-1', state: 'detached', tabId: 'tab-a' }
-    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
-
-    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
-    await session.establish(mockConn)
-
-    expect(mockAttach).toHaveBeenCalledWith('pty-1', { tabId: 'tab-a' })
-  })
-
-  it('forwards a lease pane identity when leaf identity is available', async () => {
+  // The relay froze pane identity at spawn, so sending it made a moved pane
+  // unreachable — and it never caught the reused-id case it was written for,
+  // because after a relay restart the pane and tab both still match.
+  it('does not forward pane identity to reattach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const { getSshPtyProvider } = await import('../ipc/pty')
     const mockAttach = vi.fn().mockResolvedValue(undefined)
@@ -567,10 +551,7 @@ describe('SshRelaySession', () => {
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
 
-    expect(mockAttach).toHaveBeenCalledWith('pty-1', {
-      paneKey: `tab-a:${leafId}`,
-      tabId: 'tab-a'
-    })
+    expect(mockAttach).toHaveBeenCalledWith('pty-1')
   })
 
   it('does not expire a live reused relay id when attach rejects identity mismatch', async () => {
@@ -602,10 +583,6 @@ describe('SshRelaySession', () => {
 
     await session.reconnect(mockConn)
 
-    expect(mockAttach).toHaveBeenCalledWith('pty-1', {
-      paneKey: `tab-old:${staleLeafId}`,
-      tabId: 'tab-old'
-    })
     expect(clearProviderPtyState).not.toHaveBeenCalledWith('ssh:target-1@@pty-1')
     expect(deletePtyOwnership).not.toHaveBeenCalledWith('ssh:target-1@@pty-1')
     expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith('target-1', 'pty-1', 'expired')
