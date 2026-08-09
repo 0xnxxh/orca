@@ -36,10 +36,6 @@ const repairPaneWebglCanvasDprMismatch = vi.fn((_pane: unknown) => false)
 vi.mock('@/lib/pane-manager/terminal-canvas-dpr-repair', () => ({
   repairPaneWebglCanvasDprMismatch: (pane: unknown) => repairPaneWebglCanvasDprMismatch(pane)
 }))
-const repairPaneDomLetterSpacingMismatch = vi.fn((_pane: unknown) => false)
-vi.mock('@/lib/pane-manager/terminal-dom-letter-spacing-repair', () => ({
-  repairPaneDomLetterSpacingMismatch: (pane: unknown) => repairPaneDomLetterSpacingMismatch(pane)
-}))
 const resetTerminalLinkifierHoverState = vi.fn()
 const isTerminalLinkifierHoverActive = vi.fn((_terminal: unknown) => false)
 vi.mock('@/lib/pane-manager/terminal-linkifier-hover-reset', () => ({
@@ -174,9 +170,6 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     expect(repairPaneWebglCanvasDprMismatch).toHaveBeenCalledTimes(2)
     expect(repairPaneWebglCanvasDprMismatch).toHaveBeenNthCalledWith(1, first)
     expect(repairPaneWebglCanvasDprMismatch).toHaveBeenNthCalledWith(2, second)
-    expect(repairPaneDomLetterSpacingMismatch).toHaveBeenCalledTimes(2)
-    expect(repairPaneDomLetterSpacingMismatch).toHaveBeenNthCalledWith(1, first)
-    expect(repairPaneDomLetterSpacingMismatch).toHaveBeenNthCalledWith(2, second)
   })
 
   it('flushes hidden-era metric options on reveal and refits the light path', () => {

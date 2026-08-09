@@ -3574,7 +3574,7 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": [],
-      "coverageNotes": "Local macOS evidence on main@1282f5c2d, including #7192's runtime-mirror geometry authority slice. Deterministic renderer coverage includes measurable heavy/light reveal repair for poisoned DOM glyph spacing, including customized spacing, malformed internals, zero-size panes, and bounded failed repair. Provider-contract coverage includes settled window-wake reassertion and SSH relay applied-size readback. Live shell-visible SSH/remote geometry and Windows ConPTY readback remain non-blocking gaps.",
+      "coverageNotes": "Local macOS evidence on main@1282f5c2d, including #7192's runtime-mirror geometry authority slice. Deterministic provider-contract coverage now includes settled window-wake reassertion and SSH relay applied-size readback. Live shell-visible SSH/remote geometry and Windows ConPTY readback remain non-blocking gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6644",
         "https://github.com/stablyai/orca/pull/6649",
@@ -3584,20 +3584,16 @@
         "https://github.com/stablyai/orca/pull/6939",
         "https://github.com/stablyai/orca/pull/7192"
       ],
-      "invariant": "A visible desktop-owned terminal cannot trust 0x0, stale requested size, renderer-only size, or a DOM cell width that materially diverges from glyph advance; xterm, fit/proposed size, applied PTY size, shell-visible size, and the runtime mirror's parse dimensions must converge or enter explicit degraded state. DOM repair must preserve configured letter spacing and stay bounded, and mirror resize reflow must stay ordered with queued output writes.",
-      "oracle": "The current executable slice uses deterministic frame schedulers and fake providers to force 0x0 first fit, delayed layout settle, dropped resize/readback drift, hidden-to-visible activation, and window wake. It also injects a poisoned DOM cell width, takes the unchanged-size reveal branch that skips fitting, and requires letter spacing to heal once while customized, malformed, WebGL, zero-size, throwing, and persistently mismatched cases remain safe and bounded. It asserts the renderer forwards a usable size, pty:getSize reports applied rather than merely requested size where available, visibility resume reasserts real drift without hot listSessions, one settled wake produces one geometry-only readback, and SSH relay readback is authoritative with bounded fallback. Shell-visible stty/echo-wrap convergence remains a live-gate follow-up.",
+      "invariant": "A visible desktop-owned terminal cannot trust 0x0, stale requested size, or renderer-only size; xterm, fit/proposed size, applied PTY size, shell-visible size, and the runtime mirror's parse dimensions must converge or enter explicit degraded state, and mirror resize reflow must stay ordered with queued output writes.",
+      "oracle": "The current executable slice uses deterministic frame schedulers and fake providers to force 0x0 first fit, delayed layout settle, dropped resize/readback drift, hidden-to-visible activation, and window wake. It asserts the renderer forwards a usable size, pty:getSize reports applied rather than merely requested size where available, visibility resume reasserts real drift without hot listSessions, one settled wake produces one geometry-only readback, and SSH relay readback is authoritative with bounded fallback. Shell-visible stty/echo-wrap convergence remains a live-gate follow-up.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-size-reconcile.test.ts src/renderer/src/components/terminal-pane/pty-size-reassertion.test.ts src/renderer/src/components/terminal-pane/split-right-white-screen.test.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/main/ipc/pty.test.ts src/main/providers/ssh-pty-provider.test.ts src/main/runtime/orca-runtime.test.ts src/relay/pty-handler.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/pane-manager/terminal-dom-letter-spacing-repair.test.ts src/renderer/src/lib/pane-manager/pane-reveal-fit.test.ts src/renderer/src/components/terminal-pane/terminal-visibility-resume.test.ts"
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-size-reconcile.test.ts src/renderer/src/components/terminal-pane/pty-size-reassertion.test.ts src/renderer/src/components/terminal-pane/split-right-white-screen.test.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/main/ipc/pty.test.ts src/main/providers/ssh-pty-provider.test.ts src/main/runtime/orca-runtime.test.ts src/relay/pty-handler.test.ts"
       ],
       "testFiles": [
         "src/renderer/src/components/terminal-pane/pty-size-reconcile.test.ts",
         "src/renderer/src/components/terminal-pane/pty-size-reassertion.test.ts",
         "src/renderer/src/components/terminal-pane/split-right-white-screen.test.ts",
         "src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts",
-        "src/renderer/src/lib/pane-manager/terminal-dom-letter-spacing-repair.test.ts",
-        "src/renderer/src/lib/pane-manager/pane-reveal-fit.test.ts",
-        "src/renderer/src/components/terminal-pane/terminal-visibility-resume.test.ts",
         "src/main/ipc/pty.test.ts",
         "src/main/providers/ssh-pty-provider.test.ts",
         "src/main/runtime/orca-runtime.test.ts",
@@ -3632,25 +3628,6 @@
           "assertions": [
             "window focus reasserts PTY size after fitting",
             "the immediate and settled wake fits produce exactly one geometry-only reassertion"
-          ]
-        },
-        {
-          "file": "src/renderer/src/lib/pane-manager/terminal-dom-letter-spacing-repair.test.ts",
-          "assertions": [
-            "poisoned positive and negative DOM glyph spacing heals in one measurable pass",
-            "customized, malformed, WebGL, zero-size, throwing, and unresolved cases remain unchanged, contained, and bounded"
-          ]
-        },
-        {
-          "file": "src/renderer/src/lib/pane-manager/pane-reveal-fit.test.ts",
-          "assertions": [
-            "an unchanged-size and unchanged-grid reveal still checks DOM glyph spacing without forcing a fit"
-          ]
-        },
-        {
-          "file": "src/renderer/src/components/terminal-pane/terminal-visibility-resume.test.ts",
-          "assertions": [
-            "a light tab reveal checks each revealed pane exactly once for poisoned DOM glyph spacing"
           ]
         },
         {
@@ -3704,11 +3681,11 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "#7192 proved the mirror slice red before its fix (snapshot stayed 80x24, queued write parsed at the wrong width). The DOM-spacing repair tests fail without the repair and the unchanged-grid reveal test fails when its lifecycle call is removed; the renderer 0x0/settle slices do not have recorded red runs."
+        "evidence": "#7192 proved the mirror slice red before its fix (snapshot stayed 80x24, queued write parsed at the wrong width). The renderer 0x0/settle slices do not have recorded red runs."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "The wake hook count test permits two visual fits but exactly one applied-size read per visible pane and no broad visibility/agent lifecycle call. DOM glyph-spacing detection runs once per currently revealed pane, outside ordinary fit/resize paths; a persistent mismatch gets at most one measurement attempt until healthy metrics are observed. SSH readback has a one-second timeout, caches stable method-not-found, and retries only transient failures. No polling, listSessions scan, subprocess, or unbounded retry was added."
+        "evidence": "The wake hook count test permits two visual fits but exactly one applied-size read per visible pane and no broad visibility/agent lifecycle call. SSH readback has a one-second timeout, caches stable method-not-found, and retries only transient failures. No polling, listSessions scan, subprocess, or unbounded retry was added."
       },
       "promotionCriteria": [
         "Build deterministic fault hooks before adding broad E2E coverage.",
