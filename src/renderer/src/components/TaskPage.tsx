@@ -287,11 +287,11 @@ import {
   DEFAULT_LINEAR_ORDER_BY,
   DEFAULT_LINEAR_VIEW_MODE,
   LINEAR_DISPLAY_PROPERTIES,
-  resolveLinearIssueViewResumeState,
   selectLinearWorkspaceIssueFilter,
   serializeLinearIssueViewResumeState,
   setLinearWorkspaceIssueFilter
 } from '../../../shared/linear-issue-view-resume-state'
+import { loadLinearIssueView, saveLinearIssueView } from './linear-issue-view-storage'
 import {
   isNewIssueDraftContentful,
   resolveNewIssueOpenSeed,
@@ -4754,7 +4754,7 @@ export default function TaskPage(): React.JSX.Element {
     setLinearSearchInput(linearQuery)
     setAppliedLinearSearch(linearQuery)
 
-    const linearIssueView = resolveLinearIssueViewResumeState(taskResumeState?.linearIssueView)
+    const linearIssueView = loadLinearIssueView()
     setLinearViewMode(linearIssueView.viewMode)
     setLinearGroupBy(linearIssueView.groupBy)
     setLinearOrderBy(linearIssueView.orderBy)
@@ -7935,8 +7935,8 @@ export default function TaskPage(): React.JSX.Element {
       linearViewPersistReadyRef.current = true
       return
     }
-    setTaskResumeState({
-      linearIssueView: serializeLinearIssueViewResumeState({
+    saveLinearIssueView(
+      serializeLinearIssueViewResumeState({
         viewMode: linearViewMode,
         groupBy: linearGroupBy,
         orderBy: linearOrderBy,
@@ -7944,7 +7944,7 @@ export default function TaskPage(): React.JSX.Element {
         teamPropertyTouched: linearTeamPropertyTouched,
         filtersByWorkspaceId: linearIssueFiltersByWorkspaceId
       })
-    })
+    )
   }, [
     linearDisplayProperties,
     linearGroupBy,
@@ -7952,7 +7952,6 @@ export default function TaskPage(): React.JSX.Element {
     linearOrderBy,
     linearTeamPropertyTouched,
     linearViewMode,
-    setTaskResumeState,
     taskResumeApplied
   ])
 
