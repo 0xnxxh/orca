@@ -9258,21 +9258,13 @@ describe('Store', () => {
       expect(store.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey?.[paneKey]).toBe(
         'inc-live'
       )
-      // The in-session assertion above is unchanged. Across a RELOAD the SSH case now resolves in
-      // the local partition: STA-3077 step P gave an SSH pane binding one home, and the load fold
-      // carries the incarnation with the binding it fences — leaving it behind would strand the CAS
-      // guard in a partition no reader consults. The preserved value is what this pins, not which
-      // partition holds it, so the assertion follows the binding.
+      // Unchanged by STA-3077 step P. The fold moves an SSH pane's incarnation only when it moves
+      // the binding it fences, and this fixture's tab exists solely in the SSH partition — so
+      // there is no second home to disagree with, nothing folds, and both halves stay together.
       const reloaded = await createStore()
-      const foldedHostId = hostId?.startsWith('ssh:') ? undefined : hostId
-      expect(
-        reloaded.getWorkspaceSession(foldedHostId).terminalPtyIncarnationsByPaneKey?.[paneKey]
-      ).toBe('inc-live')
-      if (hostId?.startsWith('ssh:')) {
-        expect(
-          reloaded.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey?.[paneKey]
-        ).toBeUndefined()
-      }
+      expect(reloaded.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey?.[paneKey]).toBe(
+        'inc-live'
+      )
     }
   )
 

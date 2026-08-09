@@ -8142,7 +8142,11 @@ describe('connectPanePty', () => {
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
   })
 
-  it('spawns a fresh PTY when a non-deferred SSH reattach reports expired via onError', async () => {
+  // STA-3077. `SSH_SESSION_EXPIRED` is produced by the relay's not-found mapping, which also
+  // answers for shells still running under a relay process it replaced — so it is not proof the
+  // shell exited. Respawning here would `--resume` a second agent onto one transcript, so the pane
+  // surfaces as disconnected and the user chooses.
+  it('surfaces a disconnected pane when a non-deferred SSH reattach reports expired via onError', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transport.connect.mockImplementation(
@@ -8167,23 +8171,36 @@ describe('connectPanePty', () => {
     } as StoreState
     const pane = createPane(2)
     const manager = createManager(2)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
     const deps = createDeps({
       restoredLeafId: LEAF_2,
-      restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
+      restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
     })
 
     connectPanePty(pane as never, manager as never, deps as never)
     await flushAsyncTicks(10)
 
+    // Producer pin: the reattach must actually have been attempted and reported expired, or the
+    // no-respawn clauses below would pass for the wrong reason.
+    expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('restored-session')
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
-    expect(transport.connect).toHaveBeenCalledTimes(2)
-    expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'restored-session')
-    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'restored-session')
-    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'fresh-ssh-pty')
-    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'fresh-ssh-pty')
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(
+      onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+    ).toBeDefined()
+    expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+    expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(2, 'fresh-ssh-pty')
+    expect(deps.updateTabPtyId).not.toHaveBeenCalled()
   })
 
-  it('submits a cold-restore resume command after SSH expired-session fallback', async () => {
+  // STA-3077. The resume this used to assert IS the duplicate-transcript defect: an expired report
+  // is the relay's not-found mapping, not proof the shell exited, so `codex ... resume <session>`
+  // would put a second agent process on the transcript the first one is still writing.
+  it('never resumes a cold-restore agent when an SSH reattach reports expired', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -8234,11 +8251,20 @@ describe('connectPanePty', () => {
           }
         }
       } as StoreState
+      // Fixture pin: the resume is genuinely buildable from this record, so "no resume" below
+      // cannot pass because the builder bailed out early for an unrelated reason.
+      expect(isResumableTuiAgent('codex')).toBe(true)
+      expect(
+        normalizeAgentProviderSession({ key: 'session_id', id: 'codex-session-1' })
+      ).not.toBeNull()
+
       const pane = createPane(2)
       const manager = createManager(2)
+      const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
       const deps = createDeps({
         restoredLeafId: LEAF_2,
-        restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
+        restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' },
+        onPtyRecoveryStateRef: { current: onPtyRecoveryState }
       })
 
       connectPanePty(pane as never, manager as never, deps as never)
@@ -8248,23 +8274,23 @@ describe('connectPanePty', () => {
         fn()
       }
 
-      expect(transport.connect).toHaveBeenCalledTimes(2)
-      expect(transport.connect).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          command: "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'",
-          env: expect.objectContaining({
-            ORCA_PANE_KEY: paneKey,
-            ORCA_TAB_ID: 'tab-1',
-            ORCA_WORKTREE_ID: 'wt-1',
-            ORCA_WORKSPACE_ID: 'wt-1',
-            ORCA_AGENT_LAUNCH_TOKEN: expect.stringMatching(new RegExp(`^${UUID_RE}$`))
-          })
-        })
-      )
-      expect(transport.sendInput).toHaveBeenCalledWith(
+      // Producer pin: the reattach ran and reported expired.
+      expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('restored-session')
+      expect(transport.connect).toHaveBeenCalledTimes(1)
+      // No replacement connection was ever opened, so no shell exists to type a resume into.
+      expect(capturedDataCallback.current).toBeNull()
+      expect(
+        onPtyRecoveryState.mock.calls.find(
+          ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+        )?.[1]?.unreachablePane
+      ).toBeDefined()
+      // The resume path claims the launch config before spawning; nothing claimed one.
+      expect(mockStoreState.registerAgentLaunchConfig).not.toHaveBeenCalled()
+      expect(transport.sendInput).not.toHaveBeenCalledWith(
         "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'\r"
       )
+      expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+      expect(deps.clearTabPtyId).not.toHaveBeenCalled()
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
@@ -8921,6 +8947,10 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalledWith('\x1b[I')
   })
 
+  // STA-3077 moved the replacement behind the disconnected banner: an expired report is the
+  // relay's not-found mapping, not proof the shell exited, so the user starts the new terminal.
+  // The subject here is unchanged — the old connection's callbacks must be fenced off once a
+  // replacement PTY exists, whatever route created it.
   it('drops stale callbacks but delivers fresh replacement output after an old replay clear', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const { getTerminalScrollIntentKind, markTerminalPinnedViewport } =
@@ -8948,9 +8978,11 @@ describe('connectPanePty', () => {
     pane.terminal.buffer.active.baseY = 100
     markTerminalPinnedViewport(pane.terminal)
     const { writes, parseCallbacks } = captureCallbackTerminalWrites(pane)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
     const deps = createDeps({
       restoredLeafId: LEAF_1,
-      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
     })
 
     connectPanePty(pane as never, createManager(1) as never, deps as never)
@@ -8961,6 +8993,16 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(8)
     oldCallbacks.current?.onError?.('SSH_SESSION_EXPIRED: tab-pty')
     oldResult.resolve(undefined)
+    await flushAsyncTicks(20)
+
+    // The expiry no longer respawns on its own; the banner's action is now the route to a
+    // replacement PTY, so drive it to reach this test's subject.
+    expect(connectCount).toBe(1)
+    const published = onPtyRecoveryState.mock.calls.find(
+      ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+    )?.[1]?.unreachablePane
+    expect(published).toBeDefined()
+    published!.onStartNewTerminal()
     await flushAsyncTicks(20)
     expect(replacementCallbacks.current).not.toBeNull()
 
@@ -21317,6 +21359,10 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(4)
   })
 
+  // STA-3077 moved the replacement behind the disconnected banner: an expired report is the
+  // relay's not-found mapping, not proof the shell exited, so the user starts the new terminal.
+  // The subject here is unchanged — a parked snapshot that resolves late must not paint over the
+  // replacement PTY, whatever route created it.
   it('does not paint a delayed parked snapshot over an expired-session replacement', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const sshPtyId = toAppSshPtyId('conn-1', 'relay-pty-expired')
@@ -21352,16 +21398,30 @@ describe('connectPanePty', () => {
 
     const pane = createPane(1)
     const { writes } = captureCallbackTerminalWrites(pane)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
     const binding = connectPanePty(
       pane as never,
       createManager(1) as never,
       createDeps({
         restoredLeafId: LEAF_1,
-        restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId }
+        restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId },
+        onPtyRecoveryStateRef: { current: onPtyRecoveryState }
       }) as never
     )
     await flushAsyncTicks(30)
+
+    // The expiry no longer respawns on its own; the banner's action is now the route to a
+    // replacement PTY, so drive it to reach this test's subject.
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    const published = onPtyRecoveryState.mock.calls.find(
+      ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+    )?.[1]?.unreachablePane
+    expect(published).toBeDefined()
+    published!.onStartNewTerminal()
+    await flushAsyncTicks(30)
     expect(transport.connect).toHaveBeenCalledTimes(2)
+    // A fresh spawn, not a second reattach — the replacement is `freshPtyId`.
+    expect(transport.connect.mock.calls[1]?.[0]?.sessionId).toBeUndefined()
 
     snapshot.resolve({
       data: 'EXPIRED-SESSION-SNAPSHOT\r\n',
@@ -21793,7 +21853,10 @@ describe('connectPanePty', () => {
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
   })
 
-  it('spawns a fresh PTY when a deferred SSH session expired', async () => {
+  // STA-3077, deferred-reconnect twin of the non-deferred onError case. `SSH_SESSION_EXPIRED` is
+  // the relay's not-found mapping and answers for shells still running under a relay process it
+  // replaced, so it is not proof the shell exited and may not authorize a respawn.
+  it('surfaces a disconnected pane when a deferred SSH session reports expired', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transport.connect.mockImplementation(async (opts) => {
@@ -21819,18 +21882,26 @@ describe('connectPanePty', () => {
 
     const pane = createPane(1)
     const manager = createManager(1)
-    const deps = createDeps()
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
+    const deps = createDeps({ onPtyRecoveryStateRef: { current: onPtyRecoveryState } })
 
     connectPanePty(pane as never, manager as never, deps as never)
     await flushAsyncTicks(20)
 
+    // Producer pin: the deferred reattach ran and reported expired.
+    expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('expired-session')
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
     expect(toastInfo).not.toHaveBeenCalled()
-    expect(transport.connect).toHaveBeenCalledTimes(2)
-    expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'expired-session')
-    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'expired-session')
-    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'fresh-ssh-pty')
-    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'fresh-ssh-pty')
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(
+      onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+    ).toBeDefined()
+    expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+    expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(1, 'fresh-ssh-pty')
+    expect(deps.updateTabPtyId).not.toHaveBeenCalled()
   })
 
   it('clears the pending serializer when disposed before deferred SSH expiry resolves', async () => {

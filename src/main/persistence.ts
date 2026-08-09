@@ -7278,6 +7278,7 @@ export class Store {
         continue
       }
       const host: WorkspaceSessionState | undefined = partitions[hostId]
+      const movedPaneKeys: string[] = []
       for (const [tabId, layout] of Object.entries(host?.terminalLayoutsByTabId ?? {})) {
         const bindings = layout.ptyIdsByLeafId
         if (!bindings || Object.keys(bindings).length === 0) {
@@ -7291,18 +7292,21 @@ export class Store {
         }
         localLayout.ptyIdsByLeafId = { ...bindings, ...localLayout.ptyIdsByLeafId }
         layout.ptyIdsByLeafId = {}
+        movedPaneKeys.push(...Object.keys(bindings).map((leafId) => `${tabId}:${leafId}`))
         changed = true
       }
-      // The incarnation is the other half of the same fence — `persistPtyBinding` writes it into
-      // whichever partition it wrote the binding to, so leaving it behind would move the binding
-      // while its CAS guard stayed in the partition nothing reads.
+      // The incarnation is the other half of the same fence, so it moves with its binding and only
+      // with its binding: `persistPtyBinding` writes both into one partition, and separating them
+      // in either direction leaves a CAS comparing against a guard that is somewhere else.
       const incarnations = host?.terminalPtyIncarnationsByPaneKey
-      if (incarnations && Object.keys(incarnations).length > 0) {
-        local.terminalPtyIncarnationsByPaneKey = {
-          ...incarnations,
-          ...local.terminalPtyIncarnationsByPaneKey
+      for (const paneKey of movedPaneKeys) {
+        const incarnationId = incarnations?.[paneKey]
+        if (!incarnationId) {
+          continue
         }
-        host.terminalPtyIncarnationsByPaneKey = {}
+        local.terminalPtyIncarnationsByPaneKey ??= {}
+        local.terminalPtyIncarnationsByPaneKey[paneKey] ??= incarnationId
+        delete incarnations[paneKey]
         changed = true
       }
     }

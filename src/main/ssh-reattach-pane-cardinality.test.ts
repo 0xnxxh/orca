@@ -278,6 +278,28 @@ describe('STA-3077: exact-binding compare-and-swap', () => {
   })
 })
 
+describe('STA-3077 step F: live-layout tab resolution is reattach-only', () => {
+  // The lease's tabId is the frozen side on reattach, so the live layout outranks it there. On a
+  // SPAWN the opposite holds: the caller's tabId is fresh truth and the persisted layout is the
+  // stale side, because the renderer publishes membership on a debounce. Breaking a pane out into
+  // a new tab and spawning into it inside that window would otherwise resolve back to the tab the
+  // pane just left, writing the durable binding and the fence under one tab while the lease and
+  // the runtime registration use the other — the split-coordinate defect step F exists to remove.
+  it('opts into stale-tab resolution only from the reattach bind', async () => {
+    const { readFileSync } = await import('node:fs')
+    const relay = readFileSync('src/main/ssh/ssh-relay-session.ts', 'utf-8')
+    const ipc = readFileSync('src/main/ipc/pty.ts', 'utf-8')
+
+    expect(relay).toContain('tabIdMayBeStale: true')
+    // Every spawn-side bindPaneShell call must leave the flag unset.
+    const spawnBinds = ipc.split('bindPaneShell({').slice(1)
+    expect(spawnBinds.length).toBeGreaterThan(0)
+    for (const call of spawnBinds) {
+      expect(call.slice(0, call.indexOf('})'))).not.toContain('tabIdMayBeStale')
+    }
+  })
+})
+
 describe('STA-3077: the reattach path actually refuses to create', () => {
   // This is the oracle the store-level tests could not provide: `mayCreate`
   // existed and was correct, but no production caller passed it, so reattach

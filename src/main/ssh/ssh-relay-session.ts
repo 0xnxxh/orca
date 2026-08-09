@@ -2470,7 +2470,9 @@ export class SshRelaySession {
           leafId: lease.leafId,
           ptyId: appPtyId,
           incarnationId,
-          mayCreate: false
+          mayCreate: false,
+          // The lease's tabId was frozen when it was written; the pane may have been moved since.
+          tabIdMayBeStale: true
         })
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)

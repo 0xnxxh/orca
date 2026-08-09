@@ -8827,11 +8827,7 @@ export function connectPanePty(
                   if (rejectObsoleteDirectSshReattach(pendingSessionId)) {
                     return
                   }
-                  deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
-                  deps.clearTabPtyId(deps.tabId, pendingSessionId)
-                  startFreshColdRestoreAgentResume(coldRestoreStartup, {
-                    forceBlankRestoredViewport: true
-                  })
+                  publishUnreachablePane(pendingSessionId)
                   return
                 }
                 const accepted = await handleReattachResult(
@@ -9065,11 +9061,7 @@ export function connectPanePty(
             if (rejectObsoleteDirectSshReattach(deferredReattachSessionId)) {
               return
             }
-            deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
-            deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
-            startFreshColdRestoreAgentResume(coldRestoreStartup, {
-              forceBlankRestoredViewport: true
-            })
+            publishUnreachablePane(deferredReattachSessionId)
             return
           }
           const accepted = await handleReattachResult(

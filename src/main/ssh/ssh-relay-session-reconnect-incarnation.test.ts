@@ -448,7 +448,9 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       leafId: INCARNATION_LEAF_ID,
       ptyId: APP_PTY_ID,
       incarnationId,
-      mayCreate: false
+      mayCreate: false,
+      // The lease's tabId is the frozen side on reattach, so the live layout outranks it.
+      tabIdMayBeStale: true
     })
     expect(vi.mocked(bindPaneShell).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(mockStore.markSshRemotePtyLeasesAttachedAsync).mock.invocationCallOrder[0]!

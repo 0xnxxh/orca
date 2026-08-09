@@ -546,9 +546,13 @@ export function bindPaneShell(args: {
   incarnationId?: string
   startupCwd?: string
   mayCreate?: boolean
+  /** The supplied `tabId` came from a durable lease and may name a tab the pane has since left, so
+   *  the live layout outranks it. Spawn callers must NOT set this: their tabId is the fresh truth
+   *  and the persisted layout is the stale side inside the renderer's publish debounce. */
+  tabIdMayBeStale?: boolean
 }): { bound: boolean; tabId: string } {
   const session =
-    typeof args.store?.getWorkspaceSession === 'function'
+    args.tabIdMayBeStale && typeof args.store?.getWorkspaceSession === 'function'
       ? args.store.getWorkspaceSession()
       : undefined
   const tabId = findTerminalTabIdForLeaf(session, args.leafId) ?? args.tabId
