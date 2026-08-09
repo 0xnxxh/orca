@@ -7,6 +7,7 @@ import { installWslGuestHooks } from './wsl-hook-fs-adapter'
 import { buildWslRelaySpawnEnv, launchWslRelayWithInstall } from './wsl-hook-relay-launch'
 import {
   defaultWslHookRelayDeps,
+  isWslHookRelayAllowed,
   FAILURE_COOLDOWN_BASE_MS,
   FAILURE_COOLDOWN_MAX_MS,
   NO_NODE_COOLDOWN_MS,
@@ -78,13 +79,12 @@ export class WslHookRelayManager {
 
   /** Fire-and-forget from every WSL PTY spawn-env build; errors breadcrumb. */
   ensureForDistro(distro: string | null): void {
-    if (this.disposed || this.deps.platform() !== 'win32' || !this.deps.remoteHooksEnabled()) {
+    if (this.disposed || !isWslHookRelayAllowed(this.deps)) {
       return
     }
     void this.ensureInternal(distro).catch((err) => {
-      this.deps.warn(
-        `[agent-hooks] WSL hook relay ensure failed: ${err instanceof Error ? err.message : String(err)}`
-      )
+      const detail = err instanceof Error ? err.message : String(err)
+      this.deps.warn(`[agent-hooks] WSL hook relay ensure failed: ${detail}`)
     })
   }
 
@@ -106,8 +106,10 @@ export class WslHookRelayManager {
     return this.stateFor(distro)?.opencodeOverlayDir ?? null
   }
 
-  disposeAll(): void {
-    this.disposed = true
+  /** Kills every live relay. Non-permanent (hooks switched off mid-session) leaves the
+   *  manager reusable, so re-enabling hooks can start relays again without an app restart. */
+  disposeAll({ permanent = true }: { permanent?: boolean } = {}): void {
+    this.disposed ||= permanent
     for (const state of this.states.values()) {
       this.recovery.clearTimers(state)
       state.mux?.dispose()

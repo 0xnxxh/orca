@@ -374,14 +374,42 @@ describe('WslHookRelayManager', () => {
     manager.disposeAll()
   })
 
-  it('is inert off-Windows and when remote hooks are disabled', async () => {
+  it('is inert off-Windows, when remote hooks are disabled, and when agent status hooks are off', async () => {
     const offPlatform = createManager({ platform: () => 'darwin' })
     offPlatform.manager.ensureForDistro('Ubuntu')
     const disabled = createManager({ remoteHooksEnabled: () => false })
     disabled.manager.ensureForDistro('Ubuntu')
+    const hooksOff = createManager({
+      managedHookSettings: () => ({ agentStatusHooksEnabled: false })
+    })
+    hooksOff.manager.ensureForDistro('Ubuntu')
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(offPlatform.deps.spawnRelay).not.toHaveBeenCalled()
     expect(disabled.deps.spawnRelay).not.toHaveBeenCalled()
+    expect(hooksOff.deps.spawnRelay).not.toHaveBeenCalled()
+  })
+
+  it('stops live relays and refuses to revive them once agent status hooks are switched off', async () => {
+    const settings = { agentStatusHooksEnabled: true }
+    const { manager, deps } = createManager({ managedHookSettings: () => settings })
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(deps.installHooks).toHaveBeenCalledTimes(1))
+
+    settings.agentStatusHooksEnabled = false
+    manager.disposeAll({ permanent: false })
+    // Reattach and crash recovery both re-enter ensureForDistro; neither may reinstall guest hooks now.
+    manager.ensureForDistro('Ubuntu')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.installHooks).toHaveBeenCalledTimes(1)
+    expect(manager.getGuestEndpointFilePath('Ubuntu')).toBeNull()
+
+    // Re-enabling must work without an app restart — disposeAll stayed non-permanent.
+    settings.agentStatusHooksEnabled = true
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(2))
+    manager.disposeAll()
   })
 
   it('requires WSL fs-bridge home coordinates before exposing an endpoint path', () => {

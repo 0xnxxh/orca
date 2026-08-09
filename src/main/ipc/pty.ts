@@ -4373,8 +4373,7 @@ export function registerPtyHandlers(
         }
         ensureWslHookRelayForReattach(
           { isReattach: true, wslDistro: preAdoptedStablePane.result.wslDistro },
-          args.connectionId,
-          isAgentStatusHooksEnabled(getSettings?.())
+          args.connectionId
         )
         if (!args.connectionId) {
           options?.onCodexHomePtySpawned?.({
@@ -4955,11 +4954,7 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
-          ensureWslHookRelayForReattach(
-            result,
-            args.connectionId,
-            isAgentStatusHooksEnabled(getSettings?.())
-          )
+          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId
@@ -6334,11 +6329,7 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
-          ensureWslHookRelayForReattach(
-            result,
-            args.connectionId,
-            isAgentStatusHooksEnabled(getSettings?.())
-          )
+          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId

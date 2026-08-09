@@ -2136,6 +2136,10 @@ void app.whenReady().then(async () => {
       // Why: Store is the mutation authority for all settings writes, so every macOS toggle updates the native item live.
       syncMacMenuBarIcon(settings.showMenuBarIcon !== false)
     }
+    if ('agentStatusHooksEnabled' in updates && !isAgentStatusHooksEnabled(settings)) {
+      // Why: the ensure gate only blocks new relays; one already running keeps its guest process and restart timers alive until quit.
+      wslHookRelayManager.disposeAll({ permanent: false })
+    }
   })
   // Why: run before ClaudeRuntimeAuthService's constructor sync — a surviving daemon Claude CLI holds the single-use refresh token; early refresh rotates it out mid-session.
   attachClaudeLivePtyPersistence(store)
