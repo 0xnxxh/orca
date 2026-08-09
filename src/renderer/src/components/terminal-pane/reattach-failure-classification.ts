@@ -7,10 +7,11 @@
 // Respawn now requires proof. Everything else is unresolved, which leaves the
 // shell running and the binding intact for a later reattach.
 
-/** The host said the session is gone. */
-const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
-/** The shell is alive; only its output source must be re-established. */
-const SSH_SOURCE_RESTORE_REQUIRED_ERROR = 'SSH_SOURCE_RESTORE_REQUIRED'
+import {
+  SSH_SESSION_EXPIRED_ERROR,
+  SSH_SOURCE_RESTORE_REQUIRED_ERROR,
+  isSshPtyIdentityMismatchMessage
+} from '../../../../shared/ssh-pty-failure-tokens'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -24,6 +25,9 @@ function messageOf(error: unknown): string {
 export function isProvenSshSessionGoneError(error: unknown): boolean {
   const message = messageOf(error)
   if (message.includes(SSH_SOURCE_RESTORE_REQUIRED_ERROR)) {
+    return false
+  }
+  if (isSshPtyIdentityMismatchMessage(message)) {
     return false
   }
   return message.includes(SSH_SESSION_EXPIRED_ERROR) || /PTY ".+" not found/i.test(message)

@@ -57,3 +57,27 @@ describe('reattach failure description', () => {
     expect(describeReattachFailure(new Error('read ECONNRESET'))).toBe('read ECONNRESET')
   })
 })
+
+// An identity mismatch is the relay saying "I have this pty and its recorded
+// pane differs" — proof the shell is ALIVE. It is worded "not found", so the
+// not-found regex alone reads it backwards and respawns onto a live shell,
+// resuming the agent a second time. Reachable by detaching a pane to a new tab.
+describe('an identity mismatch is never proof of death', () => {
+  it('refuses the token main publishes', () => {
+    const error = new Error('SSH_PTY_IDENTITY_MISMATCH: pty-7')
+    expect(isProvenSshSessionGoneError(error)).toBe(false)
+  })
+
+  // Defense in depth: any route that surfaces the relay's raw wording unwrapped
+  // must not read as death either.
+  it('refuses the relay wording unwrapped', () => {
+    const error = new Error('PTY "pty-7" not found (identity mismatch)')
+    expect(isProvenSshSessionGoneError(error)).toBe(false)
+  })
+
+  // Clause-selectivity: silencing real expiry would strand panes whose shell
+  // genuinely went away.
+  it('still proves death for the same wording without the mismatch clause', () => {
+    expect(isProvenSshSessionGoneError(new Error('PTY "pty-7" not found'))).toBe(true)
+  })
+})

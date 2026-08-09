@@ -219,11 +219,14 @@ export async function reattachSshPtySession(args: {
   } catch (error) {
     // Why: an expired relay lease must be surfaced distinctly so the renderer clears its binding.
     console.warn(`[ssh-pty] pty.attach FAILED for ${args.sessionId}:`, error)
+    // Why: the relay reports a mismatch by saying "not found", but it found the
+    // pty — comparing identity is how it knows. Publishing expiry there makes
+    // the renderer respawn and resume the agent a second time onto a live shell.
+    if (isSshPtyIdentityMismatchError(error)) {
+      throw new Error(`${SSH_PTY_IDENTITY_MISMATCH_ERROR}: ${relaySessionId}`)
+    }
     if (isSshPtyNotFoundError(error)) {
-      const mismatchMarker = isSshPtyIdentityMismatchError(error)
-        ? ` ${SSH_PTY_IDENTITY_MISMATCH_ERROR}`
-        : ''
-      throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}${mismatchMarker}`)
+      throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}`)
     }
     throw error
   }
