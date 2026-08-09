@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSessionOperationDecision } from './agent-session-operation-ledger'
-import type { AgentSessionLease } from './agent-session-record'
+import { agentSessionLeaseFixture } from './agent-session-record.test-fixture'
 import {
   admitAgentSessionMutation,
   agentSessionFingerprintConflict,
@@ -8,23 +8,11 @@ import {
 } from './agent-session-mutation-envelope'
 import type { AgentSessionMutationEnvelope } from './agent-session-wire'
 
-const LEASE: AgentSessionLease = {
+const LEASE = agentSessionLeaseFixture({
   sessionId: 'session-1',
   runtimeKind: 'native',
-  provenHandleLinkId: 'link-1',
-  deathEvidence: null,
-  runtimeFence: 4,
-  ownerProcess: { hostId: 'host-1', pid: 42, processStartTimeMs: null, spawnToken: 'token-1' },
-  reservedSpawnToken: null,
-  leaseDeadlineAt: 10_000,
-  lastRenewedAt: 9_000,
-  handoffOperationId: null,
-  journalCheckpoint: null,
-  claimKeyId: 'key-1',
-  claimStatus: 'live',
-  unreconciled: false,
-  handoffStage: null
-}
+  runtimeFence: 4
+})
 
 function envelope(overrides: Partial<AgentSessionMutationEnvelope> = {}) {
   return {
