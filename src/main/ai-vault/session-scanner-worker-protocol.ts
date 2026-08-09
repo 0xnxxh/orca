@@ -4,8 +4,13 @@ import type {
   AiVaultSessionTitlesResult
 } from '../../shared/ai-vault-session-title'
 import type { AiVaultScanOptions } from './session-scanner-types'
+import type { SessionParseCachePersistenceOptions } from './session-parse-cache-persistence'
 
 export type AiVaultWorkerScanOptions = Omit<AiVaultScanOptions, 'signal'>
+
+export type AiVaultWorkerData = {
+  sessionParseCache: SessionParseCachePersistenceOptions | null
+}
 
 export type AiVaultWorkerRequest =
   | { id: number; kind: 'scan'; options: AiVaultWorkerScanOptions }

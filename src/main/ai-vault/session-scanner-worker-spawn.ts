@@ -7,8 +7,9 @@ import type {
   AiVaultSessionTitlesResult
 } from '../../shared/ai-vault-session-title'
 import { withSpan } from '../observability/tracer'
+import { getSessionParseCachePersistenceOptions } from './session-parse-cache-persistence'
 import { AiVaultScannerWorkerClient } from './session-scanner-worker-client'
-import type { AiVaultWorkerScanOptions } from './session-scanner-worker-protocol'
+import type { AiVaultWorkerData, AiVaultWorkerScanOptions } from './session-scanner-worker-protocol'
 
 const WORKER_ENTRY_FILENAME = 'session-scanner-worker-entry.js'
 
@@ -17,7 +18,11 @@ function defaultWorkerFactory(): Worker {
   if (!existsSync(workerPath)) {
     throw new Error(`AI Vault scanner worker entry not found: ${workerPath}`)
   }
-  return new Worker(workerPath)
+  return new Worker(workerPath, {
+    workerData: {
+      sessionParseCache: getSessionParseCachePersistenceOptions()
+    } satisfies AiVaultWorkerData
+  })
 }
 
 let sharedClient: AiVaultScannerWorkerClient | null = null

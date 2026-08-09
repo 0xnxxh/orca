@@ -519,10 +519,7 @@ describe('resolveAiVaultSessionTitles host routing', () => {
       _internals.resolveAiVaultSessionTitles({ executionHostScope: 'local', requests })
     ).resolves.toEqual(titles)
 
-    expect(mocks.resolveAiVaultSessionTitlesInWorker).toHaveBeenCalledWith(
-      [{ agent: 'codex', sessionId: 'session-1' }],
-      undefined
-    )
+    expect(mocks.resolveAiVaultSessionTitlesInWorker).toHaveBeenCalledWith(requests, undefined)
     expect(mocks.scanAiVaultSessionsInWorker).not.toHaveBeenCalled()
   })
 

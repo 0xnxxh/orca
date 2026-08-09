@@ -6,7 +6,10 @@ import {
   collectAiVaultTitleRequests,
   type AiVaultTitleRequest
 } from './ai-vault-tab-title-requests'
-import { batchAiVaultTitleRequests } from './ai-vault-tab-title-batches'
+import {
+  batchAiVaultTitleRequests,
+  settleAiVaultTitleRequestBatches
+} from './ai-vault-tab-title-batches'
 import { startAiVaultTabTitleSync } from './ai-vault-tab-title-sync'
 import type { AppState } from '@/store/types'
 
@@ -379,5 +382,42 @@ describe('AI Vault tab title sync', () => {
     expect(groups).toHaveLength(2)
     expect(groups[0]).toHaveLength(64)
     expect(groups[1]).toHaveLength(1)
+  })
+
+  it('runs hosts concurrently while serializing each host wire', async () => {
+    const request = (executionHostId: AiVaultTitleRequest['executionHostId'], index: number) => ({
+      agent: 'codex' as const,
+      executionHostId,
+      providerSession: { key: 'session_id' as const, id: `session-${index}` },
+      refresh: true,
+      tabId: `tab-${index}`,
+      worktreeId: `worktree-${index}`
+    })
+    const requests = [
+      ...Array.from({ length: 65 }, (_, index) => request('ssh:dev-box', index)),
+      request('runtime:server-1', 100)
+    ]
+    const calls: AiVaultTitleRequest[][] = []
+    const completions: (() => void)[] = []
+    const pending = settleAiVaultTitleRequestBatches(
+      requests,
+      (batch) =>
+        new Promise<void>((resolve) => {
+          calls.push(batch)
+          completions.push(resolve)
+        })
+    )
+
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls.map((batch) => batch[0]!.executionHostId)).toEqual([
+      'ssh:dev-box',
+      'runtime:server-1'
+    ])
+    completions[0]!()
+    await vi.waitFor(() => expect(calls).toHaveLength(3))
+    expect(calls[2]).toHaveLength(1)
+    completions[1]!()
+    completions[2]!()
+    await pending
   })
 })

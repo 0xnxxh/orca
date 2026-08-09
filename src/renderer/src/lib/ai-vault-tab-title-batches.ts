@@ -26,3 +26,27 @@ export function batchAiVaultTitleRequests(
   }
   return batches
 }
+
+export async function settleAiVaultTitleRequestBatches(
+  requests: AiVaultTitleRequest[],
+  resolveBatch: (batch: AiVaultTitleRequest[]) => Promise<void>
+): Promise<void> {
+  const batchesByHost = new Map<ExecutionHostId, AiVaultTitleRequest[][]>()
+  for (const batch of batchAiVaultTitleRequests(requests)) {
+    const executionHostId = batch[0]!.executionHostId
+    const hostBatches = batchesByHost.get(executionHostId) ?? []
+    hostBatches.push(batch)
+    batchesByHost.set(executionHostId, hostBatches)
+  }
+  await Promise.all(
+    [...batchesByHost.values()].map(async (hostBatches) => {
+      for (const batch of hostBatches) {
+        try {
+          await resolveBatch(batch)
+        } catch {
+          // One unavailable host/batch must not suppress later exact identities.
+        }
+      }
+    })
+  )
+}

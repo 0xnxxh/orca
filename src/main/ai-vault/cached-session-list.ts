@@ -18,8 +18,6 @@ import {
 // RPC method share a single cache instance — opening the desktop panel and the
 // mobile screen for the same scope must not double-scan hundreds of transcripts.
 const AI_VAULT_CACHE_TTL_MS = 60_000
-// Covers concurrent title-scope chunks without retaining unbounded session previews.
-const AI_VAULT_CACHE_MAX_ENTRIES = 8
 
 // Why: codex-home + WSL home dirs must be sourced from a serve-mode-reachable
 // seam (the OrcaRuntimeService deps), NOT the window-only registerCoreHandlers
@@ -30,12 +28,13 @@ export type AiVaultSessionSources = {
 }
 
 type CachedAiVaultList = {
+  key: string
   depth: AiVaultSessionDepth
   result: AiVaultListResult
   expiresAt: number
 }
 
-const cachedLists = new Map<string, CachedAiVaultList>()
+let cachedList: CachedAiVaultList | null = null
 let scanCoordinator = new AiVaultScanCoordinator()
 let sources: AiVaultSessionSources = {}
 // Bumped on every invalidation. A scan that started before an invalidation
@@ -57,17 +56,14 @@ export async function listAiVaultSessions(
   const depth = requestedAiVaultSessionDepth(args)
   const scanKey = JSON.stringify({ key, depth })
   const now = Date.now()
-  const cachedList = cachedLists.get(key)
   // Why: opening this panel repeatedly should not re-parse hundreds of JSONL
   // transcripts; explicit refreshes bypass the cache and preempt stale scans.
   if (
     args?.force !== true &&
-    cachedList &&
+    cachedList?.key === key &&
     cachedList.expiresAt > now &&
     aiVaultSessionDepthCovers(cachedList.depth, depth)
   ) {
-    cachedLists.delete(key)
-    cachedLists.set(key, cachedList)
     return truncateAiVaultListResult(cachedList.result, depth, args?.scopePaths)
   }
   // Captured here, not inside start(): the coordinator defers start() by a
@@ -98,30 +94,18 @@ export async function listAiVaultSessions(
       // its result predates the delete, so caching it would resurrect the
       // deleted session for the TTL. Return it to this caller but don't cache.
       if (!scanSignal.aborted && startGeneration === cacheGeneration) {
-        const current = cachedLists.get(key)
+        const current = cachedList
         if (
           args?.force === true ||
-          !current ||
+          current?.key !== key ||
           current.expiresAt <= Date.now() ||
           !aiVaultSessionDepthCovers(current.depth, depth)
         ) {
-          for (const [cachedKey, cached] of cachedLists) {
-            if (cached.expiresAt <= Date.now()) {
-              cachedLists.delete(cachedKey)
-            }
-          }
-          cachedLists.delete(key)
-          cachedLists.set(key, {
+          cachedList = {
+            key,
             depth,
             result,
             expiresAt: Date.now() + AI_VAULT_CACHE_TTL_MS
-          })
-          while (cachedLists.size > AI_VAULT_CACHE_MAX_ENTRIES) {
-            const oldestKey = cachedLists.keys().next().value
-            if (oldestKey === undefined) {
-              break
-            }
-            cachedLists.delete(oldestKey)
           }
         }
       }
@@ -150,7 +134,7 @@ export async function getAiVaultWslHomeDirs(): Promise<string[]> {
 // file is never rediscovered — this only guards the cached RESULT.
 export function invalidateAiVaultSessionListCache(): void {
   cacheGeneration++
-  cachedLists.clear()
+  cachedList = null
 }
 
 // Why: tests reset module-level cache/source state between cases.

@@ -8,6 +8,7 @@ const parseAgentSessionFileCached = vi.hoisted(() => vi.fn())
 vi.mock('./session-scanner-parse-cache', () => ({ parseAgentSessionFileCached }))
 
 const { readAiVaultSessionTitlesFromFiles } = await import('./session-title-file-reader')
+const { resolveHostReadableAiVaultTitleRequests } = await import('./session-title-request-paths')
 
 let temporaryRoots: string[] = []
 
@@ -28,6 +29,20 @@ async function transcriptPath(): Promise<string> {
 }
 
 describe('readAiVaultSessionTitlesFromFiles', () => {
+  it('probes exact transcript paths in the background-scanner layer', async () => {
+    const path = await transcriptPath()
+
+    await expect(
+      resolveHostReadableAiVaultTitleRequests([
+        { agent: 'codex', sessionId: 'present', transcriptPath: path },
+        { agent: 'claude', sessionId: 'missing', transcriptPath: `${path}.missing` }
+      ])
+    ).resolves.toEqual([
+      { agent: 'codex', sessionId: 'present', transcriptPath: path },
+      { agent: 'claude', sessionId: 'missing' }
+    ])
+  })
+
   it('reads only the exact requested transcript and validates its identity', async () => {
     const path = await transcriptPath()
     parseAgentSessionFileCached.mockResolvedValue({

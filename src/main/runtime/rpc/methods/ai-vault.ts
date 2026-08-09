@@ -76,7 +76,8 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'aiVault.resolveSessionTitles',
     params: AiVaultSessionTitlesParams,
-    handler: (params, { runtime }) => runtime.resolveAiVaultSessionTitles(params.requests)
+    handler: (params, { runtime, signal }) =>
+      runtime.resolveAiVaultSessionTitles(params.requests, signal)
   }),
   defineMethod({
     name: 'aiVault.listSessions',

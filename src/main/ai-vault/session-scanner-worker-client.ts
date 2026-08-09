@@ -13,7 +13,6 @@ import type {
 
 const SCAN_TIMEOUT_MS = 130_000
 const TITLE_TIMEOUT_MS = 15_000
-const IDLE_TEARDOWN_MS = 5 * 60_000
 const MAX_QUEUED_CALLS = 16
 
 export type AiVaultWorkerFactory = () => Worker
@@ -37,7 +36,6 @@ export class AiVaultScannerWorkerClient {
   private worker: Worker | null = null
   private active: PendingCall | null = null
   private queue: PendingCall[] = []
-  private idleTimer: NodeJS.Timeout | null = null
   private nextId = 1
   private readonly workerFactory: AiVaultWorkerFactory
 
@@ -120,7 +118,6 @@ export class AiVaultScannerWorkerClient {
       return
     }
     this.active = call
-    this.clearIdleTimer()
     call.timer = setTimeout(() => {
       this.onWorkerFault(new Error(`AI Vault scanner worker timed out after ${call.timeoutMs}ms.`))
     }, call.timeoutMs)
@@ -226,25 +223,10 @@ export class AiVaultScannerWorkerClient {
   private afterSettle(): void {
     if (this.queue.length > 0) {
       this.pump()
-      return
-    }
-    this.idleTimer = setTimeout(() => {
-      if (!this.active && this.queue.length === 0) {
-        this.destroyWorker()
-      }
-    }, IDLE_TEARDOWN_MS)
-    this.idleTimer.unref?.()
-  }
-
-  private clearIdleTimer(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer)
-      this.idleTimer = null
     }
   }
 
   private destroyWorker(): void {
-    this.clearIdleTimer()
     const worker = this.worker
     this.worker = null
     if (!worker) {

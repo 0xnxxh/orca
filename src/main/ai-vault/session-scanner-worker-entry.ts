@@ -1,12 +1,15 @@
-import { parentPort } from 'node:worker_threads'
+import { parentPort, workerData } from 'node:worker_threads'
 import type {
   AiVaultSessionTitle,
   AiVaultSessionTitleRequest
 } from '../../shared/ai-vault-session-title'
 import { scanAiVaultSessions } from './session-scanner'
+import { initSessionParseCachePersistence } from './session-parse-cache-persistence'
 import { readAiVaultSessionTitlesFromFiles } from './session-title-file-reader'
+import { resolveHostReadableAiVaultTitleRequests } from './session-title-request-paths'
 import type {
   AiVaultWorkerControl,
+  AiVaultWorkerData,
   AiVaultWorkerRequest,
   AiVaultWorkerResponse
 } from './session-scanner-worker-protocol'
@@ -17,6 +20,10 @@ if (!parentPort) {
   throw new Error('AI Vault scanner worker must run with a parent port.')
 }
 const port = parentPort
+const data = workerData as AiVaultWorkerData | undefined
+if (data?.sessionParseCache) {
+  initSessionParseCachePersistence(data.sessionParseCache)
+}
 const controllers = new Map<number, AbortController>()
 const titleIndex = new Map<string, AiVaultSessionTitle>()
 
@@ -42,11 +49,15 @@ async function handleRequest(request: AiVaultWorkerRequest): Promise<AiVaultWork
   controllers.set(request.id, controller)
   try {
     if (request.kind === 'titles') {
+      const requests = await resolveHostReadableAiVaultTitleRequests(
+        request.requests,
+        controller.signal
+      )
       return {
         id: request.id,
         ok: true,
         kind: 'titles',
-        value: await readAiVaultSessionTitlesFromFiles(request.requests, {
+        value: await readAiVaultSessionTitlesFromFiles(requests, {
           signal: controller.signal,
           cache: {
             get: (titleRequest) => titleIndex.get(titleKey(titleRequest)) ?? null,

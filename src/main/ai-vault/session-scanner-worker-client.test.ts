@@ -1,5 +1,5 @@
 import type { Worker } from 'node:worker_threads'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   AiVaultWorkerControl,
   AiVaultWorkerRequest,
@@ -51,6 +51,23 @@ function setup(): { client: AiVaultScannerWorkerClient; worker: FakeWorker } {
       workerFactory: () => worker as unknown as Worker
     }),
     worker
+  }
+}
+
+function setupWorkerFactory(): {
+  client: AiVaultScannerWorkerClient
+  workers: FakeWorker[]
+} {
+  const workers: FakeWorker[] = []
+  return {
+    client: new AiVaultScannerWorkerClient({
+      workerFactory: () => {
+        const worker = new FakeWorker()
+        workers.push(worker)
+        return worker as unknown as Worker
+      }
+    }),
+    workers
   }
 }
 
@@ -111,6 +128,43 @@ describe('AiVaultScannerWorkerClient', () => {
     worker.emit('message', titleResponse(secondId, 'second'))
     await expect(second).resolves.toEqual(titleResponse(secondId, 'second').value)
     client.dispose()
+  })
+
+  it.each([
+    ['error', new Error('worker crashed')],
+    ['exit', 1]
+  ] as const)('restarts queued work after a worker %s', async (event, value) => {
+    const { client, workers } = setupWorkerFactory()
+    const first = client.resolveTitles([{ agent: 'codex', sessionId: 'first' }])
+    const second = client.resolveTitles([{ agent: 'claude', sessionId: 'second' }])
+
+    workers[0]!.emit(event, value)
+
+    await expect(first).rejects.toThrow()
+    expect(workers).toHaveLength(2)
+    expect(workers[0]!.terminated).toBe(true)
+    const secondId = workers[1]!.posted[0]!.id
+    workers[1]!.emit('message', titleResponse(secondId, 'second'))
+    await expect(second).resolves.toEqual(titleResponse(secondId, 'second').value)
+    client.dispose()
+  })
+
+  it('keeps the unrefed worker resident so incremental parse state survives idle time', async () => {
+    vi.useFakeTimers()
+    try {
+      const { client, worker } = setup()
+      const result = client.resolveTitles([{ agent: 'codex', sessionId: 'session' }])
+      const requestId = worker.posted[0]!.id
+      worker.emit('message', titleResponse(requestId, 'title'))
+      await result
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(worker.terminated).toBe(false)
+      client.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('bounds queued calls while one request is active', async () => {

@@ -4964,9 +4964,10 @@ export class OrcaRuntimeService {
   }
 
   resolveAiVaultSessionTitles(
-    requests: AiVaultSessionTitleRequest[]
+    requests: AiVaultSessionTitleRequest[],
+    signal?: AbortSignal
   ): Promise<AiVaultSessionTitlesResult> {
-    return resolveLocalAiVaultSessionTitles(requests)
+    return resolveLocalAiVaultSessionTitles(requests, signal)
   }
 
   async getAiVaultSessionLiveness(target: {

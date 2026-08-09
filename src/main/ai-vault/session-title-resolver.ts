@@ -5,7 +5,6 @@ import {
   type AiVaultSessionTitleRequest,
   type AiVaultSessionTitlesResult
 } from '../../shared/ai-vault-session-title'
-import { toHostReadableTranscriptPath } from '../native-chat/host-readable-transcript-path'
 import { resolveAiVaultSessionTitlesInWorker } from './session-scanner-worker-spawn'
 
 const TRANSCRIPT_PATH_MAX_LENGTH = 32_768
@@ -43,16 +42,5 @@ export async function resolveLocalAiVaultSessionTitles(
       deduped.set(key, normalized)
     }
   }
-  const resolved = await Promise.all(
-    [...deduped.values()].map(async (request): Promise<AiVaultSessionTitleRequest> => {
-      if (!request.transcriptPath) {
-        return request
-      }
-      const transcriptPath = await toHostReadableTranscriptPath(request.transcriptPath)
-      return transcriptPath
-        ? { ...request, transcriptPath }
-        : { agent: request.agent, sessionId: request.sessionId }
-    })
-  )
-  return resolveAiVaultSessionTitlesInWorker(resolved, signal)
+  return resolveAiVaultSessionTitlesInWorker([...deduped.values()], signal)
 }

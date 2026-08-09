@@ -73,8 +73,8 @@ function makeDispatcher(): RpcDispatcher {
     getRuntimeId: () => 'test-runtime',
     listAiVaultSessions: (args?: Parameters<typeof listAiVaultSessions>[0]) =>
       listAiVaultSessions(args),
-    resolveAiVaultSessionTitles: (requests: unknown[]) =>
-      resolveAiVaultSessionTitlesInWorker(requests)
+    resolveAiVaultSessionTitles: (requests: unknown[], signal?: AbortSignal) =>
+      resolveAiVaultSessionTitlesInWorker(requests, signal)
   } as unknown as OrcaRuntimeService
   return new RpcDispatcher({ runtime, methods: AI_VAULT_METHODS })
 }
@@ -99,8 +99,21 @@ describe('aiVault.resolveSessionTitles handler', () => {
       ok: true,
       result: { titles: [{ sessionId: 'session-1', title: 'Exact title' }] }
     })
-    expect(resolveAiVaultSessionTitlesInWorker).toHaveBeenCalledWith(requests)
+    expect(resolveAiVaultSessionTitlesInWorker).toHaveBeenCalledWith(requests, undefined)
     expect(RUNTIME_CAPABILITIES).toContain(AI_VAULT_SESSION_TITLES_RUNTIME_CAPABILITY)
+  })
+
+  it('forwards transport cancellation to the background scanner', async () => {
+    resolveAiVaultSessionTitlesInWorker.mockResolvedValue({ titles: [] })
+    const dispatcher = makeDispatcher()
+    const controller = new AbortController()
+    const requests = [{ agent: 'codex', sessionId: 'session-1' }]
+
+    await dispatcher.dispatch(makeRequest('aiVault.resolveSessionTitles', { requests }), {
+      signal: controller.signal
+    })
+
+    expect(resolveAiVaultSessionTitlesInWorker).toHaveBeenCalledWith(requests, controller.signal)
   })
 
   it('rejects more than 64 title identities before reaching the host', async () => {

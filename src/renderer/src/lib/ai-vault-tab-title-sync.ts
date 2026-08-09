@@ -7,7 +7,7 @@ import {
   collectAiVaultTitleRequests,
   type AiVaultTitleRequest
 } from './ai-vault-tab-title-requests'
-import { batchAiVaultTitleRequests } from './ai-vault-tab-title-batches'
+import { settleAiVaultTitleRequestBatches } from './ai-vault-tab-title-batches'
 import { aiVaultTitleSyncInputsChanged } from './ai-vault-tab-title-sync-inputs'
 
 const MISSING_TITLE_REFRESH_MS = 20_000
@@ -159,9 +159,7 @@ export function startAiVaultTabTitleSync(dependencies: SyncDependencies): () => 
 
     if (requestsToScan.length > 0) {
       scanInFlight = true
-      for (const batch of batchAiVaultTitleRequests(requestsToScan)) {
-        await resolveBatch(batch).catch(() => undefined)
-      }
+      await settleAiVaultTitleRequestBatches(requestsToScan, resolveBatch)
       scanInFlight = false
     }
 

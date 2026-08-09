@@ -76,32 +76,4 @@ describe('invalidateAiVaultSessionListCache generation guard', () => {
     expect(cached.scannedAt).toBe('scan-A')
     expect(scanAiVaultSessionsInWorker).toHaveBeenCalledTimes(1)
   })
-
-  it('retains independent scoped results without cache thrash', async () => {
-    scanAiVaultSessionsInWorker
-      .mockResolvedValueOnce(scanResult('scan-A'))
-      .mockResolvedValueOnce(scanResult('scan-B'))
-
-    await listAiVaultSessions({ scopePaths: ['/workspace/a'] })
-    await listAiVaultSessions({ scopePaths: ['/workspace/b'] })
-    const cachedA = await listAiVaultSessions({ scopePaths: ['/workspace/a'] })
-    const cachedB = await listAiVaultSessions({ scopePaths: ['/workspace/b'] })
-
-    expect(cachedA.scannedAt).toBe('scan-A')
-    expect(cachedB.scannedAt).toBe('scan-B')
-    expect(scanAiVaultSessionsInWorker).toHaveBeenCalledTimes(2)
-  })
-
-  it('evicts old scope entries instead of retaining unbounded results', async () => {
-    scanAiVaultSessionsInWorker.mockImplementation(async () =>
-      scanResult(`scan-${scanAiVaultSessionsInWorker.mock.calls.length}`)
-    )
-    for (let index = 0; index < 9; index++) {
-      await listAiVaultSessions({ scopePaths: [`/workspace/${index}`] })
-    }
-
-    await listAiVaultSessions({ scopePaths: ['/workspace/0'] })
-
-    expect(scanAiVaultSessionsInWorker).toHaveBeenCalledTimes(10)
-  })
 })
