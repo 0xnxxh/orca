@@ -85,6 +85,19 @@ export function registerUIHandlers(store: Store): void {
     }
     webContents?.paste()
   })
+
+  ipcMain.removeAllListeners('ui:performNativeSelectionAction')
+  ipcMain.on('ui:performNativeSelectionAction', (event, action: unknown) => {
+    if (!isTrustedUIRenderer(event.sender)) {
+      return
+    }
+    const target = BrowserWindow.fromWebContents(event.sender)?.webContents
+    if (action === 'copy') {
+      target?.copy()
+    } else if (action === 'select-all') {
+      target?.selectAll()
+    }
+  })
 }
 
 export function isTrustedUIRenderer(sender: WebContents): boolean {
