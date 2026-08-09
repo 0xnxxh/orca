@@ -586,7 +586,7 @@ describe('WorktreeJumpPalette recent chats & terminals', () => {
     // Why: high-signal current tabs stay scannable (ask-question / permission badge) even though
     // idle "where you are" rows are still dropped.
     expect(getTabRowIds()).toEqual(['tab-alpha', 'tab-beta'])
-    expect(testContainer.textContent).toMatch(/Current Tab|当前/)
+    expect(testContainer.textContent).toContain('Current Tab')
   })
 
   it('keeps the current tab in recent when its agent is working', async () => {
