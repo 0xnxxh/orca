@@ -65,6 +65,14 @@ on:
         required: false
         default: '30'
         type: string
+      appkit_repro_runner:
+        description: 'macOS 26 runner pool for the isolated reproduction'
+        required: false
+        default: 'macos-26-arm64'
+        type: choice
+        options:
+          - macos-26-arm64
+          - macos-26
   schedule:
     - cron: '0 6 * * *'
 
@@ -188,7 +196,7 @@ jobs:
 
   macos-appkit-dashboard-hang-repro:
     if: github.event_name == 'workflow_dispatch' && inputs.appkit_dashboard_hang_repro == true
-    runs-on: macos-26-arm64
+    runs-on: ${{ inputs.appkit_repro_runner }}
     timeout-minutes: 75
     permissions:
       contents: read

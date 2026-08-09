@@ -156,6 +156,7 @@ describe('computer-use e2e workflow', () => {
       readFileSync(join(projectDir, '.github/workflows/computer-e2e.yml'), 'utf8')
     )
     const input = workflow.on.workflow_dispatch.inputs.appkit_dashboard_hang_repro
+    const runnerInput = workflow.on.workflow_dispatch.inputs.appkit_repro_runner
     const job = workflow.jobs['macos-appkit-dashboard-hang-repro']
     const runs = job.steps.map((step) => step.run).filter((run) => typeof run === 'string')
     const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v6')
@@ -163,7 +164,12 @@ describe('computer-use e2e workflow', () => {
 
     expect(input).toMatchObject({ default: false, type: 'boolean' })
     expect(job.if).toContain('inputs.appkit_dashboard_hang_repro == true')
-    expect(job['runs-on']).toBe('macos-26-arm64')
+    expect(runnerInput).toMatchObject({
+      default: 'macos-26-arm64',
+      options: ['macos-26-arm64', 'macos-26'],
+      type: 'choice'
+    })
+    expect(job['runs-on']).toBe('${{ inputs.appkit_repro_runner }}')
     expect(checkout.with['persist-credentials']).toBe(false)
     expect(runs).toContain('pnpm build:electron-vite')
     expect(runs.join('\n')).toContain('macos-appkit-dashboard-mobile-session.test.mjs')
