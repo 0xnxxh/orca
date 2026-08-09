@@ -251,6 +251,30 @@ describe('STA-3077 step P: the pane binding has one home', () => {
   })
 })
 
+describe('STA-3077 step P: the fold carries the whole fence', () => {
+  // `persistPtyBinding` writes the binding and its incarnation into the SAME partition, and the
+  // incarnation is what its CAS compares. Folding only the binding would move the guard's subject
+  // to `local` while the guard itself stayed in the partition nothing reads — the CAS would then
+  // compare undefined against undefined and pass for any incarnation.
+  it('folds the pane incarnation along with the binding it fences', async () => {
+    const sshSession = paneSession('pty-1') as unknown as {
+      terminalPtyIncarnationsByPaneKey: Record<string, string>
+    }
+    sshSession.terminalPtyIncarnationsByPaneKey = { [`${TAB}:${LEAF}`]: 'inc-pty-1' }
+    const store = await createStore({
+      workspaceSession: paneSession('pty-1'),
+      workspaceSessionsByHostId: { [SSH_PARTITION]: sshSession }
+    })
+
+    expect(store.getWorkspaceSession().terminalPtyIncarnationsByPaneKey?.[`${TAB}:${LEAF}`]).toBe(
+      'inc-pty-1'
+    )
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).terminalPtyIncarnationsByPaneKey?.[`${TAB}:${LEAF}`]
+    ).toBeUndefined()
+  })
+})
+
 describe('STA-3077 step P: every production caller names that one home', () => {
   const summarize = (source: string): string => source.replace(/\s+/g, ' ').trim().slice(0, 90)
 

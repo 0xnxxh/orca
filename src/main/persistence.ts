@@ -7290,6 +7290,18 @@ export class Store {
         layout.ptyIdsByLeafId = {}
         changed = true
       }
+      // The incarnation is the other half of the same fence — `persistPtyBinding` writes it into
+      // whichever partition it wrote the binding to, so leaving it behind would move the binding
+      // while its CAS guard stayed in the partition nothing reads.
+      const incarnations = host?.terminalPtyIncarnationsByPaneKey
+      if (incarnations && Object.keys(incarnations).length > 0) {
+        local.terminalPtyIncarnationsByPaneKey = {
+          ...incarnations,
+          ...local.terminalPtyIncarnationsByPaneKey
+        }
+        host.terminalPtyIncarnationsByPaneKey = {}
+        changed = true
+      }
     }
     return changed
   }
