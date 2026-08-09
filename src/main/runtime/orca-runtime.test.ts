@@ -25899,9 +25899,13 @@ describe('OrcaRuntimeService', () => {
     ).toBe(hostTerminal.tab.id)
   })
 
-  it.each(['caller', 'all'] as const)(
-    'keeps a newer caller activation ahead of a delayed retried %s create',
-    async (navigation) => {
+  it.each([
+    ['caller', 'caller'],
+    ['all', 'caller'],
+    ['all', 'all']
+  ] as const)(
+    'keeps a newer activation ahead of a delayed retried %s create (%s activation)',
+    async (navigation, activationNavigation) => {
       const created = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
       let spawnIndex = 0
       const runtime = new OrcaRuntimeService(store)
@@ -25929,7 +25933,7 @@ describe('OrcaRuntimeService', () => {
       await vi.waitFor(() => expect(spawnIndex).toBe(2))
       await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, existing.tab.id, undefined, {
         clientNavigationId: 'device-a',
-        navigation: 'caller'
+        navigation: activationNavigation
       })
       const retriedCreate = runtime.createMobileSessionTerminal(
         `id:${TEST_WORKTREE_ID}`,
@@ -25943,7 +25947,16 @@ describe('OrcaRuntimeService', () => {
       ).toBe(existing.tab.id)
       expect(
         (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')).activeTabId
-      ).toBe(navigation === 'all' ? createdTerminal.tab.id : existing.tab.id)
+      ).toBe(
+        navigation === 'all' && activationNavigation === 'caller'
+          ? createdTerminal.tab.id
+          : existing.tab.id
+      )
+      expect((await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).activeTabId).toBe(
+        navigation === 'all' && activationNavigation === 'caller'
+          ? createdTerminal.tab.id
+          : existing.tab.id
+      )
     }
   )
 
@@ -28606,6 +28619,8 @@ describe('OrcaRuntimeService', () => {
     expect(settled.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
     const otherClient = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
     expect(otherClient.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
+    const host = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    expect(host.activeTabId).toBe(`other-tab::${HEADLESS_SECOND_LEAF_ID}`)
   })
 
   it('materializes a plain shell when the pending tab has no launch agent', async () => {

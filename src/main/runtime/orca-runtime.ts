@@ -2734,6 +2734,8 @@ export class OrcaRuntimeService {
     }
   >()
   private clientSessionTabSelections = new ClientSessionTabSelectionStore()
+  // Why: delayed materialization must not let an older all-targeted request retake host focus.
+  private mobileSessionHostTabActivationIntent: symbol | null = null
   // Why: idempotency map for mobile terminal creation — a retried create with the
   // same clientMutationId returns the in-flight operation instead of duplicating.
   private mobileTerminalCreateByMutationId = new Map<
@@ -2775,6 +2777,7 @@ export class OrcaRuntimeService {
       activate: boolean
       paired: boolean
       selectIfNoActiveTab: boolean
+      shouldActivate?: () => boolean
       viewMode?: 'terminal' | 'chat'
       /** Resolved agent launch command, kept so a settle over a bare renderer
        *  PTY can still deliver the launch instead of succeeding silently (STA-3214). */
@@ -7220,6 +7223,9 @@ export class OrcaRuntimeService {
   ): Promise<RuntimeMobileSessionTabsResult> {
     const navigation = opts.navigation ?? (opts.notifyClients === false ? 'caller' : 'all')
     const targetsHost = navigationTargetsHost(navigation)
+    const hostActivationIntent = this.beginMobileSessionHostTabActivationIntent(navigation)
+    const shouldActivateHost = (): boolean =>
+      this.isMobileSessionHostTabActivationIntentCurrent(hostActivationIntent)
     const clientActivationIntents = this.beginMobileSessionTabNavigation(
       navigation,
       opts.clientNavigationId
@@ -7323,7 +7329,8 @@ export class OrcaRuntimeService {
               startupCommandDelivery: agentStartup.startupCommandDelivery,
               launchConfig: agentStartup.launchConfig,
               launchAgent: tab.launchAgent,
-              targetGroupId
+              targetGroupId,
+              shouldActivate: shouldActivateHost
             }
           )
           if (
@@ -7368,14 +7375,14 @@ export class OrcaRuntimeService {
                 candidate.isActive
             ) as RuntimeMobileSessionTerminalTab | undefined)
       const targetTab = activeSibling ?? tab
-      if (targetsHost && !this.notifier?.focusTerminal) {
+      if (shouldActivateHost() && !this.notifier?.focusTerminal) {
         if (
           !targetTab.isActive &&
           this.shouldPersistHeadlessMobileSessionActivation(snapshot!, targetTab)
         ) {
           this.activateHeadlessMobileSessionTerminalTab(worktreeId, snapshot!, targetTab)
         }
-      } else if (targetsHost) {
+      } else if (shouldActivateHost()) {
         this.notifier?.focusTerminal?.(targetTab.parentTabId, worktreeId, targetTab.leafId)
       }
       return this.applyMobileSessionTabNavigation(
@@ -7388,11 +7395,11 @@ export class OrcaRuntimeService {
     } else if (tab.type === 'browser') {
       // Why: browser mobile tabs are renderer-owned unified tabs; focusing the
       // session tab keeps desktop tab order/group state authoritative.
-      if (targetsHost) {
+      if (shouldActivateHost()) {
         this.notifier?.focusEditorTab?.(tab.id, worktreeId)
       }
     } else {
-      if (targetsHost) {
+      if (shouldActivateHost()) {
         this.notifier?.focusEditorTab?.(tab.id, worktreeId)
       }
     }
@@ -7481,6 +7488,21 @@ export class OrcaRuntimeService {
     return new Map(
       [...clientIds].map((id) => [id, this.clientSessionTabSelections.beginActivationIntent(id)])
     )
+  }
+
+  private beginMobileSessionHostTabActivationIntent(
+    navigation: RuntimeNavigationTarget
+  ): symbol | undefined {
+    if (!navigationTargetsHost(navigation)) {
+      return undefined
+    }
+    const intent = Symbol('host-session-tab-activation')
+    this.mobileSessionHostTabActivationIntent = intent
+    return intent
+  }
+
+  private isMobileSessionHostTabActivationIntentCurrent(intent: symbol | undefined): boolean {
+    return intent !== undefined && this.mobileSessionHostTabActivationIntent === intent
   }
 
   private discardForgottenMaterializedTerminal(
@@ -25304,10 +25326,11 @@ export class OrcaRuntimeService {
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const navigation = opts.navigation ?? 'all'
     const select = opts.select ?? opts.activate !== false
-    const runOpts = {
+    const buildRunOpts = (hostActivationIntent: symbol | undefined) => ({
       ...opts,
-      activate: select && navigationTargetsHost(navigation)
-    }
+      activate: select && navigationTargetsHost(navigation),
+      shouldActivate: () => this.isMobileSessionHostTabActivationIntentCurrent(hostActivationIntent)
+    })
     const mutationId = opts.clientMutationId
     let result: RuntimeMobileSessionCreateTerminalResult
     let clientActivationIntents: ReadonlyMap<string, ClientSessionTabActivationIntent>
@@ -25315,7 +25338,13 @@ export class OrcaRuntimeService {
       clientActivationIntents = select
         ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
         : new Map()
-      result = await this.runCreateMobileSessionTerminal(worktreeSelector, runOpts)
+      const hostActivationIntent = select
+        ? this.beginMobileSessionHostTabActivationIntent(navigation)
+        : undefined
+      result = await this.runCreateMobileSessionTerminal(
+        worktreeSelector,
+        buildRunOpts(hostActivationIntent)
+      )
     } else {
       // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
       const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${worktreeSelector}\0${mutationId}`
@@ -25329,8 +25358,14 @@ export class OrcaRuntimeService {
         const activationIntents = select
           ? this.beginMobileSessionTabNavigation(navigation, opts.clientNavigationId)
           : new Map()
+        const hostActivationIntent = select
+          ? this.beginMobileSessionHostTabActivationIntent(navigation)
+          : undefined
         run = {
-          result: this.runCreateMobileSessionTerminal(worktreeSelector, runOpts),
+          result: this.runCreateMobileSessionTerminal(
+            worktreeSelector,
+            buildRunOpts(hostActivationIntent)
+          ),
           activationIntents
         }
         this.mobileTerminalCreateByMutationId.set(mutationKey, run)
@@ -25377,12 +25412,15 @@ export class OrcaRuntimeService {
       launchAgent?: TuiAgent
       viewMode?: 'terminal' | 'chat'
       activate?: boolean
+      shouldActivate?: () => boolean
       clientNavigationId?: string
       clientMutationId?: string
       signal?: AbortSignal
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const pairedCreate = Boolean(opts.clientNavigationId)
+    const shouldActivate = (): boolean =>
+      opts.activate !== false && (opts.shouldActivate?.() ?? true)
     const graphEpoch = this.captureReadyGraphEpoch()
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
     const worktreeId = workspace.id
@@ -25406,7 +25444,7 @@ export class OrcaRuntimeService {
     if (!win) {
       return await this.createRuntimeOwnedMobileSessionTerminal(
         worktreeId,
-        opts.activate !== false,
+        shouldActivate(),
         opts.afterTabId,
         {
           command: startupCommand.command,
@@ -25418,6 +25456,7 @@ export class OrcaRuntimeService {
           viewMode: opts.viewMode,
           targetGroupId: opts.targetGroupId,
           launchConfig: startupCommand.launchConfig,
+          shouldActivate,
           signal: opts.signal
         }
       )
@@ -25476,11 +25515,11 @@ export class OrcaRuntimeService {
           ...(opts.viewMode ? { viewMode: opts.viewMode } : {}),
           startupCommandDelivery: startupCommand.startupCommandDelivery,
           source: 'runtime-session',
-          activate: opts.activate
+          activate: shouldActivate()
         })
       })
 
-      if (opts.activate !== false) {
+      if (shouldActivate()) {
         this.notifier?.focusTerminal(reply.tabId, worktreeId, null)
       }
       // Why: register the wait before the renderer's PTY spawn arrives so that
@@ -25492,6 +25531,7 @@ export class OrcaRuntimeService {
       // requested group, so any wrong-group placement is cosmetic and stall-window-only.
       this.pendingMobileTerminalCreatesByKey.set(pendingCreateKey, {
         activate: opts.activate !== false,
+        shouldActivate,
         paired: pairedCreate,
         selectIfNoActiveTab: true,
         ...(startupCommand.command ? { startupCommand: startupCommand.command } : {}),
@@ -25530,7 +25570,7 @@ export class OrcaRuntimeService {
         // Why: a hidden renderer can publish the tab shell before the PTY spawns; reuse the same identity so later focus adopts instead of creating another tab.
         return await this.createRuntimeOwnedMobileSessionTerminal(
           worktreeId,
-          opts.activate !== false,
+          shouldActivate(),
           opts.afterTabId,
           {
             command: startupCommand.command,
@@ -25543,6 +25583,7 @@ export class OrcaRuntimeService {
             viewMode: opts.viewMode,
             targetGroupId: opts.targetGroupId,
             launchConfig: startupCommand.launchConfig,
+            shouldActivate,
             signal: opts.signal
           }
         )
@@ -25672,6 +25713,7 @@ export class OrcaRuntimeService {
       viewMode?: 'terminal' | 'chat'
       targetGroupId?: string
       launchConfig?: SleepingAgentLaunchConfig
+      shouldActivate?: () => boolean
       signal?: AbortSignal
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
@@ -25712,6 +25754,7 @@ export class OrcaRuntimeService {
     }
     const parentTabId = livePty.pty.tabId ?? `pty:${livePty.pty.ptyId}`
     const leafId = parsePaneKey(livePty.pty.paneKey ?? '')?.leafId ?? randomUUID()
+    const activateOnPublish = activate && (opts.shouldActivate?.() ?? true)
     if (opts.viewMode) {
       // Why: the runtime-owned binding must survive a serve restart with the same initial mode, not a later client's local default.
       this.persistHeadlessSessionTabProps(worktreeId, parentTabId, { viewMode: opts.viewMode })
@@ -25740,7 +25783,7 @@ export class OrcaRuntimeService {
       ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
       ...(opts.viewMode ? { viewMode: opts.viewMode } : {}),
       parentLayout,
-      isActive: activate
+      isActive: activateOnPublish
     }
     const tabs = (existing?.tabs ?? [])
       .filter((candidate) => candidate.id !== tab.id)
@@ -25749,7 +25792,7 @@ export class OrcaRuntimeService {
         ...(candidate.type === 'terminal' && candidate.parentTabId === parentTabId
           ? { parentLayout }
           : {}),
-        isActive: activate ? false : candidate.isActive
+        isActive: activateOnPublish ? false : candidate.isActive
       }))
     const insertAfter = afterTabId ? tabs.findIndex((candidate) => candidate.id === afterTabId) : -1
     if (insertAfter >= 0) {
@@ -25763,15 +25806,15 @@ export class OrcaRuntimeService {
       snapshotVersion: (existing?.snapshotVersion ?? 0) + 1,
       // Why: activating the new tab also focuses its group, so a "+" targeting a specific split group makes that group active too.
       activeGroupId:
-        activate && opts.targetGroupId
+        activateOnPublish && opts.targetGroupId
           ? opts.targetGroupId
           : (existing?.activeGroupId ?? this.getHeadlessMobileSessionGroupId(worktreeId)),
-      activeTabId: activate ? tab.id : (existing?.activeTabId ?? null),
-      activeTabType: activate ? 'terminal' : (existing?.activeTabType ?? null),
+      activeTabId: activateOnPublish ? tab.id : (existing?.activeTabId ?? null),
+      activeTabType: activateOnPublish ? 'terminal' : (existing?.activeTabType ?? null),
       tabGroups: this.buildHeadlessMobileSessionTabGroups(
         worktreeId,
         tabs,
-        activate ? tab : null,
+        activateOnPublish ? tab : null,
         existing?.tabGroups,
         opts.targetGroupId ? { tabId: parentTabId, groupId: opts.targetGroupId } : undefined
       ),
@@ -25920,7 +25963,7 @@ export class OrcaRuntimeService {
       tabId,
       leafId,
       title: null,
-      activate: pending.activate,
+      activate: pending.activate && (pending.shouldActivate?.() ?? true),
       selectIfNoActiveTab: pending.selectIfNoActiveTab,
       ...(pending.viewMode ? { viewMode: pending.viewMode } : {})
     })
