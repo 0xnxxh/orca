@@ -356,6 +356,26 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(getKittyKeyboardFlags).toHaveBeenCalledOnce()
     })
 
+    // A held key emits repeated keydowns. The protocol reports those as REPEAT (event type 2);
+    // encoding them all as PRESS would make one held key read as N separate strikes to an app
+    // that counts presses or filters repeats.
+    // Flags 8|2: the event type only appears on the wire when report_event_types is also
+    // negotiated, which is exactly the pane that can tell a repeat from a press.
+    it('encodes an auto-repeat commit as REPEAT, not as another PRESS', () => {
+      const { forwarder, sendInput } = installWithFlags(() => 0b1010)
+
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'a', code: 'KeyA' }))).toBe(true)
+      dispatchInsertText(textarea, 'a')
+      const firstPress = sendInput.mock.calls[0][0]
+
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'a', code: 'KeyA', repeat: true }))).toBe(true)
+      dispatchInsertText(textarea, 'a')
+      const repeated = sendInput.mock.calls[1][0]
+
+      expect(firstPress).toBe('[97u')
+      expect(repeated).toBe('[97;1:2u')
+    })
+
     it('claims the keydown under bit 3 exactly as it does without it', () => {
       // The predicate stays structural: the protocol changes what the commit
       // writes, never whether the keystroke is owned.

@@ -15,6 +15,7 @@ type ClaimedKeyPress = {
   key: string
   code?: string
   shiftKey: boolean
+  repeat?: boolean
 }
 
 export type ImeNativeTextKeyEvent = {
@@ -25,6 +26,7 @@ export type ImeNativeTextKeyEvent = {
   ctrlKey: boolean
   altKey: boolean
   shiftKey?: boolean
+  repeat?: boolean
   isComposing?: boolean
 }
 
@@ -123,7 +125,12 @@ export function installTerminalImeNativeTextForwarder(args: {
       // never arrived (the input source swallowed the key) — no timer needed.
       pendingForward = true
       forwardedPressBytes = false
-      claimedPress = { key: event.key, code: event.code, shiftKey: event.shiftKey === true }
+      claimedPress = {
+        key: event.key,
+        code: event.code,
+        shiftKey: event.shiftKey === true,
+        repeat: event.repeat === true
+      }
       return true
     }
     if (!claimedPress) {

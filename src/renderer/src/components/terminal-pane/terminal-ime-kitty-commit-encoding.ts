@@ -10,6 +10,13 @@ import { KittyKeyboard } from '@xterm/xterm/src/common/input/KittyKeyboard'
  */
 const KITTY_REPORT_ALL_KEYS_AS_ESCAPE_CODES = 0b1000
 
+/**
+ * `KittyKeyboardEventType.PRESS` / `.REPEAT`. Inlined because the upstream enum is a
+ * `const enum`, which does not survive an import across module boundaries.
+ */
+const KITTY_EVENT_TYPE_PRESS = 1
+const KITTY_EVENT_TYPE_REPEAT = 2
+
 const kittyKeyboardEncoder = new KittyKeyboard()
 
 /** The physical keydown that produced a commit, captured before the input event. */
@@ -17,6 +24,8 @@ export type ImeCommitKeyPress = {
   key: string
   code?: string
   shiftKey: boolean
+  /** An auto-repeat keydown; the protocol distinguishes it from a fresh press. */
+  repeat?: boolean
 }
 
 /**
@@ -57,7 +66,11 @@ export function encodeImeCommitAsKittyReport(
       ctrlKey: false,
       metaKey: false
     },
-    kittyKeyboardFlags
+    kittyKeyboardFlags,
+    // Why: a held key emits repeated keydowns, and the protocol reports those as REPEAT.
+    // Defaulting them all to PRESS would make one held key look like N separate strikes to
+    // an app that counts presses or filters repeats.
+    press.repeat === true ? KITTY_EVENT_TYPE_REPEAT : KITTY_EVENT_TYPE_PRESS
   )
   return encoded.key ?? null
 }
