@@ -66,7 +66,7 @@ describe('signalPosixPtyForegroundGroup', () => {
   it('falls back to the root pid on Windows', () => {
     // Why: a negative pid is invalid there, and SIGTERM/SIGINT mean terminate.
     const fallback = vi.fn()
-    signalPosixPtyForegroundGroup(84644, undefined, 'SIGWINCH', fallback, {
+    signalPosixPtyForegroundGroup(84644, '/dev/ttys318', 'SIGWINCH', fallback, {
       platform: 'win32',
       currentPid: 4242,
       readProcessTable: table
@@ -111,6 +111,25 @@ describe('signalPosixPtyForegroundGroup', () => {
         readProcessTable: table
       })
       expect(fallback).not.toHaveBeenCalled()
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  it('falls back when foreground group signalling fails', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      const error = new Error('operation not permitted') as NodeJS.ErrnoException
+      error.code = 'EPERM'
+      throw error
+    })
+    const fallback = vi.fn()
+    try {
+      signalPosixPtyForegroundGroup(84644, '/dev/ttys318', 'SIGWINCH', fallback, {
+        platform: 'darwin',
+        currentPid: 4242,
+        readProcessTable: table
+      })
+      expect(fallback).toHaveBeenCalledOnce()
     } finally {
       kill.mockRestore()
     }

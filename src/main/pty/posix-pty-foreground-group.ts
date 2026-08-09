@@ -129,8 +129,11 @@ export function signalPosixPtyForegroundGroup(
   }
   try {
     process.kill(-pgid, signal as NodeJS.Signals)
-  } catch {
+  } catch (error) {
     // Why: the group can exit between `ps` and `kill`. The fallback would be just
     // as stale, so a vanished foreground group is success, not a reason to retry.
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ESRCH') {
+      fallback()
+    }
   }
 }
