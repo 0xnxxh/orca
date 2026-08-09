@@ -180,8 +180,10 @@ describe('installTerminalImeNativeTextForwarder', () => {
       )
       dispatchInsertText(textarea, 'á')
 
+      // The keypress is what must be suppressed (it would double-send the ASCII 'a').
+      // The keyup is not: 'á' reached the pty, so the app is owed the matching release.
       expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: 'a', code: 'KeyA' }))).toBe(
-        true
+        false
       )
       expect(sendInput).toHaveBeenCalledExactlyOnceWith('á')
     })
@@ -270,12 +272,24 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(sendInput).toHaveBeenCalledExactlyOnceWith('á')
     })
 
-    it('still claims keyup after forwarding so the kitty release sequence does not leak', () => {
+    // An app that negotiated kitty `report_event_types` expects a release for every press it
+    // received. The claim now takes every printable keydown, so swallowing the keyup
+    // unconditionally would drop the release for ordinary typing and leave keys stuck down.
+    it('lets the keyup through once the press has reached the pty, so its release still fires', () => {
       const { forwarder, sendInput } = install()
       expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
       dispatchInsertText(textarea, '，')
-      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(false)
       expect(sendInput).toHaveBeenCalledExactlyOnceWith('，')
+    })
+
+    // The paired case: nothing reached the pty, so a release would describe a press the app
+    // never saw. This is the leak the unconditional claim was originally guarding against.
+    it('still swallows the keyup when the input source ate the press', () => {
+      const { forwarder, sendInput } = install()
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(true)
+      expect(sendInput).not.toHaveBeenCalled()
     })
 
     it('releases the claim on blur', () => {

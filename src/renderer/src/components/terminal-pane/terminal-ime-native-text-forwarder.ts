@@ -94,6 +94,8 @@ export function installTerminalImeNativeTextForwarder(args: {
   let pendingForward = false
   let compositionTransactionPending = false
   let claimedPress: ClaimedKeyPress | null = null
+  /** Whether the claimed press actually reached the pty, which decides if its release does. */
+  let forwardedPressBytes = false
 
   const markCompositionTransactionAccepted = (): void => {
     compositionTransactionPending = true
@@ -111,6 +113,7 @@ export function installTerminalImeNativeTextForwarder(args: {
       // Why: re-arming here is also what drops a stale claim whose input event
       // never arrived (the input source swallowed the key) — no timer needed.
       pendingForward = true
+      forwardedPressBytes = false
       claimedPress = { key: event.key, code: event.code }
       return true
     }
@@ -124,9 +127,15 @@ export function installTerminalImeNativeTextForwarder(args: {
       if (!matchesClaimedPress(event, claimedPress)) {
         return false
       }
+      const pressReachedThePty = forwardedPressBytes
       claimedPress = null
-      // Bypass so the kitty release sequence for the swallowed press cannot leak.
-      return true
+      forwardedPressBytes = false
+      // Why: a release report describes a press the app received. Suppress it only when
+      // this press put nothing on the wire — swallowed by the input source, or owned by a
+      // composition transaction. Suppressing unconditionally would drop the kitty release
+      // for ordinary typing, because the structural claim takes every printable keydown
+      // rather than the short punctuation list the previous design claimed.
+      return !pressReachedThePty
     }
     // Keep the keydown's armed state but still bypass xterm so it does not
     // double-send printable text before our input forward runs.
@@ -153,6 +162,7 @@ export function installTerminalImeNativeTextForwarder(args: {
     }
     if (event.data) {
       args.sendInput(event.data)
+      forwardedPressBytes = true
     }
     event.stopImmediatePropagation()
     // Clear the helper textarea so the committed text doesn't accumulate.
@@ -163,6 +173,7 @@ export function installTerminalImeNativeTextForwarder(args: {
 
   const cancelPending = (): void => {
     pendingForward = false
+    forwardedPressBytes = false
     compositionTransactionPending = false
     claimedPress = null
   }
