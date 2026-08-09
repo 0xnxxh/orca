@@ -4,21 +4,12 @@ import type { HostSessionChatDraftOperations } from './host-session-chat-draft-o
 import type { HostSessionChatPendingDeliveryOperations } from './host-session-chat-pending-delivery-operations'
 import {
   findLandedUnconfirmedSends,
-  mergeLandedImagePreviewEchoes,
-  migrateImagePreviewMessageIds,
-  normalizedUserText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
-import {
-  appendMobileNativeChatPending,
-  combineMobileNativeChatPending,
-  mergeWaitingSessionPending,
-  removeWaitingSessionPending,
-  type MobileNativeChatPendingMessage,
-  type MobileNativeChatSendOrigin
-} from './mobile-native-chat-pending-echo'
 import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
 import { useMobileNativeChatDraftPersistence } from './use-mobile-native-chat-draft-persistence'
+import { useMobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
+import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import {
   useMobileNativeChatPendingDeliveries,
   type MobileNativeChatPendingDeliveryOrigin,
@@ -57,6 +48,8 @@ export function useMobileNativeChatDrafts(args: {
    *  optimistic echo, keyed by authoritative message id. */
   imagePreviewsByMessageId: Record<string, string[]>
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
+  readSeededLaunchDraft: () => string | null
+  readSeededLaunchDraftSeed: () => MobileNativeChatLaunchDraftSeed | null
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   restoreRejectedDraft: (origin: MobileNativeChatSendOrigin, text: string) => void
   acceptSend: (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => void
@@ -88,6 +81,7 @@ export function useMobileNativeChatDrafts(args: {
   const {
     pendingKey,
     pending,
+    imagePreviewsByMessageId,
     captureOrigin: capturePendingOrigin,
     accept: acceptPending
   } = useMobileNativeChatPendingDeliveries({
@@ -236,9 +230,7 @@ export function useMobileNativeChatDrafts(args: {
     composerText,
     setComposerText,
     pending,
-    imagePreviewsByMessageId: pendingKey
-      ? (imagePreviewsBySession[pendingKey] ?? NO_IMAGE_PREVIEWS)
-      : NO_IMAGE_PREVIEWS,
+    imagePreviewsByMessageId,
     captureSendOrigin,
     readSeededLaunchDraft,
     readSeededLaunchDraftSeed,

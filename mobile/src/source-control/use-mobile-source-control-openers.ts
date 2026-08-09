@@ -132,8 +132,22 @@ export function useMobileSourceControlOpeners(params: Params) {
         if (!mountedRef.current) {
           return
         }
+        const revealResult = await revealMobileSourceControlSessionDiff({
+          client,
+          worktreeId,
+          relativePath: entry.path,
+          tabMode: openedTabMode,
+          staged: entry.area === 'staged',
+          onOpenedFileDiff,
+          isCurrent: () => mountedRef.current && openingPathRef.current === entry.path
+        })
+        if (revealResult === 'cancelled') {
+          return
+        }
+        if (revealResult === 'timeout') {
+          throw new Error("The file opened, but its tab isn't ready yet. Try again.")
+        }
         feedback.selection()
-        onOpenedFileDiff?.(entry.path)
         // Why: when launched from the session screen, opening a file dismisses
         // this surface back to the session. In embedded mode there is nothing
         // to pop (the panel docks beside the terminal), so close the dock

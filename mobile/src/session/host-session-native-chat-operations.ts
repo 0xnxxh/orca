@@ -50,7 +50,8 @@ export type HostSessionNativeChatOperations = {
     target: HostSessionNativeChatTarget,
     text: string,
     deadline?: number,
-    clearInputFirst?: boolean
+    clearInputFirst?: boolean,
+    resolvedLaunchDraft?: { text: string; createdAt: number }
   ): Promise<MobileNativeChatSendOutcome>
   prepareCommit(target: HostSessionNativeChatTarget, deadline?: number): Promise<boolean>
   respond(

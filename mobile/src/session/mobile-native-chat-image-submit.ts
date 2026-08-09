@@ -1,3 +1,4 @@
+import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import type {
@@ -39,6 +40,7 @@ export async function sendMobileNativeChatWithImages(args: {
   readonly operations: HostSessionNativeChatOperations | null
   readonly targetRef: CurrentRef<HostSessionNativeChatTarget | null>
   readonly baseSend: MobileNativeChatImageBaseSend
+  readonly readSeededLaunchDraft: () => string | null
   readonly onSent: (sentIds: ReadonlySet<string>) => void
   readonly onError?: () => void
   readonly onSendError: (message: string) => void
@@ -62,13 +64,17 @@ export async function sendMobileNativeChatWithImages(args: {
   }
   try {
     const references = args.pendingImages.map((attachment) => attachment.path)
+    const seededLaunchDraft = args.readSeededLaunchDraft()
     const pasted = args.client
       ? await pasteMobileNativeChatImagePaths({
           client: args.client,
           terminal: handle,
           deviceToken: args.deviceTokenRef.current,
           imagePaths: references,
-          deadline
+          deadline,
+          ...(seededLaunchDraft
+            ? { clearInput: buildAgentTuiClearInputForText(seededLaunchDraft) }
+            : {})
         })
       : await args.operations!.pasteImages!(target!, references, deadline)
     if (!pasted) {

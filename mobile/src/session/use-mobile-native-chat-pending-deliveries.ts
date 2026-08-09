@@ -5,8 +5,18 @@ import type { HostSessionChatPendingDeliveryOperations } from './host-session-ch
 import {
   countImageSourceTurnsAfter,
   countUserTextOccurrences,
+  findLandedImagePreviewEchoes,
+  mergeLandedImagePreviewEchoes,
+  migrateImagePreviewMessageIds,
   normalizedUserText
 } from './mobile-native-chat-draft-reconcile'
+import {
+  combineMobileNativeChatPending,
+  mergeWaitingSessionPending,
+  nextMobileNativeChatPendingId,
+  omitMobileNativeChatPendingKey,
+  removeWaitingSessionPending
+} from './mobile-native-chat-pending-echo'
 
 export type MobileNativeChatPendingMessage = {
   id: string
@@ -24,6 +34,7 @@ export type MobileNativeChatPendingDeliveryTarget = {
 
 export type MobileNativeChatPendingDeliveryOrigin = {
   pendingKey: string | null
+  pendingStorageKey: string | null
   normalizedText: string
   baselineOccurrences: number
   baselineTailMessageId: string | null
@@ -31,6 +42,7 @@ export type MobileNativeChatPendingDeliveryOrigin = {
 }
 
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
+const NO_IMAGE_PREVIEWS: Record<string, string[]> = {}
 
 export function useMobileNativeChatPendingDeliveries(args: {
   hostId: string
@@ -42,10 +54,12 @@ export function useMobileNativeChatPendingDeliveries(args: {
 }): {
   pendingKey: string | null
   pending: MobileNativeChatPendingMessage[]
+  imagePreviewsByMessageId: Record<string, string[]>
   captureOrigin: (normalizedText: string) => MobileNativeChatPendingDeliveryOrigin
   accept: (origin: MobileNativeChatPendingDeliveryOrigin, text: string, images?: string[]) => void
 } {
   const { hostId, worktreeId, tabId, sessionId, messages, persistence } = args
+  const waitingKey = tabId ? `${hostId}\0${worktreeId}\0${tabId}` : null
   const pendingKey = tabId && sessionId ? `${hostId}\0${worktreeId}\0${tabId}\0${sessionId}` : null
   const pendingTarget = useMemo(
     () => (tabId && sessionId ? { workspaceId: worktreeId, tabId, sessionId } : null),
@@ -53,6 +67,9 @@ export function useMobileNativeChatPendingDeliveries(args: {
   )
   const [pendingBySession, setPendingBySession] = useState<
     Record<string, MobileNativeChatPendingMessage[]>
+  >({})
+  const [imagePreviewsBySession, setImagePreviewsBySession] = useState<
+    Record<string, Record<string, string[]>>
   >({})
   const pendingBySessionRef = useRef(pendingBySession)
   useEffect(() => {
@@ -105,17 +122,19 @@ export function useMobileNativeChatPendingDeliveries(args: {
   const replacePending = useCallback(
     (
       key: string,
-      target: MobileNativeChatPendingDeliveryTarget,
+      target: MobileNativeChatPendingDeliveryTarget | null,
       deliveries: MobileNativeChatPendingMessage[]
     ) => {
       editVersionRef.current[key] = (editVersionRef.current[key] ?? 0) + 1
       const nextState =
         deliveries.length > 0
           ? { ...pendingBySessionRef.current, [key]: deliveries }
-          : omitPendingKey(pendingBySessionRef.current, key)
+          : omitMobileNativeChatPendingKey(pendingBySessionRef.current, key)
       pendingBySessionRef.current = nextState
       setPendingBySession(nextState)
-      queueSave(key, target, deliveries)
+      if (target) {
+        queueSave(key, target, deliveries)
+      }
     },
     [queueSave]
   )
@@ -134,7 +153,7 @@ export function useMobileNativeChatPendingDeliveries(args: {
           return
         }
         const deliveries = stored.map((delivery) => ({
-          id: nextPendingMessageId(nextMessageIdRef),
+          id: nextMobileNativeChatPendingId(nextMessageIdRef),
           ...delivery,
           baselineTailMessageId: null
         }))
@@ -156,20 +175,22 @@ export function useMobileNativeChatPendingDeliveries(args: {
   const captureOrigin = useCallback(
     (normalizedText: string): MobileNativeChatPendingDeliveryOrigin => ({
       pendingKey,
+      pendingStorageKey: pendingKey ?? waitingKey,
       normalizedText,
       baselineOccurrences: countUserTextOccurrences(messages, normalizedText),
       baselineTailMessageId: messages.at(-1)?.id ?? null,
       pendingTarget
     }),
-    [messages, pendingKey, pendingTarget]
+    [messages, pendingKey, pendingTarget, waitingKey]
   )
 
   const accept = useCallback(
     (origin: MobileNativeChatPendingDeliveryOrigin, text: string, images?: string[]) => {
-      if (!origin.pendingKey || !origin.pendingTarget) {
+      const storageKey = origin.pendingStorageKey
+      if (!storageKey || (!origin.pendingTarget && !images?.length)) {
         return
       }
-      const current = pendingBySessionRef.current[origin.pendingKey] ?? NO_PENDING_MESSAGES
+      const current = pendingBySessionRef.current[storageKey] ?? NO_PENDING_MESSAGES
       const earlierOutstanding = current.filter(
         (pending) =>
           pending.text.trim() === origin.normalizedText &&
@@ -183,7 +204,7 @@ export function useMobileNativeChatPendingDeliveries(args: {
       const next = [
         ...current,
         {
-          id: nextPendingMessageId(nextMessageIdRef),
+          id: nextMobileNativeChatPendingId(nextMessageIdRef),
           text,
           expectedOccurrence:
             origin.normalizedText === ''
@@ -193,17 +214,50 @@ export function useMobileNativeChatPendingDeliveries(args: {
           ...(images && images.length > 0 ? { images } : {})
         }
       ].slice(-MOBILE_WEB_NATIVE_CHAT_PENDING_DELIVERY_LIMIT)
-      replacePending(origin.pendingKey, origin.pendingTarget, next)
+      replacePending(storageKey, origin.pendingTarget, next)
     },
     [replacePending]
   )
 
-  const pending = pendingKey
+  const sessionPending = pendingKey
     ? (pendingBySession[pendingKey] ?? NO_PENDING_MESSAGES)
     : NO_PENDING_MESSAGES
+  const waitingForSession = waitingKey
+    ? (pendingBySession[waitingKey] ?? NO_PENDING_MESSAGES)
+    : NO_PENDING_MESSAGES
+  const pending = combineMobileNativeChatPending(sessionPending, waitingForSession)
   useEffect(() => {
-    if (!pendingKey || !pendingTarget || pending.length === 0) {
+    if (!pendingKey || !pendingTarget || !waitingKey || waitingForSession.length === 0) {
       return
+    }
+    const movedIds = new Set(waitingForSession.map((item) => item.id))
+    const merged = mergeWaitingSessionPending(
+      pendingBySessionRef.current,
+      pendingKey,
+      waitingForSession
+    )
+    const next = removeWaitingSessionPending(merged, waitingKey, movedIds)
+    pendingBySessionRef.current = next
+    editVersionRef.current[pendingKey] = (editVersionRef.current[pendingKey] ?? 0) + 1
+    setPendingBySession(next)
+    queueSave(pendingKey, pendingTarget, next[pendingKey] ?? [])
+  }, [pendingKey, pendingTarget, queueSave, waitingForSession, waitingKey])
+  useEffect(() => {
+    if (!pendingKey || !pendingTarget) {
+      return
+    }
+    setImagePreviewsBySession((previous) =>
+      migrateImagePreviewMessageIds(previous, pendingKey, messages)
+    )
+    if (pending.length === 0) {
+      return
+    }
+    const landedImagePreviews = findLandedImagePreviewEchoes(messages, pending)
+    const landedImagePendingIds = new Set(landedImagePreviews.map((preview) => preview.pendingId))
+    if (landedImagePreviews.length > 0) {
+      setImagePreviewsBySession((previous) =>
+        mergeLandedImagePreviewEchoes(previous, pendingKey, landedImagePreviews)
+      )
     }
     const landedCounts = new Map<string, number>()
     for (const message of messages) {
@@ -212,29 +266,29 @@ export function useMobileNativeChatPendingDeliveries(args: {
         landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)
       }
     }
-    const next = pending.filter((item) =>
-      item.text.trim() === ''
+    const next = pending.filter((item) => {
+      if (landedImagePendingIds.has(item.id)) {
+        return false
+      }
+      if (item.images?.length) {
+        return true
+      }
+      return item.text.trim() === ''
         ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) < item.expectedOccurrence
         : (landedCounts.get(item.text.trim()) ?? 0) < item.expectedOccurrence
-    )
+    })
     if (next.length !== pending.length) {
       replacePending(pendingKey, pendingTarget, next)
     }
   }, [messages, pending, pendingKey, pendingTarget, replacePending])
 
-  return { pendingKey, pending, captureOrigin, accept }
-}
-
-function nextPendingMessageId(counter: { current: number }): string {
-  counter.current += 1
-  return `pending-${counter.current}`
-}
-
-function omitPendingKey(
-  state: Record<string, MobileNativeChatPendingMessage[]>,
-  key: string
-): Record<string, MobileNativeChatPendingMessage[]> {
-  const next = { ...state }
-  delete next[key]
-  return next
+  return {
+    pendingKey,
+    pending,
+    imagePreviewsByMessageId: pendingKey
+      ? (imagePreviewsBySession[pendingKey] ?? NO_IMAGE_PREVIEWS)
+      : NO_IMAGE_PREVIEWS,
+    captureOrigin,
+    accept
+  }
 }

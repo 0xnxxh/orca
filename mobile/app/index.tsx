@@ -62,45 +62,14 @@ import {
   normalizeVisibleTaskProviders,
   type TaskProvider
 } from '../src/tasks/mobile-task-providers'
-import { useOpenMobileTasks } from '../src/tasks/use-open-mobile-tasks'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
 import { navigateFromMobileHome } from '../src/mobile-web/mobile-web-home-navigation'
-
-function endpointLabel(endpoint: string): string {
-  try {
-    const url = new URL(endpoint)
-    return `${url.hostname}${url.port ? `:${url.port}` : ''}`
-  } catch {
-    return endpoint
-  }
-}
-
-type StatsSummary = {
-  totalAgentsSpawned: number
-  totalPRsCreated: number
-  totalAgentTimeMs: number
-  firstEventAt: number | null
-}
-
-type WorktreeSummary = {
-  worktreeId: string
-  repo: string
-  branch: string
-  displayName: string
-  liveTerminalCount: number
-  status?: 'working' | 'active' | 'permission' | 'done' | 'inactive'
-  // The worktree the desktop currently has focused (exactly one is true).
-  isActive?: boolean
-  // Last terminal-output time (ms); breaks ties when nothing is focused.
-  lastOutputAt?: number
-}
-
-type HostWorktreeInfo = {
-  hostId: string
-  totalWorktrees: number
-  activeCount: number
-  lastActiveWorktree: WorktreeSummary | null
-}
+import {
+  isResumeTargetConfirmedMissing,
+  selectHomeResumeCard,
+  type HomeResumeCard
+} from '../src/worktree/home-resume-card'
+import { hostEndpointLabel } from '../src/transport/host-endpoint-label'
 
 type HomeTaskSettings = {
   visibleTaskProviders?: unknown
@@ -244,15 +213,16 @@ function repoColor(name: string): string {
 export default function HomeScreen() {
   const router = useRouter()
   const openMobileHostEdit = useOpenMobileHostEdit()
-  const openMobileTasks = useOpenMobileTasks()
-  const openMobileSession = useOpenMobileSession()
-  const openMobileAccounts = useOpenMobileAccounts()
   const insets = useSafeAreaInsets()
   // Why: cap/center content on wide/tablet canvases so cards don't stretch edge-to-edge on iPad.
   const { isWideLayout, contentMaxWidth } = useResponsiveLayout()
   const [hostCatalog, setHostCatalog] = useState<HostCatalogEntry[]>([])
   const [actionTarget, setActionTarget] = useState<HostProfile | null>(null)
-  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<{
+    id: string
+    name: string
+    publicKeyB64: string
+  } | null>(null)
   const [hostStates, setHostStates] = useState<Record<string, ConnectionState>>({})
   const [hostAttempts, setHostAttempts] = useState<Record<string, number>>({})
   const [hostLastConnected, setHostLastConnected] = useState<Record<string, number | null>>({})
@@ -562,16 +532,20 @@ export default function HomeScreen() {
           getProvenCachedWorktrees(card.hostId) as HomeWorktreeSummary[] | null
         )
       ) {
-        router.push(hostRouteWithNotice(card.hostId, 'worktree-missing'))
+        navigateFromMobileHome({
+          router,
+          hostId: card.hostId,
+          target: { kind: 'workspaceList' }
+        })
         return
       }
-      openMobileSession({
+      navigateFromMobileHome({
+        router,
         hostId: card.hostId,
-        worktreeId: card.worktree.worktreeId,
-        name: card.worktree.displayName || card.worktree.repo
+        target: { kind: 'session', hostWorkspaceId: card.worktree.worktreeId }
       })
     },
-    [openMobileSession, router]
+    [router]
   )
 
   // Why: only show Account usage for connected hosts; stale cached usage would imply live data.
@@ -612,7 +586,7 @@ export default function HomeScreen() {
         target: { kind: 'tasks', ...(provider ? { taskSource: provider } : {}) }
       })
     },
-    [openMobileTasks, primaryConnectedHost]
+    [primaryConnectedHost, router]
   )
   const renderTaskHomeCard = () => (
     <Pressable
@@ -780,6 +754,7 @@ export default function HomeScreen() {
           }
           ItemSeparatorComponent={CardGap}
           renderItem={({ item }) => {
+            const info = worktreeInfo[item.id]
             const state = resolveHomeHostConnectionState(
               item.id,
               hostStates[item.id],
@@ -800,16 +775,22 @@ export default function HomeScreen() {
                 state={state}
                 verdict={verdict}
                 path={hostPaths[item.id] ?? 'lan'}
-                worktreeCounts={
-                  info ? { total: info.totalWorktrees, active: info.activeCount } : undefined
-                }
-                onPress={() =>
-                  navigateFromMobileHome({
-                    router,
-                    hostId: item.id,
-                    target: { kind: 'workspaceList' }
-                  })
-                }
+                worktreeInfo={info}
+                onPress={() => {
+                  if (item.credentialStatus === 'missing') {
+                    router.push('/pair-scan')
+                  } else if (item.credentialStatus === 'temporarily-unavailable') {
+                    void loadHostCatalog()
+                      .then(setHostCatalog)
+                      .catch(() => Alert.alert('Could not check pairing', 'Please try again.'))
+                  } else {
+                    navigateFromMobileHome({
+                      router,
+                      hostId: item.id,
+                      target: { kind: 'workspaceList' }
+                    })
+                  }
+                }}
                 onLongPress={() => {
                   triggerMediumImpact()
                   if (item.profile) {
@@ -835,17 +816,13 @@ export default function HomeScreen() {
                 <>
                   <Text style={[styles.sectionHeading, styles.sectionHeadingTightTop]}>Resume</Text>
                   <Pressable
-                    style={({ pressed }) => [styles.resumeCard, pressed && styles.hostCardPressed]}
-                    onPress={() =>
-                      navigateFromMobileHome({
-                        router,
-                        hostId: resumeWorktree.hostId,
-                        target: {
-                          kind: 'session',
-                          hostWorkspaceId: resumeWorktree.worktree.worktreeId
-                        }
-                      })
-                    }
+                    disabled={!resumeCard.actionable}
+                    style={({ pressed }) => [
+                      styles.resumeCard,
+                      !resumeCard.actionable && styles.cardDisabled,
+                      pressed && styles.hostCardPressed
+                    ]}
+                    onPress={() => openResume(resumeCard)}
                   >
                     <View style={styles.resumeIcon}>
                       <Terminal size={18} color={colors.textSecondary} />
@@ -876,40 +853,17 @@ export default function HomeScreen() {
               {renderTaskHomeCard()}
 
               {/* ─── Quick actions ─── */}
-              <Text style={[styles.sectionHeading, { marginTop: spacing.xl }]}>Quick Actions</Text>
-              <View style={styles.quickActions}>
-                <Pressable
-                  style={({ pressed }) => [styles.quickAction, pressed && styles.hostCardPressed]}
-                  onPress={() => router.push('/pair-scan')}
-                >
-                  <View style={styles.quickActionIcon}>
-                    <QrCode size={16} color={colors.textSecondary} />
-                  </View>
-                  <Text style={styles.quickActionLabel}>Pair Desktop</Text>
-                </Pressable>
-                <Pressable
-                  disabled={!primaryConnectedHost}
-                  style={({ pressed }) => [
-                    styles.quickAction,
-                    !primaryConnectedHost && styles.quickActionDisabled,
-                    pressed && styles.hostCardPressed
-                  ]}
-                  onPress={() => {
-                    if (primaryConnectedHost) {
-                      navigateFromMobileHome({
-                        router,
-                        hostId: primaryConnectedHost.id,
-                        target: { kind: 'newWorkspace' }
-                      })
-                    }
-                  }}
-                >
-                  <View style={styles.quickActionIcon}>
-                    <Plus size={16} color={colors.textSecondary} />
-                  </View>
-                  <Text style={styles.quickActionLabel}>New Workspace</Text>
-                </Pressable>
-              </View>
+              <MobileHomeQuickActions
+                connectedHosts={connectedHosts}
+                onPairDesktop={() => router.push('/pair-scan')}
+                onCreateWorkspace={(hostId) =>
+                  navigateFromMobileHome({
+                    router,
+                    hostId,
+                    target: { kind: 'newWorkspace' }
+                  })
+                }
+              />
 
               {/* ─── Account usage ─── */}
               {accountsHosts.length > 0 ? (

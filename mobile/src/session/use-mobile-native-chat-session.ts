@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createNativeChatTranscriptRetention } from '../../../src/shared/native-chat-transcript-retention'
 import type {
   NativeChatMessage,
   NativeChatTurnLifecycle
@@ -187,7 +188,7 @@ export function useMobileNativeChatSession(args: {
         if (applied.lifecycle !== undefined) {
           setLifecycle(applied.lifecycle)
         }
-        if (applied.hasMore != null) {
+        if (!applied.windowReplaced && applied.hasMore != null) {
           setHasMore(applied.hasMore)
         }
         if (!applied.windowReplaced && applied.beforeOffset != null) {
@@ -296,7 +297,7 @@ export function useMobileNativeChatSession(args: {
   return {
     // Withheld until the settled read belongs to this identity: the effect that
     // clears the previous tab's list is passive, so `messages` lags a commit.
-    messages: settled ? messages : EMPTY_MESSAGES,
+    messages: visibleMessages,
     lifecycle,
     status,
     transcriptLoading: status === 'loading',

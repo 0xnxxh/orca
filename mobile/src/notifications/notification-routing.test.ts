@@ -26,7 +26,6 @@ describe('notification routing', () => {
     })
   })
 
-  // Identities stay raw: the target is dispatched as navigator params, not a URL.
   it('routes notification taps to the worktree terminal screen', () => {
     expect(
       getNotificationNavigationTarget({
@@ -43,13 +42,7 @@ describe('notification routing', () => {
         hostId: 'host-1',
         worktreeId: 'repo::/Users/me/orca/workspaces/feature'
       })
-    ).toEqual({
-      hostId: 'host-1',
-      sessionTarget: {
-        name: '[hostId]/session/[worktreeId]',
-        params: { hostId: 'host-1', worktreeId: 'repo::/Users/me/orca/workspaces/feature' }
-      }
-    })
+    ).toBe('/h/host-1/session/repo%3A%3A%2FUsers%2Fme%2Forca%2Fworkspaces%2Ffeature')
   })
 
   it('falls back to the host screen when the payload has no worktree id', () => {

@@ -82,7 +82,7 @@ describe('mobile accounts route', () => {
     })
   })
 
-  it('opens the home account-usage card through the cold-navigator-safe transition', () => {
+  it('opens the home account-usage card through the hybrid navigation intent', () => {
     const start = homeSource.indexOf('{/* ─── Account usage ─── */}')
 
     // Assert the marker first: a renamed banner would otherwise slice garbage and report a
@@ -90,7 +90,8 @@ describe('mobile accounts route', () => {
     expect(start).toBeGreaterThanOrEqual(0)
 
     const accountsSection = homeSource.slice(start)
-    expect(accountsSection).toContain('openMobileAccounts(host.id)')
+    expect(accountsSection).toContain('navigateFromMobileHome({')
+    expect(accountsSection).toContain("target: { kind: 'accounts' }")
     expect(accountsSection).not.toContain('/accounts`')
   })
 })

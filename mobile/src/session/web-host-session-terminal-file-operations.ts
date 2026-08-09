@@ -31,12 +31,14 @@ function webTerminalFileTarget(
     ? {
         kind: 'worktree-file',
         relativePath: result.relativePath,
-        localAbsolutePath: null
+        localAbsolutePath: null,
+        workspaceId: result.workspaceId
       }
     : {
         kind: 'web-artifact',
         token: result.token,
         displayName: result.displayName,
-        previewKind: result.previewKind
+        previewKind: result.previewKind,
+        workspaceId: result.workspaceId
       }
 }

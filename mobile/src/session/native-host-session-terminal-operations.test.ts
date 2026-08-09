@@ -47,12 +47,16 @@ describe('native host session terminal operations', () => {
     await expect(operations.sendInput('terminal-native-1', 'ls', true, 'device-1')).resolves.toBe(
       true
     )
-    expect(sendRequest).toHaveBeenCalledWith('terminal.send', {
-      terminal: 'terminal-native-1',
-      text: 'ls',
-      enter: true,
-      client: { id: 'device-1', type: 'mobile' }
-    })
+    expect(sendRequest).toHaveBeenCalledWith(
+      'terminal.send',
+      {
+        terminal: 'terminal-native-1',
+        text: 'ls',
+        enter: true,
+        client: { id: 'device-1', type: 'mobile' }
+      },
+      { failWhenDisconnected: true }
+    )
     await expect(
       operations.setDisplayMode('terminal-native-1', 'auto', { cols: 90, rows: 30 }, 'device-1')
     ).resolves.toBe(true)

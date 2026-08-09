@@ -160,7 +160,6 @@ export function useMobileSourceControlState(params: MobileSourceControlStatePara
   )
   const branchLabel = formatBranchLabel(status?.branch, status?.head)
   const upstream = status?.upstreamStatus
-  const upstreamKnown = upstream !== undefined
   const syncLabel =
     upstream && upstream.hasUpstream
       ? `${upstream.ahead} ahead, ${upstream.behind} behind`
@@ -301,7 +300,7 @@ export function useMobileSourceControlState(params: MobileSourceControlStatePara
     unstagedCount,
     branchLabel,
     upstream,
-    upstreamKnown,
+    upstreamKnown: upstream !== undefined,
     syncLabel,
     primaryAction,
     createPrAction,

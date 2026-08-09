@@ -1,12 +1,14 @@
 import type { MobileWebNativeChatAgentStatus } from '../../../src/shared/mobile-web/native-chat-operation-contract'
-import { isNativeChatSupportedAgent } from '../../../src/shared/native-chat-agent-support'
+import { isRuntimeOwnedSshTargetId } from '../../../src/shared/execution-host'
+import {
+  isNativeChatSupportedAgent,
+  nativeChatRequiresLocalTranscript
+} from '../../../src/shared/native-chat-agent-support'
 
-// Why: undefined means the workspace owner could not be resolved. Local,
-// runtime-owned, and classic SSH owners all have bounded transcript readers.
 export function isMobileNativeChatTranscriptReadable(
   connectionId: string | null | undefined
 ): boolean {
-  return connectionId !== undefined
+  return connectionId === null || isRuntimeOwnedSshTargetId(connectionId)
 }
 
 export type MobileNativeChatResolution = {
@@ -25,10 +27,12 @@ export type MobileNativeChatTab = {
   agentStatus?: MobileNativeChatAgentStatusWithProvider | null
   /** Host-provided launch context still parked as an unsent TUI-input draft. */
   launchDraft?: string
+  launchDraftCreatedAt?: number
   nativeChatSessionId?: string | null
 }
 
 export type MobileNativeChatAgentStatusWithProvider = MobileWebNativeChatAgentStatus & {
+  model?: string
   providerSession?: {
     id: string
     transcriptPath?: string

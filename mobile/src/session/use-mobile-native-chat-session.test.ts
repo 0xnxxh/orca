@@ -280,7 +280,9 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
-      limit: 100
+      limit: 100,
+      worktreeId: 'worktree',
+      terminal: 'terminal'
     })
   })
 
@@ -340,7 +342,9 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
-      limit: 100
+      limit: 100,
+      worktreeId: 'worktree',
+      terminal: 'terminal'
     })
   })
 
@@ -492,16 +496,16 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     operations,
     sessionId,
     agent = 'claude',
-    sourceIdentity = 'host-a\0workspace-a'
+    workspaceId = 'worktree'
   }: {
     operations: HostSessionNativeChatOperations | null
     sessionId: string | null
     agent?: string | null
-    sourceIdentity?: string
+    workspaceId?: string
   }): null {
     const session = useMobileNativeChatSession({
       operations,
-      workspaceId: 'worktree',
+      workspaceId,
       agent,
       sessionId,
       transcriptPath: null,
@@ -594,7 +598,13 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     await mountAt(operations, 'session-a')
     expect(renders.at(-1)).toMatchObject({ status: 'ready' })
 
-    const reconnected = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    let emitFresh: (frame: unknown) => void = () => {}
+    const reconnected = {
+      subscribe: vi.fn((_method: string, _params: unknown, onData: (frame: unknown) => void) => {
+        emitFresh = onData
+        return () => {}
+      })
+    } as unknown as RpcClient
     const reconnectedOperations = nativeHostSessionNativeChatOperations(reconnected)
     renders.length = 0
     await act(async () =>
@@ -631,16 +641,17 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
         return () => {}
       })
     } as unknown as RpcClient
-    await mountAt(firstClient, 'session-a')
+    await mountAt(nativeHostSessionNativeChatOperations(firstClient), 'session-a')
 
     const secondClient = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    const secondOperations = nativeHostSessionNativeChatOperations(secondClient)
     renders.length = 0
     await act(async () =>
       renderer?.update(
         createElement(Harness, {
-          client: secondClient,
+          operations: secondOperations,
           sessionId: 'session-a',
-          sourceIdentity: 'host-b\0workspace-b'
+          workspaceId: 'workspace-b'
         })
       )
     )

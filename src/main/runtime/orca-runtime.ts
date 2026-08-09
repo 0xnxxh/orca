@@ -42,6 +42,7 @@ import {
   AGENT_STATUS_STALE_AFTER_MS,
   isFreshNonDoneAgentStatus,
   normalizeAgentStatusPayload,
+  pickParsedAgentStatusPayload,
   type AgentStatusIpcPayload,
   type ParsedAgentStatusPayload,
   type AgentStatusOrchestrationContext,
@@ -2797,6 +2798,13 @@ async function hasLocalWorktreeBaseRef(
     (gitArgs) => gitExecFileAsync(gitArgs, { cwd: repoPath, ...options }),
     baseRef
   )
+}
+
+function getSetupRunnerCommandPlatformForLaunch(
+  setup: CreateWorktreeResult['setup'],
+  fallbackPlatform: 'windows' | 'posix'
+): 'windows' | 'posix' {
+  return getSetupRunnerCommandPlatformForPath(setup?.runnerScriptPath ?? '', fallbackPlatform)
 }
 
 function normalizeMobileHookStatus(
@@ -31092,7 +31100,8 @@ export class OrcaRuntimeService {
     // Why not lastOutputAt: this state is title-derived, so it must be dated by
     // its evidence. Stamping it with the byte stream made the frame advance on
     // every output byte, so a paired client's live status could never outrank it.
-    const evidenceAt = pty?.lastOscTitleEpochMs ?? hookRow.providerSessionReceivedAt ?? Date.now()
+    const evidenceAt =
+      pty?.lastOscTitleEpochMs ?? providerRow.providerSessionReceivedAt ?? Date.now()
     const agentType = ownerAgent ?? undefined
     return {
       agentStatus: {
@@ -31115,32 +31124,6 @@ export class OrcaRuntimeService {
         ...(providerSession ? { providerSession } : {})
       }
     }
-  }
-
-  /** Live hook status to publish for a pane with no retained OSC row, or null when the
-   *  pane's hook evidence only proves identity.
-   *
-   *  Why the freshness rule: `pty.lastAgentStatus` is title-derived and refreshed live,
-   *  so an unconditional hook precedence would let a 29-minute-old `done` erase a pane
-   *  that is visibly working. A pending `interactivePrompt` outranks title evidence at
-   *  any age — the agent is parked on a selector until it answers — and it is also the
-   *  only signal allowed to survive the #1437 non-agent-title suppression. */
-  private resolveHookLiveAgentRow(
-    live: HookLiveAgentRow | null,
-    pty: RuntimePtyWorktreeRecord | null,
-    nonAgentTitle: boolean
-  ): HookLiveAgentRow | null {
-    if (!live) {
-      return null
-    }
-    if (live.payload.interactivePrompt != null) {
-      return live
-    }
-    // Why only this stamp: it is the sole wall-clock date on the pane's live title,
-    // so it is the only one comparable to a hook `receivedAt`. The sibling
-    // `titleUpdatedAt`/`lastOscTitleAt`/`paneTitleUpdatedAt` fields are observation
-    // sequence numbers, and comparing them here can only ever misfire.
-    return !nonAgentTitle && live.updatedAt >= (pty?.lastOscTitleEpochMs ?? 0) ? live : null
   }
 
   /** Hook-reported identity for this pane, newest wins per field.

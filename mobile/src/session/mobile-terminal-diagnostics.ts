@@ -8,7 +8,9 @@ type MobileTerminalDiagnosticEvent =
   | 'stream-armed'
   | 'stream-first-event'
   | 'stream-resized'
+  | 'stream-resubscribe-exhausted'
   | 'stream-resubscribe-for-viewport'
+  | 'stream-resubscribe-held-absent-dims'
   | 'stream-scrollback'
   | 'stream-skipped'
   | 'tab-switch'
@@ -158,7 +160,13 @@ export class MobileTerminalDiagnostics {
     })
   }
 
-  streamResubscribing(_handle: string, seq: number, dims: { cols: number; rows: number }): void {
+  streamResubscribing(
+    _handle: string,
+    seq: number,
+    dims: { cols: number; rows: number },
+    attempt?: number,
+    delayMs?: number
+  ): void {
     logMobileTerminalDiagnostic('stream-resubscribe-for-viewport', {
       seq,
       cols: dims.cols,
@@ -168,16 +176,14 @@ export class MobileTerminalDiagnostics {
     })
   }
 
-  streamResubscribeHeld(handle: string, seq: number): void {
+  streamResubscribeHeld(_handle: string, seq: number): void {
     logMobileTerminalDiagnostic('stream-resubscribe-held-absent-dims', {
-      handle: shortenMobileTerminalDiagnosticId(handle),
       seq
     })
   }
 
-  streamResubscribeExhausted(handle: string, seq: number, attempts: number): void {
+  streamResubscribeExhausted(_handle: string, seq: number, attempts: number): void {
     logMobileTerminalDiagnostic('stream-resubscribe-exhausted', {
-      handle: shortenMobileTerminalDiagnosticId(handle),
       seq,
       attempts
     })

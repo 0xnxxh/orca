@@ -65,8 +65,8 @@ export function nativeHostSessionNativeChatOperations(
         return { error: 'Transcript read failed' }
       }
     },
-    sendMessage(target, text, deadline, clearInputFirst) {
-      return sendNative(target, text, true, client, deadline, clearInputFirst)
+    sendMessage(target, text, deadline, clearInputFirst, resolvedLaunchDraft) {
+      return sendNative(target, text, true, client, deadline, clearInputFirst, resolvedLaunchDraft)
     },
     prepareCommit(target, deadline) {
       if (!target.terminalId) {
@@ -159,7 +159,8 @@ function sendNative(
   enter: boolean,
   client: RpcClient,
   deadline?: number,
-  clearInputFirst?: boolean
+  clearInputFirst?: boolean,
+  resolvedLaunchDraft?: { text: string; createdAt: number }
 ): Promise<MobileNativeChatSendOutcome> {
   if (!target.terminalId) {
     return Promise.resolve('rejected')
@@ -170,6 +171,7 @@ function sendNative(
     text,
     enter,
     clearInputFirst,
+    resolvedLaunchDraft,
     deadline,
     ...(target.clientId ? { mobileClient: { id: target.clientId, type: 'mobile' as const } } : {})
   })

@@ -50,7 +50,7 @@ export const RelayErrorCode = {
   DiskFull: -33005,
   TooManyStreams: -33006,
   StreamProtocolError: -33007,
-  MarkdownDocumentListingCapacity: -33008
+  MarkdownDocumentListingCapacity: -33009
 } as const
 
 export const JsonRpcErrorCode = {

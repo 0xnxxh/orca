@@ -8,6 +8,7 @@ import {
   AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
   AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
   AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_MODEL_MAX_LENGTH,
   AGENT_TYPE_MAX_LENGTH
 } from './agent-status-limits'
 import {
@@ -19,11 +20,13 @@ import {
 import { assertJsonTextStructureWithinLimits } from './json-text-structure-limit'
 
 export { AGENT_STATUS_MAX_FIELD_LENGTH } from './agent-status-field-normalization'
+export { agentSubagentsEqual } from './agent-subagent-equality'
 export {
   AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
   AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
   AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
   AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_MODEL_MAX_LENGTH,
   AGENT_TYPE_MAX_LENGTH
 } from './agent-status-limits'
 
@@ -287,8 +290,6 @@ export function isFreshNonDoneAgentStatus(
 
 // Why: ReadonlySet<string> so .has() accepts any string without a cast here; the narrowing cast stays on the return line where it's proven safe.
 const VALID_STATES: ReadonlySet<string> = new Set<string>(AGENT_STATUS_STATES)
-export const AGENT_MODEL_MAX_LENGTH = 120
-
 /** Maximum subagent child rows carried per status entry. Bounds per-pane cache
  *  and IPC fanout against a runaway spawner. */
 export const AGENT_STATUS_MAX_SUBAGENTS = 32
@@ -344,35 +345,6 @@ function normalizeSubagentsField(value: unknown): AgentSubagentSnapshot[] | unde
     }
   }
   return normalized.length > 0 ? normalized : undefined
-}
-
-/** Structural equality for subagent lists so stores can reuse the previous
- *  array reference (and skip fanout) when nothing actually changed. */
-export function agentSubagentsEqual(
-  a: AgentSubagentSnapshot[] | undefined,
-  b: AgentSubagentSnapshot[] | undefined
-): boolean {
-  if (a === b) {
-    return true
-  }
-  if (!a || !b || a.length !== b.length) {
-    return !a && !b
-  }
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i]
-    const y = b[i]
-    if (
-      x.id !== y.id ||
-      x.state !== y.state ||
-      x.startedAt !== y.startedAt ||
-      x.agentType !== y.agentType ||
-      x.model !== y.model ||
-      x.description !== y.description
-    ) {
-      return false
-    }
-  }
-  return true
 }
 
 /**

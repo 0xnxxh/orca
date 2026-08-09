@@ -179,6 +179,7 @@ function baseArgs(
     showToast: vi.fn(),
     onSendError: vi.fn(),
     baseSend,
+    readSeededLaunchDraft: () => null,
     sleep: async () => {}
   }
 }

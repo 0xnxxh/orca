@@ -102,7 +102,7 @@ describe('resolveMobileNativeChat', () => {
     expect(resolveMobileNativeChat({ type: 'terminal', launchAgent: 'gemini' })).toBeNull()
   })
 
-  it('admits Grok for local, runtime-owned, and classic SSH transcript readers', () => {
+  it('admits Grok only when its transcript is readable by the serving host', () => {
     const tab = { type: 'terminal', launchAgent: 'grok' }
     expect(resolveMobileNativeChat(tab, isMobileNativeChatTranscriptReadable(null))).toMatchObject({
       agent: 'grok'
@@ -112,7 +112,7 @@ describe('resolveMobileNativeChat', () => {
     ).toMatchObject({ agent: 'grok' })
     expect(
       resolveMobileNativeChat(tab, isMobileNativeChatTranscriptReadable('model-a-ssh'))
-    ).toMatchObject({ agent: 'grok' })
+    ).toBeNull()
   })
 
   // Why: omp's hook reports no transcript path either, so mobile can only show

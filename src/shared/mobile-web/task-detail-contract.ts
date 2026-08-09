@@ -127,6 +127,18 @@ export const MobileWebTaskGitLabDetailResultSchema = z
     comments: z.array(MobileWebTaskDetailCommentSchema).max(1_000),
     labels: z.array(z.string().max(240)).max(1_000).optional(),
     assignees: z.array(z.string().max(240)).max(1_000),
+    item: z
+      .object({ mergeable: z.enum(['MERGEABLE', 'CONFLICTING', 'UNKNOWN']).optional() })
+      .strip()
+      .optional(),
+    reviewers: z.array(z.unknown()).max(1_000).optional(),
+    approvalState: z
+      .object({
+        approvalsRequired: z.number().int().nonnegative().nullable(),
+        approvalsLeft: z.number().int().nonnegative().nullable()
+      })
+      .strip()
+      .optional(),
     pipelineJobs: z
       .array(
         z

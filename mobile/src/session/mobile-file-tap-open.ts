@@ -9,12 +9,12 @@ export type FileTapSessionTab = {
   relativePath?: string
 }
 
-type OpenMobileTerminalFileTapOptions<T extends TerminalFileTapSessionTab> = {
+export type OpenMobileFileTapOptions<T extends FileTapSessionTab> = {
   operations: HostSessionTerminalFileOperations
   hostId: string
   worktreeId: string
   worktreeName?: string
-  terminalHandle: string
+  terminalHandle?: string | null
   pathText: string
   cwd?: string | null
   line: number | null
@@ -65,27 +65,28 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
   options: OpenMobileFileTapOptions<T>
 ): Promise<void> {
   const terminalHandle = options.terminalHandle?.trim()
-  if (!terminalHandle) {
+  const sourceTabId = terminalHandle || options.getActivationState(false).sourceTerminalHandle
+  if (!sourceTabId) {
     return
   }
   const resolved = await options.operations.resolveTerminalPath({
     workspaceId: options.worktreeId,
-    tabId: terminalHandle,
-    terminalHandle,
+    tabId: sourceTabId,
+    terminalHandle: terminalHandle || null,
     pathText: options.pathText,
     cwd: options.cwd?.trim() || null,
     line: options.line,
     column: options.column
   })
   if (!resolved) {
+    reportOpenFailure(options)
     return
   }
   // Not a failure: the user moved off the source tab mid-resolve.
   if (!shouldActivateOpenedMobileSessionTab(options.getActivationState(false))) {
     return
   }
-  const resolvedWorktreeId = resolved.worktree?.trim() || options.worktreeId
-  const resolvedWorktree = `id:${resolvedWorktreeId}`
+  const resolvedWorktreeId = resolved.workspaceId?.trim() || options.worktreeId
   const resolvedWorktreeName =
     resolvedWorktreeId === options.worktreeId ? options.worktreeName : undefined
 

@@ -44,7 +44,7 @@ export function webHostSessionNativeChatOperations(
         return { error: 'Transcript read failed' }
       }
     },
-    async sendMessage(target, text, deadline, clearInputFirst) {
+    async sendMessage(target, text, deadline, clearInputFirst, resolvedLaunchDraft) {
       const budget = bridgeBudget(deadline)
       if (!budget) {
         return 'rejected'
@@ -55,7 +55,8 @@ export function webHostSessionNativeChatOperations(
             bridgeTarget(target, {
               text,
               deadline: budget.deadline,
-              ...(clearInputFirst ? { clearInputFirst: true } : {})
+              ...(clearInputFirst ? { clearInputFirst: true } : {}),
+              ...(resolvedLaunchDraft ? { resolvedLaunchDraft } : {})
             }),
             { timeoutMs: budget.timeoutMs }
           )

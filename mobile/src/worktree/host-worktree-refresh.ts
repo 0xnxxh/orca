@@ -64,6 +64,7 @@ export function startHostWorktreeRefresh({
       return
     }
     if (event.type === 'reposChanged') {
+      void fetchWorktrees()
       void fetchRepoMetadata({ force: true, queueIfInFlight: true })
     } else if (event.type === 'worktreesChanged') {
       void fetchWorktrees()

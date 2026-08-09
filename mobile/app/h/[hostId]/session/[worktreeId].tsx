@@ -90,12 +90,13 @@ import type {
   TerminalWebViewHandle
 } from '../../../../src/terminal/terminal-webview-contract'
 import { useTerminalViewportRefit } from '../../../../src/terminal/terminal-viewport-refit'
+import { computeActiveTerminalKeyboardLift } from '../../../../src/terminal/terminal-keyboard-avoidance-lift'
 import {
   getDefaultTerminalAccessoryBuiltInIds,
   getVisibleTerminalAccessoryKeys
 } from '../../../../src/terminal/terminal-accessory-layout'
 import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/terminal-live-accessory-input'
-import { sendTerminalLiveAccessoryRawBytes } from '../../../../src/terminal/terminal-live-accessory-raw-send'
+import { getTerminalLiveAccessoryRawSendTarget } from '../../../../src/terminal/terminal-live-accessory-raw-send-target'
 import {
   clearTerminalLiveInputFocusTimer,
   isTerminalLiveInputWithinByteLimit,
@@ -171,7 +172,6 @@ import { useMobileFileTapHandlers } from '../../../../src/session/use-mobile-fil
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import { useMissingWorktreeBounce } from '../../../../src/session/use-missing-worktree-bounce'
 import { hostRouteWithNotice } from '../../../../src/host-route-notice'
-import { LAST_VISITED_WORKTREE_STORAGE_KEY } from '../../../../src/worktree/last-visited-worktree-repo'
 import {
   acceptSessionSnapshot,
   applyClosedTabTombstones,
@@ -202,6 +202,12 @@ import {
 import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-mobile-native-chat-terminal-stream'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
 import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
+import {
+  createInitialSessionAutoCreateState,
+  useInitialSessionTerminalAutoCreate,
+  useWorktreeSessionTabsLoaded
+} from '../../../../src/session/use-initial-session-terminal-autocreate'
+import { TerminalViewportResubscribeBudget } from '../../../../src/session/mobile-terminal-viewport-resubscribe'
 import type {
   SessionTabsApplyOutcome,
   SessionTabsStreamSource
@@ -260,8 +266,8 @@ import {
   reconcileMobileSessionCreateWarningState
 } from '../../../../src/session/mobile-session-create-warning-state'
 import { colors, spacing } from '../../../../src/theme/mobile-theme'
-import { styles } from './mobile-session-styles'
-import { QuickCommandsTabButton } from './QuickCommandsTabButton'
+import { styles } from '../../../../src/session/mobile-session-styles'
+import { QuickCommandsTabButton } from '../../../../src/session/QuickCommandsTabButton'
 import type { DiffComment } from '../../../../../src/shared/types'
 import type {
   DiffCommentActions,
@@ -1232,13 +1238,12 @@ export function SessionScreen({
   useEffect(() => {
     sessionTerminalOperationsRef.current = sessionTerminalOperations
   }, [sessionTerminalOperations])
-  const canSend =
-    connState === 'connected' &&
-    sessionTerminalOperations != null &&
-    activeHandle != null &&
-    activeSessionTab?.type !== 'markdown' &&
-    activeSessionTab?.type !== 'file' &&
-    activeSessionTab?.type !== 'browser'
+  const { canCompose, canSend: inputGateCanSend } = resolveMobileTerminalInputGate({
+    connState,
+    activeHandle,
+    activeSessionTabType: activeSessionTab?.type
+  })
+  const canSend = inputGateCanSend && sessionTerminalOperations != null
   const liveInputEnabled = activeHandle ? liveInputTerminalHandles.has(activeHandle) : false
   const { focusLiveInput, handleTerminalTap, resetLiveInputFocus } = useTerminalLiveInputFocus({
     activeHandleRef,
@@ -2999,7 +3004,7 @@ export function SessionScreen({
   }, [activeSessionTab, fileDocs, readFileTab])
 
   async function handleSend() {
-    if (!sessionTerminalOperations || !activeHandle || sendingRef.current) {
+    if (!sessionTerminalOperations || !activeHandle || !canSend || sendingRef.current) {
       return
     }
     sendingRef.current = true
@@ -3038,10 +3043,7 @@ export function SessionScreen({
     const rawSendTarget = getTerminalLiveAccessoryRawSendTarget({
       targetHandle,
       activeHandle: activeHandleRef.current,
-      activeSessionTabType: activeSessionTabTypeRef.current,
-      connState: connStateRef.current,
-      bytes: input.bytes,
-      deviceToken: deviceTokenRef.current
+      activeSessionTabType: activeSessionTabTypeRef.current
     })
     if (!currentOperations || !rawSendTarget || connStateRef.current !== 'connected') {
       return
@@ -3150,62 +3152,22 @@ export function SessionScreen({
     })
   }, [])
 
-  const handleTerminalTap = useCallback(
-    (handle: string) => {
-      if (handle !== activeHandleRef.current) {
-        return
-      }
-      focusLiveInput()
-    },
-    [focusLiveInput]
-  )
-
-  // Tap a terminal file path → resolve on host, open as file tab (mirrors desktop Cmd/Ctrl-click); silent on a miss.
-  const handleFileTapActivationSeqRef = useRef(0)
-  const handleFileTap = useCallback(
-    (handle: string, pathText: string, line: number | null, column: number | null) => {
-      if (handle !== activeHandleRef.current || !sessionTerminalFileOperations) {
-        return
-      }
-      const activationSeq = ++handleFileTapActivationSeqRef.current
-      openMobileTerminalFileTap<MobileSessionTab>({
-        operations: sessionTerminalFileOperations,
-        hostId,
-        worktreeId,
-        worktreeName: routeWorktreeName,
-        terminalHandle: handle,
-        pathText,
-        cwd: terminalCwdRef.current.get(handle) ?? null,
-        line,
-        column,
-        pushPreviewRoute: (href) => router.push(href),
-        openBrowser: (url) => void handleCreateBrowserRef.current?.(url),
-        triggerOpenFeedback: triggerSelection,
-        fetchSessionTabs,
-        getSessionTabs: () => sessionTabsRef.current,
-        getActiveSessionTabId: () => activeSessionTabIdRef.current,
-        getActivationState: (activated) => ({
-          activated,
-          activationSeq,
-          latestActivationSeq: handleFileTapActivationSeqRef.current,
-          sourceTerminalHandle: handle,
-          activeTerminalHandle: activeHandleRef.current,
-          activeTabType: activeSessionTabTypeRef.current
-        }),
-        switchSessionTab: (tab) => switchSessionTabRef.current?.(tab),
-        scheduleDelayedAction
-      })
-    },
-    [
-      fetchSessionTabs,
-      hostId,
-      routeWorktreeName,
-      router,
-      scheduleDelayedAction,
-      sessionTerminalFileOperations,
-      worktreeId
-    ]
-  )
+  const { handleFileTap, handleNativeChatFileTap } = useMobileFileTapHandlers<MobileSessionTab>({
+    operations: sessionTerminalFileOperations,
+    hostId,
+    worktreeId,
+    worktreeName: routeWorktreeName,
+    activeHandleRef,
+    terminalCwdRef,
+    openBrowser: (url) => void handleCreateBrowserRef.current?.(url),
+    fetchSessionTabs,
+    getSessionTabs: () => sessionTabsRef.current,
+    getActiveSessionTabId: () => activeSessionTabIdRef.current,
+    getActiveSessionTabType: () => activeSessionTabTypeRef.current,
+    switchSessionTab: (tab) => switchSessionTabRef.current?.(tab),
+    scheduleDelayedAction,
+    reportChatTapFailure: nativeChatSendError.show
+  })
 
   const handleOpenedFileDiffActivationSeqRef = useRef(0)
   // Capture active tab at tap time; reading it after openDiff would misread a mid-RPC switch and let the retry steal focus.
@@ -3835,7 +3797,8 @@ export function SessionScreen({
                   text: options.initialPrompt,
                   enter: options.enter !== false,
                   deviceToken: deviceTokenRef.current
-                })
+                }),
+                TERMINAL_INPUT_SEND_OPTIONS
               )
               .then((sendResponse) => {
                 if (!sendResponse.ok) {
@@ -4192,30 +4155,22 @@ export function SessionScreen({
   const showEmptyState =
     connState === 'connected' && terminalsLoaded && visibleTabs.length === 0 && !activeHandle
 
-  useEffect(() => {
-    if (
-      (!client && !sessionTabOperations) ||
-      !showEmptyState ||
-      creating ||
-      creatingBrowser ||
-      creatingMarkdown ||
-      initialEmptySessionAutoCreateRef.current === worktreeId
-    ) {
-      return
+  useInitialSessionTerminalAutoCreate({
+    client: client ?? sessionTabOperations,
+    newlyCreatedWorkspace: created === '1',
+    connState,
+    terminalsLoaded,
+    visibleTabCount: visibleTabs.length,
+    activeHandle,
+    createInFlight: creating || creatingBrowser || creatingMarkdown,
+    stateRef: initialSessionAutoCreateRef,
+    worktreeId,
+    consumeCreationRoute: () => router.setParams({ created: undefined }),
+    createTerminal: () => {
+      setCreateError('')
+      void handleCreateTerminal()
     }
-    // Why: a sleeping/new workspace can hydrate with zero tabs; create the first terminal once so mobile isn't blank.
-    initialEmptySessionAutoCreateRef.current = worktreeId
-    setCreateError('')
-    void handleCreateTerminal()
-  }, [
-    client,
-    creating,
-    creatingBrowser,
-    creatingMarkdown,
-    sessionTabOperations,
-    showEmptyState,
-    worktreeId
-  ])
+  })
 
   // Why: reconnect trickles to 90s at its give-up cap; surface tap-to-retry so recovery needn't wait it out (issue #5049).
   const connectionVerdict = classifyConnection({

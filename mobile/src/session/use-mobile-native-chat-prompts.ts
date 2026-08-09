@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileNativeChatAgentStatusWithProvider } from './mobile-native-chat-eligibility'
-import { extractPendingAsk, parseAskFromStatus } from './mobile-native-chat-ask'
+import { parseAskFromStatus, resolveNativeChatAsk } from './mobile-native-chat-ask'
 import { detectAgentPermission, parseApprovalFromStatus } from './mobile-native-chat-permission'
 import { parseAgentQuestion } from './mobile-native-chat-question'
 
@@ -21,7 +21,8 @@ export function useMobileNativeChatPrompts(args: {
    *  across a reconnect). Required: an ask derived from it may already be answered. */
   transcriptLoading: boolean
 }): MobileNativeChatPrompts {
-  const { enabled, status, messages } = args
+  const { enabled, status, messages, transcriptLoading } = args
+  const blocked = status?.state === 'waiting' || status?.state === 'blocked'
   const askFromStatus = useMemo(
     () => parseAskFromStatus(status?.interactivePrompt, status?.toolName),
     [status?.interactivePrompt, status?.toolName]
@@ -35,28 +36,28 @@ export function useMobileNativeChatPrompts(args: {
       }),
     [askFromStatus, transcriptLoading, messages]
   )
-  const ask = enabled ? (askFromStatus ?? askFromMessages) : null
-  const blocked = status?.state === 'waiting' || status?.state === 'blocked'
-  // Why: after a structured answer, its host status can linger briefly; never
-  // replace that dismissed card with a heuristic reading of the same prompt.
-  const permission = ask
+  const askFromMessages = askFromStatus ? null : resolvedAsk
+  const detectedAsk = askFromStatus ?? askFromMessages
+  const visibleAsk = enabled ? ((blocked ? askFromStatus : null) ?? askFromMessages) : null
+  const permission = visibleAsk
     ? null
-    : ((blocked && status
-        ? detectAgentPermission({
-            state: status.state,
-            lastAssistantMessage: status.lastAssistantMessage,
-            toolName: status.toolName,
-            toolInput: status.toolInput
-          })
-        : null) ?? parseApprovalFromStatus(status?.interactivePrompt))
+    : blocked && status
+      ? (detectAgentPermission({
+          state: status.state,
+          lastAssistantMessage: status.lastAssistantMessage,
+          toolName: status.toolName,
+          toolInput: status.toolInput
+        }) ?? parseApprovalFromStatus(status.interactivePrompt))
+      : null
   const question =
-    !ask && blocked && status && !permission
+    !visibleAsk && blocked && status && !permission
       ? parseAgentQuestion(status.lastAssistantMessage ?? '')
       : null
 
   return {
     permission,
     question,
-    ask
+    detectedAsk: enabled ? detectedAsk : null,
+    ask: visibleAsk
   }
 }

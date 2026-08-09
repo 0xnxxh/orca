@@ -19,6 +19,7 @@ vi.mock('./mobile-markdown-styles', () => ({
     }
   )
 }))
+vi.mock('./pr-sidebar/MermaidDiagram', () => ({ MermaidDiagram: 'MermaidDiagram' }))
 
 describe('MobileMarkdown security', () => {
   let renderer: ReactTestRenderer | null = null

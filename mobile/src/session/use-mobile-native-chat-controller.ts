@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type MutableRefObject } from 'react'
 import { useMobileSessionViewMode } from './use-mobile-session-view-mode'
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
-import type {
-  HostSessionNativeChatOperations,
-  HostSessionNativeChatTarget
-} from './host-session-native-chat-operations'
+import type { HostSessionNativeChatOperations } from './host-session-native-chat-operations'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
+import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 import { useMobileNativeChatFileSearch } from './use-mobile-native-chat-file-search'
 import { useMobileNativeChatMessageSend } from './use-mobile-native-chat-message-send'
@@ -15,6 +13,7 @@ import { useMobileNativeChatSession } from './use-mobile-native-chat-session'
 import { useMobileNativeChatSessionOptions } from './use-mobile-native-chat-session-options'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
+import { useMobileNativeChatTarget } from './use-mobile-native-chat-target'
 import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
 import { useThrottledLatestValue } from './use-throttled-latest-value'
 import { isMobileNativeChatAgentWorking } from './mobile-native-chat-working-state'
@@ -98,33 +97,18 @@ export function useMobileNativeChatController(args: {
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
   const activeTerminalId = activeHandleRef.current
   const nativeClientId = deviceTokenRef.current
-  const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeTerminalId ?? ''}`
+  const routeKey = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}`
+  const streamIdentity = `${routeKey}\0${activeChatSessionId ?? ''}\0${activeTerminalId ?? ''}`
+  const streamScopeKey = `${routeKey}\0${activeSessionTab?.agentStatus?.providerSession?.id ?? ''}\0${activeTerminalId ?? ''}`
 
-  const nativeChatTarget = useMemo<HostSessionNativeChatTarget | null>(
-    () =>
-      activeChatResolution?.sessionId
-        ? {
-            workspaceId: worktreeId,
-            agent: activeChatResolution.agent,
-            sessionId: activeChatResolution.sessionId,
-            transcriptPath: activeChatResolution.transcriptPath,
-            terminalId: activeTerminalId,
-            clientId: nativeClientId
-          }
-        : null,
-    [
-      activeChatResolution?.agent,
-      activeChatResolution?.sessionId,
-      activeChatResolution?.transcriptPath,
-      activeTerminalId,
-      nativeClientId,
-      worktreeId
-    ]
-  )
-  const nativeChatTargetRef = useRef(nativeChatTarget)
-  useEffect(() => {
-    nativeChatTargetRef.current = nativeChatTarget
-  }, [nativeChatTarget])
+  const { target: nativeChatTarget, targetRef: nativeChatTargetRef } = useMobileNativeChatTarget({
+    workspaceId: worktreeId,
+    agent: activeChatResolution?.agent ?? null,
+    sessionId: activeChatResolution?.sessionId ?? null,
+    transcriptPath: activeChatResolution?.transcriptPath ?? null,
+    terminalId: activeTerminalId,
+    clientId: nativeClientId
+  })
   const nativeChatSession = useMobileNativeChatSession({
     operations,
     workspaceId: worktreeId,
@@ -168,6 +152,7 @@ export function useMobileNativeChatController(args: {
     nativeChatStatus,
     nativeChatSession.lifecycle
   )
+  const nativeChatStreamLive = activeSessionTab?.agentStatus?.state === 'working'
   // Throttle the streaming bubble: OpenCode emits a status frame per streamed
   // part, and each one re-renders and re-parses the whole accumulated markdown.
   const nativeChatStreamingText = useThrottledLatestValue(
@@ -202,17 +187,6 @@ export function useMobileNativeChatController(args: {
     sessionKey: activeChatSessionId,
     observing: nativeChatAskObservable
   })
-
-  const handleNativeChatOpenFile = useCallback(
-    (pathText: string) => {
-      const target = nativeChatTargetRef.current
-      if (!operations || !target) {
-        return
-      }
-      void operations.openFile(target, pathText).catch(() => {})
-    },
-    [operations]
-  )
 
   // The explicit transport state collapses before the input lease on disconnect.
   const inputSendable = nativeChatInputLeaseReady && connected
@@ -281,6 +255,8 @@ export function useMobileNativeChatController(args: {
     operations,
     enabled: inputSendable,
     targetRef: nativeChatTargetRef,
+    agentRef: activeChatAgentRef,
+    commandSendRef: recordSessionOptionCommandRef,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,

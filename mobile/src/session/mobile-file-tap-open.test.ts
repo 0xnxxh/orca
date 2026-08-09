@@ -326,26 +326,12 @@ describe('openMobileFileTap', () => {
   })
 
   it('reports a failed files.open through onOpenFailed', async () => {
-    const client = createClient([
-      ok({
-        worktree: 'wt-1',
-        relativePath: 'src/index.ts',
-        absolutePath: '/repo/src/index.ts',
-        exists: true,
-        isDirectory: false,
-        openTarget: {
-          kind: 'worktree-file',
-          provider: 'local',
-          relativePath: 'src/index.ts',
-          absolutePath: '/repo/src/index.ts'
-        }
-      }),
-      { ok: false, error: { message: 'nope' } }
-    ])
+    const operations = createOperations([worktreeTarget('src/index.ts', '/repo/src/index.ts')])
+    operations.openWorktreeFile.mockRejectedValue(new Error('nope'))
     const onOpenFailed = vi.fn()
 
-    openMobileFileTap({
-      client,
+    openMobileTerminalFileTap({
+      operations,
       hostId: 'host-1',
       worktreeId: 'wt-1',
       pathText: 'src/index.ts',
@@ -370,27 +356,13 @@ describe('openMobileFileTap', () => {
   })
 
   it('reports an unsupported file when files.open declines it', async () => {
-    const client = createClient([
-      ok({
-        worktree: 'wt-1',
-        relativePath: 'dist/app.zip',
-        absolutePath: '/repo/dist/app.zip',
-        exists: true,
-        isDirectory: false,
-        openTarget: {
-          kind: 'worktree-file',
-          provider: 'local',
-          relativePath: 'dist/app.zip',
-          absolutePath: '/repo/dist/app.zip'
-        }
-      }),
-      ok({ worktree: 'wt-1', relativePath: 'dist/app.zip', kind: 'binary', opened: false })
-    ])
+    const operations = createOperations([worktreeTarget('dist/app.zip', '/repo/dist/app.zip')])
+    operations.openWorktreeFile.mockRejectedValue(new Error('unsupported'))
     const onOpenFailed = vi.fn()
     const scheduleDelayedAction = vi.fn()
 
-    openMobileFileTap({
-      client,
+    openMobileTerminalFileTap({
+      operations,
       hostId: 'host-1',
       worktreeId: 'wt-1',
       pathText: 'dist/app.zip',
@@ -416,19 +388,11 @@ describe('openMobileFileTap', () => {
   })
 
   it('does not report a stale failure after a newer tap supersedes it', async () => {
-    const client = createClient([
-      ok({
-        worktree: 'wt-1',
-        relativePath: null,
-        absolutePath: null,
-        exists: false,
-        isDirectory: false
-      })
-    ])
+    const operations = createOperations([null])
     const onOpenFailed = vi.fn()
 
-    openMobileFileTap({
-      client,
+    openMobileTerminalFileTap({
+      operations,
       hostId: 'host-1',
       worktreeId: 'wt-1',
       pathText: 'gone/missing.ts',
@@ -455,25 +419,11 @@ describe('openMobileFileTap', () => {
   })
 
   it('does not report a failure when the user left the source tab mid-resolve', async () => {
-    const client = createClient([
-      ok({
-        worktree: 'wt-1',
-        relativePath: 'src/index.ts',
-        absolutePath: '/repo/src/index.ts',
-        exists: true,
-        isDirectory: false,
-        openTarget: {
-          kind: 'worktree-file',
-          provider: 'local',
-          relativePath: 'src/index.ts',
-          absolutePath: '/repo/src/index.ts'
-        }
-      })
-    ])
+    const operations = createOperations([worktreeTarget('src/index.ts', '/repo/src/index.ts')])
     const onOpenFailed = vi.fn()
 
-    openMobileFileTap({
-      client,
+    openMobileTerminalFileTap({
+      operations,
       hostId: 'host-1',
       worktreeId: 'wt-1',
       pathText: 'src/index.ts',

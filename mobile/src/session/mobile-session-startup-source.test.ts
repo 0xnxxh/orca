@@ -24,17 +24,17 @@ function sliceBetween(startPattern: string, endPattern: string): string {
 
 describe('mobile session startup', () => {
   it('auto-creates one terminal for an initially empty connected session', () => {
-    expect(source).toContain('const initialEmptySessionAutoCreateRef = useRef<string | null>(null)')
-    expect(source).toContain('initialEmptySessionAutoCreateRef.current = null')
-
-    const autoCreateEffect = sliceBetween(
-      'if (\n      (!client && !sessionTabOperations) ||\n      !showEmptyState',
-      'const terminalSummary ='
+    expect(source).toContain(
+      'const initialSessionAutoCreateRef = useRef(createInitialSessionAutoCreateState())'
     )
-    expect(autoCreateEffect).toContain('initialEmptySessionAutoCreateRef.current === worktreeId')
-    expect(autoCreateEffect).toContain('initialEmptySessionAutoCreateRef.current = worktreeId')
-    expect(autoCreateEffect).toContain("setCreateError('')")
-    expect(autoCreateEffect).toContain('void handleCreateTerminal()')
+    expect(source).toContain(
+      'initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()'
+    )
+    expect(source).toContain('useInitialSessionTerminalAutoCreate({')
+    expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree = worktreeId')
+    expect(autoCreateHookSource).toContain('createTerminal()')
+    expect(source).toContain("setCreateError('')")
+    expect(source).toContain('void handleCreateTerminal()')
     expect(source).toContain(
       'const hostedAdapterCreate = !client && sessionTabOperations && !options'
     )

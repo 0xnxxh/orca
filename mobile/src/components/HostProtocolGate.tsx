@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { ActivityIndicator, StyleSheet, View } from 'react-native'
 import { useHostClient } from '../transport/client-context'
 import { useHostStatusGates } from '../transport/host-status-gates'
@@ -58,7 +58,26 @@ export function HostProtocolGate({ hostId, children }: Props) {
     return <ProtocolBlockScreen verdict={compatVerdict} />
   }
   // Why: the host sidebar needs the same status fields; sharing the result avoids a second status.get per route.
-  return <HostProtocolGatesProvider value={gates}>{children}</HostProtocolGatesProvider>
+  return (
+    <HostProtocolGatesProvider value={gates}>
+      <View style={styles.host}>
+        <View
+          style={styles.host}
+          importantForAccessibility={pending ? 'no-hide-descendants' : 'auto'}
+        >
+          {children}
+        </View>
+        {pending ? (
+          <View style={styles.pendingOverlay} pointerEvents="auto" accessibilityViewIsModal>
+            <ActivityIndicator
+              color={colors.textSecondary}
+              accessibilityLabel="Checking host compatibility"
+            />
+          </View>
+        ) : null}
+      </View>
+    </HostProtocolGatesProvider>
+  )
 }
 
 const styles = StyleSheet.create({

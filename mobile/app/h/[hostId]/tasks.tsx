@@ -58,6 +58,13 @@ import {
   resolveMobileSyntaxLanguage
 } from '../../../src/session/mobile-file-syntax'
 import { buildGitHubCheckSummary } from '../../../src/tasks/github-check-summary'
+import { buildGitLabCheckSummary } from '../../../src/tasks/gitlab-check-summary'
+import {
+  getHostedChecksLabel,
+  getHostedMergeLabel,
+  getHostedReviewLabel,
+  getHostedReviewSignalTone
+} from '../../../src/tasks/mobile-hosted-check-status'
 import type { MobileComposerCreateSelection } from '../../../src/tasks/mobile-composer-source-types'
 import {
   filterWorkspaceAgents,
@@ -265,6 +272,10 @@ type GitLabWorkItem = {
   targetId?: string
   repoId: string
   repoName: string
+  reviewDecision?: string | null
+  checksSummary?: ProviderCheckSummary
+  mergeable?: GitHubPRMergeableState
+  reviewerCount?: number
 }
 
 type GitLabTodo = {

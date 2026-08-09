@@ -116,35 +116,12 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
         if (!stale) {
           setFilesById((prev) => ({ ...prev, [commitId]: entries }))
         }
-        setFilesById((prev) => ({ ...prev, [row.id]: 'loading' }))
-        void client
-          .sendRequest('git.commitCompare', {
-            worktree: `id:${worktreeId}`,
-            commitId: row.id
-          })
-          .then((response) => {
-            const entries = response.ok
-              ? (
-                  (response as RpcSuccess).result as {
-                    entries: GitBranchChangeEntry[]
-                  }
-                ).entries
-              : []
-            setFilesById((prev) => {
-              // Drop stale responses if the row is no longer loading (collapsed + re-opened).
-              if (prev[row.id] !== 'loading') {
-                return prev
-              }
-              return { ...prev, [row.id]: entries }
-            })
-          })
-          .catch(() =>
-            setFilesById((prev) => {
-              if (prev[row.id] !== 'loading') {
-                return prev
-              }
-              return { ...prev, [row.id]: [] }
-            })
+      })
+      .catch(() => {
+        // Keep an already-loaded list; a first load that fails resolves to "No file changes".
+        if (!stale) {
+          setFilesById((prev) =>
+            prev[commitId] === 'loading' ? { ...prev, [commitId]: [] } : prev
           )
         }
       })

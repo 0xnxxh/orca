@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  AGENT_MODEL_MAX_LENGTH,
   AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
   AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
   AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
@@ -30,6 +31,7 @@ export const MobileWebNativeChatAgentStatusSchema = z
     state: z.enum(['working', 'blocked', 'waiting', 'done']),
     stateStartedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     agentType: OptionalBoundedTextSchema(AGENT_TYPE_MAX_LENGTH),
+    model: OptionalBoundedTextSchema(AGENT_MODEL_MAX_LENGTH),
     toolName: OptionalBoundedTextSchema(AGENT_STATUS_TOOL_NAME_MAX_LENGTH),
     toolInput: OptionalBoundedTextSchema(AGENT_STATUS_TOOL_INPUT_MAX_LENGTH),
     interactivePrompt: OptionalBoundedTextSchema(AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH),
@@ -145,7 +147,14 @@ export const MobileWebNativeChatSendMessagePayloadSchema = z
       .string()
       .min(1)
       .max(64 * 1024),
-    clearInputFirst: z.boolean().optional()
+    clearInputFirst: z.boolean().optional(),
+    resolvedLaunchDraft: z
+      .object({
+        text: z.string().max(64 * 1024),
+        createdAt: z.number().finite()
+      })
+      .strict()
+      .optional()
   })
   .strict()
 export const MobileWebNativeChatRespondPayloadSchema = z

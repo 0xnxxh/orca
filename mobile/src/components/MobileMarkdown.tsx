@@ -36,8 +36,17 @@ const MAX_TABLE_COLUMNS = 8
 /** Prose base size — passed to MermaidDiagram fallback mono text. */
 const MERMAID_BASE = 13
 
-function openMarkdownUrl(url: string, onOpenLink?: (url: string) => void): void {
-  const externalUrl = normalizeMobileWebExternalUrl(url)
+function openMarkdownUrl(
+  url: string,
+  onOpenFile?: (pathText: string) => void,
+  onOpenLink?: (url: string) => void
+): void {
+  const route = routeMarkdownHref(url)
+  if (route.kind === 'file') {
+    onOpenFile?.(route.pathText)
+    return
+  }
+  const externalUrl = route.kind === 'web' ? normalizeMobileWebExternalUrl(route.url) : null
   if (externalUrl) {
     onOpenLink?.(externalUrl)
   }
@@ -105,21 +114,33 @@ function renderInline(
     const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)
     if (image) {
       parts.push(
-        <Text key={key} style={styles.link} onPress={() => openMarkdownUrl(image[2]!, onOpenLink)}>
+        <Text
+          key={key}
+          style={styles.link}
+          onPress={() => openMarkdownUrl(image[2]!, onOpenFile, onOpenLink)}
+        >
           {image[1] || 'image'}
         </Text>
       )
     } else if (link) {
       parts.push(
-        <Text key={key} style={styles.link} onPress={() => openMarkdownUrl(link[2]!, onOpenLink)}>
+        <Text
+          key={key}
+          style={styles.link}
+          onPress={() => openMarkdownUrl(link[2]!, onOpenFile, onOpenLink)}
+        >
           {link[1]}
         </Text>
       )
     } else if (/^https?:\/\//i.test(token)) {
       const { url, trailing } = trimAutolinkTrailingPunctuation(token)
       parts.push(
-        <Text key={key} style={styles.link} onPress={() => openMarkdownUrl(token, onOpenLink)}>
-          {token}
+        <Text
+          key={key}
+          style={styles.link}
+          onPress={() => openMarkdownUrl(url, onOpenFile, onOpenLink)}
+        >
+          {url}
         </Text>
       )
       if (trailing) {
@@ -240,7 +261,7 @@ function MobileMarkdownInner({
             <Pressable
               key={index}
               style={styles.imageFrame}
-              onPress={() => openMarkdownUrl(block.url, onOpenLink)}
+              onPress={() => openMarkdownUrl(block.url, onOpenFile, onOpenLink)}
             >
               <Text style={styles.link}>{block.alt || 'Open image'}</Text>
               <Text style={styles.imageCaption} numberOfLines={1}>

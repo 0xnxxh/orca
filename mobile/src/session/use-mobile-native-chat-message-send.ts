@@ -4,10 +4,14 @@ import type {
   HostSessionNativeChatTarget
 } from './host-session-native-chat-operations'
 import {
-  clearMobileNativeChatInput,
   openMobileNativeChatSendBudget,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
+import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite
+} from './mobile-native-chat-terminal-write-lock'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
 import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
@@ -34,6 +38,8 @@ export function useMobileNativeChatMessageSend(args: {
   operations: HostSessionNativeChatOperations | null
   enabled: boolean
   targetRef: MutableRefObject<HostSessionNativeChatTarget | null>
+  agentRef: MutableRefObject<string | null>
+  commandSendRef: MutableRefObject<(command: string) => void>
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
    *  at send time so the pre-clear can be sized to every line it occupies. */
@@ -52,6 +58,8 @@ export function useMobileNativeChatMessageSend(args: {
     operations,
     enabled,
     targetRef,
+    agentRef,
+    commandSendRef,
     captureSendOrigin,
     readSeededLaunchDraftSeed,
     clearDraftForSend,
@@ -71,6 +79,8 @@ export function useMobileNativeChatMessageSend(args: {
     ): Promise<MobileNativeChatSendOutcome> => {
       const target = targetRef.current
       const origin = captureSendOrigin(text)
+      const agent = agentRef.current
+      const recordCommand = commandSendRef.current
       if (!operations || !target || !origin || !enabled) {
         onSendError('Message not sent (disconnected)')
         return 'rejected'
@@ -84,11 +94,38 @@ export function useMobileNativeChatMessageSend(args: {
       if (syncComposer) {
         clearDraftForSend(origin, text)
       }
-      const outcome = await operations.sendMessage(target, text, deadline, !images?.length)
-      if (outcome === 'unknown') {
-        holdUnconfirmedSend(origin, text, () =>
-          onSendError('Delivery unconfirmed — check chat before retrying')
+      const seededLaunchDraft = readSeededLaunchDraftSeed()
+      if (seededLaunchDraft && !images?.length) {
+        const clearOutcome = await operations.respond(
+          target,
+          buildAgentTuiClearInputForText(seededLaunchDraft.text),
+          false,
+          deadline
         )
+        if (clearOutcome !== 'accepted') {
+          if (syncComposer) {
+            restoreRejectedDraft(origin, text)
+          }
+          onSendError('Message not sent')
+          return 'rejected'
+        }
+      }
+      const outcome = await operations.sendMessage(
+        target,
+        text,
+        deadline,
+        !images?.length && !seededLaunchDraft,
+        syncComposer && typeof seededLaunchDraft?.createdAt === 'number'
+          ? { text: seededLaunchDraft.text, createdAt: seededLaunchDraft.createdAt }
+          : undefined
+      )
+      const classification = classifyMobileNativeChatSend(agent, text)
+      if (outcome === 'unknown') {
+        if (classification === 'chat') {
+          holdUnconfirmedSend(origin, text, () =>
+            onSendError('Delivery unconfirmed — check chat before retrying')
+          )
+        }
         return 'unknown'
       }
       if (outcome === 'rejected') {
@@ -98,7 +135,11 @@ export function useMobileNativeChatMessageSend(args: {
         onSendError('Message not sent')
         return 'rejected'
       }
-      acceptSend(origin, text, images)
+      if (classification === 'chat') {
+        acceptSend(origin, text, images)
+      } else if (recordControlSend) {
+        recordCommand(text.trim())
+      }
       return 'accepted'
     },
     [
@@ -106,10 +147,12 @@ export function useMobileNativeChatMessageSend(args: {
       agentRef,
       captureSendOrigin,
       clearDraftForSend,
+      commandSendRef,
       enabled,
       holdUnconfirmedSend,
       onSendError,
       operations,
+      readSeededLaunchDraftSeed,
       restoreRejectedDraft,
       targetRef
     ]
@@ -125,8 +168,21 @@ export function useMobileNativeChatMessageSend(args: {
     [sendWithOutcome]
   )
   const answerQuestion = useCallback(
-    async (text: string) => (await sendMessage(text, undefined, false)) !== 'rejected',
-    [sendMessage]
+    async (text: string): Promise<boolean> => {
+      const terminal = targetRef.current?.terminalId
+      if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
+        onSendError('Answer not sent')
+        return false
+      }
+      try {
+        return (await sendMessage(text, undefined, false, true)) !== 'rejected'
+      } finally {
+        if (terminal) {
+          releaseMobileNativeChatTerminalWrite(terminal)
+        }
+      }
+    },
+    [onSendError, sendMessage, targetRef]
   )
 
   // A session-option apply writes to the same input line as a send, and the host
@@ -134,7 +190,7 @@ export function useMobileNativeChatMessageSend(args: {
   // apply lands between them and is submitted as part of the user's prompt.
   const dispatchCommand = useCallback(
     async (text: string): Promise<MobileNativeChatSendOutcome> => {
-      const terminal = handleRef.current
+      const terminal = targetRef.current?.terminalId
       if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
         return 'rejected'
       }
@@ -146,7 +202,7 @@ export function useMobileNativeChatMessageSend(args: {
         }
       }
     },
-    [handleRef, sendMessage]
+    [sendMessage, targetRef]
   )
 
   return { send, sendWithOutcome, answerQuestion, dispatchCommand }

@@ -340,9 +340,9 @@ async function sendTerminalStreamInput(
   try {
     if (args.inputKind === 'query-reply') {
       if (!clientId || !isTerminalQueryReply(args.text)) {
-        return
+        return 'failed'
       }
-      await runtime.sendTerminal(args.terminal, action, {
+      const result = await runtime.sendTerminal(args.terminal, action, {
         beforeWrite: (writePtyId) => {
           if (
             writePtyId !== args.ptyId ||
@@ -352,7 +352,7 @@ async function sendTerminalStreamInput(
           }
         }
       })
-      return
+      return result.accepted ? 'delivered' : 'rejected'
     }
     if (!clientId) {
       const result = await runtime.sendTerminal(args.terminal, action)

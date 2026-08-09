@@ -7,6 +7,14 @@ const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
   'utf8'
 )
+const nativeTerminalOperationsSource = readFileSync(
+  new URL('../session/native-host-session-terminal-operations.ts', import.meta.url),
+  'utf8'
+)
+const accessoryRawSendSource = readFileSync(
+  new URL('./terminal-live-accessory-raw-send.ts', import.meta.url),
+  'utf8'
+)
 
 function routeSlice(anchorStart: string, anchorEnd: string): string {
   const start = sessionRouteSource.indexOf(anchorStart)
@@ -117,11 +125,8 @@ describe('session route offline-compose wiring', () => {
   })
 
   it('keeps every keystroke-grade terminal send now-or-never so nothing replays after reconnect', () => {
-    // Live mirror, buffered send, and gesture arrows must all opt out of the
-    // connect wait — a parked send replays stale bytes into the PTY. Accessory
-    // keys get the same option inside terminal-live-accessory-raw-send.ts.
-    const optOuts = sessionRouteSource.match(/TERMINAL_INPUT_SEND_OPTIONS/g)?.length ?? 0
-    expect(optOuts).toBe(4)
+    expect(nativeTerminalOperationsSource).toContain('TERMINAL_INPUT_SEND_OPTIONS')
+    expect(accessoryRawSendSource).toContain('TERMINAL_INPUT_SEND_OPTIONS')
     expect(TERMINAL_INPUT_SEND_OPTIONS).toEqual({ failWhenDisconnected: true })
   })
 

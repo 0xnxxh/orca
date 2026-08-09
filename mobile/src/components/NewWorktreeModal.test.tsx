@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RpcClient } from '../transport/rpc-client'
+import type { HostWorkspaceCreationOperations } from '../worktree/host-workspace-creation-operations'
 
 const asyncStorage = vi.hoisted(() => ({
   getItem: vi.fn().mockResolvedValue(null),
@@ -68,20 +68,36 @@ describe('NewWorktreeModal repo list', () => {
   })
 
   it('keeps the cached repos when the in-flight repo.list rejects on a dropped connection', async () => {
-    const sendRequest = vi.fn().mockImplementation((method: string) => {
-      if (method === 'repo.list') {
-        return Promise.reject(new Error('connection closed'))
+    const listRepositories = vi.fn().mockRejectedValue(new Error('connection closed'))
+    const operations = new Proxy(
+      {
+        listRepositories,
+        readRuntimeCapabilities: vi.fn().mockResolvedValue({
+          tasksSupported: false,
+          idempotentWorktreeCreateSupported: false
+        }),
+        readRuntimeSettings: vi.fn().mockResolvedValue({}),
+        readTrustedHooks: vi.fn().mockResolvedValue({}),
+        isGitLabCliInstalled: vi.fn().mockResolvedValue(false),
+        isLinearConnected: vi.fn().mockResolvedValue(false)
+      },
+      {
+        get(target, property) {
+          if (property in target) {
+            return target[property as keyof typeof target]
+          }
+          return vi.fn().mockResolvedValue(null)
+        }
       }
-      return new Promise(() => {})
-    })
-    const client = { sendRequest } as unknown as RpcClient
+    ) as unknown as HostWorkspaceCreationOperations
 
     await act(async () => {
       renderer = create(
         createElement(NewWorktreeModal, {
           visible: true,
-          client,
+          operations,
           hostId: 'host-1',
+          openExternalUrl: vi.fn(),
           onCreated: () => {},
           onClose: () => {}
         })
@@ -92,7 +108,7 @@ describe('NewWorktreeModal repo list', () => {
       await Promise.resolve()
     })
 
-    expect(sendRequest).toHaveBeenCalledWith('repo.list')
+    expect(listRepositories).toHaveBeenCalledOnce()
     expect(repoPickerNames(renderer)).toEqual(['orca'])
   })
 })

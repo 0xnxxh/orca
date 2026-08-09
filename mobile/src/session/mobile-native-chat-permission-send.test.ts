@@ -14,6 +14,11 @@ import {
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
 import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite,
+  resetMobileNativeChatTerminalWritesForTests
+} from './mobile-native-chat-terminal-write-lock'
 
 const target = {
   workspaceId: 'worktree',
@@ -125,11 +130,13 @@ describe('useMobileNativeChatPermissionSend', () => {
       result: { send: { handle: 'terminal', accepted: true, bytesWritten: 1 } }
     })
     function Harness(): null {
+      const operations = nativeHostSessionNativeChatOperations({
+        sendRequest
+      } as unknown as RpcClient)
       respond = useMobileNativeChatPermissionSend({
-        client: { sendRequest } as unknown as RpcClient,
+        operations,
+        targetRef: { current: target },
         enabled: true,
-        handleRef: { current: 'terminal' },
-        deviceTokenRef: { current: null },
         onSendError
       })
       return null

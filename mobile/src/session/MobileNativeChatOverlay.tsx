@@ -80,7 +80,7 @@ export function MobileNativeChatOverlay({
         onAnswerQuestion={controller.handleNativeChatQuestionAnswer}
         permission={controller.nativeChatPermission}
         onRespondPermission={controller.handleNativeChatRespondPermission}
-        onOpenFile={controller.handleNativeChatOpenFile}
+        onOpenFile={onOpenFile}
         onOpenLink={onOpenLink}
         onCopyText={onCopyText}
         hasMore={session.hasMore}

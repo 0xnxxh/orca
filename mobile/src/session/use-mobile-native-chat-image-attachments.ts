@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
 import { CLIPBOARD_IMAGE_TOO_LARGE_ERROR } from '../../../src/shared/clipboard-image'
-import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import type {
@@ -21,6 +20,10 @@ import {
   sendMobileNativeChatWithImages,
   type MobileNativeChatImageBaseSend
 } from './mobile-native-chat-image-submit'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite
+} from './mobile-native-chat-terminal-write-lock'
 
 type CurrentRef<T> = { readonly current: T }
 type ShowToast = (message: string, durationMs?: number) => void
@@ -50,6 +53,10 @@ type Args = {
    *  Accepts this action's budget so the text body draws from what the paste left
    *  rather than opening a second one. */
   readonly baseSend: MobileNativeChatImageBaseSend
+  /** Launch-context text parked on the agent's TUI input line, or null. The
+   *  paste's leading clear must cover every line of it, or the draft's earlier
+   *  lines survive and ride along with the image. */
+  readonly readSeededLaunchDraft: () => string | null
   readonly onAttachSuccess?: () => void
   readonly onError?: () => void
   // Injected so the settle between image paste and submit is instant in tests.
@@ -137,43 +144,36 @@ export function useMobileNativeChatImageAttachments({
       let started = false
       const uploadedImages: Omit<PendingNativeChatImage, 'id'>[] = []
       let uploadError: unknown = null
+      const onUploadStart = (): void => {
+        started = true
+        attachingCount.current += 1
+        setIsAttaching(true)
+      }
       try {
-        const onUploadStart = () => {
-          started = true
-          attachingCount.current += 1
-          setIsAttaching(true)
-        }
-        const uploaded = client
-          ? await uploadMobileNativeChatImage(source, {
-              client,
-              getConnectionId: getActiveWorktreeConnectionId,
-              pickImage: pickMobileImage,
-              onUploadStart
+        if (client) {
+          await uploadMobileNativeChatImages(source, {
+            client,
+            getConnectionId: getActiveWorktreeConnectionId,
+            pickImages: pickMobileImages,
+            onImageUploaded: (image) => uploadedImages.push(image),
+            onUploadStart
+          })
+        } else {
+          onUploadStart()
+          const result = await operations!.attachImage!(target!, source)
+          if (result.status === 'permission-denied') {
+            throw new ImageLibraryPermissionError()
+          }
+          if (result.status === 'too-large') {
+            throw new Error(CLIPBOARD_IMAGE_TOO_LARGE_ERROR)
+          }
+          if (result.status === 'accepted') {
+            uploadedImages.push({
+              path: result.attachment.reference,
+              previewUri: result.attachment.previewUri
             })
-          : await (async () => {
-              onUploadStart()
-              const result = await operations!.attachImage!(target!, source)
-              if (result.status === 'permission-denied') {
-                throw new ImageLibraryPermissionError()
-              }
-              if (result.status === 'too-large') {
-                throw new Error(CLIPBOARD_IMAGE_TOO_LARGE_ERROR)
-              }
-              return result.status === 'accepted'
-                ? {
-                    path: result.attachment.reference,
-                    previewUri: result.attachment.previewUri
-                  }
-                : null
-            })()
-        // Cancelled picker: no error, no toast.
-        if (!uploaded) {
-          return
+          }
         }
-        idCounter.current += 1
-        const chip = { id: `img-${idCounter.current}`, ...uploaded }
-        setAttachmentsByScope((prev) => ({ ...prev, [scope]: [...(prev[scope] ?? []), chip] }))
-        onAttachSuccess?.()
       } catch (error) {
         uploadError = error
       } finally {
@@ -256,9 +256,6 @@ export function useMobileNativeChatImageAttachments({
         onSendError('Message not sent')
         return false
       }
-      if (operationTerminal) {
-        sendInFlightTerminalsRef.current.add(operationTerminal)
-      }
       try {
         const scope = scopeKey
         const pendingImages = (scope ? attachmentsByScope[scope] : undefined) ?? NO_ATTACHMENTS
@@ -273,6 +270,7 @@ export function useMobileNativeChatImageAttachments({
           operations,
           targetRef,
           baseSend,
+          readSeededLaunchDraft,
           onError,
           onSendError,
           sleep,
@@ -306,6 +304,7 @@ export function useMobileNativeChatImageAttachments({
       onError,
       onSendError,
       operations,
+      readSeededLaunchDraft,
       scopeKey,
       sleep,
       targetRef

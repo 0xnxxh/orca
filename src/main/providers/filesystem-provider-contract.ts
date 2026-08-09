@@ -18,13 +18,31 @@ export type FileReadResult = {
   mimeType?: string
 }
 
+export type FileChunkReadResult = {
+  contentBase64: string
+  bytesRead: number
+  eof: boolean
+}
+
+type FilesystemDirectoryReadOptions = {
+  maxEntries?: number
+  maxRetainedBytes?: number
+}
+
 export type IFilesystemProvider = {
-  readDir(dirPath: string): Promise<DirEntry[]>
+  readDir(dirPath: string, options?: FilesystemDirectoryReadOptions): Promise<DirEntry[]>
   readFile(filePath: string): Promise<FileReadResult>
+  readFileChunk?(filePath: string, offset: number, length: number): Promise<FileChunkReadResult>
   readTerminalArtifact?(
     filePath: string,
     options: TerminalArtifactAccessOptions
   ): Promise<FileReadResult>
+  readTerminalArtifactChunk?(
+    filePath: string,
+    offset: number,
+    length: number,
+    options: TerminalArtifactAccessOptions
+  ): Promise<FileChunkReadResult>
   downloadFile?(sourcePath: string, destinationPath: string): Promise<void>
   downloadFolder?: (src: string, dest: string, options?: { signal?: AbortSignal }) => Promise<void>
   openFileUploadSession?(): Promise<FileUploadSession>

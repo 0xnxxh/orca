@@ -12,6 +12,11 @@ import {
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
 import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  releaseMobileNativeChatTerminalWrite,
+  resetMobileNativeChatTerminalWritesForTests
+} from './mobile-native-chat-terminal-write-lock'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
 

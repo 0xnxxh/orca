@@ -331,7 +331,13 @@ describe('applyMobileNativeChatStreamFrame', () => {
         limit: 40,
         replaceSnapshot: true
       })
-    ).toEqual({ kind: 'messages', messages: [], lifecycle })
+    ).toEqual({
+      kind: 'messages',
+      messages: [],
+      hasMore: undefined,
+      lifecycle,
+      windowReplaced: true
+    })
   })
 
   it('surfaces snapshot errors and ignores unrelated frames', () => {

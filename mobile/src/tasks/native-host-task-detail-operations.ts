@@ -9,7 +9,10 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 
 type GitLabRawDetails = Partial<MobileWebTaskGitLabDetailResult> & {
-  item?: { labels?: string[] }
+  item?: {
+    labels?: string[]
+    mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
+  }
 }
 
 export function nativeHostTaskDetailOperations(client: RpcClient): HostTaskDetailOperations {
@@ -63,7 +66,10 @@ export function nativeHostTaskDetailOperations(client: RpcClient): HostTaskDetai
         comments: details.comments ?? [],
         labels: details.item?.labels ?? details.labels,
         assignees: details.assignees ?? [],
-        pipelineJobs: details.pipelineJobs ?? []
+        pipelineJobs: details.pipelineJobs ?? [],
+        ...(details.item?.mergeable ? { item: { mergeable: details.item.mergeable } } : {}),
+        ...(details.reviewers ? { reviewers: details.reviewers } : {}),
+        ...(details.approvalState ? { approvalState: details.approvalState } : {})
       }
     },
     async loadLinear(payload) {

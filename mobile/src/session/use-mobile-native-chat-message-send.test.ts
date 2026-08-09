@@ -46,11 +46,26 @@ describe('useMobileNativeChatMessageSend', () => {
   ): void => {
     agentRef.current = agent
     function Probe(): null {
+      const targetRef = {
+        current: {
+          workspaceId: 'worktree',
+          agent: agentRef.current ?? 'claude',
+          sessionId: 'session',
+          transcriptPath: null,
+          terminalId: 'term',
+          clientId: 'device'
+        }
+      }
       api = useMobileNativeChatMessageSend({
-        client: { sendRequest: vi.fn() } as never,
+        operations: {
+          prepareCommit: async () => true,
+          respond: async (_target, text) =>
+            (await clearInputWrite({ clearInput: text })) ? 'accepted' : 'rejected',
+          sendMessage: (_target, _text, _deadline, clearInputFirst, resolvedLaunchDraft) =>
+            sendWithOutcome({ clearInputFirst, resolvedLaunchDraft })
+        } as never,
         enabled: true,
-        handleRef: { current: 'term' },
-        deviceTokenRef: { current: 'device' },
+        targetRef,
         agentRef,
         commandSendRef,
         captureSendOrigin: () => ({ draftKey: 'k', pendingKey: 'p' }) as never,

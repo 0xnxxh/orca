@@ -76,7 +76,6 @@ import {
 import { useWorkspaceSections } from '../../../src/worktree/use-workspace-sections'
 import { getMobileWorkspaceLineageGroupKey } from '../../../src/worktree/mobile-workspace-lineage'
 import { areWorktreeListsEqual } from '../../../src/worktree/worktree-list-snapshot'
-import { WorktreeCatalogSnapshotClient } from '../../../src/worktree/worktree-catalog-snapshot-client'
 import { HostWorkspaceListStates } from '../../../src/worktree/host-workspace-list-states'
 import { repoColor } from '../../../src/worktree/repo-color'
 import {
@@ -136,6 +135,9 @@ export function HostScreen({
   const params = useLocalSearchParams<{ hostId: string; action?: string; notice?: string }>()
   const hostId = hostIdProp ?? params.hostId
   const action = actionProp ?? params.action
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
+  const noticeParam = params.notice?.trim()
+  const routeNotice = visibleHostRouteNotice(embedded, noticeParam, dismissedNotice)
   const insets = useSafeAreaInsets()
   const hostState = hostStateProp ?? defaultHostScreenHostState
   // Why: cap and center the list on wide/tablet canvases; on phones isWideLayout is false so it stays edge-to-edge.
@@ -504,7 +506,7 @@ export function HostScreen({
         })
       } catch {
         // Will retry on reconnect
-        if (clientRef.current === requestClient && hostId === requestHostId) {
+        if (workspaceOperationsRef.current === requestOperations && hostId === requestHostId) {
           setCatalogError('network_error')
         }
       } finally {

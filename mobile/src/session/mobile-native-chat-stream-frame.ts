@@ -24,6 +24,7 @@ export type AppliedMobileNativeChatFrame =
       beforeOffset?: number
       cursorInvalidated?: boolean
       lifecycle?: NativeChatTurnLifecycle
+      windowReplaced?: boolean
     }
 
 function replayRetainedTailStart(
@@ -90,6 +91,7 @@ export function applyMobileNativeChatStreamFrame(args: {
       kind: 'messages',
       messages: merger.list,
       hasMore: frame.hasMore,
+      windowReplaced: true,
       ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset }),
       ...(frame.lifecycle === undefined ? {} : { lifecycle: frame.lifecycle })
     }
@@ -103,7 +105,15 @@ export function applyMobileNativeChatStreamFrame(args: {
     messages,
     // Why: once the bounded live window drops its oldest row, the snapshot's
     // byte cursor no longer describes the oldest retained message.
-    ...(previousFirstId && messages[0]?.id !== previousFirstId ? { cursorInvalidated: true } : {}),
+    ...(cursorInvalidated ? { cursorInvalidated: true } : {}),
+    ...(frame.type === 'snapshot' && cursorInvalidated
+      ? { hasMore: true }
+      : replayStillStartsAtOldest
+        ? {
+            ...(frame.hasMore == null ? {} : { hasMore: frame.hasMore }),
+            ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
+          }
+        : {}),
     ...(frame.lifecycle === undefined ? {} : { lifecycle: frame.lifecycle })
   }
 }

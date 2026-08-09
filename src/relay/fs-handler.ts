@@ -4,7 +4,6 @@ import { writeFile, stat, lstat, mkdir, rename, cp, rm, realpath } from 'node:fs
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
-import { sortDirEntries } from '../shared/file-name-sort'
 import type { RelayContext } from './context'
 // Why: RelayContext is accepted in the constructor for protocol back-compat
 // (see docs/relay-fs-allowlist-removal.md), but no longer consulted on FS ops.

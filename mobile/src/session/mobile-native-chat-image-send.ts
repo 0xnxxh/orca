@@ -26,6 +26,8 @@ type PasteImagesArgs = {
   /** Budget shared with the rest of the user action (the text body that follows, or
    *  the send this is healing for). Omit to open a fresh one for this paste alone. */
   readonly deadline?: number
+  /** Clears every parked launch-draft line before the image paste. */
+  readonly clearInput?: string
   readonly assertCurrent?: () => void
 }
 
@@ -40,6 +42,7 @@ export async function pasteMobileNativeChatImagePaths({
   deviceToken,
   imagePaths,
   deadline: sharedDeadline,
+  clearInput,
   assertCurrent = () => {}
 }: PasteImagesArgs): Promise<boolean> {
   const mobileClient: MobileTerminalClient | null = deviceToken

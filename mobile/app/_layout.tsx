@@ -185,7 +185,7 @@ export default function RootLayout() {
       disposed = true
       sub.remove()
     }
-  }, [openNotificationRoute])
+  }, [router])
   // ─── End notification tap routing ───
 
   // Why: hide the native splash only once the navigation Stack has been laid

@@ -1,11 +1,13 @@
 import type { TerminalStreamFrame } from './terminal-stream-protocol'
 import type { RpcClientSubscribeOptions } from './rpc-client-subscribe-options'
-import type { ConnectionState, RpcResponse } from './types'
+import type { ConnectionState, ForegroundNudgeReason, RpcResponse } from './types'
 
 export type RpcClientSendRequestOptions = {
   timeoutMs?: number
   /** Spend the timeout across connection wait and acknowledgement. */
   budgetSpansConnect?: boolean
+  /** Reject immediately instead of replaying stale terminal input after reconnect. */
+  failWhenDisconnected?: boolean
 }
 
 export type RpcClient = {
@@ -29,6 +31,6 @@ export type RpcClient = {
   getReconnectAttempt: () => number
   getLastConnectedAt: () => number | null
   onStateChange: (listener: (state: ConnectionState) => void) => () => void
-  notifyForeground: () => void
+  notifyForeground: (reason?: ForegroundNudgeReason) => void
   close: () => void
 }

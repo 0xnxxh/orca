@@ -51,6 +51,7 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
         args.terminalClientId,
         payload.deadline,
         payload.clearInputFirst === true,
+        payload.resolvedLaunchDraft,
         () => assertCurrentBinding(args, payload, binding)
       )
     )
@@ -82,6 +83,7 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
         args.terminalClientId,
         payload.deadline,
         false,
+        undefined,
         () => assertCurrentBinding(args, payload, binding)
       )
     )
@@ -98,6 +100,7 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
       args.terminalClientId,
       payload.deadline,
       false,
+      undefined,
       () => assertCurrentBinding(args, payload, binding)
     )
   )
@@ -127,6 +130,7 @@ async function sendTerminal(
   clientId: string,
   deadline: number,
   clearInputFirst: boolean,
+  resolvedLaunchDraft: { text: string; createdAt: number } | undefined,
   assertCurrent: () => void
 ): Promise<MobileNativeChatSendOutcome> {
   const timeoutMs = deadline - Date.now()
@@ -141,7 +145,8 @@ async function sendTerminal(
         terminal,
         text: clearInputFirst ? `\x15${text}` : text,
         enter,
-        client: { id: clientId, type: 'mobile' }
+        client: { id: clientId, type: 'mobile' },
+        ...(resolvedLaunchDraft ? { resolvedLaunchDraft } : {})
       },
       { timeoutMs, budgetSpansConnect: true }
     )

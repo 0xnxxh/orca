@@ -6,6 +6,7 @@ import {
 } from '../../../src/shared/mobile-web/native-operation-contract'
 import { normalizeMobileMarkdownPreviewHtml } from './mobile-markdown-preview-html'
 import { parseMobileMarkdown } from './mobile-markdown-parser'
+import { isMobileMermaidLanguage } from './mobile-mermaid-language'
 
 describe('isMobileMermaidLanguage', () => {
   it('matches mermaid case-insensitively after trim', () => {

@@ -1,5 +1,6 @@
 import { sendMobileTerminalQueryReply } from '../terminal/mobile-terminal-query-reply'
 import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import { TERMINAL_INPUT_SEND_OPTIONS } from '../terminal/terminal-send-request'
 import type { RpcClient } from '../transport/rpc-client'
 import type { HostSessionTerminalOperations } from './host-session-terminal-operations'
 import { subscribeMobileTerminalSafely } from './mobile-terminal-stream-subscribe'
@@ -30,12 +31,16 @@ export function nativeHostSessionTerminalOperations(
     acknowledge() {},
     async sendInput(terminalId, text, enter, clientId) {
       return client
-        .sendRequest('terminal.send', {
-          terminal: terminalId,
-          text,
-          enter,
-          ...(clientId ? { client: { id: clientId, type: 'mobile' as const } } : {})
-        })
+        .sendRequest(
+          'terminal.send',
+          {
+            terminal: terminalId,
+            text,
+            enter,
+            ...(clientId ? { client: { id: clientId, type: 'mobile' as const } } : {})
+          },
+          TERMINAL_INPUT_SEND_OPTIONS
+        )
         .then(isTerminalSendRpcAccepted, () => false)
     },
     sendQueryReply(terminalId, bytes, clientId, hostSupportsQueryReply) {

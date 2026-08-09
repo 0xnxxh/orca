@@ -19,7 +19,7 @@ export enum TerminalStreamOpcode {
   ClaimViewport = 14,
   OutputSpan = 15,
   // Why: query replies must bypass input-floor claims while remaining distinguishable for Desktop authorization.
-  QueryReply = 16
+  QueryReply = 18
 }
 
 export type TerminalStreamFrame = {

@@ -11,10 +11,8 @@ import {
   type MobileDiffReviewQueueItem
 } from './mobile-diff-review-queue'
 import { findMobileDiffReviewInitialIndex } from './mobile-diff-review-positioning'
-import {
-  loadMobileDiffReviewDiff,
-  loadMobileDiffReviewSnapshot
-} from './mobile-diff-review-loaders'
+import { loadMobileDiffReviewSnapshot } from './mobile-diff-review-loaders'
+import { useMobileDiffReviewDiffLoading } from './use-mobile-diff-review-diff-loading'
 import { canOpenMobileBranchCompareDiff } from '../source-control/mobile-branch-compare'
 import type {
   ComposerState,

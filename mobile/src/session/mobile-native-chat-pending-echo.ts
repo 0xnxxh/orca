@@ -17,6 +17,17 @@ export type MobileNativeChatSendOrigin = {
 
 type PendingByKey = Record<string, MobileNativeChatPendingMessage[]>
 
+export function nextMobileNativeChatPendingId(counter: { current: number }): string {
+  counter.current += 1
+  return `pending-${counter.current}`
+}
+
+export function omitMobileNativeChatPendingKey(state: PendingByKey, key: string): PendingByKey {
+  const next = { ...state }
+  delete next[key]
+  return next
+}
+
 export function combineMobileNativeChatPending(
   session: MobileNativeChatPendingMessage[],
   waiting: readonly MobileNativeChatPendingMessage[]

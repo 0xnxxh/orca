@@ -19,6 +19,7 @@ export type MobileTerminalSessionTab = {
   agentStatus?: MobileNativeChatAgentStatusWithProvider | null
   /** Host-provided launch context still parked as an unsent TUI-input draft. */
   launchDraft?: string
+  launchDraftCreatedAt?: number
   launchAgent?: string
   nativeChatSessionId?: string
   terminalTheme?: MobileTerminalTheme

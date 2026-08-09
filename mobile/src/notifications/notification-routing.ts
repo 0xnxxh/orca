@@ -1,7 +1,3 @@
-import type { HostStackRouteTarget } from '../navigation/host-stack-navigation'
-import { mobileSessionRouteTarget } from '../session/mobile-session-route'
-import type { HostCredentialStatus } from '../transport/types'
-
 export type DesktopNotificationSource = 'agent-task-complete' | 'terminal-bell' | 'test'
 
 export type DesktopNotificationEvent = {
@@ -19,7 +15,6 @@ export type LocalNotificationData = {
 
 export type NotificationNavigationOptions = {
   knownHostIds?: ReadonlySet<string>
-  credentialStatusByHostId?: ReadonlyMap<string, HostCredentialStatus>
 }
 
 export type NotificationNavigationTarget =
@@ -57,24 +52,7 @@ export function buildLocalNotificationData(
   return data
 }
 
-/** Where a tap should land. `sessionTarget` is null for a host-only notification, whose
- *  `/h/<id>` push is shallow enough to need no host-stack coordination. */
-export type NotificationNavigationTarget = Readonly<{
-  hostId: string
-  sessionTarget: HostStackRouteTarget | null
-  credentialRecovery?: 'retry' | 're-pair'
-}>
-
-export function notificationCredentialRecoveryRoute(
-  target: NotificationNavigationTarget
-): '/' | '/pair-scan' | null {
-  if (target.credentialRecovery === 're-pair') {
-    return '/pair-scan'
-  }
-  return target.credentialRecovery === 'retry' ? '/' : null
-}
-
-export function getNotificationNavigationTarget(
+export function getNotificationNavigationPath(
   data: unknown,
   options: NotificationNavigationOptions = {}
 ): string | null {

@@ -67,6 +67,12 @@ export function useMobileNativeChatAnswerSend(args: {
   useEffect(() => {
     activeRouteRef.current = { operations, enabled, sessionId, streamIdentity }
   }, [enabled, operations, sessionId, streamIdentity])
+  // Per-terminal count of this hook's chains sharing one write-lock hold: a
+  // superseding answer inherits the cancelled chain's hold (it re-enters before
+  // the old chain unwinds), and only the last chain out releases the lock.
+  const writeHoldsRef = useRef(new Map<string, number>())
+  // Successors wait for the prior RPC and inherit any delivery ambiguity.
+  const writeTurnsRef = useRef(new Map<string, Promise<boolean>>())
   const delaysRef = useRef<
     Set<{ timer: ReturnType<typeof setTimeout>; resolve: (completed: boolean) => void }>
   >(new Set())
@@ -98,6 +104,7 @@ export function useMobileNativeChatAnswerSend(args: {
       if (!hasAskAnswer(prompt, selections)) {
         return false
       }
+      const handle = target.terminalId ?? target.sessionId
       // One composed write sequence per terminal: an answer landing mid-flight
       // in an image paste (or vice versa) would interleave bytes into the PTY.
       // A superseding answer shares the cancelled chain's hold on this terminal
@@ -120,74 +127,18 @@ export function useMobileNativeChatAnswerSend(args: {
       const generation = generationRef.current
       let sawUnknownOutcome = false
       let sawAcceptedGroup = false
-      // One budget for the whole answer instead of a fresh timeout per keystroke
-      // group, which let an N-group selector hold the card for N × the send timeout.
-      // It bounds transport time only: each deliberate pacing wait is credited back
-      // below, so a long multi-question answer still gets a full budget to write in.
-      let deadline = openMobileNativeChatSendBudget()
-      const sendTerminal = async (body: string, enter: boolean): Promise<boolean> => {
-        const activeRoute = activeRouteRef.current
-        if (
-          !activeRoute.enabled ||
-          activeRoute.operations !== operations ||
-          activeRoute.sessionId !== sessionId ||
-          activeRoute.streamIdentity !== streamIdentity ||
-          targetRef.current !== target
-        ) {
-          return false
-        }
-        const outcome = await operations.respond(target, body, enter, deadline)
-        if (outcome === 'unknown') {
-          sawUnknownOutcome = true
-        }
-        if (outcome === 'accepted') {
-          sawAcceptedGroup = true
-        }
-        return outcome === 'accepted'
-      }
-      const wait = (ms: number): Promise<boolean> =>
-        new Promise((resolve) => {
-          const delay = {
-            timer: setTimeout(() => {
-              delaysRef.current.delete(delay)
-              resolve(generationRef.current === generation)
-            }, ms),
-            resolve
-          }
-          delaysRef.current.add(delay)
-        })
-      const fail = (): false => {
-        if (generationRef.current === generation) {
-          // Why: keystrokes that may have landed (ack lost / path cutover) must
-          // not read as a definite failure — a blind resend could double-step
-          // the selector. An earlier group that WAS accepted is the same hazard
-          // in definite form: a multi-question answer whose shared budget ran out
-          // mid-sequence left the remote selector half-stepped, and telling the
-          // user nothing was sent invites a retry on top of the advanced state.
-          onSendError(
-            sawAcceptedGroup
-              ? 'Answer partly sent — check chat before retrying'
-              : sawUnknownOutcome
-                ? 'Answer unconfirmed — check chat before retrying'
-                : 'Answer not sent'
-          )
-        }
-        return false
-      }
-      // Grok commits pasted labels; Claude and Codex need their selector-specific
-      // keystrokes paced so each step renders before the next lands.
-      if (!shouldStepNativeChatAskAnswer(agentRef.current)) {
-        // This shape pastes the label into the composer and commits it, so an
-        // orphaned image paste would be submitted along with the answer (#10228).
-        // The selector shapes below deliberately skip the heal: their keys are
-        // `enter: false` for an active overlay, and a single-select answer is a
-        // bare option digit that cannot submit the line at all, so clearing there
-        // would consume the marker still protecting the next real message.
-        // Desktop splits it identically — use-native-chat-interactive-send.ts
-        // routes only the pasted-label shape through the clearing sender.
-        if (!(await operations.prepareCommit(target, deadline))) {
-          if (generationRef.current === generation) {
-            onSendError('Answer not sent')
+      let predecessorSafe = true
+      try {
+        predecessorSafe = await previousTurn
+        if (!predecessorSafe) {
+          // Fenced. Report it: the card re-enables on a false result, so silence
+          // here is indistinguishable from a dead button. "Check chat" rather than
+          // a bare "not sent" because the PREVIOUS answer's keys may have landed.
+          // Gate on the turn slot, not the generation: a dropped input lease bumps
+          // the generation without writing the Escape that Stop and ask-cancel do,
+          // so the card is still up and silence there strands an advanced selector.
+          if (writeTurnsRef.current.get(handle) === turn) {
+            onSendError('Answer not sent — check chat before retrying')
           }
           return false
         }
@@ -204,23 +155,14 @@ export function useMobileNativeChatAnswerSend(args: {
           const activeRoute = activeRouteRef.current
           if (
             !activeRoute.enabled ||
-            activeRoute.client !== client ||
+            activeRoute.operations !== operations ||
             activeRoute.sessionId !== sessionId ||
             activeRoute.streamIdentity !== streamIdentity ||
-            handleRef.current !== handle
+            targetRef.current !== target
           ) {
             return false
           }
-          const outcome = await sendMobileNativeChatMessageWithOutcome({
-            client,
-            terminal: handle,
-            text: body,
-            enter,
-            deadline,
-            ...(deviceTokenRef.current
-              ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
-              : {})
-          })
+          const outcome = await operations.respond(target, body, enter, deadline)
           if (outcome === 'unknown') {
             sawUnknownOutcome = true
           }
@@ -275,14 +217,7 @@ export function useMobileNativeChatAnswerSend(args: {
           // would consume the marker still protecting the next real message.
           // Desktop splits it identically — use-native-chat-interactive-send.ts
           // routes only the pasted-label shape through the clearing sender.
-          if (
-            !(await healMobileNativeChatStaleInput({
-              client,
-              terminal: handle,
-              deviceToken: deviceTokenRef.current,
-              deadline
-            }))
-          ) {
+          if (!(await operations.prepareCommit(target, deadline))) {
             if (generationRef.current === generation) {
               onSendError('Answer not sent')
             }

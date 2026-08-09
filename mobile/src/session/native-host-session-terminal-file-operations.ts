@@ -16,7 +16,8 @@ export function nativeHostSessionTerminalFileOperations(
         {
           worktree: `id:${request.workspaceId}`,
           pathText: request.pathText,
-          terminal: request.terminalHandle,
+          crossWorkspace: true,
+          ...(request.terminalHandle ? { terminal: request.terminalHandle } : {}),
           ...(request.cwd ? { cwd: request.cwd } : {})
         },
         { timeoutMs: 10_000 }
@@ -51,7 +52,8 @@ function nativeTerminalFileTarget(
     return {
       kind: 'native-artifact',
       absolutePath: resolved.openTarget.absolutePath,
-      grantId: resolved.openTarget.grantId
+      grantId: resolved.openTarget.grantId,
+      ...(resolved.worktree ? { workspaceId: resolved.worktree } : {})
     }
   }
   const relativePath =
@@ -64,6 +66,7 @@ function nativeTerminalFileTarget(
   return {
     kind: 'worktree-file',
     relativePath,
+    ...(resolved.worktree ? { workspaceId: resolved.worktree } : {}),
     localAbsolutePath:
       resolved.openTarget?.kind === 'worktree-file' && resolved.openTarget.provider === 'local'
         ? resolved.openTarget.absolutePath

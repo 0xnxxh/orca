@@ -27,7 +27,7 @@ import {
   buildTerminalUnsubscribeParams,
   updateTerminalSubscriptionViewport as updateCachedTerminalSubscriptionViewport
 } from './rpc-client-terminal-subscription'
-import { describeSocketEvent, redactSocketEndpoint } from './socket-event-debug'
+import { describeSocketEvent } from './socket-event-debug'
 import {
   isStaleRpcSocketEvent,
   logRpcSocketClose,
@@ -36,6 +36,8 @@ import {
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
+import { createRpcActivityProbe } from './rpc-client-activity-probe'
+import { isStaleForegroundDial } from './rpc-stale-dial'
 import {
   createMobileInboundFrameQueue,
   MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE,
@@ -56,7 +58,11 @@ import {
 } from './rpc-client-terminal-multiplex'
 import type { RpcClient, RpcClientSendRequestOptions } from './rpc-client-contract'
 
-export type { RpcClient } from './rpc-client-contract'
+export type {
+  RpcClient,
+  RpcClientSendRequestOptions,
+  RpcClientSendRequestOptions as SendRequestOptions
+} from './rpc-client-contract'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -134,6 +140,7 @@ export function connect(
     })
   }
   let ws: WebSocket | null = null
+  const synthesizedCloses = new RpcSynthesizedCloseIndex()
   let outbound: ReturnType<typeof createMobileDirectRpcOutbound> | null = null
   let state: ConnectionState = 'disconnected'
   let requestCounter = 0
@@ -296,6 +303,8 @@ export function connect(
 
     ws = new WebSocket(endpoint)
     const openingWs = ws
+    let openingWsAuthenticated = false
+    let openingWsLastInboundAt: number | null = null
     const closeForOverload = (direction: 'Inbound' | 'Outbound', detail: string): void => {
       emitLog('error', `${direction} WebSocket overload`, detail)
       openingWs.close()
@@ -315,19 +324,6 @@ export function connect(
       overflowMessage: MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE,
       frameTooLargeMessage: MOBILE_INBOUND_FRAME_TOO_LARGE_MESSAGE
     })
-    const ignoreStaleSocketEvent = (eventName: string): boolean => {
-      if (ws === openingWs) {
-        return false
-      }
-      // Why: RN can deliver callbacks from a timed-out socket after reconnect swapped in a replacement — ignore them.
-      console.log('[net] stale ws event ignored', {
-        eventName,
-        state,
-        attempt: reconnectAttempt
-      })
-      return true
-    }
-
     // Why: RN can leave opens pending forever on flaky handoffs — force reconnect if onopen never arrives.
     connectTimer = setTimeout(() => {
       connectTimer = null
@@ -393,7 +389,9 @@ export function connect(
     }
 
     function handleSocketMessage(rawData: unknown): Promise<void> | void {
-      lastInboundAt = Date.now()
+      const receivedAt = Date.now()
+      lastInboundAt = receivedAt
+      openingWsLastInboundAt = receivedAt
       const raw = typeof rawData === 'string' ? rawData : null
 
       // Why: e2ee_ready is plaintext (precedes encrypted auth); e2ee_authenticated/e2ee_error are encrypted.
@@ -595,34 +593,16 @@ export function connect(
       if (outbound === openingOutbound) {
         disposeActiveOutbound()
       }
-      const e = event as { code?: number; reason?: string; wasClean?: boolean } | undefined
-      const closeCode =
-        typeof e?.code === 'number' && Number.isInteger(e.code) && e.code >= 0 && e.code <= 65_535
-          ? e.code
-          : undefined
-      const wasClean = typeof e?.wasClean === 'boolean' ? e.wasClean : undefined
-      const closeAt = Date.now()
-      // Why: time-since-construct classifies the failure — instant close = RST/unreachable, slow = SYN timeout/packet loss.
-      const constructToCloseMs = currentWsOpenedAt != null ? closeAt - currentWsOpenedAt : null
-      const aliveMs =
-        currentWsOpenedAt != null && state === 'connected' ? closeAt - currentWsOpenedAt : null
-      const inboundIdleMs = lastInboundAt != null ? closeAt - lastInboundAt : null
-      // Why: statically imported — a hot-reload bug came from a stale closure capturing a half-loaded module.
-      const closeEvent = describeSocketEvent(event)
-      console.log('[net] ws.onclose', {
-        code: closeCode,
-        wasClean,
+      const closeCode = logRpcSocketClose({
+        event,
         state,
         attempt: reconnectAttempt,
         intentionallyClosed,
         endpoint: redactedWebSocketEndpoint(endpoint),
-        constructToCloseMs,
-        aliveMs,
-        inboundIdleMs,
-        eventFields: closeEvent.fields
+        constructedAt: now,
+        authenticated: openingWsAuthenticated,
+        lastInboundAt: openingWsLastInboundAt
       })
-      lastWsClosedAt = closeAt
-      currentWsOpenedAt = null
       handleSocketClosed(openingWs, { closeCode })
     }
 
@@ -1137,7 +1117,7 @@ export function connect(
       return () => stateListeners.delete(listener)
     },
 
-    notifyForeground(): void {
+    notifyForeground(_reason?: ForegroundNudgeReason): void {
       if (intentionallyClosed) {
         return
       }
@@ -1183,7 +1163,7 @@ export function connect(
         clearTimeout(handshakeTimer)
         handshakeTimer = null
       }
-      stopActivityProbe()
+      activityProbe.stop()
       disposeActiveOutbound()
       if (ws) {
         ws.close()
