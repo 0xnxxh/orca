@@ -79,6 +79,18 @@ type ClientSessionTabClosureState = {
 
 export class ClientSessionTabClosureTracker {
   private statesByClient = new Map<string, Map<string, ClientSessionTabClosureState>>()
+  // Why: tab destruction is global, including for clients first seen after the close settles.
+  private forgottenTabIdsByWorktree = new Map<string, ReadonlySet<string>>()
+
+  private getPendingActivationTabIds(worktreeId: string): ReadonlySet<string> {
+    const pendingTabIds = new Set<string>()
+    for (const statesByWorktree of this.statesByClient.values()) {
+      for (const tabId of statesByWorktree.get(worktreeId)?.pendingActivationCounts.keys() ?? []) {
+        pendingTabIds.add(tabId)
+      }
+    }
+    return pendingTabIds
+  }
 
   private getState(
     clientNavigationId: string,
@@ -111,8 +123,25 @@ export class ClientSessionTabClosureTracker {
 
   project(
     snapshot: RuntimeMobileSessionTabsResult,
-    clientNavigationId: string
+    clientNavigationId?: string
   ): RuntimeMobileSessionTabsResult {
+    const globallyForgottenTabIds = this.forgottenTabIdsByWorktree.get(snapshot.worktree)
+    if (globallyForgottenTabIds) {
+      const globallyClosed = omitClosedClientSessionTabs(
+        snapshot,
+        globallyForgottenTabIds,
+        this.getPendingActivationTabIds(snapshot.worktree)
+      )
+      if (globallyClosed.retainedClosedTabIds.size === 0) {
+        this.forgottenTabIdsByWorktree.delete(snapshot.worktree)
+      } else {
+        this.forgottenTabIdsByWorktree.set(snapshot.worktree, globallyClosed.retainedClosedTabIds)
+      }
+      snapshot = globallyClosed.snapshot
+    }
+    if (!clientNavigationId) {
+      return snapshot
+    }
     const state = this.getState(clientNavigationId, snapshot.worktree)
     if (!state) {
       return snapshot
@@ -125,6 +154,13 @@ export class ClientSessionTabClosureTracker {
     state.forgottenTabIds = closed.retainedClosedTabIds
     this.pruneState(clientNavigationId, snapshot.worktree)
     return closed.snapshot
+  }
+
+  forgetTabsGlobally(worktreeId: string, tabIds: readonly string[]): void {
+    this.forgottenTabIdsByWorktree.set(
+      worktreeId,
+      new Set([...(this.forgottenTabIdsByWorktree.get(worktreeId) ?? []), ...tabIds])
+    )
   }
 
   forgetTabs(
@@ -181,13 +217,28 @@ export class ClientSessionTabClosureTracker {
     this.project(snapshot, clientNavigationId)
   }
 
-  isForgotten(clientNavigationId: string, worktreeId: string, tabId: string): boolean {
-    return this.getState(clientNavigationId, worktreeId)?.forgottenTabIds.has(tabId) === true
+  isForgotten(clientNavigationId: string | undefined, worktreeId: string, tabId: string): boolean {
+    return (
+      this.forgottenTabIdsByWorktree.get(worktreeId)?.has(tabId) === true ||
+      (clientNavigationId !== undefined &&
+        this.getState(clientNavigationId, worktreeId)?.forgottenTabIds.has(tabId) === true)
+    )
   }
 
   migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
     if (oldWorktreeId === newWorktreeId) {
       return
+    }
+    const oldForgottenTabIds = this.forgottenTabIdsByWorktree.get(oldWorktreeId)
+    if (oldForgottenTabIds) {
+      this.forgottenTabIdsByWorktree.set(
+        newWorktreeId,
+        new Set([
+          ...(this.forgottenTabIdsByWorktree.get(newWorktreeId) ?? []),
+          ...oldForgottenTabIds
+        ])
+      )
+      this.forgottenTabIdsByWorktree.delete(oldWorktreeId)
     }
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
       const oldState = statesByWorktree.get(oldWorktreeId)

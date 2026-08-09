@@ -116,7 +116,7 @@ export class ClientSessionTabSelectionStore {
     clientNavigationId?: string
   ): RuntimeMobileSessionTabsResult {
     if (!clientNavigationId) {
-      return snapshot
+      return this.tabClosures.project(snapshot)
     }
     const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
     const state = statesByWorktree.get(snapshot.worktree) ?? {
@@ -214,6 +214,7 @@ export class ClientSessionTabSelectionStore {
       return
     }
     worktreeId = this.resolveWorktreeId(worktreeId)
+    this.tabClosures.forgetTabsGlobally(worktreeId, tabIds)
     this.tabClosures.forgetPendingActivations(worktreeId, tabIds)
     // Why: tab destruction is global even though each device owns its selection.
     const clientNavigationIds = new Set([
@@ -251,9 +252,8 @@ export class ClientSessionTabSelectionStore {
     }
   }
 
-  isTabForgotten(clientNavigationId: string, worktreeId: string, tabId: string): boolean {
-    worktreeId = this.resolveWorktreeId(worktreeId)
-    return this.tabClosures.isForgotten(clientNavigationId, worktreeId, tabId)
+  isTabForgotten(clientId: string | undefined, worktreeId: string, tabId: string): boolean {
+    return this.tabClosures.isForgotten(clientId, this.resolveWorktreeId(worktreeId), tabId)
   }
 
   beginActivationIntent(clientNavigationId: string): ClientSessionTabActivationIntent {

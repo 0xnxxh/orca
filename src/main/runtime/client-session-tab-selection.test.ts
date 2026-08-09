@@ -444,6 +444,41 @@ describe('client session-tab selection', () => {
     expect(activated.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
   })
 
+  it('blocks a closed tab for a client first seen after the close settles', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    const projected = store.activate(full, 'device-b', 'browser-unified')
+    expect(projected.activeTabId).toBe('terminal-a::leaf-a')
+    expect(projected.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+    expect(store.project(full).tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+  })
+
+  it('retains the global close fence while any client activation is pending', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    const withoutBrowser = {
+      ...full,
+      activeGroupId: 'group-left',
+      activeTabId: 'terminal-a::leaf-a',
+      activeTabType: 'terminal' as const,
+      tabGroups: full.tabGroups?.slice(0, 1),
+      tabs: full.tabs.filter((tab) => tab.id !== 'browser-unified')
+    }
+    store.project(full, 'device-a')
+    store.project(full, 'device-b')
+    store.beginTabActivation('device-a', 'wt-1', ['browser-unified'])
+
+    store.forgetTabs('device-b', 'wt-1', ['browser-unified'])
+    store.project(withoutBrowser, 'device-b')
+
+    expect(store.project(full, 'device-b').tabs.some((tab) => tab.id === 'browser-unified')).toBe(
+      false
+    )
+  })
+
   it('retains a close tombstone until an in-flight activation settles after disconnect', () => {
     const store = new ClientSessionTabSelectionStore()
     const full = snapshot()

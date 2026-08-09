@@ -7257,6 +7257,14 @@ export class OrcaRuntimeService {
     if (!tab) {
       throw new Error('tab_not_found')
     }
+    const activationTabIds = tab.type === 'terminal' ? [tab.id, tab.parentTabId] : [tab.id]
+    if (
+      activationTabIds.some((id) =>
+        this.clientSessionTabSelections.isTabForgotten(opts.clientNavigationId, worktreeId, id)
+      )
+    ) {
+      throw new Error('tab_not_found')
+    }
 
     if (tab.type === 'terminal') {
       const publicTab = this.toMobileSessionTabsResult(snapshot!).tabs.find(
@@ -7338,7 +7346,6 @@ export class OrcaRuntimeService {
           )
           worktreeId = this.clientSessionTabSelections.resolveWorktreeId(worktreeId)
           if (
-            opts.clientNavigationId &&
             this.discardForgottenMaterializedTerminal(
               worktreeId,
               opts.clientNavigationId,
@@ -7512,7 +7519,7 @@ export class OrcaRuntimeService {
 
   private discardForgottenMaterializedTerminal(
     worktreeId: string,
-    clientNavigationId: string,
+    clientNavigationId: string | undefined,
     tab: RuntimeMobileSessionTerminalTab
   ): boolean {
     const forgottenParent = this.clientSessionTabSelections.isTabForgotten(

@@ -28580,6 +28580,28 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
   })
 
+  it('discards an unattributed pending activation after a client closes the tab', async () => {
+    const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
+    const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
+    const { runtime, kill } = makePendingAgentTabActivationRuntime({ spawn })
+
+    const activation = runtime.activateMobileSessionTab(
+      `id:${TEST_WORKTREE_ID}`,
+      `host-tab::${HEADLESS_LEAF_ID}`,
+      undefined,
+      { navigation: 'host' }
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    await runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab', {
+      reason: 'user',
+      clientNavigationId: 'device-a'
+    })
+
+    spawned.resolve({ id: 'serve-materialized-pty' })
+    await expect(activation).rejects.toThrow('tab_not_found')
+    expect(kill).toHaveBeenCalledWith('serve-materialized-pty')
+  })
+
   it('keeps a newer client activation ahead of an older delayed materialization', async () => {
     const firstSpawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
     const spawn = vi.fn<RuntimePtySpawn>((options) =>
