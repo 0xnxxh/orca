@@ -22,8 +22,7 @@ const {
 vi.mock('./browser-session-registry', () => ({
   browserSessionRegistry: {
     setPendingCookieImport: setPendingCookieImportMock,
-    clearPendingCookieImport: clearPendingCookieImportMock,
-    persistUserAgent: vi.fn()
+    clearPendingCookieImport: clearPendingCookieImportMock
   }
 }))
 
@@ -425,6 +424,7 @@ describe('importCookiesFromBrowser Chromium', () => {
   let cookiesRemoveMock: ReturnType<typeof vi.fn>
   let cookiesFlushStoreMock: ReturnType<typeof vi.fn>
   let clearStorageDataMock: ReturnType<typeof vi.fn>
+  let setUserAgentMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'orca-chromium-cookie-test-'))
@@ -432,6 +432,7 @@ describe('importCookiesFromBrowser Chromium', () => {
     cookiesRemoveMock = vi.fn().mockResolvedValue(undefined)
     cookiesFlushStoreMock = vi.fn().mockResolvedValue(undefined)
     clearStorageDataMock = vi.fn().mockResolvedValue(undefined)
+    setUserAgentMock = vi.fn()
     appGetPathMock.mockReset()
     appGetPathMock.mockReturnValue(join(tmpDir, 'userData'))
     copyFileSyncMock.mockClear()
@@ -448,7 +449,8 @@ describe('importCookiesFromBrowser Chromium', () => {
         remove: cookiesRemoveMock,
         flushStore: cookiesFlushStoreMock
       },
-      clearStorageData: clearStorageDataMock
+      clearStorageData: clearStorageDataMock,
+      setUserAgent: setUserAgentMock
     })
   })
 
@@ -502,6 +504,9 @@ describe('importCookiesFromBrowser Chromium', () => {
       ).toEqual(sourceFilesBefore)
       expect(cookiesRemoveMock).not.toHaveBeenCalled()
       expect(clearStorageDataMock).toHaveBeenCalledWith({ storages: ['cookies'] })
+      // Why: STA-3514 — imports must never impersonate the source browser; the
+      // session keeps the engine UA the registry set at startup.
+      expect(setUserAgentMock).not.toHaveBeenCalled()
     } finally {
       platformSpy.mockRestore()
       sourceDb.close()
