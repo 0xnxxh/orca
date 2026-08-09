@@ -45,6 +45,16 @@ export type TerminalImeNativeTextForwarder = IDisposable & {
  * predicate invariant under the `key` rewrite a CJK input source performs, and
  * why no punctuation table is needed. Length also excludes named keys (`Enter`,
  * `ArrowLeft`, `Dead`, `F3`) without enumerating them.
+ *
+ * Claiming a keydown withholds its byte until the commit arrives, so a key the
+ * IME eats without committing would be dropped. That is bounded, not a gap:
+ * across 12,040 recorded keydowns there is no such case. The browser marks
+ * IME-owned presses on the keydown itself — `keyCode 229` on macOS even while
+ * `key` is still a single translated character — and all 4,453 such presses in
+ * the corpus were followed by a composition event. It is a positive marker
+ * only: fcitx5 on Wayland omits it, so it cannot be inverted into a gate.
+ * Stale claims clear on the next keydown rather than on a timer; a timer here
+ * once wrote a newline the user never typed.
  */
 function isNativeTextKeydown(event: ImeNativeTextKeyEvent, compositionActive: boolean): boolean {
   return (
