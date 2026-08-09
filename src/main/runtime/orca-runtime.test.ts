@@ -28806,7 +28806,7 @@ describe('OrcaRuntimeService', () => {
     ).toBe(`tab-b::${leafIds.b}`)
   })
 
-  it('applies delayed activation after a rename rekeys the renderer snapshot', async () => {
+  it('applies delayed activation before a rename rekeys the renderer snapshot', async () => {
     const inventory = deferred<[]>()
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const focusEditorTab = vi.fn()
@@ -28856,18 +28856,34 @@ describe('OrcaRuntimeService', () => {
       expect(runtime['pendingMobileSessionPtyInventoryRefresh']).not.toBeNull()
     )
     runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    expect(runtime['mobileSessionTabsByWorktree'].get(renamedWorktreeId)?.tabs).toEqual([
+      expect.objectContaining({ id: 'browser-tab' })
+    ])
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [sessionTabs(TEST_WORKTREE_ID, 1)]
+    })
+    inventory.resolve([])
+
+    const activated = await activation
+    expect(runtime['mobileSessionTabsByWorktree'].get(renamedWorktreeId)?.tabs).toEqual([
+      expect.objectContaining({ id: 'browser-tab' })
+    ])
+    expect(activated).toMatchObject({ worktree: renamedWorktreeId })
+    expect(focusEditorTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
+    await expect(runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).resolves.toMatchObject({
+      worktree: renamedWorktreeId,
+      tabs: []
+    })
     runtime.syncWindowGraph(1, {
       tabs: [],
       leaves: [],
       mobileSessionTabs: [sessionTabs(renamedWorktreeId, 1)]
     })
-    inventory.resolve([])
-
-    await expect(activation).resolves.toMatchObject({ worktree: renamedWorktreeId })
-    expect(focusEditorTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
   })
 
-  it('applies delayed close after a rename rekeys the renderer snapshot', async () => {
+  it('applies delayed close before a rename rekeys the renderer snapshot', async () => {
     const inventory = deferred<[]>()
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const closeSessionTab = vi.fn()
@@ -28916,15 +28932,15 @@ describe('OrcaRuntimeService', () => {
       expect(runtime['pendingMobileSessionPtyInventoryRefresh']).not.toBeNull()
     )
     runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    inventory.resolve([])
+
+    await expect(close).resolves.toEqual({ closed: true })
+    expect(closeSessionTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
     runtime.syncWindowGraph(1, {
       tabs: [],
       leaves: [],
       mobileSessionTabs: [sessionTabs(renamedWorktreeId, 1)]
     })
-    inventory.resolve([])
-
-    await expect(close).resolves.toEqual({ closed: true })
-    expect(closeSessionTab).toHaveBeenCalledWith('browser-tab', renamedWorktreeId)
     expect(
       (await runtime.listMobileSessionTabs(`id:${renamedWorktreeId}`, 'device-a')).tabs
     ).toEqual([])
@@ -28989,7 +29005,7 @@ describe('OrcaRuntimeService', () => {
     expect((await runtime.listMobileSessionTabs(`id:${renamedWorktreeId}`)).tabs).toEqual([])
   })
 
-  it('releases renderer session ownership when close acknowledgement overlaps a rename', async () => {
+  it('migrates terminal ownership and handles when close acknowledgement overlaps a rename', async () => {
     const closeAcknowledgement = deferred<void>()
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const ptyId = 'paired-close-rename-pty'
@@ -29052,6 +29068,12 @@ describe('OrcaRuntimeService', () => {
       })
     }
     publish(TEST_WORKTREE_ID)
+    const terminal = (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).tabs.find(
+      (tab) => tab.type === 'terminal'
+    )
+    expect(terminal?.type).toBe('terminal')
+    const terminalHandle = terminal?.type === 'terminal' ? terminal.terminal : null
+    expect(terminalHandle).toMatch(/^term_/)
 
     const close = runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'terminal-tab', {
       reason: 'user',
@@ -29067,6 +29089,7 @@ describe('OrcaRuntimeService', () => {
       worktreeId: renamedWorktreeId,
       runtimeSessionOwned: false
     })
+    expect(runtime['handles'].get(terminalHandle!)?.worktreeId).toBe(renamedWorktreeId)
   })
 
   it('publishes delayed terminal materialization under the renamed worktree', async () => {
@@ -32243,10 +32266,11 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('keeps a mobile-created terminal alive when the renderer never publishes the surface', async () => {
+  it('keeps a mobile-created terminal alive when a renamed renderer never publishes the surface', async () => {
     vi.useFakeTimers()
     try {
       const leafId = '44444444-4444-4444-8444-444444444444'
+      const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
       const closeTerminal = vi.fn()
       const runtime = new OrcaRuntimeService(store)
       runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
@@ -32303,6 +32327,7 @@ describe('OrcaRuntimeService', () => {
         ]
       })
 
+      runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
       // The renderer's PTY spawn registers with the tab binding (as the pty IPC layer now does) after the shell-only snapshot.
       runtime.registerPty('pty-alive', TEST_WORKTREE_ID, null, {
         tabId: 'tab-alive',
@@ -32322,6 +32347,8 @@ describe('OrcaRuntimeService', () => {
         terminal: expect.stringMatching(/^term_/),
         viewMode: 'chat'
       })
+      expect(runtime['ptysById'].get('pty-alive')?.worktreeId).toBe(renamedWorktreeId)
+      expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(false)
       expect(closeTerminal).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
