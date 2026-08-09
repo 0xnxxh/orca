@@ -34,6 +34,6 @@ describe('AutomationListSearchField', () => {
 
     const input = container.querySelector('input')
     expect(input).not.toBeNull()
-    expect(input?.hasAttribute('autofocus') || document.activeElement === input).toBe(true)
+    expect(document.activeElement).toBe(input)
   })
 })

@@ -61,6 +61,20 @@ function getAnchorRect(anchorElement: HTMLElement | null): AnchorRect | null {
   return anchorElement?.getBoundingClientRect() ?? null
 }
 
+const FOCUSABLE_ANCHOR_SELECTOR =
+  'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])'
+
+// Why: the anchor is a non-focusable `role="option"` row, so closing focus has
+// to land on its nearest focusable container (the sidebar listbox).
+export function getWorktreeParentPickerFocusRestoreTarget(
+  anchorElement: HTMLElement | null
+): HTMLElement | null {
+  if (!anchorElement?.isConnected) {
+    return null
+  }
+  return anchorElement.closest<HTMLElement>(FOCUSABLE_ANCHOR_SELECTOR)
+}
+
 export function selectWorktreeParent({
   childWorktreeId,
   parentWorktreeId,
@@ -312,8 +326,13 @@ export function WorktreeParentPickerPopover({
           event.preventDefault()
           inputRef.current?.focus()
         }}
-        // Why: virtual anchor has no trigger for Radix to restore focus to.
-        onCloseAutoFocus={(event) => event.preventDefault()}
+        // Why: virtual anchor has no trigger for Radix to restore focus to, so
+        // drive it back to the anchored row's listbox instead of dropping it on
+        // the detached input (i.e. document.body).
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          getWorktreeParentPickerFocusRestoreTarget(anchorElement)?.focus()
+        }}
         onInteractOutside={(event) => {
           if (suppressInitialOutsideCloseRef.current) {
             event.preventDefault()
