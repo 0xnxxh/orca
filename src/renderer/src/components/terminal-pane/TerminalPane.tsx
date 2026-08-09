@@ -189,7 +189,7 @@ import { scheduleImagePasteWebglAtlasRecovery } from './terminal-webgl-atlas-rec
 import { restoreTerminalFitToDesktop, restoreTerminalFitsToDesktop } from './terminal-fit-restore'
 import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
 import { TerminalSshReconnectOverlay } from './TerminalSshReconnectOverlay'
-import { TerminalRemoteRuntimeReconnectBanner } from './TerminalRemoteRuntimeReconnectBanner'
+import { TerminalPaneDisconnectedBanner } from './TerminalPaneDisconnectedBanner'
 import { selectTerminalTabAgentTypesByLeaf } from './terminal-tab-agent-type-index'
 import { canContinueAgentSessionInNewSession } from './terminal-agent-session-continuation'
 import {
@@ -3145,12 +3145,19 @@ function TerminalPane(
               return null
             }
             return createPortal(
-              <TerminalRemoteRuntimeReconnectBanner
+              <TerminalPaneDisconnectedBanner
                 key={`remote-runtime-reconnect-${pane.id}-${recoveryState.epoch}`}
                 phase={recoveryState.phase}
+                variant={recoveryState.unreachablePane ? 'ssh-pane' : 'remote-runtime'}
                 onReconnect={() => {
+                  const unreachable = recoveryState.unreachablePane
+                  if (unreachable) {
+                    unreachable.onRetry()
+                    return
+                  }
                   paneTransportsRef.current.get(pane.id)?.retryRecovery?.()
                 }}
+                onStartNewTerminal={recoveryState.unreachablePane?.onStartNewTerminal}
               />,
               pane.container,
               `remote-runtime-reconnect-${pane.id}`

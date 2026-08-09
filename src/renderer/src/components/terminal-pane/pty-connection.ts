@@ -335,10 +335,7 @@ import {
 } from './renderer-owned-agent-status-registry'
 import type { DirectSshPaneRetryAttempt } from '@/store/slices/direct-ssh-terminal-recovery'
 import { directSshAuthoritiesEqual } from '@/store/slices/direct-ssh-terminal-authority-ledger'
-import {
-  describeReattachFailure,
-  isProvenSshSessionGoneError
-} from './reattach-failure-classification'
+import { isProvenSshSessionGoneError } from './reattach-failure-classification'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
 const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
@@ -5095,6 +5092,37 @@ export function connectPanePty(
       applyColdRestoreAgentResumeStartup(startup)
       return startFreshSpawn(startup, options)
     }
+    /**
+     * A reattach failed without proving the shell is gone. Show the pane as disconnected with two
+     * explicit actions instead of leaving it frozen behind a raw error toast — the user decides,
+     * because nothing here knows whether the shell died.
+     */
+    const publishUnreachablePane = (
+      sessionId: string,
+      coldRestoreStartup?: ColdRestoreAgentResumeStartup | null
+    ): void => {
+      deps.onPtyRecoveryStateRef?.current?.(pane.id, {
+        phase: 'disconnected',
+        epoch: 0,
+        attempt: 0,
+        unreachablePane: {
+          onRetry: () => {
+            void requestTerminalPaneRecovery({
+              tabId: deps.tabId,
+              ptyId: sessionId,
+              reason: 'restore-blocked'
+            })
+          },
+          onStartNewTerminal: () => {
+            deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
+            deps.clearTabPtyId(deps.tabId, sessionId)
+            startFreshColdRestoreAgentResume(coldRestoreStartup, {
+              forceBlankRestoredViewport: true
+            })
+          }
+        }
+      })
+    }
     // Why: the hibernation wake fires from noteVisibilityResume in the outer
     // connection scope, long after this deferred-connect closure has run.
     wakeHibernatedAgentPane = () => startFreshColdRestoreAgentResume()
@@ -8837,7 +8865,7 @@ export function connectPanePty(
                 // else leaves the shell running, because respawning with the
                 // restored id resumes the same agent session a second time.
                 if (!isProvenSshSessionGoneError(err)) {
-                  reportError(describeReattachFailure(err))
+                  publishUnreachablePane(pendingSessionId, coldRestoreStartup)
                   return
                 }
                 deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
@@ -9084,7 +9112,7 @@ export function connectPanePty(
           // leaves the shell running, and respawning there resumes the same
           // agent session a second time into one transcript.
           if (!isProvenSshSessionGoneError(err)) {
-            reportError(describeReattachFailure(err))
+            publishUnreachablePane(deferredReattachSessionId, coldRestoreStartup)
             return
           }
           deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)

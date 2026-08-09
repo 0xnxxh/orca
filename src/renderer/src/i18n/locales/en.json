@@ -2965,6 +2965,12 @@
           "TerminalQuickCommandsSubmenu": {
             "3ccc7981bb": "Host unavailable",
             "54f29b7c0d": "Loading host…"
+          },
+          "TerminalPaneDisconnectedBanner": {
+            "sshPaneTitle": "Terminal disconnected",
+            "sshPaneBody": "Orca cannot reach this terminal right now. The shell may still be running on the host, so starting a new one leaves it alone.",
+            "tryAgainButton": "Try again",
+            "startNewTerminalButton": "Start a new terminal"
           }
         }
       },

@@ -6,10 +6,7 @@
  * Respawn requires proof the session is gone. These pin which failures qualify.
  */
 import { describe, expect, it } from 'vitest'
-import {
-  describeReattachFailure,
-  isProvenSshSessionGoneError
-} from './reattach-failure-classification'
+import { isProvenSshSessionGoneError } from './reattach-failure-classification'
 
 describe('reattach failure classification', () => {
   it('treats an explicit host expiry as proof', () => {
@@ -46,17 +43,10 @@ describe('reattach failure classification', () => {
   })
 })
 
-describe('reattach failure description', () => {
-  it('keeps the wire token out of the pane', () => {
-    const shown = describeReattachFailure(new Error('SSH_SOURCE_RESTORE_REQUIRED: ssh-1:pty-9'))
-    expect(shown).not.toContain('SSH_SOURCE_RESTORE_REQUIRED')
-    expect(shown).toMatch(/re-established/i)
-  })
-
-  it('passes an ordinary failure through unchanged', () => {
-    expect(describeReattachFailure(new Error('read ECONNRESET'))).toBe('read ECONNRESET')
-  })
-})
+// The `reattach failure description` cases moved rather than vanished. An unproven failure no
+// longer renders an error string at all — it renders the disconnected banner with two actions
+// (STA-3077 step E-0), so "keeps the wire token out of the pane" is now asserted against that
+// copy in TerminalPaneDisconnectedBanner.test.tsx, alongside the no-death-verbs constraint.
 
 // An identity mismatch is the relay saying "I have this pty and its recorded
 // pane differs" — proof the shell is ALIVE. It is worded "not found", so the

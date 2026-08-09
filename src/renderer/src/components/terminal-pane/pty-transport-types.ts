@@ -102,6 +102,8 @@ export type PtyTransportRecoveryState = {
     | 'disposed'
   epoch: number
   attempt: number
+  /** Set only for a pane whose shell we cannot reach; drives the two-action disconnected banner. */
+  unreachablePane?: { onRetry: () => void; onStartNewTerminal: () => void }
 }
 
 export type PtyTransport = {
