@@ -49,6 +49,8 @@ function topLevelTabId(tab: RuntimeMobileSessionClientTab): string {
 
 export class ClientSessionTabSelectionStore {
   private statesByClient = new Map<string, Map<string, StoredClientSessionTabSelection>>()
+  // Why: delayed tab operations still carry pre-rename identities.
+  private migratedWorktreeIds = new Map<string, string>()
   private activationIntents = new ClientSessionTabActivationIntentTracker()
   private tabClosures = new ClientSessionTabClosureTracker()
   private persistListener: ((state: PersistedMobileClientTabSelections) => void) | null = null
@@ -102,6 +104,11 @@ export class ClientSessionTabSelectionStore {
       this.statesByClient.set(clientNavigationId, statesByWorktree)
     }
     return statesByWorktree
+  }
+
+  private resolveWorktreeId(worktreeId: string): string {
+    const migrated = this.migratedWorktreeIds.get(worktreeId)
+    return migrated ? this.resolveWorktreeId(migrated) : worktreeId
   }
 
   project(
@@ -201,6 +208,7 @@ export class ClientSessionTabSelectionStore {
     if (tabIds.length === 0) {
       return
     }
+    worktreeId = this.resolveWorktreeId(worktreeId)
     this.tabClosures.forgetPendingActivations(worktreeId, tabIds)
     // Why: tab destruction is global even though each device owns its selection.
     const clientNavigationIds = new Set([
@@ -238,6 +246,7 @@ export class ClientSessionTabSelectionStore {
   }
 
   isTabForgotten(clientNavigationId: string, worktreeId: string, tabId: string): boolean {
+    worktreeId = this.resolveWorktreeId(worktreeId)
     return this.tabClosures.isForgotten(clientNavigationId, worktreeId, tabId)
   }
 
@@ -250,7 +259,7 @@ export class ClientSessionTabSelectionStore {
     worktreeId: string,
     tabIds: readonly string[]
   ): void {
-    this.tabClosures.beginActivation(clientNavigationId, worktreeId, tabIds)
+    this.tabClosures.beginActivation(clientNavigationId, this.resolveWorktreeId(worktreeId), tabIds)
   }
 
   finishTabActivation(
@@ -258,7 +267,12 @@ export class ClientSessionTabSelectionStore {
     snapshot: RuntimeMobileSessionTabsResult,
     tabIds: readonly string[]
   ): void {
-    this.tabClosures.finishActivation(clientNavigationId, snapshot, tabIds)
+    const worktreeId = this.resolveWorktreeId(snapshot.worktree)
+    this.tabClosures.finishActivation(
+      clientNavigationId,
+      worktreeId === snapshot.worktree ? snapshot : { ...snapshot, worktree: worktreeId },
+      tabIds
+    )
   }
 
   forgetClient(clientNavigationId: string): void {
@@ -274,9 +288,13 @@ export class ClientSessionTabSelectionStore {
   }
 
   migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
+    oldWorktreeId = this.resolveWorktreeId(oldWorktreeId)
+    newWorktreeId = this.resolveWorktreeId(newWorktreeId)
     if (oldWorktreeId === newWorktreeId) {
       return
     }
+    this.migratedWorktreeIds.set(oldWorktreeId, newWorktreeId)
+    this.tabClosures.migrateWorktree(oldWorktreeId, newWorktreeId)
     let changed = false
     for (const statesByWorktree of this.statesByClient.values()) {
       const state = statesByWorktree.get(oldWorktreeId)
@@ -293,6 +311,7 @@ export class ClientSessionTabSelectionStore {
   }
 
   forgetWorktree(worktreeId: string): void {
+    worktreeId = this.resolveWorktreeId(worktreeId)
     let changed = false
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
       const state = statesByWorktree.get(worktreeId)

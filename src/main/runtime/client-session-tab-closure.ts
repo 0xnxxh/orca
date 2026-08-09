@@ -181,6 +181,33 @@ export class ClientSessionTabClosureTracker {
     return this.getState(clientNavigationId, worktreeId)?.forgottenTabIds.has(tabId) === true
   }
 
+  migrateWorktree(oldWorktreeId: string, newWorktreeId: string): void {
+    if (oldWorktreeId === newWorktreeId) {
+      return
+    }
+    for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
+      const oldState = statesByWorktree.get(oldWorktreeId)
+      if (!oldState) {
+        continue
+      }
+      const newState = statesByWorktree.get(newWorktreeId)
+      if (newState) {
+        const pendingActivationCounts = new Map(newState.pendingActivationCounts)
+        for (const [tabId, count] of oldState.pendingActivationCounts) {
+          pendingActivationCounts.set(tabId, (pendingActivationCounts.get(tabId) ?? 0) + count)
+        }
+        statesByWorktree.set(newWorktreeId, {
+          forgottenTabIds: new Set([...newState.forgottenTabIds, ...oldState.forgottenTabIds]),
+          pendingActivationCounts
+        })
+      } else {
+        statesByWorktree.set(newWorktreeId, oldState)
+      }
+      statesByWorktree.delete(oldWorktreeId)
+      this.pruneState(clientNavigationId, oldWorktreeId)
+    }
+  }
+
   forgetClient(clientNavigationId: string): void {
     const statesByWorktree = this.statesByClient.get(clientNavigationId)
     for (const [worktreeId, state] of statesByWorktree ?? []) {

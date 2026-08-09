@@ -206,6 +206,32 @@ describe('client session-tab selection', () => {
     )
   })
 
+  it('keeps a close tombstone across a worktree identity change', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-a', 'browser-unified')
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    const stale = store.project({ ...initial, worktree: 'wt-renamed' }, 'device-a')
+    expect(stale.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+    expect(stale.activeTabId).toBe('terminal-a::leaf-a')
+  })
+
+  it('applies a delayed close completion to the renamed worktree identity', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-a', 'browser-unified')
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    const stale = store.project({ ...initial, worktree: 'wt-renamed' }, 'device-a')
+    expect(stale.tabs.some((tab) => tab.id === 'browser-unified')).toBe(false)
+    expect(stale.activeTabId).toBe('terminal-a::leaf-a')
+  })
+
   it('does not persist topology-only projections from unrelated worktrees', () => {
     const persisted: PersistedMobileClientTabSelections[] = []
     const store = new ClientSessionTabSelectionStore()
