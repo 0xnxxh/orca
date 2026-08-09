@@ -28917,6 +28917,8 @@ export class OrcaRuntimeService {
       (resolvedOldWorktreeId !== oldWorktreeId &&
         [...this.activeTerminalWorkspaceLaunches].some(
           (launch) =>
+            // Why: branch/name/issue selectors reveal their identity only after the worktree scan settles.
+            !launch.worktreeId ||
             launch.worktreeId === oldWorktreeId ||
             (Boolean(launch.worktreePath) &&
               oldWorktreePath !== undefined &&
