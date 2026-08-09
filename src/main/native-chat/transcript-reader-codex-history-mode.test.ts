@@ -46,6 +46,7 @@ describe('Codex transcript history modes', () => {
       {
         type: 'message',
         id: null,
+        timestamp: '2025-06-28T10:00:01.000Z',
         role: 'user',
         content: [
           { type: 'input_text', text: 'Early prompt' },
@@ -55,6 +56,7 @@ describe('Codex transcript history modes', () => {
       {
         type: 'message',
         id: 'assistant-1',
+        timestamp: '2025-06-28T10:00:02.000Z',
         role: 'assistant',
         content: [{ type: 'output_text', text: 'Early response' }]
       },
@@ -78,6 +80,7 @@ describe('Codex transcript history modes', () => {
       messages: [
         {
           role: 'user',
+          timestamp: Date.parse('2025-06-28T10:00:01.000Z'),
           blocks: [
             { type: 'text', text: 'Early prompt' },
             { type: 'image-ref', url: 'data:image/png;base64,abc' }
@@ -86,6 +89,7 @@ describe('Codex transcript history modes', () => {
         {
           id: 'assistant-1',
           role: 'assistant',
+          timestamp: Date.parse('2025-06-28T10:00:02.000Z'),
           blocks: [{ type: 'text', text: 'Early response' }]
         }
       ]
@@ -105,7 +109,7 @@ describe('Codex transcript history modes', () => {
         payload: {
           type: 'message',
           role: 'developer',
-          content: [{ type: 'input_text', text: 'internal instructions' }]
+          content: [{ type: 'text', text: 'internal instructions' }]
         }
       },
       {
@@ -174,6 +178,7 @@ describe('Codex transcript history modes', () => {
         }
       ]
     })
+    expect('messages' in result && result.messages).toHaveLength(2)
     expect(tail).toMatchObject({ messages: 'messages' in result ? result.messages : [] })
   })
 
@@ -213,14 +218,20 @@ describe('Codex transcript history modes', () => {
     const call = decodeCodexTranscriptLine(
       JSON.stringify({
         type: 'response_item',
-        payload: { type: 'custom_tool_call', id: 'call-1', name: 'exec', input: 'pwd' }
+        payload: {
+          type: 'custom_tool_call',
+          id: 'call-1',
+          call_id: 'durable-call-1',
+          name: 'exec',
+          input: 'pwd'
+        }
       }),
       'fallback-call'
     )
     const output = decodeCodexTranscriptLine(
       JSON.stringify({
         type: 'response_item',
-        payload: { type: 'custom_tool_call_output', id: 'output-1', output: 'ok' }
+        payload: { type: 'custom_tool_call_output', call_id: 'durable-call-1', output: 'ok' }
       }),
       'fallback-output'
     )
@@ -231,7 +242,7 @@ describe('Codex transcript history modes', () => {
       blocks: [{ type: 'tool-call', name: 'exec', input: 'pwd' }]
     })
     expect(output).toMatchObject({
-      id: 'output-1',
+      id: 'fallback-output',
       role: 'tool',
       blocks: [{ type: 'tool-result', output: 'ok' }]
     })
