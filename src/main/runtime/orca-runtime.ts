@@ -11179,14 +11179,20 @@ export class OrcaRuntimeService {
     }
     try {
       await assertTerminalInputWithinLimitWithYield(data)
-      await this.writeTerminalInputChunks(ptyId, data, {
-        // Why: a phone can claim the floor while a paste yields between chunks.
-        beforeWrite: () => {
-          if (this.getDriver(ptyId).kind === 'mobile') {
-            throw new Error('terminal_mobile_driver_active')
+      const admitted = agentSessionPtyWriteGate.assertAdmitted(ptyId)
+      await this.writeTerminalInputChunks(
+        ptyId,
+        data,
+        {
+          // Why: a phone can claim the floor while a paste yields between chunks.
+          beforeWrite: () => {
+            if (this.getDriver(ptyId).kind === 'mobile') {
+              throw new Error('terminal_mobile_driver_active')
+            }
           }
-        }
-      })
+        },
+        admitted
+      )
       return true
     } catch {
       return false
@@ -17266,13 +17272,14 @@ export class OrcaRuntimeService {
       agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
       try {
         await options.beforeWrite?.(ptyId)
-        options.reserveWrite?.(ptyId)
       } catch (error) {
         if (options.suffixFailureError) {
           throw new Error(options.suffixFailureError)
         }
         throw error
       }
+      agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
+      options.reserveWrite?.(ptyId)
       const suffixWrote = this.ptyController?.write(ptyId, suffix) ?? false
       if (!suffixWrote) {
         throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
@@ -17285,6 +17292,7 @@ export class OrcaRuntimeService {
     }
 
     await options.beforeWrite?.(ptyId)
+    agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
     options.reserveWrite?.(ptyId)
     const wrote = this.ptyController?.write(ptyId, payload) ?? false
     if (!wrote) {
@@ -17301,7 +17309,7 @@ export class OrcaRuntimeService {
       reserveWrite?: (ptyId: string) => void
       afterWrite?: (ptyId: string) => void | Promise<void>
     } = {},
-    admitted: AgentSessionPtyWriteAdmittance = { sessionId: null, runtimeFence: null }
+    admitted: AgentSessionPtyWriteAdmittance
   ): Promise<void> {
     const chunks = iterateTerminalInputChunks(text)
     let chunk = chunks.next()
@@ -17314,6 +17322,7 @@ export class OrcaRuntimeService {
       }
       firstChunk = false
       await options.beforeWrite?.(ptyId)
+      agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
       options.reserveWrite?.(ptyId)
       const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
       if (!wrote) {
@@ -17348,6 +17357,7 @@ export class OrcaRuntimeService {
         }
         firstChunk = false
         await options.beforeWrite?.(ptyId)
+        agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
         const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
         if (!wrote) {
           throw new Error('terminal_not_writable')
@@ -17364,7 +17374,12 @@ export class OrcaRuntimeService {
         // Why: a lease that moved mid-paste also refuses this terminator, leaving the TUI in paste
         // mode — the incoming owner re-establishes the mode, and feeding a session we no longer own
         // is the worse outcome.
-        this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
+        try {
+          agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
+          this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
+        } catch {
+          // The original refusal is the actionable error.
+        }
       }
       throw error
     }
@@ -17379,6 +17394,7 @@ export class OrcaRuntimeService {
       }
       throw error
     }
+    agentSessionPtyWriteGate.assertReadmitted(ptyId, admitted)
     const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
@@ -32208,6 +32224,16 @@ export class OrcaRuntimeService {
     let settlesInEnterCallback = false
     try {
       const payload = formatMessagePointer(unread.length)
+      const admission = agentSessionPtyWriteGate.admit(deliveryPtyId)
+      if (!admission.admitted) {
+        // Preserve the controller's refusal reporting for internal deliveries.
+        this.ptyController?.write(deliveryPtyId, payload)
+        return
+      }
+      const admitted = {
+        sessionId: admission.sessionId,
+        runtimeFence: admission.runtimeFence
+      }
       const wrote = this.ptyController?.write(deliveryPtyId, payload) ?? false
       if (!wrote) {
         return
@@ -32233,6 +32259,7 @@ export class OrcaRuntimeService {
           if (!currentLeaf || currentLeaf.ptyId !== deliveryPtyId || !currentLeaf.writable) {
             return
           }
+          agentSessionPtyWriteGate.assertReadmitted(deliveryPtyId, admitted)
           this.ptyController?.write(deliveryPtyId, '\r')
         } catch {
           // Terminal may have closed during the delay; mail remains queued for check.

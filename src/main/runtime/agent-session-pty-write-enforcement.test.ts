@@ -197,6 +197,26 @@ describe('terminal.send path', () => {
 
     expect(reserveWrite).not.toHaveBeenCalled()
   })
+
+  it('refuses when an async send guard outlives the admitted fence', async () => {
+    const { runtime, handle, write } = await makeRuntime()
+    enforce(agentSessionLeaseFixture({ runtimeFence: 7 }))
+
+    await expect(
+      runtime.sendTerminal(
+        handle,
+        { text: 'ls' },
+        {
+          beforeWrite: async () => {
+            publish(agentSessionLeaseFixture({ runtimeFence: 8 }))
+            await Promise.resolve()
+          }
+        }
+      )
+    ).rejects.toThrow('agent_session_checkpoint_stale')
+
+    expect(write).not.toHaveBeenCalled()
+  })
 })
 
 describe('agent prompt path', () => {
@@ -218,6 +238,19 @@ describe('agent prompt path', () => {
     await expect(runtime.sendTerminalAgentPrompt(handle, 'do the thing')).resolves.toBeDefined()
 
     expect(write).toHaveBeenCalled()
+  })
+
+  it('does not terminate a partial paste after its admitted fence moved', async () => {
+    const { runtime, handle, write } = await makeRuntime({
+      onWrite: () => publish(agentSessionLeaseFixture({ runtimeFence: 8 }))
+    })
+    enforce(agentSessionLeaseFixture({ runtimeFence: 7 }))
+
+    await expect(
+      runtime.sendTerminalAgentPrompt(handle, 'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES * 2))
+    ).rejects.toThrow('agent_session_checkpoint_stale')
+
+    expect(write).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -255,6 +288,23 @@ describe('lease transition against an in-flight write', () => {
     expect(write).toHaveBeenCalledTimes(3)
   })
 
+  it('fences preview paste chunks to the lease admitted before the first chunk', async () => {
+    let written = 0
+    const { runtime, write } = await makeRuntime({
+      onWrite: () => {
+        written += 1
+        if (written === 1) {
+          publish(agentSessionLeaseFixture({ runtimeFence: 8 }))
+        }
+      }
+    })
+    enforce(agentSessionLeaseFixture({ runtimeFence: 7 }))
+
+    await expect(runtime.writeTerminalPreviewInput(PTY_ID, CHUNKED_TEXT)).resolves.toBe(false)
+
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+
   it('withholds the submit when the lease moves during the text/suffix pause', async () => {
     const { runtime, handle, write } = await makeRuntime({
       onWrite: (_ptyId, data) => {
@@ -271,5 +321,36 @@ describe('lease transition against an in-flight write', () => {
 
     expect(write).toHaveBeenCalledTimes(1)
     expect(write).not.toHaveBeenCalledWith(PTY_ID, '\r')
+  })
+
+  it('withholds orchestration Enter after the pointer lease fence moves', async () => {
+    vi.useFakeTimers()
+    try {
+      const { runtime, handle, write } = await makeRuntime({
+        onWrite: (_ptyId, data) => {
+          if (data.includes('orca orchestration check')) {
+            publish(agentSessionLeaseFixture({ runtimeFence: 8 }))
+          }
+        }
+      })
+      let messages: { sequence: number; type: string }[] = []
+      runtime.setOrchestrationDb({
+        getUndeliveredUnreadMessages: () => messages,
+        getCurrentRunForPane: () => undefined
+      } as never)
+      runtime.onPtyData(PTY_ID, '\x1b]0;Codex working\x07', 1)
+      runtime.onPtyData(PTY_ID, '\x1b]0;Codex done\x07', 2)
+      enforce(agentSessionLeaseFixture({ runtimeFence: 7 }))
+      messages = [{ sequence: 1, type: 'status' }]
+
+      runtime.deliverPendingMessagesForHandle(handle)
+      expect(write).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(500)
+
+      expect(write.mock.calls.filter(([, data]) => data === '\r')).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
