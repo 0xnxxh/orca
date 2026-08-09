@@ -161,6 +161,7 @@ describe('computer-use e2e workflow', () => {
     const job = workflow.jobs['macos-appkit-dashboard-hang-repro']
     const runs = job.steps.map((step) => step.run).filter((run) => typeof run === 'string')
     const checkout = job.steps.find((step) => step.uses === 'actions/checkout@v6')
+    const build = job.steps.find((step) => step.run === 'pnpm build:electron-vite')
     const artifact = job.steps.find((step) => step.uses === 'actions/upload-artifact@v7')
 
     expect(input).toMatchObject({ default: false, type: 'boolean' })
@@ -176,6 +177,7 @@ describe('computer-use e2e workflow', () => {
     expect(runs.join('\n')).toContain('git fetch --no-tags --depth=1 origin "$SOURCE_COMMIT"')
     expect(runs.join('\n')).toContain('git checkout --detach "$SOURCE_COMMIT"')
     expect(runs).toContain('pnpm build:electron-vite')
+    expect(build.env.VITE_EXPOSE_STORE).toBe('true')
     expect(runs.join('\n')).toContain('macos-appkit-dashboard-activity.test.mjs')
     expect(runs.join('\n')).toContain('macos-appkit-dashboard-mobile-session.test.mjs')
     expect(runs).toContain('node tests/tools/macos-appkit-dashboard-hang-repro.mjs')

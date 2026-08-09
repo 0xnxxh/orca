@@ -234,6 +234,8 @@ jobs:
           run_install: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:electron-vite
+        env:
+          VITE_EXPOSE_STORE: 'true'
       - name: Validate AppKit activity and mobile Home fixtures
         run: >-
           pnpm vitest run --config config/vitest.config.ts
