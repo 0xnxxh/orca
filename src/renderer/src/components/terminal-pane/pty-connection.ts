@@ -4766,6 +4766,10 @@ export function connectPanePty(
       if (!connectionId || !pendingStartupCommand || shouldDeliverStartupViaTerminalPaste) {
         return
       }
+      if (startupInjectTimer !== null) {
+        clearTimeout(startupInjectTimer)
+        startupInjectTimer = null
+      }
       if (sshShellReadyFallbackTimer !== null) {
         clearTimeout(sshShellReadyFallbackTimer)
         sshShellReadyFallbackTimer = null
