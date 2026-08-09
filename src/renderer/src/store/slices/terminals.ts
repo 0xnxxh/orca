@@ -59,6 +59,7 @@ import { terminalLayoutEqual } from '@/lib/terminal-layout-equality'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
 import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-helpers'
 import {
+  collectReleasedLeafIds,
   hydrateWorkspaceTerminalRows,
   releaseTerminalLayoutPtyIds
 } from './terminal-session-row-hydration'
@@ -976,6 +977,10 @@ function targetScopedWorkspaceHydrationPatch(
         continue
       }
       for (const tab of session.tabsByWorktree[workspaceKey] ?? []) {
+        // Why: rows hydration dropped (invalid id, canonical duplicate) would leak reconnect keys nothing owns.
+        if (!retainedTargetTabIds.has(tab.id)) {
+          continue
+        }
         const ptyId = session.remoteSessionIdsByTabId?.[tab.id] ?? tab.ptyId
         if (ptyId && parseAppSshPtyId(ptyId)?.connectionId === authority.targetId) {
           pendingReconnectPtyIdByTabId[tab.id] = ptyId
@@ -3966,6 +3971,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const releasedPtyIdsByTabId = new Map<string, Set<string>>(
         rowHydrationByWorktree.flatMap(([, hydration]) => [...hydration.releasedPtyIdsByTabId])
       )
+      const reconnectPtyIdByRetainedTabId = new Map<string, string>(
+        rowHydrationByWorktree.flatMap(([, hydration]) => [
+          ...hydration.reconnectPtyIdByRetainedTabId
+        ])
+      )
       const canonicalTabIdBySubsumedTabId = new Map<string, string>(
         rowHydrationByWorktree.flatMap(([, hydration]) => [
           ...hydration.canonicalTabIdBySubsumedTabId
@@ -3991,6 +4001,22 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             tabId
           )
         }
+      }
+      // Why: a released leaf's agent session belongs to the canonical row now; leaving the record here
+      // would cold-restore the same provider session on a pane that no longer owns its PTY.
+      const releasedPaneKeys = new Set(
+        [...releasedPtyIdsByTabId].flatMap(([tabId, releasedPtyIds]) =>
+          collectReleasedLeafIds(session.terminalLayoutsByTabId[tabId], releasedPtyIds).map(
+            (leafId) => `${tabId}:${leafId}`
+          )
+        )
+      )
+      if (releasedPaneKeys.size > 0) {
+        sleepingAgentSessionsByPaneKey = Object.fromEntries(
+          Object.entries(sleepingAgentSessionsByPaneKey).filter(
+            ([paneKey]) => !releasedPaneKeys.has(paneKey)
+          )
+        )
       }
       const fallbackActiveWorktreeId =
         !session.activeWorktreeId && session.activeRepoId && knownRepoIds.has(session.activeRepoId)
@@ -4048,7 +4074,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       for (const worktreeId of pendingReconnectWorktreeIds) {
         const rawTabs = session.tabsByWorktree[worktreeId] ?? []
         const liveTabIds = rawTabs
-          .filter((t) => (t.ptyId || remoteSessionIds[t.id]) && validTabIds.has(t.id))
+          .filter(
+            (t) =>
+              // Why: a row that gave its tab-level PTY to the canonical twin still owns leaf sessions to advertise.
+              (t.ptyId || remoteSessionIds[t.id] || reconnectPtyIdByRetainedTabId.has(t.id)) &&
+              validTabIds.has(t.id)
+          )
           .map((t) => t.id)
         if (liveTabIds.length > 0) {
           pendingReconnectTabByWorktree[worktreeId] = liveTabIds
@@ -4084,6 +4115,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       for (const [tabId, sessionId] of Object.entries(remoteSessionIds)) {
         if (validTabIds.has(tabId) && !releasedPtyIdsByTabId.get(tabId)?.has(sessionId)) {
           pendingReconnectPtyIdByTabId[tabId] = sessionId
+        }
+      }
+
+      // Why: hydration nulls tab.ptyId and orphan detection ignores layout bindings, so a row whose
+      // tab-level PTY went to its canonical twin reads as dead and is swept before its own surviving
+      // pane can reattach. Anchor it on the PTY it still owns (#10486).
+      for (const [tabId, ptyId] of reconnectPtyIdByRetainedTabId) {
+        if (validTabIds.has(tabId) && !pendingReconnectPtyIdByTabId[tabId]) {
+          pendingReconnectPtyIdByTabId[tabId] = ptyId
         }
       }
 
@@ -4315,23 +4355,27 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         console.debug(
           `[reconnect-terminals] tab=${tabId} tabLevelPtyId=${tabLevelPtyId} supportsDeferredReattach=${supportsDeferredReattach} hasLeafMappings=${hasLeafMappings}`
         )
+        // Why: populate ptyIdsByTabId so the sessions status segment maps daemon IDs to tabs; otherwise all sessions look like orphans until the pane mounts.
+        // A row whose tab.ptyId went to the canonical row has no tab-level id left, but its own leaf PTYs still need advertising.
+        const allPtyIds = hasLeafMappings
+          ? (Object.values(leafPtyMap).filter(Boolean) as string[])
+          : tabLevelPtyId
+            ? [tabLevelPtyId]
+            : []
+        if (allPtyIds.length > 0) {
+          // Why: hide-sleeping reads ptyIdsByTabId for liveness; restored daemon sessions run before their pane remounts, so advertise them.
+          reconnectedPtyIdsByTabId ??= { ...ptyIdsByTabId }
+          reconnectedPtyIdsByTabId[tabId] = allPtyIds
+        }
         if (tabLevelPtyId) {
           reconnectedTabsByWorktree ??= { ...tabsByWorktree }
           const nextTabs = reconnectedTabsByWorktree[worktreeId]
           if (!nextTabs) {
             continue
           }
-
-          // Why: populate ptyIdsByTabId so the sessions status segment maps daemon IDs to tabs; otherwise all sessions look like orphans until the pane mounts.
-          const allPtyIds = hasLeafMappings
-            ? (Object.values(leafPtyMap).filter(Boolean) as string[])
-            : [tabLevelPtyId]
           reconnectedTabsByWorktree[worktreeId] = nextTabs.map((t) =>
             t.id === tabId ? { ...t, ptyId: tabLevelPtyId } : t
           )
-          // Why: hide-sleeping reads ptyIdsByTabId for liveness; restored daemon sessions run before their pane remounts, so advertise them.
-          reconnectedPtyIdsByTabId ??= { ...ptyIdsByTabId }
-          reconnectedPtyIdsByTabId[tabId] = allPtyIds
         }
       }
     }
