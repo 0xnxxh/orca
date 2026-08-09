@@ -126,7 +126,7 @@ export function needsCookedEchoSafeQueryReply(data: string): boolean {
   return replies !== null && replies.length === 1
 }
 
-/** True if every extracted cooked-echo-risk reply is accepted by `answer`. */
+/** True if at least one extracted cooked-echo-risk reply is accepted by `answer`. */
 export function answerEachCookedEchoSafeQueryReply(
   data: string,
   answer: (reply: string) => boolean

@@ -164,4 +164,27 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     ingress.drainAndClose()
     vi.useRealTimers()
   })
+
+  it('dedupes a second identical CSI reply after a quiet write (no echo projection)', async () => {
+    // Quiet CSI has no caret projection; reply identity must still arm so a
+    // late dual answerer does not double-write stdin.
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const probe = scriptedEchoProbe('quiet')
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      echoProbe: probe,
+      write: (data) => writes.push(data),
+      onEmission: () => {}
+    })
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+  })
 })

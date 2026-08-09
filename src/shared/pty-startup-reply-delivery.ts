@@ -347,21 +347,24 @@ export class PtyStartupReplyDelivery {
       return false
     }
     const projections = replyEchoProjections(reply, this.ownerBackend, kernelEchoImpossible)
-    // Why: register before write because node-pty can synchronously re-enter onData.
-    const expected: ExpectedEcho | null =
-      projections.length > 0
-        ? { reply, projections, remainingBytes: ECHO_SEARCH_BUDGET_BYTES }
-        : null
-    if (expected) {
-      this.expectedEchoes.push(expected)
+    // Why always register (even with empty projections): quiet CSI replies have no
+    // echo shape to match, but dual answerers can still fire a second identical
+    // write after the first landed — keep reply identity armed briefly so answer()
+    // dedupes stdin doubles (#13137). Short budget when there is nothing to strip.
+    const expected: ExpectedEcho = {
+      reply,
+      projections,
+      remainingBytes:
+        projections.length > 0 ? ECHO_SEARCH_BUDGET_BYTES : ECHO_POST_DEADLINE_BUDGET_BYTES
     }
+    this.expectedEchoes.push(expected)
     try {
       this.writeProvider(reply)
       return true
     } catch {
       // Why splice by identity, not pop: the write above can re-enter onData and
       // retire a different projection, so the last slot is not necessarily ours.
-      const index = expected ? this.expectedEchoes.indexOf(expected) : -1
+      const index = this.expectedEchoes.indexOf(expected)
       if (index !== -1) {
         this.expectedEchoes.splice(index, 1)
       }
