@@ -2837,7 +2837,6 @@ export class OrcaRuntimeService {
     }
   >()
   private terminalSleepGeneration = 0
-  private terminalPaneRecoveryByIdentity = new Map<string, Promise<RuntimeTerminalResolvePane>>()
   // Why: idempotency map for worktree.create — a create interrupted by a mobile
   // connection migration is retried with the same clientMutationId and returns
   // the in-flight (or just-finished) operation instead of a duplicate worktree.
@@ -6295,8 +6294,7 @@ export class OrcaRuntimeService {
   private getRecentExpiredSshLease(
     worktreeId: string,
     tabId: string,
-    leafId: string | undefined,
-    ptyId?: string
+    leafId: string | undefined
   ): ReturnType<NonNullable<RuntimeStore['getSshRemotePtyLeases']>>[number] | null {
     const now = Date.now()
     return (
@@ -6307,7 +6305,6 @@ export class OrcaRuntimeService {
             lease.state === 'expired' &&
             lease.worktreeId === worktreeId &&
             lease.tabId === tabId &&
-            (ptyId === undefined || lease.ptyId === ptyId) &&
             (leafId === undefined || lease.leafId === undefined || lease.leafId === leafId) &&
             lease.updatedAt <= now &&
             now - lease.updatedAt <= SSH_PANE_RECOVERY_GRACE_MS
@@ -16462,46 +16459,17 @@ export class OrcaRuntimeService {
     ) {
       throw new Error('terminal_not_found')
     }
-    const recoveryKey = `${expectedWorktreeId}\0${paneKey}`
-    const pending = this.terminalPaneRecoveryByIdentity.get(recoveryKey)
-    if (pending) {
-      return pending
-    }
     if (pty?.connected) {
       const current = this.resolveTerminalPane(paneKey, expectedWorktreeId)
       if (expectedHandle === undefined || current.handle !== expectedHandle) {
         return current
       }
-      throw new Error('terminal_not_recoverable')
     }
-    if (
-      !this.getRecentExpiredSshLease(expectedWorktreeId, parsed.tabId, parsed.leafId, pty.ptyId)
-    ) {
-      // Why: an explicit close leaves a terminated lease; only relay expiry authorizes shell recreation.
-      throw new Error('terminal_not_recoverable')
-    }
-    // Why: disconnected PTYs can reissue handles during graph cleanup; only a connected replacement satisfies the pane CAS.
-    const recovery = this.createTerminal(`id:${expectedWorktreeId}`, {
-      tabId: parsed.tabId,
-      leafId: parsed.leafId,
-      focus: false,
-      // Why: the HUB renderer may publish its exited layout while recovery is in flight; persist the replacement before that stale graph can orphan it.
-      persistHostSessionBinding: true
-    }).then((terminal) => ({
-      handle: terminal.handle,
-      tabId: parsed.tabId,
-      leafId: parsed.leafId,
-      ptyId: terminal.ptyId ?? null,
-      worktreeId: expectedWorktreeId
-    }))
-    this.terminalPaneRecoveryByIdentity.set(recoveryKey, recovery)
-    const clearRecovery = (): void => {
-      if (this.terminalPaneRecoveryByIdentity.get(recoveryKey) === recovery) {
-        this.terminalPaneRecoveryByIdentity.delete(recoveryKey)
-      }
-    }
-    void recovery.then(clearRecovery, clearRecovery)
-    return recovery
+    // A disconnected pane is never silently replaced. The grant this used to hold could not fire:
+    // it compared a relay-native lease id against an app-form runtime id (STA-3077 S6/S8, oracle in
+    // ssh-pane-recovery-grant-reachability.test.ts). The pane surfaces as disconnected instead, and
+    // spawning a replacement is the user's explicit choice.
+    throw new Error('terminal_not_recoverable')
   }
 
   async showTerminal(handle: string): Promise<RuntimeTerminalShow> {
