@@ -32487,6 +32487,73 @@ describe('OrcaRuntimeService', () => {
     expect(retried).toBe(first)
   })
 
+  it.each([
+    ['rejects', false],
+    ['returns a stale result', true]
+  ])('dedupes an original-id mobile create replay when its fallback scan %s', async (_, stale) => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const twiceRenamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed-again`
+    const renamedResolution = deferred<{
+      id: string
+      path: string
+      connectionId: null
+      repo: null
+      folderWorkspace: null
+      priorWorktreeIds: string[]
+    }>()
+    const runtime = new OrcaRuntimeService(store)
+    const created = {} as Awaited<ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>>
+    runtime['runCreateMobileSessionTerminal'] = vi.fn(async () => created)
+
+    const first = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-original-id-second-rename'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    runtime['resolveTerminalWorkspaceLaunchScope'] = vi.fn(async (selector) => {
+      if (selector === `id:${renamedWorktreeId}`) {
+        return await renamedResolution.promise
+      }
+      if (selector === `id:${twiceRenamedWorktreeId}`) {
+        return {
+          id: twiceRenamedWorktreeId,
+          path: '/tmp/worktree-renamed-again',
+          connectionId: null,
+          repo: null,
+          folderWorkspace: null,
+          priorWorktreeIds: []
+        }
+      }
+      throw new Error('selector_not_found')
+    })
+
+    const retry = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-original-id-second-rename'
+    })
+    await vi.waitFor(() =>
+      expect(runtime['resolveTerminalWorkspaceLaunchScope']).toHaveBeenCalledWith(
+        `id:${renamedWorktreeId}`
+      )
+    )
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, renamedWorktreeId, twiceRenamedWorktreeId)
+    if (stale) {
+      renamedResolution.resolve({
+        id: renamedWorktreeId,
+        path: '/tmp/worktree-renamed',
+        connectionId: null,
+        repo: null,
+        folderWorkspace: null,
+        priorWorktreeIds: []
+      })
+    } else {
+      renamedResolution.reject(new Error('selector_not_found'))
+    }
+
+    await expect(retry).resolves.toBe(first)
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledOnce()
+  })
+
   it('keeps a path-selected mobile create retry bound through a worktree rename', async () => {
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const created = {

@@ -25580,17 +25580,10 @@ export class OrcaRuntimeService {
           this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId) !==
             explicitWorktreeId
         ) {
-          let workspace: TerminalWorkspaceLaunchScope
-          try {
-            workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
-          } catch (error) {
-            if (!(error instanceof Error && error.message === 'selector_not_found')) {
-              throw error
-            }
-            workspace = await this.resolveTerminalWorkspaceLaunchScope(
-              `id:${this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)}`
-            )
-          }
+          const workspace = await this.resolveRetriedMobileTerminalWorkspaceLaunchScope(
+            worktreeSelector,
+            explicitWorktreeId
+          )
           this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
           if (activeLaunch.worktreeId !== explicitWorktreeId) {
             mutationWorktreeKey = activeLaunch.worktreeId
@@ -28114,6 +28107,51 @@ export class OrcaRuntimeService {
     const worktreeSelector = parsed?.type === 'worktree' ? `id:${parsed.worktreeId}` : selector
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     return this.terminalWorkspaceLaunchScopeForWorktree(worktree)
+  }
+
+  private async resolveRetriedMobileTerminalWorkspaceLaunchScope(
+    selector: string,
+    explicitWorktreeId: string
+  ): Promise<TerminalWorkspaceLaunchScope> {
+    while (true) {
+      const aliasBeforeResolution =
+        this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)
+      try {
+        return await this.resolveTerminalWorkspaceLaunchScope(selector)
+      } catch (selectorError) {
+        if (!(selectorError instanceof Error && selectorError.message === 'selector_not_found')) {
+          throw selectorError
+        }
+        const aliasedWorktreeId =
+          this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)
+        if (aliasedWorktreeId === explicitWorktreeId) {
+          if (aliasedWorktreeId !== aliasBeforeResolution) {
+            continue
+          }
+          throw selectorError
+        }
+        try {
+          const workspace = await this.resolveTerminalWorkspaceLaunchScope(
+            `id:${aliasedWorktreeId}`
+          )
+          // Why: a later rename can make either outcome of the fallback scan stale.
+          if (
+            this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId) ===
+            aliasedWorktreeId
+          ) {
+            return workspace
+          }
+        } catch (aliasError) {
+          if (
+            !(aliasError instanceof Error && aliasError.message === 'selector_not_found') ||
+            this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId) ===
+              aliasedWorktreeId
+          ) {
+            throw aliasError
+          }
+        }
+      }
+    }
   }
 
   private buildTerminalWorkspaceEnv(
