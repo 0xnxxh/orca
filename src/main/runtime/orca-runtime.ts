@@ -7777,6 +7777,9 @@ export class OrcaRuntimeService {
         }
       }
     }
+    if (tab.isPinned) {
+      throw new Error('terminal_tab_pinned')
+    }
     let closedSelectionTabIds = [tab.id]
     const forgetClosedSelection = (): void => {
       if (options.reason === 'user' && options.clientNavigationId) {

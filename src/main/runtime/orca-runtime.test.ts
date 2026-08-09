@@ -25554,6 +25554,52 @@ describe('OrcaRuntimeService', () => {
     expect(closeSessionTab).toHaveBeenCalledWith('browser-unified-1', TEST_WORKTREE_ID)
   })
 
+  it('keeps pinned non-terminal session tabs visible when mobile requests a close', async () => {
+    const closeSessionTab = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setNotifier({ closeSessionTab } as never)
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'pinned-file',
+          snapshotVersion: 1,
+          activeGroupId: null,
+          activeTabId: 'file-tab',
+          activeTabType: 'file',
+          tabs: [
+            {
+              type: 'file',
+              id: 'file-tab',
+              title: 'Pinned file',
+              filePath: join(TEST_WORKTREE_PATH, 'file.ts'),
+              relativePath: 'file.ts',
+              language: 'typescript',
+              isDirty: false,
+              isPinned: true,
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+
+    await expect(
+      runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'file-tab', {
+        reason: 'user',
+        clientNavigationId: 'device-a'
+      })
+    ).rejects.toThrow('terminal_tab_pinned')
+
+    expect(closeSessionTab).not.toHaveBeenCalled()
+    expect(
+      (await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')).tabs
+    ).toEqual([expect.objectContaining({ id: 'file-tab', isPinned: true })])
+  })
+
   it('creates mobile session terminals in a headless runtime server', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-headless' })
     const runtime = new OrcaRuntimeService(store)
