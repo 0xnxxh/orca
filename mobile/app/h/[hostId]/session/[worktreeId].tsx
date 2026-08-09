@@ -3837,7 +3837,7 @@ export default function SessionScreen() {
         if (!selectCreated) {
           const restoreTabId =
             selectedSessionTabIdRef.current ?? sessionTabsRef.current[0]?.id ?? null
-          restoreTabSelection(client, `id:${worktreeId}`, restoreTabId)
+          restoreTabSelection(client, `id:${worktreeId}`, () => restoreTabId)
           scheduleDelayedAction(() => void fetchSessionTabs(), 500)
           return
         }
@@ -4214,7 +4214,8 @@ export default function SessionScreen() {
       tabId: activePendingTerminalTab.id,
       leafId: activePendingTerminalTab.leafId,
       notifyClients: false,
-      navigation: 'caller'
+      navigation: 'caller',
+      shouldRetryAfterCutover: sessionTabIntentRef.current.retryWhileCurrent(intentRevision)
     })
       .then((response) => {
         if (!response.ok) {
@@ -4227,7 +4228,7 @@ export default function SessionScreen() {
           pendingTerminalActivationAttemptRef.current !== activationKey ||
           sessionTabIntentRef.current.revision !== intentRevision
         ) {
-          restoreTabSelection(client, `id:${worktreeId}`, selectedSessionTabIdRef.current)
+          restoreTabSelection(client, `id:${worktreeId}`, () => selectedSessionTabIdRef.current)
           return
         }
         applySessionTabs((response as RpcSuccess).result as SessionTabsResult)

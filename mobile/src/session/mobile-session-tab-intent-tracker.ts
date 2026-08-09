@@ -11,4 +11,8 @@ export class MobileSessionTabIntentTracker {
     this.pendingFocusKey = null
     return this.revision
   }
+
+  retryWhileCurrent(revision: number): () => boolean {
+    return () => this.revision === revision
+  }
 }

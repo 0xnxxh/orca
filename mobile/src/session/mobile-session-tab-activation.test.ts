@@ -85,12 +85,63 @@ describe('mobile session tab activation', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
+  it('does not retry an activation superseded during cutover', async () => {
+    let current = true
+    const cutover = new LogicalClientCutoverError()
+    const sendRequest = vi.fn<RpcClient['sendRequest']>().mockImplementation(async () => {
+      current = false
+      throw cutover
+    })
+
+    await expect(
+      activateMobileSessionTab(clientWith(sendRequest), {
+        worktree: 'id:worktree-1',
+        tabId: 'tab-1',
+        notifyClients: false,
+        navigation: 'caller',
+        shouldRetryAfterCutover: () => current
+      })
+    ).rejects.toBe(cutover)
+    expect(sendRequest).toHaveBeenCalledOnce()
+  })
+
+  it('does not let an older cutover retry overtake a newer activation', async () => {
+    let rejectFirst: ((error: unknown) => void) | null = null
+    const sendRequest = vi.fn<RpcClient['sendRequest']>().mockImplementation((_method, params) => {
+      if ((params as { tabId?: string }).tabId === 'tab-1') {
+        return new Promise<RpcResponse>((_resolve, reject) => {
+          rejectFirst = reject
+        })
+      }
+      return Promise.resolve(success())
+    })
+    const client = clientWith(sendRequest)
+    const first = activateMobileSessionTab(client, {
+      worktree: 'id:worktree-1',
+      tabId: 'tab-1',
+      notifyClients: false,
+      navigation: 'caller'
+    })
+    const cutover = new LogicalClientCutoverError()
+
+    await activateMobileSessionTab(client, {
+      worktree: 'id:worktree-1',
+      tabId: 'tab-2',
+      notifyClients: false,
+      navigation: 'caller'
+    })
+    rejectFirst?.(cutover)
+
+    await expect(first).rejects.toBe(cutover)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
   it('restores a newer selection after a delayed create completes', () => {
     const sendRequest = vi.fn<RpcClient['sendRequest']>().mockResolvedValue(success())
     const client = clientWith(sendRequest)
 
-    restoreTabSelection(client, 'id:worktree-1', 'tab-1')
-    restoreTabSelection(client, 'id:worktree-1', null)
+    restoreTabSelection(client, 'id:worktree-1', () => 'tab-1')
+    restoreTabSelection(client, 'id:worktree-1', () => null)
 
     expect(sendRequest).toHaveBeenCalledExactlyOnceWith('session.tabs.activate', {
       worktree: 'id:worktree-1',

@@ -8,6 +8,7 @@ import {
 } from './mobile-terminal-diagnostics'
 
 type ActivationClient = Pick<RpcClient, 'sendRequest'>
+const activationRevisionByClient = new WeakMap<ActivationClient, number>()
 
 type MobileSessionTabActivationParams = {
   worktree: string
@@ -15,12 +16,14 @@ type MobileSessionTabActivationParams = {
   leafId?: string
   notifyClients: false
   navigation: 'caller'
+  shouldRetryAfterCutover?: () => boolean
 }
 
 async function retryIdempotentActivationAfterCutover(
   request: () => Promise<RpcResponse>,
   operation: 'terminal.focus' | 'session.tabs.activate',
-  target: string
+  target: string,
+  shouldRetryAfterCutover: () => boolean = () => true
 ): Promise<RpcResponse> {
   const diagnosticTarget = shortenMobileTerminalDiagnosticId(target)
   logMobileTerminalDiagnostic('activation-request', { operation, target: diagnosticTarget })
@@ -40,6 +43,9 @@ async function retryIdempotentActivationAfterCutover(
         target: diagnosticTarget,
         errorName: getMobileTerminalDiagnosticErrorName(error)
       })
+      throw error
+    }
+    if (!shouldRetryAfterCutover()) {
       throw error
     }
     logMobileTerminalDiagnostic('activation-cutover-retry', {
@@ -81,12 +87,17 @@ export function focusMobileTerminal(
 
 export function activateMobileSessionTab(
   client: ActivationClient,
-  params: MobileSessionTabActivationParams
+  { shouldRetryAfterCutover, ...params }: MobileSessionTabActivationParams
 ): Promise<RpcResponse> {
+  const activationRevision = (activationRevisionByClient.get(client) ?? 0) + 1
+  activationRevisionByClient.set(client, activationRevision)
   return retryIdempotentActivationAfterCutover(
     () => client.sendRequest('session.tabs.activate', params),
     'session.tabs.activate',
-    params.tabId
+    params.tabId,
+    () =>
+      activationRevisionByClient.get(client) === activationRevision &&
+      (shouldRetryAfterCutover?.() ?? true)
   )
 }
 
@@ -94,14 +105,16 @@ export function activateMobileSessionTab(
 export function restoreTabSelection(
   client: ActivationClient,
   worktree: string,
-  tabId: string | null
+  getTabId: () => string | null
 ): void {
+  const tabId = getTabId()
   if (tabId) {
     void activateMobileSessionTab(client, {
       worktree,
       tabId,
       notifyClients: false,
-      navigation: 'caller'
+      navigation: 'caller',
+      shouldRetryAfterCutover: () => getTabId() === tabId
     }).catch(() => {})
   }
 }
