@@ -331,6 +331,28 @@ describe('client session-tab selection', () => {
     )
   })
 
+  it('retains a close tombstone until an in-flight activation settles after disconnect', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const full = snapshot()
+    store.activate(full, 'device-a', 'browser-unified')
+    store.beginTabActivation('device-a', 'wt-1', ['browser-unified'])
+    store.forgetTabs('device-a', 'wt-1', ['browser-unified'])
+
+    store.forgetClient('device-a')
+
+    expect(store.isTabForgotten('device-a', 'wt-1', 'browser-unified')).toBe(true)
+    store.finishTabActivation(
+      'device-a',
+      {
+        ...full,
+        tabGroups: full.tabGroups?.slice(0, 1),
+        tabs: full.tabs.filter((tab) => tab.id !== 'browser-unified')
+      },
+      ['browser-unified']
+    )
+    expect(store.isTabForgotten('device-a', 'wt-1', 'browser-unified')).toBe(false)
+  })
+
   it('forgets leaf and group picks when a whole split terminal tab closes', () => {
     const store = new ClientSessionTabSelectionStore()
     store.activate(snapshot(), 'device-a', 'terminal-a::leaf-b')

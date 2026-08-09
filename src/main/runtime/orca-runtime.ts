@@ -7261,6 +7261,24 @@ export class OrcaRuntimeService {
         const targetGroupId = snapshot?.tabGroups?.find((group) =>
           group.tabOrder.includes(tab.parentTabId)
         )?.id
+        const activationTabIds = [tab.id, tab.parentTabId]
+        if (opts.clientNavigationId) {
+          this.clientSessionTabSelections.beginTabActivation(
+            opts.clientNavigationId,
+            worktreeId,
+            activationTabIds
+          )
+        }
+        const finishTabActivation = (): void => {
+          const current = this.mobileSessionTabsByWorktree.get(worktreeId)
+          if (opts.clientNavigationId && current) {
+            this.clientSessionTabSelections.finishTabActivation(
+              opts.clientNavigationId,
+              this.toMobileSessionTabsResult(current),
+              activationTabIds
+            )
+          }
+        }
         // Why: a pending agent tab may exist without its startup command ever
         // having been delivered (the create's renderer stalled, #7587), so a
         // bare materialize would put a plain shell under the agent icon.
@@ -7311,6 +7329,7 @@ export class OrcaRuntimeService {
             throw new Error('tab_not_found')
           }
         } catch (err) {
+          finishTabActivation()
           if (sessionId && parseAppSshPtyId(sessionId)) {
             // Why: an expired SSH reattach clears durable bindings in the store,
             // but this in-memory headless snapshot can still carry the old id.
@@ -7318,6 +7337,7 @@ export class OrcaRuntimeService {
           }
           throw err
         }
+        finishTabActivation()
         return this.applyMobileSessionTabNavigation(
           this.getMobileSessionTabsForWorktree(worktreeId),
           tab.id,

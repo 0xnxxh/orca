@@ -28465,11 +28465,12 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
-  it('discards a pending terminal materialized after the caller closed it', async () => {
+  it('discards another client pending activation after a close and intervening list', async () => {
     const spawned = deferred<Awaited<ReturnType<RuntimePtySpawn>>>()
     const spawn = vi.fn<RuntimePtySpawn>(() => spawned.promise)
     const { runtime, getSession, kill } = makePendingAgentTabActivationRuntime({ spawn })
     await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
 
     const activation = runtime.activateMobileSessionTab(
       `id:${TEST_WORKTREE_ID}`,
@@ -28480,8 +28481,10 @@ describe('OrcaRuntimeService', () => {
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
     await runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab', {
       reason: 'user',
-      clientNavigationId: 'device-a'
+      clientNavigationId: 'device-b'
     })
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-b')
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`, 'device-a')
 
     spawned.resolve({ id: 'serve-materialized-pty' })
     await expect(activation).rejects.toThrow('tab_not_found')
