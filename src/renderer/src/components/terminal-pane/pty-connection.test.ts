@@ -598,6 +598,12 @@ function createManager(paneCount = 1, initialActivePaneId: number | null = null)
   }
 }
 
+// Structural subset of PtyTransportRecoveryState: enough to pin the disconnected/unreachable pane.
+type RecoveryStateProbe = {
+  phase: string
+  unreachablePane?: { onRetry: () => void; onStartNewTerminal: () => void }
+} | null
+
 function createDeps(overrides: Record<string, unknown> = {}) {
   return {
     tabId: 'tab-1',
@@ -9223,14 +9229,18 @@ describe('connectPanePty', () => {
     // Why: main can answer a *spawn* with an adopted session, so the reattach handler
     // is reachable by a second door that skips the restored-session path entirely. The
     // cold-restore signal has to survive that door too, or #12101 returns on it.
+    //
+    // Vehicle changed for STA-3077: reaching that door used to be automatic — a restore that threw
+    // `PTY "tab-pty" not found` counted as proof the session was gone and respawned itself. No
+    // reattach failure proves that any more (a replaced relay reports not-found for shells still
+    // running under its predecessor), so the pane surfaces as disconnected and the *user* opens the
+    // same door via "Start a new terminal". The #12101 assertions below are unchanged.
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
-    let activePtyId = 'tab-pty'
+    let activePtyId: string | null = 'tab-pty'
     transport.getPtyId.mockImplementation(() => activePtyId)
     transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
       if (sessionId) {
-        // Proof the session is gone — only that may reach the spawn door. A bare
-        // fault is unresolved and deliberately does not respawn.
         throw new Error('PTY "tab-pty" not found')
       }
       // Main answered the spawn by adopting a durable session instead.
@@ -9253,16 +9263,32 @@ describe('connectPanePty', () => {
     configureTerminalFocusMode(pane, textarea)
     await withMockedDocumentActiveElement(textarea, async () => {
       const manager = createManager(1)
+      const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
       const deps = createDeps({
         restoredLeafId: LEAF_1,
-        restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+        restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+        onPtyRecoveryStateRef: { current: onPtyRecoveryState }
       })
 
       connectPanePty(pane as never, manager as never, deps as never)
       await flushAsyncTicks(30)
 
-      expect(transport.connect).toHaveBeenCalledTimes(2)
+      // The unproven failure parks the pane instead of respawning it.
+      expect(transport.connect).toHaveBeenCalledTimes(1)
       expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('tab-pty')
+      const unreachable = onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+      expect(unreachable).toBeDefined()
+      expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+
+      // The user opens the spawn door; main answers that spawn by adopting a session.
+      unreachable?.onStartNewTerminal()
+      await flushAsyncTicks(30)
+
+      expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(pane.id, 'tab-pty')
+      expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'tab-pty')
+      expect(transport.connect).toHaveBeenCalledTimes(2)
       expect(transport.connect.mock.calls[1]?.[0]?.sessionId).toBeUndefined()
       const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
         ([data]) => data as string
@@ -9275,6 +9301,48 @@ describe('connectPanePty', () => {
       expect(writes).toContain(POST_REPLAY_MODE_RESET)
       expect(writes).not.toContain(POST_REPLAY_LIVE_AGENT_REATTACH_RESET)
     })
+  })
+
+  // STA-3077 / RC2. The relay answers "not found" for any id it cannot hand back — including for
+  // shells still running under a relay process it replaced. Respawning there starts a second
+  // `--resume` against the same agent session and both processes append to one transcript. This is
+  // the last route to that defect, and it is the reason this pane surfaces as disconnected instead.
+  it('does not respawn a pane whose restore was answered with a not-found', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
+      if (sessionId) {
+        throw new Error('PTY "tab-pty" not found')
+      }
+      return { id: 'respawned-pty' }
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(30)
+
+    // Producer pin: the restore must actually have been attempted and failed, or the
+    // no-respawn clause below would pass for the wrong reason.
+    expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('tab-pty')
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    // Branch pin: the not-found reached the unproven arm specifically. Without this, any earlier
+    // bail-out (an obsolete-reattach reject, a generation mismatch) would satisfy the clauses below.
+    expect(
+      onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+    ).toBeDefined()
+    expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+    expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
   })
 
   it('keeps ?25h in the live agent reattach reset when the snapshot leaves the cursor visible', async () => {

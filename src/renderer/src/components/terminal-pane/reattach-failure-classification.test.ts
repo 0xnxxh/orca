@@ -9,12 +9,26 @@ import { describe, expect, it } from 'vitest'
 import { isProvenSshSessionGoneError } from './reattach-failure-classification'
 
 describe('reattach failure classification', () => {
-  it('treats an explicit host expiry as proof', () => {
-    expect(isProvenSshSessionGoneError(new Error('SSH_SESSION_EXPIRED: ssh-1:pty-9'))).toBe(true)
+  // INVERTED for STA-3077. Both clauses below asserted that a not-found — raw, or wrapped as
+  // SSH_SESSION_EXPIRED — proves the shell is gone. It does not, and this was the last live route
+  // to the reported duplicate resume.
+  //
+  // A not-found means the relay WE ASKED cannot hand that id back. That is proof of an exit only
+  // if the relay process that minted the pty is the one answering. When a relay is restarted or
+  // replaced, the new process reports not-found for shells still running under its predecessor —
+  // observed directly in the Docker relay harness, where a stalled relay is superseded by a fresh
+  // one with no memory of `pty-1` while the old shells keep running. Respawning there starts a
+  // second `--resume` against the same agent session.
+  //
+  // SSH_SESSION_EXPIRED is not independent evidence: its ONLY producer is that same not-found
+  // mapping in reattachSshPtySession. Telling the two apart needs `relayInstanceId` on the consumer
+  // grant (design step E-2), which is not built — so the honest answer is "unproven".
+  it('does not treat an explicit host expiry as proof', () => {
+    expect(isProvenSshSessionGoneError(new Error('SSH_SESSION_EXPIRED: ssh-1:pty-9'))).toBe(false)
   })
 
-  it('treats a not-found PTY as proof', () => {
-    expect(isProvenSshSessionGoneError(new Error('PTY "pty-9" not found'))).toBe(true)
+  it('does not treat a not-found PTY as proof', () => {
+    expect(isProvenSshSessionGoneError(new Error('PTY "pty-9" not found'))).toBe(false)
   })
 
   // The reported defect: a source that needs re-establishing was reported as
@@ -65,9 +79,29 @@ describe('an identity mismatch is never proof of death', () => {
     expect(isProvenSshSessionGoneError(error)).toBe(false)
   })
 
-  // Clause-selectivity: silencing real expiry would strand panes whose shell
-  // genuinely went away.
-  it('still proves death for the same wording without the mismatch clause', () => {
-    expect(isProvenSshSessionGoneError(new Error('PTY "pty-7" not found'))).toBe(true)
+  // INVERTED with the two clauses above. This was the clause-selectivity guard: it pinned that
+  // silencing the mismatch case had not silenced plain expiry too. Plain expiry is now unproven as
+  // well, on its own evidence — so what remains to guard is that the pane is not stranded, and that
+  // is the disconnected affordance's job, asserted in TerminalPaneDisconnectedBanner.test.tsx.
+  it('does not prove death for the same wording without the mismatch clause either', () => {
+    expect(isProvenSshSessionGoneError(new Error('PTY "pty-7" not found'))).toBe(false)
+  })
+})
+
+/**
+ * The respawn arms are now unreachable, and that is the point: no reattach failure authorizes
+ * replacing a running shell. The design keeps the grant as a CONDITIONAL for step E-2 — a
+ * not-found whose `relayInstanceId` matches the recorded one is genuine proof — so the decision
+ * point stays rather than being deleted. This clause pins that nothing reaches it meanwhile.
+ */
+describe('no reattach failure authorizes a respawn today', () => {
+  it.each([
+    ['a relay-worded not-found', new Error('PTY "pty-9" not found')],
+    ['the expiry token main publishes', new Error('SSH_SESSION_EXPIRED: ssh-1:pty-9')],
+    ['an identity mismatch', new Error('SSH_PTY_IDENTITY_MISMATCH: pty-7')],
+    ['a required source restore', new Error('SSH_SOURCE_RESTORE_REQUIRED: ssh-1:pty-9')],
+    ['a transport fault', new Error('read ECONNRESET')]
+  ])('leaves %s unproven', (_label, error) => {
+    expect(isProvenSshSessionGoneError(error)).toBe(false)
   })
 })
