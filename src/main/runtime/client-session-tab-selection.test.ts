@@ -263,6 +263,21 @@ describe('client session-tab selection', () => {
     expect(store.serialize()['device-a']?.['wt-renamed']).toBeUndefined()
   })
 
+  it('applies a delayed activation to the renamed worktree identity', () => {
+    const store = new ClientSessionTabSelectionStore()
+    const initial = snapshot()
+    store.activate(initial, 'device-a', 'browser-unified')
+    const delayedActivation = store.beginActivationIntent('device-a')
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    store.activate(initial, 'device-a', 'terminal-a::leaf-b', delayedActivation)
+    store.forgetWorktree('wt-1')
+
+    const renamed = { ...initial, worktree: 'wt-renamed' }
+    expect(store.project(renamed, 'device-a').activeTabId).toBe('terminal-a::leaf-b')
+    expect(store.serialize()['device-a']?.['wt-renamed']?.activeTabId).toBe('terminal-a::leaf-b')
+  })
+
   it('does not persist topology-only projections from unrelated worktrees', () => {
     const persisted: PersistedMobileClientTabSelections[] = []
     const store = new ClientSessionTabSelectionStore()

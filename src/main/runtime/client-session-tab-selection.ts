@@ -160,13 +160,17 @@ export class ClientSessionTabSelectionStore {
     activeTabId: string,
     activationIntent?: ClientSessionTabActivationIntent
   ): RuntimeMobileSessionTabsResult {
+    const worktreeId = this.resolveWorktreeId(snapshot.worktree)
+    if (worktreeId !== snapshot.worktree) {
+      snapshot = { ...snapshot, worktree: worktreeId }
+    }
     const activeTab = snapshot.tabs.find((tab) => tab.id === activeTabId)
     const activationTabIds = activeTab ? [activeTabId, topLevelTabId(activeTab)] : [activeTabId]
     if (!this.activationIntents.claim(clientNavigationId, activationIntent, activationTabIds)) {
       return this.project(snapshot, clientNavigationId)
     }
     const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
-    const state = statesByWorktree.get(snapshot.worktree) ?? {
+    const state = statesByWorktree.get(worktreeId) ?? {
       selection: emptyClientSessionTabSelection(),
       revision: 0,
       shouldPersist: false
@@ -174,13 +178,13 @@ export class ClientSessionTabSelectionStore {
     // Why: a delayed activation can finish after close; absence must retire the tombstone first.
     if (
       !activeTab ||
-      this.tabClosures.isForgotten(clientNavigationId, snapshot.worktree, activeTabId) ||
-      this.tabClosures.isForgotten(clientNavigationId, snapshot.worktree, topLevelTabId(activeTab))
+      this.tabClosures.isForgotten(clientNavigationId, worktreeId, activeTabId) ||
+      this.tabClosures.isForgotten(clientNavigationId, worktreeId, topLevelTabId(activeTab))
     ) {
       return this.project(snapshot, clientNavigationId)
     }
     const nextSelection = activateClientSessionTabSelection(snapshot, state.selection, activeTabId)
-    statesByWorktree.set(snapshot.worktree, {
+    statesByWorktree.set(worktreeId, {
       selection: nextSelection,
       revision: state.revision + 1,
       shouldPersist: true
