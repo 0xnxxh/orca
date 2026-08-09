@@ -1076,10 +1076,7 @@ export class LocalPtyProvider implements IPtyProvider {
     return ptyProcesses.has(id)
   }
   write(id: string, data: string): void {
-    // Why: live xterm query replies (DSR color-scheme 997, OSC) — including dual
-    // answerer / write-queue coalesced `?997;1n?997;1n` — must use the ingress
-    // echo-safe path; raw master writes while ECHO is on paint into cooked
-    // prompts (#13137). CPR/DA stay immediate (#7329).
+    // Cooked PTYs echo private DSR/OSC replies; CPR/DA remain immediate (#13137, #7329).
     if (extractOnlyCookedEchoSafeQueryReplies(data)) {
       const ingress = startupIngressByPty.get(id)
       if (ingress?.answerLiveQueryReply(data)) {

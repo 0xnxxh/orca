@@ -226,20 +226,18 @@ export class Session {
       return
     }
 
-    // Why: keep queuing during the post-ready flush-gate window ('ready' but not yet flushed); a
-    // direct write would race fresh input ahead of the buffered startup command.
-    if (this._shellState === 'pending' || this.postReadyFlushGate.isPending) {
-      this.preReadyStdinQueue.push(data)
-      return
-    }
-
-    // Why: daemon-hosted POSIX PTYs hit the same cooked-prompt 997 leak as local
-    // provider writes (including dual-answerer coalesced payloads); share the
-    // ingress echo-safe path (#13137).
+    // Daemon POSIX PTYs need the local provider's cooked-echo containment (#13137).
     if (
       extractOnlyCookedEchoSafeQueryReplies(data) &&
       this.startupIngress.answerLiveQueryReply(data)
     ) {
+      return
+    }
+
+    // Why: keep queuing during the post-ready flush-gate window ('ready' but not yet flushed); a
+    // direct write would race fresh input ahead of the buffered startup command.
+    if (this._shellState === 'pending' || this.postReadyFlushGate.isPending) {
+      this.preReadyStdinQueue.push(data)
       return
     }
 

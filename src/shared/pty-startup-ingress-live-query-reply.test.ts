@@ -1,6 +1,5 @@
-// #13137: live xterm query replies (color-scheme 997) must use the same
-// ECHO-safe delivery as startup color replies so cooked prompts stay clean.
-import { describe, expect, it, vi } from 'vitest'
+// #13137: live color replies need startup's cooked-echo containment.
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PtyStartupIngress, type PtyIngressEmission } from './pty-startup-ingress'
 import type {
   PtySlaveEchoProbe,
@@ -13,8 +12,7 @@ import {
 } from './terminal-query-reply'
 
 const COLOR_SCHEME_REPLY = mode2031SequenceFor('dark')
-// Why: CSI replies only project ECHOCTL caret form — OSC-rewrite is identity and
-// would re-arm an ESC-led projection. OSC replies keep both.
+// CSI has only a caret echo; OSC also has readline's rewritten echo.
 const POSIX_CSI_COOKED_ECHO = (reply: string): string => reply.replaceAll('\x1b', '^[')
 const OSC_COLOR_REPLY = '\x1b]11;rgb:00/00/00\x07'
 const POSIX_OSC_COOKED_ECHOES = [
@@ -38,6 +36,8 @@ function visible(emissions: readonly PtyIngressEmission[]): string {
   return emissions.map((emission) => emission.data).join('')
 }
 
+afterEach(() => vi.useRealTimers())
+
 describe('PtyStartupIngress live query replies (#13137)', () => {
   it('classifies the real mode-2031 reply as cooked-echo-risk', () => {
     expect(COLOR_SCHEME_REPLY).toBe('\x1b[?997;1n')
@@ -49,13 +49,12 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     vi.useFakeTimers()
     const writes: string[] = []
     const emissions: PtyIngressEmission[] = []
-    let ingress!: PtyStartupIngress
+    let ingress: PtyStartupIngress | undefined
     ingress = new PtyStartupIngress({
       ownerBackend: 'posix-pty',
       write: (data) => {
         writes.push(data)
-        // Kernel ECHOCTL projection of the master write (the #13137 paint).
-        ingress.accept(POSIX_CSI_COOKED_ECHO(data))
+        ingress?.accept(POSIX_CSI_COOKED_ECHO(data))
       },
       onEmission: (emission) => emissions.push(emission)
     })
@@ -63,7 +62,6 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
     vi.advanceTimersByTime(0)
     expect(writes).toEqual([COLOR_SCHEME_REPLY])
-    // Echo swallowed — no `^[ [?997;1n` / visible `997;1n` on the emission path.
     expect(visible(emissions)).toBe('')
     expect(visible(emissions)).not.toContain('997;1n')
     expect(visible(emissions)).not.toContain(COLOR_SCHEME_REPLY)
@@ -71,10 +69,8 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     ingress.accept('Ok to proceed? (y) ')
     expect(visible(emissions)).toBe('Ok to proceed? (y) ')
     expect(visible(emissions)).not.toContain('997')
-    // Single write only — delivery must not re-send on success.
     expect(writes).toEqual([COLOR_SCHEME_REPLY])
     ingress.drainAndClose()
-    vi.useRealTimers()
   })
 
   it('swallows OSC color reply echoes under both POSIX projections', () => {
@@ -82,12 +78,12 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     for (const echoOf of POSIX_OSC_COOKED_ECHOES) {
       const writes: string[] = []
       const emissions: PtyIngressEmission[] = []
-      let ingress!: PtyStartupIngress
+      let ingress: PtyStartupIngress | undefined
       ingress = new PtyStartupIngress({
         ownerBackend: 'posix-pty',
         write: (data) => {
           writes.push(data)
-          ingress.accept(echoOf(data))
+          ingress?.accept(echoOf(data))
         },
         onEmission: (emission) => emissions.push(emission)
       })
@@ -98,7 +94,6 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
       expect(visible(emissions)).toBe('')
       ingress.drainAndClose()
     }
-    vi.useRealTimers()
   })
 
   it('defers a live query reply while the slave is still echoing', async () => {
@@ -120,9 +115,50 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     await vi.advanceTimersByTimeAsync(20)
     expect(writes).toEqual([COLOR_SCHEME_REPLY])
     expect(probe.calls).toBe(3)
-    // Still a single write after quiet — no doubled successful path.
     await vi.advanceTimersByTimeAsync(200)
     expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+  })
+
+  it('writes within the echo budget when a probe never settles', async () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const echoProbe: PtySlaveEchoProbe = () => new Promise(() => {})
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      echoProbe,
+      write: (data) => writes.push(data),
+      onEmission: () => {}
+    })
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(199)
+    expect(writes).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+  })
+
+  it('caps probe subprocess starts across live reply bursts', async () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const probe = scriptedEchoProbe('echoing')
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      echoProbe: probe,
+      write: (data) => writes.push(data),
+      onEmission: () => {}
+    })
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(probe.calls).toBe(10)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+
+    expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probe.calls).toBe(10)
+    expect(writes).toEqual([COLOR_SCHEME_REPLY, COLOR_SCHEME_REPLY])
     ingress.drainAndClose()
   })
 
@@ -133,18 +169,16 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     expect(needsCookedEchoSafeQueryReply('\x1b[3;1R')).toBe(false)
   })
 
-  it('swallows a pre-coalesced dual ?997 payload on the host write path', () => {
-    // Defense in depth: even if something concatenates before the host, extract
-    // + delivery must still accept and echo-strip without raw fallthrough.
+  it('swallows a pre-coalesced repeated ?997 payload on the host write path', () => {
     vi.useFakeTimers()
     const writes: string[] = []
     const emissions: PtyIngressEmission[] = []
-    let ingress!: PtyStartupIngress
+    let ingress: PtyStartupIngress | undefined
     ingress = new PtyStartupIngress({
       ownerBackend: 'posix-pty',
       write: (data) => {
         writes.push(data)
-        ingress.accept(POSIX_CSI_COOKED_ECHO(data))
+        ingress?.accept(POSIX_CSI_COOKED_ECHO(data))
       },
       onEmission: (emission) => emissions.push(emission)
     })
@@ -157,17 +191,13 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
     ])
     expect(ingress.answerLiveQueryReply(coalesced)).toBe(true)
     vi.advanceTimersByTime(0)
-    // Second identical reply is deduped while the first is in-flight.
-    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    expect(writes).toEqual([COLOR_SCHEME_REPLY, COLOR_SCHEME_REPLY])
     expect(visible(emissions)).toBe('')
     expect(visible(emissions)).not.toContain('997')
     ingress.drainAndClose()
-    vi.useRealTimers()
   })
 
-  it('dedupes a second identical CSI reply after a quiet write (no echo projection)', async () => {
-    // Quiet CSI has no caret projection; reply identity must still arm so a
-    // late dual answerer does not double-write stdin.
+  it('preserves identical replies after a quiet CSI write', async () => {
     vi.useFakeTimers()
     const writes: string[] = []
     const probe = scriptedEchoProbe('quiet')
@@ -184,7 +214,41 @@ describe('PtyStartupIngress live query replies (#13137)', () => {
 
     expect(ingress.answerLiveQueryReply(COLOR_SCHEME_REPLY)).toBe(true)
     await vi.advanceTimersByTimeAsync(0)
-    expect(writes).toEqual([COLOR_SCHEME_REPLY])
+    expect(writes).toEqual([COLOR_SCHEME_REPLY, COLOR_SCHEME_REPLY])
+    ingress.drainAndClose()
+  })
+
+  it('bounds pending writes and unmatched live echo projections', async () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    const emissions: PtyIngressEmission[] = []
+    const ingress = new PtyStartupIngress({
+      ownerBackend: 'posix-pty',
+      write: (data) => writes.push(data),
+      onEmission: (emission) => emissions.push(emission)
+    })
+    const replies = Array.from(
+      { length: 65 },
+      (_, index) => `\x1b]10;rgb:${index.toString().padStart(2, '0')}\x07`
+    )
+
+    for (const reply of replies) {
+      expect(ingress.answerLiveQueryReply(reply)).toBe(true)
+    }
+    // The 65th enqueue forces the bounded pending set to flush without dropping data.
+    expect(writes).toHaveLength(64)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(writes).toEqual(replies)
+
+    const firstReply = replies[0]
+    const lastReply = replies.at(-1)
+    if (!firstReply || !lastReply) {
+      throw new Error('expected bounded reply fixture')
+    }
+    ingress.accept(POSIX_CSI_COOKED_ECHO(firstReply))
+    ingress.accept(POSIX_CSI_COOKED_ECHO(lastReply))
+    expect(visible(emissions)).toContain('rgb:00')
+    expect(visible(emissions)).not.toContain('rgb:64')
     ingress.drainAndClose()
   })
 })

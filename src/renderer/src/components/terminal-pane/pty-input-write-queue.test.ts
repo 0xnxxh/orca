@@ -203,8 +203,7 @@ describe('pty input write queue', () => {
     await queue.waitForDrain()
     await vi.advanceTimersByTimeAsync(0)
 
-    // Delivery dedupes identical in-flight replies → one master write, no raw fallthrough.
-    expect(masterWrites).toEqual([reply])
+    expect(masterWrites).toEqual([reply, reply])
     expect(masterWrites.some((write) => write.startsWith('RAW:'))).toBe(false)
     const visible = emissions.map((emission) => emission.data).join('')
     expect(visible).toBe('')

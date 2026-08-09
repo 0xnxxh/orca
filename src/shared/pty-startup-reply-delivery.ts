@@ -67,16 +67,15 @@ const ECHO_POLL_INTERVAL_MS = 20
 // longer, which is the direction that fails safe: measured flat at ~210ms of withholding
 // from 1 to 100 concurrent panes, with probe spawns plateauing rather than scaling.
 //
-// This bounds when a probe is STARTED, not one already in flight, so the hard bound is
-// this plus STTY_TIMEOUT_MS — still inside the startup deadline that reset() enforces.
+// In-flight probes are deadline-raced below, so reply latency stays inside this budget.
 const ECHO_POLL_BUDGET_MS = 200
+// Live replies make both queues session-lived, so cap them under query floods.
+const MAX_TRACKED_REPLIES = 64
+const ECHO_PROBE_MAX_STARTS_PER_SECOND = 10
 
-type ExpectedEcho = {
-  reply: string
-  projections: readonly string[]
-  remainingBytes: number
-}
+type ExpectedEcho = { projections: readonly string[]; remainingBytes: number }
 type PendingWrite = { reply: string; onFailed: (() => void) | undefined }
+type ActiveEchoProbe = { timer: ReturnType<typeof setTimeout> | null }
 
 /** Only a POSIX tty both echoes the reply and still delivers a deferred write. */
 function defersWrite(ownerBackend: PtyOwnerBackend): boolean {
@@ -103,24 +102,11 @@ function replyEchoProjections(
   // That read would be held as an echo candidate, and an expired hold releases its
   // bytes raw, past the query parser, so a query torn at its own ESC is never answered.
   const projections: string[] = []
-  // ECHOCTL (default cooked tty) renders each control byte as its caret form. This is
-  // the ONE projection the probe can retire, because it is the kernel's echo and a
-  // cleared ECHO bit is proof it cannot happen.
+  // A quiet probe rules out only the kernel's ECHOCTL caret form.
   if (!kernelEchoImpossible) {
     projections.push(reply.replaceAll('\x1b', '^['))
   }
-  // readline: `ESC ]` is an unbound binding, so it is eaten (with a bell) and the
-  // remainder self-inserts; the ST is eaten the same way. Software echo — survives
-  // `quiet`, because readline does this with the tty already raw and ECHO off.
-  //
-  // Only emit when the reply actually contains OSC open/ST. For CSI (e.g. ?997;1n)
-  // the replace is a no-op and would re-project the verbatim ESC-led reply — which
-  // violates the no-ESC-prefix rule and 500ms-holds partial ESC tails (#13137).
-  //
-  // This buys display cleanliness ONLY. The bytes self-inserted into readline's edit
-  // buffer are still there, so a user who then presses Enter runs them: `bash: 10:
-  // command not found`, with nothing on screen to explain it. Not fixable by
-  // suppressing harder — undoing it means writing a kill-line into someone's prompt.
+  // Readline rewrites OSC, while adding a CSI identity would hold query fragments.
   if (reply.includes('\x1b]')) {
     projections.push(reply.replaceAll('\x1b]', '\x07').replaceAll('\x1b\\', ''))
   }
@@ -186,7 +172,10 @@ export class PtyStartupReplyDelivery {
   private readonly expectedEchoes: ExpectedEcho[] = []
   private readonly pendingWrites: PendingWrite[] = []
   private writeTimer: ReturnType<typeof setTimeout> | null = null
+  private activeEchoProbe: ActiveEchoProbe | null = null
   private echoPollDeadline = 0
+  private echoProbeWindowStartedAt: number | null = null
+  private echoProbeStartsInWindow = 0
   private closed = false
 
   constructor(
@@ -211,18 +200,12 @@ export class PtyStartupReplyDelivery {
     if (this.closed) {
       return false
     }
-    // Why: dual answerers (xterm onData + mode-2031 scan) enqueue the same
-    // `?997;1n` twice. A second write would paint under ECHO and double stdin;
-    // treat an in-flight identical reply as already accepted (#13137).
-    if (
-      this.pendingWrites.some((pending) => pending.reply === reply) ||
-      this.expectedEchoes.some((expected) => expected.reply === reply)
-    ) {
-      return true
-    }
     if (!defersWrite(this.ownerBackend)) {
       // Why: ConPTY answers the query itself unless Orca beats it in this turn.
       return this.writeReply(reply)
+    }
+    if (this.pendingWrites.length >= MAX_TRACKED_REPLIES) {
+      this.flushPendingWrites()
     }
     // A fresh queue starts a fresh budget, so a second query arriving after the first
     // one exhausted its own still gets probed rather than going straight to guessing.
@@ -285,6 +268,7 @@ export class PtyStartupReplyDelivery {
   close(): void {
     this.closed = true
     this.clearWriteTimer()
+    this.clearActiveEchoProbe()
     this.pendingWrites.length = 0
     this.expectedEchoes.length = 0
   }
@@ -308,13 +292,30 @@ export class PtyStartupReplyDelivery {
     if (this.closed || this.pendingWrites.length === 0) {
       return
     }
-    if (!this.echoProbe || Date.now() >= this.echoPollDeadline) {
+    if (!this.echoProbe || Date.now() >= this.echoPollDeadline || !this.claimEchoProbeStart()) {
       this.flushPendingWrites()
       return
     }
+    const active: ActiveEchoProbe = { timer: null }
+    active.timer = setTimeout(
+      () => {
+        if (this.activeEchoProbe !== active) {
+          return
+        }
+        this.activeEchoProbe = null
+        this.flushPendingWrites()
+      },
+      Math.max(0, this.echoPollDeadline - Date.now())
+    )
+    active.timer.unref?.()
+    this.activeEchoProbe = active
     void this.echoProbe()
       .catch(() => 'unknown' as const)
       .then((state) => {
+        if (this.activeEchoProbe !== active) {
+          return
+        }
+        this.clearActiveEchoProbe()
         if (this.closed || this.pendingWrites.length === 0) {
           return
         }
@@ -329,6 +330,7 @@ export class PtyStartupReplyDelivery {
 
   private flushPendingWrites(kernelEchoImpossible = false): void {
     this.clearWriteTimer()
+    this.clearActiveEchoProbe()
     for (const pending of this.pendingWrites.splice(0)) {
       this.writeReply(pending.reply, pending.onFailed, kernelEchoImpossible)
     }
@@ -342,29 +344,54 @@ export class PtyStartupReplyDelivery {
     this.writeTimer = null
   }
 
+  private clearActiveEchoProbe(): void {
+    if (!this.activeEchoProbe) {
+      return
+    }
+    if (this.activeEchoProbe.timer) {
+      clearTimeout(this.activeEchoProbe.timer)
+    }
+    this.activeEchoProbe = null
+  }
+
+  private claimEchoProbeStart(): boolean {
+    const now = Date.now()
+    if (
+      this.echoProbeWindowStartedAt === null ||
+      now < this.echoProbeWindowStartedAt ||
+      now - this.echoProbeWindowStartedAt >= 1_000
+    ) {
+      this.echoProbeWindowStartedAt = now
+      this.echoProbeStartsInWindow = 0
+    }
+    if (this.echoProbeStartsInWindow >= ECHO_PROBE_MAX_STARTS_PER_SECOND) {
+      return false
+    }
+    this.echoProbeStartsInWindow += 1
+    return true
+  }
+
   private writeReply(reply: string, onFailed?: () => void, kernelEchoImpossible = false): boolean {
     if (this.closed) {
       return false
     }
     const projections = replyEchoProjections(reply, this.ownerBackend, kernelEchoImpossible)
-    // Why always register (even with empty projections): quiet CSI replies have no
-    // echo shape to match, but dual answerers can still fire a second identical
-    // write after the first landed — keep reply identity armed briefly so answer()
-    // dedupes stdin doubles (#13137). Short budget when there is nothing to strip.
-    const expected: ExpectedEcho = {
-      reply,
-      projections,
-      remainingBytes:
-        projections.length > 0 ? ECHO_SEARCH_BUDGET_BYTES : ECHO_POST_DEADLINE_BUDGET_BYTES
+    // Why: register before write because node-pty can synchronously re-enter onData.
+    const expected: ExpectedEcho | null =
+      projections.length > 0 ? { projections, remainingBytes: ECHO_SEARCH_BUDGET_BYTES } : null
+    if (expected) {
+      this.expectedEchoes.push(expected)
     }
-    this.expectedEchoes.push(expected)
     try {
       this.writeProvider(reply)
+      if (this.expectedEchoes.length > MAX_TRACKED_REPLIES) {
+        this.expectedEchoes.shift()
+      }
       return true
     } catch {
       // Why splice by identity, not pop: the write above can re-enter onData and
       // retire a different projection, so the last slot is not necessarily ours.
-      const index = this.expectedEchoes.indexOf(expected)
+      const index = expected ? this.expectedEchoes.indexOf(expected) : -1
       if (index !== -1) {
         this.expectedEchoes.splice(index, 1)
       }

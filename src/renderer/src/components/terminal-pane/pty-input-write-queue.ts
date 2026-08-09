@@ -31,10 +31,7 @@ export type PtyInputWriteQueueDeps = {
 }
 
 function isCoalescibleText(text: string): boolean {
-  // Why: dual mode-2031 answerers enqueue two `?997;1n`s; coalescing them into
-  // one payload fails the whole-string host classifier and paints under ECHO
-  // (#13137). Keep cooked-echo-risk replies atomic so each host write is
-  // extractable as a single reply (and delivery can dedupe identical ones).
+  // Echo-risk replies stay atomic so host classifiers cannot miss them (#13137).
   return (
     text.length <= TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS && !needsCookedEchoSafeQueryReply(text)
   )

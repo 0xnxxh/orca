@@ -1689,9 +1689,7 @@ export class PtyHandler {
     if (managed && !managed.disposed) {
       this.lastInputAtByPty.set(id, performance.now())
       this.interactiveOutputCharsByPty.set(id, 0)
-      // Why: cooked-echo-risk replies (color-scheme 997, OSC), including dual
-      // answerer / write-queue coalesced payloads, must share the startup
-      // echo-safe path or cooked prompts paint `997;1n` (#13137). CPR stays immediate.
+      // Relay PTYs need the local provider's cooked-echo containment (#13137).
       if (
         extractOnlyCookedEchoSafeQueryReplies(data) &&
         managed.startupIngress?.answerLiveQueryReply(data)

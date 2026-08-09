@@ -42,7 +42,7 @@ const OSC_RESPONSE_RE = new RegExp('^\\u001b\\][0-9]+;[^\\u0007\\u001b]*(?:\\u00
 // (vim queries cursor style this way) and XTVERSION "ESC P > | text ST".
 const DCS_RESPONSE_RE = new RegExp('^\\u001bP(?:[01]\\$r[^\\u001b]*|>\\|[^\\u001b]*)\\u001b\\\\$')
 // Private-mode DSR (CSI ? … n) — e.g. color-scheme `?997;1n` — often lands cooked.
-// Prefix form: used to peel one reply off a coalesced dual-answerer payload.
+// Prefix form peels consecutive replies out of one coalesced payload.
 const COOKED_ECHO_RISK_PRIVATE_DSR_PREFIX_RE = new RegExp('^\\u001b\\[\\?[0-9;]*n')
 const COOKED_ECHO_RISK_OSC_PREFIX_RE = new RegExp(
   '^\\u001b\\][0-9]+;[^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)'
@@ -93,7 +93,7 @@ function cookedEchoSafeReplyEnd(data: string, start: number): number {
 
 /**
  * If `data` is entirely one or more consecutive cooked-echo-risk replies
- * (e.g. dual `?997;1n` coalesced by the input write queue), return each reply.
+ * (e.g. repeated `?997;1n` coalesced by the input write queue), return each reply.
  * Mixed payloads (reply + keystroke) return null so hosts fall through to raw write.
  */
 export function extractOnlyCookedEchoSafeQueryReplies(data: string): string[] | null {
@@ -118,7 +118,7 @@ export function extractOnlyCookedEchoSafeQueryReplies(data: string): string[] | 
  * prompts do not paint reply bytes (e.g. `997;1n` on `npx` confirm, #13137).
  * Latency-critical CPR/DSR without `?` stay on the immediate write path.
  *
- * Whole-string only: a single complete reply. For dual-answerer / write-queue
+ * Whole-string only: a single complete reply. For repeated / write-queue
  * coalesced payloads use {@link extractOnlyCookedEchoSafeQueryReplies}.
  */
 export function needsCookedEchoSafeQueryReply(data: string): boolean {

@@ -93,7 +93,7 @@ export class PtyStartupIngress {
     return this.rawHighWater
   }
 
-  // Live xterm replies (color-scheme 997 / OSC); single or dual-answerer coalesced (#13137).
+  // Live color replies reuse startup's cooked-echo containment (#13137).
   answerLiveQueryReply(reply: string): boolean {
     return !this.closed && reply.length > 0
       ? answerEachCookedEchoSafeQueryReply(reply, (part) => this.delivery.answer(part))
