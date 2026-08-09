@@ -547,13 +547,12 @@ function rememberPaneKeyForPty(ptyId: string, paneKey: unknown): string | null {
  */
 export function resolvePaneShellTabId(
   store: Pick<Store, 'getWorkspaceSession'> | undefined,
-  worktreeId: string,
   leafId: string
 ): string | undefined {
   if (typeof store?.getWorkspaceSession !== 'function') {
     return undefined
   }
-  return findTerminalTabIdForLeaf(store.getWorkspaceSession(), worktreeId, leafId)
+  return findTerminalTabIdForLeaf(store.getWorkspaceSession(), leafId)
 }
 
 export function bindPaneShell(args: {

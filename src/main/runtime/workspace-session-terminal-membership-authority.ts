@@ -167,12 +167,18 @@ export function advanceTerminalTopologyRevision(
  */
 export function findTerminalTabIdForLeaf(
   session: WorkspaceSessionState | undefined,
-  worktreeId: string,
   leafId: string
 ): string | undefined {
   // Only a tab that still exists counts: a layout entry outlives the tab it described, and binding
   // a live shell to a deleted tab would register a pane under a ghost and can resurface it.
-  const liveTabIds = new Set((session?.tabsByWorktree?.[worktreeId] ?? []).map((tab) => tab.id))
+  //
+  // Liveness is checked across every worktree rather than under one key. A leaf id is a UUID, so
+  // there is nothing to disambiguate — and keying on the caller's worktreeId would make the answer
+  // depend on that string matching the map exactly, which is precisely the kind of full-string
+  // equality that has already bitten this area for `::workspace:` folder-workspace suffixes.
+  const liveTabIds = new Set(
+    Object.values(session?.tabsByWorktree ?? {}).flatMap((tabs) => tabs.map((tab) => tab.id))
+  )
   for (const [tabId, layout] of Object.entries(session?.terminalLayoutsByTabId ?? {})) {
     if (!liveTabIds.has(tabId)) {
       continue

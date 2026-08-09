@@ -2466,7 +2466,7 @@ export class SshRelaySession {
       // live layout outranks it. Resolved before the write, so a throw cannot lose it and leave the
       // graph registered under the tab the pane left.
       const tabId =
-        resolvePaneShellTabId(this.store, lease.worktreeId, lease.leafId) ?? lease.tabId
+        resolvePaneShellTabId(this.store, lease.leafId) ?? lease.tabId
       let bind: { bound: boolean; tabId: string } | null = null
       try {
         bind = bindPaneShell({
