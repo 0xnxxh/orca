@@ -13,13 +13,6 @@ import { OrcaRuntimeService } from './orca-runtime'
  * Windows PTY lifecycle behind them is not.
  */
 
-// These five are skipped because they reproduce a defect that is still live on
-// main: `runtimeWorktreeIdsEqual` compares folder-workspace ids with the
-// instance suffix stripped, so `repo::/path::workspace:<uuid>` reads as equal to
-// `repo::/path` and two workspaces sharing a directory collide. PR #12474 fixes
-// exactly that. Unskip when it merges — they are the oracle for it, not dead
-// weight, and they fail today for the right reason.
-
 const GIT_REPO_ID = 'repo-git'
 const GIT_ROOT_PATH = '/tmp/ns/checkout'
 const GIT_ROOT_ID = `${GIT_REPO_ID}::${GIT_ROOT_PATH}`
@@ -190,7 +183,7 @@ describe('workspace namespaces keep terminal identity host-local and per-workspa
   })
 
   describe('folder workspace namespace', () => {
-    it.skip('does not let the caller target stand in for an attributed PTY owner', async () => {
+    it('does not let the caller target stand in for an attributed PTY owner', async () => {
       const internals = createRuntimeInternals({
         sessions: [{ id: PTY_B, worktreeId: FOLDER_B, cwd: FOLDER_PATH, title: 'b' }]
       })
@@ -206,7 +199,7 @@ describe('workspace namespaces keep terminal identity host-local and per-workspa
       expect(internals.ptysById.get(PTY_B)?.worktreeId).toBe(FOLDER_B)
     })
 
-    it.skip('keeps each sibling terminal bound to its own workspace across a reconnect', async () => {
+    it('keeps each sibling terminal bound to its own workspace across a reconnect', async () => {
       const sessions: ControllerSession[] = [
         {
           id: PTY_A,
@@ -266,7 +259,7 @@ describe('workspace namespaces keep terminal identity host-local and per-workspa
       ).toBe(false)
     })
 
-    it.skip('does not treat one directory as one namespace across two projects', async () => {
+    it('does not treat one directory as one namespace across two projects', async () => {
       // Same directory added twice: the ids differ only by the client's repo id.
       const internals = createRuntimeInternals({
         sessions: [
@@ -319,7 +312,7 @@ describe('workspace namespaces keep terminal identity host-local and per-workspa
       expect([...internals.getLivePtyIdsForWorktree(FOLDER_A)]).toEqual([PTY_A])
     })
 
-    it.skip('does not resolve a floating terminal onto a workspace that shares its cwd', () => {
+    it('does not resolve a floating terminal onto a workspace that shares its cwd', () => {
       const internals = createRuntimeInternals({})
       internals.recordPtyWorktree(PTY_FLOATING, FLOATING_TERMINAL_WORKTREE_ID, { connected: true })
       internals.recordPtyWorktree(PTY_A, FOLDER_A, { connected: true })
@@ -358,7 +351,7 @@ describe('workspace namespaces keep terminal identity host-local and per-workspa
       ]).toEqual(['pty-wsl'])
     })
 
-    it.skip('keeps a folder workspace instance on a drive path distinct from its root', () => {
+    it('keeps a folder workspace instance on a drive path distinct from its root', () => {
       const driveRoot = 'repo-win::C:\\ws\\proj'
       const driveInstance = `${driveRoot}${FOLDER_WORKSPACE_INSTANCE_SEPARATOR}dddddddd-dddd-4ddd-8ddd-dddddddddddd`
       const internals = createRuntimeInternals({})
