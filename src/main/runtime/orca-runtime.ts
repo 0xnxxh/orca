@@ -25565,14 +25565,39 @@ export class OrcaRuntimeService {
         )
       } else {
         // Why: idempotency is caller-owned; two paired devices may reuse the same mutation id without sharing a result.
-        const mutationWorktreeKey = explicitWorktreeId ?? worktreeSelector
-        const mutationKey = `${opts.clientNavigationId ?? 'local'}\0${mutationWorktreeKey}\0${mutationId}`
+        const clientMutationScope = opts.clientNavigationId ?? 'local'
+        let mutationWorktreeKey = explicitWorktreeId ?? worktreeSelector
+        let mutationKey = `${clientMutationScope}\0${mutationWorktreeKey}\0${mutationId}`
         // Why: a retried create (double-tap, reconnect replay) with the same
         // idempotency key must return the in-flight operation instead of spawning a
         // duplicate terminal. Successes are kept briefly so a retry whose response
         // was lost in transit reuses the created terminal; failures are dropped
         // immediately so a retry can start a fresh create.
         let run = this.mobileTerminalCreateByMutationId.get(mutationKey)
+        if (
+          !run &&
+          explicitWorktreeId &&
+          this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId) !==
+            explicitWorktreeId
+        ) {
+          let workspace: TerminalWorkspaceLaunchScope
+          try {
+            workspace = await this.resolveTerminalWorkspaceLaunchScope(worktreeSelector)
+          } catch (error) {
+            if (!(error instanceof Error && error.message === 'selector_not_found')) {
+              throw error
+            }
+            workspace = await this.resolveTerminalWorkspaceLaunchScope(
+              `id:${this.clientSessionTabSelections.resolveWorktreeId(explicitWorktreeId)}`
+            )
+          }
+          this.bindActiveTerminalWorkspaceLaunch(activeLaunch, explicitWorktreeId, workspace)
+          if (activeLaunch.worktreeId !== explicitWorktreeId) {
+            mutationWorktreeKey = activeLaunch.worktreeId
+            mutationKey = `${clientMutationScope}\0${mutationWorktreeKey}\0${mutationId}`
+            run = this.mobileTerminalCreateByMutationId.get(mutationKey)
+          }
+        }
         if (
           run &&
           !activeLaunch.worktreeId &&

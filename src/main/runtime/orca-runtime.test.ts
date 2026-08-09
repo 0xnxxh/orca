@@ -32461,6 +32461,32 @@ describe('OrcaRuntimeService', () => {
     expect(retried).toBe(first)
   })
 
+  it('dedupes an original-id mobile create replay after a worktree rename', async () => {
+    const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
+    const runtime = new OrcaRuntimeService(store)
+    const created = {} as Awaited<ReturnType<OrcaRuntimeService['createMobileSessionTerminal']>>
+    runtime['runCreateMobileSessionTerminal'] = vi.fn(async () => created)
+
+    const first = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-original-id-replay'
+    })
+    runtime.notifyWorktreeFolderRenamed(TEST_REPO_ID, TEST_WORKTREE_ID, renamedWorktreeId)
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        ...MOCK_GIT_WORKTREES[0],
+        path: '/tmp/worktree-renamed'
+      }
+    ])
+    const retried = await runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+      activate: false,
+      clientMutationId: 'mutation-original-id-replay'
+    })
+
+    expect(runtime['runCreateMobileSessionTerminal']).toHaveBeenCalledOnce()
+    expect(retried).toBe(first)
+  })
+
   it('keeps a path-selected mobile create retry bound through a worktree rename', async () => {
     const renamedWorktreeId = `${TEST_REPO_ID}::/tmp/worktree-renamed`
     const created = {
