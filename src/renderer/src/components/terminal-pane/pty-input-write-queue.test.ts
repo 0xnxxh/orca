@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES,
   TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS,
   createPtyInputWriteQueue
 } from './pty-input-write-queue'
@@ -9,7 +10,10 @@ import {
 } from '../../../../shared/terminal-input'
 import { mode2031SequenceFor } from '../../../../shared/terminal-color-scheme-protocol'
 import { PtyStartupIngress, type PtyIngressEmission } from '../../../../shared/pty-startup-ingress'
-import { extractOnlyCookedEchoSafeQueryReplies } from '../../../../shared/terminal-query-reply'
+import {
+  extractOnlyCookedEchoSafeQueryReplies,
+  needsCookedEchoSafeQueryReply
+} from '../../../../shared/terminal-query-reply'
 
 const WHEEL_UP_REPORT = '\x1b[<64;60;20M'
 
@@ -25,6 +29,36 @@ function createRecordingQueue(options: { writable?: () => boolean } = {}): {
     write: (id, data) => writes.push({ id, data })
   })
   return { writes, queue }
+}
+
+function createParkedQueue(): {
+  writes: WriteRecord[]
+  pendingYields: (() => void)[]
+  queue: ReturnType<typeof createPtyInputWriteQueue>
+} {
+  const writes: WriteRecord[] = []
+  const pendingYields: (() => void)[] = []
+  const queue = createPtyInputWriteQueue({
+    isWritable: () => true,
+    write: (id, data) => writes.push({ id, data }),
+    yieldBetweenWrites: () =>
+      new Promise<void>((resolve) => {
+        pendingYields.push(resolve)
+      })
+  })
+  return { writes, pendingYields, queue }
+}
+
+async function releaseNextWrite(
+  writes: WriteRecord[],
+  pendingYields: (() => void)[]
+): Promise<void> {
+  const before = writes.length
+  const release = pendingYields.shift()
+  expect(release).toBeDefined()
+  release?.()
+  await Promise.resolve()
+  expect(writes.length).toBeGreaterThan(before)
 }
 
 describe('pty input write queue', () => {
@@ -162,6 +196,66 @@ describe('pty input write queue', () => {
     expect(writes).toEqual([
       { id: 'pty-1', data: reply },
       { id: 'pty-1', data: 'y' }
+    ])
+  })
+
+  it('bounds an OSC 10/11 reply flood and drains a following keystroke', async () => {
+    const { writes, pendingYields, queue } = createParkedQueue()
+    const replies: string[] = []
+    let allAccepted = true
+
+    for (let index = 0; index < 10_000; index += 1) {
+      const color = index.toString(16).padStart(4, '0')
+      const reply = `\x1b]${index % 2 === 0 ? 10 : 11};rgb:${color}/0000/0000\x1b\\`
+      replies.push(reply)
+      allAccepted = queue.enqueue('pty-1', reply) && allAccepted
+    }
+    expect(allAccepted).toBe(true)
+    expect(queue.enqueue('pty-1', 'k')).toBe(true)
+
+    await Promise.resolve()
+    expect(pendingYields).toHaveLength(1)
+    for (let turn = 0; turn < PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES; turn += 1) {
+      await releaseNextWrite(writes, pendingYields)
+    }
+    await queue.waitForDrain()
+
+    const replyWrites = writes.filter((write) => write.data.startsWith('\x1b]'))
+    expect(replyWrites.map((write) => write.data)).toEqual([
+      replies[0],
+      ...replies.slice(-PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES)
+    ])
+    expect(replyWrites.every((write) => needsCookedEchoSafeQueryReply(write.data))).toBe(true)
+    expect(writes.at(-1)?.data).toBe('k')
+  })
+
+  it('drops the oldest reply-only payload when the reply text budget fills', async () => {
+    const reply = (slot: 10 | 11, marker: string): string =>
+      `\x1b]${slot};${marker.repeat(1_400)}\x1b\\`
+    const first = reply(10, '1')
+    const dropped = reply(11, '2')
+    const second = reply(10, '3')
+    const third = reply(11, '4')
+    const { writes, pendingYields, queue } = createParkedQueue()
+
+    queue.enqueue('pty-1', first)
+    queue.enqueue('pty-1', dropped)
+    queue.enqueue('pty-1', second)
+    queue.enqueue('pty-1', third)
+    queue.enqueue('pty-1', 'k')
+
+    await Promise.resolve()
+    expect(pendingYields).toHaveLength(1)
+    for (let turn = 0; turn < 2; turn += 1) {
+      await releaseNextWrite(writes, pendingYields)
+    }
+    await queue.waitForDrain()
+
+    expect(writes).toEqual([
+      { id: 'pty-1', data: first },
+      { id: 'pty-1', data: second },
+      { id: 'pty-1', data: third },
+      { id: 'pty-1', data: 'k' }
     ])
   })
 

@@ -9,10 +9,15 @@ import { needsCookedEchoSafeQueryReply } from '../../../../shared/terminal-query
 // 16KB TERMINAL_INPUT_CHUNK_MAX_BYTES cap without paying byte measurement on
 // the hot input path.
 export const TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS = 4096
+// Match host delivery's reply ceiling while keeping all retained reply text under one PTY chunk.
+export const PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES = 64
+export const PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLY_CODE_UNITS =
+  TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS
 
 type PendingPtyInputWrite = {
   id: string
   text: string
+  replyOnly: boolean
   tooLarge: boolean | Promise<boolean>
   chunks?: Iterator<string>
   nextChunk?: string
@@ -40,27 +45,60 @@ function isCoalescibleText(text: string): boolean {
 export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInputWriteQueue {
   const yieldBetweenWrites = deps.yieldBetweenWrites ?? yieldToEventLoop
   let pending: PendingPtyInputWrite[] = []
+  let pendingReplies = 0
+  let pendingReplyCodeUnits = 0
   let drainPromise: Promise<void> | null = null
+
+  function removePendingAt(index: number): PendingPtyInputWrite | undefined {
+    const [removed] = pending.splice(index, 1)
+    if (removed?.replyOnly) {
+      pendingReplies -= 1
+      pendingReplyCodeUnits -= removed.text.length
+    }
+    return removed
+  }
+
+  function shiftPending(): PendingPtyInputWrite | undefined {
+    return removePendingAt(0)
+  }
+
+  function admitReply(text: string): boolean {
+    if (text.length > PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLY_CODE_UNITS) {
+      return false
+    }
+    while (
+      pendingReplies >= PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES ||
+      pendingReplyCodeUnits + text.length > PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLY_CODE_UNITS
+    ) {
+      // Keep ordinary input intact while retaining the newest bounded reply window.
+      const oldestReply = pending.findIndex((item) => item.replyOnly)
+      if (oldestReply === -1) {
+        return false
+      }
+      removePendingAt(oldestReply)
+    }
+    return true
+  }
 
   async function drain(): Promise<void> {
     while (pending.length > 0) {
       const next = pending[0]
       if (!next) {
-        pending.shift()
+        shiftPending()
         continue
       }
       if (!deps.isWritable(next.id)) {
-        pending.shift()
+        shiftPending()
         continue
       }
       if (next.tooLarge !== false) {
         next.tooLarge = await Promise.resolve(next.tooLarge).catch(() => true)
         if (next.tooLarge) {
-          pending.shift()
+          shiftPending()
           continue
         }
         if (!deps.isWritable(next.id)) {
-          pending.shift()
+          shiftPending()
           continue
         }
       }
@@ -73,7 +111,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
       // the PTY byte stream identical while draining the backlog in one turn.
       if (next.chunks === undefined && isCoalescibleText(next.text)) {
         let payload = next.text
-        pending.shift()
+        shiftPending()
         while (pending.length > 0) {
           const peek = pending[0]
           if (
@@ -87,7 +125,7 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
             break
           }
           payload += peek.text
-          pending.shift()
+          shiftPending()
         }
         deps.write(next.id, payload)
         if (pending.length > 0) {
@@ -100,13 +138,13 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
         next.nextChunk === undefined ? next.chunks.next() : { done: false, value: next.nextChunk }
       next.nextChunk = undefined
       if (chunk.done) {
-        pending.shift()
+        shiftPending()
         continue
       }
       deps.write(next.id, chunk.value)
       const following = next.chunks.next()
       if (following.done) {
-        pending.shift()
+        shiftPending()
       } else {
         next.nextChunk = following.value
       }
@@ -131,11 +169,19 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
   return {
     enqueue(id: string, data: string): boolean {
       try {
+        const replyOnly = needsCookedEchoSafeQueryReply(data)
+        if (replyOnly && !admitReply(data)) {
+          return false
+        }
         const tooLarge = isTerminalInputTooLargeWithDeferredMeasurement(data)
         if (tooLarge === true) {
           return false
         }
-        pending.push({ id, text: data, tooLarge })
+        pending.push({ id, text: data, replyOnly, tooLarge })
+        if (replyOnly) {
+          pendingReplies += 1
+          pendingReplyCodeUnits += data.length
+        }
         scheduleDrain()
         return true
       } catch {
@@ -151,6 +197,8 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
 
     clear(): void {
       pending = []
+      pendingReplies = 0
+      pendingReplyCodeUnits = 0
     }
   }
 }
