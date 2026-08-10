@@ -149,7 +149,6 @@ import {
 } from '@/lib/app-menu-selection-actions'
 import { isEditableTarget } from '@/lib/editable-target'
 import { copyTerminalSelection } from './terminal-selection-copy'
-import { encodeTerminalTuiCopyInput } from './terminal-tui-copy-input'
 import { CODEX_ACCOUNT_RESTART_STARTUP } from '@/lib/codex-session-restart'
 import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/workspace-file-drag'
 import { isTerminalSessionStateSaveFailure } from '../../../../shared/terminal-session-state-save-failure'
@@ -2183,14 +2182,6 @@ function TerminalPane(
       const action = (event as CustomEvent<AppMenuSelectionAction>).detail
       if (action === 'copy') {
         if (!pane.terminal.getSelection()) {
-          const tuiCopyInput = encodeTerminalTuiCopyInput(
-            shortcutPlatform,
-            paneKittyKeyboardModesRef.current.get(pane.id)?.flags ?? 0
-          )
-          if (tuiCopyInput) {
-            event.preventDefault()
-            pane.terminal.input(tuiCopyInput)
-          }
           return
         }
         event.preventDefault()

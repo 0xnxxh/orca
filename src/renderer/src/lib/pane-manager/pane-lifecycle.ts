@@ -255,7 +255,7 @@ export function disposePane(
     /* ignore */
   }
   try {
-    // Drop compositor selection state before a recovery remount replaces the xterm surface.
+    // Drop renderer selection state before a recovery remount replaces the surface.
     pane.terminal.clearSelection()
   } catch {
     /* ignore */
