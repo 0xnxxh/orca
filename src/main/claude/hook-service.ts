@@ -191,7 +191,9 @@ export class ClaudeHookService {
       config,
       command,
       getManagedScriptFileName(this.options.settings),
-      process.platform === 'win32' ? WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS : undefined
+      process.platform === 'win32' && this.options.agent === 'claude'
+        ? WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS
+        : undefined
     )
     writeManagedScript(
       scriptPath,
