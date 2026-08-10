@@ -1,5 +1,5 @@
 import type { Dir, Dirent } from 'node:fs'
-import { opendir, readdir, realpath } from 'node:fs/promises'
+import { opendir, realpath } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 
 /** Per-directory dirent examination budget; keeps cold scans hard-bounded. */
@@ -18,12 +18,18 @@ export function retainLexicographic(selected: string[], name: string, limit: num
   if (name.localeCompare(last) >= 0) {
     return true
   }
-  let index = limit - 1
-  while (index > 0 && name.localeCompare(selected[index - 1]) < 0) {
-    selected[index] = selected[index - 1]
-    index -= 1
+  let low = 0
+  let high = limit
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (name.localeCompare(selected[middle]) < 0) {
+      high = middle
+    } else {
+      low = middle + 1
+    }
   }
-  selected[index] = name
+  selected.splice(low, 0, name)
+  selected.pop()
   return true
 }
 
@@ -36,22 +42,18 @@ export type StreamDirectoryNamesOptions = {
 
 type StreamDirectoryIo = {
   opendir: (path: string) => ReturnType<typeof opendir>
-  readdirWithFileTypes: (path: string) => Promise<Dirent[]>
 }
 
 const defaultStreamDirectoryIo: StreamDirectoryIo = {
-  opendir,
-  readdirWithFileTypes: (path) => readdir(path, { withFileTypes: true })
+  opendir
 }
 let streamDirectoryIo: StreamDirectoryIo = defaultStreamDirectoryIo
 
-/** Test isolation for opendir vs readdir-fallback paths. */
+/** Test isolation for streamed and unsupported directory paths. */
 export function setStreamDirectoryIoForTests(next?: Partial<StreamDirectoryIo>): void {
   streamDirectoryIo = next
     ? {
-        opendir: next.opendir ?? defaultStreamDirectoryIo.opendir,
-        readdirWithFileTypes:
-          next.readdirWithFileTypes ?? defaultStreamDirectoryIo.readdirWithFileTypes
+        opendir: next.opendir ?? defaultStreamDirectoryIo.opendir
       }
     : defaultStreamDirectoryIo
 }
@@ -82,12 +84,12 @@ export async function streamDirectoryNames(
       await directory.close().catch(() => undefined)
     }
   } catch (error) {
-    // Fallback keeps remote-wire hosts that only expose readdir working.
     if (!isUnsupportedDirectoryStream(error)) {
       throw error
     }
+    // readdir is eager and cannot preserve this function's memory/IO bound.
+    return { entriesExamined: 0, examinationTruncated: true }
   }
-  return examineReaddirFallback(dirPath, visit, options, maxEntries)
 }
 
 /**
@@ -196,33 +198,6 @@ async function examineDirectoryStream(
     visit(entry.name, entry)
   }
   return { entriesExamined, examinationTruncated }
-}
-
-async function examineReaddirFallback(
-  dirPath: string,
-  visit: (name: string, entry: Dirent) => void,
-  options: StreamDirectoryNamesOptions,
-  maxEntries: number
-): Promise<{ entriesExamined: number; examinationTruncated: boolean }> {
-  // Why: readdir eagerly allocates the full listing. Shrink immediately to the
-  // examination window so adversarial directories cannot keep an unbounded
-  // Dirent array alive past the budget (peak alloc is platform-limited).
-  const entries = await streamDirectoryIo.readdirWithFileTypes(dirPath)
-  let entriesExamined = 0
-  try {
-    const examinationTruncated = entries.length > maxEntries
-    if (examinationTruncated) {
-      entries.length = maxEntries
-    }
-    for (const entry of entries) {
-      entriesExamined += 1
-      options.onDirent?.()
-      visit(entry.name, entry)
-    }
-    return { entriesExamined, examinationTruncated }
-  } finally {
-    entries.length = 0
-  }
 }
 
 function isUnsupportedDirectoryStream(error: unknown): boolean {

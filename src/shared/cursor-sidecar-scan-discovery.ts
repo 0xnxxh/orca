@@ -2,16 +2,34 @@ import { createHash } from 'node:crypto'
 import type { Stats } from 'node:fs'
 import { lstat, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { CursorSidecarScanRequest, CursorSidecarScanResponse } from './cursor-sidecar-scan'
+import {
+  CURSOR_REMOTE_MAX_SESSION_DIRS,
+  type CursorSidecarScanRequest,
+  type CursorSidecarScanResponse
+} from './cursor-sidecar-scan'
+import {
+  isCursorSidecarScanCancelledError,
+  type CursorSidecarScanCancellation
+} from './cursor-sidecar-scan-cancellation'
 import {
   CURSOR_DIR_MAX_ENTRIES_EXAMINED,
   listLexicographicDirectoryNames,
-  resolveTargetScopePathVariants,
-  safeBasename
+  resolveTargetScopePathVariants
 } from './cursor-sidecar-scan-directory'
+import {
+  CURSOR_SIDECAR_SCAN_CONCURRENCY,
+  retainCursorSidecarSessions,
+  type CursorSidecarScanBucket as Bucket,
+  type CursorSidecarScanSession
+} from './cursor-sidecar-scan-session-retention'
+
+export {
+  cursorSidecarScanCancellationFromSignal,
+  isCursorSidecarScanCancelledError,
+  type CursorSidecarScanCancellation
+} from './cursor-sidecar-scan-cancellation'
 
 const BUCKET_PATTERN = /^[0-9a-f]{32}$/u
-const BUCKET_READ_CONCURRENCY = 8
 /** Check cancellation every N dirents during cold directory walks. */
 const CANCEL_CHECK_EVERY_DIRENTS = 64
 
@@ -23,11 +41,6 @@ export type CursorSidecarScanCaps = {
   aggregateBytes: number
 }
 
-export type CursorSidecarScanCancellation = {
-  throwIfCancelled: () => void
-}
-
-type Bucket = { name: string; path: string; scopeCwd: string | null }
 type ScanArgs = {
   caps: CursorSidecarScanCaps
   response: CursorSidecarScanResponse
@@ -40,22 +53,6 @@ export type CursorSidecarScanCandidate = Bucket & {
   metaPath: string
   meta: Stats
   store: Stats
-}
-
-export function isCursorSidecarScanCancelledError(error: unknown): boolean {
-  return error instanceof Error && error.message === 'cursor_sidecar_scan_cancelled'
-}
-
-export function cursorSidecarScanCancellationFromSignal(
-  signal?: AbortSignal
-): CursorSidecarScanCancellation {
-  return {
-    throwIfCancelled: () => {
-      if (signal?.aborted) {
-        throw new Error('cursor_sidecar_scan_cancelled')
-      }
-    }
-  }
 }
 
 export async function discoverCursorSidecarCandidates(args: {
@@ -71,10 +68,12 @@ export async function discoverCursorSidecarCandidates(args: {
   const pathPlatform = args.pathPlatform ?? process.platform
   const chatsRoot = args.request.chatsRoot
   let rootRealPath: string
+  args.cancellation.throwIfCancelled()
   try {
     rootRealPath = await realpath(chatsRoot)
   } catch (error) {
     rethrowCancel(error)
+    args.cancellation.throwIfCancelled()
     if (!isMissing(error)) {
       addIssue(args.response, chatsRoot, error)
     }
@@ -85,7 +84,12 @@ export async function discoverCursorSidecarCandidates(args: {
 
   const direct = await scopeBuckets(args.request, chatsRoot, pathPlatform, args)
   const enumerated = await enumeratedBuckets(chatsRoot, direct, args)
-  const sessions = await retainSessions([...direct.values(), ...enumerated], args)
+  const sessions = await retainCursorSidecarSessions({
+    buckets: [...direct.values(), ...enumerated],
+    sessionLimit: args.caps.sessions,
+    response: args.response,
+    cancellation: args.cancellation
+  })
   return { rootRealPath, candidates: await eligibleCandidates(sessions, args) }
 }
 
@@ -155,86 +159,16 @@ async function enumeratedBuckets(
   }
 }
 
-async function retainSessions(
-  buckets: readonly Bucket[],
-  args: ScanArgs
-): Promise<(Bucket & { sessionId: string })[]> {
-  const retained: (Bucket & { sessionId: string })[] = []
-  for (
-    let index = 0;
-    index < buckets.length && retained.length < args.caps.sessions;
-    index += BUCKET_READ_CONCURRENCY
-  ) {
-    args.cancellation.throwIfCancelled()
-    const batch = buckets.slice(index, index + BUCKET_READ_CONCURRENCY)
-    const listings = await Promise.all(
-      batch.map((bucket) => listBucketSessions(bucket, args, retained.length))
-    )
-    args.cancellation.throwIfCancelled()
-    for (let listingIndex = 0; listingIndex < listings.length; listingIndex += 1) {
-      const { bucket, names, truncated } = listings[listingIndex]
-      if (retained.length >= args.caps.sessions) {
-        if (
-          listings.slice(listingIndex).some((listing) => listing.truncated || listing.names.length)
-        ) {
-          args.response.truncated.sessionDirs = true
-        }
-        break
-      }
-      const capacity = args.caps.sessions - retained.length
-      retained.push(...names.slice(0, capacity).map((sessionId) => ({ ...bucket, sessionId })))
-      if (truncated || names.length > capacity) {
-        args.response.truncated.sessionDirs = true
-      }
-    }
-    if (retained.length >= args.caps.sessions && index + batch.length < buckets.length) {
-      args.response.truncated.sessionDirs = true
-    }
-  }
-  return retained
-}
-
-async function listBucketSessions(
-  bucket: Bucket,
-  args: ScanArgs,
-  retainedCount: number
-): Promise<{ bucket: Bucket; names: string[]; truncated: boolean }> {
-  try {
-    if (bucket.scopeCwd) {
-      args.response.counters.fileLstat++
-      const stats = await lstat(bucket.path)
-      if (!stats.isDirectory() || stats.isSymbolicLink()) {
-        return { bucket, names: [], truncated: false }
-      }
-    }
-    args.response.counters.bucketReaddir++
-    const listed = await listLexicographicDirectoryNames({
-      dirPath: bucket.path,
-      limit: Math.max(0, args.caps.sessions - retainedCount),
-      maxEntriesExamined: CURSOR_DIR_MAX_ENTRIES_EXAMINED,
-      accept: (name, entry) => entry.isDirectory() && !entry.isSymbolicLink() && safeBasename(name),
-      onDirent: createDirentCancelChecker(args.cancellation)
-    })
-    return { bucket, names: listed.names, truncated: listed.truncated }
-  } catch (error) {
-    rethrowCancel(error)
-    if (!isMissing(error)) {
-      addIssue(args.response, bucket.path, error)
-    }
-    return { bucket, names: [], truncated: false }
-  }
-}
-
 async function eligibleCandidates(
-  sessions: readonly (Bucket & { sessionId: string })[],
+  sessions: readonly CursorSidecarScanSession[],
   args: ScanArgs
 ): Promise<CursorSidecarScanCandidate[]> {
   // Collect every eligible candidate first, then apply newest-first retention
   // before the aggregate byte budget (stable lexical ties).
   const eligible: CursorSidecarScanCandidate[] = []
-  for (let index = 0; index < sessions.length; index += BUCKET_READ_CONCURRENCY) {
+  for (let index = 0; index < sessions.length; index += CURSOR_SIDECAR_SCAN_CONCURRENCY) {
     args.cancellation.throwIfCancelled()
-    const batch = sessions.slice(index, index + BUCKET_READ_CONCURRENCY)
+    const batch = sessions.slice(index, index + CURSOR_SIDECAR_SCAN_CONCURRENCY)
     const results = await Promise.all(batch.map((session) => inspectSession(session, args)))
     args.cancellation.throwIfCancelled()
     for (const result of results) {
@@ -247,7 +181,7 @@ async function eligibleCandidates(
 }
 
 async function inspectSession(
-  session: Bucket & { sessionId: string },
+  session: CursorSidecarScanSession,
   args: ScanArgs
 ): Promise<CursorSidecarScanCandidate | null> {
   const sessionDir = join(session.path, session.sessionId)
@@ -287,9 +221,25 @@ function retainByNewestThenAggregate(
         Math.max(left.meta.mtimeMs, left.store.mtimeMs) ||
       `${left.name}\0${left.sessionId}`.localeCompare(`${right.name}\0${right.sessionId}`)
   )
+  const representatives = new Set<CursorSidecarScanCandidate>()
+  const representedBuckets = new Set<string>()
+  for (const candidate of ranked) {
+    if (candidate.scopeCwd && !representedBuckets.has(candidate.name)) {
+      representedBuckets.add(candidate.name)
+      representatives.add(candidate)
+    }
+  }
+  const prioritized = [
+    ...representatives,
+    ...ranked.filter((candidate) => !representatives.has(candidate))
+  ]
   const retained: CursorSidecarScanCandidate[] = []
   let aggregateBytes = 0
-  for (const candidate of ranked) {
+  for (const candidate of prioritized) {
+    if (retained.length >= CURSOR_REMOTE_MAX_SESSION_DIRS) {
+      args.response.truncated.sessionDirs = true
+      break
+    }
     if (aggregateBytes + candidate.meta.size > args.caps.aggregateBytes) {
       args.response.truncated.sidecarBytes = true
       break

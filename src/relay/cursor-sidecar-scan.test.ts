@@ -12,7 +12,7 @@ import { cursorBucketForCwd } from '../main/ai-vault/session-scanner-cursor-path
 
 const roots: string[] = []
 const context = { clientId: 1, isStale: () => false }
-const CHECKS_BEFORE_FIRST_VERIFIED_READ = 8
+const CHECKS_BEFORE_FIRST_VERIFIED_READ = 9
 
 async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'orca-cursor-scan-'))
@@ -87,6 +87,48 @@ describe('scanCursorSidecars', () => {
       sessionDirs: false,
       sidecarBytes: false
     })
+  })
+
+  it('shares bounded session capacity across exact scope buckets', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const scopes = [join(root, 'a-workspace'), join(root, 'z-workspace')]
+    await Promise.all(scopes.map((scope) => mkdir(scope)))
+    const firstBucket = cursorBucketForCwd(scopes[0], process.platform)
+    await Promise.all([
+      addSession(chatsRoot, firstBucket, 'first-a'),
+      addSession(chatsRoot, firstBucket, 'first-b'),
+      addSession(chatsRoot, cursorBucketForCwd(scopes[1], process.platform), 'second')
+    ])
+    const request = defaultCursorSidecarScanRequest(chatsRoot, scopes, process.platform)
+    request.maxSessionDirs = 2
+
+    const result = await scanCursorSidecars(request, context)
+
+    expect(result.sidecars.map((sidecar) => sidecar.sessionId).sort()).toEqual([
+      'first-a',
+      'second'
+    ])
+    expect(result.truncated.sessionDirs).toBe(true)
+  })
+
+  it('keeps exact scope sessions within the requested cap', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const scope = join(root, 'workspace')
+    await mkdir(scope)
+    const bucket = cursorBucketForCwd(scope, process.platform)
+    await Promise.all([
+      addSession(chatsRoot, bucket, 'first-scoped'),
+      addSession(chatsRoot, bucket, 'second-scoped')
+    ])
+    const request = defaultCursorSidecarScanRequest(chatsRoot, [scope], process.platform)
+    request.maxSessionDirs = 1
+
+    const result = await scanCursorSidecars(request, context)
+
+    expect(result.sidecars).toHaveLength(1)
+    expect(result.truncated.sessionDirs).toBe(true)
   })
 
   it.skipIf(process.platform === 'win32')(

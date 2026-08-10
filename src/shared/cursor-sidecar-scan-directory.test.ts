@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -85,22 +85,14 @@ describe('cursor sidecar directory examination bounds', () => {
     expect(onDirentCount).toBe(budget)
   })
 
-  it('hard-bounds the readdir fallback without retaining an unbounded listing', async () => {
+  it('fails bounded when directory streaming is unsupported', async () => {
     const root = await tempDir('orca-cursor-dir-fallback-')
     const budget = 16
-    const names = await fillDirectory(root, budget + 8)
+    await fillDirectory(root, budget + 8)
 
-    let readdirCalls = 0
-    let observedListingLength = 0
     setStreamDirectoryIoForTests({
       opendir: async () => {
         throw unsupportedDirectoryStreamError()
-      },
-      readdirWithFileTypes: async (dirPath) => {
-        readdirCalls += 1
-        const entries = await readdir(dirPath, { withFileTypes: true })
-        observedListingLength = entries.length
-        return entries
       }
     })
 
@@ -113,13 +105,8 @@ describe('cursor sidecar directory examination bounds', () => {
       { maxEntriesExamined: budget }
     )
 
-    expect(readdirCalls).toBe(1)
-    expect(result.entriesExamined).toBe(budget)
-    expect(result.examinationTruncated).toBe(true)
-    expect(visited).toHaveLength(budget)
-    expect(observedListingLength).toBe(names.length)
-    // After return, the eager listing must not remain as a retained examination set.
-    expect(visited.every((name) => names.includes(name))).toBe(true)
+    expect(result).toEqual({ entriesExamined: 0, examinationTruncated: true })
+    expect(visited).toEqual([])
   })
 
   it('propagates cancellation from onDirent during examination', async () => {
@@ -138,29 +125,6 @@ describe('cursor sidecar directory examination bounds', () => {
       })
     ).rejects.toThrow('cursor_sidecar_scan_cancelled')
     expect(seen).toBe(10)
-  })
-
-  it('propagates cancellation on the readdir fallback path', async () => {
-    const root = await tempDir('orca-cursor-dir-cancel-fallback-')
-    await fillDirectory(root, 40)
-    setStreamDirectoryIoForTests({
-      opendir: async () => {
-        throw unsupportedDirectoryStreamError()
-      }
-    })
-    let seen = 0
-    await expect(
-      streamDirectoryNames(root, () => undefined, {
-        maxEntriesExamined: 40,
-        onDirent: () => {
-          seen += 1
-          if (seen >= 5) {
-            throw new Error('cursor_sidecar_scan_cancelled')
-          }
-        }
-      })
-    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
-    expect(seen).toBe(5)
   })
 
   it('keeps listLexicographic examination-truncated when the walk hits the budget with more left', async () => {
@@ -226,7 +190,7 @@ describe('cursor sidecar directory examination bounds', () => {
     expect(listed.names).toHaveLength(64)
   }, 60_000)
 
-  it('fallback path never visits more than the examination budget on a 10k store', async () => {
+  it('unsupported streaming does not traverse a 10k store', async () => {
     const root = await tempDir('orca-cursor-dir-10k-fallback-')
     await fillDirectory(root, 10_000)
     setStreamDirectoryIoForTests({
@@ -243,9 +207,8 @@ describe('cursor sidecar directory examination bounds', () => {
       },
       { maxEntriesExamined: budget }
     )
-    expect(visits).toBe(budget)
-    expect(result.entriesExamined).toBe(budget)
-    expect(result.examinationTruncated).toBe(true)
+    expect(visits).toBe(0)
+    expect(result).toEqual({ entriesExamined: 0, examinationTruncated: true })
   }, 60_000)
 
   it('retainLexicographic keeps only the first `limit` names in order', () => {
@@ -255,6 +218,32 @@ describe('cursor sidecar directory examination bounds', () => {
     expect(retainLexicographic(selected, 'z', 3)).toBe(false)
     expect(retainLexicographic(selected, 'b', 3)).toBe(true)
     expect(selected).toEqual(['a', 'b', 'm'])
+  })
+
+  it('bounds comparisons for reverse-ordered retained names', () => {
+    const originalLocaleCompare = String.prototype.localeCompare
+    let comparisons = 0
+    const localeCompare = vi.spyOn(String.prototype, 'localeCompare').mockImplementation(function (
+      this: string,
+      value: string
+    ) {
+      comparisons += 1
+      return originalLocaleCompare.call(this, value)
+    })
+    const selected: string[] = []
+
+    try {
+      for (let index = 255; index >= 0; index -= 1) {
+        retainLexicographic(selected, String(index).padStart(3, '0'), 64)
+      }
+    } finally {
+      localeCompare.mockRestore()
+    }
+
+    expect(comparisons).toBeLessThan(2_500)
+    expect(selected).toEqual(
+      Array.from({ length: 64 }, (_, index) => String(index).padStart(3, '0'))
+    )
   })
 
   it('treats a zero examination budget as already truncated', async () => {

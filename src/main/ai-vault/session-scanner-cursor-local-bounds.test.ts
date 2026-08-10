@@ -264,6 +264,28 @@ describe('local Cursor sidecar discovery bounds', () => {
     ).rejects.toThrow('cursor_sidecar_scan_cancelled')
   })
 
+  it('honors cancellation that lands while resolving a missing chats root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-cancel-missing-'))
+    tempRoots.push(root)
+    let checks = 0
+    const signal = {
+      get aborted() {
+        checks += 1
+        return checks > 1
+      }
+    } as AbortSignal
+
+    await expect(
+      discoverLocalCursorSidecarsBounded({
+        chatsDir: join(root, 'missing-chats'),
+        scopePaths: [],
+        issues: [],
+        signal
+      })
+    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+    expect(checks).toBe(2)
+  })
+
   it('rejects on second-phase cancellation instead of resolving with an issue', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-cancel-2nd-'))
     tempRoots.push(root)
@@ -276,7 +298,7 @@ describe('local Cursor sidecar discovery bounds', () => {
     const signal = {
       get aborted() {
         checks += 1
-        // First check (post-realpath) passes; later enumeration-phase checks abort.
+        // The pre-realpath check passes; the post-realpath check observes cancellation.
         return checks > 1
       }
     } as AbortSignal
