@@ -30,10 +30,16 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
   const hostUnsubscribesRef = useRef<Map<string, () => void>>(new Map())
   const observedClientsRef = useRef<Map<string, RpcClient | null>>(new Map())
   const closeUnusedRef = useRef(closeUnusedOnRelease)
+  // Why: host-state subscriptions outlive an option change, so the callback must read the live value.
+  const observeConnectionStateRef = useRef(observeConnectionState)
 
   useEffect(() => {
     closeUnusedRef.current = closeUnusedOnRelease
   }, [closeUnusedOnRelease])
+
+  useEffect(() => {
+    observeConnectionStateRef.current = observeConnectionState
+  }, [observeConnectionState])
 
   useEffect(() => {
     return () => {
@@ -85,7 +91,10 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
           id,
           ctx.subscribeHostState(id, () => {
             const nextClient = ctx.getClient(id)
-            if (observeConnectionState || observedClientsRef.current.get(id) !== nextClient) {
+            if (
+              observeConnectionStateRef.current ||
+              observedClientsRef.current.get(id) !== nextClient
+            ) {
               observedClientsRef.current.set(id, nextClient)
               setTick((value) => value + 1)
             }

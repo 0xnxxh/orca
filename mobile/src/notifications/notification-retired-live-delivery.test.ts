@@ -130,4 +130,52 @@ describe('retired host live delivery', () => {
 
     expect(asyncStorage.setItem).not.toHaveBeenCalled()
   })
+
+  it('retires without waiting on a delivery that never settles', async () => {
+    vi.mocked(loadPushNotificationsEnabled).mockResolvedValue(true)
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      status: 'granted',
+      canAskAgain: true
+    } as never)
+    // Why never resolved: reproduces a wedged scheduling promise, which before the bounded
+    // drain left unpair awaiting the delivery tail forever.
+    vi.mocked(Notifications.scheduleNotificationAsync).mockReturnValueOnce(
+      new Promise<string>(() => {})
+    )
+    let onEvent: ((data: unknown) => void) | null = null
+    const client = {
+      subscribe: vi.fn((_method, _params, callback: (data: unknown) => void) => {
+        onEvent = callback
+        return vi.fn()
+      }),
+      getState: vi.fn(() => 'connected'),
+      sendRequest: vi.fn()
+    } as unknown as RpcClient
+
+    subscribeToDesktopNotifications(client, 'host-wedged')
+    onEvent?.({
+      type: 'notification',
+      source: 'agent-task-complete',
+      title: 'Wedged',
+      body: 'Wedged body',
+      notificationId: 'agent:wedged'
+    })
+    await flushAsync()
+
+    vi.useFakeTimers()
+    try {
+      const retirement = retireHostNotificationState('host-wedged')
+      let settled = false
+      void retirement.then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await retirement
+
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

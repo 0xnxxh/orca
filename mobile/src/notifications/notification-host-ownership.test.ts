@@ -263,15 +263,11 @@ describe('paired-host notification ownership', () => {
     const restore = suppressRendererWarning()
     try {
       await act(async () => {
-        const notificationOwner =
-          process.env.ORCA_TEST_DISABLE_NOTIFICATION_OWNER === '1'
-            ? null
-            : createElement(NotificationHostConnectionOwner)
         renderer = create(
           createElement(
             RpcClientProvider,
             null,
-            notificationOwner,
+            createElement(NotificationHostConnectionOwner),
             createElement(HomeNotificationProbe)
           )
         )

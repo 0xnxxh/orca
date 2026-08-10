@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AppState } from 'react-native'
 import type { RpcClient } from '../transport/rpc-client'
+import { rpcClientIdentity } from '../transport/rpc-client-identity'
 import { subscribeHostCollectionChanges } from '../transport/host-collection-changes'
 import { selectConnectableHostProfiles } from '../transport/host-catalog-selection'
 import { loadHostCatalog } from '../transport/host-store'
@@ -12,18 +13,6 @@ import { subscribeToDesktopNotifications } from './mobile-notifications'
 import { retireHostNotificationState } from './notification-reconnect-catchup'
 
 const HOST_REFRESH_RETRY_DELAYS_MS = [250, 1_000, 5_000, 15_000] as const
-
-const clientIdentities = new WeakMap<RpcClient, number>()
-let nextClientIdentity = 1
-
-function clientIdentity(client: RpcClient): number {
-  let identity = clientIdentities.get(client)
-  if (identity == null) {
-    identity = nextClientIdentity++
-    clientIdentities.set(client, identity)
-  }
-  return identity
-}
 
 function subscribeToHostNotificationLifecycle(client: RpcClient, hostId: string): () => void {
   let unsubscribeNotifications: (() => void) | null = null
@@ -61,7 +50,8 @@ function subscribeNotificationHostCatalog(
     if (retryTimer || disposed) {
       return
     }
-    const delay = HOST_REFRESH_RETRY_DELAYS_MS[Math.min(retryIndex, 3)]
+    const delay =
+      HOST_REFRESH_RETRY_DELAYS_MS[Math.min(retryIndex, HOST_REFRESH_RETRY_DELAYS_MS.length - 1)]
     retryIndex += 1
     retryTimer = setTimeout(() => {
       retryTimer = null
@@ -77,31 +67,30 @@ function subscribeNotificationHostCatalog(
       }
     }
     const revision = ++loadRevision
-    void loadHostCatalog()
-      .then((catalog) => {
-        if (!disposed && revision === loadRevision) {
-          const nextHosts = selectConnectableHostProfiles(catalog)
-          const readyHostIds = new Set(nextHosts.map(({ id }) => id))
-          for (const entry of catalog) {
-            if (entry.credentialStatus === 'temporarily-unavailable') {
-              const retained = profilesByHostId.get(entry.id)
-              if (retained && !readyHostIds.has(entry.id)) {
-                nextHosts.push(retained)
-              }
+    // Why: rejection handler as the second `then` arg so only catalog loads retry, not update errors.
+    void loadHostCatalog().then((catalog) => {
+      if (!disposed && revision === loadRevision) {
+        const nextHosts = selectConnectableHostProfiles(catalog)
+        const readyHostIds = new Set(nextHosts.map(({ id }) => id))
+        for (const entry of catalog) {
+          if (entry.credentialStatus === 'temporarily-unavailable') {
+            const retained = profilesByHostId.get(entry.id)
+            if (retained && !readyHostIds.has(entry.id)) {
+              nextHosts.push(retained)
             }
           }
-          profilesByHostId = new Map(nextHosts.map((host) => [host.id, host]))
-          updateHosts(nextHosts)
-          if (
-            catalog.some(({ credentialStatus }) => credentialStatus === 'temporarily-unavailable')
-          ) {
-            scheduleRetry()
-          } else {
-            retryIndex = 0
-          }
         }
-      })
-      .catch(scheduleRetry)
+        profilesByHostId = new Map(nextHosts.map((host) => [host.id, host]))
+        updateHosts(nextHosts)
+        if (
+          catalog.some(({ credentialStatus }) => credentialStatus === 'temporarily-unavailable')
+        ) {
+          scheduleRetry()
+        } else {
+          retryIndex = 0
+        }
+      }
+    }, scheduleRetry)
   }
   const unsubscribeHosts = subscribeHostCollectionChanges(({ retiredHostIds }) => {
     if (retiredHostIds.length > 0) {
@@ -132,15 +121,7 @@ export function NotificationHostConnectionOwner() {
   const [hosts, setHosts] = useState<HostProfile[]>([])
   const [retiringHostIds, setRetiringHostIds] = useState<string[]>([])
   const retirementStartedRef = useRef(new Set<string>())
-  const mountedRef = useRef(true)
   const primeHosts = usePrimeHosts()
-
-  useEffect(
-    () => () => {
-      mountedRef.current = false
-    },
-    []
-  )
 
   useEffect(
     () =>
@@ -175,11 +156,11 @@ export function NotificationHostConnectionOwner() {
       }
       retirementStartedRef.current.add(hostId)
       connectionLogStore.clear(hostId)
+      // Why unguarded: React 19 makes a post-unmount setState a no-op, and skipping it would
+      // strand hostId in retiringHostIds, which activeHosts filters out with no way back.
       void retireHostNotificationState(hostId).finally(() => {
         retirementStartedRef.current.delete(hostId)
-        if (mountedRef.current) {
-          setRetiringHostIds((current) => current.filter((id) => id !== hostId))
-        }
+        setRetiringHostIds((current) => current.filter((id) => id !== hostId))
       })
     }
   }, [retiringHostIds])
@@ -188,7 +169,7 @@ export function NotificationHostConnectionOwner() {
     <>
       {clients.map(({ client, hostId }) => (
         <NotificationHostClientOwner
-          key={`${hostId}:${clientIdentity(client)}`}
+          key={`${hostId}:${rpcClientIdentity(client)}`}
           client={client}
           hostId={hostId}
         />

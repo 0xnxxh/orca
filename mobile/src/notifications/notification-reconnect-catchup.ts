@@ -398,6 +398,29 @@ export function forgetHostNotificationSession(hostId: string): void {
   sessionsByHost.delete(hostId)
 }
 
+// Why bounded: unpair awaits this on the UI thread, so a delivery that never settles (a
+// wedged expo scheduling promise) would hang the button with no recovery. Overrunning the
+// drain is safe because `retired` is already set — every watermark write checks it, so a
+// late delivery cannot persist past the clear below.
+const RETIREMENT_DELIVERY_DRAIN_TIMEOUT_MS = 2_000
+
+async function drainHostDeliveries(session: HostNotificationSession | undefined): Promise<void> {
+  if (!session) {
+    return
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      session.deliveryTail,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, RETIREMENT_DELIVERY_DRAIN_TIMEOUT_MS)
+      })
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function retireHostNotificationState(hostId: string): Promise<void> {
   const existing = retirementByHost.get(hostId)
   if (existing) {
@@ -408,7 +431,7 @@ export function retireHostNotificationState(hostId: string): Promise<void> {
     session.retired = true
   }
   const retirement = (async () => {
-    await session?.deliveryTail
+    await drainHostDeliveries(session)
     if (!session || sessionsByHost.get(hostId) === session) {
       sessionsByHost.delete(hostId)
     }

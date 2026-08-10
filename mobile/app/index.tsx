@@ -23,6 +23,7 @@ import { fetchHomeHostWorktreeInfo } from '../src/worktree/home-host-worktree-fe
 import { totalHomeStats, type HomeStatsSummary } from '../src/stats/home-stats-total'
 import type { HomeWorktreeSummary, HostWorktreeInfo } from '../src/worktree/home-worktree-info'
 import type { RpcClient } from '../src/transport/rpc-client'
+import { rpcClientIdentity } from '../src/transport/rpc-client-identity'
 import { createHostConnectRefetchGate } from '../src/transport/host-connect-refetch-gate'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
 import { useCloseHost, useForceReconnect, usePrimeHosts } from '../src/transport/client-context'
@@ -105,18 +106,6 @@ function formatDuration(ms: number): string {
     return `${totalHours}h ${minutes}m`
   }
   return `${totalMinutes}m`
-}
-
-// Why: stable per-instance RpcClient identity so wireUp's dep key changes when forceReconnect swaps the client, re-attaching listeners.
-const clientIdentities = new WeakMap<RpcClient, number>()
-let nextClientIdentity = 1
-function clientKey(client: RpcClient): number {
-  let id = clientIdentities.get(client)
-  if (id == null) {
-    id = nextClientIdentity++
-    clientIdentities.set(client, id)
-  }
-  return id
 }
 
 function fetchStats(
@@ -494,7 +483,7 @@ export default function HomeScreen() {
     // Why: key on host-id set + each client's identity so resubs fire when forceReconnect swaps a host's client, not on every render.
   }, [
     allClients
-      .map((e) => `${e.hostId}:${clientKey(e.client)}`)
+      .map((e) => `${e.hostId}:${rpcClientIdentity(e.client)}`)
       .sort()
       .join(',')
   ])

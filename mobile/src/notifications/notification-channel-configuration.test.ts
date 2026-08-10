@@ -25,4 +25,19 @@ describe('Android notification channel configuration', () => {
 
     expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledOnce()
   })
+
+  it('retries on a later subscribe after the channel setup fails', async () => {
+    vi.mocked(Notifications.setNotificationChannelAsync).mockRejectedValueOnce(
+      new Error('channel unavailable')
+    )
+    configureNotificationChannel()
+    // Why a macrotask: the rejection has to settle through .then and .catch before the
+    // retry gate reopens, which outlasts a single microtask flush.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    configureNotificationChannel()
+    await Promise.resolve()
+
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledTimes(2)
+  })
 })

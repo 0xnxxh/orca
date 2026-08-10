@@ -35,8 +35,7 @@ const scheduledNotificationsByHostAndNotificationId = new Map<string, ScheduledN
 // Why: keys never repeat and are only freed on desktop dismiss (which remote users often miss), so bound the map to stop unbounded growth.
 const MAX_SCHEDULED_NOTIFICATIONS = 256
 let maxScheduledNotifications = MAX_SCHEDULED_NOTIFICATIONS
-let notificationChannelConfigured = false
-let notificationChannelConfiguring = false
+let notificationChannelSetup: Promise<void> | null = null
 
 function getStoredNotificationKey(hostId: string, notificationId: string): string {
   return `${encodeURIComponent(hostId)}:${encodeURIComponent(notificationId)}`
@@ -65,20 +64,17 @@ export function setScheduledNotificationsMaxForTests(max?: number): void {
 }
 
 export function resetNotificationChannelConfigurationForTests(): void {
-  notificationChannelConfigured = false
-  notificationChannelConfiguring = false
+  notificationChannelSetup = null
 }
 
+// Why assigned before the await: every paired host calls this on subscribe (and again on
+// each reconnect), so concurrent callers dedup on the in-flight promise. Cleared on
+// failure so a later subscribe retries, which is how the per-call version self-healed.
 export function configureNotificationChannel(): void {
-  if (
-    Platform.OS !== 'android' ||
-    notificationChannelConfigured ||
-    notificationChannelConfiguring
-  ) {
+  if (Platform.OS !== 'android' || notificationChannelSetup) {
     return
   }
-  notificationChannelConfiguring = true
-  void Promise.resolve(
+  notificationChannelSetup = Promise.resolve(
     Notifications.setNotificationChannelAsync('orca-desktop', {
       name: 'Desktop Notifications',
       importance: Notifications.AndroidImportance.HIGH,
@@ -86,12 +82,9 @@ export function configureNotificationChannel(): void {
       lightColor: '#6366f1'
     })
   )
-    .then(() => {
-      notificationChannelConfigured = true
-    })
-    .catch(() => {})
-    .finally(() => {
-      notificationChannelConfiguring = false
+    .then(() => undefined)
+    .catch(() => {
+      notificationChannelSetup = null
     })
 }
 
