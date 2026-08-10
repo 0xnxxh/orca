@@ -12,6 +12,7 @@ import {
   clearAiVaultServiceCall,
   createAiVaultServiceReadyWaiter,
   rejectAiVaultServiceCall,
+  requeueAiVaultServiceStart,
   retireAiVaultServiceChild,
   type AiVaultServiceClientOptions,
   type AiVaultServicePendingCall,
@@ -84,9 +85,23 @@ export class AiVaultScannerServiceClient {
     const child = await this.ensureChild()
     return this.invalidations.open(
       AI_VAULT_SERVICE_READY_TIMEOUT_MS,
-      () => this.onFault(new Error('AI Vault service cache invalidation timed out.')),
+      (generation) => this.onInvalidationDeadline(generation),
       (generation) => child.send({ type: 'invalidate', generation, paths })
     )
+  }
+
+  /**
+   * The deadline is a startup-sized budget, but a child mid-scan can be slow to
+   * turn the channel around. Fork IPC ordering already guarantees the child
+   * applies the invalidation before any request sent after it, so a busy child
+   * owes nothing here — only an idle one that misses the deadline is wedged.
+   */
+  private onInvalidationDeadline(generation: number): void {
+    if (this.active.size > 0) {
+      this.invalidations.settle(generation)
+      return
+    }
+    this.onFault(new Error('AI Vault service cache invalidation timed out.'))
   }
 
   dispose(): void {
@@ -151,23 +166,14 @@ export class AiVaultScannerServiceClient {
     child.send(call.request)
   }
 
-  /**
-   * A cold start that faults before the request reached the child self-heals on
-   * the scheduled respawn, so retry once instead of surfacing a startup error.
-   */
   private retryStartOrReject(call: AiVaultServicePendingCall, error: Error): void {
     if (
-      call.sent ||
-      call.cancelled ||
-      call.startRetried ||
       this.disposed ||
-      !this.restartPolicy.restartScheduled
+      !this.restartPolicy.restartScheduled ||
+      !requeueAiVaultServiceStart(call, this.queue)
     ) {
       rejectAiVaultServiceCall(call, error)
-      return
     }
-    call.startRetried = true
-    this.queue.unshift(call)
   }
 
   private ensureChild(): Promise<ChildProcess> {

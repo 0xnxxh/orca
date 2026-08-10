@@ -198,6 +198,32 @@ describe('AiVaultScannerServiceClient', () => {
     client.dispose()
   })
 
+  it('leaves a scanning child alone when cache invalidation is slow to acknowledge', async () => {
+    vi.useFakeTimers()
+    const { child, client } = setup()
+    const scan = client.request({ type: 'request', operation: 'scan', options: {} })
+    readyAiVaultServiceChild(child)
+    await Promise.resolve()
+
+    const invalidation = client.invalidate(['/tmp/deleted.jsonl'])
+    await Promise.resolve()
+    vi.advanceTimersByTime(AI_VAULT_SERVICE_READY_TIMEOUT_MS)
+
+    // The scan owns liveness through its own 130s deadline; killing the child
+    // here would abort it and burn a slot toward the restart circuit.
+    await expect(invalidation).resolves.toBeUndefined()
+    expect(child.killed).toBe(false)
+
+    child.emit('message', {
+      type: 'result',
+      id: aiVaultServiceRequestId(child, 'scan'),
+      operation: 'scan',
+      value: { result: { sessions: [], issues: [], scannedAt: '2026-08-10' }, durationMs: 1 }
+    })
+    await expect(scan).resolves.toMatchObject({ result: { sessions: [] } })
+    client.dispose()
+  })
+
   it('replaces a child that does not acknowledge cache invalidation', async () => {
     vi.useFakeTimers()
     const children: AiVaultServiceTestChild[] = []

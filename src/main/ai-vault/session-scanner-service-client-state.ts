@@ -36,12 +36,12 @@ export class AiVaultServiceInvalidations {
 
   open(
     timeoutMs: number,
-    onTimeout: () => void,
+    onTimeout: (generation: number) => void,
     send: (generation: number) => void
   ): Promise<void> {
     const generation = ++this.generation
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(onTimeout, timeoutMs)
+      const timer = setTimeout(() => onTimeout(generation), timeoutMs)
       timer.unref?.()
       this.pending.set(generation, { resolve, reject, timer })
       send(generation)
@@ -104,6 +104,22 @@ export function armAiVaultServiceCancellationTimeout(
   }
   call.timer = setTimeout(onExpired, AI_VAULT_SERVICE_SHUTDOWN_TIMEOUT_MS)
   call.timer.unref?.()
+}
+
+/**
+ * A cold start that faults before the request reached the child self-heals on
+ * the scheduled respawn. Requeue once; the caller rejects when this returns false.
+ */
+export function requeueAiVaultServiceStart(
+  call: AiVaultServicePendingCall,
+  queue: AiVaultServicePendingCall[]
+): boolean {
+  if (call.sent || call.cancelled || call.startRetried) {
+    return false
+  }
+  call.startRetried = true
+  queue.unshift(call)
+  return true
 }
 
 export function clearAiVaultServiceCall(call: AiVaultServicePendingCall): void {
