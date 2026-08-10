@@ -91,6 +91,7 @@ function sameTerminalInput(
       a.localWindowsConpty === b.localWindowsConpty &&
       a.osRelease === b.osRelease &&
       a.windowsShiftEnterEncoding === b.windowsShiftEnterEncoding &&
+      a.ctrlEnterCsiU === b.ctrlEnterCsiU &&
       a.kittyKeyboardAdvertised === b.kittyKeyboardAdvertised)
   )
 }

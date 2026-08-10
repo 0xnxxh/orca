@@ -104,7 +104,7 @@ export type DashboardCard = {
   /** Optional for preload compatibility with snapshots produced before Agent Map.
    *  Also keeps the inspector from reading remote transcript paths locally. */
   hostKind?: DashboardCardHostKind
-  /** Effective renderer mode for this agent's terminal tab. */
+  /** Initial dashboard inspector mode derived from the user's Chat UI default. */
   viewMode?: DashboardCardViewMode
   /** Exact owner used by in-window workspace actions when IDs collide across hosts. */
   executionHostId?: ExecutionHostId

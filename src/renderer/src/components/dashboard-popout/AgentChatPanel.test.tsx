@@ -149,6 +149,32 @@ describe('AgentChatPanel', () => {
     expect(screen.getByLabelText('Reply to this agent')).toHaveValue('hello')
   })
 
+  it.each([
+    ['an active composition', { isComposing: true }],
+    ['the legacy IME key code', { keyCode: 229 }]
+  ])('does not submit the Enter that confirms %s', (_label, keyboardInit) => {
+    render(<AgentChatPanel card={card()} onClose={vi.fn()} />)
+
+    const input = screen.getByLabelText('Reply to this agent')
+    fireEvent.change(input, { target: { value: 'unfinished conversion' } })
+    fireEvent.keyDown(input, { key: 'Enter', ...keyboardInit })
+
+    expect(terminalInput).not.toHaveBeenCalled()
+    expect(input).toHaveValue('unfinished conversion')
+  })
+
+  it('shows acknowledged completions with the dashboard idle state', () => {
+    render(
+      <AgentChatPanel
+        card={card({ bucket: 'idle', dotState: 'done', unseen: false })}
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByLabelText('Idle')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Done')).not.toBeInTheDocument()
+  })
+
   it('withholds the composer when the agent has no live pane', () => {
     render(<AgentChatPanel card={card({ ptyId: null })} onClose={vi.fn()} />)
 

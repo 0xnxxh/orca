@@ -15,8 +15,12 @@ import { selectNativeChatViewState } from '@/components/native-chat/native-chat-
 import { NATIVE_CHAT_SUBMIT_DELAY_MS } from '../../../../shared/native-chat-answer-stepping'
 import { translate } from '@/i18n/i18n'
 import { formatAgentTypeLabel } from '@/lib/agent-status'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { cn } from '@/lib/utils'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import {
+  dashboardCardDisplayState,
+  type DashboardCard
+} from '../../../../shared/dashboard-snapshot'
 import { resolveAgentChatPanelMode, type AgentChatPanelMode } from './agent-chat-panel-mode'
 
 type AgentChatPanelProps = {
@@ -183,7 +187,7 @@ function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element
             setFailedSend(null)
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+            if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyDown(event)) {
               event.preventDefault()
               void send()
             }
@@ -260,7 +264,7 @@ export function AgentChatPanel({
       )}
     >
       <header className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-2.5">
-        <AgentStateDot state={card.dotState} size="md" className="mt-0.5" />
+        <AgentStateDot state={dashboardCardDisplayState(card)} size="md" className="mt-0.5" />
         <span className="min-w-0 flex-1">
           <h2 id={titleId} className="truncate text-[12px] leading-normal font-semibold">
             {agentName(card)}

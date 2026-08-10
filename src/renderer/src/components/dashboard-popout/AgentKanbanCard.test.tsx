@@ -337,6 +337,19 @@ describe('AgentKanbanCard', () => {
 
     fireEvent.click(screen.getByText('Review the change'))
     expect(onOpenTerminal).toHaveBeenLastCalledWith(windowsCard)
+
+    const ctrlEnterCard = {
+      ...windowsCard,
+      terminalInput: { ...windowsCard.terminalInput, ctrlEnterCsiU: true }
+    }
+    rerender(
+      <TooltipProvider>
+        <AgentKanbanCard card={ctrlEnterCard} now={2_000} onOpenTerminal={onOpenTerminal} />
+      </TooltipProvider>
+    )
+
+    fireEvent.click(screen.getByText('Review the change'))
+    expect(onOpenTerminal).toHaveBeenLastCalledWith(ctrlEnterCard)
   })
 
   it('updates the relative age when the UI language changes', async () => {
