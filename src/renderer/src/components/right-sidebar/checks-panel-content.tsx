@@ -1756,7 +1756,7 @@ function CommentRow({
     comment: PRComment,
     content: GitHubReactionContent,
     reacted: boolean
-  ) => Promise<void>
+  ) => Promise<boolean>
   onQueueForAgent?: () => void
 }): React.JSX.Element {
   const automated = isBotPRComment(comment, botAuthorOverrides)
@@ -2070,7 +2070,7 @@ function PRCommentGroupView({
     comment: PRComment,
     content: GitHubReactionContent,
     reacted: boolean
-  ) => Promise<void>
+  ) => Promise<boolean>
   onQueueForAgent?: () => void
 }): React.JSX.Element {
   // Reply targets a specific comment id so any comment in a thread — root or
@@ -2219,7 +2219,7 @@ function ResolvedCommentGroupsSection({
     comment: PRComment,
     content: GitHubReactionContent,
     reacted: boolean
-  ) => Promise<void>
+  ) => Promise<boolean>
 }): React.JSX.Element | null {
   if (groups.length === 0) {
     return null
@@ -2344,7 +2344,7 @@ export function PRCommentsList({
     comment: PRComment,
     content: GitHubReactionContent,
     reacted: boolean
-  ) => Promise<void>
+  ) => Promise<boolean>
 }): React.JSX.Element {
   const presentation = React.useMemo(() => getPRCommentPresentationClasses(), [])
   const [commentFilter, setCommentFilter] = useState<PRCommentAudienceFilter>('all')
