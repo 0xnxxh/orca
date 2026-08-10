@@ -138,6 +138,12 @@ import {
   readPrimarySelectionText
 } from '@/lib/primary-selection'
 import { APP_MENU_PASTE_EVENT } from '@/lib/app-menu-paste'
+import {
+  APP_MENU_SELECTION_ACTION_EVENT,
+  type AppMenuSelectionAction
+} from '@/lib/app-menu-selection-actions'
+import { isEditableTarget } from '@/lib/editable-target'
+import { copyTerminalSelection } from './terminal-selection-copy'
 import { CODEX_ACCOUNT_RESTART_STARTUP } from '@/lib/codex-session-restart'
 import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/workspace-file-drag'
 import { isTerminalSessionStateSaveFailure } from '../../../../shared/terminal-session-state-save-failure'
@@ -240,6 +246,7 @@ import {
   setRegularTerminalInputFocusAttribute
 } from './regular-terminal-focus-ownership'
 import { useTerminalQuickCommandHosts } from '@/hooks/use-terminal-quick-command-hosts'
+import { refreshTerminalImeInputContext } from './terminal-ime-input-context-refresh'
 
 type TerminalPaneProps = {
   tabId: string
@@ -1691,7 +1698,6 @@ function TerminalPane(
     panePtyBindingsRef,
     paneCwdRef,
     fallbackCwd: cwd ?? '',
-    koreanWonToBackquoteEnabled: settings?.terminalKoreanWonToBackquote === true,
     expandedPaneIdRef,
     setExpandedPane,
     restoreExpandedLayout,
@@ -1799,6 +1805,8 @@ function TerminalPane(
     }
     let ownsRegularTerminalFocus = false
     let releasedHelperOnWindowBlur: HTMLElement | null = null
+    // Why: the IME refresh's blur emits a focusout that would clear terminalInputFocused mid-handoff; latch it so Terminal-first shortcut routing survives until refocus.
+    let refreshingImeInputContext = false
     const syncFocused = (focused: boolean): void => {
       ownsRegularTerminalFocus = focused
       if (focused) {
@@ -1812,12 +1820,24 @@ function TerminalPane(
         return
       }
       syncFocused(true)
+      // Why: helper→helper handoffs skip window blur and can leave a stale macOS NSTextInputContext; the refocus's non-helper relatedTarget prevents recursion.
+      if (isXtermHelperTextarea(event.relatedTarget) && event.relatedTarget !== event.target) {
+        refreshingImeInputContext = true
+        try {
+          refreshTerminalImeInputContext(event.target, {})
+        } finally {
+          refreshingImeInputContext = false
+        }
+      }
     }
     const onFocusOut = (event: FocusEvent): void => {
       if (!isXtermHelperTextarea(event.target)) {
         return
       }
       if (isXtermHelperTextarea(event.relatedTarget)) {
+        return
+      }
+      if (refreshingImeInputContext) {
         return
       }
       syncFocused(false)
@@ -2145,9 +2165,44 @@ function TerminalPane(
       })
     }
 
+    const onAppMenuSelectionAction = (event: Event): void => {
+      const activeElement = document.activeElement
+      if (
+        !(activeElement instanceof Element) ||
+        !container.contains(activeElement) ||
+        isEditableTarget(activeElement) ||
+        activeElement.closest('[data-terminal-search-root]') ||
+        isInsideNativeChatRoot(activeElement)
+      ) {
+        return
+      }
+      const manager = managerRef.current
+      const pane = manager?.getActivePane() ?? manager?.getPanes()[0]
+      if (!pane) {
+        return
+      }
+      const action = (event as CustomEvent<AppMenuSelectionAction>).detail
+      if (action === 'copy') {
+        if (!pane.terminal.getSelection()) {
+          return
+        }
+        event.preventDefault()
+        void copyTerminalSelection({
+          terminal: pane.terminal,
+          writeClipboardText: window.api.ui.writeTerminalClipboardText
+        }).catch(() => undefined)
+        return
+      }
+      if (action === 'select-all') {
+        event.preventDefault()
+        pane.terminal.selectAll()
+      }
+    }
+
     container.addEventListener('keydown', onKeyPaste, { capture: true })
     container.addEventListener('paste', onPaste, { capture: true })
     window.addEventListener(APP_MENU_PASTE_EVENT, onAppMenuPaste)
+    window.addEventListener(APP_MENU_SELECTION_ACTION_EVENT, onAppMenuSelectionAction)
     return () => {
       if (pasteSuppressionTimerId !== null) {
         window.clearTimeout(pasteSuppressionTimerId)
@@ -2155,6 +2210,7 @@ function TerminalPane(
       container.removeEventListener('keydown', onKeyPaste, { capture: true })
       container.removeEventListener('paste', onPaste, { capture: true })
       window.removeEventListener(APP_MENU_PASTE_EVENT, onAppMenuPaste)
+      window.removeEventListener(APP_MENU_SELECTION_ACTION_EVENT, onAppMenuSelectionAction)
     }
   }, [isActive, worktreeId, keybindings, forceBracketedMultilineTextPaste, tabId])
 
@@ -3024,6 +3080,7 @@ function TerminalPane(
           contextMenu.menuPaneId !== null && contextMenu.menuPaneId === expandedPaneId
         }
         onCopy={() => void contextMenu.onCopy()}
+        onSelectAll={contextMenu.onSelectAll}
         onPaste={() => void contextMenu.onPaste()}
         onSplitRight={contextMenu.onSplitRight}
         onSplitDown={contextMenu.onSplitDown}

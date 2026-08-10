@@ -48,6 +48,14 @@ import {
   scanHostLegWithCache
 } from './ai-vault-host-leg-cache'
 import { requestedAiVaultSessionDepth } from '../../shared/ai-vault-session-depth'
+import type {
+  AiVaultSessionTitlesArgs,
+  AiVaultSessionTitlesResult
+} from '../../shared/ai-vault-session-title'
+import {
+  resolveAiVaultSessionTitlesByHost,
+  type RuntimeAiVaultSessionTitleResolver
+} from './ai-vault-session-title-routing'
 
 const AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS = 3_000
 // Why: a remote home with many agent roots routinely needs seconds to walk,
@@ -62,6 +70,7 @@ type AiVaultHandlerOptions = AiVaultSessionSources &
   AiVaultResumeHandlerOptions & {
     getActiveRuntimeAiVaultHostInfos?: () => readonly RuntimeAiVaultHostInfo[]
     scanRuntimeAiVaultSessions?: RuntimeAiVaultScanner
+    resolveRuntimeAiVaultSessionTitles?: RuntimeAiVaultSessionTitleResolver
   }
 
 let scanCoordinator = new AiVaultScanCoordinator()
@@ -72,6 +81,11 @@ const listCancellations = createSenderScopedRequestCancellations()
 const aiVaultDeleteDeps = {
   invalidateMultiHostListCache: invalidateAiVaultHostLegCache
 }
+
+const resolveAiVaultSessionTitles = (
+  args: AiVaultSessionTitlesArgs
+): Promise<AiVaultSessionTitlesResult> =>
+  resolveAiVaultSessionTitlesByHost(args, handlerOptions.resolveRuntimeAiVaultSessionTitles)
 
 async function listAiVaultSessions(
   args?: AiVaultListArgs,
@@ -276,6 +290,11 @@ export function registerAiVaultHandlers(options: AiVaultHandlerOptions = {}): vo
     }
   })
   ipcMain.handle(
+    'aiVault:resolveSessionTitles',
+    (_event, args: AiVaultSessionTitlesArgs): Promise<AiVaultSessionTitlesResult> =>
+      resolveAiVaultSessionTitles(args)
+  )
+  ipcMain.handle(
     'aiVault:cancelListSessions',
     (event, args: { requestToken?: string } | undefined): void => {
       if (typeof args?.requestToken === 'string' && args.requestToken.length <= 128) {
@@ -306,13 +325,13 @@ function resetAiVaultCacheForTests(): void {
   resetAiVaultHostLegCacheForTests()
   scanCoordinator = new AiVaultScanCoordinator()
   handlerOptions = {}
-  // The local leg delegates to the shared cache module; reset it too so tests
-  // never see a scan cached by an earlier case.
+  // Keep tests isolated from the shared local-leg cache.
   resetAiVaultSessionListCacheForTests()
 }
 
 export const _internals = {
   listAiVaultSessions,
+  resolveAiVaultSessionTitles,
   listAiVaultSubagentSessions,
   deleteAiVaultSession: (args?: AiVaultDeleteSessionArgs) =>
     deleteAiVaultSession(args, aiVaultDeleteDeps),
