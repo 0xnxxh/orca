@@ -2412,6 +2412,11 @@
             "label": "Close as duplicate",
             "description": "Duplicate of another issue"
           }
+        },
+        "CommentReactions": {
+          "addReaction": "Add reaction",
+          "removeNamedReaction": "Remove {{value0}} reaction",
+          "addNamedReaction": "Add {{value0}} reaction"
         }
       },
       "linear": {
@@ -10566,7 +10571,8 @@
               "pending": "Syncing…",
               "branch": "Sync Branch"
             },
-            "7e4b2a19c0": "Could not resolve the GitHub PR to reply on."
+            "7e4b2a19c0": "Could not resolve the GitHub PR to reply on.",
+            "updateReactionFailed": "Failed to update reaction."
           },
           "CreatePullRequestDialog": {
             "2bc1b4345e": "Cancel",
