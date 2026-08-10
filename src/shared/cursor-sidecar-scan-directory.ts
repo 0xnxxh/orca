@@ -1,4 +1,4 @@
-import type { Dirent } from 'node:fs'
+import type { Dir, Dirent } from 'node:fs'
 import { opendir, readdir } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 
@@ -28,16 +28,40 @@ export function retainLexicographic(selected: string[], name: string, limit: num
 }
 
 export type StreamDirectoryNamesOptions = {
-  /** Invoked once per dirent observed (opendir read or readdir fallback entry). */
+  /** Invoked once per examined dirent (not the overflow probe). */
   onDirent?: () => void
   /** Hard stop after this many dirents; default CURSOR_DIR_MAX_ENTRIES_EXAMINED. */
   maxEntriesExamined?: number
 }
 
+type StreamDirectoryIo = {
+  opendir: (path: string) => ReturnType<typeof opendir>
+  readdirWithFileTypes: (path: string) => Promise<Dirent[]>
+}
+
+const defaultStreamDirectoryIo: StreamDirectoryIo = {
+  opendir,
+  readdirWithFileTypes: (path) => readdir(path, { withFileTypes: true })
+}
+let streamDirectoryIo: StreamDirectoryIo = defaultStreamDirectoryIo
+
+/** Test isolation for opendir vs readdir-fallback paths. */
+export function setStreamDirectoryIoForTests(next?: Partial<StreamDirectoryIo>): void {
+  streamDirectoryIo = next
+    ? {
+        opendir: next.opendir ?? defaultStreamDirectoryIo.opendir,
+        readdirWithFileTypes:
+          next.readdirWithFileTypes ?? defaultStreamDirectoryIo.readdirWithFileTypes
+      }
+    : defaultStreamDirectoryIo
+}
+
 /**
- * Streams directory names without materializing the full listing.
+ * Streams directory names without materializing the full listing on opendir hosts.
  * Retention callers keep only their bounded selection; examination stops at
- * maxEntriesExamined so cold adversarial directories cannot unbounded-walk.
+ * maxEntriesExamined. One extra dirent is read as an overflow probe so stopping
+ * exactly at the budget still reports examinationTruncated truthfully when more
+ * entries exist.
  */
 export async function streamDirectoryNames(
   dirPath: string,
@@ -45,46 +69,25 @@ export async function streamDirectoryNames(
   options: StreamDirectoryNamesOptions = {}
 ): Promise<{ entriesExamined: number; examinationTruncated: boolean }> {
   const maxEntries = options.maxEntriesExamined ?? CURSOR_DIR_MAX_ENTRIES_EXAMINED
-  let entriesExamined = 0
-  let examinationTruncated = false
-
-  const consider = (name: string, entry: Dirent): boolean => {
-    if (entriesExamined >= maxEntries) {
-      examinationTruncated = true
-      return false
-    }
-    entriesExamined += 1
-    options.onDirent?.()
-    visit(name, entry)
-    return entriesExamined < maxEntries
+  if (maxEntries <= 0) {
+    return { entriesExamined: 0, examinationTruncated: true }
   }
 
   try {
-    const directory = await opendir(dirPath)
+    const directory = await streamDirectoryIo.opendir(dirPath)
     try {
-      for await (const entry of directory) {
-        if (!consider(entry.name, entry)) {
-          break
-        }
-      }
+      return await examineDirectoryStream(directory, visit, options, maxEntries)
     } finally {
       // Closing mid-iteration is best-effort; for-await also closes on break/throw.
       await directory.close().catch(() => undefined)
     }
-    return { entriesExamined, examinationTruncated }
   } catch (error) {
     // Fallback keeps remote-wire hosts that only expose readdir working.
     if (!isUnsupportedDirectoryStream(error)) {
       throw error
     }
   }
-  const entries = await readdir(dirPath, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!consider(entry.name, entry)) {
-      break
-    }
-  }
-  return { entriesExamined, examinationTruncated }
+  return examineReaddirFallback(dirPath, visit, options, maxEntries)
 }
 
 /**
@@ -151,6 +154,55 @@ export function targetPathVariants(value: string, pathPlatform: NodeJS.Platform)
 
 export function safeBasename(value: string): boolean {
   return Boolean(value && value !== '.' && value !== '..' && !/[\\/]/u.test(value))
+}
+
+async function examineDirectoryStream(
+  directory: Dir,
+  visit: (name: string, entry: Dirent) => void,
+  options: StreamDirectoryNamesOptions,
+  maxEntries: number
+): Promise<{ entriesExamined: number; examinationTruncated: boolean }> {
+  let entriesExamined = 0
+  let examinationTruncated = false
+  for await (const entry of directory) {
+    // Bounded overflow probe: reading one dirent past the budget proves that
+    // stopping exactly at maxEntries is truncation, without visiting it.
+    if (entriesExamined >= maxEntries) {
+      examinationTruncated = true
+      break
+    }
+    entriesExamined += 1
+    options.onDirent?.()
+    visit(entry.name, entry)
+  }
+  return { entriesExamined, examinationTruncated }
+}
+
+async function examineReaddirFallback(
+  dirPath: string,
+  visit: (name: string, entry: Dirent) => void,
+  options: StreamDirectoryNamesOptions,
+  maxEntries: number
+): Promise<{ entriesExamined: number; examinationTruncated: boolean }> {
+  // Why: readdir eagerly allocates the full listing. Shrink immediately to the
+  // examination window so adversarial directories cannot keep an unbounded
+  // Dirent array alive past the budget (peak alloc is platform-limited).
+  const entries = await streamDirectoryIo.readdirWithFileTypes(dirPath)
+  let entriesExamined = 0
+  try {
+    const examinationTruncated = entries.length > maxEntries
+    if (examinationTruncated) {
+      entries.length = maxEntries
+    }
+    for (const entry of entries) {
+      entriesExamined += 1
+      options.onDirent?.()
+      visit(entry.name, entry)
+    }
+    return { entriesExamined, examinationTruncated }
+  } finally {
+    entries.length = 0
+  }
 }
 
 function isUnsupportedDirectoryStream(error: unknown): boolean {
