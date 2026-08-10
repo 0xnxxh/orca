@@ -39,6 +39,31 @@ export type SessionRetentionEntry = {
   recency: number
 }
 
+type RetainableSession = {
+  hasAttachedClients: boolean
+  setRetainedScrollbackRows(rows: number): void
+}
+
+/** Re-split retention across live sessions: full depth for attached and recently-viewed parked ones,
+ *  trimmed depth for parked sessions past the LRU cap. Idempotent — unchanged depths are no-ops. */
+export function applySessionScrollbackRetention(
+  sessions: ReadonlyMap<string, RetainableSession>,
+  recency: ReadonlyMap<string, number>,
+  cap: number
+): void {
+  const entries = [...sessions.entries()].map(([sessionId, session]) => ({
+    sessionId,
+    attached: session.hasAttachedClients,
+    recency: recency.get(sessionId) ?? 0
+  }))
+  const trimmed = new Set(selectParkedSessionsToTrim(entries, cap))
+  for (const [sessionId, session] of sessions) {
+    session.setRetainedScrollbackRows(
+      trimmed.has(sessionId) ? DAEMON_SCROLLBACK_TRIMMED_PARKED_ROWS : DAEMON_SCROLLBACK_FULL_ROWS
+    )
+  }
+}
+
 /**
  * Parked sessions that must drop to the trimmed depth: everything past the `cap` most recently viewed.
  * Attached sessions never appear in the result and do not consume the cap. Pure so LRU ordering and

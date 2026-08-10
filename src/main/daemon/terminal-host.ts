@@ -17,10 +17,8 @@ import { TerminalHostTombstones } from './terminal-host-tombstones'
 import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
 import { createOrAttachTerminalSession } from './terminal-host-session-create'
 import {
-  DAEMON_SCROLLBACK_FULL_ROWS,
-  DAEMON_SCROLLBACK_TRIMMED_PARKED_ROWS,
-  resolveParkedFullDepthCap,
-  selectParkedSessionsToTrim
+  applySessionScrollbackRetention,
+  resolveParkedFullDepthCap
 } from './daemon-scrollback-retention'
 import { isShellProcess } from '../../shared/agent-detection'
 
@@ -102,21 +100,10 @@ export class TerminalHost {
     this.applyScrollbackRetention()
   }
 
-  // Why: a terminal the user is viewing must never lose reachable scrollback, so retention only trims
-  // PARKED sessions past the LRU cap — the ones least recently viewed. Trimming is one-way for rows
-  // already evicted, but a reattached session returns to full depth for everything it emits afterward.
+  // Why: a terminal the user is viewing must never lose reachable scrollback — only parked sessions
+  // past the LRU cap are trimmed. Trimming is one-way for evicted rows; reattach restores depth forward.
   private applyScrollbackRetention(): void {
-    const entries = [...this.sessions.entries()].map(([sessionId, session]) => ({
-      sessionId,
-      attached: session.hasAttachedClients,
-      recency: this.retentionRecency.get(sessionId) ?? 0
-    }))
-    const trimmed = new Set(selectParkedSessionsToTrim(entries, this.parkedFullDepthCap))
-    for (const [sessionId, session] of this.sessions) {
-      session.setRetainedScrollbackRows(
-        trimmed.has(sessionId) ? DAEMON_SCROLLBACK_TRIMMED_PARKED_ROWS : DAEMON_SCROLLBACK_FULL_ROWS
-      )
-    }
+    applySessionScrollbackRetention(this.sessions, this.retentionRecency, this.parkedFullDepthCap)
   }
 
   write(sessionId: string, data: string): void {
