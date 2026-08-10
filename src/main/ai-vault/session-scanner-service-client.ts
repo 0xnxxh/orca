@@ -83,9 +83,7 @@ export class AiVaultScannerServiceClient {
     const generation = ++this.invalidationGeneration
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.invalidations.delete(generation)
-        reject(new Error('AI Vault service cache invalidation timed out.'))
-        this.scheduleIdleIfNeeded()
+        this.onFault(new Error('AI Vault service cache invalidation timed out.'))
       }, AI_VAULT_SERVICE_READY_TIMEOUT_MS)
       timer.unref?.()
       this.invalidations.set(generation, { resolve, reject, timer })

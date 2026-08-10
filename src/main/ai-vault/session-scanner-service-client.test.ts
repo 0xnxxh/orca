@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AiVaultScannerServiceClient } from './session-scanner-service-client'
+import { AI_VAULT_SERVICE_READY_TIMEOUT_MS } from './session-scanner-service-client-state'
 import {
   AiVaultServiceTestChild,
   aiVaultServiceRequestId,
@@ -110,6 +111,42 @@ describe('AiVaultScannerServiceClient', () => {
     child.emit('message', { type: 'invalidated', generation: 1 })
 
     await expect(invalidation).resolves.toBeUndefined()
+    client.dispose()
+  })
+
+  it('replaces a child that does not acknowledge cache invalidation', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = new AiVaultScannerServiceClient({
+      processFactory: () => {
+        const child = new AiVaultServiceTestChild(12_345 + children.length)
+        children.push(child)
+        return child.asChildProcess()
+      },
+      init: { sessionParseCache: null }
+    })
+    const invalidation = client.invalidate(['/tmp/deleted.jsonl'])
+    readyAiVaultServiceChild(children[0]!)
+    await Promise.resolve()
+
+    vi.advanceTimersByTime(AI_VAULT_SERVICE_READY_TIMEOUT_MS)
+
+    await expect(invalidation).rejects.toThrow('cache invalidation timed out')
+    expect(children[0]!.killed).toBe(true)
+    const titles = client.request({ type: 'request', operation: 'titles', requests: [] })
+    expect(children).toHaveLength(1)
+    vi.advanceTimersByTime(250)
+    expect(children).toHaveLength(2)
+    readyAiVaultServiceChild(children[1]!)
+    await Promise.resolve()
+    children[1]!.emit('message', {
+      type: 'result',
+      id: aiVaultServiceRequestId(children[1]!, 'titles'),
+      operation: 'titles',
+      value: { titles: [] }
+    })
+
+    await expect(titles).resolves.toEqual({ titles: [] })
     client.dispose()
   })
 
