@@ -139,6 +139,30 @@ describe('plugin language pack loading', () => {
     expect(removeResourceBundle).not.toHaveBeenCalled()
   })
 
+  it('rejects a missing resource language before i18next resource installation', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        plugins: {
+          listLanguagePacks: vi.fn().mockResolvedValue([
+            {
+              id: 'plugin:missing-language',
+              resourceLanguage: undefined,
+              pluginKey: 'missing-language',
+              locale: 'en',
+              catalog: {}
+            }
+          ])
+        }
+      }
+    })
+
+    await usePluginLanguagePackStore.getState().fetchPacks()
+    const packs = usePluginLanguagePackStore.getState().packs
+
+    expect(() => setRendererPluginLanguagePacks(packs)).not.toThrow()
+    expect(packs).toEqual([])
+  })
+
   it('keeps the latest request when an older language-pack response finishes last', async () => {
     const older = {
       id: 'plugin:older',
