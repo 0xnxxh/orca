@@ -82,11 +82,13 @@ export async function performAttach(
     if (reservedRecord && isAgentSessionPreSpawnError(error)) {
       const spawnToken = reservedRecord.lease.reservedSpawnToken
       if (spawnToken) {
-        await store.markReservationProcessless({
+        const processlessAt = input.now()
+        await store.setReservationProcesslessProof({
           sessionId,
           fence: reservedRecord.lease.runtimeFence,
           spawnToken,
-          now: input.now()
+          processlessAt,
+          now: processlessAt
         })
       }
     }
@@ -136,6 +138,14 @@ async function acquireOwner(
   if (!spawnToken) {
     throw new Error('agent_session_ownership_unknown')
   }
+  // Pre-spawn proof is single-use: this retry may create a child after the durable clear.
+  record = await input.store.setReservationProcesslessProof({
+    sessionId: record.sessionId,
+    fence,
+    spawnToken,
+    processlessAt: null,
+    now: input.now()
+  })
   await input.onAcquiring?.()
   const acquired = await input.adapter.acquire({
     identity: journalIdentityFor(record, input.params),

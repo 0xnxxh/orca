@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { computeAgentSessionPayloadFingerprint } from '../../../shared/agent-session-mutation-envelope'
 import { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
+import { createStructuredAgentSessionOwnerProbe } from '../../runtime/structured-agent-session-runtime'
 import {
   AgentSessionPreSpawnError,
   type StructuredAgentSessionAdapter
@@ -101,6 +102,66 @@ describe('processless structured session reservation', () => {
       claimStatus: 'released',
       runtimeFence: 2,
       reservedSpawnToken: null
+    })
+  })
+
+  it('consumes stale pre-spawn proof before a retry can spawn', async () => {
+    root = await mkdtemp(join(tmpdir(), 'orca-processless-retry-'))
+    const storeDir = join(root, 'store')
+    const store = await AgentSessionRecordStore.open({ directory: storeDir, hostId: 'local' })
+    const adapter = {
+      acquire: vi
+        .fn<StructuredAgentSessionAdapter['acquire']>()
+        .mockRejectedValueOnce(new AgentSessionPreSpawnError(new Error('launch not ready')))
+        .mockResolvedValueOnce({
+          process: {
+            hostId: 'local',
+            pid: 4242,
+            processStartTimeMs: NOW,
+            spawnToken: 'spawn-a'
+          },
+          link: {
+            linkId: 'link-1',
+            handle: { provider: 'codex', threadId: 'thread-1' },
+            origin: 'created',
+            mintedAtFence: 1,
+            observedAt: NOW
+          }
+        })
+    } as unknown as StructuredAgentSessionAdapter
+    const input = {
+      store,
+      adapter,
+      journalRoot: root,
+      authority: {
+        spawnToken: 'spawn-a',
+        claimKeyId: 'key-1',
+        handoffOperationId: OPERATION,
+        probe: { outcome: 'reservation-unused' as const }
+      },
+      callerKey: 'client-1',
+      params: attachParams(),
+      now: () => NOW,
+      onAttached: () => {}
+    }
+
+    await expect(performAttach(input)).rejects.toThrow('launch not ready')
+    expect(store.getRecord(SESSION)?.lease.processlessAt).toBe(NOW)
+    vi.spyOn(store, 'commitProcessIdentity').mockRejectedValueOnce(new Error('simulated crash'))
+
+    await expect(performAttach(input)).rejects.toThrow('simulated crash')
+
+    const reopened = await AgentSessionRecordStore.open({ directory: storeDir, hostId: 'local' })
+    expect(reopened.getRecord(SESSION)?.lease.processlessAt).toBeNull()
+    await reopened.reconcileOnRestart({
+      probe: createStructuredAgentSessionOwnerProbe('local'),
+      now: NOW + 1
+    })
+    expect(reopened.getRecord(SESSION)?.lease).toMatchObject({
+      claimStatus: 'reserved',
+      handoffStage: 'recovering',
+      runtimeFence: 1,
+      processlessAt: null
     })
   })
 })

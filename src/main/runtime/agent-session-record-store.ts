@@ -42,7 +42,7 @@ import {
   type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
 import {
-  markAgentSessionReservationProcessless,
+  setAgentSessionReservationProcesslessProof,
   type AgentSessionReservationProcesslessProof
 } from './agent-session-processless-reservation'
 import {
@@ -178,11 +178,11 @@ export class AgentSessionRecordStore {
     )
   }
 
-  markReservationProcessless = (
-    args: AgentSessionReservationProcesslessProof
+  setReservationProcesslessProof = (
+    args: AgentSessionReservationProcesslessProof & { processlessAt: number | null }
   ): Promise<AgentSessionRecord> =>
     this.mutate(args.sessionId, (record) =>
-      markAgentSessionReservationProcessless({ ...args, record })
+      setAgentSessionReservationProcesslessProof({ ...args, record })
     )
 
   async proveOwner(args: {
