@@ -5,7 +5,7 @@ import {
   type AgentStartupShell
 } from './tui-agent-startup-shell'
 
-export function isClaudeResumeSelector(token: string): boolean {
+function isClaudeResumeSelector(token: string): boolean {
   if (token === '--resume' || token.startsWith('--resume=')) {
     return true
   }
@@ -28,10 +28,10 @@ function isClaudeExecutableToken(token: string): boolean {
 }
 
 /** Accepts a claude token only in command position — index 0, right after a
- * wrapper's `--`, or preceded solely by NAME=value assignments — so an
- * argument that merely ends in /claude (an ssh key, a project dir) can never
- * be mistaken for the executable. */
-function findClaudeExecutableIndex(tokens: readonly string[]): number {
+ * wrapper's `--`, behind PowerShell's `&` call operator, or preceded solely by
+ * NAME=value assignments — so an argument that merely ends in /claude (an ssh
+ * key, a project dir) can never be mistaken for the executable. */
+function findClaudeExecutableIndex(tokens: readonly string[], shell: AgentStartupShell): number {
   let commandPosition = true
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]
@@ -39,7 +39,10 @@ function findClaudeExecutableIndex(tokens: readonly string[]): number {
       if (isClaudeExecutableToken(token)) {
         return i
       }
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+      if (
+        /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) ||
+        (shell === 'powershell' && token === '&' && i === 0)
+      ) {
         continue
       }
       commandPosition = false
@@ -93,8 +96,21 @@ export function buildClaudeResumeLaunchCommand(
     return appended
   }
   const { tokens, spans } = tokenized
-  const claudeIndex = findClaudeExecutableIndex(tokens)
+  const claudeIndex = findClaudeExecutableIndex(tokens, shell)
   if (claudeIndex === -1) {
+    return appended
+  }
+  // Why: the tokenizers are not shell-aware, so an unquoted operator or a
+  // newline after the claude token means the base chains further commands;
+  // splicing across that boundary would hand the selector to the wrong one.
+  for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
+    const raw = baseCommand.slice(spans[i].start, spans[i].end)
+    const gap = baseCommand.slice(spans[i - 1].end, spans[i].start)
+    if (!/^[ \t]+$/.test(gap) || (raw === tokens[i] && /[;&|<>]/.test(raw))) {
+      return appended
+    }
+  }
+  if (!/^[ \t]*$/.test(baseCommand.slice(spans.at(-1)?.end ?? 0))) {
     return appended
   }
   const cuts: { start: number; end: number }[] = []
@@ -104,6 +120,8 @@ export function buildClaudeResumeLaunchCommand(
     if (token === '--') {
       // Why: claude is the executable here, so `--` is claude's own
       // terminator; the selector must stay in option position before it.
+      // Span-splice equivalent of insertBeforeTerminator in
+      // tui-agent-launch-command.ts, which re-quotes and cannot be reused.
       terminatorStart = spans[i].start
       break
     }

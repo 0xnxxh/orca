@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildClaudeResumeLaunchCommand,
-  isClaudeResumeSelector
-} from './claude-resume-selector-guard'
+import { buildClaudeResumeLaunchCommand } from './agent-resume-launch-command'
 import { buildAgentResumeStartupPlan, buildAgentStartupPlan } from './tui-agent-startup'
 import { tokenizeStartupCommand, type AgentStartupShell } from './tui-agent-startup-shell'
 
@@ -17,15 +14,24 @@ const SHELLS: { platform: NodeJS.Platform; shell: AgentStartupShell }[] = [
   { platform: 'win32', shell: 'cmd' }
 ]
 
-/** Tokenizes a launch command and asserts exactly one identity-bearing resume,
- * using the guard's own selector predicate so `=`-joined forms count too. */
+/** Independent selector oracle — deliberately NOT the implementation's own
+ * predicate, so a regression that shrinks the stripped set cannot also blind
+ * this assertion. */
+function isSelectorShapedToken(token: string): boolean {
+  return (
+    ['--resume', '--continue', '-r', '-c'].includes(token) ||
+    ['--resume=', '--continue=', '-r=', '-c='].some((prefix) => token.startsWith(prefix))
+  )
+}
+
+/** Tokenizes a launch command and asserts exactly one identity-bearing resume. */
 function expectSingleAuthoritativeResume(command: string, shell: AgentStartupShell): void {
   const tokenized = tokenizeStartupCommand(command, shell)
   expect(tokenized.ok).toBe(true)
   if (!tokenized.ok) {
     return
   }
-  const selectors = tokenized.tokens.filter(isClaudeResumeSelector)
+  const selectors = tokenized.tokens.filter(isSelectorShapedToken)
   expect(selectors).toEqual(['--resume'])
   const index = tokenized.tokens.indexOf('--resume')
   expect(tokenized.tokens[index + 1]).toBe(SESSION_ID)
@@ -166,6 +172,42 @@ describe('buildClaudeResumeLaunchCommand', () => {
     expect(buildClaudeResumeLaunchCommand('my-agent-wrapper --resume', RESUME, 'posix')).toBe(
       `my-agent-wrapper --resume '--resume' '${SESSION_ID}'`
     )
+  })
+
+  it.each([
+    'claude -c && echo done',
+    'claude --resume stale; echo hi',
+    'claude --resume stale;echo hi',
+    'claude -c | tee /tmp/log',
+    'claude 2>/tmp/x.log',
+    'claude --resume stale\n--verbose'
+  ])('fails open when the base chains shell syntax after claude: %s', (base) => {
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('still strips when operators are safely quoted', () => {
+    expect(
+      buildClaudeResumeLaunchCommand(
+        "claude --append-system-prompt 'use && wisely' --resume stale",
+        RESUME,
+        'posix'
+      )
+    ).toBe(`claude --append-system-prompt 'use && wisely' '--resume' '${SESSION_ID}'`)
+  })
+
+  it('recognizes claude behind the PowerShell call operator', () => {
+    expect(buildClaudeResumeLaunchCommand("& claude '--resume'", RESUME, 'powershell')).toBe(
+      `& claude '--resume' '${SESSION_ID}'`
+    )
+    expect(
+      buildClaudeResumeLaunchCommand(
+        "& 'C:\\Program Files\\claude\\claude.exe' --resume old",
+        RESUME,
+        'powershell'
+      )
+    ).toBe(`& 'C:\\Program Files\\claude\\claude.exe' '--resume' '${SESSION_ID}'`)
   })
 })
 

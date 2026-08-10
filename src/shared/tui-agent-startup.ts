@@ -20,7 +20,7 @@ import { inlineAgentDraftFitsPlatform } from './agent-draft-platform-limit'
 import type { TuiAgent } from './types'
 import type { SessionOptionValue } from './native-chat-session-options'
 import { resolveAgentLaunchCommand } from './tui-agent-launch-command'
-import { buildAgentResumeLaunchCommand } from './claude-resume-selector-guard'
+import { buildAgentResumeLaunchCommand } from './agent-resume-launch-command'
 
 export type AgentStartupPlan = {
   agent: TuiAgent
