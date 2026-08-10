@@ -13,6 +13,15 @@ export type RuntimeProjectRefreshScheduler = {
   stop: () => void
 }
 
+type RuntimeProjectWorktreeRefreshOptions = {
+  executionHostId: ExecutionHostId
+  deferRemoteLineageRefresh: true
+}
+
+type RuntimeProjectLineageRefreshOptions = {
+  executionHostId: ExecutionHostId
+}
+
 type RefreshEntry = {
   inFlight: boolean
   lastStartedAt: number
@@ -29,7 +38,7 @@ export async function refreshRuntimeProjectWorktrees(
   repos: readonly { id: string }[],
   fetchWorktrees: (
     repoId: string,
-    options: { executionHostId: ExecutionHostId }
+    options: RuntimeProjectWorktreeRefreshOptions
   ) => Promise<unknown>,
   concurrency = DEFAULT_REFRESH_CONCURRENCY
 ): Promise<void> {
@@ -46,7 +55,7 @@ export async function refreshRuntimeProjectWorktrees(
         nextIndex += 1
         const repoId = repos[index].id
         try {
-          await fetchWorktrees(repoId, { executionHostId })
+          await fetchWorktrees(repoId, { executionHostId, deferRemoteLineageRefresh: true })
         } catch (error) {
           failures.push({ repoId, error })
         }
@@ -61,6 +70,22 @@ export async function refreshRuntimeProjectWorktrees(
         .join(', ')}`
     )
   }
+}
+
+export async function refreshRuntimeProjectCatalog(
+  environmentId: string,
+  repos: readonly { id: string }[],
+  fetchWorktrees: (
+    repoId: string,
+    options: RuntimeProjectWorktreeRefreshOptions
+  ) => Promise<unknown>,
+  fetchLineage: (options: RuntimeProjectLineageRefreshOptions) => Promise<unknown>
+): Promise<void> {
+  const executionHostId = toRuntimeExecutionHostId(environmentId)
+  // Why: one failed repo must not prevent the host-wide snapshot from refreshing.
+  await refreshRuntimeProjectWorktrees(environmentId, repos, fetchWorktrees).finally(() =>
+    fetchLineage({ executionHostId })
+  )
 }
 
 export function createRuntimeProjectRefreshScheduler(

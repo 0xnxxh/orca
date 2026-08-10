@@ -3036,6 +3036,61 @@ describe('fetchWorktrees', () => {
     expect(store.getState().sortEpoch).toBe(8)
   })
 
+  it('defers remote lineage when a batch caller owns the host-wide refresh', async () => {
+    const store = createTestStore()
+    const worktree = makeWorktree({
+      id: 'repo1::/remote/wt1',
+      repoId: 'repo1',
+      path: '/remote/wt1',
+      branch: 'refs/heads/remote'
+    })
+    store.setState({ settings: { activeRuntimeEnvironmentId: 'env-1' } as never })
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-1',
+      ok: true,
+      result: makeDetectedResult('repo1', [worktree]),
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+
+    await store.getState().fetchWorktrees('repo1', { deferRemoteLineageRefresh: true })
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(1)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'worktree.detectedList' })
+    )
+    expect(store.getState().worktreesByRepo.repo1).toEqual([worktree])
+  })
+
+  it('defers lineage for an explicitly targeted non-focused runtime', async () => {
+    const store = createTestStore()
+    const worktree = makeWorktree({
+      id: 'repo1::/remote/wt1',
+      repoId: 'repo1',
+      path: '/remote/wt1',
+      branch: 'refs/heads/remote'
+    })
+    store.setState({ settings: { activeRuntimeEnvironmentId: 'env-a' } as never })
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-1',
+      ok: true,
+      result: makeDetectedResult('repo1', [worktree]),
+      _meta: { runtimeId: 'runtime-b' }
+    })
+
+    await store.getState().fetchWorktrees('repo1', {
+      executionHostId: 'runtime:env-b',
+      deferRemoteLineageRefresh: true
+    })
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(1)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-b',
+      method: 'worktree.detectedList',
+      params: { repo: 'repo1' },
+      timeoutMs: 15_000
+    })
+  })
+
   it('updates worktree records when only GitLab link metadata changes', async () => {
     const store = createTestStore()
     const initial = makeWorktree({

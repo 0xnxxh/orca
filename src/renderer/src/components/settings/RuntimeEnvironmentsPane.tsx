@@ -62,6 +62,7 @@ import {
   RemoteServerUpdateStatus
 } from './RemoteServerUpdateStatus'
 import { RuntimeHostAccessForm, type RuntimeHostAccessFailure } from './RuntimeHostAccessForm'
+import { refreshRuntimeProjectCatalog } from '@/hooks/runtime-project-refresh-scheduler'
 
 const LOCAL_RUNTIME_VALUE = '__local__'
 const NO_RUNTIME_VALUE = '__none__'
@@ -674,8 +675,12 @@ export function RuntimeEnvironmentsPane({
       // Why: Connect is not the Active Server selector anymore, but connected
       // hosts should still contribute their projects/workspaces to the sidebar.
       const repos = await store.fetchRuntimeEnvironmentRepos(environment.id)
-      await Promise.all(repos.map((repo) => useAppStore.getState().fetchWorktrees(repo.id)))
-      await useAppStore.getState().fetchWorktreeLineage()
+      await refreshRuntimeProjectCatalog(
+        environment.id,
+        repos,
+        (repoId, options) => useAppStore.getState().fetchWorktrees(repoId, options),
+        (options) => useAppStore.getState().fetchWorktreeLineage(options)
+      )
       if (mountedRef.current) {
         toast.success(
           translate(

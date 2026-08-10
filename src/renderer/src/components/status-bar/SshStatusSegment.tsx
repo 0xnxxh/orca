@@ -36,20 +36,25 @@ import {
   runtimeHostConnectionState,
   runtimeStatusForOverall
 } from '@/runtime/runtime-host-connection-state'
+import { refreshRuntimeProjectCatalog } from '@/hooks/runtime-project-refresh-scheduler'
 
 export async function connectRuntimeHostForNavigation(args: {
   environmentId: string
   refreshStatus: (environmentId: string, timeoutMs: number) => Promise<boolean>
   fetchRepos: (environmentId: string) => Promise<{ id: string }[]>
-  fetchWorktrees: (repoId: string) => Promise<unknown>
-  fetchLineage: () => Promise<unknown>
+  fetchWorktrees: Parameters<typeof refreshRuntimeProjectCatalog>[2]
+  fetchLineage: Parameters<typeof refreshRuntimeProjectCatalog>[3]
 }): Promise<boolean> {
   if (!(await args.refreshStatus(args.environmentId, 5_000))) {
     return false
   }
   const repos = await args.fetchRepos(args.environmentId)
-  await Promise.all(repos.map((repo) => args.fetchWorktrees(repo.id)))
-  await args.fetchLineage()
+  await refreshRuntimeProjectCatalog(
+    args.environmentId,
+    repos,
+    args.fetchWorktrees,
+    args.fetchLineage
+  )
   return true
 }
 

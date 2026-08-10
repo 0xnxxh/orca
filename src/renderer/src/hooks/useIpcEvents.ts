@@ -104,7 +104,7 @@ import {
 } from '@/runtime/runtime-environment-ssh-state'
 import {
   createRuntimeProjectRefreshScheduler,
-  refreshRuntimeProjectWorktrees
+  refreshRuntimeProjectCatalog
 } from './runtime-project-refresh-scheduler'
 import { createRuntimeClientEventsSync } from './runtime-client-events-sync'
 import { detectLanguage } from '@/lib/language-detect'
@@ -798,7 +798,10 @@ export function useIpcEvents(): void {
         options?.forceLocalOwner
           ? { forceLocalOwner: true }
           : options?.executionHostId
-            ? { executionHostId: options.executionHostId }
+            ? {
+                executionHostId: options.executionHostId,
+                deferRemoteLineageRefresh: true
+              }
             : undefined
       )
       await useAppStore
@@ -869,7 +872,7 @@ export function useIpcEvents(): void {
         startup,
         defaultTabs
       }: Extract<RuntimeClientEvent, { type: 'activateWorktree' }>,
-      options: { allowRuntimeEnvironment: boolean }
+      options: { allowRuntimeEnvironment: boolean; executionHostId?: ExecutionHostId }
     ): Promise<void> => {
       if (!options.allowRuntimeEnvironment && isRuntimeEnvironmentActive()) {
         // Why: local CLI worktree events carry local ids; runtime activation comes via the remote stream, allowed separately.
@@ -877,7 +880,12 @@ export function useIpcEvents(): void {
       }
       const existedBeforeFetch = Boolean(useAppStore.getState().getKnownWorktreeById(worktreeId))
       // Why: fetch first so activation can resolve the CLI-created worktree; it arrived from main, not yet in renderer state.
-      await useAppStore.getState().fetchWorktrees(repoId)
+      // Keep lineage enabled because a transport gap can drop the preceding worktreesChanged event.
+      await (options.executionHostId
+        ? useAppStore.getState().fetchWorktrees(repoId, {
+            executionHostId: options.executionHostId
+          })
+        : useAppStore.getState().fetchWorktrees(repoId))
       const existsAfterFetch = Boolean(useAppStore.getState().getKnownWorktreeById(worktreeId))
       // Why: use the canonical activation path so the CLI switch records a back/forward visit, or the nav buttons ignore it.
       activateAndRevealWorktree(worktreeId, {
@@ -905,12 +913,12 @@ export function useIpcEvents(): void {
         // Why: refresh the env's SSH bucket on (re)connect so a pre-drop snapshot can't keep a reconnect overlay stale.
         void hydrateRuntimeEnvironmentSshState(environmentId, { force: true }).catch(() => {})
         const repos = await useAppStore.getState().fetchRuntimeEnvironmentRepos(environmentId)
-        await refreshRuntimeProjectWorktrees(environmentId, repos, (repoId, options) =>
-          useAppStore.getState().fetchWorktrees(repoId, options)
+        await refreshRuntimeProjectCatalog(
+          environmentId,
+          repos,
+          (repoId, options) => useAppStore.getState().fetchWorktrees(repoId, options),
+          (options) => useAppStore.getState().fetchWorktreeLineage(options)
         )
-        await useAppStore.getState().fetchWorktreeLineage({
-          executionHostId: toRuntimeExecutionHostId(environmentId)
-        })
       },
       onError: (error) => {
         console.error('Failed to refresh runtime projects:', error)
@@ -973,7 +981,12 @@ export function useIpcEvents(): void {
         return
       }
       void ensureRuntimeEventRepoKnown(environmentId, event.repoId)
-        .then(() => activateNotifiedWorktree(event, { allowRuntimeEnvironment: true }))
+        .then(() =>
+          activateNotifiedWorktree(event, {
+            allowRuntimeEnvironment: true,
+            executionHostId: toRuntimeExecutionHostId(environmentId)
+          })
+        )
         .catch((error) => {
           console.error('Failed to activate runtime-created worktree:', error)
         })

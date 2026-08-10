@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createRuntimeProjectRefreshScheduler,
+  refreshRuntimeProjectCatalog,
   refreshRuntimeProjectWorktrees
 } from './runtime-project-refresh-scheduler'
 
@@ -16,11 +17,63 @@ describe('refreshRuntimeProjectWorktrees', () => {
 
     expect(fetchWorktrees).toHaveBeenCalledTimes(2)
     expect(fetchWorktrees).toHaveBeenNthCalledWith(1, 'same-repo', {
-      executionHostId: 'runtime:env-1'
+      executionHostId: 'runtime:env-1',
+      deferRemoteLineageRefresh: true
     })
     expect(fetchWorktrees).toHaveBeenNthCalledWith(2, 'same-repo', {
-      executionHostId: 'runtime:env-1'
+      executionHostId: 'runtime:env-1',
+      deferRemoteLineageRefresh: true
     })
+  })
+
+  it('refreshes host-wide lineage once after a large repo batch', async () => {
+    const fetchWorktrees = vi.fn().mockResolvedValue(true)
+    const fetchLineage = vi.fn().mockResolvedValue(undefined)
+    const repos = Array.from({ length: 40 }, (_, index) => ({ id: `repo-${index}` }))
+
+    await refreshRuntimeProjectCatalog('env-1', repos, fetchWorktrees, fetchLineage)
+
+    expect(fetchWorktrees).toHaveBeenCalledTimes(40)
+    for (const [repoId, options] of fetchWorktrees.mock.calls) {
+      expect(repoId).toMatch(/^repo-\d+$/)
+      expect(options).toEqual({
+        executionHostId: 'runtime:env-1',
+        deferRemoteLineageRefresh: true
+      })
+    }
+    expect(fetchLineage).toHaveBeenCalledOnce()
+    expect(fetchLineage).toHaveBeenCalledWith({ executionHostId: 'runtime:env-1' })
+  })
+
+  it('refreshes host-wide lineage when the host has no repos', async () => {
+    const fetchWorktrees = vi.fn()
+    const fetchLineage = vi.fn().mockResolvedValue(undefined)
+
+    await refreshRuntimeProjectCatalog('env-1', [], fetchWorktrees, fetchLineage)
+
+    expect(fetchWorktrees).not.toHaveBeenCalled()
+    expect(fetchLineage).toHaveBeenCalledOnce()
+    expect(fetchLineage).toHaveBeenCalledWith({ executionHostId: 'runtime:env-1' })
+  })
+
+  it('still refreshes host-wide lineage when a repo callback rejects', async () => {
+    const fetchWorktrees = vi.fn((repoId: string) =>
+      repoId === 'repo-b' ? Promise.reject(new Error('scan failed')) : Promise.resolve(true)
+    )
+    const fetchLineage = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      refreshRuntimeProjectCatalog(
+        'env-1',
+        [{ id: 'repo-a' }, { id: 'repo-b' }],
+        fetchWorktrees,
+        fetchLineage
+      )
+    ).rejects.toThrow('Failed to refresh 1 runtime project worktree(s): repo-b')
+
+    expect(fetchWorktrees).toHaveBeenCalledTimes(2)
+    expect(fetchLineage).toHaveBeenCalledOnce()
+    expect(fetchLineage).toHaveBeenCalledWith({ executionHostId: 'runtime:env-1' })
   })
 })
 
