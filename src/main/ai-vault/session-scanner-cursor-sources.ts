@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import {
   cursorBucketForCwd,
+  cursorContextPathForHash,
   cursorLegacySlug,
   cursorSessionActivityMtimeMs,
   cursorScopeCwdCandidates,
@@ -71,16 +72,7 @@ async function discoverCursorSidecars(args: {
   issues: AiVaultScanIssue[]
 }): Promise<SessionFileDiscovery> {
   const startedAt = Date.now()
-  const rawScopePaths = args.options.scopePaths ?? []
-  // Detect truncation on the raw caller list before any conversion work/cap.
-  const scopePathsTruncated = rawScopePaths.length > CURSOR_SCOPE_PATH_LIMIT
-  const scopePaths = await localScopeCandidates({
-    ...args,
-    options: {
-      ...args.options,
-      scopePaths: rawScopePaths.slice(0, CURSOR_SCOPE_PATH_LIMIT)
-    }
-  })
+  const scopePaths = localSidecarScopeCandidates(args)
   let discovery
   try {
     discovery = await discoverLocalCursorSidecarsBounded({
@@ -112,17 +104,6 @@ async function discoverCursorSidecars(args: {
     ...discovery.counters,
     elapsedMs: Math.max(0, Date.now() - startedAt)
   }
-  const truncated = {
-    ...discovery.truncated,
-    scopePaths: discovery.truncated.scopePaths || scopePathsTruncated
-  }
-  if (scopePathsTruncated && !discovery.truncated.scopePaths) {
-    args.issues.push({
-      agent: 'cursor',
-      path: 'cursor sidecar scan',
-      message: 'Cursor sidecar scan truncated by the scope paths limit.'
-    })
-  }
   if (!discovery.rootRealPath) {
     return {
       agent: 'cursor',
@@ -131,7 +112,7 @@ async function discoverCursorSidecars(args: {
       cursorLayout: 'sidecar',
       cursorStorageContextKey: args.roots.storageContextKey,
       cursorDiscoveryCounters: counters,
-      cursorDiscoveryTruncated: truncated
+      cursorDiscoveryTruncated: discovery.truncated
     }
   }
 
@@ -152,7 +133,7 @@ async function discoverCursorSidecars(args: {
     cursorCwdEvidenceByPath: discovery.evidenceByPath,
     cursorExpectedRootRealPath: discovery.rootRealPath,
     cursorDiscoveryCounters: counters,
-    cursorDiscoveryTruncated: truncated
+    cursorDiscoveryTruncated: discovery.truncated
   }
 }
 
@@ -208,7 +189,7 @@ async function localScopeCandidates(args: {
   options: AiVaultScanOptions
 }): Promise<string[]> {
   const candidates = new Set<string>()
-  for (const scopePath of args.options.scopePaths ?? []) {
+  for (const scopePath of (args.options.scopePaths ?? []).slice(0, CURSOR_SCOPE_PATH_LIMIT)) {
     for (const cwd of cursorScopeCwdCandidates({
       scopePath,
       platform: args.roots.targetPlatform,
@@ -227,6 +208,24 @@ async function localScopeCandidates(args: {
       }
     } catch {
       // A scope path need not exist in every selected storage context.
+    }
+  }
+  return [...candidates]
+}
+
+function localSidecarScopeCandidates(args: {
+  roots: CursorRootPair
+  options: AiVaultScanOptions
+}): string[] {
+  const candidates = new Set<string>()
+  for (const scopePath of args.options.scopePaths ?? []) {
+    const candidate = cursorContextPathForHash(
+      scopePath,
+      args.roots.storageContextKey,
+      args.roots.targetPlatform
+    )
+    if (candidate) {
+      candidates.add(candidate)
     }
   }
   return [...candidates]

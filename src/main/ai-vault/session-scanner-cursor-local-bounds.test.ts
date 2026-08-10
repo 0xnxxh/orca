@@ -179,6 +179,52 @@ describe('local Cursor sidecar discovery bounds', () => {
     expect(result.truncated.buckets).toBe(true)
   })
 
+  it('keeps lowercase Windows scope buckets exact through the 64-path cap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-win-scope-cap-'))
+    tempRoots.push(root)
+    const roots = isolatedScanRoots(root)
+    const scopePaths = Array.from(
+      { length: CURSOR_REMOTE_MAX_SCOPE_PATHS - 1 },
+      (_, index) => `c:\\workspaces\\repo-${String(index).padStart(3, '0')}`
+    )
+    let targetScope = ''
+    for (let index = 0; !targetScope; index += 1) {
+      const candidate = `c:\\workspaces\\target-${index}`
+      if (cursorBucketForCwd(candidate, 'win32').startsWith('f')) {
+        targetScope = candidate
+      }
+    }
+    scopePaths.push(targetScope)
+    const targetBucket = cursorBucketForCwd(targetScope, 'win32')
+    const targetMeta = await addSession(
+      roots.cursorChatsDir,
+      targetBucket,
+      'lowercase-drive-session'
+    )
+
+    await Promise.all(
+      Array.from({ length: CURSOR_REMOTE_MAX_BUCKETS }, (_, index) =>
+        mkdir(join(roots.cursorChatsDir, index.toString(16).padStart(32, '0')), {
+          recursive: true
+        })
+      )
+    )
+
+    const result = await scanAiVaultSessions({
+      ...roots,
+      platform: 'win32',
+      executionHostId: 'local',
+      scopePaths,
+      limit: 5
+    })
+
+    expect(result.sessions.some((session) => session.filePath === targetMeta)).toBe(true)
+    expect(result.sessions.find((session) => session.filePath === targetMeta)?.cwd).toBe(
+      targetScope
+    )
+    expect(result.issues.some((issue) => issue.message.includes('scope paths limit'))).toBe(false)
+  })
+
   it('detects scope-path truncation before applying the cap', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-scope-trunc-'))
     tempRoots.push(root)
