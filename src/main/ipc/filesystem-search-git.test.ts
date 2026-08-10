@@ -15,6 +15,7 @@ vi.mock('child_process', () => ({
 import { searchWithGitGrep } from './filesystem-search-git'
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
 import { GIT_GREP_MAX_RECORD_BYTES } from '../../shared/text-search'
 
 function createMockProcess(): ChildProcess {
@@ -215,12 +216,15 @@ describe('filesystem-search-git', () => {
         wslDistro: 'Ubuntu'
       })
       const stdout = proc.stdout as unknown as EventEmitter
-      const chunk = 'x'.repeat(1024 * 1024)
-      for (let bytes = 0; bytes <= GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
+      const chunk = Buffer.alloc(1024 * 1024, 0x78)
+      for (let bytes = 0; bytes < GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
         stdout.emit('data', chunk)
       }
 
+      expect(proc.kill).not.toHaveBeenCalled()
+      stdout.emit('data', Buffer.from('x'))
       expect(proc.kill).toHaveBeenCalledTimes(1)
+      expect(proc.stdout!.setEncoding).not.toHaveBeenCalled()
       await expect(promise).resolves.toMatchObject({ truncated: true })
       const [binary, wslArgs] = spawnMock.mock.calls[0]
       expect(binary).toBe('wsl.exe')
@@ -229,6 +233,24 @@ describe('filesystem-search-git', () => {
     } finally {
       Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }
+  })
+
+  it('counts raw subprocess bytes before UTF-8 replacement decoding', async () => {
+    const proc = createMockProcess()
+    const stdout = new PassThrough()
+    ;(proc as unknown as Record<string, unknown>).stdout = stdout
+    spawnMock.mockReturnValue(proc)
+
+    const promise = searchWithGitGrep('/mock/root', { query: 'ok', rootPath: '/mock/root' }, 100)
+    stdout.write(Buffer.alloc(Math.floor(GIT_GREP_MAX_RECORD_BYTES / 3) + 1, 0xff))
+    stdout.write(Buffer.from('\nvalid.ts\x001\x00ok\n'))
+    proc.emit('close')
+
+    await expect(promise).resolves.toMatchObject({
+      files: [{ relativePath: 'valid.ts', matchCount: 1 }],
+      totalMatches: 1,
+      truncated: false
+    })
   })
 
   it('skips lines without null separator', async () => {

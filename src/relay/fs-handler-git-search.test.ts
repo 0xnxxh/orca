@@ -64,12 +64,15 @@ describe('relay git grep fallback', () => {
 
     const promise = searchWithGitGrep('/remote/folder-workspace', 'ok', { maxResults: 100 })
     const stdout = proc.stdout as unknown as EventEmitter
-    const chunk = 'x'.repeat(1024 * 1024)
-    for (let bytes = 0; bytes <= GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
+    const chunk = Buffer.alloc(1024 * 1024, 0x78)
+    for (let bytes = 0; bytes < GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
       stdout.emit('data', chunk)
     }
 
+    expect(proc.kill).not.toHaveBeenCalled()
+    stdout.emit('data', Buffer.from('x'))
     expect(proc.kill).toHaveBeenCalledTimes(1)
+    expect(proc.stdout!.setEncoding).not.toHaveBeenCalled()
     await expect(promise).resolves.toMatchObject({ truncated: true })
   })
 })

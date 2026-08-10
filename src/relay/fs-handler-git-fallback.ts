@@ -311,7 +311,7 @@ export function searchWithGitGrep(
       }
     }
 
-    function handleStdoutData(chunk: string): void {
+    function handleStdoutData(chunk: Buffer): void {
       if (!stdoutLines.push(chunk, processLine)) {
         acc.truncated = true
         child.kill()
@@ -335,7 +335,6 @@ export function searchWithGitGrep(
       resolveOnce()
     }
 
-    child.stdout!.setEncoding('utf-8')
     child.stdout!.on('data', handleStdoutData)
     child.stderr!.on('data', handleStderrData)
     child.once('error', handleError)
