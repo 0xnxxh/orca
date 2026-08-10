@@ -4,6 +4,7 @@ import {
   CURSOR_REMOTE_MAX_AGGREGATE_BYTES,
   CURSOR_SIDECAR_MAX_BYTES
 } from '../../shared/cursor-sidecar-scan'
+import { isCursorSidecarScanCancelledError } from '../../shared/cursor-sidecar-scan-discovery'
 import type { ActiveSpan } from '../observability/tracer'
 import { parseAgentSessionFileCached } from './session-scanner-parse-cache'
 import type { SessionParseStats } from './session-scanner-parse-cache'
@@ -98,6 +99,8 @@ type VerifiedReadTracker = {
     }
   >
   aggregateReturnedBytes: number
+  /** Serializes reserve/read/commit so concurrent parses cannot overshoot the cap. */
+  gate: Promise<void>
 }
 
 function createVerifiedReadTracker(
@@ -124,7 +127,24 @@ function createVerifiedReadTracker(
       truncated: discovery.cursorDiscoveryTruncated
     })
   }
-  return { byStorageKey, aggregateReturnedBytes: 0 }
+  return { byStorageKey, aggregateReturnedBytes: 0, gate: Promise.resolve() }
+}
+
+async function withVerifiedReadGate<T>(
+  tracker: VerifiedReadTracker,
+  run: () => Promise<T>
+): Promise<T> {
+  const previous = tracker.gate
+  let release!: () => void
+  tracker.gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await previous
+  try {
+    return await run()
+  } finally {
+    release()
+  }
 }
 
 async function parseCursorGroups(
@@ -161,43 +181,7 @@ async function parseCursorCandidate(
   const layout = candidate.cursorLayout ?? 'legacy'
   try {
     if (layout === 'sidecar') {
-      if (verifiedReads.aggregateReturnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
-        const bucket = verifiedReads.byStorageKey.get(candidate.cursorStorageContextKey ?? 'native')
-        if (bucket) {
-          bucket.truncated.sidecarBytes = true
-        }
-        return null
-      }
-      const result = await parseCursorSidecarFileCached({
-        file: candidate.file,
-        platform: args.platform,
-        executionHostId: args.executionHostId,
-        expectedRootRealPath: candidate.cursorExpectedRootRealPath
-      })
-      const storage = verifiedReads.byStorageKey.get(candidate.cursorStorageContextKey ?? 'native')
-      if (!result.cacheHit && storage) {
-        const readBytes = Math.min(candidate.file.sizeBytes ?? 0, CURSOR_SIDECAR_MAX_BYTES)
-        if (verifiedReads.aggregateReturnedBytes + readBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
-          storage.truncated.sidecarBytes = true
-          storage.counters.boundedReads += 1
-          return null
-        }
-        storage.counters.boundedReads += 1
-        storage.counters.returnedBytes += readBytes
-        verifiedReads.aggregateReturnedBytes += readBytes
-      }
-      if (result.issue) {
-        args.issues.push(result.issue)
-      }
-      return result.evidence
-        ? {
-            layout,
-            storageContextKey: candidate.cursorStorageContextKey ?? 'native',
-            file: candidate.file,
-            cwdEvidence: candidate.cursorCwdEvidence,
-            sidecar: result.evidence
-          }
-        : null
+      return await parseSidecarWithAggregateCap(candidate, args, verifiedReads)
     }
     const legacy = await parseAgentSessionFileCached(candidate, args.platform, args.parseStats)
     return legacy
@@ -210,6 +194,9 @@ async function parseCursorCandidate(
         }
       : null
   } catch (error) {
+    if (isCursorSidecarScanCancelledError(error)) {
+      throw error
+    }
     args.issues.push({
       executionHostId: args.executionHostId,
       agent: 'cursor',
@@ -218,4 +205,76 @@ async function parseCursorCandidate(
     })
     return null
   }
+}
+
+async function parseSidecarWithAggregateCap(
+  candidate: SessionFileCandidate,
+  args: {
+    platform: NodeJS.Platform
+    executionHostId: ExecutionHostId
+    issues: AiVaultScanIssue[]
+  },
+  verifiedReads: VerifiedReadTracker
+): Promise<ParsedCursorCandidate | null> {
+  const storageKey = candidate.cursorStorageContextKey ?? 'native'
+  const storage = verifiedReads.byStorageKey.get(storageKey)
+  // Unknown size reserves the per-sidecar max so concurrent admission cannot overshoot.
+  const estimatedBytes =
+    candidate.file.sizeBytes === undefined
+      ? CURSOR_SIDECAR_MAX_BYTES
+      : Math.min(Math.max(0, candidate.file.sizeBytes), CURSOR_SIDECAR_MAX_BYTES)
+
+  // Gate covers reserve → verified read → commit of actual returned bytes.
+  return withVerifiedReadGate(verifiedReads, async () => {
+    if (verifiedReads.aggregateReturnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+      if (storage) {
+        storage.truncated.sidecarBytes = true
+      }
+      return null
+    }
+    if (verifiedReads.aggregateReturnedBytes + estimatedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+      if (storage) {
+        storage.truncated.sidecarBytes = true
+      }
+      return null
+    }
+
+    const result = await parseCursorSidecarFileCached({
+      file: candidate.file,
+      platform: args.platform,
+      executionHostId: args.executionHostId,
+      expectedRootRealPath: candidate.cursorExpectedRootRealPath
+    })
+
+    if (!result.cacheHit) {
+      const readBytes = result.returnedBytes ?? 0
+      if (storage) {
+        // Count the logical verified-read work even when the payload is dropped.
+        storage.counters.boundedReads += 1
+      }
+      if (verifiedReads.aggregateReturnedBytes + readBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+        if (storage) {
+          storage.truncated.sidecarBytes = true
+        }
+        return null
+      }
+      if (storage) {
+        storage.counters.returnedBytes += readBytes
+      }
+      verifiedReads.aggregateReturnedBytes += readBytes
+    }
+
+    if (result.issue) {
+      args.issues.push(result.issue)
+    }
+    return result.evidence
+      ? {
+          layout: 'sidecar' as const,
+          storageContextKey: storageKey,
+          file: candidate.file,
+          cwdEvidence: candidate.cursorCwdEvidence,
+          sidecar: result.evidence
+        }
+      : null
+  })
 }

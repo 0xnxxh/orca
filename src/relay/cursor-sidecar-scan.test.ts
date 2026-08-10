@@ -257,6 +257,64 @@ describe('scanCursorSidecars', () => {
     ).rejects.toThrow('cursor_sidecar_scan_cancelled')
   })
 
+  it('rejects when cancellation flips after the first enumeration check', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    await addSession(chatsRoot, 'cccccccccccccccccccccccccccccccc', 'alive')
+    let checks = 0
+    await expect(
+      scanCursorSidecars(defaultCursorSidecarScanRequest(chatsRoot, [], process.platform), {
+        clientId: 1,
+        isStale: () => {
+          checks += 1
+          return checks > 1
+        }
+      })
+    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+  })
+
+  it('retains the newer equal-size session under a tight aggregate byte cap', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const content = 'y'.repeat(70)
+    const bucket = 'dddddddddddddddddddddddddddddddd'
+    await addSession(chatsRoot, bucket, 'aaa-older', content)
+    await addSession(chatsRoot, bucket, 'zzz-newer', content)
+    await setSessionMtime(chatsRoot, bucket, 'aaa-older', 1_000)
+    await setSessionMtime(chatsRoot, bucket, 'zzz-newer', 9_000)
+    const request = defaultCursorSidecarScanRequest(chatsRoot, [], process.platform)
+    request.maxAggregateBytes = 70
+
+    const result = await scanCursorSidecars(request, context)
+    expect(result.sidecars.map((sidecar) => sidecar.sessionId)).toEqual(['zzz-newer'])
+    expect(result.counters.returnedBytes).toBe(70)
+    expect(result.truncated.sidecarBytes).toBe(true)
+  })
+
+  it('does not return all 70 large sidecars past the 16 MiB aggregate', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    const payload = `${'{"createdAtMs":1,"updatedAtMs":2,"hasConversation":true,"pad":"'}${'b'.repeat(249_990)}"}`
+    const payloadBytes = Buffer.byteLength(payload, 'utf8')
+    expect(payloadBytes * 70).toBeGreaterThan(16_777_216)
+    for (let index = 0; index < 70; index += 1) {
+      await addSession(chatsRoot, bucket, `s-${String(index).padStart(3, '0')}`, payload)
+    }
+    const result = await scanCursorSidecars(
+      defaultCursorSidecarScanRequest(chatsRoot, [], process.platform),
+      context
+    )
+    expect(result.sidecars.length).toBeLessThan(70)
+    expect(result.counters.returnedBytes).toBeLessThanOrEqual(16_777_216)
+    expect(result.truncated.sidecarBytes).toBe(true)
+    const contentTotal = result.sidecars.reduce(
+      (total, sidecar) => total + Buffer.byteLength(sidecar.content, 'utf8'),
+      0
+    )
+    expect(contentTotal).toBe(result.counters.returnedBytes)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'continues after an unreadable bucket and reports its path',
     async () => {

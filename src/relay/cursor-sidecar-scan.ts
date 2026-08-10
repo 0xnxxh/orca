@@ -16,6 +16,7 @@ import { readVerifiedBoundedTextFile } from '../shared/node-verified-bounded-tex
 import type { RequestContext } from './dispatcher'
 import {
   discoverCursorSidecarCandidates,
+  isCursorSidecarScanCancelledError,
   type CursorSidecarScanCandidate,
   type CursorSidecarScanCaps,
   type CursorSidecarScanCancellation
@@ -61,7 +62,18 @@ async function readCandidates(
 ): Promise<void> {
   for (let index = 0; index < candidates.length; index += 1) {
     throwIfCancelled(context)
+    if (response.counters.returnedBytes >= caps.aggregateBytes) {
+      if (index < candidates.length) {
+        response.truncated.sidecarBytes = true
+      }
+      break
+    }
     const candidate = candidates[index]
+    // Pre-check statted size so we do not open a sidecar that cannot fit.
+    if (response.counters.returnedBytes + candidate.meta.size > caps.aggregateBytes) {
+      response.truncated.sidecarBytes = true
+      break
+    }
     try {
       response.counters.boundedReads++
       const content = await readVerifiedBoundedTextFile(candidate.metaPath, {
@@ -89,6 +101,9 @@ async function readCandidates(
         break
       }
     } catch (error) {
+      if (isCursorSidecarScanCancelledError(error)) {
+        throw error
+      }
       if (!isMissing(error)) {
         addIssue(response, candidate.metaPath, error)
       }

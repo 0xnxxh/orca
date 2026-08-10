@@ -4,6 +4,7 @@ import { lstat, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CursorSidecarScanRequest, CursorSidecarScanResponse } from './cursor-sidecar-scan'
 import {
+  CURSOR_DIR_MAX_ENTRIES_EXAMINED,
   listLexicographicDirectoryNames,
   safeBasename,
   targetPathVariants
@@ -11,6 +12,8 @@ import {
 
 const BUCKET_PATTERN = /^[0-9a-f]{32}$/u
 const BUCKET_READ_CONCURRENCY = 8
+/** Check cancellation every N dirents during cold directory walks. */
+const CANCEL_CHECK_EVERY_DIRENTS = 64
 
 export type CursorSidecarScanCaps = {
   buckets: number
@@ -25,12 +28,21 @@ export type CursorSidecarScanCancellation = {
 }
 
 type Bucket = { name: string; path: string; scopeCwd: string | null }
+type ScanArgs = {
+  caps: CursorSidecarScanCaps
+  response: CursorSidecarScanResponse
+  cancellation: CursorSidecarScanCancellation
+}
 
 export type CursorSidecarScanCandidate = Bucket & {
   sessionId: string
   metaPath: string
   meta: Stats
   store: Stats
+}
+
+export function isCursorSidecarScanCancelledError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'cursor_sidecar_scan_cancelled'
 }
 
 export function cursorSidecarScanCancellationFromSignal(
@@ -59,31 +71,27 @@ export async function discoverCursorSidecarCandidates(args: {
   let rootRealPath: string
   try {
     rootRealPath = await realpath(chatsRoot)
-    args.response.counters.rootReaddir++
   } catch (error) {
+    rethrowCancel(error)
     if (!isMissing(error)) {
       addIssue(args.response, chatsRoot, error)
     }
     return null
   }
+  // First enumeration-phase cancel check (after root resolve, before walks).
   args.cancellation.throwIfCancelled()
 
   const direct = await scopeBuckets(args.request, chatsRoot, pathPlatform, args)
   const enumerated = await enumeratedBuckets(chatsRoot, direct, args)
   const sessions = await retainSessions([...direct.values(), ...enumerated], args)
-  const candidates = await eligibleCandidates(sessions, args)
-  return { rootRealPath, candidates }
+  return { rootRealPath, candidates: await eligibleCandidates(sessions, args) }
 }
 
 async function scopeBuckets(
   request: CursorSidecarScanRequest,
   chatsRoot: string,
   pathPlatform: NodeJS.Platform,
-  args: {
-    caps: CursorSidecarScanCaps
-    response: CursorSidecarScanResponse
-    cancellation: CursorSidecarScanCancellation
-  }
+  args: ScanArgs
 ): Promise<Map<string, Bucket>> {
   // Truncation is measured on the full unique list before the cap slice.
   const paths = [...new Set(request.scopePaths.map((value) => value.trim()).filter(Boolean))].sort()
@@ -99,7 +107,8 @@ async function scopeBuckets(
       for (const cwd of targetPathVariants(resolved, pathPlatform)) {
         cwds.add(cwd)
       }
-    } catch {
+    } catch (error) {
+      rethrowCancel(error)
       // Scope paths are allowed to be absent on the owning host.
     }
     args.cancellation.throwIfCancelled()
@@ -117,26 +126,28 @@ async function scopeBuckets(
 async function enumeratedBuckets(
   chatsRoot: string,
   direct: ReadonlyMap<string, Bucket>,
-  args: {
-    caps: CursorSidecarScanCaps
-    response: CursorSidecarScanResponse
-    cancellation: CursorSidecarScanCancellation
-  }
+  args: ScanArgs
 ): Promise<Bucket[]> {
+  // Cancel check must sit outside the listing try so it is never turned into an issue.
+  args.cancellation.throwIfCancelled()
   try {
+    args.response.counters.rootReaddir++
     const { names, truncated } = await listLexicographicDirectoryNames({
       dirPath: chatsRoot,
       limit: args.caps.buckets,
+      maxEntriesExamined: CURSOR_DIR_MAX_ENTRIES_EXAMINED,
       accept: (name, entry) =>
         entry.isDirectory() &&
         !entry.isSymbolicLink() &&
         BUCKET_PATTERN.test(name) &&
-        !direct.has(name)
+        !direct.has(name),
+      onDirent: createDirentCancelChecker(args.cancellation)
     })
     args.cancellation.throwIfCancelled()
     args.response.truncated.buckets = truncated
     return names.map((name) => ({ name, path: join(chatsRoot, name), scopeCwd: null }))
   } catch (error) {
+    rethrowCancel(error)
     if (!isMissing(error)) {
       addIssue(args.response, chatsRoot, error)
     }
@@ -146,11 +157,7 @@ async function enumeratedBuckets(
 
 async function retainSessions(
   buckets: readonly Bucket[],
-  args: {
-    caps: CursorSidecarScanCaps
-    response: CursorSidecarScanResponse
-    cancellation: CursorSidecarScanCancellation
-  }
+  args: ScanArgs
 ): Promise<(Bucket & { sessionId: string })[]> {
   const retained: (Bucket & { sessionId: string })[] = []
   for (
@@ -158,33 +165,10 @@ async function retainSessions(
     index < buckets.length && retained.length < args.caps.sessions;
     index += BUCKET_READ_CONCURRENCY
   ) {
+    args.cancellation.throwIfCancelled()
     const batch = buckets.slice(index, index + BUCKET_READ_CONCURRENCY)
     const listings = await Promise.all(
-      batch.map(async (bucket) => {
-        try {
-          if (bucket.scopeCwd) {
-            args.response.counters.fileLstat++
-            const stats = await lstat(bucket.path)
-            if (!stats.isDirectory() || stats.isSymbolicLink()) {
-              return { bucket, names: [] as string[], truncated: false }
-            }
-          }
-          args.response.counters.bucketReaddir++
-          const remaining = Math.max(0, args.caps.sessions - retained.length)
-          const listed = await listLexicographicDirectoryNames({
-            dirPath: bucket.path,
-            limit: remaining,
-            accept: (name, entry) =>
-              entry.isDirectory() && !entry.isSymbolicLink() && safeBasename(name)
-          })
-          return { bucket, names: listed.names, truncated: listed.truncated }
-        } catch (error) {
-          if (!isMissing(error)) {
-            addIssue(args.response, bucket.path, error)
-          }
-          return { bucket, names: [] as string[], truncated: false }
-        }
-      })
+      batch.map((bucket) => listBucketSessions(bucket, args, retained.length))
     )
     args.cancellation.throwIfCancelled()
     for (const { bucket, names, truncated } of listings) {
@@ -205,77 +189,126 @@ async function retainSessions(
   return retained
 }
 
-async function eligibleCandidates(
-  sessions: readonly (Bucket & { sessionId: string })[],
-  args: {
-    caps: CursorSidecarScanCaps
-    response: CursorSidecarScanResponse
-    cancellation: CursorSidecarScanCancellation
-  }
-): Promise<CursorSidecarScanCandidate[]> {
-  const candidates: CursorSidecarScanCandidate[] = []
-  let aggregateBytes = 0
-  for (let index = 0; index < sessions.length; index += BUCKET_READ_CONCURRENCY) {
-    const batch = sessions.slice(index, index + BUCKET_READ_CONCURRENCY)
-    const results = await Promise.all(
-      batch.map(async (session): Promise<CursorSidecarScanCandidate | null> => {
-        const sessionDir = join(session.path, session.sessionId)
-        const metaPath = join(sessionDir, 'meta.json')
-        try {
-          args.response.counters.fileLstat += 2
-          const [meta, store] = await Promise.all([
-            lstat(metaPath),
-            lstat(join(sessionDir, 'store.db'))
-          ])
-          if (
-            !meta.isFile() ||
-            meta.isSymbolicLink() ||
-            !store.isFile() ||
-            store.isSymbolicLink()
-          ) {
-            return null
-          }
-          if (meta.size > args.caps.sidecarBytes) {
-            addIssue(
-              args.response,
-              metaPath,
-              new Error('Cursor session metadata exceeds the read limit.')
-            )
-            return null
-          }
-          return { ...session, metaPath, meta, store }
-        } catch (error) {
-          if (!isMissing(error)) {
-            addIssue(args.response, metaPath, error)
-          }
-          return null
-        }
-      })
-    )
-    args.cancellation.throwIfCancelled()
-    for (const result of results) {
-      if (!result) {
-        continue
+async function listBucketSessions(
+  bucket: Bucket,
+  args: ScanArgs,
+  retainedCount: number
+): Promise<{ bucket: Bucket; names: string[]; truncated: boolean }> {
+  try {
+    if (bucket.scopeCwd) {
+      args.response.counters.fileLstat++
+      const stats = await lstat(bucket.path)
+      if (!stats.isDirectory() || stats.isSymbolicLink()) {
+        return { bucket, names: [], truncated: false }
       }
-      if (aggregateBytes + result.meta.size > args.caps.aggregateBytes) {
-        args.response.truncated.sidecarBytes = true
-        return sortCandidates(candidates)
-      }
-      aggregateBytes += result.meta.size
-      candidates.push(result)
     }
+    args.response.counters.bucketReaddir++
+    const listed = await listLexicographicDirectoryNames({
+      dirPath: bucket.path,
+      limit: Math.max(0, args.caps.sessions - retainedCount),
+      maxEntriesExamined: CURSOR_DIR_MAX_ENTRIES_EXAMINED,
+      accept: (name, entry) => entry.isDirectory() && !entry.isSymbolicLink() && safeBasename(name),
+      onDirent: createDirentCancelChecker(args.cancellation)
+    })
+    return { bucket, names: listed.names, truncated: listed.truncated }
+  } catch (error) {
+    rethrowCancel(error)
+    if (!isMissing(error)) {
+      addIssue(args.response, bucket.path, error)
+    }
+    return { bucket, names: [], truncated: false }
   }
-  return sortCandidates(candidates)
 }
 
-function sortCandidates(candidates: CursorSidecarScanCandidate[]): CursorSidecarScanCandidate[] {
-  return candidates.sort(
+async function eligibleCandidates(
+  sessions: readonly (Bucket & { sessionId: string })[],
+  args: ScanArgs
+): Promise<CursorSidecarScanCandidate[]> {
+  // Collect every eligible candidate first, then apply newest-first retention
+  // before the aggregate byte budget (stable lexical ties).
+  const eligible: CursorSidecarScanCandidate[] = []
+  for (let index = 0; index < sessions.length; index += BUCKET_READ_CONCURRENCY) {
+    args.cancellation.throwIfCancelled()
+    const batch = sessions.slice(index, index + BUCKET_READ_CONCURRENCY)
+    const results = await Promise.all(batch.map((session) => inspectSession(session, args)))
+    args.cancellation.throwIfCancelled()
+    for (const result of results) {
+      if (result) {
+        eligible.push(result)
+      }
+    }
+  }
+  return retainByNewestThenAggregate(eligible, args)
+}
+
+async function inspectSession(
+  session: Bucket & { sessionId: string },
+  args: ScanArgs
+): Promise<CursorSidecarScanCandidate | null> {
+  const sessionDir = join(session.path, session.sessionId)
+  const metaPath = join(sessionDir, 'meta.json')
+  try {
+    args.response.counters.fileLstat += 2
+    const [meta, store] = await Promise.all([lstat(metaPath), lstat(join(sessionDir, 'store.db'))])
+    if (!meta.isFile() || meta.isSymbolicLink() || !store.isFile() || store.isSymbolicLink()) {
+      return null
+    }
+    if (meta.size > args.caps.sidecarBytes) {
+      addIssue(
+        args.response,
+        metaPath,
+        new Error('Cursor session metadata exceeds the read limit.')
+      )
+      return null
+    }
+    return { ...session, metaPath, meta, store }
+  } catch (error) {
+    rethrowCancel(error)
+    if (!isMissing(error)) {
+      addIssue(args.response, metaPath, error)
+    }
+    return null
+  }
+}
+
+function retainByNewestThenAggregate(
+  eligible: CursorSidecarScanCandidate[],
+  args: ScanArgs
+): CursorSidecarScanCandidate[] {
+  const ranked = eligible.sort(
     (left, right) =>
       Number(right.scopeCwd !== null) - Number(left.scopeCwd !== null) ||
       Math.max(right.meta.mtimeMs, right.store.mtimeMs) -
         Math.max(left.meta.mtimeMs, left.store.mtimeMs) ||
       `${left.name}\0${left.sessionId}`.localeCompare(`${right.name}\0${right.sessionId}`)
   )
+  const retained: CursorSidecarScanCandidate[] = []
+  let aggregateBytes = 0
+  for (const candidate of ranked) {
+    if (aggregateBytes + candidate.meta.size > args.caps.aggregateBytes) {
+      args.response.truncated.sidecarBytes = true
+      break
+    }
+    aggregateBytes += candidate.meta.size
+    retained.push(candidate)
+  }
+  return retained
+}
+
+function createDirentCancelChecker(cancellation: CursorSidecarScanCancellation): () => void {
+  let seen = 0
+  return () => {
+    seen += 1
+    if (seen % CANCEL_CHECK_EVERY_DIRENTS === 0) {
+      cancellation.throwIfCancelled()
+    }
+  }
+}
+
+function rethrowCancel(error: unknown): void {
+  if (isCursorSidecarScanCancelledError(error)) {
+    throw error
+  }
 }
 
 function addIssue(response: CursorSidecarScanResponse, path: string, error: unknown): void {

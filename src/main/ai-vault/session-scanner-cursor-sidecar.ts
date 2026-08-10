@@ -27,6 +27,8 @@ export type CursorSidecarParseResult = {
   issue: AiVaultScanIssue | null
   /** True when the parse reused an in-memory entry and skipped a verified read. */
   cacheHit?: boolean
+  /** UTF-8 byte length actually returned by the verified read; 0 on cache hit. */
+  returnedBytes?: number
 }
 
 const SIDECAR_CACHE_MAX_ENTRIES = 4096
@@ -55,13 +57,17 @@ export async function parseCursorSidecarFile(args: {
   if (!args.expectedRootRealPath) {
     throw new Error('cursor_sidecar_root_unavailable')
   }
-  return parseCursorSidecarContent({
-    ...args,
-    content: await readVerifiedBoundedTextFile(args.file.path, {
-      expectedRootRealPath: args.expectedRootRealPath,
-      maxBytes: CURSOR_SIDECAR_MAX_BYTES
-    })
+  const content = await readVerifiedBoundedTextFile(args.file.path, {
+    expectedRootRealPath: args.expectedRootRealPath,
+    maxBytes: CURSOR_SIDECAR_MAX_BYTES
   })
+  return {
+    ...parseCursorSidecarContent({
+      ...args,
+      content
+    }),
+    returnedBytes: Buffer.byteLength(content, 'utf8')
+  }
 }
 
 export async function parseCursorSidecarFileCached(args: {
@@ -87,9 +93,13 @@ export async function parseCursorSidecarFileCached(args: {
   ) {
     sidecarCache.delete(args.file.path)
     sidecarCache.set(args.file.path, cached)
-    return { ...cached.result, cacheHit: true }
+    return { ...cached.result, cacheHit: true, returnedBytes: 0 }
   }
   const result = await parseCursorSidecarFile(args)
+  const cacheEntry = {
+    evidence: result.evidence,
+    issue: result.issue
+  }
   sidecarCache.delete(args.file.path)
   sidecarCache.set(args.file.path, {
     mtimeMs: args.file.mtimeMs,
@@ -101,7 +111,7 @@ export async function parseCursorSidecarFileCached(args: {
     platform: args.platform,
     executionHostId: args.executionHostId ?? null,
     expectedRootRealPath: args.expectedRootRealPath ?? null,
-    result
+    result: cacheEntry
   })
   if (sidecarCache.size > SIDECAR_CACHE_MAX_ENTRIES) {
     const oldest = sidecarCache.keys().next()

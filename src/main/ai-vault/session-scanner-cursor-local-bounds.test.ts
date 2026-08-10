@@ -218,6 +218,155 @@ describe('local Cursor sidecar discovery bounds', () => {
     ).rejects.toThrow('cursor_sidecar_scan_cancelled')
   })
 
+  it('rejects on second-phase cancellation instead of resolving with an issue', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-cancel-2nd-'))
+    tempRoots.push(root)
+    const chatsDir = join(root, 'chats')
+    await mkdir(chatsDir, { recursive: true })
+    for (let index = 0; index < 8; index += 1) {
+      await addSession(chatsDir, bucketName(`phase-${index}`), `session-${index}`)
+    }
+    let checks = 0
+    const signal = {
+      get aborted() {
+        checks += 1
+        // First check (post-realpath) passes; later enumeration-phase checks abort.
+        return checks > 1
+      }
+    } as AbortSignal
+    const issues: AiVaultScanIssue[] = []
+    await expect(
+      discoverLocalCursorSidecarsBounded({
+        chatsDir,
+        scopePaths: [],
+        issues,
+        signal
+      })
+    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+    expect(issues.some((issue) => issue.message.includes('cursor_sidecar_scan_cancelled'))).toBe(
+      false
+    )
+  })
+
+  it('caps aggregate verified meta bytes so a 70×~250KiB store cannot return every session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-70-agg-'))
+    tempRoots.push(root)
+    const chatsDir = join(root, 'chats')
+    const bucket = bucketName('aggregate-70')
+    // Adversarial shape: 70 sidecars totaling ~17.5 MiB (> 16 MiB aggregate).
+    const prefix = '{"createdAtMs":1,"updatedAtMs":2,"hasConversation":true,"title":"x","pad":"'
+    const suffix = '"}'
+    const pad = 'a'.repeat(250_069 - Buffer.byteLength(prefix + suffix, 'utf8'))
+    const payload = `${prefix}${pad}${suffix}`
+    const payloadBytes = Buffer.byteLength(payload, 'utf8')
+    expect(payloadBytes).toBe(250_069)
+    expect(payloadBytes * 70).toBe(17_504_830)
+    for (let index = 0; index < 70; index += 1) {
+      const sessionDir = join(chatsDir, bucket, `session-${String(index).padStart(3, '0')}`)
+      await mkdir(sessionDir, { recursive: true })
+      await Promise.all([
+        writeFile(join(sessionDir, 'meta.json'), payload),
+        writeFile(join(sessionDir, 'store.db'), '')
+      ])
+    }
+    const issues: AiVaultScanIssue[] = []
+    const result = await discoverLocalCursorSidecarsBounded({
+      chatsDir,
+      scopePaths: [],
+      issues
+    })
+    const retainedBytes = result.files.reduce((total, file) => total + (file.sizeBytes ?? 0), 0)
+    expect(result.files.length).toBeLessThan(70)
+    expect(result.files.length).toBeGreaterThan(0)
+    expect(retainedBytes).toBeLessThanOrEqual(16_777_216)
+    expect(result.truncated.sidecarBytes).toBe(true)
+    expect(issues.some((issue) => issue.message.includes('sidecar bytes'))).toBe(true)
+  })
+
+  it('applies newest-first mtime retention before the aggregate byte cap', async () => {
+    const { utimes } = await import('node:fs/promises')
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-mtime-ret-'))
+    tempRoots.push(root)
+    const chatsDir = join(root, 'chats')
+    const bucket = bucketName('mtime-pair')
+    const content = `${'x'.repeat(70)}`
+    expect(Buffer.byteLength(content, 'utf8')).toBe(70)
+    // Lexicographically earlier session is older; later name is newer.
+    for (const [sessionId, mtimeMs] of [
+      ['aaa-older', 1_000],
+      ['zzz-newer', 9_000]
+    ] as const) {
+      const sessionDir = join(chatsDir, bucket, sessionId)
+      await mkdir(sessionDir, { recursive: true })
+      const metaPath = join(sessionDir, 'meta.json')
+      await Promise.all([writeFile(metaPath, content), writeFile(join(sessionDir, 'store.db'), '')])
+      const timestamp = new Date(mtimeMs)
+      await Promise.all([
+        utimes(metaPath, timestamp, timestamp),
+        utimes(join(sessionDir, 'store.db'), timestamp, timestamp)
+      ])
+    }
+    const result = await discoverLocalCursorSidecarsBounded({
+      chatsDir,
+      scopePaths: [],
+      issues: []
+      // Force a 70-byte aggregate so only one of the two equal-size sessions fits.
+      // discoverLocalCursorSidecarsBounded uses fixed LOCAL_CAPS; assert via shared
+      // discovery path instead.
+    })
+    // With the default 16MiB cap both fit; exercise the shared helper contract below.
+    expect(result.files.length).toBe(2)
+
+    const { discoverCursorSidecarCandidates, cursorSidecarScanCancellationFromSignal } =
+      await import('../../shared/cursor-sidecar-scan-discovery')
+    const {
+      CURSOR_SIDECAR_SCAN_VERSION,
+      CURSOR_REMOTE_MAX_BUCKETS,
+      CURSOR_REMOTE_MAX_SESSION_DIRS,
+      CURSOR_REMOTE_MAX_SCOPE_PATHS,
+      CURSOR_SIDECAR_MAX_BYTES
+    } = await import('../../shared/cursor-sidecar-scan')
+    const response = {
+      version: CURSOR_SIDECAR_SCAN_VERSION,
+      scopeCwds: [] as string[],
+      sidecars: [] as never[],
+      issues: [] as { path: string; message: string }[],
+      counters: {
+        rootReaddir: 0,
+        bucketReaddir: 0,
+        fileLstat: 0,
+        boundedReads: 0,
+        scopeRealpath: 0,
+        returnedBytes: 0,
+        elapsedMs: 0
+      },
+      truncated: { scopePaths: false, buckets: false, sessionDirs: false, sidecarBytes: false }
+    }
+    const discovery = await discoverCursorSidecarCandidates({
+      request: {
+        version: CURSOR_SIDECAR_SCAN_VERSION,
+        chatsRoot: chatsDir,
+        scopePaths: [],
+        maxBuckets: CURSOR_REMOTE_MAX_BUCKETS,
+        maxSessionDirs: CURSOR_REMOTE_MAX_SESSION_DIRS,
+        maxScopePaths: CURSOR_REMOTE_MAX_SCOPE_PATHS,
+        maxSidecarBytes: CURSOR_SIDECAR_MAX_BYTES,
+        maxAggregateBytes: 70
+      },
+      caps: {
+        buckets: CURSOR_REMOTE_MAX_BUCKETS,
+        sessions: CURSOR_REMOTE_MAX_SESSION_DIRS,
+        scopes: CURSOR_REMOTE_MAX_SCOPE_PATHS,
+        sidecarBytes: CURSOR_SIDECAR_MAX_BYTES,
+        aggregateBytes: 70
+      },
+      response,
+      cancellation: cursorSidecarScanCancellationFromSignal()
+    })
+    expect(discovery?.candidates.map((candidate) => candidate.sessionId)).toEqual(['zzz-newer'])
+    expect(response.truncated.sidecarBytes).toBe(true)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects symlink session dirs without opening store contents',
     async () => {
