@@ -115,6 +115,12 @@ function attachParams(fence: number | null): Record<string, unknown> {
   }
 }
 
+function createIntentParams(): Record<string, unknown> {
+  const worktree = `id:${WORKSPACE}`
+  const fields = { worktree, agent: 'codex' }
+  return { envelope: envelope({ method: 'agentSession.create', fields, fence: null }), ...fields }
+}
+
 function sendParams(text: string, fence: number): Record<string, unknown> {
   const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text }] }
   return { envelope: envelope({ method: 'agentSession.send', fields: { body }, fence }), body }
@@ -125,7 +131,7 @@ function paramsFor(method: string): unknown {
   const fence = 1
   switch (method) {
     case 'agentSession.create':
-      return attachParams(null)
+      return createIntentParams()
     case 'agentSession.ensure':
       return attachParams(fence)
     case 'agentSession.send':
@@ -155,6 +161,16 @@ function runtimeStub(): unknown {
   const cleanups = new Map<string, () => void>()
   return {
     getRuntimeId: () => 'runtime-1',
+    getStructuredAgentSessionCreateSupport: async () => ({ supported: true }),
+    resolveStructuredAgentSessionCreateIntent: async () => {
+      const {
+        envelope: _envelope,
+        providerHandle: _providerHandle,
+        ...resolved
+      } = attachParams(null)
+      return resolved
+    },
+    publishStructuredAgentSessionTab: () => {},
     registerSubscriptionCleanup: (id: string, cleanup: () => void) => cleanups.set(id, cleanup),
     cleanupSubscription: (id: string) => {
       cleanups.get(id)?.()
@@ -212,7 +228,7 @@ describe('cross-version structured agent sessions', () => {
     beforeEach(() => {
       operations = 0
       hostCalls = {
-        attach: vi.fn(async () => ({ ok: true, replayed: false })),
+        attach: vi.fn(async () => ({ ok: true, replayed: false, value: { sessionId: SESSION } })),
         send: vi.fn(async () => ({ ok: true, replayed: false })),
         cancel: vi.fn(async () => ({ ok: true, replayed: false })),
         respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
@@ -264,7 +280,9 @@ describe('cross-version structured agent sessions', () => {
           expect(replies[0], `${method} was refused`).toMatchObject({ ok: true })
         }
         for (const reply of replies) {
-          expect(reply, `${method} was refused`).toMatchObject({ ok: true })
+          expect(reply, `${method} was refused: ${JSON.stringify(reply)}`).toMatchObject({
+            ok: true
+          })
         }
       }
     })
@@ -417,7 +435,7 @@ describe('cross-version structured agent sessions', () => {
     })
 
     it('resumes from the cursor the client held, with no snapshot and no replay', async () => {
-      const created = await answer('agentSession.create', attachParams(null))
+      const created = await answer('agentSession.create', createIntentParams())
       expect(created.ok).toBe(true)
       const first = await answer('agentSession.send', sendParams('before restart', created.fence))
       expect(first.ok).toBe(true)
@@ -447,7 +465,7 @@ describe('cross-version structured agent sessions', () => {
     })
 
     it('refuses a write still fenced to the host generation that died', async () => {
-      const created = await answer('agentSession.create', attachParams(null))
+      const created = await answer('agentSession.create', createIntentParams())
       await bootHost('b')
       const reattached = await reattach(created.fence)
       expect(reattached.fence).toBeGreaterThan(created.fence)

@@ -170,6 +170,12 @@ function attachParams(fence: number | null) {
   }
 }
 
+function createIntentParams() {
+  const worktree = `id:${WORKSPACE}`
+  const fields = { worktree, agent: 'codex' }
+  return { envelope: envelope('agentSession.create', fields, null), ...fields }
+}
+
 let codex: CodexScript
 let root: string
 let dispatcher: RpcDispatcher
@@ -252,6 +258,16 @@ beforeEach(async () => {
   cleanups = new Map()
   const runtime = {
     getRuntimeId: () => 'runtime-1',
+    getStructuredAgentSessionCreateSupport: async () => ({ supported: true }),
+    resolveStructuredAgentSessionCreateIntent: async () => {
+      const {
+        envelope: _envelope,
+        providerHandle: _providerHandle,
+        ...resolved
+      } = attachParams(null)
+      return resolved
+    },
+    publishStructuredAgentSessionTab: () => {},
     ensureStructuredAgentSessionHost: () =>
       ensureStructuredAgentSessionHost({
         stateDirectory: root,
@@ -295,7 +311,7 @@ describe('a structured codex session over agentSession.*', () => {
     expect(getStructuredAgentSessionHost()).toBeNull()
     const created = await ok<{ fence: number; snapshot: { items: unknown[] } }>(
       'agentSession.create',
-      attachParams(null)
+      createIntentParams()
     )
     expect(created.snapshot.items).toEqual([])
     expect(codex.live().calls[0]).toMatchObject({
@@ -448,6 +464,7 @@ describe('a structured codex session over agentSession.*', () => {
     // no page overlaps another, and nothing the live stream showed is missing.
     expect([...older.page.items, ...tail.page.items].map((item) => item.body?.kind)).toEqual([
       'message',
+      'status',
       'message',
       'tool-call',
       'approval',
@@ -456,6 +473,7 @@ describe('a structured codex session over agentSession.*', () => {
     ])
     expect([...older.page.items, ...tail.page.items].map(textOf)).toEqual([
       'list files',
+      '',
       'Two files.',
       '',
       '',
