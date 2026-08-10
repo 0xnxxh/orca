@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import {
   CURSOR_REMOTE_MAX_AGGREGATE_BYTES,
   CURSOR_SIDECAR_MAX_BYTES
@@ -114,6 +115,45 @@ describe('Cursor verified-read budgets by storage context', () => {
       span.end()
     }
   }, 30_000)
+
+  it('stops after a raced sidecar grows past the verified-read limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-oversized-race-'))
+    roots.push(root)
+    const chatsRoot = join(root, '.cursor', 'chats')
+    const files = await Promise.all([
+      addSession(chatsRoot, 'race-first', sidecarPayload(1_000), 2_000),
+      addSession(chatsRoot, 'race-second', sidecarPayload(1_000), 1_000)
+    ])
+    await Promise.all(
+      files.map((file) => writeFile(file.path, sidecarPayload(CURSOR_SIDECAR_MAX_BYTES + 1)))
+    )
+    const discovery = sidecarDiscovery('native', chatsRoot, await realpath(chatsRoot), files)
+    const span = startSpan('cursor-storage-oversized-race-test')
+    const issues: AiVaultScanIssue[] = []
+
+    try {
+      const result = await processLocalCursorCandidates({
+        candidates: discoveryCandidates(discovery),
+        discoveries: [discovery],
+        executionHostId: 'local',
+        issues,
+        limit: 20,
+        parseStats: createSessionParseStats(),
+        platform: 'linux',
+        scopeLimit: 20,
+        span
+      })
+
+      expect(result.sessions).toEqual([])
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(1)
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(0)
+      expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(true)
+      expect(issues).toHaveLength(1)
+      expect(issues[0]?.message).toContain('file_too_large')
+    } finally {
+      span.end()
+    }
+  })
 
   it('does not let native reads consume the WSL ingress budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-budget-'))

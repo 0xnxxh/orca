@@ -103,7 +103,7 @@ type VerifiedReadTracker = {
   budgetsByStorageKey: Map<string, VerifiedReadBudget>
 }
 
-type VerifiedReadBudget = { returnedBytes: number; gate: Promise<void> }
+type VerifiedReadBudget = { chargedBytes: number; gate: Promise<void> }
 
 function createVerifiedReadTracker(
   discoveries: readonly SessionFileDiscovery[] | undefined
@@ -154,7 +154,7 @@ function verifiedReadBudget(tracker: VerifiedReadTracker, storageKey: string): V
   if (existing) {
     return existing
   }
-  const created = { returnedBytes: 0, gate: Promise.resolve() }
+  const created = { chargedBytes: 0, gate: Promise.resolve() }
   tracker.budgetsByStorageKey.set(storageKey, created)
   return created
 }
@@ -243,26 +243,40 @@ async function parseSidecarWithAggregateCap(
   // Gate covers reserve → verified read → commit of actual returned bytes.
   return withVerifiedReadGate(budget, async () => {
     throwIfAiVaultScanCancelled(args.signal)
-    if (budget.returnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+    if (budget.chargedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
       if (storage) {
         storage.truncated.sidecarBytes = true
       }
       return null
     }
-    if (budget.returnedBytes + estimatedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+    if (budget.chargedBytes + estimatedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
       if (storage) {
         storage.truncated.sidecarBytes = true
       }
       return null
     }
 
-    const result = await parseCursorSidecarFileCached({
-      file: candidate.file,
-      platform: args.platform,
-      targetPlatform: candidate.cursorTargetPlatform,
-      executionHostId: args.executionHostId,
-      expectedRootRealPath: candidate.cursorExpectedRootRealPath
-    })
+    let result
+    try {
+      result = await parseCursorSidecarFileCached({
+        file: candidate.file,
+        platform: args.platform,
+        targetPlatform: candidate.cursorTargetPlatform,
+        executionHostId: args.executionHostId,
+        expectedRootRealPath: candidate.cursorExpectedRootRealPath
+      })
+    } catch (error) {
+      if (storage) {
+        storage.counters.boundedReads += 1
+      }
+      if (isVerifiedReadTooLargeError(error)) {
+        budget.chargedBytes = CURSOR_REMOTE_MAX_AGGREGATE_BYTES
+        if (storage) {
+          storage.truncated.sidecarBytes = true
+        }
+      }
+      throw error
+    }
 
     if (!result.cacheHit) {
       const readBytes = result.returnedBytes ?? 0
@@ -271,8 +285,8 @@ async function parseSidecarWithAggregateCap(
         storage.counters.boundedReads += 1
         storage.counters.returnedBytes += readBytes
       }
-      budget.returnedBytes += readBytes
-      if (budget.returnedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+      budget.chargedBytes += readBytes
+      if (budget.chargedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
         if (storage) {
           storage.truncated.sidecarBytes = true
         }
@@ -295,4 +309,8 @@ async function parseSidecarWithAggregateCap(
         }
       : null
   })
+}
+
+function isVerifiedReadTooLargeError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'file_too_large'
 }

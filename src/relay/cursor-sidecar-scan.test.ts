@@ -1,13 +1,18 @@
+import { writeFileSync } from 'node:fs'
 import { chmod, mkdtemp, mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { scanCursorSidecars } from './cursor-sidecar-scan'
-import { defaultCursorSidecarScanRequest } from '../shared/cursor-sidecar-scan'
+import {
+  CURSOR_SIDECAR_MAX_BYTES,
+  defaultCursorSidecarScanRequest
+} from '../shared/cursor-sidecar-scan'
 import { cursorBucketForCwd } from '../main/ai-vault/session-scanner-cursor-paths'
 
 const roots: string[] = []
 const context = { clientId: 1, isStale: () => false }
+const CHECKS_BEFORE_FIRST_VERIFIED_READ = 8
 
 async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'orca-cursor-scan-'))
@@ -285,6 +290,59 @@ describe('scanCursorSidecars', () => {
         }
       })
     ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+  })
+
+  it('rejects when cancellation lands during the final verified sidecar read', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    await addSession(chatsRoot, 'cccccccccccccccccccccccccccccccc', 'alive')
+    let checks = 0
+
+    await expect(
+      scanCursorSidecars(defaultCursorSidecarScanRequest(chatsRoot, [], process.platform), {
+        clientId: 1,
+        isStale: () => {
+          checks += 1
+          return checks > CHECKS_BEFORE_FIRST_VERIFIED_READ
+        }
+      })
+    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+  })
+
+  it('stops after a raced sidecar grows past the verified-read limit', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd'
+    await Promise.all([
+      addSession(chatsRoot, bucket, 'first'),
+      addSession(chatsRoot, bucket, 'second')
+    ])
+    let checks = 0
+
+    const result = await scanCursorSidecars(
+      defaultCursorSidecarScanRequest(chatsRoot, [], process.platform),
+      {
+        clientId: 1,
+        isStale: () => {
+          checks += 1
+          if (checks === CHECKS_BEFORE_FIRST_VERIFIED_READ) {
+            for (const sessionId of ['first', 'second']) {
+              writeFileSync(
+                join(chatsRoot, bucket, sessionId, 'meta.json'),
+                'x'.repeat(CURSOR_SIDECAR_MAX_BYTES + 1)
+              )
+            }
+          }
+          return false
+        }
+      }
+    )
+
+    expect(result.sidecars).toEqual([])
+    expect(result.counters.boundedReads).toBe(1)
+    expect(result.counters.returnedBytes).toBe(0)
+    expect(result.truncated.sidecarBytes).toBe(true)
+    expect(result.issues).toContainEqual(expect.objectContaining({ message: 'file_too_large' }))
   })
 
   it('retains the newer equal-size session under a tight aggregate byte cap', async () => {

@@ -80,6 +80,7 @@ async function readCandidates(
         expectedRootRealPath: rootRealPath,
         maxBytes: caps.sidecarBytes
       })
+      throwIfCancelled(context)
       const bytes = Buffer.byteLength(content, 'utf8')
       if (response.counters.returnedBytes + bytes > caps.aggregateBytes) {
         response.truncated.sidecarBytes = true
@@ -106,6 +107,10 @@ async function readCandidates(
       }
       if (!isMissing(error)) {
         addIssue(response, candidate.metaPath, error)
+      }
+      if (isVerifiedReadTooLargeError(error)) {
+        response.truncated.sidecarBytes = true
+        break
       }
     }
   }
@@ -164,6 +169,10 @@ function addIssue(response: CursorSidecarScanResponse, path: string, error: unkn
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code
   return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+function isVerifiedReadTooLargeError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'file_too_large'
 }
 
 function cancellationFromContext(context: RequestContext): CursorSidecarScanCancellation {
