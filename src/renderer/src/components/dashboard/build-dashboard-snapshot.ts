@@ -39,8 +39,10 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
-import { dashboardCardNativeChatMetadata } from './dashboard-card-native-chat'
-import { dashboardNativeChatTabIds } from './dashboard-native-chat-tab-ids'
+import {
+  dashboardCardNativeChatMetadata,
+  dashboardNativeChatByDefault
+} from './dashboard-card-native-chat'
 import {
   dashboardCardMapWorkspaceMetadata,
   collectActiveDashboardWorkspaces
@@ -77,8 +79,7 @@ export type DashboardSnapshotState = Pick<
   | 'settings'
 > &
   DashboardCardContextState &
-  Partial<DashboardCardTerminalInputState & DashboardLaunchDetectionState> &
-  Partial<Pick<AppState, 'unifiedTabsByWorktree'>>
+  Partial<DashboardCardTerminalInputState & DashboardLaunchDetectionState>
 
 /**
  * Derive the serializable dashboard snapshot from the live renderer store.
@@ -100,6 +101,7 @@ export function buildDashboardSnapshot(
   const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
   const showIdle = state.settings?.experimentalAgentDashboardShowIdle === true
+  const nativeChatByDefault = includeCardDetails && dashboardNativeChatByDefault(state.settings)
   const activeWorktrees = collectActiveDashboardWorkspaces(state, includeCardDetails)
   const filterOptions =
     options.includeFilterOptions === false
@@ -126,9 +128,6 @@ export function buildDashboardSnapshot(
   for (const workspace of activeWorktrees) {
     const { repo, worktree } = workspace
     const worktreeId = worktree.id
-    const nativeChatTabIds = includeCardDetails
-      ? dashboardNativeChatTabIds(state, worktreeId)
-      : undefined
     const parentWorktreeId = worktree.parentWorktreeId
     const liveEntries = selectLiveAgentStatusEntriesForWorktree(state, worktreeId)
     const migrationUnsupported = selectMigrationUnsupportedEntriesForWorktree(state, worktreeId)
@@ -278,8 +277,8 @@ export function buildDashboardSnapshot(
                 terminalInput ?? undefined,
                 clientHost.platform
               ),
-              ...(nativeChatTabIds?.has(tabId) === true
-                ? dashboardCardNativeChatMetadata(row.entry.providerSession)
+              ...(nativeChatByDefault
+                ? dashboardCardNativeChatMetadata(row.agentType, row.entry.providerSession)
                 : {})
             }
           : {}),

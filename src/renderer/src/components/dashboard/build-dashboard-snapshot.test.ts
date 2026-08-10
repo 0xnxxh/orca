@@ -7,7 +7,7 @@ import {
 } from '../../../../shared/agent-status-types'
 import { DASHBOARD_MAX_LABEL_LENGTH } from '../../../../shared/dashboard-snapshot'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
-import type { Tab, TerminalTab, Worktree } from '../../../../shared/types'
+import type { TerminalTab, Worktree } from '../../../../shared/types'
 import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-orchestration-batch'
 import type * as DashboardSnapshotWorkspacesModule from './dashboard-snapshot-workspaces'
 import type * as AgentRowLineageModule from './agent-row-lineage'
@@ -76,22 +76,6 @@ function tab(id = TAB_ID, worktreeId = 'w1'): TerminalTab {
     color: null,
     sortOrder: 0,
     createdAt: NOW
-  }
-}
-
-function unifiedTerminalTab(viewMode: Tab['viewMode']): Tab {
-  return {
-    id: 'unified-tab-1',
-    entityId: TAB_ID,
-    groupId: 'group-1',
-    worktreeId: 'w1',
-    contentType: 'terminal',
-    label: 'agent',
-    customLabel: null,
-    color: null,
-    sortOrder: 0,
-    createdAt: NOW,
-    viewMode
   }
 }
 
@@ -215,7 +199,7 @@ describe('buildDashboardSnapshot', () => {
     expect(card.unseen).toBe(true)
   })
 
-  it('carries native-chat session identity and effective tab mode', () => {
+  it('carries native-chat session identity when Chat UI is the default view', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         agentStatusByPaneKey: {
@@ -227,8 +211,7 @@ describe('buildDashboardSnapshot', () => {
             }
           })
         },
-        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
-        settings: { experimentalNativeChat: true } as never
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true } as never
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
@@ -245,8 +228,7 @@ describe('buildDashboardSnapshot', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
-        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
-        settings: { experimentalNativeChat: false }
+        settings: { experimentalNativeChat: false, openAgentTabsInChatByDefault: true }
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
@@ -254,7 +236,7 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0].viewMode).toBeUndefined()
   })
 
-  it('omits native-chat session payload from terminal-mode cards', () => {
+  it('omits native-chat payload when the default view is the terminal', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         agentStatusByPaneKey: {
@@ -266,8 +248,7 @@ describe('buildDashboardSnapshot', () => {
             }
           })
         },
-        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('terminal')] },
-        settings: { experimentalNativeChat: true }
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: false }
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
@@ -275,6 +256,18 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0]).not.toHaveProperty('viewMode')
     expect(snapshot.cards[0]).not.toHaveProperty('sessionId')
     expect(snapshot.cards[0]).not.toHaveProperty('transcriptPath')
+  })
+
+  it('keeps agents without a native-chat renderer in terminal mode', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: { [PANE_KEY]: entry({ agentType: 'aider' }) },
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true }
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+
+    expect(snapshot.cards[0].viewMode).toBeUndefined()
   })
 
   it('marks SSH transcript paths as remote from the dashboard renderer', () => {
@@ -291,8 +284,7 @@ describe('buildDashboardSnapshot', () => {
           }
         ],
         agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
-        unifiedTabsByWorktree: { w1: [unifiedTerminalTab('chat')] },
-        settings: { experimentalNativeChat: true } as never
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true } as never
       }),
       NOW
     )
