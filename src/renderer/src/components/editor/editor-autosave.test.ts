@@ -258,4 +258,20 @@ describe('getOpenFilesForExternalFileChange', () => {
       }).map((file) => file.id)
     ).toEqual(['runtime-edit', 'runtime-diff'])
   })
+  it('matches WSL edit tabs opened from a forward-slash UNC terminal link', () => {
+    // Why: terminal links use //wsl.localhost/Distro/... while file watchers emit \\wsl.localhost\Distro\...
+    const terminalLinkTab = makeOpenFile({
+      id: '//wsl.localhost/Ubuntu/workspace/repo/file.ts',
+      filePath: '//wsl.localhost/Ubuntu/workspace/repo/file.ts',
+      worktreeId: 'wt-wsl'
+    })
+
+    expect(
+      getOpenFilesForExternalFileChange([terminalLinkTab], {
+        worktreeId: 'wt-wsl',
+        worktreePath: '\\\\wsl.localhost\\Ubuntu\\workspace\\repo',
+        relativePath: 'file.ts'
+      }).map((file) => file.id)
+    ).toEqual(['//wsl.localhost/Ubuntu/workspace/repo/file.ts'])
+  })
 })
