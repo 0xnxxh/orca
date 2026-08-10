@@ -10,6 +10,8 @@ type WorktreeDrift = {
   recentSubjects: string[]
 } | null
 
+type TaskDispatchResult = 'dispatched' | 'stale-base-refused'
+
 export type CoordinatorRuntime = {
   sendTerminalAgentPrompt(handle: string, prompt: string): Promise<unknown>
   listTerminals(
@@ -398,7 +400,11 @@ export class Coordinator {
       slotsAvailable--
 
       try {
-        await this.dispatchTask(task, targetHandle, baseDrift)
+        const result = await this.dispatchTask(task, targetHandle, baseDrift)
+        if (result === 'stale-base-refused') {
+          terminals.unshift(targetHandle)
+          slotsAvailable++
+        }
       } catch (err) {
         this.opts.onLog(`Failed to dispatch task ${task.id}: ${String(err)}`)
       }
@@ -409,7 +415,7 @@ export class Coordinator {
     task: TaskRow,
     targetHandle: string,
     baseDrift: WorktreeDrift
-  ): Promise<void> {
+  ): Promise<TaskDispatchResult> {
     // Why (§3.1): drift check runs before createDispatchContext so a refusal doesn't bump failure_count (carried forward as MAX in db.ts:301-306) and burn the circuit-breaker budget; the task stays `ready` and retries next tick.
     const { allowStale, strippedSpec } = parseAllowStaleBaseFromSpec(task.spec)
 
@@ -425,7 +431,7 @@ export class Coordinator {
           `in the task spec to override. Task remains in 'ready'; coordinator ` +
           `will retry on the next tick.`
       )
-      return
+      return 'stale-base-refused'
     }
 
     const dispatchAuthority = this.runtime.getOrchestrationDispatchAuthority?.(targetHandle)
@@ -482,6 +488,7 @@ export class Coordinator {
 
     this.opts.onLog(`Dispatched task ${task.id} to ${targetHandle}`)
     this.state.phase = 'monitoring'
+    return 'dispatched'
   }
 
   private async getAvailableTerminals(): Promise<string[]> {
