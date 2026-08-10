@@ -31,9 +31,12 @@ import {
 } from '@/lib/agent-startup-delayed-delivery'
 import type { PaneForegroundAgentEntry } from '@/store/slices/pane-foreground-agent'
 
-const { resetAndRefreshAllTerminalWebglAtlases } = vi.hoisted(() => ({
-  resetAndRefreshAllTerminalWebglAtlases: vi.fn()
-}))
+const { resetAndRefreshAllTerminalWebglAtlases, scheduleTerminalWebglAtlasRecovery } = vi.hoisted(
+  () => ({
+    resetAndRefreshAllTerminalWebglAtlases: vi.fn(),
+    scheduleTerminalWebglAtlasRecovery: vi.fn()
+  })
+)
 
 // Repro command:
 //   pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts -t "OpenTUI-style small ANSI redraw"
@@ -353,6 +356,10 @@ vi.mock('@/lib/pane-manager/pane-manager-registry', async (importOriginal) => ({
   resetAndRefreshAllTerminalWebglAtlases
 }))
 
+vi.mock('./terminal-webgl-atlas-recovery', () => ({
+  scheduleTerminalWebglAtlasRecovery
+}))
+
 vi.mock('@/store', () => ({
   useAppStore: {
     getState: () => mockStoreState,
@@ -369,6 +376,12 @@ function notifyStoreSubscribers(): void {
   for (const listener of storeSubscribers.slice()) {
     listener(mockStoreState)
   }
+}
+
+function expectNoGlobalAtlasRecovery(): void {
+  // Why: the removed output path requested recovery 200ms before its global reset ran.
+  expect(scheduleTerminalWebglAtlasRecovery).not.toHaveBeenCalled()
+  expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
 }
 
 vi.mock('@/lib/agent-status', async (importOriginal) => {
@@ -12747,7 +12760,7 @@ describe('connectPanePty', () => {
       expect(writes).toEqual([`${startChunk}${plainRowChunk}${endChunk}`])
 
       parseCallbacks[0]?.()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -12787,7 +12800,7 @@ describe('connectPanePty', () => {
       expect(writes.join('')).toBe('\x1b[?2026hbody row\r\ntail\x1b[?2026l')
 
       parseCallbacks[0]?.()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -12825,7 +12838,7 @@ describe('connectPanePty', () => {
       for (const callback of parseCallbacks) {
         callback()
       }
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -12860,7 +12873,7 @@ describe('connectPanePty', () => {
       vi.advanceTimersByTime(50)
 
       parseCallbacks[0]?.()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -12903,7 +12916,7 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('plain after frame')
       vi.advanceTimersByTime(50)
       parseCallbacks.shift()?.()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -12953,7 +12966,7 @@ describe('connectPanePty', () => {
       parseCallbacks.shift()?.()
 
       expect(writes).toEqual(['plain after skipped close\r\n'])
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       vi.useRealTimers()
     }
@@ -17209,7 +17222,7 @@ describe('connectPanePty', () => {
     expect(refresh).not.toHaveBeenCalled()
     parseCallback?.()
     expect(refresh).toHaveBeenCalledWith(0, 39, true)
-    expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+    expectNoGlobalAtlasRecovery()
   })
 
   it('refreshes alternate-screen redraws without clearing the shared glyph atlas', async () => {
@@ -17246,7 +17259,7 @@ describe('connectPanePty', () => {
       )
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17285,7 +17298,7 @@ describe('connectPanePty', () => {
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'alternate'
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17327,7 +17340,7 @@ describe('connectPanePty', () => {
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'alternate'
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17366,7 +17379,7 @@ describe('connectPanePty', () => {
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'normal'
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17403,7 +17416,7 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('\x1b[?1049h\x1b[2J\x1b[Hpager frame\x1b[K\x1b[?1049l')
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17447,7 +17460,7 @@ describe('connectPanePty', () => {
       )
       parseCallback?.()
       expect(refresh).toHaveBeenCalled()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17485,7 +17498,7 @@ describe('connectPanePty', () => {
 
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }
@@ -17516,7 +17529,7 @@ describe('connectPanePty', () => {
 
       capturedDataCallback.current?.('\x1b[?2026hplain claude frame\x1b[?2026l')
       parseCallback?.()
-      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+      expectNoGlobalAtlasRecovery()
     } finally {
       restoreNavigator()
     }

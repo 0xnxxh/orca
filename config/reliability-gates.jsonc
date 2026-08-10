@@ -3656,9 +3656,7 @@
         },
         {
           "file": "src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts",
-          "assertions": [
-            "risky-output atlas recovery is bounded, coalesced, and survives a throwing manager"
-          ]
+          "assertions": ["continues recovery when a manager throws after scheduling"]
         },
         {
           "file": "src/renderer/src/lib/pane-manager/pane-webgl-context-recovery.test.ts",
@@ -8906,7 +8904,7 @@
       "invariant": "Ordinary PTY output must never clear the shared WebGL glyph atlas, including synchronized frames, hidden output, renderer-risk glyphs, and alternate-screen entry, redraw, or exit. Affected visible panes still receive pane-local refresh after parsing. Explicit paste, reveal, visibility-resume, system-resume, context-loss, and confirmed-desync recovery remain available and may reset visible renderers.",
       "oracle": "Parse foreground renderer-risk, synchronized, hidden, and alternate-screen PTY output and require pane-local refresh where needed with zero calls to shared reset-and-refresh recovery. Require the atlas-recovery module to expose only explicit lifecycle entry points, then verify paste and tab reveal still perform their recovery bursts. Dispatch a visible document visibilitychange and require atlas-preserving wake recovery; register one visible manager and 64 hidden managers and require heavy recovery to reset and refresh only the visible manager. Separately, drive an Electron visibility cycle with two real WebGL panes, require zero atlas clears, and retain at least 85% of each pane's baseline ink pixels.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts src/renderer/src/components/terminal-pane/terminal-render-desync-sentinel.test.ts src/renderer/src/lib/pane-manager/pane-webgl-context-recovery.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
         "pnpm run ensure:electron-runtime && pnpm exec playwright test tests/e2e/terminal-document-visibility-webgl-recovery.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "pnpm run ensure:electron-runtime && pnpm exec playwright test tests/e2e/terminal-document-visibility-webgl-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1"
       ],
@@ -8915,6 +8913,8 @@
         "src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts",
         "src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-render-desync-sentinel.test.ts",
+        "src/renderer/src/lib/pane-manager/pane-webgl-context-recovery.test.ts",
         "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
         "tests/e2e/terminal-document-visibility-webgl-recovery.spec.ts"
       ],
@@ -8938,6 +8938,14 @@
           "assertions": ["bounds atlas recovery to visible managers"]
         },
         {
+          "file": "src/renderer/src/components/terminal-pane/terminal-render-desync-sentinel.test.ts",
+          "assertions": ["persists and recovers after the same cells stay missing twice"]
+        },
+        {
+          "file": "src/renderer/src/lib/pane-manager/pane-webgl-context-recovery.test.ts",
+          "assertions": ["recovers a context-lost pane on the next rendering resume"]
+        },
+        {
           "file": "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
           "assertions": [
             "keeps hidden synchronized output off the global atlas recovery path",
@@ -8958,10 +8966,10 @@
           "date": "2026-08-10",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/use-terminal-window-wake-recovery.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-global-effects.test.ts src/renderer/src/components/terminal-pane/terminal-webgl-atlas-recovery.test.ts src/renderer/src/lib/pane-manager/pane-manager-registry.test.ts src/renderer/src/components/terminal-pane/terminal-render-desync-sentinel.test.ts src/renderer/src/lib/pane-manager/pane-webgl-context-recovery.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
           "result": "passed",
-          "durationSeconds": 117,
-          "summary": "All 612 focused renderer contracts passed on the final head for atlas-preserving visibility, visible-only heavy recovery fanout, explicit lifecycle recovery, pane-local foreground redraws, and zero ordinary-output atlas resets."
+          "durationSeconds": 47,
+          "summary": "All 625 focused renderer contracts passed on the final head for atlas-preserving visibility, visible-only heavy recovery fanout, confirmed-desync and context-loss recovery, explicit lifecycle recovery, pane-local foreground redraws, and zero ordinary-output atlas resets."
         },
         {
           "date": "2026-08-01",
@@ -8992,7 +9000,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "Before the change, foreground renderer-risk and alternate-screen PTY writes invoked terminal-output atlas recovery after parsing; hidden synchronized/TUI output also drove the same global path. The updated contracts fail if those paths call shared reset-and-refresh recovery, while explicit lifecycle recovery remains required."
+        "evidence": "Before the change, foreground renderer-risk and alternate-screen PTY writes requested terminal-output atlas recovery after parsing; hidden synchronized/TUI output also drove the same path. The updated oracle spies on that request before its removed 200ms debounce and on the eventual shared reset, while explicit lifecycle recovery remains required."
       },
       "performanceBudget": {
         "required": true,
