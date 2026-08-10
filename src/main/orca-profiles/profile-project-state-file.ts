@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { getDefaultPersistedState, getDefaultWorkspaceSession } from '../../shared/constants'
 import type { ExecutionHostId } from '../../shared/execution-host'
 import { projectHostSetupProjectionFromRepos } from '../../shared/project-host-setup-projection'
+import { normalizePersistedProjectSourceRepoIds } from '../../shared/project-source-repo-id-normalization'
 import type {
   PersistedState,
   Project,
@@ -101,8 +102,9 @@ function isRepoBackedProjectHostSetup(
 }
 
 export function rebuildRepoBackedProjectState(state: TransferProfileState): TransferProfileState {
+  const projects = normalizePersistedProjectSourceRepoIds(state.projects).projects
   const projection = projectHostSetupProjectionFromRepos(state.repos)
-  const existingProjectsById = new Map(state.projects.map((project) => [project.id, project]))
+  const existingProjectsById = new Map(projects.map((project) => [project.id, project]))
   const currentRepoIds = new Set(state.repos.map((repo) => repo.id))
   const projectedProjectIds = new Set(projection.projects.map((project) => project.id))
   const projectedSetupIds = new Set(projection.setups.map((setup) => setup.id))
@@ -113,7 +115,7 @@ export function rebuildRepoBackedProjectState(state: TransferProfileState): Tran
     return !isRepoBackedProjectHostSetup(setup, currentRepoIds)
   })
   const independentProjectIds = new Set(independentSetups.map((setup) => setup.projectId))
-  const independentProjects = state.projects
+  const independentProjects = projects
     .filter(
       (project) => independentProjectIds.has(project.id) && !projectedProjectIds.has(project.id)
     )

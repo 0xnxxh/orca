@@ -247,6 +247,7 @@ import {
   normalizeTuiAgentEnvRecord
 } from '../shared/tui-agent-launch-defaults'
 import { normalizeTerminalCursorStyleDefault } from '../shared/terminal-cursor-style-settings'
+import { normalizePersistedProjectSourceRepoIds } from '../shared/project-source-repo-id-normalization'
 import {
   normalizeOsc52ClipboardDefaultOn,
   osc52ClipboardDefaultOnOverridesPersistedOff
@@ -3224,6 +3225,13 @@ export class Store {
           parsed.settings
         )
         const migratedTerminalCursorStyle = normalizeTerminalCursorStyleDefault(parsed.settings)
+        if (
+          parsed.settings?.terminalCursorStyle !==
+            migratedTerminalCursorStyle.terminalCursorStyle ||
+          parsed.settings?.terminalCursorStyleDefaultedToBlock !== true
+        ) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalLineHeight = normalizeTerminalLineHeight(
           parsed.settings?.terminalLineHeight
         )
@@ -3734,6 +3742,11 @@ export class Store {
       this.loadNeedsSave = true
     }
 
+    const normalizedProjects = normalizePersistedProjectSourceRepoIds(result.projects)
+    if (normalizedProjects.changed) {
+      this.loadNeedsSave = true
+      result = { ...result, projects: normalizedProjects.projects }
+    }
     const repos = clearMissingProjectGroupMemberships(result.repos, result.projectGroups ?? [])
     const projectHostSetupCompatibility = mergeProjectHostSetupCompatibilityState(result, repos)
     if (!projectHostSetupCompatibilityStateEqual(result, projectHostSetupCompatibility)) {
@@ -5802,6 +5815,15 @@ export class Store {
     if ('terminalCustomThemes' in updates) {
       sanitizedUpdates.terminalCustomThemes = normalizeTerminalCustomThemes(
         updates.terminalCustomThemes
+      )
+    }
+    if ('terminalCursorStyle' in updates) {
+      Object.assign(
+        sanitizedUpdates,
+        normalizeTerminalCursorStyleDefault(
+          { terminalCursorStyle: updates.terminalCursorStyle },
+          { preserveExplicitValue: true }
+        )
       )
     }
     if ('terminalScrollbackRows' in updates) {

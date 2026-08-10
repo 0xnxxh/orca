@@ -562,6 +562,34 @@ describe('Store', () => {
     expect(persisted.projectHostSetups).toContainEqual(independentSetup)
   })
 
+  it('normalizes missing persisted project source repo ids before compatibility projection', async () => {
+    const independentProject = makeProject({ id: 'folder-project' })
+    const { sourceRepoIds: _sourceRepoIds, ...malformedProject } = independentProject
+    const independentSetup = makeProjectHostSetup({
+      id: 'folder-project::local',
+      projectId: independentProject.id,
+      repoId: '',
+      path: 'C:\\workspace\\folder-project'
+    })
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      projects: [malformedProject],
+      projectHostSetups: [independentSetup]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjects()).toContainEqual({ ...independentProject, sourceRepoIds: [] })
+    expect(() =>
+      store.getProjects().find((project) => project.sourceRepoIds.includes('missing-repo'))
+    ).not.toThrow()
+    store.flush()
+    expect((readDataFile() as PersistedState).projects).toContainEqual({
+      ...independentProject,
+      sourceRepoIds: []
+    })
+  })
+
   it('updates and persists a project Windows runtime preference', async () => {
     const project = makeProject({
       id: 'project-1',
@@ -5621,6 +5649,42 @@ describe('Store', () => {
     expect(persisted.settings).not.toHaveProperty('terminalScrollbackBytes')
   })
 
+  it('normalizes terminal cursor style before persistence and listener broadcasts', async () => {
+    const store = await createStore()
+    store.updateSettings({ terminalCursorStyle: 'underline' })
+    const listener = vi.fn()
+    store.onSettingsChanged(listener)
+
+    const invalid = store.updateSettings(
+      { terminalCursorStyle: 'beam' as never },
+      { notifyListeners: true }
+    )
+
+    expect(invalid.terminalCursorStyle).toBe('block')
+    expect(invalid.terminalCursorStyleDefaultedToBlock).toBe(true)
+    expect(listener).toHaveBeenCalledWith(
+      {
+        terminalCursorStyle: 'block'
+      },
+      expect.objectContaining({ terminalCursorStyle: 'block' }),
+      undefined
+    )
+
+    const valid = store.updateSettings(
+      { terminalCursorStyle: 'underline' },
+      { notifyListeners: true }
+    )
+    expect(valid.terminalCursorStyle).toBe('underline')
+    expect(listener).toHaveBeenLastCalledWith(
+      { terminalCursorStyle: 'underline' },
+      expect.objectContaining({ terminalCursorStyle: 'underline' }),
+      undefined
+    )
+
+    store.flush()
+    expect((readDataFile() as PersistedState).settings.terminalCursorStyle).toBe('underline')
+  })
+
   it('normalizes disabled TUI agents on load and update', async () => {
     writeFileSync(
       join(testState.dir, 'orca-data.json'),
@@ -7293,6 +7357,22 @@ describe('Store', () => {
     const store = await createStore()
     expect(store.getSettings().terminalCursorStyle).toBe('bar')
     expect(store.getSettings().terminalCursorStyleDefaultedToBlock).toBe(true)
+  })
+
+  it('replaces an invalid persisted terminal cursor choice after migration', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { terminalCursorStyle: 'beam', terminalCursorStyleDefaultedToBlock: true },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+    expect(store.getSettings().terminalCursorStyle).toBe('block')
+    store.flush()
+    expect((readDataFile() as PersistedState).settings.terminalCursorStyle).toBe('block')
   })
 
   it('preserves explicit "false" terminalMacOptionAsAlt through migration', async () => {

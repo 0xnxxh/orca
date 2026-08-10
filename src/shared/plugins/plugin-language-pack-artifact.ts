@@ -23,6 +23,26 @@ export type PluginLanguagePackRegistration = {
   catalog: Record<string, unknown>
 }
 
+export function isPluginLanguagePackRegistration(
+  value: unknown
+): value is PluginLanguagePackRegistration {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const pack = value as Record<string, unknown>
+  return (
+    typeof pack.id === 'string' &&
+    pack.id.startsWith('plugin:') &&
+    typeof pack.resourceLanguage === 'string' &&
+    pack.resourceLanguage === pluginLanguageResourceId(pack.id as `plugin:${string}`) &&
+    typeof pack.pluginKey === 'string' &&
+    typeof pack.locale === 'string' &&
+    typeof pack.catalog === 'object' &&
+    pack.catalog !== null &&
+    !Array.isArray(pack.catalog)
+  )
+}
+
 export function pluginLanguageResourceId(id: `plugin:${string}`): `plugin${string}` {
   let encoded = ''
   for (let index = 0; index < id.length; index += 1) {

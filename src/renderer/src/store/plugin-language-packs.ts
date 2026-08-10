@@ -1,6 +1,9 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import type { PluginLanguagePackRegistration } from '../../../shared/plugins/plugin-language-pack-artifact'
+import {
+  isPluginLanguagePackRegistration,
+  type PluginLanguagePackRegistration
+} from '../../../shared/plugins/plugin-language-pack-artifact'
 
 type PluginLanguagePackState = {
   packs: PluginLanguagePackRegistration[]
@@ -24,7 +27,11 @@ export const usePluginLanguagePackStore = create<PluginLanguagePackState>()((set
       return
     }
     try {
-      const packs = await api.listLanguagePacks()
+      const response = await api.listLanguagePacks()
+      const packs = Array.isArray(response) ? response.filter(isPluginLanguagePackRegistration) : []
+      if (!Array.isArray(response) || packs.length !== response.length) {
+        console.warn('[plugins] Ignoring malformed language-pack list')
+      }
       if (generation === requestGeneration) {
         set({ packs, loaded: true })
       }
