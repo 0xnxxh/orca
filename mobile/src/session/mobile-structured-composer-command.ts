@@ -1,17 +1,28 @@
 import { getVerifiedNativeChatCommands } from '../../../src/shared/native-chat-agent-profiles'
 import type { SlashCommandSuggestion } from '../../../src/shared/native-chat-slash-commands'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
+import type { MobileStructuredAgent } from './mobile-structured-session-create'
 
+const MODEL_COMMAND: SlashCommandSuggestion = {
+  name: 'model',
+  description: 'Choose the model'
+}
 const EFFORT_COMMAND: SlashCommandSuggestion = {
   name: 'effort',
   description: 'Choose reasoning effort'
 }
 
-export const MOBILE_STRUCTURED_SLASH_COMMANDS: readonly SlashCommandSuggestion[] = [
-  ...getVerifiedNativeChatCommands('codex').slice(0, 1),
-  EFFORT_COMMAND,
-  ...getVerifiedNativeChatCommands('codex').slice(1)
-]
+export function mobileStructuredSlashCommands(
+  agent: MobileStructuredAgent
+): readonly SlashCommandSuggestion[] {
+  return [
+    MODEL_COMMAND,
+    EFFORT_COMMAND,
+    ...getVerifiedNativeChatCommands(agent).filter(
+      (command) => command.name !== 'model' && command.name !== 'effort'
+    )
+  ]
+}
 
 export type MobileStructuredCommandOutcome = {
   handled: boolean
@@ -27,10 +38,13 @@ function commandParts(text: string): { name: string; argument: string } | null {
   return match ? { name: match[1]!.toLowerCase(), argument: match[2]?.trim() ?? '' } : null
 }
 
-export function isMobileStructuredComposerCommand(text: string): boolean {
+export function isMobileStructuredComposerCommand(
+  text: string,
+  agent: MobileStructuredAgent
+): boolean {
   const command = commandParts(text)
   return Boolean(
-    command && MOBILE_STRUCTURED_SLASH_COMMANDS.some((entry) => entry.name === command.name)
+    command && mobileStructuredSlashCommands(agent).some((entry) => entry.name === command.name)
   )
 }
 
@@ -44,10 +58,11 @@ function unavailable(name: string): MobileStructuredCommandOutcome {
 
 export async function dispatchMobileStructuredComposerCommand(
   text: string,
-  controller: MobileNativeChatSessionOptionsController
+  controller: MobileNativeChatSessionOptionsController,
+  agent: MobileStructuredAgent
 ): Promise<MobileStructuredCommandOutcome> {
   const command = commandParts(text)
-  if (!command || !isMobileStructuredComposerCommand(text)) {
+  if (!command || !isMobileStructuredComposerCommand(text, agent)) {
     return { handled: false, accepted: false, error: null }
   }
   if (command.name !== 'model' && command.name !== 'effort') {
