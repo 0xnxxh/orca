@@ -79,13 +79,15 @@ export function startFirstWindowStartupServices({
   const daemon = startService('daemon PTY provider', startDaemonPtyProvider, onDaemonError)
   const hooks = startService('agent hook server', startAgentHookServer, onAgentHookServerError)
   let failOpened = false
-  const allServicesReady = Promise.all([daemon.ready, hooks.ready])
+  const startupAuthoritiesReady = Promise.all([daemon.ready, hooks.ready]).then(() => undefined)
+  const wslHookRelayReconciliation = startupAuthoritiesReady
     .then(() => (failOpened ? undefined : reconcileWslHookRelays()))
     .catch(onWslHookRelayReconciliationError)
     .then(() => undefined)
+  void wslHookRelayReconciliation
   let windowTimeout: ReturnType<typeof setTimeout> | null = null
   let failOpenTimeout: ReturnType<typeof setTimeout> | null = null
-  const servicesSettled = allServicesReady.finally(() => {
+  const startupAuthoritiesSettled = startupAuthoritiesReady.finally(() => {
     if (windowTimeout) {
       clearTimeout(windowTimeout)
     }
@@ -102,12 +104,12 @@ export function startFirstWindowStartupServices({
     }, LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS)
   })
   const firstWindowReady = Promise.race([
-    servicesSettled,
+    startupAuthoritiesSettled,
     new Promise<void>((resolve) => {
       windowTimeout = setTimeout(resolve, FIRST_WINDOW_STARTUP_SERVICE_TIMEOUT_MS)
     })
   ])
-  const localPtyReady = Promise.race([servicesSettled, failOpenReady])
+  const localPtyReady = Promise.race([startupAuthoritiesSettled, failOpenReady])
   // Why: destructive routing only needs daemon authority. A stalled optional
   // hook server must not hold terminal close for the full fail-open window.
   const localPtyProviderReady = Promise.race([daemon.ready, failOpenReady])

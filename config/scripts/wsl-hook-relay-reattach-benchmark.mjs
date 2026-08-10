@@ -323,15 +323,15 @@ async function main() {
     // Why: if jiti ever returns a second manager module, our monkey-patch would miss the singleton
     // that ensureWslHookRelayForReattach (loaded via pty.ts) closes over — fail closed now.
     const singletonProbe = []
-    const previousEnsure = wslHookRelayManager.ensureForDistro.bind(wslHookRelayManager)
-    wslHookRelayManager.ensureForDistro = (probedDistro) => {
+    const previousEnsureReady = wslHookRelayManager.ensureForDistroReady.bind(wslHookRelayManager)
+    wslHookRelayManager.ensureForDistroReady = async (probedDistro) => {
       singletonProbe.push(probedDistro)
     }
-    ensureWslHookRelayForReattach(
+    await ensureWslHookRelayForReattach(
       { isReattach: true, wslDistro: '__bench-singleton-probe__' },
       null
     )
-    wslHookRelayManager.ensureForDistro = previousEnsure
+    wslHookRelayManager.ensureForDistroReady = previousEnsureReady
     if (singletonProbe.length !== 1 || singletonProbe[0] !== '__bench-singleton-probe__') {
       throw new Error(
         'jiti duplicated the WSL hook-relay manager graph; reattach patch would not observe pty.ts'
@@ -360,15 +360,15 @@ async function main() {
     // Why: pty.ts refreshes through the production singleton, so route that singleton at the
     // benchmark-scoped manager instead of calling the reattach helper from here — a removed or
     // mislocated integration call in pty.ts must fail this benchmark.
-    wslHookRelayManager.ensureForDistro = (refreshedDistro) => {
+    wslHookRelayManager.ensureForDistroReady = async (refreshedDistro) => {
       relayRefreshes.push(refreshedDistro)
-      manager?.ensureForDistro(refreshedDistro)
+      await manager?.ensureForDistroReady(refreshedDistro)
     }
 
     const { runtime, getController } = createRuntimeStub()
     // Why hooks off: fresh WSL spawn still runs buildPtyHostEnv, which calls ensureForDistro when
     // hooks are on. This bench isolates the reattach call site (ensureWslHookRelayForReattach);
-    // the manager's own hooks gate lives behind the ensureForDistro patch above, so it stays out
+    // the manager's own hooks gate lives behind the ensureForDistroReady patch above, so it stays out
     // of the measurement — `manager` below resolves its own (enabled) managed-hook settings.
     ptyIpc.registerPtyHandlers(
       createRendererWindowStub(),
@@ -474,7 +474,7 @@ async function main() {
       ],
       ensureForDistro: async (startupDistro) => {
         startupDistros.push(startupDistro)
-        await manager.ensureForDistroReady(startupDistro)
+        await manager.ensureRunningDistroForStartup(startupDistro)
       }
     })
     const startupRelayReadyMs = performance.now() - startupStartedAt

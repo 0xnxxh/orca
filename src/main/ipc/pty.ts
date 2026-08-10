@@ -4414,10 +4414,6 @@ export function registerPtyHandlers(
             leafId: preAdoptedStablePane.owner.leafId
           }
         }
-        ensureWslHookRelayForReattach(
-          { isReattach: true, wslDistro: preAdoptedStablePane.result.wslDistro },
-          args.connectionId
-        )
         if (!args.connectionId) {
           options?.onCodexHomePtySpawned?.({
             id: result.id,
@@ -4997,7 +4993,6 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
-          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId
@@ -5006,6 +5001,9 @@ export function registerPtyHandlers(
                 ? expectedWslDistro
                 : result.wslDistro
           )
+          await ensureWslHookRelayForReattach(result, args.connectionId)
+          // Why: the PTY can exit while WSL relay readiness is pending.
+          runtime?.assertPtyRegistrationAllowed?.(result.id, result.incarnationId)
         } catch (err) {
           if (
             (isNewDaemonSession || preparedProvisionalExecutionContext) &&
@@ -6430,7 +6428,6 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
-          ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
             result.id,
             args.connectionId
@@ -6439,6 +6436,9 @@ export function registerPtyHandlers(
                 ? expectedWslDistro
                 : result.wslDistro
           )
+          await ensureWslHookRelayForReattach(result, args.connectionId)
+          // Why: the PTY can exit while WSL relay readiness is pending.
+          runtime?.assertPtyRegistrationAllowed?.(result.id, result.incarnationId)
           spawnTiming.mark('provider_spawn')
         } catch (err) {
           if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {

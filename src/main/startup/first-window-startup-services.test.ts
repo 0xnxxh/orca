@@ -47,7 +47,7 @@ describe('startFirstWindowStartupServices', () => {
     expect(completed).toBe(true)
   })
 
-  it('reconciles after both authorities and keeps local reattach gated until relays are ready', async () => {
+  it('starts reconciliation after both authorities without gating unrelated local PTYs', async () => {
     const events: string[] = []
     let resolveDaemon!: () => void
     let resolveHooks!: () => void
@@ -66,7 +66,10 @@ describe('startFirstWindowStartupServices', () => {
       reconcileWslHookRelays: () =>
         new Promise<void>((resolve) => {
           events.push('relay-reconciliation-started')
-          resolveRelays = resolve
+          resolveRelays = () => {
+            events.push('relay-reconciliation-ready')
+            resolve()
+          }
         }),
       onDaemonError: vi.fn(),
       onAgentHookServerError: vi.fn(),
@@ -80,16 +83,22 @@ describe('startFirstWindowStartupServices', () => {
 
     resolveDaemon()
     await vi.waitFor(() => expect(events).toContain('relay-reconciliation-started'))
+    let firstWindowReady = false
+    void started.firstWindowReady.then(() => {
+      firstWindowReady = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(firstWindowReady).toBe(true)
     let localPtyReady = false
     void started.localPtyReady.then(() => {
       localPtyReady = true
     })
-    await Promise.resolve()
-    expect(localPtyReady).toBe(false)
-
-    resolveRelays()
     await started.localPtyReady
     expect(localPtyReady).toBe(true)
+    expect(events).not.toContain('relay-reconciliation-ready')
+
+    resolveRelays()
+    await vi.waitFor(() => expect(events).toContain('relay-reconciliation-ready'))
   })
 
   it('reports reconciliation failure and still opens the startup gate', async () => {
@@ -104,7 +113,9 @@ describe('startFirstWindowStartupServices', () => {
     })
 
     await expect(started.localPtyReady).resolves.toBeUndefined()
-    expect(onWslHookRelayReconciliationError).toHaveBeenCalledWith(expect.any(Error))
+    await vi.waitFor(() =>
+      expect(onWslHookRelayReconciliationError).toHaveBeenCalledWith(expect.any(Error))
+    )
   })
 
   it('opens the provider gate when daemon startup finishes without waiting for hooks', async () => {
@@ -233,16 +244,19 @@ describe('startFirstWindowStartupServices', () => {
     vi.useFakeTimers()
     const onDaemonError = vi.fn()
     const onAgentHookServerError = vi.fn()
+    const reconcileWslHookRelays = vi.fn(async () => {})
     let daemonSignal: AbortSignal | undefined
 
     try {
       const started = startFirstWindowStartupServices({
         startDaemonPtyProvider: (signal) => {
           daemonSignal = signal
-          return new Promise<void>(() => {})
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
         },
         startAgentHookServer: () => Promise.resolve(),
-        reconcileWslHookRelays: vi.fn(async () => {}),
+        reconcileWslHookRelays,
         onDaemonError,
         onAgentHookServerError,
         onWslHookRelayReconciliationError: vi.fn()
@@ -257,6 +271,7 @@ describe('startFirstWindowStartupServices', () => {
       expect(onDaemonError).toHaveBeenCalledWith(expect.any(Error))
       expect(onAgentHookServerError).not.toHaveBeenCalled()
       expect(daemonSignal?.aborted).toBe(true)
+      expect(reconcileWslHookRelays).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

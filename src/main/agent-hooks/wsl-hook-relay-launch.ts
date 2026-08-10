@@ -249,15 +249,26 @@ export async function launchWslRelayWithInstall(options: {
   onChild: (child: ChildProcessWithoutNullStreams) => void
   onNoNode: () => void
   onFailure: (message: string) => void
+  continueAfterFailure?: () => Promise<boolean>
+  onContinuationBlocked: () => void
   connect: (transport: MultiplexerTransport, child: ChildProcessWithoutNullStreams) => Promise<void>
 }): Promise<void> {
   const { distro, env, bundleJsPath, version, io } = options
   let installTried = false
   let transientRetries = 0
+  let continuationRequiresRunning = false
   for (;;) {
     if (options.isDisposed()) {
       return
     }
+    if (
+      continuationRequiresRunning &&
+      !(await canContinueRelayStartup(options.continueAfterFailure))
+    ) {
+      options.onContinuationBlocked()
+      return
+    }
+    continuationRequiresRunning = false
     const child = io.spawnRelay(distro, env, version)
     options.onChild(child)
     try {
@@ -284,13 +295,19 @@ export async function launchWslRelayWithInstall(options: {
       ) {
         transientRetries++
         await new Promise((resolve) => setTimeout(resolve, io.transientRetryDelayMs))
+        continuationRequiresRunning = true
         continue
       }
       if (!installTried) {
+        if (!(await canContinueRelayStartup(options.continueAfterFailure))) {
+          options.onContinuationBlocked()
+          return
+        }
         installTried = true
         const script = buildGuestInstallScript(io.readBundle(bundleJsPath), version)
         const result = await io.runInstall(distro, script, env)
         if (result.code === 0) {
+          continuationRequiresRunning = true
           continue
         }
         options.onFailure(
@@ -301,6 +318,19 @@ export async function launchWslRelayWithInstall(options: {
       options.onFailure(formatWslRelayFailure(failure))
       return
     }
+  }
+}
+
+async function canContinueRelayStartup(
+  continueAfterFailure: (() => Promise<boolean>) | undefined
+): Promise<boolean> {
+  if (!continueAfterFailure) {
+    return true
+  }
+  try {
+    return await continueAfterFailure()
+  } catch {
+    return false
   }
 }
 

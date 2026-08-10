@@ -15,7 +15,7 @@ const defaultDeps: StartupReconciliationDeps = {
   platform: process.platform,
   listLiveProcesses: listLiveDaemonProcesses,
   listRunningDistros: listRunningWslDistros,
-  ensureForDistro: (distro) => wslHookRelayManager.ensureForDistroReady(distro)
+  ensureForDistro: (distro) => wslHookRelayManager.ensureRunningDistroForStartup(distro)
 }
 
 export async function reconcileWslHookRelaysOnStartup(

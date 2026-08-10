@@ -22,6 +22,7 @@ import {
 import { wireWslRelayLink } from './wsl-hook-relay-link'
 import { WslRelayRecovery } from './wsl-hook-relay-recovery'
 import { wslHookRelayStateKey } from './wsl-hook-relay-state-key'
+import type { WslHookRelayLifecycleState } from './wsl-hook-relay-lifecycle-state'
 import { SshChannelMultiplexer, type MultiplexerTransport } from '../ssh/ssh-channel-multiplexer'
 import { AGENT_HOOK_REQUEST_REPLAY_METHOD } from '../../shared/agent-hook-relay'
 import {
@@ -30,27 +31,10 @@ import {
   wslHookRelayEndpointFilePath
 } from '../../shared/wsl-hook-relay-contract'
 
-type DistroState = {
-  /** Original casing for wsl.exe argv and breadcrumbs; map keys are lowercased. */
-  distro: string
-  phase: 'starting' | 'running' | 'failed'
-  child?: ChildProcessWithoutNullStreams
-  mux?: SshChannelMultiplexer
-  guestHome?: string
-  guestEndpointFilePath?: string
-  opencodeOverlayDir?: string
-  failures: number
-  cooldownUntil: number
-  connectedAt?: number
-  restartTimer?: ReturnType<typeof setTimeout>
-  reinstallTimer?: ReturnType<typeof setTimeout>
-  lastInstallAt?: number
-}
-
 export class WslHookRelayManager {
   private deps: WslHookRelayManagerDeps
   private recovery: WslRelayRecovery
-  private states = new Map<string, DistroState>()
+  private states = new Map<string, WslHookRelayLifecycleState>()
   /** Distros a hooks-off teardown stopped, so re-enabling can put them back. */
   private stoppedByHooksOff = new Set<string>()
   private defaultDistro: string | null = null
@@ -85,18 +69,30 @@ export class WslHookRelayManager {
     void this.ensureForDistroReady(distro)
   }
 
-  /** Awaitable first attempt for the startup gate; failures retain timer-driven recovery. */
+  /** Awaitable first attempt for startup and reattach ordering. */
   async ensureForDistroReady(distro: string | null): Promise<void> {
+    await this.ensureForDistroReadyWhile(distro)
+  }
+
+  /** Startup retries must not resurrect a distro that stopped after inventory. */
+  async ensureRunningDistroForStartup(distro: string): Promise<void> {
+    await this.ensureForDistroReadyWhile(distro, () => this.deps.isDistroRunning(distro))
+  }
+
+  private async ensureForDistroReadyWhile(
+    distro: string | null,
+    continueAfterFailure?: () => Promise<boolean>
+  ): Promise<void> {
     if (this.disposed || !isWslHookRelayAllowed(this.deps)) {
       return
     }
-    await this.ensureInternal(distro).catch((err) => {
+    await this.ensureInternal(distro, continueAfterFailure).catch((err) => {
       const detail = err instanceof Error ? err.message : String(err)
       this.deps.warn(`[agent-hooks] WSL hook relay ensure failed: ${detail}`)
     })
   }
 
-  private stateFor(distro: string | null): DistroState | undefined {
+  private stateFor(distro: string | null): WslHookRelayLifecycleState | undefined {
     // Empty key never matches a real (non-empty) distro state.
     return this.states.get(wslHookRelayStateKey(distro ?? this.defaultDistro ?? ''))
   }
@@ -146,7 +142,10 @@ export class WslHookRelayManager {
     }
   }
 
-  private async ensureInternal(requestedDistro: string | null): Promise<void> {
+  private async ensureInternal(
+    requestedDistro: string | null,
+    continueAfterFailure?: () => Promise<boolean>
+  ): Promise<void> {
     const distro = requestedDistro ?? (await this.resolveDefaultDistro())
     if (!distro || this.disposed) {
       return
@@ -157,6 +156,10 @@ export class WslHookRelayManager {
       if (existing.phase === 'running') {
         void maybeRerunWslRelayGuestInstall(this.deps, existing)
         return
+      }
+      if (existing.phase === 'starting') {
+        await existing.firstAttempt
+        return await this.ensureInternal(requestedDistro, continueAfterFailure)
       }
       if (existing.phase !== 'failed' || Date.now() < existing.cooldownUntil) {
         return
@@ -182,7 +185,7 @@ export class WslHookRelayManager {
     if (existing) {
       this.recovery.clearTimers(existing)
     }
-    const state: DistroState = {
+    const state: WslHookRelayLifecycleState = {
       distro,
       phase: 'starting',
       failures: existing?.failures ?? 0,
@@ -195,31 +198,44 @@ export class WslHookRelayManager {
 
     const env = buildWslRelaySpawnEnv(coords, bundle.version, instanceKey)
 
+    state.firstAttempt = launchWslRelayWithInstall({
+      distro: state.distro,
+      env,
+      bundleJsPath: bundle.jsPath,
+      version: bundle.version,
+      io: this.deps,
+      // Why the identity half: a hooks-off teardown drops this state and kills its child, but
+      // that kill reads as a startup failure and the retry loop would respawn an untracked relay.
+      isDisposed: () => this.disposed || this.states.get(key) !== state,
+      onChild: (child) => {
+        state.child = child
+      },
+      onNoNode: () =>
+        this.markFailed(
+          state,
+          `no node >= 18 found in distro '${state.distro}'; agent hooks stay degraded there`,
+          { cooldownBaseMs: NO_NODE_COOLDOWN_MS }
+        ),
+      onFailure: (message) =>
+        this.markFailed(state, message, {
+          cooldownBaseMs: FAILURE_COOLDOWN_BASE_MS
+        }),
+      continueAfterFailure,
+      onContinuationBlocked: () => {
+        state.phase = 'failed'
+        state.child = undefined
+        if (this.states.get(key) === state) {
+          this.states.delete(key)
+        }
+        this.deps.warn(
+          `[agent-hooks] WSL hook relay (${state.distro}): distro no longer confirmed running; startup continuation skipped`
+        )
+      },
+      connect: (transport, child) => this.connect(state, transport, child, instanceKey)
+    })
+
     try {
-      await launchWslRelayWithInstall({
-        distro: state.distro,
-        env,
-        bundleJsPath: bundle.jsPath,
-        version: bundle.version,
-        io: this.deps,
-        // Why the identity half: a hooks-off teardown drops this state and kills its child, but
-        // that kill reads as a startup failure and the retry loop would respawn an untracked relay.
-        isDisposed: () => this.disposed || this.states.get(key) !== state,
-        onChild: (child) => {
-          state.child = child
-        },
-        onNoNode: () =>
-          this.markFailed(
-            state,
-            `no node >= 18 found in distro '${state.distro}'; agent hooks stay degraded there`,
-            { cooldownBaseMs: NO_NODE_COOLDOWN_MS }
-          ),
-        onFailure: (message) =>
-          this.markFailed(state, message, {
-            cooldownBaseMs: FAILURE_COOLDOWN_BASE_MS
-          }),
-        connect: (transport, child) => this.connect(state, transport, child, instanceKey)
-      })
+      await state.firstAttempt
     } catch (err) {
       // Why: teardown may have already recorded this failure; don't double-
       // count. A request-level error can leave a live child — never leak it.
@@ -230,11 +246,13 @@ export class WslHookRelayManager {
           cooldownBaseMs: FAILURE_COOLDOWN_BASE_MS
         })
       }
+    } finally {
+      state.firstAttempt = undefined
     }
   }
 
   private async connect(
-    state: DistroState,
+    state: WslHookRelayLifecycleState,
     transport: MultiplexerTransport,
     child: ChildProcessWithoutNullStreams,
     instanceKey: string
@@ -306,7 +324,7 @@ export class WslHookRelayManager {
    *  one failed relaunch must not end self-recovery; the timer's
    *  distro-running probe keeps this from booting stopped distros. */
   private markFailed(
-    state: DistroState,
+    state: WslHookRelayLifecycleState,
     message: string,
     options: { cooldownBaseMs: number }
   ): void {

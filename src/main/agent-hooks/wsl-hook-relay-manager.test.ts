@@ -275,7 +275,7 @@ describe('WslHookRelayManager', () => {
     const { manager, deps } = createManager({ installHooks })
     let ready = false
 
-    const firstAttempt = manager.ensureForDistroReady('Ubuntu').then(() => {
+    const firstAttempt = manager.ensureRunningDistroForStartup('Ubuntu').then(() => {
       ready = true
     })
     await vi.waitFor(() => expect(deps.installHooks).toHaveBeenCalledTimes(1))
@@ -285,6 +285,90 @@ describe('WslHookRelayManager', () => {
     await firstAttempt
     expect(manager.getGuestEndpointFilePath('Ubuntu')).not.toBeNull()
     expect(ready).toBe(true)
+    expect(deps.isDistroRunning).not.toHaveBeenCalled()
+    manager.disposeAll()
+  })
+
+  it('awaits an equivalent first attempt already started by a PTY path', async () => {
+    let releaseInstall: (() => void) | undefined
+    const installHooks = vi.fn(
+      () => new Promise<never[]>((resolve) => (releaseInstall = () => resolve([])))
+    )
+    const { manager, deps } = createManager({ installHooks })
+
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(deps.installHooks).toHaveBeenCalledTimes(1))
+    let ready = false
+    const startupAttempt = manager.ensureForDistroReady('ubuntu').then(() => {
+      ready = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(ready).toBe(false)
+
+    releaseInstall?.()
+    await startupAttempt
+    expect(ready).toBe(true)
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    manager.disposeAll()
+  })
+
+  it('does not respawn when a startup-owned distro stops during guest install', async () => {
+    const isDistroRunning = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    const waitForSentinel = vi
+      .fn()
+      .mockRejectedValueOnce(startupError(42))
+      .mockImplementationOnce(async () => guestTransport())
+    const { manager, deps } = createManager({ isDistroRunning, waitForSentinel })
+
+    await manager.ensureRunningDistroForStartup('Ubuntu')
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.runInstall).toHaveBeenCalledTimes(1)
+    expect(isDistroRunning).toHaveBeenCalledTimes(2)
+    expect(deps.warn).toHaveBeenCalledWith(expect.stringContaining('continuation skipped'))
+    manager.disposeAll()
+  })
+
+  it('does not retry a transient startup failure after the distro stops', async () => {
+    const isDistroRunning = vi.fn(async () => false)
+    const waitForSentinel = vi
+      .fn()
+      .mockRejectedValueOnce(startupError(1, 'Catastrophic failure (E_UNEXPECTED)'))
+      .mockImplementationOnce(async () => guestTransport())
+    const { manager, deps } = createManager({ isDistroRunning, waitForSentinel })
+
+    await manager.ensureRunningDistroForStartup('Ubuntu')
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.runInstall).not.toHaveBeenCalled()
+    expect(isDistroRunning).toHaveBeenCalledOnce()
+    manager.disposeAll()
+  })
+
+  it('lets a concurrent reattach retry after startup drops a stopped attempt', async () => {
+    let rejectStartup!: (error: Error) => void
+    const waitForSentinel = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<MultiplexerTransport>((_resolve, reject) => (rejectStartup = reject))
+      )
+      .mockImplementationOnce(async () => guestTransport())
+    const { manager, deps } = createManager({
+      isDistroRunning: vi.fn(async () => false),
+      waitForSentinel
+    })
+
+    const startup = manager.ensureRunningDistroForStartup('Ubuntu')
+    await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(1))
+    const reattach = manager.ensureForDistroReady('ubuntu')
+    rejectStartup(startupError(42))
+    await Promise.all([startup, reattach])
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(2)
+    expect(deps.installHooks).toHaveBeenCalledTimes(1)
     manager.disposeAll()
   })
 

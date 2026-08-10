@@ -1174,6 +1174,84 @@ describe('registerPtyHandlers', () => {
     clearProviderPtyState(ptyId)
   })
 
+  it.each(['renderer', 'runtime'] as const)(
+    'rejects %s publication when a WSL PTY exits during relay readiness',
+    async (entry) => {
+      const ptyId = `pty-${entry}-relay-exit`
+      const incarnationId = `incarnation-${entry}-relay-exit`
+      const runtime = new OrcaRuntimeService()
+      const registerRuntimePty = vi.spyOn(runtime, 'registerPty')
+      let releaseRelay!: () => void
+      const ensureForDistro = vi
+        .spyOn(wslHookRelayManager, 'ensureForDistroReady')
+        .mockImplementation(() => new Promise<void>((resolve) => (releaseRelay = resolve)))
+      const provider = createAgentClaimProvider({
+        spawn: vi.fn(async () => {
+          runtime.onPtySpawned(ptyId, incarnationId)
+          return {
+            id: ptyId,
+            incarnationId,
+            isReattach: true,
+            wslDistro: 'Ubuntu-24.04'
+          }
+        }),
+        authoritativeOwnerListings: false
+      })
+      const store = { persistPtyBinding: vi.fn() }
+      setLocalPtyProvider(provider as never)
+      registerPtyHandlers(
+        mainWindow as never,
+        runtime,
+        undefined,
+        undefined,
+        undefined,
+        store as never
+      )
+      const spawnArgs = {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp/worktree',
+        sessionId: ptyId,
+        worktreeId: 'repo::/tmp/worktree',
+        tabId: `tab-${entry}-relay-exit`,
+        leafId: '55555555-5555-4555-8555-555555555555'
+      }
+      const controller = (
+        runtime as unknown as {
+          ptyController: { spawn(args: Record<string, unknown>): Promise<unknown> }
+        }
+      ).ptyController
+
+      try {
+        const spawn =
+          entry === 'renderer'
+            ? (handlers.get('pty:spawn')!(null, spawnArgs) as Promise<unknown>)
+            : controller.spawn({
+                ...spawnArgs,
+                preAllocatedHandle: 'term-runtime-relay-exit',
+                persistHostSessionBinding: true
+              })
+        const rejectedSpawn = expect(spawn).rejects.toThrow('agent_session_exited_during_start')
+        await vi.waitFor(() => expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04'))
+        runtime.onPtyExit(ptyId, 0, incarnationId)
+        releaseRelay()
+        await rejectedSpawn
+
+        expect(store.persistPtyBinding).not.toHaveBeenCalled()
+        expect(registerRuntimePty).not.toHaveBeenCalled()
+        const internals = runtime as unknown as {
+          earlyExitedPtyIncarnations: Map<string, string | null>
+          pendingPtyRegistrationIncarnations: Map<string, string | null>
+        }
+        expect(internals.earlyExitedPtyIncarnations.size).toBe(0)
+        expect(internals.pendingPtyRegistrationIncarnations.size).toBe(0)
+      } finally {
+        ensureForDistro.mockRestore()
+        clearProviderPtyState(ptyId)
+      }
+    }
+  )
+
   it('adopts a live controller-owned local fallback when listings cannot serialize claims', async () => {
     const sessions: {
       id: string
@@ -9069,7 +9147,7 @@ describe('registerPtyHandlers', () => {
     'adopts a completed runtime-owned pane before replacement launch preflight ($label)',
     async ({ worktreeId, cwd }) => {
       type StableAdoption = {
-        result: { id: string; incarnationId?: string; isReattach?: boolean }
+        result: { id: string; incarnationId?: string; isReattach?: boolean; wslDistro?: string }
         owner: { handle?: string; tabId: string; leafId: string; ptyId: string }
         materialized?: true
       } | null
@@ -9091,6 +9169,9 @@ describe('registerPtyHandlers', () => {
       const tabId = 'tab-live-owner'
       const leafId = '66666666-6666-4666-8666-666666666666'
       const paneKey = makePaneKey(tabId, leafId)
+      const ensureForDistro = vi
+        .spyOn(wslHookRelayManager, 'ensureForDistroReady')
+        .mockResolvedValue(undefined)
       let ownerPublished = false
       let releaseAttach!: () => void
       let attachBarrier: Promise<void>
@@ -9110,6 +9191,7 @@ describe('registerPtyHandlers', () => {
               id: 'pty-live-owner',
               incarnationId: 'inc-live-owner',
               isReattach: true,
+              wslDistro: 'Ubuntu-24.04',
               snapshot: 'original-live-output',
               providerSequence: { value: 20, generation: 'continued' as const }
             }
@@ -9334,6 +9416,8 @@ describe('registerPtyHandlers', () => {
       expect(
         mainWindow.webContents.send.mock.calls.filter(([channel]) => channel === 'pty:spawned')
       ).toHaveLength(1)
+      expect(ensureForDistro).toHaveBeenCalledTimes(2)
+      ensureForDistro.mockRestore()
     }
   )
 
@@ -17482,9 +17566,10 @@ describe('registerPtyHandlers', () => {
   it('refreshes the WSL hook relay for the distro a reattached pane already owns', async () => {
     // Why here and not only in the helper's unit test: nothing else catches pty.ts dropping the
     // reattach call — the manager owns the hooks/platform gating this spy stands in for.
+    let releaseRelay!: () => void
     const ensureForDistro = vi
-      .spyOn(wslHookRelayManager, 'ensureForDistro')
-      .mockImplementation(() => {})
+      .spyOn(wslHookRelayManager, 'ensureForDistroReady')
+      .mockImplementation(() => new Promise<void>((resolve) => (releaseRelay = resolve)))
     setLocalPtyProvider({
       spawn: vi.fn(async () => ({ id: 'pty-wsl', isReattach: true, wslDistro: 'Ubuntu-24.04' })),
       write: vi.fn(),
@@ -17499,7 +17584,23 @@ describe('registerPtyHandlers', () => {
     registerPtyHandlers(mainWindow as never)
 
     try {
-      await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, sessionId: 'pty-wsl' })
+      let spawnReady = false
+      const spawn = (
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          sessionId: 'pty-wsl'
+        }) as Promise<unknown>
+      ).then(() => {
+        spawnReady = true
+      })
+      await vi.waitFor(() => expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04'))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(spawnReady).toBe(false)
+
+      releaseRelay()
+      await spawn
+      expect(spawnReady).toBe(true)
       expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04')
     } finally {
       ensureForDistro.mockRestore()
