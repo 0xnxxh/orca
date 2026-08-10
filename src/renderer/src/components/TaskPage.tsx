@@ -200,6 +200,8 @@ import {
 } from '@/components/linear-project-view-surfaces'
 import JiraIssueWorkspace from '@/components/JiraIssueWorkspace'
 import { TaskPageJiraIssueList } from '@/components/task-page-jira-issue-list'
+import { LinearAssigneeCell } from '@/components/task-page-linear-assignee-cell'
+import { LinearLabelsCell } from '@/components/task-page-linear-labels-cell'
 import {
   getSingleJiraProjectScope,
   getTaskPageJiraStatusOrderScopeKey,
@@ -11483,7 +11485,6 @@ export default function TaskPage(): React.JSX.Element {
                         <div className="space-y-2 p-2">
                           {section.issues.map((issue) => {
                             const selected = issue.id === selectedLinearIssueId
-                            const labels = issue.labels.slice(0, 2)
                             const dragging = linearBoardDraggingIssueId === issue.id
                             const updating = linearBoardUpdatingIssueIds.has(issue.id)
                             const teamLabel =
@@ -11616,13 +11617,11 @@ export default function TaskPage(): React.JSX.Element {
                                     />
                                   ) : null}
                                   {effectiveLinearDisplayProperties.has('assignee') ? (
-                                    <span>
-                                      {issue.assignee?.displayName ??
-                                        translate(
-                                          'auto.components.TaskPage.42a9160321',
-                                          'Unassigned'
-                                        )}
-                                    </span>
+                                    <LinearAssigneeCell
+                                      issue={issue}
+                                      variant="name"
+                                      sourceContext={linearTaskSourceContext}
+                                    />
                                   ) : null}
                                   {effectiveLinearDisplayProperties.has('team') ? (
                                     <span className="truncate">{teamLabel}</span>
@@ -11637,22 +11636,14 @@ export default function TaskPage(): React.JSX.Element {
                                     </span>
                                   ) : null}
                                 </div>
-                                {effectiveLinearDisplayProperties.has('labels') &&
-                                issue.labels.length > 0 ? (
+                                {effectiveLinearDisplayProperties.has('labels') ? (
                                   <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
-                                    {labels.map((label) => (
-                                      <span
-                                        key={label}
-                                        className="max-w-[140px] truncate rounded-full border border-border/50 bg-muted/35 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                                      >
-                                        {label}
-                                      </span>
-                                    ))}
-                                    {issue.labels.length > labels.length ? (
-                                      <span className="text-[10px] text-muted-foreground">
-                                        +{issue.labels.length - labels.length}
-                                      </span>
-                                    ) : null}
+                                    <LinearLabelsCell
+                                      issue={issue}
+                                      maxVisible={2}
+                                      className="text-[10px] [&_span]:text-[10px]"
+                                      sourceContext={linearTaskSourceContext}
+                                    />
                                   </div>
                                 ) : null}
                               </div>
@@ -11684,7 +11675,6 @@ export default function TaskPage(): React.JSX.Element {
 
                       const issue = row.issue
                       const selected = issue.id === selectedLinearIssueId
-                      const labels = issue.labels.slice(0, 3)
                       const teamLabel =
                         selectedLinearWorkspaceId === 'all' && issue.workspaceName
                           ? `${issue.workspaceName} / ${issue.team.name}`
@@ -11748,10 +11738,12 @@ export default function TaskPage(): React.JSX.Element {
                                 />
                               ) : null}
                               {effectiveLinearDisplayProperties.has('assignee') ? (
-                                <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                                  {issue.assignee?.displayName ??
-                                    translate('auto.components.TaskPage.42a9160321', 'Unassigned')}
-                                </span>
+                                <LinearAssigneeCell
+                                  issue={issue}
+                                  variant="name"
+                                  className="min-w-0 truncate"
+                                  sourceContext={linearTaskSourceContext}
+                                />
                               ) : null}
                               {effectiveLinearDisplayProperties.has('team') ? (
                                 <span className="min-w-0 truncate text-[11px] text-muted-foreground">
@@ -11769,19 +11761,11 @@ export default function TaskPage(): React.JSX.Element {
 
                           {effectiveLinearDisplayProperties.has('labels') ? (
                             <div className="flex min-w-0 items-center gap-1 max-lg:!hidden">
-                              {labels.map((label) => (
-                                <span
-                                  key={label}
-                                  className="max-w-[150px] truncate rounded-full border border-border/50 bg-muted/35 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                                >
-                                  {label}
-                                </span>
-                              ))}
-                              {issue.labels.length > labels.length ? (
-                                <span className="text-[11px] text-muted-foreground">
-                                  +{issue.labels.length - labels.length}
-                                </span>
-                              ) : null}
+                              <LinearLabelsCell
+                                issue={issue}
+                                maxVisible={3}
+                                sourceContext={linearTaskSourceContext}
+                              />
                             </div>
                           ) : null}
 
@@ -11803,31 +11787,11 @@ export default function TaskPage(): React.JSX.Element {
 
                           {effectiveLinearDisplayProperties.has('assignee') ? (
                             <div className="flex min-w-0 justify-center max-lg:!hidden">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div
-                                    className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border/50 bg-muted/40 text-[10px] text-muted-foreground"
-                                    aria-label={
-                                      issue.assignee?.displayName ??
-                                      translate('auto.components.TaskPage.42a9160321', 'Unassigned')
-                                    }
-                                  >
-                                    {issue.assignee?.avatarUrl ? (
-                                      <img
-                                        src={issue.assignee.avatarUrl}
-                                        alt={issue.assignee.displayName}
-                                        className="size-5 rounded-full"
-                                      />
-                                    ) : (
-                                      (issue.assignee?.displayName?.slice(0, 1) ?? '-')
-                                    )}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent side="bottom" sideOffset={6}>
-                                  {issue.assignee?.displayName ??
-                                    translate('auto.components.TaskPage.42a9160321', 'Unassigned')}
-                                </TooltipContent>
-                              </Tooltip>
+                              <LinearAssigneeCell
+                                issue={issue}
+                                variant="avatar"
+                                sourceContext={linearTaskSourceContext}
+                              />
                             </div>
                           ) : null}
 
