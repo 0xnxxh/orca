@@ -14,6 +14,7 @@ import {
   clearRuntimeCompatibilityCache,
   markRuntimeEnvironmentCompatible
 } from '@/runtime/runtime-rpc-client'
+import { WORKSPACE_PORT_SCAN_CONCURRENCY } from '@/lib/workspace-port-scan-batch'
 import { getWorkspacePortsByWorktreeId } from '@/lib/workspace-port-groups'
 import { useAppStore } from '@/store'
 import { WorkspacePortScanner } from './WorkspacePortScanner'
@@ -132,8 +133,9 @@ const compatibleStatus = {
 }
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve()
+  }
 }
 
 function seedRemoteWorkspace(environmentId = 'env-1'): void {
@@ -308,6 +310,85 @@ describe('WorkspacePortScanner', () => {
       await flushPromises()
     })
     expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds all-host scans, refills slots, and pauses queued work while hidden', async () => {
+    const settleScans: ((error?: Error) => void)[] = []
+    let activeScans = 0
+    let peakActiveScans = 0
+    runtimeEnvironmentCall.mockImplementation(({ method }) => {
+      if (method !== 'workspacePorts.scan') {
+        return Promise.resolve({ ok: false, error: { code: 'method_not_found', message: method } })
+      }
+      activeScans += 1
+      peakActiveScans = Math.max(peakActiveScans, activeScans)
+      return new Promise((resolve, reject) => {
+        settleScans.push((error) => {
+          activeScans -= 1
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve({ ok: true, result: emptyScan })
+        })
+      })
+    })
+    for (const environmentId of ['env-2', 'env-3', 'env-4', 'env-5', 'env-6']) {
+      markRuntimeEnvironmentCompatible(environmentId)
+      addRemoteWorkspace(environmentId)
+    }
+
+    await act(async () => {
+      root?.render(<WorkspacePortScanner />)
+      await flushPromises()
+    })
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(WORKSPACE_PORT_SCAN_CONCURRENCY)
+    expect(peakActiveScans).toBe(WORKSPACE_PORT_SCAN_CONCURRENCY)
+
+    await act(async () => {
+      settleScans.shift()?.()
+      await flushPromises()
+    })
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(WORKSPACE_PORT_SCAN_CONCURRENCY + 1)
+    expect(peakActiveScans).toBe(WORKSPACE_PORT_SCAN_CONCURRENCY)
+
+    let visibilityState: DocumentVisibilityState = 'visible'
+    const restoreVisibilityState = overrideDocumentVisibilityState(() => visibilityState)
+    try {
+      visibilityState = 'hidden'
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        settleScans.shift()?.(new Error('temporary hidden failure'))
+        await flushPromises()
+      })
+      expect(activeScans).toBe(WORKSPACE_PORT_SCAN_CONCURRENCY - 1)
+      visibilityState = 'visible'
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+        await flushPromises()
+      })
+      expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(WORKSPACE_PORT_SCAN_CONCURRENCY + 1)
+    } finally {
+      restoreVisibilityState()
+    }
+
+    await act(async () => {
+      settleScans.splice(0).forEach((settle) => settle())
+      await flushPromises()
+    })
+    expect(activeScans).toBe(2)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(WORKSPACE_PORT_SCAN_CONCURRENCY + 3)
+    expect(peakActiveScans).toBe(WORKSPACE_PORT_SCAN_CONCURRENCY)
+
+    await act(async () => {
+      settleScans.splice(0).forEach((settle) => settle())
+      await flushPromises()
+    })
+    expect(activeScans).toBe(0)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(WORKSPACE_PORT_SCAN_CONCURRENCY + 3)
+    expect(peakActiveScans).toBe(WORKSPACE_PORT_SCAN_CONCURRENCY)
+    expect(useAppStore.getState().workspacePortScanRefreshing).toBe(false)
   })
 
   it('scans a changed execution host immediately instead of applying the prior throttle', async () => {
