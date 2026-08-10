@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentMapAgentNode,
   AgentMapLayout,
@@ -205,23 +205,21 @@ export function useAgentMapMotionLayout(
   layout: AgentMapLayout,
   reducedMotion: boolean
 ): AgentMapLayout {
-  const [motionLayout, setMotionLayout] = useState(layout)
+  const [motionState, setMotionState] = useState(() => ({
+    inputLayout: layout,
+    reducedMotion,
+    motionLayout: layout
+  }))
   const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inputRef = useRef({ layout, reducedMotion })
-
-  useLayoutEffect(() => {
-    const previousInput = inputRef.current
-    inputRef.current = { layout, reducedMotion }
-    if (previousInput.layout === layout && previousInput.reducedMotion === reducedMotion) {
-      return
-    }
-    if (reducedMotion) {
-      setMotionLayout(layout)
-      return
-    }
-    setMotionLayout((previous) => reconcileAgentMapMotionLayout(previous, layout))
-  }, [layout, reducedMotion])
+  let motionLayout = motionState.motionLayout
+  // Reconcile before commit so metadata refreshes do not render the full scene twice.
+  if (motionState.inputLayout !== layout || motionState.reducedMotion !== reducedMotion) {
+    motionLayout = reducedMotion
+      ? layout
+      : reconcileAgentMapMotionLayout(motionState.motionLayout, layout)
+    setMotionState({ inputLayout: layout, reducedMotion, motionLayout })
+  }
 
   const { enteringSignature, exitingSignature } = useMemo(
     () => ({
@@ -241,7 +239,10 @@ export function useAgentMapMotionLayout(
     }
     enterTimerRef.current = setTimeout(() => {
       enterTimerRef.current = null
-      setMotionLayout(clearEnteringAgentMapLayout)
+      setMotionState((previous) => ({
+        ...previous,
+        motionLayout: clearEnteringAgentMapLayout(previous.motionLayout)
+      }))
     }, AGENT_MAP_ENTER_DURATION_MS)
     return () => {
       if (enterTimerRef.current) {
@@ -261,7 +262,10 @@ export function useAgentMapMotionLayout(
     }
     exitTimerRef.current = setTimeout(() => {
       exitTimerRef.current = null
-      setMotionLayout(pruneExitingAgentMapLayout)
+      setMotionState((previous) => ({
+        ...previous,
+        motionLayout: pruneExitingAgentMapLayout(previous.motionLayout)
+      }))
     }, AGENT_MAP_EXIT_DURATION_MS)
     return () => {
       if (exitTimerRef.current) {
@@ -271,5 +275,5 @@ export function useAgentMapMotionLayout(
     }
   }, [exitingSignature, reducedMotion])
 
-  return reducedMotion ? layout : motionLayout
+  return motionLayout
 }

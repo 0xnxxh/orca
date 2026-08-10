@@ -2,6 +2,7 @@
 
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, render } from '@testing-library/react'
+import { Profiler } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentMap } from './AgentMap'
@@ -76,6 +77,24 @@ describe('Agent Map motion lifecycle', () => {
     })
 
     expect(view.container.querySelector('[aria-label^="Agent beta,"]')).not.toBeInTheDocument()
+  })
+
+  it('commits a metadata-only layout update once', () => {
+    let commitCount = 0
+    const view = render(
+      <Profiler id="agent-map" onRender={() => (commitCount += 1)}>
+        <AgentMap cards={[card()]} now={NOW} onOpenTerminal={vi.fn()} />
+      </Profiler>
+    )
+    commitCount = 0
+
+    view.rerender(
+      <Profiler id="agent-map" onRender={() => (commitCount += 1)}>
+        <AgentMap cards={[card()]} now={NOW + 30_000} onOpenTerminal={vi.fn()} />
+      </Profiler>
+    )
+
+    expect(commitCount).toBe(1)
   })
 
   it('makes descendants non-interactive while their project exits', () => {
