@@ -167,11 +167,13 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
     ]
   }
 
+  // Why: non-macOS Ctrl+Z/Ctrl+Y belong to terminal apps; focused DOM editors undo without menu accelerators.
+  const undoRedoAccelerator = isMac ? undefined : ''
   const editMenu: Electron.MenuItemConstructorOptions = {
     label: translateMain('menu.edit', 'Edit'),
     submenu: [
-      { role: 'undo' },
-      { role: 'redo' },
+      { role: 'undo', accelerator: undoRedoAccelerator },
+      { role: 'redo', accelerator: undoRedoAccelerator },
       { type: 'separator' },
       { role: 'cut' },
       createAppMenuSelectionItem({
