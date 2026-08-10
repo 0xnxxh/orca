@@ -15054,12 +15054,10 @@
           "retainedDoneAgents": "Finished agent transcripts",
           "contextPresence": "Open tabs, terminals, comments",
           "completelyEmpty": "Nothing left to lose",
-          "presetModified": "edited",
           "noWorkspaces": "No workspaces found.",
           "noMatches": "No workspaces match these filters.",
           "noMatchesDescription": "Every workspace is in one list — widen a facet or clear the filters.",
           "selectAll": "Select all matching workspaces",
-          "moreSorts": "More sorts",
           "sortBy": "Sort by",
           "sortByField": "Sort by {{value0}}",
           "sort": {

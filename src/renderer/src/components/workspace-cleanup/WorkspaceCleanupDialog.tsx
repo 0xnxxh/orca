@@ -33,10 +33,7 @@ import { useWorkspaceCleanupRemoval } from './use-workspace-cleanup-removal'
 import { useWorkspaceCleanupRowOrder } from './use-workspace-cleanup-row-order'
 import { useWorkspaceCleanupScanLifecycle } from './use-workspace-cleanup-scan-lifecycle'
 
-/**
- * One flat list of every workspace Orca knows about. Presets are named filter
- * states rather than tabs, so nothing is hidden behind an Orca-decided bucket.
- */
+/** One filterable list of every workspace Orca knows about. */
 export default function WorkspaceCleanupDialog(): React.JSX.Element {
   const activeModal = useAppStore((s) => s.activeModal)
   const closeModal = useAppStore((s) => s.closeModal)
@@ -97,9 +94,8 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
   const onFreshOpen = useCallback(() => {
     defaultsAppliedForOpenRef.current = false
     selectionTouchedRef.current = false
-    // Why: filters, sort, and the active preset live in the persisted browse
-    // slice now, so reopening keeps the user's view; only volatile row state
-    // resets — and not while a batch is still settling.
+    // Why: filters and sort persist across reopens; only volatile row state
+    // resets, and not while a batch is still settling.
     if (!removalInFlightRef.current) {
       resetForReopen()
       setSelectedIds(new Set())
@@ -195,7 +191,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
       return
     }
     // Why: destructive selection must stay scoped to the rows the user can
-    // currently review after a preset or filter change — and only then; a
+    // currently review after a filter change — and only then; a
     // streaming refresh re-classifying a row must not silently deselect it.
     pruneSelectionToVisibleRows()
   }, [browse.filters, open, removal.confirming])

@@ -8,7 +8,6 @@ import {
 } from './workspace-cleanup-active-facets'
 import { WorkspaceCleanupEmptyState } from './workspace-cleanup-dialog-notices'
 import { WorkspaceCleanupFilterBar } from './workspace-cleanup-filter-bar'
-import { WorkspaceCleanupPresetChips } from './workspace-cleanup-preset-chips'
 import { WorkspaceCleanupSortHeader } from './workspace-cleanup-sort-header'
 
 export function WorkspaceCleanupBrowseToolbar({
@@ -33,14 +32,6 @@ export function WorkspaceCleanupBrowseToolbar({
   const activeFilters = hasActiveWorkspaceCleanupFilters(browse.filters)
   return (
     <>
-      <WorkspaceCleanupPresetChips
-        presets={browse.presets}
-        matchedPresetId={browse.matchedPresetId}
-        requestedPresetId={browse.browse.activePresetId}
-        hasActiveFilters={activeFilters}
-        onApplyPreset={browse.applyPreset}
-        onClearFilters={browse.clearFilters}
-      />
       <WorkspaceCleanupFilterBar
         facetProps={{
           filters: browse.filters,
@@ -66,7 +57,6 @@ export function WorkspaceCleanupBrowseToolbar({
         selectableCount={facetRows.selectableWorktreeIds.length}
         selectedCount={selectedCount}
         onToggleSortField={browse.toggleSortField}
-        onSetSort={browse.setSort}
         onToggleSelectAll={onToggleSelectAll}
       />
       {browse.sort.field === 'size' && facetRows.measuredSizeCount === 0 ? (

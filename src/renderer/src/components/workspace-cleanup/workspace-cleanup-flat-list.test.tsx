@@ -3,8 +3,11 @@ import type { ReactNode } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { applyWorkspaceCleanupPreset } from '../../../../shared/workspace-cleanup-preset-state'
-import { WORKSPACE_CLEANUP_BUILT_IN_PRESETS } from '../../../../shared/workspace-cleanup-presets'
+import {
+  createDefaultWorkspaceCleanupFilterState,
+  DEFAULT_WORKSPACE_CLEANUP_SORT,
+  type WorkspaceCleanupFilterState
+} from '../../../../shared/workspace-cleanup-filter-model'
 import { CandidateRow } from './workspace-cleanup-candidate-row'
 import { WorkspaceCleanupCandidateList } from './workspace-cleanup-candidate-list'
 import { FACET_NOW, makeNamedFacets } from './workspace-cleanup-facet.test.fixture'
@@ -65,12 +68,12 @@ function renderedNames(): string[] {
   )
 }
 
-function query(presetId: string) {
-  const preset = WORKSPACE_CLEANUP_BUILT_IN_PRESETS.find((entry) => entry.id === presetId)
-  if (!preset) {
-    throw new Error(`missing preset ${presetId}`)
-  }
-  return runWorkspaceCleanupQuery(FLEET, applyWorkspaceCleanupPreset(preset), FACET_NOW)
+function query(filters: WorkspaceCleanupFilterState = createDefaultWorkspaceCleanupFilterState()) {
+  return runWorkspaceCleanupQuery(
+    FLEET,
+    { filters, sort: DEFAULT_WORKSPACE_CLEANUP_SORT },
+    FACET_NOW
+  )
 }
 
 describe('workspace cleanup flat list', () => {
@@ -90,7 +93,7 @@ describe('workspace cleanup flat list', () => {
   })
 
   it('renders every tier in one list rather than per-tab groups', () => {
-    const result = query('all')
+    const result = query()
 
     renderRows(result.rows)
 
@@ -101,26 +104,30 @@ describe('workspace cleanup flat list', () => {
     )
   })
 
-  it('switches the visible rows when a preset is applied', () => {
-    const suggested = query('suggested')
-    renderRows(suggested.rows)
+  it('switches the visible rows when filters are applied', () => {
+    const filters = createDefaultWorkspaceCleanupFilterState()
+    filters.safety.tiers = ['ready']
+    filters.safety.dismissed = 'exclude'
+    renderRows(query(filters).rows)
     expect(renderedNames()).toEqual(['ready-one'])
 
-    const ignored = query('ignored')
-    renderRows(ignored.rows)
+    filters.safety.tiers = []
+    filters.safety.dismissed = 'only'
+    renderRows(query(filters).rows)
     expect(renderedNames()).toEqual(['ignored-one'])
 
-    const protectedRows = query('protected')
-    renderRows(protectedRows.rows)
+    filters.safety.dismissed = 'any'
+    filters.safety.tiers = ['protected']
+    renderRows(query(filters).rows)
     expect(renderedNames()).toEqual(['protected-one'])
   })
 
   it('reports only the rows the user could actually queue for deletion', () => {
-    expect(query('all').selectableWorktreeIds).not.toContain('repo-1::/repo/protected-one')
+    expect(query().selectableWorktreeIds).not.toContain('repo-1::/repo/protected-one')
   })
 
   it('shows a measured size on the row and nothing when the space scan never ran', () => {
-    renderRows(query('all').rows)
+    renderRows(query().rows)
 
     expect(container?.textContent).toContain('4.00 MB')
     const sizedRows = [...(container?.querySelectorAll('[aria-label^="Size on disk"]') ?? [])]

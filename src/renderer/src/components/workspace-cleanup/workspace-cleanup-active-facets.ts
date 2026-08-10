@@ -20,8 +20,7 @@ const FACET_GROUP_KEYS: readonly WorkspaceCleanupFacetGroupKey[] = [
 
 /**
  * Facet groups the user has moved off the default state. Drives the "N filters
- * on" badge, so it compares against defaults rather than against the active
- * preset — a preset is itself just a named filter state.
+ * on" badge.
  */
 export function listActiveWorkspaceCleanupFacetGroups(
   filters: WorkspaceCleanupFilterState

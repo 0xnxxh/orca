@@ -340,7 +340,7 @@ describe('safety filter', () => {
     expect(matchesWorkspaceCleanupFilters(makeFacets(), noneOf, FACET_NOW)).toBe(true)
   })
 
-  it('excludes dismissed rows by default and surfaces them on demand', () => {
+  it('includes dismissed rows by default and narrows them on demand', () => {
     const dismissed = makeFacets({ dismissed: true })
     expect(
       matchesWorkspaceCleanupFilters(
@@ -348,7 +348,12 @@ describe('safety filter', () => {
         createDefaultWorkspaceCleanupFilterState(),
         FACET_NOW
       )
-    ).toBe(false)
+    ).toBe(true)
+    const exclude = filters((s) => {
+      s.safety.dismissed = 'exclude'
+    })
+    expect(matchesWorkspaceCleanupFilters(dismissed, exclude, FACET_NOW)).toBe(false)
+    expect(matchesWorkspaceCleanupFilters(makeFacets(), exclude, FACET_NOW)).toBe(true)
     const only = filters((s) => {
       s.safety.dismissed = 'only'
     })
