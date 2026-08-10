@@ -581,7 +581,13 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   const inputWriteQueue = createPtyInputWriteQueue({
     isWritable: (id) => connected && ptyId === id,
     write: (id, data) => window.api.pty.write(id, data),
-    onDrainFailure: () => storedCallbacks.onWriteUnavailable?.()
+    // Guard like the registered writeUnavailable handler: a rebind during the async drain
+    // must not tell the new pane that its write failed.
+    onDrainFailure: (id) => {
+      if (ptyId === id) {
+        storedCallbacks.onWriteUnavailable?.()
+      }
+    }
   })
   const outputProcessor = createPtyOutputProcessor({
     onTitleChange,

@@ -11,6 +11,8 @@ import { needsCookedEchoSafeQueryReply } from '../../../../shared/terminal-query
 export const TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS = 4096
 // Match host delivery's reply ceiling while keeping all retained reply text under one PTY chunk.
 export const PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLIES = 64
+// Keep ≤ TERMINAL_INPUT_CHUNK_MAX_BYTES/3 so a reply is written and dropped in one drain step:
+// admitReply evicts the head, and a half-written entry would truncate. Guarded by a unit test.
 export const PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLY_CODE_UNITS =
   TERMINAL_INPUT_COALESCE_MAX_CODE_UNITS
 
@@ -35,7 +37,7 @@ export type PtyInputWriteQueueDeps = {
   isWritable: (id: string) => boolean
   write: (id: string, data: string) => void
   yieldBetweenWrites?: () => Promise<void>
-  onDrainFailure?: () => void
+  onDrainFailure?: (id: string) => void
 }
 
 function isCoalescibleInput(input: PendingPtyInputWrite): boolean {
@@ -151,10 +153,13 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
 
   async function drain(): Promise<void> {
     let failureGeneration = generation
+    // Why: the drain yields, so the owner may rebind before the failure surfaces; report the id that actually failed.
+    let failingId: string | null = null
     try {
       let next: PendingPtyInputWrite | undefined
       while ((next = firstPending())) {
         failureGeneration = generation
+        failingId = next.id
         if (!deps.isWritable(next.id)) {
           removePending(next)
           continue
@@ -229,9 +234,9 @@ export function createPtyInputWriteQueue(deps: PtyInputWriteQueueDeps): PtyInput
         failedGeneration = generation
       }
       console.warn('[pty-input-write-queue] drain failed:', error)
-      if (failureIsCurrent) {
+      if (failureIsCurrent && failingId !== null) {
         try {
-          deps.onDrainFailure?.()
+          deps.onDrainFailure?.(failingId)
         } catch (recoveryError) {
           console.warn('[pty-input-write-queue] failure handler failed:', recoveryError)
         }

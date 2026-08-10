@@ -396,6 +396,40 @@ describe('pty input write queue', () => {
     }
   })
 
+  it('reports the pty id that failed so a rebound owner can ignore the drain failure', async () => {
+    const failure = new Error('yield failed')
+    const onDrainFailure = vi.fn()
+    let rejectYield: ((error: Error) => void) | undefined
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const queue = createPtyInputWriteQueue({
+      isWritable: () => true,
+      write: () => undefined,
+      yieldBetweenWrites: () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectYield = reject
+        }),
+      onDrainFailure
+    })
+
+    try {
+      expect(queue.enqueue('pty-1', 'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES * 2))).toBe(true)
+      expect(rejectYield).toBeDefined()
+      rejectYield?.(failure)
+      await queue.waitForDrain()
+
+      expect(onDrainFailure).toHaveBeenCalledExactlyOnceWith('pty-1')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('keeps a pending reply small enough that one drain step writes and removes it', () => {
+    // Larger replies would span chunks, so admitReply could evict a half-written entry.
+    expect(PTY_INPUT_WRITE_QUEUE_MAX_PENDING_REPLY_CODE_UNITS * 3).toBeLessThanOrEqual(
+      TERMINAL_INPUT_CHUNK_MAX_BYTES
+    )
+  })
+
   it('does not let a stale drain failure clear input queued after reuse', async () => {
     const failure = new Error('stale yield failed')
     const writes: WriteRecord[] = []
