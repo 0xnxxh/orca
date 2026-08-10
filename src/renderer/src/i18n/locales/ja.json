@@ -13951,7 +13951,7 @@
           "874b72195b": "このオートメーションがワークスペースを作成するときに、手動でワークツリーを作成する場合と同じ準備を行います。プロジェクトのセットアップを実行し、ターミナルタブを開きます。"
         },
         "AutomationsPageSkeleton": {
-          "loading": "自動化を読み込み中"
+          "55527b7bcf": "自動化を読み込み中"
         },
         "AutomationListSearchField": {
           "tooLong": "検索テキストが長すぎます — リストは未フィルタです",
@@ -13959,6 +13959,9 @@
           "placeholder": "検索...",
           "tooLongShort": "長すぎます",
           "clear": "検索をクリア"
+        },
+        "AutomationListLocalRows": {
+          "c92c9463c6": "自動化の操作"
         }
       },
       "agent": {

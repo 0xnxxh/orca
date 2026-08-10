@@ -94,7 +94,7 @@ export function AutomationsPageSkeleton(): React.JSX.Element {
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-4 md:px-5"
       aria-busy="true"
       aria-label={translate(
-        'auto.components.automations.AutomationsPageSkeleton.loading',
+        'auto.components.automations.AutomationsPageSkeleton.55527b7bcf',
         'Loading automations'
       )}
     >

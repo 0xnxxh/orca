@@ -13971,7 +13971,7 @@
           "874b72195b": "当此自动化创建工作区时，使用与手动创建工作树相同的方式准备——运行项目的设置并打开其终端标签页。"
         },
         "AutomationsPageSkeleton": {
-          "loading": "正在加载自动化"
+          "55527b7bcf": "正在加载自动化"
         },
         "AutomationListSearchField": {
           "tooLong": "搜索文本过长 — 列表未筛选",
@@ -13979,6 +13979,9 @@
           "placeholder": "搜索...",
           "tooLongShort": "过长",
           "clear": "清除搜索"
+        },
+        "AutomationListLocalRows": {
+          "c92c9463c6": "自动化操作"
         }
       },
       "agent": {

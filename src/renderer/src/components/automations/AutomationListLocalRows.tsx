@@ -235,7 +235,7 @@ export function AutomationListLocalRows({
                       size="icon-xs"
                       className="size-7 text-muted-foreground"
                       aria-label={translate(
-                        'auto.components.automations.AutomationsPage.rowActions',
+                        'auto.components.automations.AutomationListLocalRows.c92c9463c6',
                         'Automation actions'
                       )}
                       onClick={(event) => event.stopPropagation()}

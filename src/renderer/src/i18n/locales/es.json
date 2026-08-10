@@ -13951,7 +13951,7 @@
           "874b72195b": "Cuando esta automatización crea un workspace, lo prepara igual que al crear un worktree manualmente: ejecuta la configuración del proyecto y abre sus pestañas de terminal."
         },
         "AutomationsPageSkeleton": {
-          "loading": "Cargando automatizaciones"
+          "55527b7bcf": "Cargando automatizaciones"
         },
         "AutomationListSearchField": {
           "tooLong": "El texto de búsqueda es demasiado largo — la lista no está filtrada",
@@ -13959,6 +13959,9 @@
           "placeholder": "Buscar...",
           "tooLongShort": "Demasiado largo",
           "clear": "Borrar búsqueda"
+        },
+        "AutomationListLocalRows": {
+          "c92c9463c6": "Acciones de automatización"
         }
       },
       "agent": {

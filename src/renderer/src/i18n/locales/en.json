@@ -14361,7 +14361,7 @@
           "rowActions": "Automation actions"
         },
         "AutomationsPageSkeleton": {
-          "loading": "Loading automations"
+          "55527b7bcf": "Loading automations"
         },
         "CreateFromPicker": {
           "f061f49e3f": "Search repo branches...",
@@ -14481,6 +14481,9 @@
           "placeholder": "Search...",
           "tooLongShort": "Too long",
           "clear": "Clear search"
+        },
+        "AutomationListLocalRows": {
+          "c92c9463c6": "Automation actions"
         }
       },
       "agent": {
