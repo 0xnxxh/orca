@@ -4,6 +4,7 @@ import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared
 import {
   buildWindowsAgentHookCurlPostCommand,
   readHooksJson,
+  WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS,
   writeHooksJson,
   writeManagedScript,
   type HooksConfig
@@ -189,7 +190,8 @@ export class ClaudeHookService {
     let nextConfig = applyManagedHooks(
       config,
       command,
-      getManagedScriptFileName(this.options.settings)
+      getManagedScriptFileName(this.options.settings),
+      process.platform === 'win32' ? WINDOWS_CLAUDE_HOOK_TIMEOUT_SECONDS : undefined
     )
     writeManagedScript(
       scriptPath,

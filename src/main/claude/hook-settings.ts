@@ -117,7 +117,8 @@ export function getRemoteManagedCommand(scriptPath: string): string {
 export function applyManagedHooks(
   config: HooksConfig,
   command: string,
-  scriptFileName = getManagedScriptFileName()
+  scriptFileName = getManagedScriptFileName(),
+  timeout?: number
 ): HooksConfig {
   const nextHooks = { ...config.hooks }
   const isManagedCommand = createManagedCommandMatcher(scriptFileName)
@@ -127,7 +128,7 @@ export function applyManagedHooks(
     const cleaned = removeManagedCommands(current, isManagedCommand)
     const definition: HookDefinition = {
       ...event.definition,
-      hooks: [buildManagedCommandHook(command)]
+      hooks: [buildManagedCommandHook(command, timeout)]
     }
     nextHooks[event.eventName] = [...cleaned, definition]
   }
