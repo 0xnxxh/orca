@@ -9,8 +9,7 @@ import { invalidateAiVaultBackgroundCache } from '../ai-vault/session-scanner-ba
 import type { AiVaultAgent } from '../../shared/ai-vault-types'
 import type {
   AiVaultDeleteSessionArgs,
-  AiVaultDeleteSessionResult,
-  AiVaultSessionLiveness
+  AiVaultDeleteSessionResult
 } from '../../shared/ai-vault-session-deletion'
 
 // Which cache backs the multi-host list is ai-vault.ts's concern, so its
@@ -18,11 +17,6 @@ import type {
 type AiVaultDeleteDeps = {
   invalidateMultiHostListCache: () => void
   invalidateBackgroundCache?: (paths: string[]) => Promise<void>
-  getSessionLiveness: (target: {
-    agent: AiVaultAgent
-    sessionId: string | undefined
-    filePath: string
-  }) => Promise<AiVaultSessionLiveness>
 }
 
 // Binds the delete orchestration to the caller's cache-invalidation seam.
@@ -42,16 +36,13 @@ export async function deleteAiVaultSession(
   // The validator tolerates a malformed agent/filePath but destructures `args`,
   // so an absent payload is defaulted here to keep the never-throws boundary.
   const wslHomeDirs = await getAiVaultWslHomeDirs()
-  const result = await deleteAiVaultSessionFile(
-    {
-      agent: args?.agent as AiVaultAgent,
-      sessionId: args?.sessionId,
-      filePath: args?.filePath ?? '',
-      executionHostId: args?.executionHostId,
-      wslHomeDirs
-    },
-    deps
-  )
+  const result = await deleteAiVaultSessionFile({
+    agent: args?.agent as AiVaultAgent,
+    sessionId: args?.sessionId,
+    filePath: args?.filePath ?? '',
+    executionHostId: args?.executionHostId,
+    wslHomeDirs
+  })
 
   if (result.outcome === 'deleted') {
     // Three caches could otherwise resurrect it: the desktop per-host leg
