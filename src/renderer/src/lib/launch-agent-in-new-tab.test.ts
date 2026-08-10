@@ -353,6 +353,71 @@ describe('launchAgentInNewTab', () => {
     })
   })
 
+  it('preserves the Codex CLI default after its native picker retires a stale override', async () => {
+    store.settings = {
+      agentCmdOverrides: {},
+      agentDefaultArgs: { codex: '--profile team' },
+      agentDefaultEnv: {},
+      activeRuntimeEnvironmentId: null,
+      nativeChatSessionOptions: {
+        codex: {
+          valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
+        }
+      }
+    }
+    const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
+
+    launchAgentInNewTab({
+      agent: 'codex',
+      worktreeId: 'wt-1',
+      prompt: 'Review this diff',
+      launchSource: 'quick_command',
+      quickCommandLabel: 'Review'
+    })
+
+    expect(mockQueueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-1',
+      expect.objectContaining({ command: expect.stringContaining("'Review this diff'") })
+    )
+    const launch = mockQueueTabStartupCommand.mock.calls[0]?.[1]
+    expect(launch.command).toContain("'--profile' 'team'")
+    expect(launch.command).not.toContain("'-m'")
+    expect(launch.command).not.toContain('model_reasoning_effort=')
+    expect(launch.sessionOptions).toBeUndefined()
+  })
+
+  it('keeps explicit Codex model and effort choices on Quick Command launches', async () => {
+    store.settings = {
+      agentCmdOverrides: {},
+      agentDefaultArgs: {},
+      agentDefaultEnv: {},
+      activeRuntimeEnvironmentId: null,
+      nativeChatSessionOptions: {
+        codex: {
+          model: 'gpt-5.5',
+          valuesByModel: { 'gpt-5.5': { effort: 'high' } }
+        }
+      }
+    }
+    const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
+
+    launchAgentInNewTab({
+      agent: 'codex',
+      worktreeId: 'wt-1',
+      prompt: 'Review this diff',
+      launchSource: 'quick_command',
+      quickCommandLabel: 'Review'
+    })
+
+    const launch = mockQueueTabStartupCommand.mock.calls[0]?.[1]
+    expect(launch.command).toContain("'-m' 'gpt-5.5'")
+    expect(launch.command).toContain("'-c' 'model_reasoning_effort=high'")
+    expect(launch.sessionOptions).toEqual({
+      model: 'gpt-5.5',
+      effort: 'high'
+    })
+  })
+
   it('preserves paired-host draft delivery and supported launch preferences', async () => {
     mockIsWebRuntimeSessionActive.mockReturnValue(true)
     store.settings = {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { AgentType } from '../../../../shared/agent-status-types'
 import {
   getAgentSessionOptionCatalog,
@@ -83,6 +83,12 @@ export async function retirePersistedModelMissingFromDiscovery(
   })
 }
 
+async function clearPersistedCodexModelForAgentPicker(): Promise<void> {
+  await enqueueSessionOptionSettingsWrite((persisted) =>
+    persisted?.codex?.model ? clearNativeChatSessionOptionModel(persisted, 'codex') : null
+  )
+}
+
 export function useNativeChatSessionOptions(args: {
   agent: AgentType
   terminalTabId: string
@@ -103,6 +109,13 @@ export function useNativeChatSessionOptions(args: {
     () => resolveNativeChatModelDiscoveryContext(terminalTabId),
     [terminalTabId]
   )
+  const handleAgentPicker = useCallback(() => {
+    if (agent === 'codex') {
+      // Codex persists picker choices; dropping Orca's override keeps its host config authoritative.
+      void clearPersistedCodexModelForAgentPicker().catch(() => undefined)
+    }
+    onAgentPicker?.()
+  }, [agent, onAgentPicker])
   const surface = useMemo(() => {
     // Why: native chat currently attaches only after startup is already queued;
     // exposing a draft picker here would claim it can still mutate that command.
@@ -131,7 +144,7 @@ export function useNativeChatSessionOptions(args: {
       mode: targetPtyId ? 'live' : 'draft',
       reportedValues,
       dispatchCommand,
-      onAgentPicker,
+      onAgentPicker: handleAgentPicker,
       persistSelection: ({ modelId, optionId, value, adoptModelAsLaunchDefault }) =>
         enqueueSessionOptionSettingsWrite((persisted) =>
           updateNativeChatSessionOptionDefaults({
@@ -148,7 +161,7 @@ export function useNativeChatSessionOptions(args: {
     agent,
     dispatchCommand,
     discoveryContext,
-    onAgentPicker,
+    handleAgentPicker,
     readTerminalScreen,
     targetPtyId,
     terminalTabId
