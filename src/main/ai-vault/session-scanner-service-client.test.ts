@@ -97,6 +97,90 @@ describe('AiVaultScannerServiceClient', () => {
     client.dispose()
   })
 
+  it('drops a call cancelled before the child received it', async () => {
+    vi.useFakeTimers()
+    const { child, client } = setup()
+    const controller = new AbortController()
+    const cancelled = client.request(
+      { type: 'request', operation: 'titles', requests: [] },
+      controller.signal
+    )
+
+    controller.abort()
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(child.sent).not.toContainEqual(expect.objectContaining({ type: 'cancel' }))
+
+    readyAiVaultServiceChild(child)
+    const next = client.request({ type: 'request', operation: 'titles', requests: [] })
+    await Promise.resolve()
+    child.emit('message', {
+      type: 'result',
+      id: aiVaultServiceRequestId(child, 'titles'),
+      operation: 'titles',
+      value: { titles: [] }
+    })
+    await expect(next).resolves.toEqual({ titles: [] })
+    vi.advanceTimersByTime(2_000)
+
+    expect(child.killed).toBe(false)
+    client.dispose()
+  })
+
+  it('retries once when the first cold start misses the ready deadline', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = new AiVaultScannerServiceClient({
+      processFactory: () => {
+        const child = new AiVaultServiceTestChild(12_345 + children.length)
+        children.push(child)
+        return child.asChildProcess()
+      },
+      init: { sessionParseCache: null }
+    })
+    const titles = client.request({ type: 'request', operation: 'titles', requests: [] })
+    expect(children).toHaveLength(1)
+
+    vi.advanceTimersByTime(AI_VAULT_SERVICE_READY_TIMEOUT_MS)
+    expect(children[0]!.killed).toBe(true)
+    await Promise.resolve()
+    vi.advanceTimersByTime(250)
+    expect(children).toHaveLength(2)
+    readyAiVaultServiceChild(children[1]!)
+    await Promise.resolve()
+    children[1]!.emit('message', {
+      type: 'result',
+      id: aiVaultServiceRequestId(children[1]!, 'titles'),
+      operation: 'titles',
+      value: { titles: [] }
+    })
+
+    await expect(titles).resolves.toEqual({ titles: [] })
+    client.dispose()
+  })
+
+  it('surfaces the startup error when the retried cold start also fails', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = new AiVaultScannerServiceClient({
+      processFactory: () => {
+        const child = new AiVaultServiceTestChild(12_345 + children.length)
+        children.push(child)
+        return child.asChildProcess()
+      },
+      init: { sessionParseCache: null }
+    })
+    const titles = client.request({ type: 'request', operation: 'titles', requests: [] })
+
+    vi.advanceTimersByTime(AI_VAULT_SERVICE_READY_TIMEOUT_MS)
+    await Promise.resolve()
+    vi.advanceTimersByTime(250)
+    expect(children).toHaveLength(2)
+    vi.advanceTimersByTime(AI_VAULT_SERVICE_READY_TIMEOUT_MS)
+
+    await expect(titles).rejects.toThrow('did not become ready')
+    client.dispose()
+  })
+
   it('acknowledges cache invalidation through the running child', async () => {
     const { child, client } = setup()
     const invalidation = client.invalidate(['/tmp/deleted.jsonl'])

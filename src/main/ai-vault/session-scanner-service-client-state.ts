@@ -26,6 +26,63 @@ export type AiVaultServiceInvalidation = {
   timer: NodeJS.Timeout
 }
 
+export class AiVaultServiceInvalidations {
+  private readonly pending = new Map<number, AiVaultServiceInvalidation>()
+  private generation = 0
+
+  get size(): number {
+    return this.pending.size
+  }
+
+  open(
+    timeoutMs: number,
+    onTimeout: () => void,
+    send: (generation: number) => void
+  ): Promise<void> {
+    const generation = ++this.generation
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(onTimeout, timeoutMs)
+      timer.unref?.()
+      this.pending.set(generation, { resolve, reject, timer })
+      send(generation)
+    })
+  }
+
+  settle(generation: number): boolean {
+    const entry = this.pending.get(generation)
+    if (!entry) {
+      return false
+    }
+    clearTimeout(entry.timer)
+    this.pending.delete(generation)
+    entry.resolve()
+    return true
+  }
+
+  rejectAll(error: Error): void {
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer)
+      entry.reject(error)
+    }
+    this.pending.clear()
+  }
+}
+
+export function createAiVaultServiceReadyWaiter(
+  timeoutMs: number,
+  onTimeout: () => void
+): AiVaultServiceReadyWaiter {
+  let resolve!: (child: ChildProcess) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<ChildProcess>((resolveReady, rejectReady) => {
+    resolve = resolveReady
+    reject = rejectReady
+  })
+  const timer = setTimeout(onTimeout, timeoutMs)
+  timer.unref?.()
+  return { promise, resolve, reject, timer }
+}
+
 export function retireAiVaultServiceChild(child: ChildProcess): void {
   child.removeAllListeners('message')
   child.removeAllListeners('disconnect')
@@ -76,6 +133,9 @@ export type AiVaultServicePendingCall = {
   timer: NodeJS.Timeout | null
   onAbort: (() => void) | null
   cancelled: boolean
+  /** Whether the child received the request; an unsent call gets no reply. */
+  sent: boolean
+  startRetried: boolean
 }
 
 export type AiVaultServiceReadyWaiter = {
