@@ -44,7 +44,7 @@ Download and make the AppImage executable:
 
 ```bash
 sudo mkdir -p /opt/orca
-sudo curl -L https://github.com/stablyai/orca/releases/download/v1.4.178/orca-linux.AppImage?download=1 \
+sudo curl -L https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage \
   -o /opt/orca/orca-linux.AppImage
 sudo chmod +x /opt/orca/orca-linux.AppImage
 ```

@@ -1391,18 +1391,6 @@ async function pinDefaultReleaseFeed(
     )
     autoUpdater.setFeedURL({ provider: 'generic', url })
     return 'ready'
-  } else if (releaseTagsResult.state === 'no-newer') {
-    clearPrereleaseFallbackContext()
-    clearPublishingWindowLastGoodCheck()
-    if (isPerfCheck) {
-      console.info(`[updater] perf release not found: current=${currentVersion}`)
-      return 'not-available'
-    }
-    const url = getReleaseDownloadUrl(`v${currentVersion}`)
-    // Why: a non-release publication can take over GitHub's mutable latest alias.
-    console.info(`[updater] release feed pinned to current: current=${currentVersion} → ${url}`)
-    autoUpdater.setFeedURL({ provider: 'generic', url })
-    return 'ready'
   } else if (releaseTagsResult.state === 'not-ready') {
     clearPrereleaseFallbackContext()
     if (releaseTagsResult.lastGoodTag) {
@@ -1426,27 +1414,35 @@ async function pinDefaultReleaseFeed(
     )
   } else if (
     releaseTagsResult.state === 'unavailable' &&
-    releaseTagsResult.unavailableReason === 'feed'
+    releaseTagsResult.unavailableReason === 'manifest' &&
+    !includePrerelease
   ) {
-    clearPrereleaseFallbackContext()
-    clearPublishingWindowLastGoodCheck()
-    const url = getReleaseDownloadUrl(`v${currentVersion}`)
-    // Why: a discovery outage cannot authorize falling back to GitHub's mutable latest alias.
-    console.info(`[updater] release discovery unavailable; pinned to current: ${url}`)
-    autoUpdater.setFeedURL({ provider: 'generic', url })
-    return 'ready'
-  } else if (releaseTagsResult.state === 'unavailable') {
     clearPrereleaseFallbackContext()
     clearPublishingWindowLastGoodCheck()
     throw new ReleaseFeedPreflightError(
       'manifest-unavailable',
-      isPerfCheck ? 'perf' : includePrerelease ? 'prerelease' : 'default',
+      'default',
       'Unable to find latest version on GitHub'
     )
+  } else if (isPerfCheck) {
+    clearPrereleaseFallbackContext()
+    clearPublishingWindowLastGoodCheck()
+    if (releaseTagsResult.state === 'no-newer') {
+      console.info(
+        `[updater] perf release not found: current=${currentVersion} includePrerelease=${includePrerelease}`
+      )
+      return 'not-available'
+    }
+    throw new Error('Could not resolve perf update feed')
   } else {
     clearPrereleaseFallbackContext()
     clearPublishingWindowLastGoodCheck()
-    throw new Error('Could not resolve update feed')
+    const url = 'https://github.com/stablyai/orca/releases/latest/download'
+    console.info(
+      `[updater] release feed fallback: current=${currentVersion} includePrerelease=${includePrerelease} → ${url}`
+    )
+    autoUpdater.setFeedURL({ provider: 'generic', url })
+    return 'ready'
   }
 }
 

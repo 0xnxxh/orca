@@ -33,28 +33,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/render-readme-downloads-badge.mjs
 
-      - name: Pin downloads to latest stable tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="$(node config/scripts/latest-stable-release.mjs)"
-          if [[ -z "$tag" ]]; then
-            echo "::error::No published stable desktop release found."
-            exit 1
-          fi
-          node config/scripts/pin-release-download-links.mjs "$tag"
-
       - name: Commit badge update
         run: |
           set -euo pipefail
-          if git diff --quiet -- README.md docs/assets/readme-downloads.svg docs/readme docs/reference/headless-linux-server.md; then
-            echo "README release metadata is already current."
+          if git diff --quiet -- docs/assets/readme-downloads.svg; then
+            echo "Downloads badge is already current."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md docs/assets/readme-downloads.svg docs/readme docs/reference/headless-linux-server.md
-          git commit -m "Update README release metadata"
+          git add docs/assets/readme-downloads.svg
+          git commit -m "Update README downloads badge"
           git push origin main

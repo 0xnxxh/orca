@@ -418,7 +418,7 @@ describe('updater', () => {
       expect(autoUpdaterMock.disableDifferentialDownload).toBe(false)
       expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
         provider: 'generic',
-        url: 'https://github.com/stablyai/orca/releases/download/v1.0.51'
+        url: 'https://github.com/stablyai/orca/releases/latest/download'
       })
     }
   )
@@ -461,7 +461,7 @@ describe('updater', () => {
       })
       expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
         provider: 'generic',
-        url: 'https://github.com/stablyai/orca/releases/download/v1.0.51'
+        url: 'https://github.com/stablyai/orca/releases/latest/download'
       })
     }
   )
@@ -501,7 +501,7 @@ describe('updater', () => {
       })
       expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
         provider: 'generic',
-        url: 'https://github.com/stablyai/orca/releases/download/v1.0.51'
+        url: 'https://github.com/stablyai/orca/releases/latest/download'
       })
     }
   )
@@ -558,7 +558,7 @@ describe('updater', () => {
       expect(send).toHaveBeenCalledWith('updater:status', { state: 'not-available' })
       expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
         provider: 'generic',
-        url: 'https://github.com/stablyai/orca/releases/download/v1.0.51'
+        url: 'https://github.com/stablyai/orca/releases/latest/download'
       })
     }
   )
@@ -604,7 +604,7 @@ describe('updater', () => {
       })
       expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
         provider: 'generic',
-        url: 'https://github.com/stablyai/orca/releases/download/v1.0.51'
+        url: 'https://github.com/stablyai/orca/releases/latest/download'
       })
     }
   )
@@ -2612,7 +2612,8 @@ describe('updater', () => {
     expect(autoUpdaterMock.allowPrerelease).not.toBe(true)
   })
 
-  it('pins the current tag when no newer release exists', async () => {
+  // Why: if the atom resolver fails or finds nothing newer, fall back to /releases/latest/download so the check completes as "not-available" instead of erroring.
+  it('falls back to /releases/latest/download when the atom resolver returns null', async () => {
     appMock.getVersion.mockReturnValue('1.3.19-rc.6')
     fetchNewerReleaseTagsMock.mockResolvedValue([])
     autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
@@ -2629,7 +2630,7 @@ describe('updater', () => {
     })
     expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
       provider: 'generic',
-      url: 'https://github.com/stablyai/orca/releases/download/v1.3.19-rc.6'
+      url: 'https://github.com/stablyai/orca/releases/latest/download'
     })
   })
 
@@ -2665,7 +2666,7 @@ describe('updater', () => {
     ])
   })
 
-  it('pins the current tag when the release feed is unavailable', async () => {
+  it('keeps Atom feed outages on the existing moving-feed fallback', async () => {
     appMock.getVersion.mockReturnValue('1.4.141')
     fetchNewerReleaseTagsMock.mockResolvedValue({
       tags: [],
@@ -2684,7 +2685,7 @@ describe('updater', () => {
     })
     expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
       provider: 'generic',
-      url: 'https://github.com/stablyai/orca/releases/download/v1.4.141'
+      url: 'https://github.com/stablyai/orca/releases/latest/download'
     })
     expect(sendMock).not.toHaveBeenCalledWith(
       'updater:status',
