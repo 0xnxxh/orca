@@ -248,10 +248,15 @@ describe('legacy remote clipboard staging compatibility', () => {
     writeFileMock.mockResolvedValue(undefined)
   })
 
-  it('caps a large foreign-root scan at 4096 total entries', async () => {
+  it('marks migration complete when a legacy child falls beyond the 4096-entry window', async () => {
     let visited = 0
+    let reachedLateLegacyChild = false
     function* foreignEntries(): Generator<MockDirent> {
       for (let index = 0; index < 200_000; index += 1) {
+        if (index === 4_096) {
+          reachedLateLegacyChild = true
+          yield directoryEntry(LEGACY_EXPIRED)
+        }
         visited += 1
         yield directoryEntry(`foreign-${index}`, index % 2 === 0)
       }
@@ -261,6 +266,7 @@ describe('legacy remote clipboard staging compatibility', () => {
     await cleanupLegacyRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
 
     expect(visited).toBe(4_096)
+    expect(reachedLateLegacyChild).toBe(false)
     expect(lstatMock).toHaveBeenCalledOnce()
     expect(rmMock).not.toHaveBeenCalled()
     expect(writeFileMock).toHaveBeenCalledWith(MARKER_PATH, '', {

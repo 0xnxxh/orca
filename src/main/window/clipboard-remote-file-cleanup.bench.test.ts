@@ -10,7 +10,7 @@ import {
 const BENCH_ENABLED = process.env.ORCA_CLIPBOARD_CLEANUP_BENCH === '1'
 const FOREIGN_ENTRY_COUNT = Number(process.env.ORCA_CLIPBOARD_CLEANUP_BENCH_ENTRIES ?? 100_000)
 const WARMUP_RUNS = 3
-const SAMPLE_RUNS = 25
+const SAMPLE_RUNS_PER_ARM = 24
 const FIXTURE_PREFIX = 'orca-clipboard-cleanup-bench-'
 const NOW_MS = 1_760_000_000_000
 
@@ -61,20 +61,42 @@ describe.skipIf(!BENCH_ENABLED)('remote clipboard cleanup benchmark', () => {
       await cleanupExpiredRemoteClipboardStaging(fixtureRoot, NOW_MS)
     }
 
-    const sharedRootSamples: number[] = []
-    const ownedParentSamples: number[] = []
-    for (let index = 0; index < SAMPLE_RUNS; index += 1) {
-      sharedRootSamples.push(await measure(() => scanSharedTempRoot(fixtureRoot)))
-      ownedParentSamples.push(
-        await measure(() => cleanupExpiredRemoteClipboardStaging(fixtureRoot, NOW_MS))
-      )
+    const samples = { ownedParent: [] as number[], sharedRoot: [] as number[] }
+    const launchPositions = {
+      ownedParent: [0, 0],
+      sharedRoot: [0, 0]
+    }
+    for (let index = 0; index < SAMPLE_RUNS_PER_ARM; index += 1) {
+      const order =
+        index % 2 === 0
+          ? (['sharedRoot', 'ownedParent'] as const)
+          : (['ownedParent', 'sharedRoot'] as const)
+      for (const [position, arm] of order.entries()) {
+        launchPositions[arm][position] += 1
+        samples[arm].push(
+          await measure(() =>
+            arm === 'sharedRoot'
+              ? scanSharedTempRoot(fixtureRoot)
+              : cleanupExpiredRemoteClipboardStaging(fixtureRoot, NOW_MS)
+          )
+        )
+      }
     }
 
+    expect(launchPositions).toEqual({
+      ownedParent: [SAMPLE_RUNS_PER_ARM / 2, SAMPLE_RUNS_PER_ARM / 2],
+      sharedRoot: [SAMPLE_RUNS_PER_ARM / 2, SAMPLE_RUNS_PER_ARM / 2]
+    })
+    expect(samples.ownedParent).toHaveLength(SAMPLE_RUNS_PER_ARM)
+    expect(samples.sharedRoot).toHaveLength(SAMPLE_RUNS_PER_ARM)
     expect(await countForeignEntries(fixtureRoot)).toBe(FOREIGN_ENTRY_COUNT)
     await expect(access(freshTransfer)).resolves.toBeUndefined()
-    const sharedRoot = summarize(sharedRootSamples)
-    const ownedParent = summarize(ownedParentSamples)
+    const sharedRoot = summarize(samples.sharedRoot)
+    const ownedParent = summarize(samples.ownedParent)
     console.log('correctness=pass')
+    console.log(
+      `sampling=ABBA positions-per-arm=${SAMPLE_RUNS_PER_ARM / 2}/${SAMPLE_RUNS_PER_ARM / 2} p95-order-drift<=1-slot`
+    )
     console.log(`post12917-shared-root median=${sharedRoot.median}ms p95=${sharedRoot.p95}ms`)
     console.log(`owned-parent median=${ownedParent.median}ms p95=${ownedParent.p95}ms`)
   }, 900_000)
@@ -117,7 +139,8 @@ async function measure(operation: () => Promise<void>): Promise<number> {
 
 function summarize(samples: number[]): { median: string; p95: string } {
   const sorted = [...samples].sort((left, right) => left - right)
-  const median = sorted[Math.ceil(sorted.length * 0.5) - 1]
+  const middle = sorted.length / 2
+  const median = (sorted[middle - 1] + sorted[middle]) / 2
   const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1]
   return { median: median.toFixed(3), p95: p95.toFixed(3) }
 }
