@@ -27,10 +27,10 @@ import type {
 } from './remote-terminal-source-range-consumer'
 import {
   createTerminalTitleTracker,
-  stripBrailleSpinnerGlyphs,
   type TerminalTitleFactMeta,
   type TerminalTitleTracker
 } from '../../shared/terminal-output-side-effects'
+import { getDecorativeAgentTitleSignature } from '../../shared/agent-decorative-title-signature'
 import { createCommandCodeOutputStatusDetector } from '../../shared/command-code-output-status'
 import type {
   TerminalSideEffectBatch,
@@ -980,6 +980,10 @@ import {
   createMobileSessionTabsNotifyCoalescer,
   type MobileSessionTabsNotifyCoalescer
 } from './mobile-session-tabs-notify-coalescer'
+import {
+  createMobileSessionTabsAgentStatusHeartbeat,
+  type MobileSessionTabsAgentStatusHeartbeat
+} from './mobile-session-tabs-agent-status-heartbeat'
 import { TerminalFocusNavigationCoalescer } from './terminal-focus-navigation-coalescer'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
@@ -1282,6 +1286,9 @@ type RuntimePtyWorktreeRecord = {
   lastAgentStatus: AgentStatus | null
   /** False until a live OSC frame sets the status; restore seeds never set it. */
   lastAgentStatusObservedLive: boolean
+  lastAgentStatusStartedAtEpochMs: number | null
+  // A later semantic title interval cannot inherit rich fields from an earlier task.
+  lastAgentStatusRichInvalidatedAtEpochMs: number | null
   lastOscTitle: string | null
   lastOscTitleAt: number | null
   // Why a second stamp: `lastOscTitleAt` is a title-observation sequence number,
@@ -1491,12 +1498,8 @@ type RuntimePtyTitleTrackerEntry = {
   tracker: TerminalTitleTracker
   // Why: onPtyData batches the mobile session-tab touch to once per chunk;
   // the stale-working-title timer fires between chunks and must touch
-  // immediately. These flags route the tracker callback to the right mode.
+  // immediately. This flag routes the tracker callback to the right mode.
   applyingChunk: boolean
-  // Why: synthetic spinner ticks arrive ~12.5x/sec per working pane; the
-  // synthetic path gates mobile snapshot fan-out on a non-decorative title
-  // change (spinner glyph + status comparison key kept below).
-  applyingSyntheticFrame: boolean
   lastMobileTitleGateKey: string | null
   chunkTouchedSessionTabs: boolean
   // Why: facts observed while applying a chunk are batched into one
@@ -2882,6 +2885,11 @@ export class OrcaRuntimeService {
   private readonly mobileSessionTabsNotifyCoalescer: MobileSessionTabsNotifyCoalescer =
     createMobileSessionTabsNotifyCoalescer((worktreeId) =>
       this.notifyMobileSessionTabsChangedNow(worktreeId)
+    )
+  private readonly mobileSessionTabsAgentStatusHeartbeat: MobileSessionTabsAgentStatusHeartbeat =
+    createMobileSessionTabsAgentStatusHeartbeat(
+      (ptyId) => this.getMobileSessionWorktreeIdsForPty(ptyId),
+      (worktreeId) => this.touchMobileSessionTabsForWorktree(worktreeId)
     )
   // Why: concurrent host terminal.focus storms (CLI switch fan-out / bulk open)
   // each await a full host reveal; only one terminal can be focused, so latest-wins
@@ -6732,6 +6740,21 @@ export class OrcaRuntimeService {
     }
   }
 
+  private getMobileSessionWorktreeIdsForPty(ptyId: string): string[] {
+    const worktreeIds: string[] = []
+    for (const [worktreeId, snapshot] of this.mobileSessionTabsByWorktree) {
+      const hasPtyBackedTab = snapshot.tabs.some(
+        (tab) =>
+          tab.type === 'terminal' &&
+          (tab.ptyId === ptyId || tab.parentLayout?.ptyIdsByLeafId?.[tab.leafId] === ptyId)
+      )
+      if (hasPtyBackedTab) {
+        worktreeIds.push(worktreeId)
+      }
+    }
+    return worktreeIds
+  }
+
   /** Bump the snapshot version and emit, coalesced unless `immediate`.
    *  Why the bump: clients gate mirrored snapshots on a strictly increasing
    *  `snapshotVersion`, so a re-emit at the same version is silently dropped. */
@@ -9279,6 +9302,9 @@ export class OrcaRuntimeService {
       // subscriber closing mid-window still receives the latest settled state.
       this.mobileSessionTabsNotifyCoalescer.flushAll()
       this.mobileSessionTabListeners.delete(subscription)
+      if (this.mobileSessionTabListeners.size === 0) {
+        this.mobileSessionTabsAgentStatusHeartbeat.cancelPending()
+      }
     }
   }
 
@@ -10065,13 +10091,11 @@ export class OrcaRuntimeService {
   ingestSyntheticTitleFrame(ptyId: string, data: string): void {
     const entry = this.getOrCreatePtyTitleTrackerEntry(ptyId)
     entry.applyingChunk = true
-    entry.applyingSyntheticFrame = true
     entry.chunkTouchedSessionTabs = false
     try {
       entry.tracker.applySyntheticTitleFrame(data)
     } finally {
       entry.applyingChunk = false
-      entry.applyingSyntheticFrame = false
       this.flushPendingTerminalSideEffectFacts(ptyId, entry)
     }
     if (entry.chunkTouchedSessionTabs) {
@@ -10309,13 +10333,13 @@ export class OrcaRuntimeService {
     return { ...snapshot, lastTitle: tracked }
   }
 
-  /** Decorative comparison key: spinner frame glyphs stripped, derived agent
-   *  status kept so a working→idle flip with an otherwise-equal label still
-   *  counts as a change. */
+  /** Decorative comparison key: only recognized agent titles fold leading spinner frames. */
   private makeDecorativeTitleGateKey(rawTitle: string, normalizedTitle: string): string {
-    return `${detectAgentStatusFromTitle(rawTitle) ?? ''}\u0000${stripBrailleSpinnerGlyphs(
-      normalizedTitle
-    )}`
+    // Stable Pi/Gemini/Grok display normalization also defines their semantic gate.
+    const normalizedSignature =
+      rawTitle === normalizedTitle ? null : getDecorativeAgentTitleSignature(normalizedTitle)
+    const signature = normalizedSignature ?? getDecorativeAgentTitleSignature(rawTitle)
+    return signature === null ? `literal\u0000${normalizedTitle}` : `agent\u0000${signature}`
   }
 
   private getOrCreatePtyTitleTrackerEntry(ptyId: string): RuntimePtyTitleTrackerEntry {
@@ -10346,28 +10370,42 @@ export class OrcaRuntimeService {
             ...(meta?.staleWorkingTitleClear ? { staleWorkingTitleClear: true } : {})
           })
           const changed = this.applyTrackedPtyTitle(ptyId, rawTitle, normalizedTitle, meta)
-          // Why: an identity-only cursor title records nothing, so on a fresh pane `changed` is
-          // false — but the tracker title is that pane's only Cursor identity and still has to
-          // fan out to the sidebar and mobile (#10258).
-          if (!changed && !this.isLiveCursorNativeTitle(rawTitle, meta)) {
-            return
-          }
+          const identityOnlyTitle = this.isLiveCursorNativeTitle(rawTitle, meta)
           const live = this.ptyTitleTrackersByPtyId.get(ptyId)
           const gateKey = this.makeDecorativeTitleGateKey(rawTitle, normalizedTitle)
           const decorativeOnly = live?.lastMobileTitleGateKey === gateKey
           if (live) {
             live.lastMobileTitleGateKey = gateKey
           }
+          const tracksReplicatedStatus =
+            live?.applyingChunk === true && this.mobileSessionTabListeners.size > 0
+          const titleStatus = tracksReplicatedStatus ? detectAgentStatusFromTitle(rawTitle) : null
+          if (
+            tracksReplicatedStatus &&
+            decorativeOnly &&
+            !this.ptyDelayedForegroundSnapshotTitleObservations.has(ptyId) &&
+            (titleStatus === 'working' || titleStatus === 'permission')
+          ) {
+            // Normalized Pi/Gemini/Grok frames still renew the replicated status lease.
+            this.mobileSessionTabsAgentStatusHeartbeat.scheduleDecorativeHeartbeat(ptyId)
+          }
+          // Why: an identity-only cursor title records nothing, but the tracker
+          // title is that pane's only Cursor identity and must still fan out (#10258).
+          if (!changed && !identityOnlyTitle) {
+            return
+          }
           if (live?.applyingChunk) {
             // Why: synthetic spinner ticks change only the braille glyph
             // ~12.5x/sec; fanning out full mobile session snapshots per frame
             // is pure churn. Raw lastOscTitle updates above stay cheap.
-            if (!(live.applyingSyntheticFrame && decorativeOnly)) {
+            if (!decorativeOnly) {
+              this.mobileSessionTabsAgentStatusHeartbeat.observeSemanticTitle(ptyId)
               live.chunkTouchedSessionTabs = true
             }
           } else {
             // Stale-working-title timer path — fires between chunks, so the
             // per-chunk batching in onPtyData cannot pick it up.
+            this.mobileSessionTabsAgentStatusHeartbeat.observeSemanticTitle(ptyId)
             this.touchMobileSessionSnapshotsForPty(ptyId)
           }
         },
@@ -10411,7 +10449,6 @@ export class OrcaRuntimeService {
     const entry: RuntimePtyTitleTrackerEntry = {
       tracker,
       applyingChunk: false,
-      applyingSyntheticFrame: false,
       lastMobileTitleGateKey: null,
       chunkTouchedSessionTabs: false,
       pendingFacts: [],
@@ -10453,11 +10490,22 @@ export class OrcaRuntimeService {
       const prevStatus = pty.lastAgentStatus
       const prevTitle = pty.lastOscTitle
       const observedAt = this.nextTitleObservationSequence()
+      const observedAtEpochMs = identityOnlyTitle ? null : Date.now()
       pty.lastOscTitle = recordedTitle
       pty.lastOscTitleAt = identityOnlyTitle ? null : observedAt
-      pty.lastOscTitleEpochMs = identityOnlyTitle ? null : Date.now()
+      pty.lastOscTitleEpochMs = observedAtEpochMs
       pty.lastAgentStatus = agentStatus
       pty.lastAgentStatusObservedLive = true
+      if (prevStatus !== agentStatus) {
+        pty.lastAgentStatusStartedAtEpochMs = observedAtEpochMs
+      }
+      if (
+        identityOnlyTitle ||
+        terminalTitleBlocksExplicitAgentStatus(recordedTitle) ||
+        (prevStatus !== null && agentStatus !== null && prevStatus !== agentStatus)
+      ) {
+        pty.lastAgentStatusRichInvalidatedAtEpochMs = observedAtEpochMs ?? Date.now()
+      }
       if (identityOnlyTitle) {
         pty.managementTitle = null
         pty.managementTitleAt = null
@@ -10537,6 +10585,8 @@ export class OrcaRuntimeService {
   private disposePtyTitleTracker(ptyId: string): void {
     this.ptyTitleTrackersByPtyId.get(ptyId)?.tracker.dispose()
     this.ptyTitleTrackersByPtyId.delete(ptyId)
+    this.ptyDelayedForegroundSnapshotTitleObservations.delete(ptyId)
+    this.mobileSessionTabsAgentStatusHeartbeat.removePty(ptyId)
     for (const titleGateKeys of this.terminalSideEffectTitleGateKeysByClientEventListener.values()) {
       titleGateKeys.delete(ptyId)
     }
@@ -10558,6 +10608,8 @@ export class OrcaRuntimeService {
       // Why: the prior process's live frames say nothing about the replacement,
       // so the seed a same-id restore applies must not inherit its authority.
       pty.lastAgentStatusObservedLive = false
+      pty.lastAgentStatusStartedAtEpochMs = null
+      pty.lastAgentStatusRichInvalidatedAtEpochMs = Date.now()
       pty.managementTitle = null
       pty.managementTitleAt = null
     }
@@ -17114,6 +17166,9 @@ export class OrcaRuntimeService {
         return
       }
       this.ptyDelayedForegroundSnapshotTitleObservations.delete(ptyId)
+      if (this.mobileSessionTabListeners.size > 0) {
+        this.mobileSessionTabsAgentStatusHeartbeat.observeSemanticTitle(ptyId)
+      }
       if (!foregroundAgentChanged) {
         this.touchMobileSessionSnapshotsForPty(ptyId)
       }
@@ -24135,6 +24190,7 @@ export class OrcaRuntimeService {
       store.removeWorktreeMeta(worktreeId)
     }
     this.mobileSessionTabsByWorktree.delete(worktreeId)
+    this.mobileSessionTabsAgentStatusHeartbeat.removeWorktree(worktreeId)
     this.acceptedRendererMobileSnapshotByWorktree.delete(worktreeId)
     advertisedUrlWatcher.forgetWorktree(worktreeId)
     deleteWorktreeHistoryDir(worktreeId)
@@ -29172,6 +29228,8 @@ export class OrcaRuntimeService {
         lastExitCode: null,
         lastAgentStatus: null,
         lastAgentStatusObservedLive: false,
+        lastAgentStatusStartedAtEpochMs: null,
+        lastAgentStatusRichInvalidatedAtEpochMs: null,
         lastOscTitle: null,
         lastOscTitleAt: null,
         lastOscTitleEpochMs: null,
@@ -29923,6 +29981,7 @@ export class OrcaRuntimeService {
           nextWorktrees.add(worktreeId)
         } else {
           this.mobileSessionTabsByWorktree.delete(worktreeId)
+          this.mobileSessionTabsAgentStatusHeartbeat.removeWorktree(worktreeId)
           this.acceptedRendererMobileSnapshotByWorktree.delete(worktreeId)
           // Why: drop any pending coalesced notify so a stale snapshot can't land after the removed frame.
           this.mobileSessionTabsNotifyCoalescer.cancel(worktreeId)
@@ -30459,16 +30518,21 @@ export class OrcaRuntimeService {
           (hookAgentStatus.providerSessionReceivedAt ?? -1) >= tab.agentStatus.updatedAt)
           ? hookAgentStatus.providerSession
           : tab.agentStatus?.providerSession
-      const normalizedTabAgentStatus = tab.agentStatus
-        ? normalizeCompatibleAgentStatusEntryForOwner(
-            {
-              ...tab.agentStatus,
-              ...(hookProviderSession ? { providerSession: hookProviderSession } : {})
-            },
-            ownerAgent
-          )
-        : null
-      // Why: keep rich hook status on a live prompt/tool (authoritative even under a non-agent title), else interactivePrompt is lost.
+      const statusPty = liveLeafPty ?? mobileStatusPty
+      const normalizedTabAgentStatus = this.renewMobileAgentStatusFromPtyTitle(
+        tab.agentStatus
+          ? normalizeCompatibleAgentStatusEntryForOwner(
+              {
+                ...tab.agentStatus,
+                ...(hookProviderSession ? { providerSession: hookProviderSession } : {})
+              },
+              ownerAgent
+            )
+          : null,
+        statusPty,
+        { preserveQuestionUnderShellTitle: true }
+      )
+      // Why: keep rich status on a live prompt/tool, or interactivePrompt is lost under a non-agent title.
       const hasLiveAgentSignal =
         normalizedTabAgentStatus?.interactivePrompt != null ||
         normalizedTabAgentStatus?.toolName != null
@@ -30488,8 +30552,10 @@ export class OrcaRuntimeService {
               agentStatus: {
                 state: 'done' as const,
                 prompt: '',
-                updatedAt: normalizedTabAgentStatus.updatedAt,
-                stateStartedAt: normalizedTabAgentStatus.stateStartedAt,
+                updatedAt: statusPty?.lastOscTitleEpochMs ?? normalizedTabAgentStatus.updatedAt,
+                stateStartedAt:
+                  statusPty?.lastAgentStatusStartedAtEpochMs ??
+                  normalizedTabAgentStatus.stateStartedAt,
                 paneKey: normalizedTabAgentStatus.paneKey,
                 stateHistory: [],
                 agentType: normalizedTabAgentStatus.agentType,
@@ -30582,6 +30648,91 @@ export class OrcaRuntimeService {
     }
   }
 
+  private renewMobileAgentStatusFromPtyTitle(
+    status: AgentStatusEntry | null,
+    pty: RuntimePtyWorktreeRecord | null,
+    options: { preserveQuestionUnderShellTitle?: boolean } = {}
+  ): AgentStatusEntry | null {
+    if (!status || !pty) {
+      return status
+    }
+    if (
+      options.preserveQuestionUnderShellTitle &&
+      status.interactivePrompt != null &&
+      terminalTitleBlocksExplicitAgentStatus(pty.lastOscTitle)
+    ) {
+      return status
+    }
+    const richStatusCanOwnTitleInterval =
+      pty.lastAgentStatusRichInvalidatedAtEpochMs === null ||
+      status.updatedAt > pty.lastAgentStatusRichInvalidatedAtEpochMs
+    const titleEvidenceAt = pty.lastOscTitleEpochMs
+    if (titleEvidenceAt === null) {
+      return richStatusCanOwnTitleInterval ? status : null
+    }
+    const buildTitleOnlyStatus = (
+      state: AgentStatusEntry['state'],
+      updatedAt: number,
+      stateStartedAt: number
+    ): AgentStatusEntry => ({
+      state,
+      prompt: '',
+      updatedAt,
+      stateStartedAt,
+      paneKey: status.paneKey,
+      stateHistory: [],
+      ...(status.agentType ? { agentType: status.agentType } : {}),
+      ...(status.terminalHandle ? { terminalHandle: status.terminalHandle } : {}),
+      ...(status.worktreeId ? { worktreeId: status.worktreeId } : {}),
+      ...(status.tabId ? { tabId: status.tabId } : {}),
+      ...(status.terminalTitle ? { terminalTitle: status.terminalTitle } : {}),
+      ...(status.providerSession ? { providerSession: status.providerSession } : {})
+    })
+    const titleConfirmsState =
+      (pty.lastAgentStatus === 'working' && status.state === 'working') ||
+      (pty.lastAgentStatus === 'permission' &&
+        (status.state === 'blocked' || status.state === 'waiting'))
+    if (!titleConfirmsState) {
+      if (richStatusCanOwnTitleInterval && status.updatedAt >= titleEvidenceAt) {
+        return status
+      }
+      if (
+        pty.lastAgentStatus === null &&
+        !terminalTitleBlocksExplicitAgentStatus(pty.lastOscTitle)
+      ) {
+        return status
+      }
+      const titleState =
+        pty.lastAgentStatus === 'working'
+          ? 'working'
+          : pty.lastAgentStatus === 'permission'
+            ? 'blocked'
+            : 'done'
+      return buildTitleOnlyStatus(
+        titleState,
+        titleEvidenceAt,
+        pty.lastAgentStatusStartedAtEpochMs ?? titleEvidenceAt
+      )
+    }
+    const richStatusIsFresh = Date.now() - status.updatedAt <= AGENT_STATUS_STALE_AFTER_MS
+    const richStatusOwnsCurrentState = richStatusIsFresh && richStatusCanOwnTitleInterval
+    // Fresh explicit evidence from this title interval owns acknowledgement identity.
+    const stateStartedAt = richStatusOwnsCurrentState
+      ? status.stateStartedAt
+      : (pty.lastAgentStatusStartedAtEpochMs ?? status.stateStartedAt)
+    if (richStatusOwnsCurrentState) {
+      pty.lastAgentStatusStartedAtEpochMs = stateStartedAt
+    }
+    const updatedAt = Math.max(status.updatedAt, titleEvidenceAt)
+    if (!richStatusOwnsCurrentState) {
+      return buildTitleOnlyStatus(status.state, updatedAt, stateStartedAt)
+    }
+    if (updatedAt === status.updatedAt && stateStartedAt === status.stateStartedAt) {
+      return status
+    }
+    return { ...status, updatedAt, stateStartedAt }
+  }
+
   /** Mobile-friendly status entry for a PTY, aligning agentType and titles with the active owner. */
   private buildPtyMobileAgentStatus(
     pty: RuntimePtyWorktreeRecord | null,
@@ -30656,24 +30807,29 @@ export class OrcaRuntimeService {
     // Why: OSC 9999 hook payload carries real state/prompt/agent; without preferring it, hook-only transitions never surfaced (#7970).
     const liveRow = retained ?? this.resolveHookLiveAgentRow(hookRow.live, pty, nonAgentTitle)
     if (liveRow) {
-      return {
-        agentStatus: normalizeCompatibleAgentStatusEntryForOwner(
-          {
-            ...liveRow.payload,
-            paneKey,
-            updatedAt: liveRow.updatedAt,
-            stateStartedAt: liveRow.stateStartedAt,
-            stateHistory: [],
-            ...(terminalHandle ? { terminalHandle } : {}),
-            ...((pty?.worktreeId ?? liveRow.worktreeId)
-              ? { worktreeId: pty?.worktreeId ?? liveRow.worktreeId }
-              : {}),
-            tabId: tab.parentTabId,
-            terminalTitle,
-            ...providerSession
-          },
-          ownerAgent
-        )
+      const liveStatus = normalizeCompatibleAgentStatusEntryForOwner(
+        {
+          ...liveRow.payload,
+          paneKey,
+          updatedAt: liveRow.updatedAt,
+          stateStartedAt: liveRow.stateStartedAt,
+          stateHistory: [],
+          ...(terminalHandle ? { terminalHandle } : {}),
+          ...((pty?.worktreeId ?? liveRow.worktreeId)
+            ? { worktreeId: pty?.worktreeId ?? liveRow.worktreeId }
+            : {}),
+          tabId: tab.parentTabId,
+          terminalTitle,
+          ...providerSession
+        },
+        ownerAgent
+      )
+      // A live question outranks only the shell title that currently obscures it.
+      const renewedStatus = this.renewMobileAgentStatusFromPtyTitle(liveStatus, pty, {
+        preserveQuestionUnderShellTitle: true
+      })
+      if (renewedStatus) {
+        return { agentStatus: renewedStatus }
       }
     }
     // Last resort: the pane's hook evidence is identity only (resume rows, stale
@@ -30694,7 +30850,7 @@ export class OrcaRuntimeService {
               : 'done',
         prompt: '',
         updatedAt: evidenceAt,
-        stateStartedAt: evidenceAt,
+        stateStartedAt: pty?.lastAgentStatusStartedAtEpochMs ?? evidenceAt,
         paneKey,
         ...(terminalHandle ? { terminalHandle } : {}),
         ...(agentType ? { agentType } : {}),
