@@ -16,4 +16,25 @@ describe('agentMapDirectLineageChevronPath', () => {
     expect(tips.every((tip) => tip.x === tip.y)).toBe(true)
     expect(tips.at(-1)?.x).toBeGreaterThan(tips[0].x)
   })
+
+  it('trims the path to unequal node radii', () => {
+    expect(
+      agentMapDirectLineageChevronPath({ x: 0, y: 0, radius: 2 }, { x: 20, y: 0, radius: 6 })
+    ).toBe('M 4.5 2.25 L 8 0 L 4.5 -2.25')
+  })
+
+  it('does not reverse direction when node boundaries overlap', () => {
+    expect(
+      agentMapDirectLineageChevronPath({ x: 0, y: 0, radius: 10 }, { x: 15, y: 0, radius: 10 })
+    ).toBe('M 0 0')
+  })
+
+  it('caps decorative chevrons on long links', () => {
+    const path = agentMapDirectLineageChevronPath(
+      { x: 0, y: 0, radius: 0 },
+      { x: 10_000, y: 0, radius: 0 }
+    )
+
+    expect(path.match(/\bM\b/g)).toHaveLength(32)
+  })
 })

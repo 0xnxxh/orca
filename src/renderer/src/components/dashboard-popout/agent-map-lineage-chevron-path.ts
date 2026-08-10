@@ -17,6 +17,7 @@ type LineageSegment = {
 const CHEVRON_SPACING = 8
 const CHEVRON_DEPTH = 3.5
 const CHEVRON_HALF_WIDTH = 2.25
+const MAX_CHEVRONS_PER_PATH = 32
 
 function svgNumber(value: number): number {
   return Math.round(value * 1_000) / 1_000
@@ -41,7 +42,10 @@ export function agentMapLineageChevronPath(points: AgentMapLineagePoint[]): stri
     return points[0] ? `M ${svgNumber(points[0].x)} ${svgNumber(points[0].y)}` : ''
   }
 
-  const chevronCount = Math.max(1, Math.floor(totalLength / CHEVRON_SPACING))
+  const chevronCount = Math.min(
+    MAX_CHEVRONS_PER_PATH,
+    Math.max(1, Math.floor(totalLength / CHEVRON_SPACING))
+  )
   const commands: string[] = []
   let segmentIndex = 0
   let segmentStartDistance = 0
@@ -76,7 +80,7 @@ export function agentMapDirectLineageChevronPath(
   const dx = child.x - parent.x
   const dy = child.y - parent.y
   const distance = Math.hypot(dx, dy)
-  if (distance === 0) {
+  if (distance <= parent.radius + child.radius) {
     return agentMapLineageChevronPath([parent])
   }
   const unitX = dx / distance
