@@ -24,6 +24,7 @@ type InFlightWorkspaceSpaceScan = {
 }
 
 export function registerWorkspaceSpaceHandlers(store: Store): void {
+  const snapshotDirectory = store.getProfileStorageDirectory()
   let inFlightScan: InFlightWorkspaceSpaceScan | null = null
   ipcMain.removeHandler('workspaceSpace:cancel')
   ipcMain.removeHandler('workspaceSpace:analyze')
@@ -87,7 +88,7 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
         .then((analysis): WorkspaceSpaceAnalyzeResult => {
           // Fire-and-forget: a ~6-minute cold analysis must survive reload/restart, but
           // persistence must never delay or fail the reply.
-          void persistWorkspaceSpaceAnalysisSnapshot(analysis)
+          void persistWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, analysis)
           return { ok: true, analysis }
         })
         .catch((error: unknown): WorkspaceSpaceAnalyzeResult => {
@@ -105,7 +106,8 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
 
   ipcMain.handle(
     'workspaceSpace:getCachedAnalysis',
-    (): Promise<WorkspaceSpaceAnalysis | null> => readWorkspaceSpaceAnalysisSnapshot()
+    (): Promise<WorkspaceSpaceAnalysis | null> =>
+      readWorkspaceSpaceAnalysisSnapshot(snapshotDirectory)
   )
 
   ipcMain.handle('workspaceSpace:cancel', async (): Promise<boolean> => {
