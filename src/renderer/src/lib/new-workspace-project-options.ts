@@ -145,8 +145,11 @@ export function buildNewWorkspaceProjectOptions(
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.detail.localeCompare(b.detail))
 }
 
-function getProjectGroupOptionId(projectGroupId: string): string {
-  return `${NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX}${projectGroupId}`
+export function getNewWorkspaceProjectGroupOptionId(
+  projectGroupId: string,
+  ownerHostId: ExecutionHostId
+): string {
+  return `${NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX}${encodeURIComponent(ownerHostId)}:${encodeURIComponent(projectGroupId)}`
 }
 
 function getFolderSourceOptionId(repoId: string): string {
@@ -160,9 +163,32 @@ export function getRepoIdFromNewWorkspaceFolderSourceOptionId(optionId: string):
 }
 
 export function getProjectGroupIdFromNewWorkspaceOptionId(optionId: string): string | null {
-  return optionId.startsWith(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX)
-    ? optionId.slice(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX.length)
-    : null
+  return getProjectGroupSelectorFromNewWorkspaceOptionId(optionId)?.groupId ?? null
+}
+
+export function getProjectGroupSelectorFromNewWorkspaceOptionId(
+  optionId: string
+): { groupId: string; ownerHostId?: ExecutionHostId } | null {
+  if (!optionId.startsWith(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX)) {
+    return null
+  }
+  const value = optionId.slice(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX.length)
+  const separator = value.indexOf(':')
+  if (separator === -1) {
+    return value ? { groupId: value } : null
+  }
+  try {
+    const parsedOwner = parseExecutionHostId(decodeURIComponent(value.slice(0, separator)))
+    if (!parsedOwner) {
+      return null
+    }
+    return {
+      ownerHostId: parsedOwner.id,
+      groupId: decodeURIComponent(value.slice(separator + 1))
+    }
+  } catch {
+    return null
+  }
 }
 
 function getProjectGroupDetail(group: ProjectGroup): string {
@@ -185,23 +211,25 @@ export function getNewWorkspaceProjectGroupHostId(group: ProjectGroup): Executio
 export function findActionableFolderProjectGroup({
   projectGroups,
   groupId,
+  ownerHostId,
   actionableHostIds
 }: {
   projectGroups: readonly ProjectGroup[]
   groupId: string | null | undefined
+  ownerHostId?: ExecutionHostId
   actionableHostIds: ReadonlySet<ExecutionHostId>
 }): ProjectGroup | null {
   if (!groupId) {
     return null
   }
-  return (
-    projectGroups.find(
-      (group) =>
-        group.id === groupId &&
-        Boolean(group.parentPath?.trim()) &&
-        actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group))
-    ) ?? null
+  const candidates = projectGroups.filter(
+    (group) =>
+      group.id === groupId &&
+      Boolean(group.parentPath?.trim()) &&
+      actionableHostIds.has(getNewWorkspaceProjectGroupHostId(group)) &&
+      (!ownerHostId || getNewWorkspaceProjectGroupHostId(group) === ownerHostId)
   )
+  return candidates.length === 1 ? candidates[0] : null
 }
 
 export function buildNewWorkspaceFolderSourceOptions(
@@ -233,7 +261,7 @@ export function buildNewWorkspaceCreateTargetOptions({
     )
     .map((group) => ({
       kind: 'project-group' as const,
-      id: getProjectGroupOptionId(group.id),
+      id: getNewWorkspaceProjectGroupOptionId(group.id, getNewWorkspaceProjectGroupHostId(group)),
       projectGroupId: group.id,
       displayName: group.name,
       badgeColor: group.color ?? 'var(--muted-foreground)',

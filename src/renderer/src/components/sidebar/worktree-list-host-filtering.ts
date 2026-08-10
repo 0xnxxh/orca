@@ -121,6 +121,11 @@ export function getFolderPathStatusRouteOptionsForRows({
   projectGroupsById: ReadonlyMap<string, ProjectGroup>
   folderWorkspacesById: ReadonlyMap<string, FolderWorkspace>
 }): { runtimeEnvironmentId: string | null } | undefined {
+  if (request.scope !== 'path' && request.ownerHostId) {
+    return {
+      runtimeEnvironmentId: getRuntimeEnvironmentIdForFolderPathStatusHost(request.ownerHostId)
+    }
+  }
   const folderWorkspace =
     request.scope === 'folder-workspace'
       ? folderWorkspacesById.get(request.folderWorkspaceId)

@@ -131,7 +131,9 @@ import {
 import {
   buildNewWorkspaceCreateTargetOptions,
   findActionableFolderProjectGroup,
-  getProjectGroupIdFromNewWorkspaceOptionId,
+  getNewWorkspaceProjectGroupOptionId,
+  getNewWorkspaceProjectGroupHostId,
+  getProjectGroupSelectorFromNewWorkspaceOptionId,
   type NewWorkspaceProjectOption
 } from '@/lib/new-workspace-project-options'
 import { useDetectedAgents } from '@/hooks/useDetectedAgents'
@@ -240,6 +242,7 @@ export type UseComposerStateOptions = {
   initialRepoId?: string
   initialEphemeralVmRecipeId?: string
   initialProjectGroupId?: string
+  initialProjectGroupOwnerHostId?: ExecutionHostId
   initialName?: string
   initialPrompt?: string
   initialLinkedWorkItem?: LinkedWorkItemSummary | null
@@ -608,7 +611,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     telemetrySource,
     enableIssueAutomation = true,
     createGateMode = 'full',
-    initialProjectGroupId
+    initialProjectGroupId,
+    initialProjectGroupOwnerHostId
   } = options
 
   // Why: fold stable actions into one subscription so store mutations run one equality check.
@@ -746,11 +750,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const initialFolderProjectGroup = findActionableFolderProjectGroup({
     projectGroups,
     groupId: initialFolderProjectGroupId,
+    ownerHostId: initialProjectGroupId ? initialProjectGroupOwnerHostId : undefined,
     actionableHostIds
   })
   const [selectedProjectGroupId, setSelectedProjectGroupId] = useState<string | null>(
     initialFolderProjectGroup?.id ?? null
   )
+  const [selectedProjectGroupOwnerHostId, setSelectedProjectGroupOwnerHostId] =
+    useState<ExecutionHostId | null>(
+      initialFolderProjectGroup
+        ? getNewWorkspaceProjectGroupHostId(initialFolderProjectGroup)
+        : null
+    )
   const initialProjectGroupAppliedRef = useRef(Boolean(initialFolderProjectGroup))
   const [projectError, setProjectError] = useState<string | null>(null)
   const repoId = repoIdOverride ?? internalRepoId
@@ -759,13 +770,15 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       findActionableFolderProjectGroup({
         projectGroups,
         groupId: selectedProjectGroupId,
+        ownerHostId: selectedProjectGroupOwnerHostId ?? undefined,
         actionableHostIds
       }),
-    [actionableHostIds, projectGroups, selectedProjectGroupId]
+    [actionableHostIds, projectGroups, selectedProjectGroupId, selectedProjectGroupOwnerHostId]
   )
   useEffect(() => {
     if (selectedProjectGroupId && !selectedProjectGroup) {
       setSelectedProjectGroupId(null)
+      setSelectedProjectGroupOwnerHostId(null)
     }
   }, [selectedProjectGroup, selectedProjectGroupId])
   useEffect(() => {
@@ -779,13 +792,22 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     const nextGroup = findActionableFolderProjectGroup({
       projectGroups,
       groupId: initialFolderProjectGroupId,
+      ownerHostId: initialProjectGroupId ? initialProjectGroupOwnerHostId : undefined,
       actionableHostIds
     })
     if (nextGroup) {
       initialProjectGroupAppliedRef.current = true
       setSelectedProjectGroupId(nextGroup.id)
+      setSelectedProjectGroupOwnerHostId(getNewWorkspaceProjectGroupHostId(nextGroup))
     }
-  }, [actionableHostIds, initialFolderProjectGroupId, projectGroups, selectedProjectGroupId])
+  }, [
+    actionableHostIds,
+    initialFolderProjectGroupId,
+    initialProjectGroupId,
+    initialProjectGroupOwnerHostId,
+    projectGroups,
+    selectedProjectGroupId
+  ])
   const isProjectGroupTarget = selectedProjectGroup !== null
   const folderSourceRepos = useMemo(
     () => getFolderSourceRepos(repos, projectGroups, selectedProjectGroup),
@@ -887,7 +909,10 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const selectedRepoProjectId =
     selectedWorkspaceTarget.status === 'ready' ? selectedWorkspaceTarget.target.projectId : null
   const selectedProjectId = selectedProjectGroup
-    ? `project-group:${selectedProjectGroup.id}`
+    ? getNewWorkspaceProjectGroupOptionId(
+        selectedProjectGroup.id,
+        getNewWorkspaceProjectGroupHostId(selectedProjectGroup)
+      )
     : selectedRepoProjectId
   const selectedProjectHostSetupId =
     !selectedProjectGroup && selectedWorkspaceTarget.status === 'ready'
@@ -2794,15 +2819,17 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const handleProjectChange = useCallback(
     (projectId: string): void => {
       initialProjectGroupAppliedRef.current = true
-      const projectGroupId = getProjectGroupIdFromNewWorkspaceOptionId(projectId)
-      if (projectGroupId) {
+      const projectGroupSelector = getProjectGroupSelectorFromNewWorkspaceOptionId(projectId)
+      if (projectGroupSelector) {
         const nextProjectGroup = findActionableFolderProjectGroup({
           projectGroups,
-          groupId: projectGroupId,
+          groupId: projectGroupSelector.groupId,
+          ownerHostId: projectGroupSelector.ownerHostId,
           actionableHostIds
         })
         if (!nextProjectGroup) {
           setSelectedProjectGroupId(null)
+          setSelectedProjectGroupOwnerHostId(null)
           setProjectError(
             translate(
               'auto.hooks.useComposerState.chooseOrAddProjectBeforeWorkspace',
@@ -2813,6 +2840,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         }
         const nextSourceRepo = getFolderSourceRepos(repos, projectGroups, nextProjectGroup)[0]
         setSelectedProjectGroupId(nextProjectGroup.id)
+        setSelectedProjectGroupOwnerHostId(getNewWorkspaceProjectGroupHostId(nextProjectGroup))
         setProjectError(null)
         setRepoId(nextSourceRepo?.id ?? '')
         setLinkedIssue('')
@@ -2839,6 +2867,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
 
       setSelectedProjectGroupId(null)
+      setSelectedProjectGroupOwnerHostId(null)
       const preferredHostId =
         selectedWorkspaceTarget.status === 'ready' ? selectedWorkspaceTarget.target.hostId : null
       // Why: pass the current host as a preference (focusedHostScope), not a hard hostId — pinning made selecting a project set up only on another host a silent no-op.
@@ -2875,6 +2904,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       // Why: clear the folder-group target when selecting the Add-Project repo, since the group's onRepoChange only accepts repos inside the group.
       initialProjectGroupAppliedRef.current = true
       setSelectedProjectGroupId(null)
+      setSelectedProjectGroupOwnerHostId(null)
       setProjectError(null)
       handleRepoChange(nextRepoId)
     },

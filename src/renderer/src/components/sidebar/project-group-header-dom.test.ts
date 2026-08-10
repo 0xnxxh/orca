@@ -20,7 +20,7 @@ describe('Project Group header drag DOM source', () => {
     const source = readWorktreeListSource()
 
     expect(source).toContain('const updateProjectGroup = useAppStore((s) => s.updateProjectGroup)')
-    expect(source).toContain('void updateProjectGroup(groupId, { tabOrder })')
+    expect(source).toContain('ownerHostId: getProjectGroupMutationSelector(group).ownerHostId')
   })
 
   it('keeps grab cursor on the title surface and dual handle attrs on row + surface', () => {

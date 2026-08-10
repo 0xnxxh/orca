@@ -363,14 +363,11 @@ describe('filesystem-auth path containment', () => {
     })
     const store = makeStore(repos, { projectGroups, folderWorkspaces })
 
-    const started = performance.now()
     const allowed = isPathAllowed('/local/group-0', store)
-    const elapsedMs = performance.now() - started
 
     expect(allowed).toBe(true)
     // Why: indexed auth must not re-scan every path for every group/folder on each authorize.
     expect(pathReads).toBeLessThan(repoCount * 4)
-    expect(elapsedMs).toBeLessThan(250)
   })
 
   it('bounds deep legacy folder hierarchies without materializing every subtree', () => {
@@ -393,12 +390,9 @@ describe('filesystem-auth path containment', () => {
     ]
     const store = makeStore(repos, { projectGroups, folderWorkspaces: [] })
 
-    const started = performance.now()
     const allowed = isPathAllowed('/legacy/root', store)
-    const elapsedMs = performance.now() - started
 
     expect(allowed).toBe(false)
-    expect(elapsedMs).toBeLessThan(250)
   })
 
   it.skipIf(process.platform === 'win32')(

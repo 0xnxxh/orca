@@ -1058,7 +1058,8 @@ export function buildRows(
   folderWorkspaces: readonly FolderWorkspace[] = [],
   hostLabelById?: ReadonlyMap<string, string>,
   defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID,
-  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings)
+  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings),
+  ownerQualifiedProjectGroupIds: ReadonlySet<string> = new Set()
 ): Row[] {
   const result: Row[] = []
   const projectIndex = buildProjectGroupingIndex(projectGrouping)
@@ -1560,7 +1561,11 @@ export function buildRows(
     const repoEntries = sortRepoEntriesWithinGroup(groupByProjectGroupIdentity.get(identity) ?? [])
     const childGroups = childGroupsByParentIdentity.get(identity) ?? []
     // Why: bare project-group:<id> stays when the bare id is unique; only same-id multi-owner rows need owner stamps.
-    const keyOwner = projectGroupIndex.ambiguousIds.has(projectGroup.id) ? ownerHostId : undefined
+    const keyOwner =
+      projectGroupIndex.ambiguousIds.has(projectGroup.id) ||
+      ownerQualifiedProjectGroupIds.has(projectGroup.id)
+        ? ownerHostId
+        : undefined
     const key = getProjectGroupHeaderKey(projectGroup.id, keyOwner)
     // Why: same-id groups on distinct owners collapse independently in persisted sidebar state.
     const collapseKey = getProjectGroupHeaderKey(projectGroup.id, keyOwner)

@@ -12,6 +12,11 @@ import {
 
 export type ProjectGroupSidebarIdentity = string
 
+export type ProjectGroupMutationSelector = {
+  groupId: string
+  ownerHostId: ExecutionHostId
+}
+
 export function getProjectGroupOwnerHostId(
   group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>
 ): ExecutionHostId {
@@ -24,6 +29,12 @@ export function getProjectGroupSidebarIdentity(
   return getProjectGroupOwnerIdentity(group)
 }
 
+export function getProjectGroupMutationSelector(
+  group: Pick<ProjectGroup, 'id' | 'connectionId' | 'executionHostId'>
+): ProjectGroupMutationSelector {
+  return { groupId: group.id, ownerHostId: getProjectGroupOwnerHostId(group) }
+}
+
 export function hasSingleProjectGroupMutationOwner(
   groups: readonly ProjectGroup[],
   routedHostId: ExecutionHostId
@@ -32,6 +43,16 @@ export function hasSingleProjectGroupMutationOwner(
     return false
   }
   return groups.every((group) => getProjectGroupOwnerHostId(group) === routedHostId)
+}
+
+export function getSingleProjectGroupMutationOwner(
+  groups: readonly ProjectGroup[]
+): ExecutionHostId | null {
+  const ownerHostId = groups[0] ? getProjectGroupOwnerHostId(groups[0]) : null
+  if (!ownerHostId || !hasSingleProjectGroupMutationOwner(groups, ownerHostId)) {
+    return null
+  }
+  return new Set(groups.map((group) => group.id)).size === groups.length ? ownerHostId : null
 }
 
 export function parseProjectGroupSidebarHeaderKey(

@@ -5,8 +5,11 @@ import {
   buildProjectGroupSidebarIndex,
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
+  getProjectGroupMutationSelector,
   getProjectGroupSidebarIdentity,
-  hasSingleProjectGroupMutationOwner
+  getSingleProjectGroupMutationOwner,
+  hasSingleProjectGroupMutationOwner,
+  parseProjectGroupSidebarHeaderKey
 } from './project-group-sidebar-identity'
 
 function group(id: string, executionHostId: string): ProjectGroup {
@@ -61,6 +64,19 @@ describe('project-group sidebar identity', () => {
     expect(getProjectGroupSidebarIdentity(local)).not.toBe(getProjectGroupSidebarIdentity(runtime))
   })
 
+  it('carries the exact owner from a rendered header into mutations', () => {
+    const runtime = group('same-id', 'runtime:env-1')
+
+    expect(getProjectGroupMutationSelector(runtime)).toEqual({
+      groupId: 'same-id',
+      ownerHostId: 'runtime:env-1'
+    })
+    expect(parseProjectGroupSidebarHeaderKey('project-group:runtime%3Aenv-1:same-id')).toEqual({
+      groupId: 'same-id',
+      ownerHostId: 'runtime:env-1'
+    })
+  })
+
   it('marks folder row ids ambiguous only across owners', () => {
     const local = group('local-group', 'local')
     const runtime = group('runtime-group', 'runtime:env-1')
@@ -90,5 +106,13 @@ describe('project-group sidebar identity', () => {
     expect(hasSingleProjectGroupMutationOwner([localA, localB], 'local')).toBe(true)
     expect(hasSingleProjectGroupMutationOwner([localA, localB], 'runtime:env-1')).toBe(false)
     expect(hasSingleProjectGroupMutationOwner([localA, runtime], 'local')).toBe(false)
+  })
+
+  it('allows header reorder after filtering duplicate ids to one owner', () => {
+    const local = group('same-id', 'local')
+    const runtime = group('same-id', 'runtime:env-1')
+
+    expect(getSingleProjectGroupMutationOwner([local, runtime])).toBeNull()
+    expect(getSingleProjectGroupMutationOwner([runtime])).toBe('runtime:env-1')
   })
 })

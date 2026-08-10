@@ -477,13 +477,44 @@ describe('buildNewWorkspaceCreateTargetOptions', () => {
 
     expect(options.map((option) => option.id).sort()).toEqual([
       'github:stablyai/orca',
-      'project-group:folder-group'
+      'project-group:local:folder-group'
     ])
-    expect(options.find((option) => option.id === 'project-group:folder-group')).toMatchObject({
+    expect(
+      options.find((option) => option.id === 'project-group:local:folder-group')
+    ).toMatchObject({
       kind: 'project-group',
       projectGroupId: 'folder-group',
       displayName: 'Platform',
       detail: '/tmp/platform'
+    })
+  })
+
+  it('gives duplicate group ids distinct owner-qualified option values', async () => {
+    const {
+      buildNewWorkspaceCreateTargetOptions,
+      getProjectGroupSelectorFromNewWorkspaceOptionId
+    } = await import('./new-workspace-project-options')
+    const options = buildNewWorkspaceCreateTargetOptions({
+      projects: [],
+      projectHostSetups: [],
+      eligibleRepos: [],
+      hosts: [
+        { id: 'local', label: 'Local Mac' },
+        { id: 'runtime:env-1', label: 'Remote' }
+      ],
+      projectGroups: [
+        group({ id: 'same-id', executionHostId: 'local' }),
+        group({ id: 'same-id', executionHostId: 'runtime:env-1' })
+      ]
+    })
+
+    expect(options.map((option) => option.id)).toEqual([
+      'project-group:local:same-id',
+      'project-group:runtime%3Aenv-1:same-id'
+    ])
+    expect(getProjectGroupSelectorFromNewWorkspaceOptionId(options[1].id)).toEqual({
+      groupId: 'same-id',
+      ownerHostId: 'runtime:env-1'
     })
   })
 })
@@ -532,5 +563,29 @@ describe('findActionableFolderProjectGroup', () => {
         actionableHostIds: new Set(['local'])
       })
     ).toBeNull()
+  })
+
+  it('fails closed for duplicate ids unless the owner is explicit', () => {
+    const duplicates = [
+      group({ id: 'same-id', executionHostId: 'local' }),
+      group({ id: 'same-id', executionHostId: 'runtime:env-1' })
+    ]
+    const actionableHostIds = new Set(['local', 'runtime:env-1'] as const)
+
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: duplicates,
+        groupId: 'same-id',
+        actionableHostIds
+      })
+    ).toBeNull()
+    expect(
+      findActionableFolderProjectGroup({
+        projectGroups: duplicates,
+        groupId: 'same-id',
+        ownerHostId: 'runtime:env-1',
+        actionableHostIds
+      })
+    ).toBe(duplicates[1])
   })
 })

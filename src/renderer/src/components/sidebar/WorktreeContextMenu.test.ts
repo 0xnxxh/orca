@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getContextMenuProjectGroupTargets,
   isContextWorktreeDeletable,
   shouldUseNativeContextMenu,
   shouldIgnoreNestedWorktreeContextMenuScope,
@@ -14,7 +15,27 @@ import {
   selectMenuScopedMap,
   shouldRevealWorktreeDeveloperMenu
 } from './WorktreeContextMenu'
-import type { Worktree, WorktreeLineage, WorkspaceStatusDefinition } from '../../../../shared/types'
+import type {
+  ProjectGroup,
+  Worktree,
+  WorktreeLineage,
+  WorkspaceStatusDefinition
+} from '../../../../shared/types'
+
+describe('getContextMenuProjectGroupTargets', () => {
+  const group = (executionHostId: 'local' | 'runtime:env-1'): ProjectGroup =>
+    ({ id: 'same-id', executionHostId }) as ProjectGroup
+
+  it('offers and mutates only groups owned by the repo host', () => {
+    const result = getContextMenuProjectGroupTargets(
+      { connectionId: null, executionHostId: 'runtime:env-1' },
+      [group('local'), group('runtime:env-1')]
+    )
+
+    expect(result.ownerHostId).toBe('runtime:env-1')
+    expect(result.projectGroups).toEqual([group('runtime:env-1')])
+  })
+})
 
 describe('shouldRevealWorktreeDeveloperMenu', () => {
   it('stays hidden for an ordinary right-click', () => {

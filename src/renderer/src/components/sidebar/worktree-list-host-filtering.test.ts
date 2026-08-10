@@ -92,6 +92,22 @@ describe('WorktreeList host filtering ownership', () => {
     ).toEqual({ runtimeEnvironmentId: 'env-1' })
   })
 
+  it('routes duplicate project-group ids from the request owner', () => {
+    const localGroup = group({ id: 'same-id' })
+
+    expect(
+      getFolderPathStatusRouteOptionsForRows({
+        request: {
+          scope: 'project-group',
+          projectGroupId: 'same-id',
+          ownerHostId: 'runtime:env-1'
+        },
+        projectGroupsById: new Map([[localGroup.id, localGroup]]),
+        folderWorkspacesById: new Map()
+      })
+    ).toEqual({ runtimeEnvironmentId: 'env-1' })
+  })
+
   it('routes folder-workspace path status through its project group runtime owner', () => {
     const runtimeGroup = group({ executionHostId: 'runtime:env-1' })
     const workspace = folderWorkspace({ connectionId: 'ssh-builder' })

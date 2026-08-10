@@ -42,6 +42,7 @@ import {
   getRepoHeaderSectionEndByRepoId
 } from './worktree-header-section-boundaries'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import { PendingWorktreeRow } from './PendingWorktreeRow'
 import { SUPPRESS_WORKTREE_LIST_SCROLL_ADJUSTMENT_EVENT } from './WorktreeCardAgents'
 import { Button } from '@/components/ui/button'
@@ -310,6 +311,14 @@ import {
 import { getFolderWorkspaceCardPrDisplay } from './folder-workspace-card-pr-display'
 import { getRenderedWorktreesInSidebarOrder } from './worktree-sidebar-row-preference'
 import { getCyclableWorktreeIds, resolveCycledWorktreeId } from './worktree-keyboard-cycle'
+import {
+  buildProjectGroupSidebarIndex,
+  getProjectGroupMutationSelector,
+  getProjectGroupSidebarIdentity,
+  getSingleProjectGroupMutationOwner,
+  parseProjectGroupSidebarHeaderKey,
+  type ProjectGroupMutationSelector
+} from './project-group-sidebar-identity'
 
 export {
   getScrollTopToRevealBounds,
@@ -318,10 +327,9 @@ export {
 
 type ProjectGroupNameDialogState =
   | { type: 'create-from-repo'; repo: Repo }
-  | { type: 'rename'; groupId: string; currentName: string }
+  | ({ type: 'rename'; currentName: string } & ProjectGroupMutationSelector)
 
-type ProjectGroupDeleteDialogState = {
-  groupId: string
+type ProjectGroupDeleteDialogState = ProjectGroupMutationSelector & {
   groupName: string
   removeContainedProjects: boolean
 }
@@ -582,9 +590,19 @@ function getRepoIdsFromHeaderRowKey(
 
 function getProjectGroupAncestorKeys(
   projectGroupId: string | null | undefined,
-  projectGroups: readonly ProjectGroup[]
+  projectGroups: readonly ProjectGroup[],
+  ownerHostId?: ExecutionHostId
 ): string[] {
-  const groupsById = new Map(projectGroups.map((group) => [group.id, group]))
+  const ownerGroups = ownerHostId
+    ? projectGroups.filter(
+        (group) => getProjectGroupMutationSelector(group).ownerHostId === ownerHostId
+      )
+    : projectGroups
+  const groupsById = new Map(ownerGroups.map((group) => [group.id, group]))
+  const groupIdCounts = new Map<string, number>()
+  for (const group of projectGroups) {
+    groupIdCounts.set(group.id, (groupIdCounts.get(group.id) ?? 0) + 1)
+  }
   const keys: string[] = []
   const seen = new Set<string>()
   let currentGroupId = projectGroupId ?? null
@@ -594,7 +612,9 @@ function getProjectGroupAncestorKeys(
       break
     }
     seen.add(currentGroupId)
-    keys.unshift(getProjectGroupHeaderKey(group.id))
+    keys.unshift(
+      getProjectGroupHeaderKey(group.id, groupIdCounts.get(group.id)! > 1 ? ownerHostId : undefined)
+    )
     currentGroupId = group.parentGroupId
   }
   return keys
@@ -607,9 +627,21 @@ function getSidebarRowRevealAncestorKeys(args: {
   projectGrouping?: ProjectGroupingModel
 }): string[] {
   if (args.rowKey.startsWith('project-group:')) {
-    const groupId = args.rowKey.slice('project-group:'.length)
-    const group = args.projectGroups.find((candidate) => candidate.id === groupId)
-    return getProjectGroupAncestorKeys(group?.parentGroupId, args.projectGroups)
+    const selector = parseProjectGroupSidebarHeaderKey(args.rowKey)
+    if (!selector) {
+      return []
+    }
+    const group = args.projectGroups.find(
+      (candidate) =>
+        candidate.id === selector.groupId &&
+        (!selector.ownerHostId ||
+          getProjectGroupMutationSelector(candidate).ownerHostId === selector.ownerHostId)
+    )
+    return getProjectGroupAncestorKeys(
+      group?.parentGroupId,
+      args.projectGroups,
+      selector.ownerHostId
+    )
   }
   const keys = new Set<string>()
   for (const repoId of getRepoIdsFromHeaderRowKey(
@@ -618,7 +650,11 @@ function getSidebarRowRevealAncestorKeys(args: {
     args.projectGrouping
   )) {
     const repo = args.repoMap.get(repoId)
-    for (const key of getProjectGroupAncestorKeys(repo?.projectGroupId, args.projectGroups)) {
+    for (const key of getProjectGroupAncestorKeys(
+      repo?.projectGroupId,
+      args.projectGroups,
+      repo ? getRepoExecutionHostId(repo) : undefined
+    )) {
       keys.add(key)
     }
   }
@@ -658,8 +694,8 @@ type VirtualizedWorktreeViewportProps = {
   handleCreateGroupFromRepo: (repo: Repo) => void
   handleMoveProjectToGroup: (repo: Repo, groupId: string) => void
   handleRemoveProjectFromGroup: (repo: Repo) => void
-  handleRenameProjectGroup: (groupId: string, currentName: string) => void
-  handleDeleteProjectGroup: (groupId: string, groupName: string) => void
+  handleRenameProjectGroup: (projectGroup: ProjectGroup, currentName: string) => void
+  handleDeleteProjectGroup: (projectGroup: ProjectGroup, groupName: string) => void
   handleCreateFolderWorkspace: (projectGroup: ProjectGroup) => void
   activeModal: string
   pendingRevealWorktree: PendingSidebarWorktreeReveal | null
@@ -1449,7 +1485,26 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   const suppressWorktreeClickUntilRef = useRef(0)
   const hasProjectGroups = projectGroups.length > 0
   const canReorderRepoHeaders = groupBy === 'repo' && projectOrderBy === 'manual'
-  const canReorderProjectGroupHeaders = groupBy === 'repo' && hasProjectGroups
+  const renderedProjectGroupsForHeaderDrag = useMemo(() => {
+    const byIdentity = new Map<string, ProjectGroup>()
+    for (const row of rows) {
+      if (
+        row.type === 'header' &&
+        row.projectGroup &&
+        typeof row.projectGroup.id === 'string' &&
+        !row.repo
+      ) {
+        byIdentity.set(getProjectGroupSidebarIdentity(row.projectGroup), row.projectGroup)
+      }
+    }
+    return [...byIdentity.values()]
+  }, [rows])
+  const projectGroupHeaderMutationOwner = getSingleProjectGroupMutationOwner(
+    renderedProjectGroupsForHeaderDrag
+  )
+  // Why: bare-id drag internals are safe only when the rendered view has one explicit owner.
+  const canReorderProjectGroupHeaders =
+    groupBy === 'repo' && projectGroupHeaderMutationOwner !== null
   const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
   const updateProjectGroup = useAppStore((s) => s.updateProjectGroup)
   const lastVisibleRefreshKeyRef = useRef('')
@@ -1474,8 +1529,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     [projectGroups]
   )
   const projectGroupByIdForHeaderDrag = useMemo(
-    () => new Map(projectGroups.map((group) => [group.id, group])),
-    [projectGroups]
+    () => new Map(renderedProjectGroupsForHeaderDrag.map((group) => [group.id, group])),
+    [renderedProjectGroupsForHeaderDrag]
   )
 
   useEffect(
@@ -1741,9 +1796,14 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   }, [sidebarProjectGroupHeaderIdsByBucket])
   const commitProjectGroupOrder = useCallback(
     (repoId: string, projectGroupId: string | null, order: number) => {
-      void moveProjectToGroup(repoId, projectGroupId, order)
+      const repo = repoMap.get(repoId)
+      if (repo) {
+        void moveProjectToGroup(repoId, projectGroupId, order, {
+          ownerHostId: getRepoExecutionHostId(repo)
+        })
+      }
     },
-    [moveProjectToGroup]
+    [moveProjectToGroup, repoMap]
   )
   const commitProjectGroupHeaderOrder = useCallback(
     (groupId: string, tabOrder: number) => {
@@ -1754,9 +1814,19 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
         window.performance.now() + USER_SCROLL_MEASUREMENT_ADJUSTMENT_SUPPRESS_MS
       suppressMeasurementAdjustmentUntilRef.current = suppressUntil
       directScrollInputUntilRef.current = suppressUntil
-      void updateProjectGroup(groupId, { tabOrder })
+      const group = projectGroupByIdForHeaderDrag.get(groupId)
+      if (!group) {
+        return
+      }
+      void updateProjectGroup(
+        groupId,
+        { tabOrder },
+        {
+          ownerHostId: getProjectGroupMutationSelector(group).ownerHostId
+        }
+      )
     },
-    [updateProjectGroup]
+    [projectGroupByIdForHeaderDrag, updateProjectGroup]
   )
   // Drag applies only in manual order; still construct the controller inert for stable hook order.
   const repoDrag = useRepoHeaderDrag({
@@ -1920,13 +1990,22 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     >()
     for (const group of projectGroups) {
       if (group.parentPath) {
-        const request = { scope: 'project-group' as const, projectGroupId: group.id }
+        const request = {
+          scope: 'project-group' as const,
+          projectGroupId: group.id,
+          ownerHostId: getProjectGroupMutationSelector(group).ownerHostId
+        }
         const options = getFolderPathStatusRouteOptions(request)
         requests.set(getFolderWorkspacePathStatusCacheKey(request, options), { request, options })
       }
     }
     for (const workspace of folderWorkspaces) {
-      const request = { scope: 'folder-workspace' as const, folderWorkspaceId: workspace.id }
+      const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+      const request = {
+        scope: 'folder-workspace' as const,
+        folderWorkspaceId: workspace.id,
+        ...(ownerHostId ? { ownerHostId } : {})
+      }
       const options = getFolderPathStatusRouteOptions(request)
       requests.set(getFolderWorkspacePathStatusCacheKey(request, options), { request, options })
     }
@@ -4187,7 +4266,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 row.projectGroup.parentPath
                   ? getCachedFolderWorkspacePathStatus({
                       scope: 'project-group',
-                      projectGroupId: row.projectGroup.id
+                      projectGroupId: row.projectGroup.id,
+                      ownerHostId: row.projectGroupOwnerHostId
                     })
                   : null
               const folderWorkspaceCreateDisabled =
@@ -4432,7 +4512,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                             <DropdownMenuItem
                               onSelect={() => {
                                 if (row.projectGroup?.id) {
-                                  handleRenameProjectGroup(row.projectGroup.id, row.label)
+                                  handleRenameProjectGroup(row.projectGroup, row.label)
                                 }
                               }}
                             >
@@ -4445,7 +4525,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                               variant="destructive"
                               onSelect={() => {
                                 if (row.projectGroup?.id) {
-                                  handleDeleteProjectGroup(row.projectGroup.id, row.label)
+                                  handleDeleteProjectGroup(row.projectGroup, row.label)
                                 }
                               }}
                             >
@@ -5051,7 +5131,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               const folderWorktree = folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace)
               const folderWorkspacePathStatus = getCachedFolderWorkspacePathStatus({
                 scope: 'folder-workspace',
-                folderWorkspaceId: folderWorkspaceRow.folderWorkspace.id
+                folderWorkspaceId: folderWorkspaceRow.folderWorkspace.id,
+                ownerHostId: getProjectGroupMutationSelector(folderWorkspaceRow.projectGroup)
+                  .ownerHostId
               })
               const folderWorkspaceActivationDisabled =
                 folderWorkspacePathStatus?.exists === false &&
@@ -5633,6 +5715,10 @@ const WorktreeList = React.memo(function WorktreeList({
     () => filterProjectGroupsForVisibleHosts(projectGroups, visibleHostIdSet, defaultHostId),
     [defaultHostId, projectGroups, visibleHostIdSet]
   )
+  const ownerQualifiedProjectGroupIds = useMemo(
+    () => buildProjectGroupSidebarIndex(projectGroups).ambiguousIds,
+    [projectGroups]
+  )
   const visibleFolderWorkspacesForRows = useMemo(
     () =>
       filterFolderWorkspacesForVisibleHosts(
@@ -5756,7 +5842,8 @@ const WorktreeList = React.memo(function WorktreeList({
         visibleFolderWorkspacesForRows,
         hostLabelById,
         defaultHostId,
-        pinnedDisplayPolicy
+        pinnedDisplayPolicy,
+        ownerQualifiedProjectGroupIds
       ),
     [
       groupBy,
@@ -5779,7 +5866,8 @@ const WorktreeList = React.memo(function WorktreeList({
       newExternalWorktreesInboxByRepo,
       pendingCreations,
       hostLabelById,
-      pinnedDisplayPolicy
+      pinnedDisplayPolicy,
+      ownerQualifiedProjectGroupIds
     ]
   )
   const orderedHostOptions = useMemo(
@@ -6189,20 +6277,28 @@ const WorktreeList = React.memo(function WorktreeList({
       if (repo.projectGroupId === groupId) {
         return
       }
-      void moveProjectToGroup(repo.id, groupId)
+      void moveProjectToGroup(repo.id, groupId, undefined, {
+        ownerHostId: getRepoExecutionHostId(repo)
+      })
     },
     [moveProjectToGroup]
   )
 
   const handleRemoveProjectFromGroup = useCallback(
     (repo: Repo) => {
-      void moveProjectToGroup(repo.id, null)
+      void moveProjectToGroup(repo.id, null, undefined, {
+        ownerHostId: getRepoExecutionHostId(repo)
+      })
     },
     [moveProjectToGroup]
   )
 
-  const handleRenameProjectGroup = useCallback((groupId: string, currentName: string) => {
-    setProjectGroupNameDialog({ type: 'rename', groupId, currentName })
+  const handleRenameProjectGroup = useCallback((group: ProjectGroup, currentName: string) => {
+    setProjectGroupNameDialog({
+      type: 'rename',
+      currentName,
+      ...getProjectGroupMutationSelector(group)
+    })
   }, [])
 
   const handleSubmitProjectGroupName = useCallback(
@@ -6211,13 +6307,22 @@ const WorktreeList = React.memo(function WorktreeList({
         return
       }
       if (projectGroupNameDialog.type === 'create-from-repo') {
-        const group = await createProjectGroup(name)
+        const ownerHostId = getRepoExecutionHostId(projectGroupNameDialog.repo)
+        const group = await createProjectGroup(name, { ownerHostId })
         if (group) {
-          await moveProjectToGroup(projectGroupNameDialog.repo.id, group.id)
+          await moveProjectToGroup(projectGroupNameDialog.repo.id, group.id, undefined, {
+            ownerHostId
+          })
         }
         return
       }
-      await updateProjectGroup(projectGroupNameDialog.groupId, { name })
+      await updateProjectGroup(
+        projectGroupNameDialog.groupId,
+        { name },
+        {
+          ownerHostId: projectGroupNameDialog.ownerHostId
+        }
+      )
     },
     [createProjectGroup, moveProjectToGroup, projectGroupNameDialog, updateProjectGroup]
   )
@@ -6226,8 +6331,14 @@ const WorktreeList = React.memo(function WorktreeList({
     if (!projectGroupDeleteDialog) {
       return null
     }
-    return selectProjectGroupRemovalTargets(projectGroups, repos, projectGroupDeleteDialog.groupId)
-  }, [projectGroupDeleteDialog, projectGroups, repos])
+    return selectProjectGroupRemovalTargets(
+      projectGroups,
+      repos,
+      projectGroupDeleteDialog.groupId,
+      projectGroupDeleteDialog.ownerHostId,
+      folderWorkspaces
+    )
+  }, [folderWorkspaces, projectGroupDeleteDialog, projectGroups, repos])
   const projectGroupDeleteProjectCount = projectGroupDeleteTargets?.projectIds.length ?? 0
   const projectGroupDeleteProjectNames = useMemo(
     () =>
@@ -6239,8 +6350,12 @@ const WorktreeList = React.memo(function WorktreeList({
   const projectGroupRemoveContainedProjects =
     projectGroupDeleteProjectCount > 0 && projectGroupDeleteDialog?.removeContainedProjects === true
 
-  const handleDeleteProjectGroup = useCallback((groupId: string, groupName: string) => {
-    setProjectGroupDeleteDialog({ groupId, groupName, removeContainedProjects: false })
+  const handleDeleteProjectGroup = useCallback((group: ProjectGroup, groupName: string) => {
+    setProjectGroupDeleteDialog({
+      ...getProjectGroupMutationSelector(group),
+      groupName,
+      removeContainedProjects: false
+    })
   }, [])
 
   const handleConfirmDeleteProjectGroup = useCallback(async () => {
@@ -6251,7 +6366,8 @@ const WorktreeList = React.memo(function WorktreeList({
       const result = await deleteProjectGroupWithContainedProjects(
         projectGroupDeleteDialog.groupId,
         {
-          removeContainedProjects: projectGroupRemoveContainedProjects
+          removeContainedProjects: projectGroupRemoveContainedProjects,
+          ownerHostId: projectGroupDeleteDialog.ownerHostId
         }
       )
       // Why: a missing group is already the desired end state, so only a real delete failure warrants a toast.
@@ -6308,6 +6424,7 @@ const WorktreeList = React.memo(function WorktreeList({
       }
       openModal('new-workspace-composer', {
         initialProjectGroupId: projectGroup.id,
+        initialProjectGroupOwnerHostId: getProjectGroupMutationSelector(projectGroup).ownerHostId,
         telemetrySource: 'sidebar'
       })
     },

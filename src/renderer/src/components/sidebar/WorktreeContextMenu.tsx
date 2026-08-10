@@ -35,6 +35,7 @@ import type { AppState } from '@/store/types'
 import { useAllWorktrees, useRepoById, useRepoMap, useWorktreeMap } from '@/store/selectors'
 import { cn } from '@/lib/utils'
 import type {
+  ProjectGroup,
   Repo,
   Worktree,
   WorkspaceStatus,
@@ -67,6 +68,11 @@ import {
   parseWorkspaceKey,
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
+import { getRepoExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  getProjectGroupOwnerHostId,
+  getProjectGroupOwnerIdentity
+} from '../../../../shared/project-groups'
 
 type Props = {
   worktree: Worktree
@@ -109,6 +115,19 @@ const EMPTY_CYCLIC_LINEAGE_IDS: ReadonlySet<string> = new Set()
 // data. Extracted as a pure function so the stable-reference contract is unit-testable.
 export function selectMenuScopedMap<T>(menuOpen: boolean, live: T, empty: T): T {
   return menuOpen ? live : empty
+}
+
+export function getContextMenuProjectGroupTargets(
+  repo: Pick<Repo, 'connectionId' | 'executionHostId'>,
+  projectGroups: readonly ProjectGroup[]
+): { ownerHostId: ExecutionHostId; projectGroups: readonly ProjectGroup[] } {
+  const ownerHostId = getRepoExecutionHostId(repo)
+  return {
+    ownerHostId,
+    projectGroups: projectGroups.filter(
+      (group) => getProjectGroupOwnerHostId(group) === ownerHostId
+    )
+  }
 }
 
 // Why: the Developer submenu is hidden by default and revealed only by holding
@@ -335,6 +354,10 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
   const repo = useRepoById(worktree.repoId)
+  const projectGroupTargets = useMemo(
+    () => (repo ? getContextMenuProjectGroupTargets(repo, projectGroups) : null),
+    [projectGroups, repo]
+  )
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)
   // Why: the Developer submenu is a power-user affordance, so it is revealed by
@@ -579,9 +602,10 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       if (!repo) {
         return
       }
-      const group = await createProjectGroup(name)
+      const ownerHostId = getRepoExecutionHostId(repo)
+      const group = await createProjectGroup(name, { ownerHostId })
       if (group) {
-        await moveProjectToGroup(repo.id, group.id)
+        await moveProjectToGroup(repo.id, group.id, undefined, { ownerHostId })
       }
     },
     [createProjectGroup, moveProjectToGroup, repo]
@@ -592,7 +616,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       if (!repo || repo.projectGroupId === groupId) {
         return
       }
-      void moveProjectToGroup(repo.id, groupId)
+      void moveProjectToGroup(repo.id, groupId, undefined, {
+        ownerHostId: getRepoExecutionHostId(repo)
+      })
     },
     [moveProjectToGroup, repo]
   )
@@ -601,7 +627,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     if (!repo) {
       return
     }
-    void moveProjectToGroup(repo.id, null)
+    void moveProjectToGroup(repo.id, null, undefined, {
+      ownerHostId: getRepoExecutionHostId(repo)
+    })
   }, [moveProjectToGroup, repo])
 
   const handleAssignWorkspaceStatus = useCallback(
@@ -947,7 +975,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
                       'New group from project'
                     )}
                   </DropdownMenuItem>
-                  {projectGroups.length > 0 ? (
+                  {projectGroupTargets && projectGroupTargets.projectGroups.length > 0 ? (
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger disabled={isDeleting}>
                         <FolderInput className="size-3.5" />
@@ -957,9 +985,9 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
                         )}
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent>
-                        {projectGroups.map((group) => (
+                        {projectGroupTargets.projectGroups.map((group) => (
                           <DropdownMenuItem
-                            key={group.id}
+                            key={getProjectGroupOwnerIdentity(group)}
                             disabled={repo.projectGroupId === group.id}
                             onSelect={() => handleMoveProjectToGroup(group.id)}
                           >
