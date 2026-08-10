@@ -19,10 +19,19 @@ describe('shouldBypassXtermKeyboardEvent — macOS', () => {
     ).toBe(true)
   })
 
-  it('bubbles Cmd+C even with no selection (no-op copy is harmless on macOS)', () => {
+  it('bubbles Cmd+C with no selection when no TUI negotiated Kitty input', () => {
     expect(
       shouldBypassXtermKeyboardEvent(event({ key: 'c', code: 'KeyC', metaKey: true }), noSel)
     ).toBe(true)
+  })
+
+  it('forwards Cmd+C to a Kitty TUI when the selection belongs to the app', () => {
+    expect(
+      shouldBypassXtermKeyboardEvent(event({ key: 'c', code: 'KeyC', metaKey: true }), {
+        ...noSel,
+        kittyKeyboardFlags: 1
+      })
+    ).toBe(false)
   })
 
   it('bubbles Cmd+V so web clients receive the native paste event', () => {
@@ -169,6 +178,17 @@ describe('shouldBypassXtermKeyboardEvent — macOS', () => {
   it('leaves ordinary Shift+Space available to the terminal', () => {
     expect(
       shouldBypassXtermKeyboardEvent(event({ key: ' ', code: 'Space', shiftKey: true }), opts)
+    ).toBe(false)
+  })
+})
+
+describe('shouldBypassXtermKeyboardEvent — Linux and Windows', () => {
+  it('forwards Ctrl+Shift+C to a Kitty TUI when xterm has no selection', () => {
+    expect(
+      shouldBypassXtermKeyboardEvent(
+        event({ key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true }),
+        { isMac: false, hasSelection: false, kittyKeyboardFlags: 1 }
+      )
     ).toBe(false)
   })
 })

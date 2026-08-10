@@ -11,10 +11,8 @@ import {
 // so xterm's own `copy` listener on its container never fires and the
 // selection is never written to the clipboard.
 //
-// Fix: intercept in `attachCustomKeyEventHandler` and return `false` for chords
-// that should bubble to the browser / host (clipboard, native menu). Returning
-// `false` makes xterm bail *before* the kitty encoder runs, so the browser's
-// copy pipeline and the OS-level keybinding both fire normally.
+// Fix: bypass xterm only when Orca owns the clipboard operation. A Kitty TUI
+// with no xterm selection keeps the chord so its app-owned selection can copy.
 
 export type XtermBypassEvent = {
   type: string
@@ -210,8 +208,7 @@ export function shouldSuppressTerminalModifierKeyboardEvent(event: XtermBypassEv
 
 /**
  * Decide whether a chord should bypass xterm's key handlers so the native
- * browser pipeline (Chromium `copy` event, Electron menu accelerators) or
- * layout-aware text event can handle it instead of the kitty CSI-u encoder.
+ * browser pipeline or a TUI should handle instead of xterm's default routing.
  */
 export function shouldBypassXtermKeyboardEvent(
   event: XtermBypassEvent,
@@ -222,6 +219,7 @@ export function shouldBypassXtermKeyboardEvent(
   }
 
   const { isMac, hasSelection } = options
+  const tuiOwnsEmptyCopy = !hasSelection && (options.kittyKeyboardFlags ?? 0) > 0
   const platformModifierHeld = isMac
     ? event.metaKey && !event.ctrlKey
     : event.ctrlKey && !event.metaKey
@@ -250,16 +248,16 @@ export function shouldBypassXtermKeyboardEvent(
     // Why: window-level handlers already consume other Cmd chords before xterm
     // sees them in Electron. Web clients still need paste to bubble to
     // Chromium's native paste event instead of xterm's Kitty encoder.
-    return (
-      matchesClipboardBinding('Mod+C', event, 'darwin') ||
-      matchesClipboardBinding('Mod+V', event, 'darwin')
-    )
+    if (matchesClipboardBinding('Mod+C', event, 'darwin')) {
+      return !tuiOwnsEmptyCopy
+    }
+    return matchesClipboardBinding('Mod+V', event, 'darwin')
   }
 
   // Windows/Linux: standard clipboard bindings bubble; Ctrl+C only bubbles
   // with a selection (otherwise it's SIGINT and must reach the shell).
   if (matchesClipboardBinding('Ctrl+Shift+C', event, 'linux')) {
-    return true
+    return !tuiOwnsEmptyCopy
   }
   if (matchesClipboardBinding('Ctrl+C', event, 'linux') && hasSelection) {
     return true
