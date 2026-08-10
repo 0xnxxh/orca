@@ -85,8 +85,12 @@ export class TerminalHost {
             this.reapSession(sessionId)
           }
         })
-        // Attach of an existing session refreshes its recency and restores full depth going forward.
-        this.noteSessionViewed(options.sessionId)
+        if (result.isNew) {
+          // Creation already advanced recency; re-apply now that the initial client is attached.
+          this.applyScrollbackRetention()
+        } else {
+          this.noteSessionViewed(options.sessionId)
+        }
         return result
       }
     })
@@ -172,9 +176,14 @@ export class TerminalHost {
   }
 
   detach(sessionId: string, token: symbol): void {
-    const session = this.sessions.get(sessionId)
-    session?.detachClient(token)
-    // The session just became parked; it may now fall past the LRU cap.
+    this.detachClients([{ sessionId, token }])
+  }
+
+  detachClients(attachments: readonly { sessionId: string; token: symbol }[]): void {
+    for (const { sessionId, token } of attachments) {
+      this.sessions.get(sessionId)?.detachClient(token)
+    }
+    // Newly parked sessions may now fall past the LRU cap.
     this.applyScrollbackRetention()
   }
 
