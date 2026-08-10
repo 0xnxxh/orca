@@ -116,7 +116,6 @@ export function useEditorPanelContentState({
   const [fileContents, setFileContents] = useState<Record<string, FileContent>>({})
   const [diffContents, setDiffContents] = useState<Record<string, DiffContent>>({})
   const diffContentsRef = useRef(diffContents)
-  diffContentsRef.current = diffContents
   const fileLoadRetryAttemptsRef = useRef<Record<string, number>>({})
   // Why: per-tab read generations let a forced/external reload supersede an
   // older in-flight read so a slower stale promise cannot overwrite fresh state.
@@ -125,18 +124,23 @@ export function useEditorPanelContentState({
   const fileReadGenerationCounterRef = useRef(0)
   const diffReadGenerationCounterRef = useRef(0)
   const openFilesRef = useRef(openFiles)
-  openFilesRef.current = openFiles
   const editorViewModeRef = useRef(editorViewMode)
-  editorViewModeRef.current = editorViewMode
   const isVisibleRef = useRef(isVisible)
-  isVisibleRef.current = isVisible
   const selectedConflictReviewFile =
     activeFile?.mode === 'conflict-review' && activeFile.conflictReview?.selectedFileId
       ? (openFiles.find((file) => file.id === activeFile.conflictReview?.selectedFileId) ?? null)
       : null
   const activeContentFileId = selectedConflictReviewFile?.id ?? activeFile?.id ?? null
   const activeContentFileIdRef = useRef(activeContentFileId)
-  activeContentFileIdRef.current = activeContentFileId
+
+  useEffect(() => {
+    // Why: event-driven readers must only observe state from committed renders.
+    diffContentsRef.current = diffContents
+    openFilesRef.current = openFiles
+    editorViewModeRef.current = editorViewMode
+    isVisibleRef.current = isVisible
+    activeContentFileIdRef.current = activeContentFileId
+  }, [activeContentFileId, diffContents, editorViewMode, isVisible, openFiles])
 
   const invalidateFileContent = useCallback((fileIds: string[]): void => {
     const uniqueIds = new Set(fileIds)

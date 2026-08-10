@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, useRef, useState } from 'react'
+import { act, useEffect, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenFile } from '@/store/slices/editor'
@@ -24,14 +24,17 @@ type ProbeProps = {
 
 function ExternalContentProbe({ activeFileId, calls, isVisible, openFiles }: ProbeProps): null {
   const activeContentFileIdRef = useRef(activeFileId)
-  activeContentFileIdRef.current = activeFileId
   const isVisibleRef = useRef(isVisible)
-  isVisibleRef.current = isVisible
   const openFilesRef = useRef(openFiles)
-  openFilesRef.current = openFiles
   const editorViewModeRef = useRef({})
   const [, setFileContents] = useState<Record<string, FileContent>>({})
   const [, setDiffContents] = useState<Record<string, DiffContent>>({})
+
+  useEffect(() => {
+    activeContentFileIdRef.current = activeFileId
+    isVisibleRef.current = isVisible
+    openFilesRef.current = openFiles
+  }, [activeFileId, isVisible, openFiles])
 
   useEditorPanelExternalContentEvents({
     activeContentFileIdRef,
