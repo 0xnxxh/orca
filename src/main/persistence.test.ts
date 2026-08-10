@@ -5716,6 +5716,53 @@ describe('Store', () => {
     ])
   })
 
+  it('preserves explicit local folder scope provenance during SSH migration', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({
+          id: 'remote-repo',
+          path: '/workspace/repo',
+          projectGroupId: 'explicit-local',
+          connectionId: 'ssh-1'
+        })
+      ],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'explicit-local',
+          name: 'Explicit local',
+          parentPath: '/workspace',
+          connectionId: null,
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        {
+          id: 'local-folder',
+          projectGroupId: 'explicit-local',
+          name: 'Local folder',
+          folderPath: '/workspace',
+          connectionId: null
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjectGroups()[0]?.connectionId).toBeNull()
+    expect(store.getFolderWorkspaces()[0]?.connectionId).toBeNull()
+  })
+
   it('normalizes same-id runtime folder workspaces against their explicit owner', async () => {
     writeDataFile({
       schemaVersion: 1,

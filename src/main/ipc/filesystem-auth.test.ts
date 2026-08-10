@@ -327,6 +327,24 @@ describe('filesystem-auth path containment', () => {
     }
   })
 
+  it('rejects legacy remote-only roots when a prefix sibling sorts first', () => {
+    const folderPath = resolve('/workspace/scope')
+    const store = makeStore(
+      [
+        { ...repo, path: `${folderPath}-archive`, connectionId: 'builder' },
+        { ...repo, id: 'nested', path: join(folderPath, 'repo'), connectionId: 'builder' }
+      ],
+      {
+        projectGroups: [
+          makeProjectGroup({ id: 'legacy', parentPath: folderPath, connectionId: undefined })
+        ],
+        folderWorkspaces: []
+      }
+    )
+
+    expect(isPathAllowed(folderPath, store)).toBe(false)
+  })
+
   it('keeps large multi-owner folder authorization linear in catalog size', () => {
     const groupCount = 2_048
     const repoCount = 2_048

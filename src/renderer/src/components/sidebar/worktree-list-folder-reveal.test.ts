@@ -5,7 +5,8 @@ import {
   getFolderWorkspaceSidebarRowKey,
   getFolderWorkspaceRevealGroupKeys,
   getKnownSidebarWorktreeById,
-  sidebarWorkspaceStillExists
+  sidebarWorkspaceStillExists,
+  shouldClearActiveFolderWorkspaceAfterDelete
 } from './worktree-list-folder-reveal'
 import { getProjectGroupHeaderKey } from './worktree-list-groups'
 
@@ -171,5 +172,51 @@ describe('worktree list folder reveal', () => {
         'folder-workspace:runtime%3Aenv-1:folder-workspace-1'
       )
     ).toBe('folder-workspace:runtime%3Aenv-1:folder-workspace-1')
+  })
+
+  it('keeps the surviving same-id owner active after deleting its sibling', () => {
+    expect(
+      shouldClearActiveFolderWorkspaceAfterDelete({
+        activeWorktreeId: 'folder:same-id',
+        activeOwnerHostId: 'local',
+        deletedFolderWorkspaceId: 'same-id',
+        deletedOwnerHostId: 'runtime:env-1'
+      })
+    ).toBe(false)
+  })
+
+  it('clears the deleted active folder owner', () => {
+    expect(
+      shouldClearActiveFolderWorkspaceAfterDelete({
+        activeWorktreeId: 'folder:same-id',
+        activeOwnerHostId: 'runtime:env-1',
+        deletedFolderWorkspaceId: 'same-id',
+        deletedOwnerHostId: 'runtime:env-1'
+      })
+    ).toBe(true)
+  })
+
+  it('clears a sole legacy active folder without owner provenance', () => {
+    expect(
+      shouldClearActiveFolderWorkspaceAfterDelete({
+        activeWorktreeId: 'folder:same-id',
+        activeOwnerHostId: null,
+        deletedFolderWorkspaceId: 'same-id',
+        deletedOwnerHostId: 'local',
+        sameIdWorkspaceStillExists: false
+      })
+    ).toBe(true)
+  })
+
+  it('keeps a surviving same-id folder active when legacy owner provenance is missing', () => {
+    expect(
+      shouldClearActiveFolderWorkspaceAfterDelete({
+        activeWorktreeId: 'folder:same-id',
+        activeOwnerHostId: null,
+        deletedFolderWorkspaceId: 'same-id',
+        deletedOwnerHostId: 'runtime:env-1',
+        sameIdWorkspaceStillExists: true
+      })
+    ).toBe(false)
   })
 })

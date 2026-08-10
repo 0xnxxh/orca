@@ -14,7 +14,7 @@ import {
   resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner
 } from './project-groups'
-import { normalizeFolderWorkspaces } from './folder-workspaces'
+import { getFolderWorkspaceOwnerIdentity, normalizeFolderWorkspaces } from './folder-workspaces'
 import type { ProjectGroup, Repo } from './types'
 
 function repo(overrides: Partial<Repo>): Repo {
@@ -230,6 +230,31 @@ describe('project-groups', () => {
     ).toEqual(
       new Set([getProjectGroupOwnerIdentity(localRoot), getProjectGroupOwnerIdentity(localChild)])
     )
+  })
+
+  it('indexes project groups once for bulk folder owner resolution', () => {
+    let groupIdReads = 0
+    const groups = Array.from({ length: 512 }, (_, index) => ({
+      ...projectGroup({
+        id: `group-${index}`,
+        executionHostId: index === 0 ? 'local' : `runtime:env-${index}`
+      }),
+      get id() {
+        groupIdReads += 1
+        return `group-${index}`
+      }
+    }))
+    const workspaces = groups.map((group, index) => ({
+      id: `folder-${index}`,
+      projectGroupId: group.id
+    }))
+    groupIdReads = 0
+
+    for (const workspace of workspaces) {
+      getFolderWorkspaceOwnerIdentity(workspace, groups)
+    }
+
+    expect(groupIdReads).toBeLessThan(4_096)
   })
 
   it('clears repo memberships whose group no longer exists', () => {

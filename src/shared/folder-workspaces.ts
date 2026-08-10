@@ -17,6 +17,18 @@ import { normalizeStoredTaskSourceContext } from './task-source-context'
 import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
 
+const projectGroupOwnerIndexCache = new WeakMap<readonly ProjectGroup[], ProjectGroupOwnerIndex>()
+
+function getProjectGroupOwnerIndex(projectGroups: readonly ProjectGroup[]): ProjectGroupOwnerIndex {
+  const cached = projectGroupOwnerIndexCache.get(projectGroups)
+  if (cached) {
+    return cached
+  }
+  const index = buildProjectGroupOwnerIndex(projectGroups)
+  projectGroupOwnerIndexCache.set(projectGroups, index)
+  return index
+}
+
 export function resolveLegacySshFolderWorkspaceProjectGroup(
   index: ProjectGroupOwnerIndex,
   workspace: Pick<FolderWorkspace, 'connectionId' | 'projectGroupId'>
@@ -42,7 +54,7 @@ export function resolveFolderWorkspaceCatalogOwnerHostId(
     return executionHostId
   }
   if (projectGroups.length > 0) {
-    const index = buildProjectGroupOwnerIndex(projectGroups)
+    const index = getProjectGroupOwnerIndex(projectGroups)
     return resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(workspace, index)
   }
   if (workspace.connectionId) {
@@ -113,7 +125,7 @@ export function normalizeFolderWorkspaces(
   if (!Array.isArray(value)) {
     return []
   }
-  const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
+  const projectGroupIndex = getProjectGroupOwnerIndex(projectGroups)
 
   const workspaces: FolderWorkspace[] = []
   const seen = new Set<string>()
@@ -153,7 +165,7 @@ export function normalizeFolderWorkspaces(
         ? raw.connectionId
         : raw.connectionId === null
           ? null
-          : (group?.connectionId ?? null)
+          : group.connectionId
     // Why: multi-host catalogs keep same-id folder rows; identity is owner+id, not bare id.
     const identity = getFolderWorkspaceOwnerIdentity(
       {

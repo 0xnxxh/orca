@@ -40,6 +40,24 @@ export function getFolderWorkspaceSidebarRowKey(folderWorkspaceId: string, rowKe
     : rowKey
 }
 
+export function shouldClearActiveFolderWorkspaceAfterDelete(args: {
+  activeWorktreeId: string | null
+  activeOwnerHostId: ExecutionHostId | null
+  deletedFolderWorkspaceId: string
+  deletedOwnerHostId?: ExecutionHostId
+  sameIdWorkspaceStillExists?: boolean
+}): boolean {
+  if (args.activeWorktreeId !== folderWorkspaceKey(args.deletedFolderWorkspaceId)) {
+    return false
+  }
+  if (!args.deletedOwnerHostId) {
+    return true
+  }
+  return args.activeOwnerHostId
+    ? args.activeOwnerHostId === args.deletedOwnerHostId
+    : !args.sameIdWorkspaceStillExists
+}
+
 export function getKnownSidebarWorktreeById(
   worktreeId: string,
   worktreeMap: ReadonlyMap<string, Worktree>,

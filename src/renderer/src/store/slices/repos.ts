@@ -50,7 +50,6 @@ import {
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
   getProjectGroupSubtreeIds,
-  resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner
 } from '../../../../shared/project-groups'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
@@ -106,6 +105,7 @@ import {
   resolveFolderWorkspaceCatalogOwnerHostId,
   resolveFolderWorkspaceCatalogOwnerHostIdFromIndex
 } from '../../../../shared/folder-workspaces'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspace-project-group-resolution'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
 import { getRuntimeEnvironmentConnectionGeneration } from './runtime-status'
@@ -1586,7 +1586,7 @@ function getFolderWorkspaceStatusRequestSnapshot(
         ? scope
         : null
       : scope && 'projectGroupId' in scope
-        ? resolveFolderWorkspaceProjectGroup(projectGroupIndex, scope)
+        ? resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, scope)
         : null
   const folderPath =
     request.scope === 'project-group'
@@ -1672,14 +1672,12 @@ type FolderPathStatusSnapshotBase = {
   folderPath: string
   projectGroupId: string
   scopeConnectionId: string
-  relevantConnectionIds: readonly string[]
-  repoFingerprint: string
+  catalogRevision: number | null
 }
 
 type FolderPathStatusCatalog = {
   projectGroupIndex: ReturnType<typeof buildProjectGroupOwnerIndex>
-  groupsByOwner: ReadonlyMap<ExecutionHostId, readonly ProjectGroup[]>
-  reposByOwner: ReadonlyMap<ExecutionHostId, readonly Repo[]>
+  revision: number | null
   groupSnapshots: Map<string, FolderPathStatusSnapshotBase>
   workspaceSnapshots: WeakMap<FolderWorkspace, FolderPathStatusSnapshotBase>
 }
@@ -1688,6 +1686,8 @@ const folderPathStatusCatalogs = new WeakMap<
   readonly ProjectGroup[],
   WeakMap<readonly Repo[], FolderPathStatusCatalog>
 >()
+const folderPathStatusSshRevisions = new WeakMap<AppState['sshConnectionStates'], number>()
+let nextFolderPathStatusRevision = 1
 
 function getFolderPathStatusCatalog(
   projectGroups: readonly ProjectGroup[],
@@ -1702,24 +1702,9 @@ function getFolderPathStatusCatalog(
   if (existing) {
     return existing
   }
-  const groupsByOwner = new Map<ExecutionHostId, ProjectGroup[]>()
-  for (const group of projectGroups) {
-    const ownerHostId = getProjectGroupOwnerHostId(group)
-    const ownerGroups = groupsByOwner.get(ownerHostId) ?? []
-    ownerGroups.push(group)
-    groupsByOwner.set(ownerHostId, ownerGroups)
-  }
-  const reposByOwner = new Map<ExecutionHostId, Repo[]>()
-  for (const repo of repos) {
-    const ownerHostId = getRepoExecutionHostId(repo)
-    const ownerRepos = reposByOwner.get(ownerHostId) ?? []
-    ownerRepos.push(repo)
-    reposByOwner.set(ownerHostId, ownerRepos)
-  }
   const catalog: FolderPathStatusCatalog = {
     projectGroupIndex: buildProjectGroupOwnerIndex(projectGroups),
-    groupsByOwner,
-    reposByOwner,
+    revision: repos.length === 0 ? null : nextFolderPathStatusRevision++,
     groupSnapshots: new Map(),
     workspaceSnapshots: new WeakMap()
   }
@@ -1733,36 +1718,11 @@ function buildFolderPathStatusSnapshotBase(
   folderPath: string,
   scopeConnectionId: string | null | undefined
 ): FolderPathStatusSnapshotBase {
-  const ownerHostId = getProjectGroupOwnerHostId(projectGroup)
-  const groupIds = getProjectGroupSubtreeIds(
-    catalog.groupsByOwner.get(ownerHostId) ?? [],
-    projectGroup.id
-  )
-  const candidateRepos = (catalog.reposByOwner.get(ownerHostId) ?? []).filter(
-    (repo) =>
-      (typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)) ||
-      isPathInsideOrEqual(folderPath, repo.path)
-  )
-  const relevantConnectionIds = new Set<string>()
-  if (scopeConnectionId) {
-    relevantConnectionIds.add(scopeConnectionId)
-  }
-  for (const repo of candidateRepos) {
-    if (repo.connectionId) {
-      relevantConnectionIds.add(repo.connectionId)
-    }
-  }
   return {
     folderPath,
     projectGroupId: projectGroup.id,
     scopeConnectionId: scopeConnectionId ?? '',
-    relevantConnectionIds: [...relevantConnectionIds].sort(),
-    repoFingerprint: candidateRepos
-      .map(
-        (repo) => `${repo.id}:${repo.path}:${repo.projectGroupId ?? ''}:${repo.connectionId ?? ''}`
-      )
-      .sort()
-      .join('|')
+    catalogRevision: catalog.revision
   }
 }
 
@@ -1811,18 +1771,26 @@ function getFolderPathStatusSnapshotWithSshState(
   base: FolderPathStatusSnapshotBase,
   sshConnectionStates: AppState['sshConnectionStates']
 ): string {
-  const sshFingerprint = base.relevantConnectionIds
-    .map(
-      (connectionId) =>
-        `${connectionId}:${sshConnectionStates.get(connectionId)?.status ?? 'missing'}`
-    )
-    .join('|')
+  if (sshConnectionStates.size === 0) {
+    return [
+      base.folderPath,
+      base.projectGroupId,
+      base.scopeConnectionId,
+      base.catalogRevision,
+      ''
+    ].join('\0')
+  }
+  let sshRevision = folderPathStatusSshRevisions.get(sshConnectionStates)
+  if (!sshRevision) {
+    sshRevision = nextFolderPathStatusRevision++
+    folderPathStatusSshRevisions.set(sshConnectionStates, sshRevision)
+  }
   return [
     base.folderPath,
     base.projectGroupId,
     base.scopeConnectionId,
-    sshFingerprint,
-    base.repoFingerprint
+    base.catalogRevision,
+    sshRevision
   ].join('\0')
 }
 

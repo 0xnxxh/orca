@@ -82,7 +82,7 @@ import {
 } from './worktree-list-indentation'
 import { translate } from '@/i18n/i18n'
 import { recordRendererCrashBreadcrumb } from '@/lib/crash-diagnostics'
-import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   getRepoExecutionHostId,
   isRuntimeOwnedSshTargetId,
@@ -98,6 +98,7 @@ import {
   selectRuntimeAwareSshTargetRemoved
 } from '@/store/slices/runtime-environment-ssh'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
+import { shouldClearActiveFolderWorkspaceAfterDelete } from './worktree-list-folder-reveal'
 
 type WorktreeRenameRequest = {
   worktreeId: string
@@ -978,9 +979,18 @@ const WorktreeCard = React.memo(function WorktreeCard({
           void deleteFolderWorkspace(folderWorkspaceId, {
             ownerHostId: worktreeExecutionHostId
           }).then((deleted) => {
+            const state = useAppStore.getState()
             if (
               deleted &&
-              useAppStore.getState().activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
+              shouldClearActiveFolderWorkspaceAfterDelete({
+                activeWorktreeId: state.activeWorktreeId,
+                activeOwnerHostId: state.activeWorkspaceExecutionHostId,
+                deletedFolderWorkspaceId: folderWorkspaceId,
+                deletedOwnerHostId: worktreeExecutionHostId,
+                sameIdWorkspaceStillExists: state.folderWorkspaces.some(
+                  (workspace) => workspace.id === folderWorkspaceId
+                )
+              })
             ) {
               setActiveWorktree(null)
             }

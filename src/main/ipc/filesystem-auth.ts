@@ -250,22 +250,24 @@ function mergeGroupMembership(target: GroupMembershipSummary, child: GroupMember
 
 function hasIndexedPathInside(rootPath: string, sortedPaths: readonly string[]): boolean {
   const root = normalizeRuntimePathForComparison(rootPath)
-  let low = 0
-  let high = sortedPaths.length
-  while (low < high) {
-    const middle = (low + high) >>> 1
-    if (sortedPaths[middle] < root) {
-      low = middle + 1
-    } else {
-      high = middle
-    }
-  }
-  const candidate = sortedPaths[low]
-  if (!candidate) {
-    return false
-  }
   const prefix = root === '/' || /^[a-z]:\/$/i.test(root) ? root : `${root}/`
-  return candidate === root || candidate.startsWith(prefix)
+  const lowerBound = (needle: string): number => {
+    let low = 0
+    let high = sortedPaths.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (sortedPaths[middle] < needle) {
+        low = middle + 1
+      } else {
+        high = middle
+      }
+    }
+    return low
+  }
+  if (sortedPaths[lowerBound(root)] === root) {
+    return true
+  }
+  return Boolean(sortedPaths[lowerBound(prefix)]?.startsWith(prefix))
 }
 
 function isRemoteOnlyFolderScopeWithIndex(

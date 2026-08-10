@@ -223,7 +223,6 @@ import {
   clearMissingProjectGroupMemberships,
   createProjectGroup,
   getNextProjectGroupOrder,
-  getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
   getProjectGroupOwnerSubtreeIdentities,
   normalizeProjectGroupName,
@@ -2748,7 +2747,11 @@ function backfillFolderScopeConnectionIds(state: PersistedState): {
   const originalProjectGroupIndex = buildProjectGroupOwnerIndex(groups)
   let changed = false
   const projectGroups = groups.map((group) => {
-    if (getProjectGroupOwnerHostId(group) !== LOCAL_EXECUTION_HOST_ID || !group.parentPath) {
+    if (
+      group.connectionId !== undefined ||
+      normalizeExecutionHostId(group.executionHostId) ||
+      !group.parentPath
+    ) {
       return group
     }
     const connectionId = inferFolderScopeConnectionIdForMigration({
@@ -2766,7 +2769,10 @@ function backfillFolderScopeConnectionIds(state: PersistedState): {
   })
   const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
   const folderWorkspaces = (state.folderWorkspaces ?? []).map((workspace) => {
-    if (workspace.connectionId || normalizeExecutionHostId(workspace.executionHostId)) {
+    if (
+      workspace.connectionId !== undefined ||
+      normalizeExecutionHostId(workspace.executionHostId)
+    ) {
       return workspace
     }
     const group = resolveProjectGroupOwner(projectGroupIndex, workspace.projectGroupId)
@@ -4494,15 +4500,16 @@ export class Store {
       const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
       return group && deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))
     })
+    const removedFolderWorkspaceSet = new Set(removedFolderWorkspaces)
     this.state.folderWorkspaces = folderWorkspaces.filter(
-      (workspace) => !removedFolderWorkspaces.includes(workspace)
+      (workspace) => !removedFolderWorkspaceSet.has(workspace)
+    )
+    const remainingFolderWorkspaceIds = new Set(
+      this.state.folderWorkspaces.map((workspace) => workspace.id)
     )
     const removedFolderWorkspaceKeys = new Set<string>()
     for (const workspace of removedFolderWorkspaces) {
-      const hasSameIdSibling = this.state.folderWorkspaces.some(
-        (candidate) => candidate.id === workspace.id
-      )
-      if (!hasSameIdSibling) {
+      if (!remainingFolderWorkspaceIds.has(workspace.id)) {
         removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
         this.state.workspaceSession = removeWorkspaceSessionOwner(
           this.state.workspaceSession,

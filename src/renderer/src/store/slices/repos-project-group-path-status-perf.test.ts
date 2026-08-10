@@ -23,7 +23,7 @@ function group(index: number): ProjectGroup {
 describe('project-group path-status catalog cache', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('reuses the owner-scoped snapshot across 12,208 groups and 16 owners', async () => {
+  it('reuses the owner-scoped snapshot without rescanning 12,208 repo paths', async () => {
     let pathReads = 0
     const projectGroups = Array.from({ length: 12_208 }, (_, index) => group(index))
     const repos = Array.from({ length: 12_208 }, (_, index) => {
@@ -52,7 +52,7 @@ describe('project-group path-status catalog cache', () => {
     const readsAfterFirstSnapshot = pathReads
     await store.getState().fetchFolderWorkspacePathStatus(request, options)
 
-    expect(readsAfterFirstSnapshot).toBeGreaterThan(0)
+    expect(readsAfterFirstSnapshot).toBe(0)
     expect(pathReads).toBe(readsAfterFirstSnapshot)
     expect(getPathStatus).toHaveBeenCalledTimes(2)
   })
@@ -99,5 +99,33 @@ describe('project-group path-status catalog cache', () => {
     })
 
     expect(groupIdReads).toBeLessThan(4_096)
+  })
+
+  it('builds every group snapshot with linear catalog work', () => {
+    let groupIdReads = 0
+    const projectGroups: ProjectGroup[] = Array.from({ length: 512 }, (_, index) => ({
+      ...group(index),
+      parentPath: `/workspace/${index}`,
+      executionHostId: 'local',
+      parentGroupId: index === 0 ? null : 'group-0',
+      get id() {
+        groupIdReads += 1
+        return `group-${index}`
+      }
+    }))
+    groupIdReads = 0
+    const store = createTestStore()
+    store.setState({ projectGroups })
+
+    for (let index = 0; index < projectGroups.length; index++) {
+      store
+        .getState()
+        .getFreshFolderWorkspacePathStatus(
+          { scope: 'project-group', projectGroupId: `group-${index}` },
+          { ownerHostId: 'local' }
+        )
+    }
+
+    expect(groupIdReads).toBeLessThan(16_384)
   })
 })

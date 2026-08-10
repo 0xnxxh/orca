@@ -63,11 +63,7 @@ import {
 import { WorkspaceSleepMenuItems } from './WorkspaceSleepMenuItems'
 import { isEventTargetInsideCurrentTarget } from './worktree-card-dom-events'
 import { translate } from '@/i18n/i18n'
-import {
-  folderWorkspaceKey,
-  parseWorkspaceKey,
-  worktreeWorkspaceKey
-} from '../../../../shared/workspace-scope'
+import { parseWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   getRepoExecutionHostId,
   normalizeExecutionHostId,
@@ -77,6 +73,7 @@ import {
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity
 } from '../../../../shared/project-groups'
+import { shouldClearActiveFolderWorkspaceAfterDelete } from './worktree-list-folder-reveal'
 
 type Props = {
   worktree: Worktree
@@ -758,13 +755,20 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         return
       }
       if (folderWorkspaceId) {
-        void deleteFolderWorkspace(
-          folderWorkspaceId,
-          getFolderWorkspaceContextMenuDeleteOwner({ hostId: worktree.hostId })
-        ).then((deleted) => {
+        const deleteOwner = getFolderWorkspaceContextMenuDeleteOwner({ hostId: worktree.hostId })
+        void deleteFolderWorkspace(folderWorkspaceId, deleteOwner).then((deleted) => {
+          const state = useAppStore.getState()
           if (
             deleted &&
-            useAppStore.getState().activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
+            shouldClearActiveFolderWorkspaceAfterDelete({
+              activeWorktreeId: state.activeWorktreeId,
+              activeOwnerHostId: state.activeWorkspaceExecutionHostId,
+              deletedFolderWorkspaceId: folderWorkspaceId,
+              deletedOwnerHostId: deleteOwner?.ownerHostId,
+              sameIdWorkspaceStillExists: state.folderWorkspaces.some(
+                (workspace) => workspace.id === folderWorkspaceId
+              )
+            })
           ) {
             setActiveWorktree(null)
           }
