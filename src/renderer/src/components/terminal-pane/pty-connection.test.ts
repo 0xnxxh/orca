@@ -31,6 +31,10 @@ import {
 } from '@/lib/agent-startup-delayed-delivery'
 import type { PaneForegroundAgentEntry } from '@/store/slices/pane-foreground-agent'
 
+const { resetAndRefreshAllTerminalWebglAtlases } = vi.hoisted(() => ({
+  resetAndRefreshAllTerminalWebglAtlases: vi.fn()
+}))
+
 // Repro command:
 //   pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts -t "OpenTUI-style small ANSI redraw"
 
@@ -342,6 +346,11 @@ let storeSubscribers: ((state: StoreState) => void)[] = []
 
 vi.mock('@/runtime/sync-runtime-graph', () => ({
   scheduleRuntimeGraphSync
+}))
+
+vi.mock('@/lib/pane-manager/pane-manager-registry', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  resetAndRefreshAllTerminalWebglAtlases
 }))
 
 vi.mock('@/store', () => ({
@@ -12738,12 +12747,13 @@ describe('connectPanePty', () => {
       expect(writes).toEqual([`${startChunk}${plainRowChunk}${endChunk}`])
 
       parseCallbacks[0]?.()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('defers split hidden synchronized-output markers until reveal', async () => {
+  it('keeps split hidden synchronized output off the global atlas recovery path', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
@@ -12777,6 +12787,7 @@ describe('connectPanePty', () => {
       expect(writes.join('')).toBe('\x1b[?2026hbody row\r\ntail\x1b[?2026l')
 
       parseCallbacks[0]?.()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -12814,12 +12825,13 @@ describe('connectPanePty', () => {
       for (const callback of parseCallbacks) {
         callback()
       }
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('defers hidden high-confidence TUI redraw recovery until reveal', async () => {
+  it('keeps hidden TUI redraw output off the global atlas recovery path', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
@@ -12848,12 +12860,13 @@ describe('connectPanePty', () => {
       vi.advanceTimersByTime(50)
 
       parseCallbacks[0]?.()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('advances hidden rewrite state without scheduling atlas recovery', async () => {
+  it('keeps hidden rewrite frames on the pane-local output path', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
@@ -12890,12 +12903,13 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('plain after frame')
       vi.advanceTimersByTime(50)
       parseCallbacks.shift()?.()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('resets hidden synchronized state when hidden renderer output is skipped', async () => {
+  it('keeps output after a skipped hidden alternate-screen frame pane-local', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: {
@@ -12939,6 +12953,7 @@ describe('connectPanePty', () => {
       parseCallbacks.shift()?.()
 
       expect(writes).toEqual(['plain after skipped close\r\n'])
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -17194,6 +17209,7 @@ describe('connectPanePty', () => {
     expect(refresh).not.toHaveBeenCalled()
     parseCallback?.()
     expect(refresh).toHaveBeenCalledWith(0, 39, true)
+    expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
   })
 
   it('refreshes alternate-screen redraws without clearing the shared glyph atlas', async () => {
@@ -17230,6 +17246,7 @@ describe('connectPanePty', () => {
       )
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17268,6 +17285,7 @@ describe('connectPanePty', () => {
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'alternate'
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17308,6 +17326,8 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('9h\x1b[2J\x1b[H~\x1b[K')
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'alternate'
       parseCallback?.()
+      expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17345,6 +17365,8 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('\x1b[34;1H\x1b[K\x1b[34;1H\x1b[?1049l\x1b[?25h')
       ;(pane.terminal.buffer.active as { type: 'normal' | 'alternate' }).type = 'normal'
       parseCallback?.()
+      expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17365,15 +17387,6 @@ describe('connectPanePty', () => {
       transportFactoryQueue.push(transport)
 
       const pane = createPane(1)
-      let bufferChangeListener: (() => void) | undefined
-      ;(
-        pane.terminal.buffer as {
-          onBufferChange?: (listener: () => void) => { dispose: () => void }
-        }
-      ).onBufferChange = (listener) => {
-        bufferChangeListener = listener
-        return { dispose: vi.fn() }
-      }
       const refresh = vi.fn()
       let parseCallback: (() => void) | undefined
       const terminal = pane.terminal as typeof pane.terminal & {
@@ -17387,11 +17400,10 @@ describe('connectPanePty', () => {
       connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
       await flushAsyncTicks(6)
 
-      // A coalesced flush can parse enter -> draw -> exit in one write (buffer nets back to 'normal'); the switch count still marks it alternate-screen work.
       capturedDataCallback.current?.('\x1b[?1049h\x1b[2J\x1b[Hpager frame\x1b[K\x1b[?1049l')
-      bufferChangeListener?.()
-      bufferChangeListener?.()
       parseCallback?.()
+      expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17434,6 +17446,8 @@ describe('connectPanePty', () => {
         ';5H  "js-combine-iterations": "off"\r\n    }\x1b[31;6H\x1b[K\x1b[33;1H\x1b[?25h'
       )
       parseCallback?.()
+      expect(refresh).toHaveBeenCalled()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17471,6 +17485,7 @@ describe('connectPanePty', () => {
 
       parseCallback?.()
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
@@ -17501,6 +17516,7 @@ describe('connectPanePty', () => {
 
       capturedDataCallback.current?.('\x1b[?2026hplain claude frame\x1b[?2026l')
       parseCallback?.()
+      expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
